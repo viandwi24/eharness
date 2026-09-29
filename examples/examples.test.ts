@@ -94,6 +94,17 @@ describe('examples run offline', () => {
   )
 
   test(
+    'subagent-tool',
+    async () => {
+      const out = await run('subagent-tool.ts')
+      expect(out).toContain('preliminary: {"status":"working","text":"Finding:')
+      expect(out).toContain('final: {"status":"done"')
+      expect(out).toContain('complete; output tokens incl. the subagent: 15')
+    },
+    timeout,
+  )
+
+  test(
     'json-file-storage',
     async () => {
       const out = await run('json-file-storage.ts')
