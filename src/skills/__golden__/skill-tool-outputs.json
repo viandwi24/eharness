@@ -1,0 +1,15 @@
+[
+  [
+    "load_skill",
+    "---\nname: pine-v6\ndescription: Pine Script v6 syntax and pitfalls. Use when writing Pine.\nlicense: MIT\ntags: [trading, pine]\n---\n# Pine v6\n\nRead reference.md before answering.\n\nFiles:\n- reference.md (29 bytes)\n- scripts/check.py (12 bytes)"
+  ],
+  ["read_skill_file", "# Reference\n\nplot(close) ✓\n"],
+  ["read_skill_file", "print(\"ok\")\n"],
+  ["read_skill_file", "ERROR: invalid path: '..' segments are not allowed"],
+  [
+    "read_skill_file",
+    "ERROR: invalid path: SKILL.md is not a supporting file; open it with load_skill"
+  ],
+  ["read_skill_file", "ERROR: file \"missing.md\" not found in skill \"pine-v6\""],
+  ["load_skill", "ERROR: skill \"nope\" not found"]
+]
