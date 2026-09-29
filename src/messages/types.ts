@@ -288,5 +288,6 @@ export interface TurnResult<M = HarnessUIMessage> {
   }
   steps: number
   durationMs: number
-  error?: { code?: string; message: string }
+  /** Set when stop is `error`; `details` of an `EH_*` error (e.g. `{ reason: 'stale' }`, spec 11). */
+  error?: { code?: string; message: string; details?: Record<string, unknown> }
 }
