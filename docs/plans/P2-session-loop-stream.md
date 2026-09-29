@@ -104,3 +104,9 @@ from P1; the dynamic tool-source parts of `src/registry/tools.ts` go to P6),
   `src/agent/session-types.ts` — implement against them (move if you like, keep the exports).
   `agent.session()` currently throws `EH_NOT_IMPLEMENTED`. `describeError` is still to do.
   The id generator ignores the floor when `config.generateId` is custom.
+- From P1 (review): warn (e.g. `W_...` via the agent emitter, or a log) when a custom
+  `config.generateId` returns an id that does not sort after the session floor (spec 03 §8).
+- From P1 (review): remove `EH_NOT_IMPLEMENTED` from `agent.session()` (and any other stub) before
+  any release — spec 10 §1 says it must not exist in a release.
+- From P1 (review): `project()` answers pending client tool calls like any call without a result;
+  patch pending parts in the stored message (respond / onNewInput deny) before projecting.
