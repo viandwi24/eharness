@@ -16,7 +16,9 @@ connect and optional definition pinning.
 
 ## Owns
 
-`src/registry/tools.ts` (dynamic parts: sources, deferral, `tool_search` injection), `src/mcp/**`.
+`src/registry/tools.ts` (dynamic parts: sources, deferral, `tool_search` injection),
+`src/registry/output-limits.ts`, the output-limit part of `src/registry/wrap.ts`, `src/mcp/**`,
+and (orchestrator decision) the `renderWindow()` budget fix in `src/filesystem/tools.ts`.
 The per-step discovery tracking in the loop is P2's (spec 02 §3.3); P6 makes it observable by
 adding deferred tools.
 
@@ -79,8 +81,9 @@ adding deferred tools.
 ## Requests to other phases
 
 - To P7: client tool outputs must pass `tool.after` + output limits (request in P7 file).
-- To P5: `read_file` full-budget reads exceed the default output limit by the footer (request in
-  P5 file).
+- P5: `read_file` full-budget reads exceeded the default output limit by the footer; fixed in P6
+  by orchestrator decision (`renderWindow()` keeps the hint inside `maxReadChars`, spec 08
+  updated, regression tests).
 - Hook point used outside P6's folders: `src/session/turn.ts` passes `config.toolOutput` to
   `resolveTurnRegistry()` (one line).
 
