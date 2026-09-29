@@ -8,7 +8,7 @@ Update this table in the same commit that changes a phase's status.
 | Phase | File | Status | Depends on | Can run in parallel with |
 |---|---|---|---|---|
 | P0 | [Bootstrap repo, tooling, CI, release](P0-bootstrap.md) | done | — | — |
-| P1 | [Core foundations: errors, ids, messages, plugins, registries](P1-core-foundations.md) | todo | P0 | — |
+| P1 | [Core foundations: errors, ids, messages, plugins, registries](P1-core-foundations.md) | in progress | P0 | — |
 | P2 | [Session, loop, streaming, storage contracts](P2-session-loop-stream.md) | todo | P1 | — |
 | P3 | [Context loading and compaction](P3-compaction.md) | todo | P2 | P4, P6 |
 | P4 | [Skills](P4-skills.md) | todo | P2 | P3, P6 |
