@@ -29,6 +29,7 @@ import {
 } from '../registry/static.ts'
 import type { ToolInput, ToolSource } from '../registry/types.ts'
 import { hookFailed } from '../registry/wrap.ts'
+import { buildSessionSkills } from '../skills/registry.ts'
 import { createRun, createTurnBuffer } from '../stream/run.ts'
 import { createContext, defaultLogger, pendingServices } from './context.ts'
 import { createEventHub } from './events.ts'
@@ -325,6 +326,12 @@ export function createSessionHandle(args: {
         }
       }
       const open: OpenSession = {
+        skills: buildSessionSkills(
+          byPlugin(internals.statics.skills, session.skills),
+          byPlugin(internals.statics.skillSources, session.skillSources),
+          pluginOrder,
+          internals.config.skillsIndexLimit,
+        ),
         services,
         hooks,
         tools,
