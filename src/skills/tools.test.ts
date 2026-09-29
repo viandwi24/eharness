@@ -395,3 +395,29 @@ describe('createSkillTools', () => {
     expect(await run(search, { query: 'pine' })).toBe('- pine-v6: Pine v6.')
   })
 })
+
+describe('skill.load event location (spec 07 §7)', () => {
+  test('carries locate() result; omitted for null; failures warn', async () => {
+    const events: unknown[] = []
+    const hooks = [
+      { owner: 'app', fn: ((_c, e) => void events.push(e.location)) as HarnessHooks['skill.load'] },
+    ]
+    const located = memory(
+      'fs:/skills',
+      [doc(), doc({ name: 'nowhere' }), doc({ name: 'broken' })],
+      {},
+      {
+        locate: (name) => {
+          if (name === 'broken') throw new Error('no fs')
+          return name === 'pine-v6' ? { service: 'fs', root: '/skills/pine-v6' } : null
+        },
+      },
+    )
+    const d = await deps([{ source: located }], { hooks })
+    await loadSkillText(d, 'pine-v6')
+    await loadSkillText(d, 'nowhere')
+    await loadSkillText(d, 'broken')
+    expect(events).toEqual([{ service: 'fs', root: '/skills/pine-v6' }, undefined, undefined])
+    expect(d.warnings.map((w) => w.code)).toEqual(['W_SKILL_SOURCE_FAILED'])
+  })
+})

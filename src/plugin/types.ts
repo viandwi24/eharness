@@ -289,10 +289,14 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   ): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 
-  /** Chainable. Adjust a loaded skill doc. */
+  /**
+   * Chainable. Adjust a loaded skill doc and add notes to the `load_skill` result (e.g. an
+   * executable path, spec 07 §7). `source` is the `SkillSource.id`; `location` is the result of
+   * `SkillSource.locate(name)` (omitted when the source has none or returns `null`).
+   */
   'skill.load'?(
     ctx: HarnessContext<DP>,
-    e: { skill: SkillDoc; source: string },
+    e: { skill: SkillDoc; source: string; location?: { service: string; root: string } },
   ): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
 }
 
