@@ -70,6 +70,10 @@ code + key), as transient `data-eh.warning` during a turn, and as session `data`
 With `config.strict: true`, misuse warnings (`W_TRANSIENT_OVERRIDE`, `W_UNKNOWN_DATA_PART`,
 `W_WRITE_OUTSIDE_TURN`) throw `EH_CONFIG_INVALID` instead.
 
+Plugins and sources emit warnings through `ctx.warn(warning)` (spec 01 §4): same channel, with
+`details.plugin` set to the emitting plugin unless given; the default handler deduplicates per
+code + plugin + message.
+
 ```ts
 export interface HarnessWarning { code: WarningCode; message: string; details?: Record<string, unknown> }
 ```
@@ -81,6 +85,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_MCP_DRIFT` | MCP tool definition changed; tool excluded |
 | `W_INVALID_MESSAGE` | stored message failed validation and was dropped |
 | `W_INVALID_SKILL` | skill metadata invalid; skipped |
+| `W_SKILL_SOURCE_FAILED` | a skill source `list()` failed (retried next turn), or its `search()` / `locate()` failed (core matcher / no location used) |
 | `W_UNKNOWN_DATA_PART` | write of an unregistered data part; dropped |
 | `W_UNKNOWN_STORED_PART` | stored message contains an unregistered data part type; ignored in memory, kept in storage (never escalated by `strict`) |
 | `W_WRITE_OUTSIDE_TURN` | persistent data part written while idle; dropped |

@@ -16,6 +16,7 @@ import type {
   ToolChoice,
 } from 'ai'
 import type { ModelSettings } from '../agent/types.ts'
+import type { HarnessWarning } from '../errors.ts'
 import type { Awaitable, ProviderOptions } from '../internal/ai-types.ts'
 import type { DataChunk, DataPartDef } from '../messages/data-parts.ts'
 import type { MessageKindDef } from '../messages/kinds.ts'
@@ -141,6 +142,17 @@ export interface HarnessContext<DP extends DataPartMap = Record<never, never>> {
   readonly log: HarnessLogger
   /** Aborts on session close. Turn-level abort is `turn.abortSignal`. */
   readonly signal: AbortSignal
+  /**
+   * Emit a non-fatal warning on the session's warning channel: `config.onWarning` (or the
+   * deduplicated console default), `strict` escalation, and a transient `data-eh.warning` part
+   * during a turn. `details.plugin` is set to this plugin unless given.
+   *
+   * @example
+   * ```ts
+   * ctx.warn({ code: 'W_INVALID_SKILL', message: `Skipped /skills/x/SKILL.md: ${error}` })
+   * ```
+   */
+  warn(warning: HarnessWarning): void
 }
 
 /**
@@ -289,10 +301,14 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   ): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 
-  /** Chainable. Adjust a loaded skill doc. */
+  /**
+   * Chainable. Adjust a loaded skill doc and add notes to the `load_skill` result (e.g. an
+   * executable path, spec 07 §7). `source` is the `SkillSource.id`; `location` is the result of
+   * `SkillSource.locate(name)` (omitted when the source has none or returns `null`).
+   */
   'skill.load'?(
     ctx: HarnessContext<DP>,
-    e: { skill: SkillDoc; source: string },
+    e: { skill: SkillDoc; source: string; location?: { service: string; root: string } },
   ): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
 }
 

@@ -3,7 +3,8 @@
  * stable order, and the step tool set with tool-search discoveries.
  *
  * The resolved set is locked for the turn (spec 02 §7), except tools discovered via tool search.
- * Skills (index block, skill tools) are added by P4; deferral and `tool_search` by P6.
+ * Skills: the index is appended to block 1 (static skills) / block 2 (dynamic sources), and the
+ * skill tools follow the static tools (spec 02 §6 rule 1). Deferral and `tool_search` are P6's.
  *
  * @see docs/specs/02-context-registry.md#8-registry-api-internal-but-tested
  */
@@ -12,15 +13,17 @@ import type { ApprovalConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
+import { resolveTurnSkills, type SkillIndexEntry } from '../skills/registry.ts'
+import { createSkillTools } from '../skills/tools.ts'
 import type { NormalizedInstruction } from './static.ts'
 import { listSourceTools, type TurnToolEntry } from './tools.ts'
 import { buildApproval, buildRefinement, type ToolWrapDeps, wrapTool } from './wrap.ts'
 
 /** Everything the model can see and call in one turn. */
 export interface TurnRegistry {
-  /** System block 1: static instructions (+ static skills index, P4). */
+  /** System block 1: static instructions + static skills index. */
   block1: string | undefined
-  /** System block 2: session-refresh instructions (+ dynamic skills index, P4). */
+  /** System block 2: session-refresh instructions + dynamic skills index. */
   block2: string | undefined
   /** Turn-refresh instructions, sent as the turn reminder. */
   turnReminder: string | undefined
@@ -38,6 +41,13 @@ export interface TurnRegistry {
   approval: GenericToolApprovalFunction<ToolSet, never, unknown> | undefined
   /** Tool set for one step: deferred tools in `discovered` become non-deferred copies. */
   toolsForStep(discovered: ReadonlySet<string>): ToolSet
+  /** Skills of the turn (locked), sorted by name. */
+  skills: SkillIndexEntry[]
+}
+
+function appendBlock(block: string | undefined, text: string | undefined): string | undefined {
+  if (text === undefined) return block
+  return block === undefined ? text : `${block}\n\n${text}`
 }
 
 async function evaluate(
@@ -66,7 +76,7 @@ export async function resolveTurnRegistry(args: {
   status: (toolName: string) => void
 }): Promise<TurnRegistry> {
   const { open, contextOf } = args
-  const block1 = await evaluate(open.instructions, (e) => e.kind === 'static', contextOf)
+  const instructions1 = await evaluate(open.instructions, (e) => e.kind === 'static', contextOf)
   if (open.sessionBlock === undefined) {
     open.sessionBlock =
       (await evaluate(
@@ -75,7 +85,12 @@ export async function resolveTurnRegistry(args: {
         contextOf,
       )) ?? ''
   }
-  const block2 = open.sessionBlock === '' ? undefined : open.sessionBlock
+  const skills = await resolveTurnSkills({ skills: open.skills, contextOf, warn: args.warn })
+  const block1 = appendBlock(instructions1, skills.staticText)
+  const block2 = appendBlock(
+    open.sessionBlock === '' ? undefined : open.sessionBlock,
+    skills.dynamicText,
+  )
   const turnReminder = await evaluate(
     open.instructions,
     (e) => e.kind === 'dynamic' && e.refresh === 'turn',
@@ -94,6 +109,13 @@ export async function resolveTurnRegistry(args: {
     tool: t.tool,
   }))
   const staticCount = raw.length
+  const skillTools = createSkillTools({
+    skills,
+    hooks: open.hooks,
+    contextOf,
+    warn: args.warn,
+  })
+  for (const { name, tool } of skillTools) raw.push({ owner: 'eh', name, tool })
   raw.push(
     ...(await listSourceTools({
       sources: open.toolSources,
@@ -136,6 +158,7 @@ export async function resolveTurnRegistry(args: {
     clientTools,
     refine: buildRefinement(toolOrder, deps),
     approval: buildApproval(args.approval, deps),
+    skills: skills.entries,
     toolsForStep(discovered) {
       let changed = false
       const out: ToolSet = {}
