@@ -32,7 +32,9 @@ export interface UuidV7GeneratorOptions {
  *
  * `floor` is the newest id the caller already knows (e.g. the newest message of a session).
  * When the generated id would not sort after it (clock skew between instances, clock going
- * backwards), the timestamp is bumped to the floor's timestamp + 1 ms (spec 03 §8).
+ * backwards), the id gets the floor's timestamp + 1 ms (spec 03 §8). The bump applies to that
+ * call only: it does not move the generator's clock, so a skewed floor of one session never shifts
+ * ids of other sessions sharing the generator. Pass the session's newest id on every call.
  */
 export type UuidV7Generator = (floor?: string) => string
 
@@ -59,9 +61,15 @@ export function createUuidV7Generator(options: UuidV7GeneratorOptions = {}): Uui
   }
 
   return (floor) => {
-    let ms = Math.floor(now())
+    const ms = Math.floor(now())
     const floorMs = floor === undefined ? undefined : uuidV7Timestamp(floor)
-    if (floorMs !== undefined && ms <= floorMs) ms = floorMs + 1
+    if (floorMs !== undefined && floorMs >= Math.max(ms, lastMs)) {
+      // per-call floor bump (spec 03 §8): sorts after the floor, generator state untouched
+      if (floorMs + 1 > MAX_TIMESTAMP) throw new RangeError('UUIDv7 timestamp overflow')
+      const seed = seedCounter()
+      random(bytes)
+      return format(floorMs + 1, seed, bytes)
+    }
     if (ms > lastMs) {
       lastMs = ms
       counter = seedCounter()
@@ -115,7 +123,8 @@ export function uuidv7(): string {
 }
 
 /**
- * Generate a UUIDv7 that also sorts after `floor` (the newest id a session knows).
+ * Generate a UUIDv7 that also sorts after `floor` (the newest id a session knows). The floor bump
+ * affects only this call (see {@link UuidV7Generator}).
  *
  * @see docs/specs/03-messages.md#8-ids
  */

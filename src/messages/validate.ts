@@ -126,7 +126,9 @@ export async function validateStoredMessages(
       const upgrade = registered.def.upgrade
       if (upgrade !== undefined) {
         try {
-          ;(part as { data: unknown }).data = upgrade((part as { data: unknown }).data)
+          ;(part as { data: unknown }).data = upgrade(
+            structuredClone((part as { data: unknown }).data),
+          )
         } catch (error) {
           problem ??= `upgrade of '${type}' failed: ${describe(error)}`
         }
