@@ -1,6 +1,6 @@
 # P4 — Skills
 
-Status: in progress · Branch: `phase/P4-skills`
+Status: done · Branch: `phase/P4-skills`
 
 ## Goal
 
