@@ -42,7 +42,6 @@ const idsOf = (messages: readonly { id: string }[]): string[] => messages.map((m
  *
  * @example
  * ```ts
- * import { messageAdapterConformance } from 'eharness/testing'
  * for (const c of messageAdapterConformance(() => postgresMessages(db))) test(c.name, c.run)
  * ```
  * @see docs/specs/05-session-and-storage.md#4-messageadapter-the-storage-contract

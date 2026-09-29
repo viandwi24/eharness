@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { defaultMemoryMessages, defaultMemoryState } from '../session/memory-storage.ts'
+import { memoryMessages, memoryState } from '../storage/memory.ts'
 import { messageAdapterConformance } from '../testing/message-adapter.conformance.ts'
 import { stateAdapterConformance } from '../testing/state-adapter.conformance.ts'
-import { memoryMessages, memoryState } from './memory.ts'
+import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 describe('memoryMessages() conformance', () => {
   for (const c of messageAdapterConformance(() => memoryMessages(), { requireLastId: true })) {

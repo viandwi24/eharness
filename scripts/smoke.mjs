@@ -41,9 +41,14 @@ const entries = {
   ],
   'eharness/filesystem': ['experimental_placeholder'],
   'eharness/filesystem/memory': ['experimental_placeholder'],
-  'eharness/storage/memory': ['experimental_placeholder'],
+  'eharness/storage/memory': ['memoryMessages', 'memoryState'],
   'eharness/mcp': ['experimental_placeholder'],
-  'eharness/testing': ['idGeneratorConformance'],
+  'eharness/testing': [
+    'idGeneratorConformance',
+    'messageAdapterConformance',
+    'scriptedModel',
+    'stateAdapterConformance',
+  ],
 }
 
 if (noMcp) {
@@ -73,7 +78,45 @@ assert.throws(
 const a = core.uuidv7()
 assert.ok(core.isUuidV7(a) && core.uuidv7() > a)
 
+// one scripted two-step turn (tool call → answer) against memoryMessages() under Node
+const { memoryMessages, memoryState } = await load('eharness/storage/memory')
+const { scriptedModel, messageAdapterConformance } = await load('eharness/testing')
+const { tool } = await load('ai')
+const { z } = await load('zod/v4')
+for (const c of messageAdapterConformance(() => memoryMessages())) await c.run()
+const messages = memoryMessages()
+const model = scriptedModel([
+  { toolCalls: [{ toolName: 'weather', input: { city: 'Oslo' } }] },
+  { text: 'It is 20 degrees.' },
+])
+const turnAgent = core.defineHarnessAgent({
+  model,
+  contextWindow: 100_000,
+  storage: { messages, state: memoryState() },
+  tools: {
+    weather: tool({
+      inputSchema: z.object({ city: z.string() }),
+      execute: async ({ city }) => ({ city, temp: 20 }),
+    }),
+  },
+})
+const run = turnAgent.session('smoke').send('Weather in Oslo?')
+const chunkTypes = []
+for await (const chunk of run.stream) chunkTypes.push(chunk.type)
+const result = await run.result
+assert.equal(result.stop, 'complete')
+assert.equal(result.steps, 2)
+assert.equal(chunkTypes.at(0), 'start')
+assert.equal(chunkTypes.at(-1), 'finish')
+const stored = await messages.load({ sessionId: 'smoke' })
+assert.deepEqual(
+  stored.map((m) => m.role),
+  ['user', 'assistant'],
+)
+assert.equal(stored[1].metadata.eharness.stop, 'complete')
+await turnAgent.close()
+
 await rm(shim)
 console.log(
-  `smoke: ok (${Object.keys(entries).length} entry points${noMcp ? ', without @ai-sdk/mcp' : ''})`,
+  `smoke: ok (${Object.keys(entries).length} entry points, one scripted turn${noMcp ? ', without @ai-sdk/mcp' : ''})`,
 )

@@ -19,7 +19,7 @@ type StoredMessage = Parameters<MessageAdapter['save']>[1][number]
  *
  * @example
  * ```ts
- * import { memoryMessages, memoryState } from 'eharness/storage/memory'
+ * // import { memoryMessages, memoryState } from the eharness/storage/memory subpath
  * defineHarnessAgent({ model, storage: { messages: memoryMessages(), state: memoryState() } })
  * ```
  * @see docs/specs/05-session-and-storage.md#4-messageadapter-the-storage-contract
