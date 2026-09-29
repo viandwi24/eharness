@@ -299,6 +299,49 @@ describe('hook order and context', () => {
   })
 })
 
+describe('waiting input and limits', () => {
+  test('step.end context cannot run past the step budget (max-steps)', async () => {
+    const model = scriptedModel(Array.from({ length: 40 }, () => ({ text: 'again' })))
+    const plugin = definePlugin({
+      name: 'chatty',
+      setup: () => ({ hooks: { 'step.end': () => ({ context: 'one more thing' }) } }),
+    })
+    const { agent } = setup({ model, plugins: [plugin], loop: { maxSteps: 3 } })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('max-steps')
+    expect(model.calls).toHaveLength(3)
+  })
+
+  test('step.end context cannot run past the cost cap', async () => {
+    const model = scriptedModel(
+      Array.from({ length: 40 }, () => ({ text: 'again', usage: { outputTokens: 30 } })),
+    )
+    const plugin = definePlugin({
+      name: 'chatty',
+      setup: () => ({ hooks: { 'step.end': () => ({ context: 'one more thing' }) } }),
+    })
+    const { agent } = setup({ model, plugins: [plugin], loop: { maxTurnOutputTokens: 50 } })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('cost-cap')
+    expect(model.calls).toHaveLength(2)
+  })
+
+  test('extendSteps for a non-max-steps stop is ignored silently (no W_CONTINUE_LIMIT)', async () => {
+    const plugin = definePlugin({
+      name: 'ext',
+      setup: () => ({ hooks: { 'turn.beforeEnd': () => ({ extendSteps: 3 }) } }),
+    })
+    const { agent, warnings } = setup({
+      model: scriptedModel([{ text: 'done' }]),
+      plugins: [plugin],
+      loop: { maxContinues: 0 },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    expect(warnings.map((w) => w.code)).not.toContain('W_CONTINUE_LIMIT')
+  })
+})
+
 describe('scenario 27: turn.beforeEnd', () => {
   test('continue runs one more step with data-eh.input { source: plugin:… }', async () => {
     const model = scriptedModel([{ text: 'first' }, { text: 'second' }])
@@ -469,6 +512,35 @@ describe('scenario 28: input.submit', () => {
       data: { level: 'warning', code: 'EH_INPUT_BLOCKED', message: 'not allowed' },
     })
     expect(result.messages).toHaveLength(2)
+  })
+
+  test('state changes of a turn that ends before its commit point are discarded', async () => {
+    let block = true
+    const plugin = definePlugin({
+      name: 'gate',
+      setup: () => ({
+        hooks: {
+          'input.submit': (ctx) => {
+            if (!block) return undefined
+            ctx.state.set('leak', true)
+            return { block: { reason: 'no' } }
+          },
+        },
+      }),
+    })
+    const { agent, state } = setup({ model: scriptedModel([{ text: 'ok' }]), plugins: [plugin] })
+    const session = agent.session('s1')
+    expect((await session.send('first').result).stop).toBe('blocked')
+    block = false
+    expect((await session.send('second').result).stop).toBe('complete')
+    expect(state.writes.some((w) => w.plugins.gate !== undefined)).toBe(false)
+  })
+
+  test('a blocked turn (persist) does not count as a model turn in state usage', async () => {
+    const { state } = await run(() => ({
+      hooks: { 'input.submit': () => ({ block: { reason: 'no', persist: true } }) },
+    }))
+    expect(state.writes.at(-1)?.core.usage?.turns).toBe(0)
   })
 
   test('a throwing input.submit hook blocks (fail closed)', async () => {

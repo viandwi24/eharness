@@ -230,6 +230,12 @@ describe('scenario 30: abort / timeout with a running tool', () => {
     }
     const result = await run.result
     expect(result.stop).toBe('aborted')
+    // the live stream carries the same interruption as storage (spec 05 §3 step 16)
+    expect(chunks.slice(-3)).toEqual([
+      { type: 'tool-output-error', toolCallId: 'call-0-0', errorText: INTERRUPTED_TURN },
+      expect.objectContaining({ type: 'message-metadata' }),
+      { type: 'abort', reason: 'aborted' },
+    ])
     const final = messages.saves.at(-1)?.[0] as HarnessUIMessage
     expect(final.parts.find((p) => p.type === 'tool-slow')).toMatchObject({
       state: 'output-error',
@@ -249,6 +255,11 @@ describe('scenario 30: abort / timeout with a running tool', () => {
     const result = await run.result
     expect(result.stop).toBe('timeout')
     expect(chunks.at(-1)).toEqual({ type: 'abort', reason: 'timeout' })
+    expect(chunks).toContainEqual({
+      type: 'tool-output-error',
+      toolCallId: 'call-0-0',
+      errorText: INTERRUPTED_TURN,
+    })
     const saved = messages.saves.flat()
     const notice = saved.find((m) => m.metadata?.eharness?.kind === 'eh.notice')
     expect(notice?.parts[0]).toMatchObject({ data: { level: 'warning', code: 'EH_TURN_TIMEOUT' } })

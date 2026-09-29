@@ -47,6 +47,7 @@ import { describeError } from '../stream/describe-error.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
+import type { StateCheckpoint } from './state.ts'
 
 /** A turn request. */
 export interface TurnOperation {
@@ -177,6 +178,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   let committed = false
   let assistantId: string | undefined
   let releaseLock: (() => Promise<void>) | undefined
+  let stateCheckpoint: StateCheckpoint | undefined
   let outcome: Outcome = { stop: 'error', steps: 0, model: config.model }
   const created: HarnessUIMessage[] = []
   let createdBeforeAssistant = 0
@@ -229,11 +231,54 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   }
   rt.turn = turnState
 
+  /** Tool calls written to the stream that have no final result yet (toolCallId → open). */
+  const openCalls = new Set<string>()
+  /** Calls answered with `INTERRUPTED_TURN` chunks at the end of the turn. */
+  const interrupted = new Set<string>()
+
   function write(chunk: UIMessageChunk): void {
     if (writer === undefined || !turnState.active) return
     buffer.push(chunk)
     if (chunk.type === 'finish-step') finishStepsWritten++
+    trackToolCall(chunk)
     writer.write(chunk)
+  }
+
+  function trackToolCall(chunk: UIMessageChunk): void {
+    switch (chunk.type) {
+      case 'tool-input-start':
+      case 'tool-input-available':
+        openCalls.add(chunk.toolCallId)
+        break
+      case 'tool-output-available':
+        if (chunk.preliminary !== true) openCalls.delete(chunk.toolCallId)
+        break
+      case 'tool-output-error':
+      case 'tool-output-denied':
+      case 'tool-input-error':
+        openCalls.delete(chunk.toolCallId)
+        break
+    }
+  }
+
+  /**
+   * Answer every open tool call that is not pending with an `INTERRUPTED_TURN` error chunk, so
+   * the live UI and the stored message agree (spec 05 §3 step 16, ADR-0014).
+   */
+  function answerOpenCalls(): void {
+    if (!committed) return
+    const pending = outcome.stop === 'tool-pending' ? outcome.pending : undefined
+    for (const toolCallId of [...openCalls]) {
+      if (
+        pending !== undefined &&
+        (pending.approvals.some((a) => a.toolCallId === toolCallId) ||
+          pending.clientTools.some((c) => c.toolCallId === toolCallId))
+      ) {
+        continue
+      }
+      interrupted.add(toolCallId)
+      write({ type: 'tool-output-error', toolCallId, errorText: INTERRUPTED_TURN })
+    }
   }
 
   function writeStart(id: string, parentId: string | null | undefined): void {
@@ -261,8 +306,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     return meta
   }
 
-  /** message-metadata + setOutcome + finish | abort (spec 04 §2). */
+  /** Interrupted calls + message-metadata + setOutcome + finish | abort (spec 04 §2). */
   function writeEnd(): void {
+    answerOpenCalls()
     const eharness: Record<string, unknown> = committed
       ? withoutUndefined({
           model: describeModel(outcome.model),
@@ -294,6 +340,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   }
 
   function earlyEnd(stop: StopReason, error?: unknown): void {
+    if (!committed && stateCheckpoint !== undefined) rt.state.restore(stateCheckpoint)
     if (!startWritten) writeStart(rt.agent.generateId(), undefined) // throwaway id, never stored
     outcome = { stop, steps: 0, model: info.model }
     if (stop === 'aborted' || stop === 'timeout') {
@@ -361,6 +408,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
 
     // 2. load context / validate the hot cache
     await host.ensureContext()
+    // hooks of the preparation may change ctx.state: discarded if the turn ends before committing
+    stateCheckpoint = rt.state.checkpoint()
 
     // 3. active-turn check (spec 05 §9)
     let stale: ActiveTurn | undefined
@@ -394,6 +443,26 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         'EH_INVALID_INPUT',
         '`settings.timeout.totalMs` is not supported (one streamText call per step); use `loop.turnTimeoutMs`.',
       )
+    }
+
+    // 6. resolve dynamic sources → TurnRegistry; then validate toolsContext (5) against the
+    //    contextSchemas of the resolved tool set (dynamic tools are known only now)
+    const registry = await resolveTurnRegistry({
+      open,
+      approval: config.approval,
+      contextOf: rt.contextOf,
+      warn: rt.warn,
+      status: (tool) =>
+        write({ type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
+    })
+    const toolsContext =
+      rt.options.toolsContext === undefined && op.options.toolsContext === undefined
+        ? undefined
+        : { ...(rt.options.toolsContext ?? {}), ...(op.options.toolsContext ?? {}) }
+    for (const entry of registry.entries) {
+      const schema = entry.tool.contextSchema
+      if (schema === undefined) continue
+      await validateWith(schema, toolsContext?.[entry.name], `toolsContext of tool '${entry.name}'`)
     }
 
     // 7. normalize input
@@ -440,25 +509,6 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
       normalized = submitted.input
       contexts = submitted.contexts
-    }
-
-    // 6. resolve dynamic sources → TurnRegistry, validate toolsContext (5)
-    const registry = await resolveTurnRegistry({
-      open,
-      approval: config.approval,
-      contextOf: rt.contextOf,
-      warn: rt.warn,
-      status: (tool) =>
-        write({ type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
-    })
-    const toolsContext =
-      rt.options.toolsContext === undefined && op.options.toolsContext === undefined
-        ? undefined
-        : { ...(rt.options.toolsContext ?? {}), ...(op.options.toolsContext ?? {}) }
-    for (const entry of registry.entries) {
-      const schema = entry.tool.contextSchema
-      if (schema === undefined) continue
-      await validateWith(schema, toolsContext?.[entry.name], `toolsContext of tool '${entry.name}'`)
     }
 
     // 9. turn.prepare (chainable)
@@ -817,6 +867,16 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
             : pending.approvals.some((a) => a.toolCallId === part.toolCallId) ||
               pending.clientTools.some((c) => c.toolCallId === part.toolCallId),
         )
+        // chunk-answered parts: same shape as answerDanglingToolParts (input {} fallback, no approval)
+        final = {
+          ...final,
+          parts: final.parts.map((part) => {
+            const tool = part as { toolCallId?: string; input?: unknown; approval?: unknown }
+            if (tool.toolCallId === undefined || !interrupted.has(tool.toolCallId)) return part
+            const { approval: _approval, ...rest } = tool
+            return { ...rest, input: tool.input ?? {} } as typeof part
+          }),
+        }
         assistant = final
         try {
           assistant = (await host.persist([final]))[0] ?? final
@@ -862,7 +922,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       core.usage = {
         inputTokens: previous.inputTokens + usage.input + usage.nestedInput,
         outputTokens: previous.outputTokens + usage.output + usage.nestedOutput,
-        turns: previous.turns + 1,
+        turns: previous.turns + (outcome.steps > 0 ? 1 : 0),
       }
       rt.state.markDirty()
       try {
