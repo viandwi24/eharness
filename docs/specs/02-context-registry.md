@@ -57,7 +57,7 @@ so they can use any service.
 ### 3.2 Tool sources
 
 ```ts
-export function defineToolSource(src: ToolSourceDef): ToolSource
+export function defineToolSource(src: ToolSourceDef): ToolSource   // ToolSourceDef + readonly '~toolSource': true (runtime brand)
 
 export interface ToolSourceDef {
   /** Unique source id, e.g. 'mcp:github'. Used in warnings and for dedupe. */
