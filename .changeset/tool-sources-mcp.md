@@ -14,3 +14,6 @@ source over the optional peer `@ai-sdk/mcp` (loaded lazily) with one client per 
 eager connect, allow/deny, prefixing, `defer: 'auto'`, `maxRetries`, reconnects after failures
 (`W_TOOL_SOURCE_FAILED`), definition pinning with drift exclusion (`W_MCP_DRIFT`) and
 `clearMcpPins()`.
+`eharness/mcp` no longer exports the `experimental_placeholder` constant (it was a placeholder with
+no behaviour). `read_file` now keeps its continuation hint inside `maxReadChars`, so a full window
+fits the default tool output limit.
