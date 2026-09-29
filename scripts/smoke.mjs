@@ -43,12 +43,21 @@ const entries = {
     'validateSkillPath',
     'version',
   ],
-  'eharness/filesystem': ['experimental_placeholder'],
-  'eharness/filesystem/memory': ['experimental_placeholder'],
+  'eharness/filesystem': [
+    'DEFAULT_MAX_READ_CHARS',
+    'DEFAULT_TOOL_OUTPUTS_DIR',
+    'classifyToolResult',
+    'contentVersion',
+    'filesystem',
+    'fsSkillSource',
+    'normalizePath',
+  ],
+  'eharness/filesystem/memory': ['memoryFs'],
   'eharness/storage/memory': ['memoryMessages', 'memoryState'],
   'eharness/mcp': ['experimental_placeholder'],
   'eharness/testing': [
     'SKILL_SOURCE_FIXTURE',
+    'fileSystemConformance',
     'idGeneratorConformance',
     'messageAdapterConformance',
     'scriptedModel',
@@ -122,7 +131,35 @@ assert.deepEqual(
 assert.equal(stored[1].metadata.eharness.stop, 'complete')
 await turnAgent.close()
 
+// filesystem plugin under Node: conformance of memoryFs, then read → edit in one scripted turn
+const { filesystem, classifyToolResult } = await load('eharness/filesystem')
+const { memoryFs } = await load('eharness/filesystem/memory')
+const { fileSystemConformance } = await load('eharness/testing')
+for (const c of fileSystemConformance(() => memoryFs())) await c.run()
+const fs = memoryFs({ '/notes.md': 'hello world\n' })
+const fsAgent = core.defineHarnessAgent({
+  model: scriptedModel([
+    { toolCalls: [{ toolName: 'read_file', input: { path: '/notes.md' } }] },
+    {
+      toolCalls: [
+        {
+          toolName: 'edit_file',
+          input: { path: '/notes.md', old_string: 'world', new_string: 'node' },
+        },
+      ],
+    },
+    { text: 'Edited.' },
+  ]),
+  contextWindow: 100_000,
+  plugins: [filesystem({ fs })],
+})
+const fsResult = await fsAgent.session('smoke-fs').send('Edit the notes').result
+assert.equal(fsResult.stop, 'complete')
+assert.equal((await fs.read('/notes.md')).content, 'hello node\n')
+assert.equal(classifyToolResult('STALE: x'), 'stale')
+await fsAgent.close()
+
 await rm(shim)
 console.log(
-  `smoke: ok (${Object.keys(entries).length} entry points, one scripted turn${noMcp ? ', without @ai-sdk/mcp' : ''})`,
+  `smoke: ok (${Object.keys(entries).length} entry points, two scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
 )
