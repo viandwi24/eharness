@@ -52,3 +52,8 @@ adding deferred tools.
 ## Open questions
 
 ## Requests to other phases
+
+- From P1: `defineToolSource()` exists (`src/registry/tool-source.ts`, runtime brand
+  `'~toolSource'`, `isToolSource()`); `config.mcp` entries must be tool sources.
+  `TOOL_NAME_PATTERN` and `RESERVED_TOOL_NAMES` live in `src/registry/static.ts` /
+  `src/registry/types.ts`.
