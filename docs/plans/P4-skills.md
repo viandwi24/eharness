@@ -50,3 +50,12 @@ filesystem source (P5).
   `list`/`load` functions = source; string `name` + `content` = skill) and throws
   `EH_DUPLICATE_SKILL` for duplicate static names. `defineSkill`, `defineSkillSource`,
   `parseSkillMarkdown`, `validateSkillPath` and skill name validation are not implemented.
+
+- From P2: the per-turn registry is `resolveTurnRegistry()` in `src/registry/turn.ts`: add the
+  skills index to the end of `block1` (static sources) / `block2` (dynamic sources, cached per
+  session in `open.sessionBlock`) and the skill tools after the static tools in `entries` (stable
+  order, spec 02 §6); `staticCount` marks the last static tool for cache breakpoints. Static skills
+  and skill sources of setup and session phases are collected but unused
+  (`internals.statics.skills` / `skillSources`, and the session registry built in `doOpen()` in
+  `src/session/session.ts`, where session-phase duplicates already throw `EH_DUPLICATE_SKILL`).
+  Hooks run through `open.hooks.list('skill.load')`.
