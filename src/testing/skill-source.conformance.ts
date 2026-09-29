@@ -65,7 +65,7 @@ function stubContext(): HarnessContext {
     log: { debug: noop, info: noop, warn: noop, error: noop },
     signal: new AbortController().signal,
     warn: noop,
-  } as HarnessContext
+  } as unknown as HarnessContext
 }
 
 const byName = <T extends { name: string }>(list: readonly T[]): T[] =>

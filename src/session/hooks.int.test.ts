@@ -54,7 +54,8 @@ describe('scenario 10: plugin services', () => {
           read_kv: tool({
             inputSchema: z.object({ key: z.string() }),
             execute: async ({ key }) =>
-              (ctx.services as Record<string, Map<string, string>>).kv?.get(key) ?? 'none',
+              (ctx.services as unknown as Record<string, Map<string, string>>).kv?.get(key) ??
+              'none',
           }),
         },
         dispose: () => void disposed++,
@@ -93,7 +94,7 @@ describe('scenario 10: plugin services', () => {
       name: 'probe',
       session: (ctx) => {
         try {
-          void (ctx.services as Record<string, unknown>).missing
+          void (ctx.services as unknown as Record<string, unknown>).missing
         } catch (e) {
           error = e
         }
