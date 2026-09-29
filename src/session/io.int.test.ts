@@ -248,6 +248,7 @@ describe('scenario 13: input normalization', () => {
         turnId: result.turnId,
         clientId: 'client-id',
         parentId: null,
+        tokens: expect.any(Number),
       },
     })
   })
@@ -493,12 +494,12 @@ describe('session API', () => {
     expect(isHarnessError(error, 'EH_SESSION_CLOSED')).toBe(true)
   })
 
-  test('P3/P7 operations are not implemented yet (run error / rejection, never a crash)', async () => {
+  test('P7 operations are not implemented yet (run error, never a crash)', async () => {
     const { agent } = setup({ model: scriptedModel([]) })
     const session = agent.session('s1')
     const respond = await session.respond({}).result
     expect(respond.error?.code).toBe('EH_NOT_IMPLEMENTED')
-    await expect(session.compact()).rejects.toMatchObject({ code: 'EH_NOT_IMPLEMENTED' })
+    expect(await session.compact()).toBeNull() // nothing to summarize
     await session.clearGrants()
   })
 })

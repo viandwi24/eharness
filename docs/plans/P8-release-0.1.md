@@ -45,3 +45,8 @@ Make eharness usable by someone who has never seen this repo, and publish `0.1.0
 - From P2: before releasing 0.1.0, verify that no code path uses `EH_NOT_IMPLEMENTED` (P3/P7 remove
   their stubs) and remove it from `HarnessErrorCode` (spec 10 §1: development only) — a breaking
   type change that is fine before 0.1.0.
+- From P3: `scriptedModel` (`src/testing/scripted-model.ts`) implements only `doStream`, but the
+  compaction summarizer calls `generateText` (`doGenerate`). Consider letting `scriptedModel` also
+  answer `doGenerate` calls from the same script (recorded in `calls`), so users can test
+  compaction with a single scripted model; P3's tests use a separate mock
+  (`src/compaction/test-kit.ts`).
