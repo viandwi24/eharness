@@ -70,7 +70,9 @@ export function createContext(rt: SessionRuntime, plugin: string): HarnessContex
       return rt.turn?.runtime ?? rt.options.runtime ?? {}
     },
     log: rt.log,
-    signal: rt.signal,
+    get signal() {
+      return rt.signal
+    },
     warn(warning: HarnessWarning) {
       rt.warn(
         { ...warning, details: { plugin, ...warning.details } },

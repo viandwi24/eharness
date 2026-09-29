@@ -137,6 +137,11 @@ run returned by `inject(…, { wake })`):
   (`start` → `error` → `message-metadata { stop: 'error' }` → `finish`) and `run.result`
   **resolves** with `{ stop: 'error', error: { code, message } }`. `run.result` never rejects.
 - Callers that want configuration errors as exceptions call `await session.ready()` first.
+- A failed session open (a plugin `session()` or a tool source `open()` threw) aborts the
+  session's `ctx.signal` **before** the disposers of that attempt run (plugin `dispose`, tool
+  source `close()`), so per-session resources are released through the normal abort path. The
+  session stays usable: the next open attempt gets a fresh `ctx.signal` (unless the session was
+  closed meanwhile).
 
 ## 3. Turn lifecycle (normative order)
 

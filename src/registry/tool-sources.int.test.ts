@@ -87,6 +87,34 @@ describe('tool sources: lifecycle and refresh', () => {
     expect(events).toEqual(['open:s1', 'list', 'close'])
   })
 
+  test('a failed session open aborts ctx.signal; a retried open gets a fresh signal', async () => {
+    const signals: AbortSignal[] = []
+    let fail = true
+    const tracked = defineToolSource({
+      id: 'tracked',
+      list: () => ({}),
+      open: (ctx) => {
+        signals.push(ctx.signal)
+      },
+    })
+    const failing = defineToolSource({
+      id: 'failing',
+      list: () => ({}),
+      open: () => {
+        if (fail) throw new Error('boom')
+      },
+    })
+    const { agent } = setup([], { tools: [tracked, failing] })
+    const session = agent.session('s1')
+    await expect(session.ready()).rejects.toThrow('boom')
+    expect(signals[0]?.aborted).toBe(true)
+    fail = false
+    await session.ready()
+    expect(signals[1]?.aborted).toBe(false)
+    await session.close()
+    expect(signals[1]?.aborted).toBe(true)
+  })
+
   test("refresh: 'turn' lists before every turn; changes apply at the next turn only", async () => {
     let version = 1
     const source = defineToolSource({

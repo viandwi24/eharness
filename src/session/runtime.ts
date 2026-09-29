@@ -70,7 +70,7 @@ export interface SessionRuntime {
   /** Random id of the agent instance (crash recovery owner). */
   readonly owner: string
   readonly log: HarnessLogger
-  /** Aborts on session close (`ctx.signal`). */
+  /** `ctx.signal`: aborts on session close and when a session open fails (then replaced). */
   readonly signal: AbortSignal
   readonly events: EventSink
   open: OpenSession | undefined
