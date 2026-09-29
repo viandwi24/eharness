@@ -70,6 +70,10 @@ code + key), as transient `data-eh.warning` during a turn, and as session `data`
 With `config.strict: true`, misuse warnings (`W_TRANSIENT_OVERRIDE`, `W_UNKNOWN_DATA_PART`,
 `W_WRITE_OUTSIDE_TURN`) throw `EH_CONFIG_INVALID` instead.
 
+Plugins and sources emit warnings through `ctx.warn(warning)` (spec 01 §4): same channel, with
+`details.plugin` set to the emitting plugin unless given; the default handler deduplicates per
+code + plugin + message.
+
 ```ts
 export interface HarnessWarning { code: WarningCode; message: string; details?: Record<string, unknown> }
 ```
