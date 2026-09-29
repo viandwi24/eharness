@@ -1,0 +1,11 @@
+{
+  // Examples are application code: typechecked (`bun run typecheck`) but never published, so they
+  // do not need the library-only `isolatedDeclarations` (exported values may have inferred types,
+  // e.g. `export const agent = defineHarnessAgent(...)`).
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "isolatedDeclarations": false
+  },
+  "include": ["."]
+}

@@ -1,6 +1,6 @@
 # Spec 05 — Session and storage
 
-Status: **Accepted** (v0). Modules: `src/session`, `src/storage` (memory adapters).
+Status: **Accepted (reviewed for 0.1.0)**. Modules: `src/session`, `src/storage` (memory adapters).
 
 eharness knows only `sessionId: string`. Chat lists, titles, owners and permissions belong to the
 application.
@@ -539,7 +539,9 @@ SELECT id FROM eh_messages WHERE session_id = $1 ORDER BY id DESC LIMIT 1;
 
 The composite primary key makes every query an index range scan. Postgres `uuid` ordering is
 byte-wise, which equals UUIDv7 time ordering. A full runnable version lives in
-`examples/postgres-storage.ts`.
+`examples/postgres-storage.ts` (conformance-tested on Postgres 17). Bind JSON as text
+(`$4::text::jsonb`) and select it as text: some drivers JSON-encode a string bound to a `jsonb`
+parameter a second time.
 
 ## 11. Performance expectations
 

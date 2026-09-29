@@ -1,6 +1,6 @@
 # Spec 09 — Tools and MCP
 
-Status: **Accepted** (v0). Modules: `src/registry/tools.ts`, `src/mcp` (`eharness/mcp`).
+Status: **Accepted (reviewed for 0.1.0)**. Modules: `src/registry/tools.ts`, `src/mcp` (`eharness/mcp`).
 
 ## 1. Tools are AI SDK tools
 

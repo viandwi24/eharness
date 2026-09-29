@@ -65,7 +65,7 @@ jobs:
       - uses: changesets/action/version@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: bun run release:version # changeset version && bun install --lockfile-only
+          script: bun run release:version # changeset version, sync src/index.ts version, lockfile
           commit-message: 'chore(release): version packages'
           pr-title: 'chore(release): version packages'
         env:

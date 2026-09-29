@@ -325,7 +325,8 @@ export type HookName = keyof HarnessHooks
  */
 export interface PluginContribution<DP extends DataPartMap = Record<never, never>> {
   instructions?: InstructionInput | InstructionInput[]
-  tools?: ToolsInput
+  /** Tool functions receive this plugin's context: `ctx.stream.data` is typed with `DP`. */
+  tools?: ToolsInput<DP>
   skills?: Array<Skill | SkillSource>
   hooks?: HarnessHooks<DP>
 }

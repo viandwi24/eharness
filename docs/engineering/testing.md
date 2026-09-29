@@ -24,7 +24,9 @@ const model = scriptedModel([
 ])
 ```
 
-`scriptedModel` records every call's prompt so tests can assert on the projected wire.
+`scriptedModel` records every call's prompt so tests can assert on the projected wire. Streaming
+calls (eharness steps) and `generateText` calls (the compaction summarizer) take entries from the
+same script in call order, so one scripted model can drive a conversation that compacts.
 
 ## Test layers
 
