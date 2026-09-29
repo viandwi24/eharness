@@ -1,0 +1,89 @@
+[
+  {
+    "type": "start",
+    "messageId": "<id:0>"
+  },
+  {
+    "type": "data-eh.status",
+    "data": {
+      "state": "thinking",
+      "step": 0
+    },
+    "transient": true
+  },
+  {
+    "type": "data-eh.status",
+    "data": {
+      "state": "tool",
+      "tool": "pay"
+    },
+    "transient": true
+  },
+  {
+    "type": "tool-output-available",
+    "toolCallId": "call-0-0",
+    "output": "paid 5"
+  },
+  {
+    "type": "start-step"
+  },
+  {
+    "type": "text-start",
+    "id": "t1"
+  },
+  {
+    "type": "text-delta",
+    "id": "t1",
+    "delta": "done (3)"
+  },
+  {
+    "type": "text-end",
+    "id": "t1"
+  },
+  {
+    "type": "finish-step"
+  },
+  {
+    "type": "data-eh.usage",
+    "data": {
+      "inputTokens": 10,
+      "outputTokens": 5,
+      "totalTokens": 15,
+      "steps": 1
+    },
+    "transient": true
+  },
+  {
+    "type": "data-eh.context",
+    "data": {
+      "window": 100000,
+      "tokens": 78,
+      "instructions": 0,
+      "tools": 42,
+      "messages": 36,
+      "summarizeAt": 75000,
+      "hardLimit": 82000
+    },
+    "transient": true
+  },
+  {
+    "type": "message-metadata",
+    "messageMetadata": {
+      "eharness": {
+        "model": "mock/scripted",
+        "usage": {
+          "inputTokens": 20,
+          "outputTokens": 10,
+          "totalTokens": 30
+        },
+        "stop": "complete",
+        "steps": 2,
+        "durationMs": 0,
+        "pending": null
+      }
+    }
+  },
+  {
+    "type": "finish"
+  }
+]

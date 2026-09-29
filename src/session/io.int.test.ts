@@ -494,11 +494,11 @@ describe('session API', () => {
     expect(isHarnessError(error, 'EH_SESSION_CLOSED')).toBe(true)
   })
 
-  test('P7 operations are not implemented yet (run error, never a crash)', async () => {
+  test('respond() with nothing pending is a run error (never a crash)', async () => {
     const { agent } = setup({ model: scriptedModel([]) })
     const session = agent.session('s1')
     const respond = await session.respond({}).result
-    expect(respond.error?.code).toBe('EH_NOT_IMPLEMENTED')
+    expect(respond.error?.code).toBe('EH_INVALID_INPUT')
     expect(await session.compact()).toBeNull() // nothing to summarize
     await session.clearGrants()
   })
