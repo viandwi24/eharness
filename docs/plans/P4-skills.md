@@ -19,29 +19,57 @@ filesystem source (P5).
 
 ## Checklist
 
-1. [ ] `defineSkill`, `defineSkillSource`, types (`SkillMeta`, `SkillDoc`, `SkillFileContent`).
-2. [ ] Static skill → in-memory source adapter.
-3. [ ] `paths.ts`: `validateSkillPath` (spec 07 §5) with exhaustive tests (traversal, backslash,
+1. [x] `defineSkill`, `defineSkillSource`, types (`SkillMeta`, `SkillDoc`, `SkillFileContent`).
+2. [x] Static skill → in-memory source adapter.
+3. [x] `paths.ts`: `validateSkillPath` (spec 07 §5) with exhaustive tests (traversal, backslash,
    NUL, empty segments, length, `SKILL.md`).
-4. [ ] `frontmatter.ts`: YAML-subset parser + serializer for tests; rejects unsupported syntax.
+4. [x] `frontmatter.ts`: YAML-subset parser + serializer for tests; rejects unsupported syntax.
    Export `parseSkillMarkdown` and `validateSkillPath` from `src/index.ts` (public helpers, spec 07
    §3) — P5 depends on them.
-5. [ ] Registry: ordering, `refresh` caching, collisions (`EH_DUPLICATE_SKILL`, `W_SHADOWED`),
+5. [x] Registry: ordering, `refresh` caching, collisions (`EH_DUPLICATE_SKILL`, `W_SHADOWED`),
    per-turn lock.
-6. [ ] Index block (sorted, stable text) and search mode (`skillsIndexLimit`, `search_skills`,
+6. [x] Index block (sorted, stable text) and search mode (`skillsIndexLimit`, `search_skills`,
    fallback token matcher).
-7. [ ] Tools `load_skill`, `read_skill_file`, `search_skills` with string errors; `skill.load`
+7. [x] Tools `load_skill`, `read_skill_file`, `search_skills` with string errors; `skill.load`
    hook chain and notes.
-8. [ ] `skillSourceConformance`.
-9. [ ] Integration tests: scenario 8 of testing.md (static part; fs part completes in P5).
+8. [x] `skillSourceConformance`.
+9. [x] Integration tests: scenario 8 of testing.md (static part; fs part completes in P5).
 
 ## Acceptance criteria
 
-- [ ] A static skill with files and a dynamic source are indistinguishable from the model's side
+- [x] A static skill with files and a dynamic source are indistinguishable from the model's side
       (same tool outputs for the same content) — golden test.
-- [ ] No path that fails `validateSkillPath` ever reaches `SkillSource.readFile` (spy test).
+- [x] No path that fails `validateSkillPath` ever reaches `SkillSource.readFile` (spy test).
 
 ## Open questions
+
+1. **Index split across blocks.** Spec 07 §4.1 shows one sorted index; spec 02 §5 puts static
+   skills in block 1 and dynamic ones in block 2. Chosen: block 1 lists static skills (header +
+   intro), block 2 lists dynamic ones under `# More skills` (or the full header + intro when there
+   are no static skills). Each part is sorted. The search-mode hint goes to block 2 when any
+   dynamic source is configured (the mode depends on dynamic lists), else block 1. Spec 07 updated.
+2. **Search hint text** was not specified: `# Skills` + one line (spec 07 §4.2 updated).
+3. **YAML subset excludes block scalars (`|`, `>`) and multi-line plain scalars**, as the spec
+   lists them nowhere. Real-world `SKILL.md` files sometimes use `description: >`; such skills are
+   rejected (`W_INVALID_SKILL` in P5). Supporting them is a small additive change if wanted.
+4. **Failed `list()` warning code.** No code existed for skill sources; added
+   `W_SKILL_SOURCE_FAILED` (spec 10, `src/errors.ts`; also used for failing `search()` /
+   `locate()`). Reusing `W_TOOL_SOURCE_FAILED` would have been misleading.
+5. **`locate()` was unreachable from `skill.load` hooks** (the event only carried the source id).
+   Added `location?: { service, root }` to the `skill.load` event (additive; spec 01 §5 and 07 §7
+   updated).
+6. **`ERROR: invalid path`** now carries the reason (`ERROR: invalid path: <reason>`) so the model
+   can self-correct; other error strings are listed in spec 07 §4.3.
+7. **Static skills shadowed by a dynamic source.** A plugin's static skill after a root dynamic
+   source with the same name loses (first wins, `W_SHADOWED`) and disappears from block 1, so block
+   1 can depend on a dynamic listing in that corner case.
+8. **Skill tools appear only while at least one skill resolves** (spec wording). A dynamic source
+   going from 0 to ≥1 skills changes the tool list (cache bust). `staticCount` still counts only
+   static tools, so the breakpoint does not include the skill tools.
+9. **`skillsIndexLimit`** invalid values (negative, non-finite) fall back to 50 instead of a boot
+   error (boot validation is P2's `define-agent.ts`).
+10. **Warnings from sources:** `HarnessContext` has no `warn`, so a source (P5's `fsSkillSource`)
+    cannot emit `W_INVALID_SKILL` itself. Handed to P5 (see its requests).
 
 ## Requests to other phases
 
@@ -59,3 +87,14 @@ filesystem source (P5).
   (`internals.statics.skills` / `skillSources`, and the session registry built in `doOpen()` in
   `src/session/session.ts`, where session-phase duplicates already throw `EH_DUPLICATE_SKILL`).
   Hooks run through `open.hooks.list('skill.load')`.
+
+## Hook-point edits outside `src/skills` (P4)
+
+- `src/registry/turn.ts`: resolves the turn's skills, appends the index texts to block 1/2, adds
+  the skill tools after the static tools (owner `'eh'`), exposes `TurnRegistry.skills`.
+- `src/registry/static.ts`: static skills/sources validated like `defineSkill` /
+  `defineSkillSource` at boot (`EH_CONFIG_INVALID` naming the owner).
+- `src/session/runtime.ts` + `session.ts` (`doOpen`): `OpenSession.skills` built with
+  `buildSessionSkills` (plugin order, setup before session contributions, `skillsIndexLimit`).
+- `src/errors.ts`: `W_SKILL_SOURCE_FAILED`. `src/plugin/types.ts`: `location` in the
+  `skill.load` event.

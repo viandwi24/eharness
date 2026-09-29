@@ -49,3 +49,24 @@ suite. Built **only** with the public API (`check:imports`).
 ## Open questions
 
 ## Requests to other phases
+
+- From P4 (skills, for checklist item 10 / spec 07 §8):
+  - Public helpers in `eharness`: `parseSkillMarkdown(text)` (YAML subset of spec 07 §8,
+    validates `name`/`description`, other keys → `meta`, body with leading blank lines removed)
+    and `validateSkillPath(path)` (returns the normalized path; rejects `SKILL.md`). Build
+    `fsSkillSource` with `defineSkillSource` and test it with
+    `skillSourceConformance((skills) => …)` from `eharness/testing` (seed `memoryFs` with
+    `<root>/<name>/SKILL.md` = `---\n<frontmatter>\n---\n<content>` plus the files). The suite
+    requires `readFile` of a directory (e.g. `scripts`) and of unknown paths to return `null`, and
+    the manifest to exclude `SKILL.md`.
+  - The core never calls `readFile` with a path that failed `validateSkillPath`; `readFile` should
+    still re-validate (defence in depth) before `fs.read(join(root, name, path))`.
+  - `SkillSource.list()` has no warning channel: `HarnessContext` exposes no `warn`. Spec 07 §8
+    asks for `W_INVALID_SKILL` on unparsable/mismatched `SKILL.md`. Options: return nothing for
+    the bad skill and log via `ctx.log.warn` (conservative), or request a core warning API from
+    the orchestrator. The core itself warns `W_INVALID_SKILL` only for invalid metadata returned
+    by `list()`.
+  - Scenario 8's fs part (static skill + fs source, duplicates, `refresh: 'turn'` picks up a new
+    `SKILL.md` next turn but not mid-turn) is yours; P4's static/dynamic part is in
+    `src/skills/skills.int.test.ts` and can serve as a template.
+  - `locate()` results reach `skill.load` hooks as `e.location` (spec 07 §7).
