@@ -81,6 +81,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_MCP_DRIFT` | MCP tool definition changed; tool excluded |
 | `W_INVALID_MESSAGE` | stored message failed validation and was dropped |
 | `W_INVALID_SKILL` | skill metadata invalid; skipped |
+| `W_SKILL_SOURCE_FAILED` | a skill source `list()` failed (retried next turn), or its `search()` / `locate()` failed (core matcher / no location used) |
 | `W_UNKNOWN_DATA_PART` | write of an unregistered data part; dropped |
 | `W_UNKNOWN_STORED_PART` | stored message contains an unregistered data part type; ignored in memory, kept in storage (never escalated by `strict`) |
 | `W_WRITE_OUTSIDE_TURN` | persistent data part written while idle; dropped |

@@ -329,8 +329,8 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'compaction.prompt'?(ctx: HarnessContext<DP>, out: { context: string[]; prompt?: string }): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 
-  /** Chainable. Adjust a loaded skill doc (e.g. add an executable path, spec 07 §7). */
-  'skill.load'?(ctx: HarnessContext<DP>, e: { skill: SkillDoc; source: string }): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
+  /** Chainable. Adjust a loaded skill doc (e.g. add an executable path, spec 07 §7). `location` = `SkillSource.locate(name)`, omitted when absent/null. */
+  'skill.load'?(ctx: HarnessContext<DP>, e: { skill: SkillDoc; source: string; location?: { service: string; root: string } }): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
 }
 
 export interface StepPrepareEvent { stepIndex: number; messages: ModelMessage[]; toolNames: string[]; model: LanguageModel }
@@ -419,6 +419,8 @@ otherwise; `details` carries the same names (`owners`, `plugin`, `service`, …)
 
 Static skills are told apart from skill sources structurally: an object with `id` and `list` /
 `load` functions is a `SkillSource`, an object with string `name` and `content` is a `Skill`.
+Both are then validated like `defineSkill` / `defineSkillSource` (spec 07 §1–§3): an invalid name,
+description, file path or source shape → `EH_CONFIG_INVALID` naming the owner.
 Tool sources carry a `'~toolSource'` brand set by `defineToolSource` (spec 02 §3.2).
 
 ## 8. Example

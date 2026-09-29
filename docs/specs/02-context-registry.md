@@ -202,10 +202,12 @@ interface TurnRegistry {
   tools: ToolSet                 // wrapped with tool.before/after hooks, deferred tools included
   /** Tool set for one step: deferred tools in `discovered` become non-deferred copies (§3.3). */
   toolsForStep(discovered: ReadonlySet<string>): ToolSet
-  skills: SkillIndexEntry[]      // sorted by name
-  getSkill(name: string): Promise<SkillDoc | null>
-  readSkillFile(name: string, path: string): Promise<SkillFileContent | null>
+  skills: SkillIndexEntry[]      // sorted by name, locked for the turn
 }
 
 type SkillIndexEntry = SkillMeta & { source: string }   // source = SkillSource.id
 ```
+
+Level 2/3 access (`getSkill` / `readSkillFile`) lives in the skill tools of the turn
+(`src/skills/tools.ts`: `loadSkillText`, `readSkillFileText`), which resolve names only against the
+turn's locked set and validate paths before calling the owning source (spec 07 §4.3, §5).
