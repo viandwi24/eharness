@@ -95,3 +95,22 @@ from P1; the dynamic tool-source parts of `src/registry/tools.ts` go to P6),
 ## Open questions
 
 ## Requests to other phases
+
+- From P1: boot state via `getAgentInternals(agent)` (`src/agent/internals.ts`). Reuse
+  `project()` (`src/messages/project.ts`), `validateStoredMessages()` (`src/messages/validate.ts`,
+  returns warnings to emit), `answerDanglingToolParts()` (`src/messages/tool-parts.ts`),
+  `sanitizeModelMessages()` and `describeModel()` (`src/internal/model.ts`, the format of
+  `metadata.eharness.model`). Session/storage/run types are declared in
+  `src/agent/session-types.ts` — implement against them (move if you like, keep the exports).
+  `agent.session()` currently throws `EH_NOT_IMPLEMENTED`. `describeError` is still to do.
+  The id generator ignores the floor when `config.generateId` is custom.
+- From P1 (review): warn (e.g. `W_...` via the agent emitter, or a log) when a custom
+  `config.generateId` returns an id that does not sort after the session floor (spec 03 §8).
+- From P1 (review): remove `EH_NOT_IMPLEMENTED` from `agent.session()` (and any other stub) before
+  any release — spec 10 §1 says it must not exist in a release.
+- From P1 (review): `project()` answers pending client tool calls like any call without a result;
+  patch pending parts in the stored message (respond / onNewInput deny) before projecting.
+- From P1 (re-review, minor): `nextId` bumps the timestamp whenever `floorMs >= lastMs`, also when
+  the floor is the generator's own last id in the same millisecond, so bursts with a per-call floor
+  advance 1 ms per id instead of using the counter. Ordering is correct; optionally bump only when
+  the floor sorts after the last issued id (`src/messages/ids.ts:66`).

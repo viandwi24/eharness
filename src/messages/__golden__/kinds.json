@@ -1,0 +1,42 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Start"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Started."
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": "<event name=\"backtest.finished\">Backtest #42 finished: +12%</event>"
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Report: Q3"
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "And now?"
+      }
+    ]
+  }
+]

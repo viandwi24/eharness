@@ -1,0 +1,73 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Start"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool-call",
+        "toolCallId": "c1",
+        "toolName": "weather",
+        "input": {
+          "city": "Oslo"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "type": "tool-result",
+        "toolCallId": "c1",
+        "toolName": "weather",
+        "output": {
+          "type": "text",
+          "value": "x"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Use this file"
+      },
+      {
+        "type": "file",
+        "mediaType": "text/plain",
+        "data": {
+          "type": "url",
+          "url": "https://example.com/a.txt"
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Todo left: 1"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Ok."
+      }
+    ]
+  }
+]
