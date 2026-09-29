@@ -1,6 +1,13 @@
 /**
- * Placeholder so this entry point builds and can be imported.
+ * `eharness/testing`: runner-agnostic conformance suites and test helpers.
  *
- * @experimental Not implemented yet.
+ * Imports core only through `src/index.ts` (ADR-0008).
+ *
+ * @see docs/engineering/testing.md
  */
-export const experimental_placeholder: true = true
+
+export {
+  type IdGeneratorConformanceOptions,
+  idGeneratorConformance,
+} from './id-generator.conformance.ts'
+export type { ConformanceCase } from './types.ts'

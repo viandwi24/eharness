@@ -18,5 +18,7 @@ export {
   type WarningCode,
 } from './errors.ts'
 
+export { isUuidV7, uuidv7 } from './messages/ids.ts'
+
 /** Package version of this build. */
 export const version: string = '0.0.2'
