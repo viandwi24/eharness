@@ -158,11 +158,17 @@ export async function withTokens(
   return { ...message, metadata: { ...message.metadata, eharness: { ...eharness, tokens } } }
 }
 
-const toolCache = new WeakMap<Tool, number>()
+/** Per counter (agents may configure different `countTokens`), per tool object. */
+const toolCache = new WeakMap<CountTokens, WeakMap<Tool, number>>()
 
 /** Uncalibrated estimate of one tool definition (name, description, input schema). Cached. */
 export async function toolTokens(name: string, tool: Tool, count: CountTokens): Promise<number> {
-  const cached = toolCache.get(tool)
+  let cache = toolCache.get(count)
+  if (cache === undefined) {
+    cache = new WeakMap()
+    toolCache.set(count, cache)
+  }
+  const cached = cache.get(tool)
   if (cached !== undefined) return cached + count(name)
   let schema = ''
   try {
@@ -175,7 +181,7 @@ export async function toolTokens(name: string, tool: Tool, count: CountTokens): 
   }
   const description = typeof tool.description === 'string' ? tool.description : ''
   const n = 10 + count(description) + count(schema)
-  toolCache.set(tool, n)
+  cache.set(tool, n)
   return n + count(name)
 }
 

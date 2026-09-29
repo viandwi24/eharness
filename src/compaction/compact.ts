@@ -263,7 +263,13 @@ export function createSessionCompaction(deps: {
     const start = plan.resumeFromId ?? saved.id
     rt.view = [saved, ...(rt.view ?? []).filter((m) => !isBoundary(m) && m.id >= start)]
 
-    const chunk = { type: 'data-eh.compaction', data: payload, transient: true } as UIMessageChunk
+    // the saved payload: message.beforeSave may have transformed the marker
+    const savedPayload = payloadOf(saved) ?? payload
+    const chunk = {
+      type: 'data-eh.compaction',
+      data: savedPayload,
+      transient: true,
+    } as UIMessageChunk
     if (request.write !== undefined) request.write(chunk)
     else rt.events.emit({ type: 'data', chunk: chunk as never })
     rt.events.emit({ type: 'message', message: structuredClone(saved) as never })
@@ -274,7 +280,7 @@ export function createSessionCompaction(deps: {
         hookFailed(rt, 'compaction.after', hook.owner, error)
       }
     }
-    return { status: 'compacted', marker: saved, payload }
+    return { status: 'compacted', marker: saved, payload: savedPayload }
   }
 
   return {

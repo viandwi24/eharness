@@ -39,6 +39,20 @@ describe('overflow detection', () => {
     expect(isContextOverflow(apiError(429, 'too many tokens per minute'))).toBe(false)
     expect(isContextOverflow(apiError(400, 'invalid tool schema'))).toBe(false)
     expect(isContextOverflow(new Error('prompt is too long'))).toBe(false)
+    expect(isContextOverflow(apiError(400, 'Input exceeds the context window of this model'))).toBe(
+      true,
+    )
+    expect(isContextOverflow(apiError(400, 'context length exceeded'))).toBe(true)
+  })
+
+  test('other 400s that merely mention the context are not overflows', () => {
+    for (const message of [
+      'Invalid value for context length: must be a positive integer',
+      'The context window parameter is not supported',
+      'Unknown field `context_window` in request',
+    ]) {
+      expect(isContextOverflow(apiError(400, message))).toBe(false)
+    }
   })
 
   test('walks the cause chain (gateway errors); plain objects with `status` work too', () => {
