@@ -63,3 +63,17 @@ into compaction (coordinate via "Requests" if larger changes are needed).
   (`src/messages/sanitize.ts`); `CompactionConfig`, `CompactionPayload` and `ContextStats` types
   are declared in `src/agent/types.ts` / `src/messages/types.ts`. Projection already honours
   `partial` and the newest boundary.
+
+- From P2: hook points are marked in the code. Pre-turn compaction goes after `turn.start` in
+  `src/session/turn.ts` (`// pre-turn compaction check: P3`); the mid-turn check and the full guard
+  go at the top of each step in `src/loop/steps.ts` (today: `sanitizeModelMessages` + a hard-cap
+  stop with `EH_CONTEXT_OVERFLOW`, using `estimateTokens` = `ceil(JSON length / 4)`).
+  `session.stats()`, `data-eh.context` and the guard share `host.stats()` in
+  `src/session/session.ts` (plain estimates, `W_DEFAULT_CONTEXT_WINDOW`); replace with calibrated
+  accounting and `metadata.eharness.tokens`. `session.compact()` is a stub that rejects
+  `EH_NOT_IMPLEMENTED` (after the busy check) — remove it. `loadContext`
+  (`src/session/load-context.ts`) always pages; add the pointer path (`state.core.compaction`,
+  already healed there). Overflow recovery needs the raw step error: `streamText`'s `onError` in
+  `steps.ts` currently only logs it, and error chunks are forwarded immediately (hold back an
+  `error` chunk that arrives before the step's first `start-step`). Mid-turn wire rebuilds must
+  keep `turnStart` (the turn reminder position) consistent.

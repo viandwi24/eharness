@@ -57,3 +57,19 @@ delivery queue).
 ## Open questions
 
 ## Requests to other phases
+
+- From P2: stubs to replace — `respond()`, `regenerate()`, `edit()` return a failed run with
+  `EH_NOT_IMPLEMENTED` (`failedRun()` in `src/session/session.ts`); `send(…, { ifBusy: 'queue' |
+  'steer' })` throws `EH_SESSION_BUSY` while a turn runs; `inject()` rejects `deliver: 'next-step'`
+  and `wake` with `EH_NOT_IMPLEMENTED`. Pending: a `tool-pending` stop writes
+  `state.core.pending`, `metadata.eharness.pending` and a `pending` event (`onEnd` in
+  `src/session/turn.ts`); the next `send()` just clears `state.core.pending` at the commit point
+  and projects with `pending: null` (open calls reach the model as `INTERRUPTED_UNKNOWN`) —
+  replace with `approval.onNewInput`. The approval function (`buildApproval()` in
+  `src/registry/wrap.ts`) has no grants yet; `approval.secret` is already passed as
+  `experimental_toolApprovalSecret`. Step-boundary delivery is the `waiting` queue in `runSteps()`
+  (`src/loop/steps.ts`), currently fed by `step.end` context and `turn.beforeEnd`; steers and
+  `next-step` injections go there (and not before step 0 of a `respond` turn). The loader applies
+  the rewind view rule (`hiddenByRewind()` / `rewindsIn()` in `src/session/load-context.ts`) but
+  does not heal `state.core.rewinds`; `messages()` filters with page rewinds + the state mirror.
+  When the last stub is gone, `EH_NOT_IMPLEMENTED` can leave the error union (see P8).
