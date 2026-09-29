@@ -124,6 +124,19 @@ describe('scenario 5: pre-turn compaction', () => {
         hooks: {
           'compaction.prompt': (_ctx, out) => void out.context.push('file src/a.ts in progress'),
           'compaction.after': (_ctx, e) => void after.push(e.marker.id),
+          // the stream divider must carry the saved payload (after message.beforeSave)
+          'message.beforeSave': (_ctx, m) =>
+            isKindMessage(m, 'eh.compaction')
+              ? {
+                  ...m,
+                  parts: [
+                    {
+                      ...(m.parts[0] as { type: 'data-eh.compaction'; data: CompactionPayload }),
+                      data: { ...payload(m), tag: 'saved' } as CompactionPayload,
+                    },
+                  ],
+                }
+              : undefined,
         },
       }),
     })
@@ -169,6 +182,7 @@ describe('scenario 5: pre-turn compaction', () => {
     expect(p.tokens.before).toBeGreaterThan(1_500)
     expect(p.tokens.after).toBeLessThan(p.tokens.before)
     expect(divider.data).toEqual(p)
+    expect(divider.data).toMatchObject({ tag: 'saved' })
     expect(marker?.metadata?.eharness).toMatchObject({
       kind: 'eh.compaction',
       turnId: result.turnId,

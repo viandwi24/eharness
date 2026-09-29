@@ -96,6 +96,11 @@ describe('token estimates', () => {
     const a = await toolTokens('read', t, count)
     expect(a).toBeGreaterThan(10 + count('Read a file'))
     expect(await toolTokens('read', t, count)).toBe(a)
+    // another counter (another agent's countTokens) gets its own estimate, not the cached one
+    const double = (text: string) => 2 * count(text)
+    const b = await toolTokens('read', t, double)
+    expect(b).toBeGreaterThan(a)
+    expect(await toolTokens('read', t, count)).toBe(a)
   })
 })
 
