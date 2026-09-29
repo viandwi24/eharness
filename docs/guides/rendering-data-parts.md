@@ -32,11 +32,11 @@ const agent = defineHarnessAgent({
       tool({
         inputSchema: z.object({ total: z.number() }),
         execute: async ({ total }) => {
-          // `transient` comes from the definition; `write` takes the full part type
-          ctx.stream.write({ type: 'data-progress', data: { percent: 50 } })
+          // names and payloads are type-checked against `dataParts`
+          ctx.stream.data('progress', { percent: 50 }) // transient by definition
           // same id → the part is replaced in place (keeps its first position)
-          ctx.stream.write({ type: 'data-invoice', id: 'inv-1', data: { total, status: 'draft' } })
-          ctx.stream.write({ type: 'data-invoice', id: 'inv-1', data: { total, status: 'sent' } })
+          ctx.stream.data('invoice', { total, status: 'draft' }, { id: 'inv-1' })
+          ctx.stream.data('invoice', { total, status: 'sent' }, { id: 'inv-1' })
           return 'Invoice inv-1 sent.'
         },
       }),
@@ -44,9 +44,9 @@ const agent = defineHarnessAgent({
 })
 ```
 
-Inside a plugin, `ctx.stream.data('invoice', data, { id })` is the typed shortcut: the name is the
-plugin's local key and `data` is checked against the schema
-([writing a plugin](writing-a-plugin.md)). App-level tools use `ctx.stream.write()` as above.
+Tools a plugin contributes get the same typed `ctx.stream.data` for the plugin's own parts
+([writing a plugin](writing-a-plugin.md)). `ctx.stream.write({ type: 'data-…', id?, data })` is
+the untyped escape hatch for parts you do not own (any registered part except `data-eh.input`).
 
 Parts are validated against their schema when history is loaded and are hidden from the model
 unless the definition sets `model: 'text'` or a projection function.

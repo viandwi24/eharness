@@ -8,7 +8,7 @@
  * @see docs/specs/07-skills.md
  */
 import type { Tool, ToolSet } from 'ai'
-import type { HarnessContext } from '../plugin/types.ts'
+import type { DataPartMap, HarnessContext } from '../plugin/types.ts'
 
 /**
  * A dynamic instruction: evaluated with the session context; `undefined`/empty results are skipped.
@@ -40,11 +40,14 @@ export type InstructionInput =
 
 /**
  * A static tool: an AI SDK `Tool`, or a function resolved once per session with the context of
- * the plugin that declared it.
+ * the plugin that declared it. `DP` are the data parts of that plugin (the app's `dataParts` for
+ * top-level tools), so `ctx.stream.data(name, data)` is typed.
  *
  * @see docs/specs/02-context-registry.md#31-static-tools
  */
-export type ToolInput = Tool | ((ctx: HarnessContext) => Tool)
+export type ToolInput<DP extends DataPartMap = Record<never, never>> =
+  | Tool
+  | ((ctx: HarnessContext<DP>) => Tool)
 
 /**
  * Definition of a dynamic tool source.
@@ -161,7 +164,7 @@ export interface SkillSource {
 }
 
 /** The `tools` slot of the agent config and of plugin contributions. */
-export type ToolsInput =
-  | Record<string, ToolInput>
+export type ToolsInput<DP extends DataPartMap = Record<never, never>> =
+  | Record<string, ToolInput<DP>>
   | ToolSource
-  | Array<Record<string, ToolInput> | ToolSource>
+  | Array<Record<string, ToolInput<DP>> | ToolSource>

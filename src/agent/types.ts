@@ -156,7 +156,7 @@ export interface CompactionConfig {
  *
  * @see docs/specs/01-agent-and-plugins.md#1-defineharnessagent
  */
-export interface HarnessAgentConfig {
+export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /** Stable id used in logs/telemetry. Default `'agent'`. */
   id?: string
   /** Default model: gateway string or provider instance. */
@@ -165,11 +165,12 @@ export interface HarnessAgentConfig {
   contextWindow?: number | ((model: LanguageModel) => number | undefined)
 
   instructions?: InstructionInput | InstructionInput[]
-  tools?: ToolsInput
+  /** Tool functions get the app context: `ctx.stream.data` is typed with `dataParts`. */
+  tools?: ToolsInput<DP>
   skills?: Array<Skill | SkillSource>
   mcp?: ToolSource[]
   /** App data parts (no namespace): part type `data-<key>`. */
-  dataParts?: DataPartMap
+  dataParts?: DP
   /** App message kinds (no namespace). */
   messageKinds?: KindMap
   plugins?: readonly HarnessPlugin<string, DataPartMap, KindMap>[]

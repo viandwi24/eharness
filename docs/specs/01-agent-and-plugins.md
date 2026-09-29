@@ -13,9 +13,11 @@ import type {
 /** `ai` does not export ProviderOptions; derive it (defined once in src/internal/ai-types.ts). */
 type ProviderOptions = NonNullable<Parameters<typeof streamText>[0]['providerOptions']>
 
-export function defineHarnessAgent<const C extends HarnessAgentConfig>(config: C): HarnessAgent<C>
+export function defineHarnessAgent<const C extends HarnessAgentConfig<DP>, const DP extends DataPartMap = {}>(
+  config: C & { dataParts?: DP },
+): HarnessAgent<C>
 
-export interface HarnessAgentConfig {
+export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /** Stable id used in logs/telemetry. Default: 'agent'. */
   id?: string
   /** Default model: gateway string ('anthropic/claude-sonnet-4.6') or provider instance. */
@@ -27,10 +29,10 @@ export interface HarnessAgentConfig {
   contextWindow?: number | ((model: LanguageModel) => number | undefined)
 
   instructions?: InstructionInput | InstructionInput[]          // spec 02 §2
-  tools?: Record<string, ToolInput> | ToolSource | Array<Record<string, ToolInput> | ToolSource>
+  tools?: ToolsInput<DP>                                         // tool functions: ctx typed with DP
   skills?: Array<Skill | SkillSource>                            // spec 07
   mcp?: ToolSource[]                                             // spec 09 (e.g. mcpServer(...))
-  dataParts?: Record<string, DataPartDef>                        // spec 03 §4 (app namespace)
+  dataParts?: DP                                                 // spec 03 §4 (app namespace)
   messageKinds?: Record<string, MessageKindDef>                  // spec 03 §5 (app namespace)
   plugins?: HarnessPlugin[]
 
@@ -101,9 +103,13 @@ export interface ToolOutputConfig {                              // spec 09 §4
 }
 ```
 
-`ToolInput = Tool | ((ctx: HarnessContext) => Tool)`. A function is resolved once per session, so
-static tools can capture the session context (e.g. `ctx.stream`, `ctx.state`) without closures in
-application code.
+`ToolInput<DP> = Tool | ((ctx: HarnessContext<DP>) => Tool)` and
+`ToolsInput<DP> = Record<string, ToolInput<DP>> | ToolSource | Array<Record<string, ToolInput<DP>> | ToolSource>`.
+A function is resolved once per session, so static tools can capture the session context (e.g.
+`ctx.stream`, `ctx.state`) without closures in application code. `DP` are the data parts of the
+owner: the app's `dataParts` for top-level tools (inferred by `defineHarnessAgent`), the plugin's
+`dataParts` for tools a plugin contributes, so `ctx.stream.data(name, data)` is type-checked in
+both.
 
 ### 1.1 Root plugin
 
@@ -173,7 +179,7 @@ export interface PluginDef<Name extends string, DP extends DataPartMap = {}, MK 
 
 export interface PluginContribution<DP extends DataPartMap = {}> {
   instructions?: InstructionInput | InstructionInput[]
-  tools?: Record<string, ToolInput> | ToolSource | Array<Record<string, ToolInput> | ToolSource>
+  tools?: ToolsInput<DP>          // tool functions receive HarnessContext<DP>
   skills?: Array<Skill | SkillSource>
   hooks?: HarnessHooks<DP>
 }
