@@ -74,7 +74,14 @@ export function isUnwrapped(name: string, tool: Tool): boolean {
  * storage).
  */
 export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
-  if (isUnwrapped(name, tool)) return tool
+  if (isUnwrapped(name, tool)) {
+    // client tools: their outputs (respond(), spec 09 §6) are limited like server outputs
+    const convert = limitAware(tool)
+    const isClient = typeof tool.execute !== 'function' && tool.type !== 'provider'
+    return isClient && deps.limits !== undefined && convert !== undefined
+      ? ({ ...tool, toModelOutput: convert } as Tool)
+      : tool
+  }
   const execute = tool.execute as (
     input: unknown,
     options: ToolExecutionOptions<unknown>,
@@ -84,34 +91,9 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
       ? error
       : new HarnessToolError(error, { toolName: name, toolCallId })
 
-  const after = async (input: unknown, output: unknown, toolCallId: string) => {
-    let current = output
-    for (const hook of deps.hooks.list('tool.after')) {
-      try {
-        const result = await hook.fn(deps.contextOf(hook.owner), {
-          toolName: name,
-          toolCallId,
-          input,
-          output: current,
-        })
-        if (result !== undefined && result !== null && 'output' in result) current = result.output
-      } catch (error) {
-        hookFailed(deps, 'tool.after', hook.owner, error)
-      }
-    }
-    return current
-  }
-
   const limits = deps.limits
-  /** `tool.after` chain, then the output limit: the final value only. */
-  const finish = async (input: unknown, output: unknown, toolCallId: string) => {
-    const afterOutput = deps.hooks.has('tool.after')
-      ? await after(input, output, toolCallId)
-      : output
-    return limits === undefined
-      ? afterOutput
-      : limitToolOutput(name, toolCallId, afterOutput, { ...limits, warn: deps.warn })
-  }
+  const finish = (input: unknown, output: unknown, toolCallId: string) =>
+    finishToolOutput(name, toolCallId, input, output, deps)
 
   const wrapped = (input: unknown, options: ToolExecutionOptions<unknown>): unknown => {
     deps.status(name)
@@ -148,21 +130,55 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
       },
     )
   }
+  const convert = limitAware(tool)
+  if (limits === undefined || convert === undefined) return { ...tool, execute: wrapped } as Tool
+  return { ...tool, execute: wrapped, toModelOutput: convert } as Tool
+}
+
+/**
+ * The tool's own `toModelOutput`, skipped for a limited structured output (it no longer has the
+ * shape the tool's converter expects), or `undefined` when the tool has none.
+ */
+function limitAware(tool: Tool): Tool['toModelOutput'] | undefined {
   const toModelOutput = tool.toModelOutput as
     | ((options: { toolCallId: string; input: unknown; output: unknown }) => unknown)
     | undefined
-  if (limits === undefined || toModelOutput === undefined) {
-    return { ...tool, execute: wrapped } as Tool
+  if (toModelOutput === undefined) return undefined
+  return ((options: { toolCallId: string; input: unknown; output: unknown }) =>
+    isLimitedOutput(options.output)
+      ? { type: 'json', value: options.output }
+      : toModelOutput(options)) as Tool['toModelOutput']
+}
+
+/**
+ * The final output of a tool call: the `tool.after` chain, then the output limit (spec 09 §4).
+ * Used for server outputs (execute wrapper) and client tool outputs (`respond()`, spec 09 §6).
+ */
+export async function finishToolOutput(
+  name: string,
+  toolCallId: string,
+  input: unknown,
+  output: unknown,
+  deps: ToolWrapDeps,
+): Promise<unknown> {
+  let current = output
+  for (const hook of deps.hooks.list('tool.after')) {
+    try {
+      const result = await hook.fn(deps.contextOf(hook.owner), {
+        toolName: name,
+        toolCallId,
+        input,
+        output: current,
+      })
+      if (result !== undefined && result !== null && 'output' in result) current = result.output
+    } catch (error) {
+      hookFailed(deps, 'tool.after', hook.owner, error)
+    }
   }
-  // a limited structured output no longer has the shape the tool's own converter expects
-  return {
-    ...tool,
-    execute: wrapped,
-    toModelOutput: (options: { toolCallId: string; input: unknown; output: unknown }) =>
-      isLimitedOutput(options.output)
-        ? { type: 'json', value: options.output }
-        : toModelOutput(options),
-  } as Tool
+  const limits = deps.limits
+  return limits === undefined
+    ? current
+    : limitToolOutput(name, toolCallId, current, { ...limits, warn: deps.warn })
 }
 
 /** `experimental_refineToolInput` map running the `tool.before` chain, or `undefined`. */
@@ -209,35 +225,57 @@ function normalizeStatus(status: ToolApprovalStatus | undefined): Normalized {
   return out
 }
 
+/** Session approval grants, read at every approval decision (spec 11 §3.1). */
+export interface ApprovalGrants {
+  /** The grants in effect right now (`undefined` = none). */
+  current(): Readonly<Record<string, 'always' | 'never'>> | undefined
+}
+
 /**
- * The per-step approval function (spec 11 §3): `approval.policy`, then every `tool.approve` hook
- * (a throwing hook counts as `denied`), combined most-restrictive-wins. `undefined` when there is
- * neither a policy nor a hook. Session grants are added by P7.
+ * The per-step approval function (spec 11 §3): `approval.policy`, then every `tool.approve` hook,
+ * then session grants, combined most-restrictive-wins. A throwing policy or hook counts as
+ * `denied` (fail closed). A grant `never` denies; `always` turns `user-approval` into `approved`
+ * but never overrides `denied` (then `W_GRANT_IGNORED`, once per tool). `undefined` when there is
+ * neither a policy, a hook nor a grant source.
  */
 export function buildApproval(
   config: ApprovalConfig | undefined,
   deps: ToolWrapDeps,
+  grants?: ApprovalGrants,
 ): GenericToolApprovalFunction<ToolSet, never, unknown> | undefined {
   const policy = config?.policy
   const hooks = deps.hooks.list('tool.approve')
-  if (policy === undefined && hooks.length === 0) return undefined
+  if (policy === undefined && hooks.length === 0 && grants === undefined) return undefined
+  const ignoredWarned = new Set<string>()
+  const failed = (error: unknown): Normalized => ({
+    type: 'denied',
+    reason: error instanceof Error ? error.message : String(error),
+  })
   return async (options) => {
     const { toolCall } = options
     const statuses: Normalized[] = []
     if (typeof policy === 'function') {
-      statuses.push(normalizeStatus(await policy(options as never)))
+      try {
+        statuses.push(normalizeStatus(await policy(options as never)))
+      } catch (error) {
+        statuses.push(failed(error))
+      }
     } else if (policy !== undefined) {
       const entry = (policy as Record<string, unknown>)[toolCall.toolName]
       if (typeof entry === 'function') {
-        const status = await (entry as (input: unknown, o: unknown) => unknown)(toolCall.input, {
-          toolCallId: toolCall.toolCallId,
-          messages: options.messages,
-          toolContext: (options.toolsContext as Record<string, unknown> | undefined)?.[
-            toolCall.toolName
-          ],
-          runtimeContext: options.runtimeContext,
-        })
-        statuses.push(normalizeStatus(status as ToolApprovalStatus))
+        try {
+          const status = await (entry as (input: unknown, o: unknown) => unknown)(toolCall.input, {
+            toolCallId: toolCall.toolCallId,
+            messages: options.messages,
+            toolContext: (options.toolsContext as Record<string, unknown> | undefined)?.[
+              toolCall.toolName
+            ],
+            runtimeContext: options.runtimeContext,
+          })
+          statuses.push(normalizeStatus(status as ToolApprovalStatus))
+        } catch (error) {
+          statuses.push(failed(error))
+        }
       } else {
         statuses.push(normalizeStatus(entry as ToolApprovalStatus))
       }
@@ -254,14 +292,28 @@ export function buildApproval(
         })
         statuses.push(normalizeStatus(status ?? undefined))
       } catch (error) {
-        statuses.push({
-          type: 'denied',
-          reason: error instanceof Error ? error.message : String(error),
-        })
+        statuses.push(failed(error))
       }
     }
     let winner: Normalized = { type: 'not-applicable' }
     for (const status of statuses) if (RANK[status.type] > RANK[winner.type]) winner = status
+    const grant = grants?.current()?.[toolCall.toolName]
+    if (grant === 'never') {
+      if (winner.type !== 'denied') winner = { type: 'denied' }
+    } else if (grant === 'always') {
+      if (winner.type === 'user-approval') winner = { type: 'approved' }
+      else if (winner.type === 'denied' && !ignoredWarned.has(toolCall.toolName)) {
+        ignoredWarned.add(toolCall.toolName)
+        deps.warn(
+          {
+            code: 'W_GRANT_IGNORED',
+            message: `The session grant 'always' for tool '${toolCall.toolName}' cannot apply: the approval policy or a tool.approve hook denies it.`,
+            details: { tool: toolCall.toolName },
+          },
+          `grant:${toolCall.toolName}`,
+        )
+      }
+    }
     return winner.reason === undefined
       ? winner.type
       : ({ type: winner.type, reason: winner.reason } as ToolApprovalStatus)

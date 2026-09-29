@@ -19,7 +19,13 @@ import { createSkillTools } from '../skills/tools.ts'
 import type { ToolOutputSink } from './output-limits.ts'
 import type { NormalizedInstruction } from './static.ts'
 import { listSourceTools, type TurnToolEntry, withToolSearch } from './tools.ts'
-import { buildApproval, buildRefinement, type ToolWrapDeps, wrapTool } from './wrap.ts'
+import {
+  type ApprovalGrants,
+  buildApproval,
+  buildRefinement,
+  type ToolWrapDeps,
+  wrapTool,
+} from './wrap.ts'
 
 /** Everything the model can see and call in one turn. */
 export interface TurnRegistry {
@@ -78,6 +84,8 @@ export async function resolveTurnRegistry(args: {
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
   status: (toolName: string) => void
+  /** Session approval grants (spec 11 §3.1). */
+  grants?: ApprovalGrants
 }): Promise<TurnRegistry> {
   const { open, contextOf } = args
   const instructions1 = await evaluate(open.instructions, (e) => e.kind === 'static', contextOf)
@@ -167,7 +175,7 @@ export async function resolveTurnRegistry(args: {
     toolOrder,
     clientTools,
     refine: buildRefinement(toolOrder, deps),
-    approval: buildApproval(args.approval, deps),
+    approval: buildApproval(args.approval, deps, args.grants),
     skills: skills.entries,
     toolsForStep(discovered) {
       let changed = false
