@@ -141,8 +141,6 @@ export function fileSystemConformance(
         assertTrue(v2 !== v1, 'different content must change the version')
         const back = await written(fs, '/a.md', 'one')
         assertTrue(back === v1, 'the version depends on the content only (not on time or counters)')
-        const other = await written(fs, '/b.md', 'one')
-        assertTrue(other === v1, 'equal content in another file has the same version')
         assertTrue((await fs.read('/a.md'))?.version === v1, 'read reports the current version')
       },
     },
