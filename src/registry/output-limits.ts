@@ -70,6 +70,37 @@ function serialize(output: unknown): string {
   }
 }
 
+/** Characters JSON escaping adds to `text` (quotes excluded). */
+function escapeCost(text: string): number {
+  return JSON.stringify(text).length - 2 - text.length
+}
+
+/**
+ * Head + tail preview of a serialized output whose kept characters **plus** the JSON escaping
+ * they need (the preview is a string inside the structured output) fit `budget` (the marker is
+ * not counted, like in `truncateMiddle`). Binary search on the kept length.
+ */
+function escapedPreview(text: string, budget: number): string {
+  let preview = truncateMiddle(text, budget)
+  const marker = (p: string, kept: number) => p.length - kept
+  if (escapeCost(preview) === 0) return preview
+  let low = 0
+  let high = budget
+  preview = truncateMiddle(text, 0)
+  while (low <= high) {
+    const kept = Math.floor((low + high) / 2)
+    const candidate = truncateMiddle(text, kept)
+    const cost = JSON.stringify(candidate).length - 2 - marker(candidate, kept)
+    if (cost <= budget) {
+      preview = candidate
+      low = kept + 1
+    } else {
+      high = kept - 1
+    }
+  }
+  return preview
+}
+
 function evictNote(path: string): string {
   return `Full output saved to ${path}; use read_file with offset/limit to see more.`
 }
@@ -115,8 +146,11 @@ export async function limitToolOutput(
     },
     toolCallId,
   )
-  const preview = truncateMiddle(text, budget)
-  if (isText) return note === undefined ? preview : `${preview}\n\n${note}`
+  if (isText) {
+    const preview = truncateMiddle(text, budget)
+    return note === undefined ? preview : `${preview}\n\n${note}`
+  }
+  const preview = escapedPreview(text, budget)
   const limited: LimitedOutput = { truncated: true, preview, originalChars: text.length }
   if (note !== undefined) limited.note = note
   return limited

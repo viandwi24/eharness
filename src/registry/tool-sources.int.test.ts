@@ -337,7 +337,7 @@ describe('tool output limits (spec 09 §4)', () => {
       preview: expect.stringContaining('…[truncated'),
       originalChars: json.length,
     })
-    expect((outputs.rows as { preview: string }).preview.startsWith(json.slice(0, 700))).toBe(true)
+    expect((outputs.rows as { preview: string }).preview.startsWith(json.slice(0, 400))).toBe(true)
     expect(outputs.free).toBe(big(2_000))
     expect(outputs.small).toBe('twelve …[truncated 2 chars]…ars')
     expect(

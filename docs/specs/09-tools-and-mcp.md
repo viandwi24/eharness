@@ -144,7 +144,9 @@ toolOutput?: {
 - **`truncate`:** strings keep the first 70% and the last 30% of the budget around a marker
   `TOOL_OUTPUT_TRUNCATED` (spec 10 §5). Structured outputs are serialized
   first; if the result is still over budget the output becomes
-  `{ truncated: true, preview: <truncated JSON string>, originalChars: N }`.
+  `{ truncated: true, preview: <truncated JSON string>, originalChars: N }`. The preview is sized so
+  that its kept characters plus the JSON escaping they need (it is a string inside a JSON value)
+  fit the budget; the marker is not counted.
 - Size: a string output is measured by its length, any other output by the length of its JSON
   serialization. `perTool` wins over `maxChars`.
 - **`evict`:** requires the `toolOutputs` service (provided by the filesystem plugin,

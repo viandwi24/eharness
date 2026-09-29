@@ -55,6 +55,18 @@ describe('limitToolOutput', () => {
     expect(warnings[0]?.details?.strategy).toBe('truncate')
   })
 
+  test('a structured preview fits the budget including its JSON escaping', async () => {
+    const rows = Array.from({ length: 500 }, (_, i) => ({ k: `v${i}`, q: '"quoted"' }))
+    const { result } = run(rows, { maxChars: 1_000 })
+    const limited = (await result) as { preview: string; originalChars: number }
+    expect(limited.originalChars).toBe(JSON.stringify(rows).length)
+    const marker = /…\[truncated \d+ chars\]…/.exec(limited.preview)?.[0] ?? ''
+    expect(marker).not.toBe('')
+    const escaped = JSON.stringify(limited.preview).length - 2 - marker.length
+    expect(escaped).toBeLessThanOrEqual(1_000)
+    expect(escaped).toBeGreaterThan(900)
+  })
+
   test('isLimitedOutput recognises only the limited form', () => {
     expect(isLimitedOutput({ truncated: true, preview: '', originalChars: 1 })).toBe(true)
     expect(isLimitedOutput({ truncated: true, preview: '' })).toBe(false)
