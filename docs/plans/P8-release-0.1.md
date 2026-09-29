@@ -1,6 +1,6 @@
 # P8 — Examples, README, 0.1.0 release
 
-Status: in progress · Branch: `phase/P8-release`
+Status: blocked (code, docs and changeset done and reviewed; waiting on maintainer release steps in MANUAL.md) · Branch: `phase/P8-release`
 
 ## Goal
 
