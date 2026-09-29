@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import * as aiSdkMcp from '@ai-sdk/mcp'
 import {
   defineHarnessAgent,
+  definePlugin,
   defineToolSource,
   type HarnessAgentConfig,
   type HarnessUIMessage,
@@ -303,6 +304,97 @@ describe('mcpServer: connection lifecycle', () => {
     expect(server.closed).toBe(100)
     expect(server.transports.every((t) => !t.isOpen)).toBe(true)
     expect(mcpSourceInternals(source)?.liveSessions()).toBe(0)
+  })
+
+  /** Sessions whose plugin `session()` waits for a gate; ids starting with 'bad' fail to open. */
+  function gated(server: FakeMcpServer) {
+    const gates = new Map<string, () => void>()
+    const waitFor = (id: string) =>
+      new Promise<void>((resolve) => {
+        gates.set(id, resolve)
+      })
+    const pending = new Map<string, Promise<void>>()
+    const gate = definePlugin({
+      name: 'gate',
+      session: async (ctx) => {
+        await pending.get(ctx.session.id)
+      },
+    })
+    let failNow: () => void = () => {}
+    const failGate = new Promise<void>((resolve) => {
+      failNow = resolve
+    })
+    const failing = defineToolSource({
+      id: 'failing',
+      list: () => ({}),
+      open: async (ctx) => {
+        if (!ctx.session.id.startsWith('bad')) return
+        await failGate
+        throw new Error('boom')
+      },
+    })
+    const source = gh(server, { connect: 'eager', pinDefinitions: true, refresh: 'turn' })
+    return {
+      failNow: () => failNow(),
+      source,
+      config: { plugins: [gate], tools: [source, failing] },
+      hold(id: string) {
+        pending.set(id, waitFor(id))
+      },
+      release(id: string) {
+        gates.get(id)?.()
+      },
+    }
+  }
+
+  test('closing a session while it opens closes no other session client; pins still clear', async () => {
+    const server = fakeMcpServer(tools())
+    const g = gated(server)
+    const { agent, model } = setup([{ text: 'a' }, { text: 'b' }], g.config)
+    const healthy = agent.session('good')
+    await healthy.ready() // eager connect, no turn yet
+    g.hold('slow')
+    const slow = agent.session('slow')
+    const opening = slow.ready().catch(() => undefined)
+    await Bun.sleep(5)
+    const closing = slow.close()
+    g.release('slow')
+    await opening
+    await closing
+    expect(server.transports[0]?.isOpen).toBe(true)
+    expect(server.transports.slice(1).every((t) => !t.isOpen)).toBe(true)
+    expect(mcpSourceInternals(g.source)?.liveSessions()).toBe(1)
+    expect(server.started).toBe(1) // the slow session never connected
+    // (d) the healthy session is still live for clearMcpPins
+    await healthy.send('x').result // pins
+    server.tools.push({ name: 'added', description: 'Added.' })
+    await clearMcpPins(agent, 'good', 'gh')
+    await healthy.send('y').result
+    expect(toolNames(model.calls[1])).toContain('gh_added')
+    expect(server.started).toBe(1) // same client all along
+    await agent.close()
+    expect(server.transports.every((t) => !t.isOpen)).toBe(true)
+  })
+
+  test('two concurrent opens, one fails: the healthy one stays connected', async () => {
+    const server = fakeMcpServer(tools())
+    const g = gated(server)
+    const { agent, model } = setup([{ text: 'a' }], g.config)
+    g.hold('ok')
+    const bad = agent.session('bad').ready()
+    const ok = agent.session('ok').ready()
+    await Bun.sleep(5) // 'bad' connected and waits in its failing source
+    g.release('ok')
+    await ok // 'ok' opened after 'bad' registered
+    g.failNow()
+    await expect(bad).rejects.toThrow('boom')
+    const open = server.transports.filter((t) => t.isOpen)
+    expect(open).toHaveLength(1)
+    expect(mcpSourceInternals(g.source)?.liveSessions()).toBe(1)
+    await agent.session('ok').send('x').result
+    expect(toolNames(model.calls[0])).toHaveLength(3)
+    expect(server.started).toBe(2) // the healthy session reused its eager client
+    await agent.close()
   })
 
   test('a session open that fails after an eager connect closes that client only', async () => {

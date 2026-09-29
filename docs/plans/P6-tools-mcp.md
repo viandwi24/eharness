@@ -71,8 +71,11 @@ adding deferred tools.
 - **Eager connect failures** other than the missing package do not fail the session open (spec:
   connection failures → `W_TOOL_SOURCE_FAILED`, retried); they only log, and the first `list()`
   retries and warns.
-- **Failed session open after an eager connect** (review): `close()` without a preceding abort
-  releases the most recently opened session that never listed its tools.
+- **Failed session open after an eager connect** (review, orchestrator decision): the core now
+  aborts `ctx.signal` when a session open fails (authorized minimal change in
+  `src/session/session.ts` / `context.ts`; a retried open gets a fresh signal; spec 05 §2 and
+  spec 01 §4 updated), so MCP clients are released through the normal abort path. The earlier
+  "release the most recent unlisted session" heuristic was dropped (it closed healthy sessions).
 - **Output size**: strings are measured by length, other outputs by JSON length. `evict` of a
   structured output keeps the `{ truncated, preview, originalChars }` form and adds `note`
   (a string would break converters such as MCP's `toModelOutput`); a tool's own `toModelOutput`
@@ -84,8 +87,9 @@ adding deferred tools.
 - P5: `read_file` full-budget reads exceeded the default output limit by the footer; fixed in P6
   by orchestrator decision (`renderWindow()` keeps the hint inside `maxReadChars`, spec 08
   updated, regression tests).
-- Hook point used outside P6's folders: `src/session/turn.ts` passes `config.toolOutput` to
-  `resolveTurnRegistry()` (one line).
+- Hook points used outside P6's folders: `src/session/turn.ts` passes `config.toolOutput` to
+  `resolveTurnRegistry()` (one line); `src/session/session.ts` + `context.ts` abort `ctx.signal`
+  on a failed session open (orchestrator decision).
 
 - From P1: `defineToolSource()` exists (`src/registry/tool-source.ts`, runtime brand
   `'~toolSource'`, `isToolSource()`); `config.mcp` entries must be tool sources.

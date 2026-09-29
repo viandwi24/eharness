@@ -85,8 +85,6 @@ interface Conn {
   client: MCPClient | undefined
   connecting: Promise<MCPClient> | undefined
   closed: boolean
-  /** A `list()` ran for this session, so its open completed. */
-  confirmed: boolean
 }
 
 /** Internals of one `mcpServer()` source (tests and `clearMcpPins`). */
@@ -194,8 +192,6 @@ export function createMcpServer(
   const agentIds = new Set<string>()
   let sharedSessions = false
   const pendingClears = new Set<string>()
-  /** Sessions released by their close signal whose disposer (`close()`) has not run yet. */
-  let abortReleases = 0
 
   const loadModule = async (): Promise<McpModule> => {
     try {
@@ -237,7 +233,6 @@ export function createMcpServer(
       client: undefined,
       connecting: undefined,
       closed: false,
-      confirmed: false,
     }
     agentIds.add(ctx.agent.id)
     for (const other of conns.values()) {
@@ -246,18 +241,9 @@ export function createMcpServer(
         sharedSessions = true
     }
     conns.set(ctx, conn)
+    // the session signal aborts on close and on a failed open (spec 05 §2): release then
     if (ctx.signal.aborted) release(conn)
-    else {
-      ctx.signal.addEventListener(
-        'abort',
-        () => {
-          if (conn.closed) return
-          abortReleases++
-          release(conn)
-        },
-        { once: true },
-      )
-    }
+    else ctx.signal.addEventListener('abort', () => release(conn), { once: true })
     return conn
   }
 
@@ -322,6 +308,7 @@ export function createMcpServer(
     ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
     async open(ctx) {
       const conn = register(ctx)
+      if (conn.closed) return // the session closed while opening
       if (pendingClears.has(ctx.session.id)) {
         ctx.state.set(pinsKey, undefined) // opened by clearMcpPins: clear, do not connect
         return
@@ -349,7 +336,6 @@ export function createMcpServer(
     },
     async list(ctx) {
       const conn = register(ctx)
-      conn.confirmed = true
       const all = await serverTools(conn)
       const blocked = opts.pinDefinitions === true ? await pinned(ctx, all) : new Set<string>()
       const exposed: Array<[string, Tool]> = []
@@ -378,22 +364,10 @@ export function createMcpServer(
       return out
     },
     async close() {
-      // `close()` carries no session. It runs as a disposer (1) on session close, after the
-      // session's signal aborted (the abort listener released it), or (2) when a session open
-      // failed after this source opened; that session's signal never aborts, so release the most
-      // recently opened session that never listed its tools.
-      for (const conn of [...conns.values()]) {
-        if (conn.ctx.signal.aborted && !conn.closed) {
-          abortReleases++
-          release(conn)
-        }
-      }
-      if (abortReleases > 0) abortReleases--
-      else {
-        const unconfirmed = [...conns.values()].filter((c) => !c.confirmed && !c.closed)
-        const failed = unconfirmed.at(-1)
-        if (failed !== undefined) release(failed)
-      }
+      // `close()` carries no session: the session's signal aborted before its disposers ran
+      // (close, eviction or a failed open), so the abort listener already released it; release
+      // any aborted session left and wait for the clients to close.
+      for (const conn of [...conns.values()]) if (conn.ctx.signal.aborted) release(conn)
       await Promise.allSettled([...closings])
     },
   })

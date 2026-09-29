@@ -85,10 +85,9 @@ Lifecycle:
 - One MCP client **per session** (credentials can differ per user). Created at the first turn
   (`lazy`) or at `open()` (`eager`); closed when the session closes. `ToolSource.close()` carries
   no session, so the source closes a session's client when that session's `ctx.signal` aborts
-  (session close/eviction) and `close()` waits for those clients to finish closing. When a session
-  open fails after this source opened (a later source's `open()` threw), the session's signal
-  never aborts; `close()` then runs as a disposer without a preceding abort and releases the most
-  recently opened session that has not listed its tools yet. A `transport` must therefore be a
+  (session close/eviction, and a failed session open, spec 05 §2) and `close()` waits for those
+  clients to finish closing. A session closed while it is still opening releases its connection
+  in `open()` and never connects. A `transport` must therefore be a
   config or a resolver that returns a **new** `MCPTransport` per call; an `MCPTransport` instance
   is rejected with `EH_CONFIG_INVALID`. An eager connect that fails for another reason than the
   missing package does not fail the session open: it only logs (`ctx.log.warn`), and the
