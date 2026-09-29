@@ -130,6 +130,8 @@ export function createSessionHandle(args: {
   const config = internals.config
   const log: HarnessLogger = config.logger ?? defaultLogger
   const closeController = new AbortController()
+  /** `ctx.signal`: aborts on close, and when an open fails (a retried open gets a fresh one). */
+  let sessionController = new AbortController()
   const events = createEventHub()
   const contexts = new Map<string, HarnessContext>()
   let customIdWarned = false
@@ -142,7 +144,9 @@ export function createSessionHandle(args: {
     state: createStateStore(args.state, id),
     owner: args.owner,
     log,
-    signal: closeController.signal,
+    get signal() {
+      return sessionController.signal
+    },
     events,
     open: undefined,
     view: undefined,
@@ -354,6 +358,9 @@ export function createSessionHandle(args: {
     } catch (error) {
       rt.open = undefined
       pendingServices.delete(rt)
+      // what was opened for this attempt releases its per-session resources (spec 05 §2)
+      sessionController.abort('open failed')
+      if (!rt.closed) sessionController = new AbortController()
       for (const { dispose } of [...disposers].reverse()) {
         try {
           await dispose()
@@ -530,6 +537,7 @@ export function createSessionHandle(args: {
         await running.run.result
       }
       closeController.abort('closed')
+      sessionController.abort('closed')
       const open = rt.open
       if (open === undefined && opening !== undefined) {
         try {
