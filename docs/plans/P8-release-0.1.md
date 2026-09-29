@@ -1,6 +1,6 @@
 # P8 — Examples, README, 0.1.0 release
 
-Status: blocked (code, docs and changeset done and reviewed; waiting on maintainer release steps in MANUAL.md) · Branch: `phase/P8-release`
+Status: done · Branch: `phase/P8-release`
 
 ## Goal
 
@@ -42,19 +42,21 @@ Make eharness usable by someone who has never seen this repo, and publish `0.1.0
     `experimental_`: **none** in the public API. Internally the core uses two AI SDK experimental
     options: `experimental_refineToolInput` (runs `tool.before`) and
     `experimental_toolApprovalSecret` (`approval.secret`) — they may change in AI SDK minors.
-11. [ ] Changeset `minor` → `0.1.0` with a summary of the feature set (**done**:
-    `.changeset/release-0-1-0.md`); merge the version PR; verify provenance on npm (**maintainer**:
-    MANUAL.md rows 6–7).
+11. [x] Changeset `minor` → `0.1.0` with a summary of the feature set
+    (`.changeset/release-0-1-0.md`); version PR #5 merged by the maintainer; provenance verified on
+    npm (2026-09-29).
 
 ## Acceptance criteria
 
 - [ ] Following getting-started from a clean directory works on Node 22 and Bun. **Bun: verified**
       (clean `bun init` project, packed tarball + `ai` + `zod`: the offline variant completes in
       3 steps, the gateway variant without a key ends with `stop: 'error'` without throwing, and the
-      project typechecks). **Node 22: maintainer** (no Node here; MANUAL.md row 5; CI node-compat
-      covers the tarball import smoke).
-- [ ] `eharness@0.1.0` on npm with provenance; GitHub release created by the workflow
-      (maintainer, MANUAL.md rows 6–7).
+      project typechecks). **Node 22:** CI `node-compat` (Node 22 and 24) is green on the packed
+      tarball (imports, boot, a scripted turn, approval continuation); the full getting-started
+      walkthrough on Node 22 is still open as MANUAL.md row 5.
+- [x] `eharness@0.1.0` on npm with provenance; GitHub release created by the workflow.
+      Verified 2026-09-29: npm `latest` = `0.1.0` with SLSA v1 provenance, tag and GitHub release
+      `v0.1.0`.
 
 ## Open questions
 
