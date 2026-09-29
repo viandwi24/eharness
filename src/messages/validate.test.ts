@@ -148,4 +148,23 @@ describe('validateStoredMessages', () => {
     const { messages } = await validateStoredMessages([marker, broken], registry())
     expect(messages.map((m) => m.id)).toEqual(['c1'])
   })
+
+  test("a throwing upgrade leaves the part's pre-upgrade data (policy 'keep')", async () => {
+    const r = createCoreMessageRegistry()
+    r.registerDataPart(
+      'bad',
+      defineDataPart({
+        schema: z.object({ v: z.number() }) as FlexibleSchema<{ v: number }>,
+        upgrade: (data) => {
+          ;(data as { v: unknown }).v = 'half-mutated'
+          throw new Error('nope')
+        },
+      }),
+      'app',
+    )
+    const stored = { id: 'u1', role: 'assistant', parts: [{ type: 'data-bad', data: { v: 1 } }] }
+    const { messages } = await validateStoredMessages([stored], r, 'keep')
+    expect(messages[0]?.parts[0] as unknown).toEqual({ type: 'data-bad', data: { v: 1 } })
+    expect(stored.parts[0]?.data).toEqual({ v: 1 })
+  })
 })

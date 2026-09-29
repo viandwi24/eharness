@@ -90,9 +90,11 @@ export function idGeneratorConformance(
         const floor = `${hexMs.slice(0, 8)}-${hexMs.slice(8)}-7fff-bfff-ffffffffffff`
         const id = generate(floor)
         if (!(id > floor)) throw new Error(`'${id}' does not sort after floor '${floor}'`)
-        const next = generate()
-        if (!(next > id))
-          throw new Error(`'${next}' after a floor bump does not sort after '${id}'`)
+        // the session passes its newest id as the next floor
+        const next = generate(id)
+        if (!(next > id)) {
+          throw new Error(`'${next}' generated with floor '${id}' does not sort after it`)
+        }
       },
     })
     cases.push({

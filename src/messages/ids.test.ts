@@ -15,7 +15,7 @@ describe('idGeneratorConformance: uuidv7 export', () => {
 describe('UUIDv7', () => {
   test('format and timestamp', () => {
     const before = Date.now()
-    const id = uuidv7()
+    const id = createUuidV7Generator()()
     expect(isUuidV7(id)).toBe(true)
     const ms = uuidV7Timestamp(id) ?? 0
     expect(ms).toBeGreaterThanOrEqual(before)
@@ -56,8 +56,10 @@ describe('UUIDv7', () => {
     const id = generate(floor)
     expect(id > floor).toBe(true)
     expect(uuidV7Timestamp(id)).toBe(5_001)
-    // the generator keeps the bumped clock for later ids
-    expect(generate() > id).toBe(true)
+    // the bump does not leak: without a floor the generator uses its own clock again
+    expect(uuidV7Timestamp(generate())).toBe(1_000)
+    // with the session's newest id as floor, ids keep increasing
+    expect(generate(id) > id).toBe(true)
   })
 
   test('non-UUIDv7 floors are ignored', () => {
@@ -65,8 +67,9 @@ describe('UUIDv7', () => {
     expect(uuidV7Timestamp(generate('zzz'))).toBe(1_000)
   })
 
-  test('nextId respects a floor', () => {
+  test('nextId respects a floor without shifting the default generator', () => {
     const floor = createUuidV7Generator({ now: () => Date.now() + 10_000 })()
     expect(nextId(floor) > floor).toBe(true)
+    expect(uuidv7() < floor).toBe(true)
   })
 })
