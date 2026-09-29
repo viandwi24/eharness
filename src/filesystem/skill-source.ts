@@ -100,7 +100,13 @@ export function fsSkillSource(fs: FileSystem, opts: FsSkillSourceOptions): Skill
     async list(ctx): Promise<SkillMeta[]> {
       const prefix = dirPrefix(root)
       const out: SkillMeta[] = []
-      for (const file of await fs.list(prefix)) {
+      const files = await fs.list(prefix)
+      // forget deleted skill files so the caches stay bounded by the current listing
+      const current = new Set(files.map((file) => `${file.path}@${file.version}`))
+      const paths = new Set(files.map((file) => file.path))
+      for (const path of cache.keys()) if (!paths.has(path)) cache.delete(path)
+      for (const key of warned) if (!current.has(key)) warned.delete(key)
+      for (const file of files) {
         const segments = file.path.slice(prefix.length).split('/')
         if (segments.length !== 2 || segments[1] !== 'SKILL.md') continue
         const name = segments[0] as string

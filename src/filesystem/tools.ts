@@ -27,6 +27,8 @@ import { byteLength } from './version.ts'
 export const READ_LINE_LIMIT = 2000
 /** Maximum hits returned by `grep`. */
 export const GREP_MAX_HITS = 50
+/** Hit budget of the adapter's `grep` fast path (before hidden/unlisted hits are filtered). */
+export const GREP_FAST_PATH_HITS = 500
 /** Maximum characters of one grep line in the result. */
 export const GREP_LINE_CHARS = 300
 
@@ -332,13 +334,13 @@ export function createFileTools(
   /** Up to GREP_MAX_HITS + 1 visible hits under `root`. */
   async function search(root: string, regex: RegExp): Promise<GrepHit[]> {
     const limit = GREP_MAX_HITS + 1
-    const excluded = [...env.hidden, ...env.unlisted].some(
-      (dir) => isUnder(dir, root) && !isUnder(root, dir),
-    )
-    // the adapter's fast path, unless hidden files could use up its hit budget
-    if (fs.grep !== undefined && !excluded) {
-      const hits = await fs.grep(regex, { prefix: dirPrefix(root), maxHits: limit })
-      return hits.filter((hit) => isUnder(hit.path, root) && listed(hit.path, root)).slice(0, limit)
+    const visible = (hit: GrepHit): boolean => isUnder(hit.path, root) && listed(hit.path, root)
+    // the adapter's fast path with a larger budget; hidden/unlisted hits are filtered out
+    if (fs.grep !== undefined) {
+      const raw = await fs.grep(regex, { prefix: dirPrefix(root), maxHits: GREP_FAST_PATH_HITS })
+      const hits = raw.filter(visible)
+      // complete result, or enough visible hits: done; otherwise hidden hits used up the budget
+      if (raw.length < GREP_FAST_PATH_HITS || hits.length >= limit) return hits.slice(0, limit)
     }
     const line = statelessPattern(regex)
     const hits: GrepHit[] = []
