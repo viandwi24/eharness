@@ -23,7 +23,8 @@ Verified in P0 with TypeScript 7.0.2, tsdown 0.23.0 and attw 0.18.5: no pin need
 - File names: kebab-case (`load-context.ts`). Tests next to code: `load-context.test.ts`.
 - Internal helpers that must not be public live in `src/internal/` and are never re-exported.
 - Subpath modules (`src/filesystem`, `src/storage`, `src/mcp`, `src/testing`) import core only via
-  `../index.ts` (rule enforced by `scripts/check-imports.ts` in CI).
+  `../index.ts` (rule enforced by `scripts/check-imports.ts` in CI). Test files of a subpath may
+  also import other subpaths (e.g. a filesystem test using `src/testing`), never core internals.
 
 ## TypeScript style
 
