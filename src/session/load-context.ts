@@ -1,8 +1,6 @@
 /**
- * Loading the model context (cold load): paging fallback, validation, boundary ordering, rewind
- * view rule and state healing (internal).
- *
- * The one-query compaction pointer path (`state.core.compaction`) is added by P3.
+ * Loading the model context (cold load): the one-query compaction pointer path, the paging
+ * fallback, validation, boundary ordering, rewind view rule and state healing (internal).
  *
  * @see docs/specs/05-session-and-storage.md#5-loading-the-model-context-fixed-algorithm
  */
@@ -63,10 +61,12 @@ export function rewindsIn(
 }
 
 /**
- * Load the context of a session with the paging fallback (spec 05 §5): page backwards 100 at a
- * time until a boundary (and everything it keeps) is loaded or history is exhausted; validate;
- * assemble `[newest boundary] + messages from its resumeFromId`; apply the rewind view rule; heal
- * `state.core.compaction` / `state.core.activeTurn` (marking the state dirty via `markDirty`).
+ * Load the context of a session (spec 05 §5): with a compaction pointer, one range query
+ * `load({ fromId: resumeFromId ?? markerId })`; otherwise (or when that range holds no boundary)
+ * page backwards 100 at a time until a boundary (and everything it keeps) is loaded or history is
+ * exhausted. Then validate; assemble `[newest boundary] + messages from its resumeFromId`; apply
+ * the rewind view rule; heal `state.core.compaction` / `state.core.activeTurn` (marking the state
+ * dirty via `markDirty`).
  */
 export async function loadContext(args: {
   adapter: MessageAdapter
@@ -79,18 +79,32 @@ export async function loadContext(args: {
   const { adapter, sessionId, registry } = args
   let raw: Loose[] = []
   let beforeId: string | undefined
+  const pointer = args.core.compaction
+  let paging = pointer === undefined
   try {
-    while (true) {
+    if (pointer !== undefined) {
+      raw = (await adapter.load({
+        sessionId,
+        fromId: pointer.resumeFromId ?? pointer.markerId,
+      })) as Loose[]
+      // the range starts at or before the marker, so it holds a boundary unless the stored
+      // history changed behind our back: fall back to paging (and heal the pointer)
+      if (!raw.some((m) => isBoundary(m, registry))) {
+        raw = []
+        paging = true
+      }
+    }
+    while (paging) {
       const page = (await adapter.load(
         beforeId === undefined
           ? { sessionId, limit: PAGE_SIZE }
           : { sessionId, limit: PAGE_SIZE, beforeId },
       )) as Loose[]
       raw = [...page, ...raw]
-      if (page.length < PAGE_SIZE || boundaryLoaded(raw, registry)) break
+      if (page.length < PAGE_SIZE || boundaryLoaded(raw, registry)) paging = false
       const oldest = page[0]?.id
-      if (typeof oldest !== 'string') break
-      beforeId = oldest
+      if (typeof oldest !== 'string') paging = false
+      else beforeId = oldest
     }
   } catch (error) {
     if (isHarnessError(error)) throw error
@@ -111,6 +125,10 @@ export async function loadContext(args: {
   let view: HarnessUIMessage[]
   if (boundary === undefined) {
     view = messages.filter((m) => !isBoundary(m, registry))
+    if (args.core.compaction !== undefined) {
+      delete args.core.compaction // points at a marker that no longer exists
+      args.markDirty()
+    }
   } else {
     const payload = payloadOf<CompactionPayload>(boundary)
     const resumeFromId = payload?.resumeFromId ?? null
