@@ -1,6 +1,6 @@
 # P3 — Context loading and compaction
 
-Status: in progress · Branch: `phase/P3-compaction`
+Status: done · Branch: `phase/P3-compaction`
 
 ## Goal
 
