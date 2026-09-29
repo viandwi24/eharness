@@ -60,7 +60,7 @@ export type CompactOutcome =
   | { status: 'compacted'; marker: HarnessUIMessage; payload: CompactionPayload }
   | {
       status: 'skipped'
-      reason: 'running' | 'disabled' | 'nothing-to-drop' | 'no-gain' | 'aborted'
+      reason: 'running' | 'disabled' | 'nothing-to-drop' | 'no-gain' | 'aborted' | 'failed-earlier'
     }
   | { status: 'failed'; error: HarnessError }
 
