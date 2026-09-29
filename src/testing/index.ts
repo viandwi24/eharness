@@ -10,4 +10,23 @@ export {
   type IdGeneratorConformanceOptions,
   idGeneratorConformance,
 } from './id-generator.conformance.ts'
+export {
+  type MessageAdapterConformanceOptions,
+  messageAdapterConformance,
+} from './message-adapter.conformance.ts'
+export {
+  type ScriptedCallOptions,
+  type ScriptedFinishReason,
+  type ScriptedModel,
+  type ScriptedModelOptions,
+  type ScriptedPrompt,
+  type ScriptedStep,
+  type ScriptedStepInput,
+  type ScriptedStreamPart,
+  scriptedModel,
+} from './scripted-model.ts'
+export {
+  type StateAdapterConformanceOptions,
+  stateAdapterConformance,
+} from './state-adapter.conformance.ts'
 export type { ConformanceCase } from './types.ts'
