@@ -35,6 +35,7 @@ const entries = {
     'defineSkill',
     'defineSkillSource',
     'defineToolSource',
+    'handleChatRequest',
     'isHarnessError',
     'isKindMessage',
     'isUuidV7',
