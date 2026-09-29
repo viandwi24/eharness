@@ -1,6 +1,6 @@
 # P1 — Core foundations
 
-Status: in progress · Branch: `phase/P1-core`
+Status: done · Branch: `phase/P1-core`
 
 ## Goal
 
