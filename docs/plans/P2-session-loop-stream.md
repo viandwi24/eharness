@@ -1,6 +1,6 @@
 # P2 — Session, loop, streaming, storage contracts
 
-Status: in progress · Branch: `phase/P2-runtime`
+Status: done · Branch: `phase/P2-runtime`
 
 ## Goal
 
