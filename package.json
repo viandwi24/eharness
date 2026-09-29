@@ -34,12 +34,12 @@
   "scripts": {
     "lint": "biome check .",
     "format": "biome format --write .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p examples",
     "test": "bun test",
     "build": "tsdown",
     "check:package": "publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz",
     "check:imports": "bun scripts/check-imports.ts",
-    "release:version": "changeset version && bun install --lockfile-only"
+    "release:version": "changeset version && bun scripts/sync-version.ts && bun install --lockfile-only"
   },
   "peerDependencies": {
     "@ai-sdk/mcp": "^2.0.0",

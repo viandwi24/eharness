@@ -35,5 +35,5 @@
       "eharness/*": ["./src/*"]
     }
   },
-  "include": ["src", "examples", "scripts"]
+  "include": ["src", "scripts"]
 }
