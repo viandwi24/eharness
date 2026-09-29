@@ -466,6 +466,9 @@ describe('scenario 18: respond() safety', () => {
       (m) => m.id === first.messageId,
     ) as HarnessUIMessage
     const patched = structuredClone(stored)
+    const meta = patched.metadata?.eharness as unknown as Record<string, unknown>
+    meta.pending = null
+    delete meta.stop
     for (const part of patched.parts as Array<Record<string, unknown>>) {
       if (part.type === 'tool-pay') {
         part.state = 'approval-responded'
@@ -799,6 +802,48 @@ describe('reload after respond reproduces the hot wire', () => {
 void isHarnessError
 
 describe('continuations that do not finish', () => {
+  test('a crash after consuming but before A′ was saved: the pending message is healed', async () => {
+    const log: string[] = []
+    const messages = spyMessages()
+    const state = spyState()
+    const config = {
+      tools: { pay: payTool(log) },
+      approval: { policy: { pay: 'user-approval' as const } },
+    }
+    const a = setup(
+      {
+        model: scriptedModel([{ toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] }]),
+        ...config,
+      },
+      { messages, state },
+    )
+    const first = await a.agent.session('s1').send('pay').result
+    await a.agent.close()
+    // the consuming state write happened, the process died before A' was saved
+    const snapshot = await state.get('s1')
+    if (snapshot === null) throw new Error('no state')
+    delete snapshot.core.pending
+    await state.set('s1', { ...snapshot, rev: snapshot.rev + 1 })
+
+    const model = scriptedModel([{ text: 'fine' }])
+    const b = setup({ model, ...config }, { messages, state })
+    const session = b.agent.session('s1')
+    const result = await session.send('what happened?').result
+    expect(result.stop).toBe('complete')
+    expect(log).toEqual([])
+    const stored = (await messages.load({ sessionId: 's1' })).find(
+      (m) => m.id === first.messageId,
+    ) as HarnessUIMessage
+    expect(stored.metadata?.eharness?.pending).toBeNull()
+    expect(stored.metadata?.eharness?.stop).toBe('interrupted')
+    expect(toolPart(stored, 'pay')).toMatchObject({
+      state: 'output-error',
+      errorText: INTERRUPTED_CRASH,
+    })
+    expect(JSON.stringify(model.prompts[0])).toContain(INTERRUPTED_CRASH)
+    expect((await session.stats()).pending).toBeNull()
+  })
+
   test('abort during step 0: approved calls end as interrupted, never re-executed', async () => {
     const log: string[] = []
     const model = scriptedModel([
