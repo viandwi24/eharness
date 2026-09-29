@@ -152,6 +152,21 @@ Resolved conservatively in P2 (specs updated where the behaviour is normative):
     validation; fixed in `src/messages/kinds.ts` (P1 folder, one line).
 18. **Not done (optional P1 note):** the `nextId` burst behaviour with a per-call floor
     (`src/messages/ids.ts:66`) is unchanged; ordering is correct and the folder is not P2's.
+19. **Waiting input vs limits (review):** input waiting at a would-be `'complete'` continues the
+    loop only below the step budget and the cost cap, else the stop becomes `'max-steps'` /
+    `'cost-cap'` (spec 05 §3.1 updated).
+20. **Interrupted calls on the stream (review):** open, non-pending tool calls are answered with
+    `tool-output-error { errorText: INTERRUPTED_TURN }` chunks before `message-metadata`; the
+    `onEnd` patch stays as a safety net (spec 05 §3 step 16 updated).
+21. **Preparation order (review):** code follows spec 05 §3 (5 options, 6 sources, then the
+    `toolsContext` check, 7 normalize, 8 `input.submit`); the `toolsContext` check needs the
+    resolved tool set, stated in step 5.
+22. **`state.core.usage.turns`** counts turns that ran at least one model step (a blocked turn with
+    `persist` does not count; spec 05 §7 updated).
+23. **State of failed preparations:** plugin state changed by hooks before the commit point is
+    restored from a checkpoint when the turn ends early (taken after the context load).
+24. **`turn.beforeEnd` results** that are not actionable for the stop (e.g. `extendSteps` for
+    `'complete'`) are ignored silently and do not count toward `maxContinues`.
 
 ## Requests to other phases
 

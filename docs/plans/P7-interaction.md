@@ -73,3 +73,7 @@ delivery queue).
   the rewind view rule (`hiddenByRewind()` / `rewindsIn()` in `src/session/load-context.ts`) but
   does not heal `state.core.rewinds`; `messages()` filters with page rewinds + the state mirror.
   When the last stub is gone, `EH_NOT_IMPLEMENTED` can leave the error union (see P8).
+- From P2 (review): `buildApproval()` (`src/registry/wrap.ts`) lets a throwing `approval.policy`
+  (per-tool function or generic function) propagate, while throwing `tool.approve` hooks count as
+  `denied`. Spec 11 §3 is fail-closed: catch policy errors too and treat them as `denied` (with the
+  error message as reason), and add a test.

@@ -162,7 +162,9 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
    (spec 11 §4.1 — `'reject'` ends here with `EH_PENDING_RESPONSE`); `regenerate`/`edit` resolve
    their target (spec 11 §5).
 5. Validate `SendOptions.options` against `config.callOptions` and `toolsContext` against the
-   tools' `contextSchema`s (spec 01 §4) → `EH_INVALID_INPUT`.
+   tools' `contextSchema`s (spec 01 §4) → `EH_INVALID_INPUT`. The `toolsContext` check runs right
+   after step 6, because the contextSchemas of dynamic tools are known only once the turn's tool
+   set is resolved.
 6. Resolve dynamic sources (spec 02 §5) → `TurnRegistry` (locked for the turn).
 7. **Normalize input** (unless omitted):
    - `role` must be `user` (else `EH_INVALID_INPUT`);
@@ -205,7 +207,8 @@ written in this order:
     `step.prepare`; model call; **step barrier** — wait until `onStepEnd` has updated the cache
     with the step's accumulated message and saved the snapshot (`persistEachStep`, spec 04 §5);
     heartbeat (§9); `step.end`; stop rules (§3.1).
-16. **End of `execute`:** answer dangling tool calls (below); write `message-metadata` (`stop`,
+16. **End of `execute`:** answer dangling tool calls (below; also written to the stream as
+    `tool-output-error` chunks, so the live UI matches storage); write `message-metadata` (`stop`,
     usage, steps, duration, `pending` — `null` when a continuation resolved it), `setOutcome`,
     and `finish` / `abort`; return.
 17. **End sequence (in `onEnd`):** `message.beforeSave` + final save; set `state.core.pending`
@@ -262,7 +265,10 @@ tool errors count as results), the loop continues.
 Then, before actually stopping:
 
 - **Pending input wins.** If a steer, `next-step` injection or `step.end` `context` is waiting and
-  the stop is `'complete'`, the loop continues instead (the input is delivered at the boundary).
+  the stop is `'complete'`, the loop continues instead (the input is delivered at the boundary) —
+  but only while the step count is below the turn's step budget and the cumulative output tokens
+  do not exceed `loop.maxTurnOutputTokens`; otherwise the stop becomes `'max-steps'` /
+  `'cost-cap'` (so waiting input can never extend a turn past its limits).
   For every other stop, waiting input is handled as in spec 11 §6.1 (queued turn, or dropped with
   an `input-dropped` event for `'tool-pending'` and `'aborted'`).
 - **`turn.beforeEnd`** runs for `'complete'`, `'max-steps'` and `'length'` (spec 01 §5). A
@@ -390,6 +396,7 @@ export interface SessionStateSnapshot {
   rev: number
   core: {
     compaction?: { markerId: string; resumeFromId: string | null }
+    /** Cumulative over the session; `turns` counts turns that ran at least one model step. */
     usage?: { inputTokens: number; outputTokens: number; turns: number }
     /** The turn currently running somewhere (§9). */
     activeTurn?: ActiveTurn

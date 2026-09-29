@@ -114,7 +114,7 @@ export interface PluginStreamWriter<DP extends DataPartMap = {}> {
   readonly active: boolean
   /** Write a data part declared by THIS plugin (name is the local key, type-checked). */
   data<K extends keyof DP & string>(name: K, data: InferSchema<DP[K]['schema']>, opts?: { id?: string; transient?: boolean }): void
-  /** Escape hatch: write any registered data chunk. */
+  /** Escape hatch: write any registered data chunk, un-namespaced (the full `data-…` type). */
   write(chunk: Extract<InferUIMessageChunk<AgentMessage>, { type: `data-${string}` }>): void
 }
 ```
@@ -123,6 +123,9 @@ export interface PluginStreamWriter<DP extends DataPartMap = {}> {
 - `transient` defaults to the part definition's `transient`. Passing `transient: false` for a part
   defined as transient raises `W_TRANSIENT_OVERRIDE` and the part is sent as transient
   (`config.strict: true` turns this and other misuse warnings into thrown `EH_CONFIG_INVALID`).
+- `write(chunk)` is an **un-namespaced escape hatch**: it accepts the full part type of any
+  registered data part or kind (core, app or another plugin's), so a plugin can write parts it does
+  not own; only the core-only `data-eh.input` is refused.
 - Writing a data part that is not registered → `W_UNKNOWN_DATA_PART`, dropped. The core-only
   `data-eh.input` part is treated the same way when a plugin writes it (§2: only the core writes it).
 - **Outside a turn** (`active === false`): transient writes go to the session event channel (§6);
