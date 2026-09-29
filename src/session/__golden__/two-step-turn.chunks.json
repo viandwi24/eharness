@@ -1,0 +1,144 @@
+[
+  {
+    "type": "start",
+    "messageId": "<id:0>",
+    "messageMetadata": {
+      "eharness": {
+        "v": 1,
+        "createdAt": 0,
+        "turnId": "<id:1>",
+        "parentId": "<id:2>"
+      }
+    }
+  },
+  {
+    "type": "data-eh.status",
+    "data": {
+      "state": "thinking",
+      "step": 0
+    },
+    "transient": true
+  },
+  {
+    "type": "start-step"
+  },
+  {
+    "type": "data-eh.status",
+    "data": {
+      "state": "tool",
+      "tool": "weather"
+    },
+    "transient": true
+  },
+  {
+    "type": "tool-input-available",
+    "toolCallId": "call-0-0",
+    "toolName": "weather",
+    "input": {
+      "city": "Oslo"
+    }
+  },
+  {
+    "type": "tool-output-available",
+    "toolCallId": "call-0-0",
+    "output": {
+      "city": "Oslo",
+      "temp": 20
+    }
+  },
+  {
+    "type": "finish-step"
+  },
+  {
+    "type": "data-eh.usage",
+    "data": {
+      "inputTokens": 10,
+      "outputTokens": 5,
+      "totalTokens": 15,
+      "steps": 1
+    },
+    "transient": true
+  },
+  {
+    "type": "data-eh.context",
+    "data": {
+      "window": 100000,
+      "tokens": 106,
+      "instructions": 4,
+      "tools": 14,
+      "messages": 88,
+      "summarizeAt": 75000,
+      "hardLimit": 82000
+    },
+    "transient": true
+  },
+  {
+    "type": "data-eh.status",
+    "data": {
+      "state": "thinking",
+      "step": 1
+    },
+    "transient": true
+  },
+  {
+    "type": "start-step"
+  },
+  {
+    "type": "text-start",
+    "id": "t1"
+  },
+  {
+    "type": "text-delta",
+    "id": "t1",
+    "delta": "It is 20 degrees."
+  },
+  {
+    "type": "text-end",
+    "id": "t1"
+  },
+  {
+    "type": "finish-step"
+  },
+  {
+    "type": "data-eh.usage",
+    "data": {
+      "inputTokens": 40,
+      "outputTokens": 12,
+      "totalTokens": 52,
+      "steps": 2
+    },
+    "transient": true
+  },
+  {
+    "type": "data-eh.context",
+    "data": {
+      "window": 100000,
+      "tokens": 125,
+      "instructions": 4,
+      "tools": 14,
+      "messages": 107,
+      "summarizeAt": 75000,
+      "hardLimit": 82000
+    },
+    "transient": true
+  },
+  {
+    "type": "message-metadata",
+    "messageMetadata": {
+      "eharness": {
+        "model": "mock/scripted",
+        "usage": {
+          "inputTokens": 40,
+          "outputTokens": 12,
+          "totalTokens": 52
+        },
+        "stop": "complete",
+        "steps": 2,
+        "durationMs": 0
+      }
+    }
+  },
+  {
+    "type": "finish"
+  }
+]

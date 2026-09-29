@@ -1,30 +1,17 @@
 /**
- * `eharness/storage/memory`: in-memory `MessageAdapter` and `StateAdapter`.
+ * Default in-memory adapters of the core (used when no `storage` is configured).
  *
- * Useful for tests, prototypes and single-process apps that do not need history after a restart.
- * Every read and write deep-copies, so callers can never change stored data by mutating objects.
+ * The core must not import the `eharness/storage/memory` subpath (dependency direction,
+ * architecture §1), so it keeps this private copy. Both copies run the same conformance suites.
  *
- * Imports core only through `src/index.ts` (ADR-0008).
- *
- * @see docs/specs/05-session-and-storage.md#4-messageadapter-the-storage-contract
+ * @see docs/specs/05-session-and-storage.md#7-state
  */
-import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from '../index.ts'
+import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
 
 type StoredMessage = Parameters<MessageAdapter['save']>[1][number]
 
-/**
- * In-memory {@link MessageAdapter}: messages kept per session, ordered by id, upserted by id.
- *
- * Implements the optional `lastId` for cache validation.
- *
- * @example
- * ```ts
- * // import { memoryMessages, memoryState } from the eharness/storage/memory subpath
- * defineHarnessAgent({ model, storage: { messages: memoryMessages(), state: memoryState() } })
- * ```
- * @see docs/specs/05-session-and-storage.md#4-messageadapter-the-storage-contract
- */
-export function memoryMessages(): MessageAdapter {
+/** Private in-memory `MessageAdapter` (see `eharness/storage/memory`). */
+export function defaultMemoryMessages(): MessageAdapter {
   const sessions = new Map<string, Map<string, StoredMessage>>()
 
   const sorted = (sessionId: string): StoredMessage[] => {
@@ -65,17 +52,8 @@ export function memoryMessages(): MessageAdapter {
   }
 }
 
-/**
- * In-memory {@link StateAdapter} with compare-and-set (`setIf`) on `rev`.
- *
- * @example
- * ```ts
- * const state = memoryState()
- * defineHarnessAgent({ model, storage: { state } })
- * ```
- * @see docs/specs/05-session-and-storage.md#7-state
- */
-export function memoryState(): StateAdapter {
+/** Private in-memory `StateAdapter` (see `eharness/storage/memory`). */
+export function defaultMemoryState(): StateAdapter {
   const snapshots = new Map<string, SessionStateSnapshot>()
   return {
     async get(sessionId) {

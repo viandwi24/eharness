@@ -158,7 +158,7 @@ process died mid-turn ──▶ next operation recovers: dangling calls answered
                     stored form                          wire form
  MessageAdapter ─▶ HarnessUIMessage[] ─▶ project() ─▶ ModelMessage[] ─▶ streamText
        ▲                 ▲                  │
-       │ save (upsert)   │ createUIMessageStream onStepEnd / onEnd (core drains a tee branch)
+       │ save (upsert)   │ createUIMessageStream onStepEnd / onEnd (the core drains the stream)
        │                 │
        └──────── assistant UIMessage ◀── UIMessageChunk stream ──▶ client (SSE / TUI / test)
 ```

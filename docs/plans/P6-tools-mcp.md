@@ -57,3 +57,14 @@ adding deferred tools.
   `'~toolSource'`, `isToolSource()`); `config.mcp` entries must be tool sources.
   `TOOL_NAME_PATTERN` and `RESERVED_TOOL_NAMES` live in `src/registry/static.ts` /
   `src/registry/types.ts`.
+
+- From P2: `src/registry/tools.ts` `listSourceTools()` already lists sources per turn with
+  `refresh` caching (`open.sourceCache`), `W_TOOL_SOURCE_FAILED` (retried next turn), name
+  validation (`W_INVALID_TOOL_NAME`) and shadowing (`W_SHADOWED`, reserved names too); session
+  open calls `source.open(ctx)` and registers `close()` as a disposer (`src/session/session.ts`).
+  Missing: `defer` → `deferLoading`, the automatic `tool_search`, and output limits — call them
+  from `wrapTool()` in `src/registry/wrap.ts` after the `tool.after` chain (final values only).
+  Discovery tracking is done: `collectDiscovered()` / `toolSearchNames()` in
+  `src/loop/steps.ts`, `seedDiscovered()` in `src/session/turn.ts`, and
+  `registry.toolsForStep(discovered)` every step. `W_DEPRECATED` for tool-level `needsApproval`
+  is emitted in `resolveTurnRegistry()`.
