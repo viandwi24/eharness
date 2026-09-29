@@ -1,6 +1,6 @@
 # P5 — Filesystem plugin
 
-Status: todo · Branch: `phase/P5-filesystem`
+Status: in progress · Branch: `phase/P5-filesystem`
 
 ## Goal
 
