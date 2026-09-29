@@ -270,8 +270,9 @@ Details (normative for the implementation in `src/messages/project.ts`):
 - Kind messages whose kind is not registered, or whose projection returns `null` / an empty
   result, are dropped. `role: 'system'` messages are never projected (spec 02 §5).
 - Step 3 answers `approval-requested` parts unless they belong to `ctx.pending` (same message id
-  and tool call id). Pending client tool calls are never projected while still pending: `respond()`
-  and `onNewInput: 'deny'` patch them before the next projection. A preliminary
+  and tool call id). A pending client tool call (`input-available`) is answered by `project()` like any
+  other call without a result; the turn operations (P2/P7: `respond()`, `onNewInput: 'deny'`) must
+  therefore patch pending client tool parts in the stored message before they project. A preliminary
   `output-available` part (`preliminary: true`) has no final result and is answered too. The
   answered part is `output-error` with `input` (or `{}` when the input never finished streaming)
   and without its `approval` object.
@@ -349,6 +350,11 @@ Validation runs on cold loads only (spec 05 §6), never on hot-path turns.
 - **Per-session floor:** a new id must sort after the newest id the session knows (cache or last
   load). If it does not (clock skew between instances, clock going backwards), the core bumps the
   UUIDv7 timestamp field to floor + 1 ms. Implemented as `nextId(floor?: string)` in `ids.ts`.
+  The bump applies to that one id only; it does not move the generator's clock, so a skewed floor
+  of one session never shifts the ids of other sessions (the session passes its newest id as the
+  floor on every call).
+- **Exception:** a custom `config.generateId` takes no floor and is not bumped; the core warns when
+  such an id does not sort after the session floor (P2).
 - The server always generates user message ids. A client-supplied id is kept only as
   `metadata.eharness.clientId` (useful for optimistic UIs).
 

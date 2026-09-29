@@ -17,7 +17,8 @@ services, and the static parts of the registry. No model calls yet.
 ## Owns
 
 `src/errors.ts`, `src/messages/**`, `src/plugin/**`, `src/agent/**` (definition + validation only),
-`src/registry/**` (static parts), `src/internal/**`.
+`src/registry/**` (static parts), `src/internal/**`, `src/testing/id-generator.conformance.ts`,
+`src/testing/types.ts` (plus the shared `src/testing/index.ts` and `scripts/smoke.mjs` edits).
 
 ## Checklist
 
@@ -95,8 +96,10 @@ Resolved conservatively in P1 (specs updated where the behaviour is normative):
 10. **`validateStoredMessages` returns warnings** instead of emitting them (the caller owns the
     agent's emitter and the transient-part/event routing).
 11. **`config.generateId` and the id floor:** a custom generator cannot be bumped; the agent's
-    internal `generateId(floor?)` ignores the floor for custom generators (P2 decides whether to
-    warn).
+    internal `generateId(floor?)` ignores the floor for custom generators. Stated as an exception
+    in spec 03 §8; P2 is asked to warn when such an id does not sort after the floor.
+13. **`EH_NOT_IMPLEMENTED`:** `agent.session()` throws it until P2. Spec 10 §1 forbids it in a
+    release, so P2 must remove every use before any release (request added to P2).
 12. **`ProjectionContext.sessionId`** is passed to `project()` as `sessionId` (spec 03 §6 updated).
 
 ## Requests to other phases
