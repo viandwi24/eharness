@@ -69,7 +69,7 @@ command/flags. Never hand-write a file the tool generates.
        "typecheck": "tsc --noEmit",
        "test": "bun test",
        "build": "tsdown",
-       "check:package": "publint && attw --pack . --profile esm-only",
+       "check:package": "publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz",
        "check:imports": "bun scripts/check-imports.ts",
        "release:version": "changeset version && bun install --lockfile-only"
      }
@@ -155,7 +155,8 @@ command/flags. Never hand-write a file the tool generates.
 - `scripts/smoke.mjs` imports through a shim written into the current directory: bare specifiers
   resolve relative to the importing file, so importing directly from the repo script would resolve
   `eharness` to the workspace (self-reference) instead of the installed tarball.
-- The P0 machine had no Node/npm: `attw --pack` shells out to `npm pack`, so `check:package` was
-  verified as `publint` + `attw <bun pm pack tarball> --profile esm-only`, and the smoke test ran
-  under Bun. CI (Node 22/24) is the real check.
+- Maintainer machines need no Node/npm: `check:package` packs with `bun pm pack` and runs attw on
+  that tarball (`attw --pack` would shell out to `npm pack`); the first publish uses
+  `bun publish` and the trusted publisher is configured on npmjs.com (release.md §4). Node is
+  exercised only in CI (`node-compat`, Node 22/24) and by the npm-based publish job.
 - No changeset for the bootstrap commit: `0.0.1` is published by hand (release.md §4.3).

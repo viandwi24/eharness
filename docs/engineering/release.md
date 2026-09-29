@@ -91,16 +91,18 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
    ```
 3. **First publish (manual, once).** npm trusted publishing can only be configured for a package
    that already exists on the registry, so the first version is published by hand:
+   No Node/npm needed locally; Bun reads the npm auth token from `~/.npmrc`:
    ```bash
-   npm login                      # account with 2FA
+   bun pm whoami                  # must print the npm account (2FA enabled); if not, add an
+                                  # npm token to ~/.npmrc or NPM_CONFIG_TOKEN
    bun install && bun run build && bun run check:package
-   npm publish --access public    # publishes the current version (0.0.1 placeholder from P0)
+   bun publish --access public    # publishes the current version (0.0.1 placeholder from P0);
+                                  # 2FA prompts in the browser (or pass --otp <code>)
    ```
-4. **Configure the trusted publisher** (npmjs.com → package → Settings → Trusted publishing, or CLI
-   with npm ≥ 11.15):
-   ```bash
-   npm trust github eharness --repo OWNER/eharness --file release.yml --env npm --allow-publish
-   ```
+4. **Configure the trusted publisher** on npmjs.com → package → Settings → Trusted publishing →
+   GitHub Actions: repository `OWNER/eharness`, workflow `release.yml`, environment `npm`.
+   (Equivalent CLI, needs npm ≥ 11.15:
+   `npm trust github eharness --repo OWNER/eharness --file release.yml --env npm --allow-publish`.)
    The workflow file name (`release.yml`) and environment (`npm`) must match exactly.
 5. **Lock down tokens:** npmjs.com → package → Settings → Publishing access → "Require two-factor
    authentication and disallow tokens". From now on only the workflow can publish.
@@ -152,7 +154,7 @@ git switch -c release/0.3 v0.3.4           # branch from the tag
 # fix + changeset (patch) via PR into release/0.3, CI must pass
 bunx changeset version                      # → 0.3.5 + CHANGELOG, commit, push
 bun run build && bun run check:package
-npm publish --tag v0.3-latest              # interactive 2FA publish (tokens stay disallowed)
+bun publish --tag v0.3-latest              # interactive 2FA publish (tokens stay disallowed)
 git tag v0.3.5 && git push --tags
 ```
 

@@ -37,7 +37,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "build": "tsdown",
-    "check:package": "publint && attw --pack . --profile esm-only",
+    "check:package": "publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz",
     "check:imports": "bun scripts/check-imports.ts",
     "release:version": "changeset version && bun install --lockfile-only"
   },
