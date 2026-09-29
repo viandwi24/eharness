@@ -8,7 +8,15 @@
  */
 import type { FileSystem, ToolOutputStore } from './types.ts'
 
+export { classifyToolResult, type FileToolResultKind } from './classify.ts'
 export { normalizePath } from './paths.ts'
+export {
+  DEFAULT_MAX_READ_CHARS,
+  DEFAULT_TOOL_OUTPUTS_DIR,
+  type FilesystemDataParts,
+  filesystem,
+} from './plugin.ts'
+export { type FsSkillSourceOptions, fsSkillSource } from './skill-source.ts'
 export type {
   DeleteResult,
   FileChangeData,
