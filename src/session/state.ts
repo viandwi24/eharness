@@ -34,6 +34,16 @@ export interface StateStore {
   write(options?: { cas?: boolean }): Promise<boolean>
   /** Write only when dirty. */
   writeIfDirty(): Promise<void>
+  /** Capture the in-memory state (before a turn's preparation). */
+  checkpoint(): StateCheckpoint
+  /** Discard in-memory changes made after `checkpoint()` (a turn failed before its commit point). */
+  restore(checkpoint: StateCheckpoint): void
+}
+
+/** Opaque in-memory state capture of {@link StateStore.checkpoint}. */
+export interface StateCheckpoint {
+  readonly snapshot: SessionStateSnapshot
+  readonly version: number
 }
 
 function empty(): SessionStateSnapshot {
@@ -148,6 +158,15 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
     },
     async writeIfDirty() {
       if (store.dirty) await store.write()
+    },
+    checkpoint() {
+      return { snapshot: structuredClone(snapshot), version }
+    },
+    restore(checkpoint) {
+      const rev = snapshot.rev
+      snapshot = structuredClone(checkpoint.snapshot)
+      snapshot.rev = rev
+      version = checkpoint.version
     },
   }
   return store
