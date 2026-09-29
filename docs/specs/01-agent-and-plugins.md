@@ -238,6 +238,9 @@ export interface HarnessContext<DP extends DataPartMap = {}> {
   readonly log: HarnessLogger
   /** Aborts on session close. Turn-level abort is `turn.abortSignal`. */
   readonly signal: AbortSignal
+  /** Non-fatal warning on the session channel (onWarning / default dedup, strict escalation,
+   *  data-eh.warning during a turn); details.plugin = this plugin unless given (spec 10 §2). */
+  warn(warning: HarnessWarning): void
 }
 
 export interface TurnInfo {
