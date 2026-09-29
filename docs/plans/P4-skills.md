@@ -46,12 +46,13 @@ filesystem source (P5).
 1. **Index split across blocks.** Spec 07 §4.1 shows one sorted index; spec 02 §5 puts static
    skills in block 1 and dynamic ones in block 2. Chosen: block 1 lists static skills (header +
    intro), block 2 lists dynamic ones under `# More skills` (or the full header + intro when there
-   are no static skills). Each part is sorted. The search-mode hint goes to block 2 when any
-   dynamic source is configured (the mode depends on dynamic lists), else block 1. Spec 07 updated.
+   are no static skills). Each part is sorted. In search mode block 1 keeps the static index (or
+   the hint when static skills alone exceed the limit) and block 2 carries only the search hint
+   (review item 3). Spec 07 §4.1–§4.2 updated.
 2. **Search hint text** was not specified: `# Skills` + one line (spec 07 §4.2 updated).
-3. **YAML subset excludes block scalars (`|`, `>`) and multi-line plain scalars**, as the spec
-   lists them nowhere. Real-world `SKILL.md` files sometimes use `description: >`; such skills are
-   rejected (`W_INVALID_SKILL` in P5). Supporting them is a small additive change if wanted.
+3. **YAML block scalars** — resolved (orchestrator DECISION): `|`, `|-`, `>`, `>-` are supported
+   for string values (plain indentation, no indentation indicators, no `+`); everything else
+   unsupported is still rejected. The description is trimmed. Spec 07 §8 updated.
 4. **Failed `list()` warning code.** No code existed for skill sources; added
    `W_SKILL_SOURCE_FAILED` (spec 10, `src/errors.ts`; also used for failing `search()` /
    `locate()`). Reusing `W_TOOL_SOURCE_FAILED` would have been misleading.
@@ -60,16 +61,19 @@ filesystem source (P5).
    updated).
 6. **`ERROR: invalid path`** now carries the reason (`ERROR: invalid path: <reason>`) so the model
    can self-correct; other error strings are listed in spec 07 §4.3.
-7. **Static skills shadowed by a dynamic source.** A plugin's static skill after a root dynamic
-   source with the same name loses (first wins, `W_SHADOWED`) and disappears from block 1, so block
-   1 can depend on a dynamic listing in that corner case.
-8. **Skill tools appear only while at least one skill resolves** (spec wording). A dynamic source
-   going from 0 to ≥1 skills changes the tool list (cache bust). `staticCount` still counts only
-   static tools, so the breakpoint does not include the skill tools.
-9. **`skillsIndexLimit`** invalid values (negative, non-finite) fall back to 50 instead of a boot
-   error (boot validation is P2's `define-agent.ts`).
-10. **Warnings from sources:** `HarnessContext` has no `warn`, so a source (P5's `fsSkillSource`)
-    cannot emit `W_INVALID_SKILL` itself. Handed to P5 (see its requests).
+7. **Static vs dynamic collisions** — resolved (review item 1): static skills are resolved before
+   every dynamic source and always win (spec 02 §7); block 1 never depends on a dynamic listing.
+   Spec 07 §6 updated.
+8. **Skill tool presence** — resolved (orchestrator DECISION): decided per session.
+   `load_skill`/`read_skill_file` exist whenever a skill source is configured (static skills
+   count); `search_skills` iff `skillsIndexLimit` is finite and (static count > limit or any
+   dynamic source). `skillsIndexLimit: Infinity` is accepted. `staticCount` still counts only
+   static tools, so the explicit breakpoint does not include the skill tools.
+9. **`skillsIndexLimit`** invalid values (negative, NaN) fall back to 50 instead of a boot error
+   (boot validation is P2's `define-agent.ts`).
+10. **Warnings from sources** — resolved (orchestrator DECISION): `HarnessContext.warn(warning)`
+    added (session warning channel, `details.plugin`, default dedup per code + plugin + message,
+    strict escalation, `data-eh.warning` in a turn). Spec 01 §4 and spec 10 §2 updated.
 
 ## Requests to other phases
 
@@ -97,4 +101,5 @@ filesystem source (P5).
 - `src/session/runtime.ts` + `session.ts` (`doOpen`): `OpenSession.skills` built with
   `buildSessionSkills` (plugin order, setup before session contributions, `skillsIndexLimit`).
 - `src/errors.ts`: `W_SKILL_SOURCE_FAILED`. `src/plugin/types.ts`: `location` in the
-  `skill.load` event.
+  `skill.load` event, `HarnessContext.warn`. `src/session/context.ts`: `ctx.warn` routed to
+  `rt.warn`.
