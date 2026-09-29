@@ -48,9 +48,11 @@ const entries = {
   'eharness/storage/memory': ['memoryMessages', 'memoryState'],
   'eharness/mcp': ['experimental_placeholder'],
   'eharness/testing': [
+    'SKILL_SOURCE_FIXTURE',
     'idGeneratorConformance',
     'messageAdapterConformance',
     'scriptedModel',
+    'skillSourceConformance',
     'stateAdapterConformance',
   ],
 }
