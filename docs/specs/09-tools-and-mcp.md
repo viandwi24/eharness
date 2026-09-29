@@ -116,11 +116,19 @@ toolOutput?: {
   `TOOL_OUTPUT_TRUNCATED` (spec 10 §5). Structured outputs are serialized
   first; if the result is still over budget the output becomes
   `{ truncated: true, preview: <truncated JSON string>, originalChars: N }`.
+- Size: a string output is measured by its length, any other output by the length of its JSON
+  serialization. `perTool` wins over `maxChars`.
 - **`evict`:** requires the `toolOutputs` service (provided by the filesystem plugin,
-  spec 08 §2). The full output is written to `/.eharness/tool-outputs/<toolCallId>.txt` and the
-  model gets the truncated preview plus `Full output saved to <path>; use read_file with
-  offset/limit to see more.` Without the service, `evict` falls back to `truncate`.
-- Every limited result raises `W_TOOL_OUTPUT_LIMITED` (tool name, original size).
+  spec 08 §2). The full output (strings as is, structured outputs as indented JSON) is written to
+  `/.eharness/tool-outputs/<toolCallId>.txt` and the model gets the truncated preview plus
+  `Full output saved to <path>; use read_file with offset/limit to see more.` — appended after a
+  blank line for strings, as `note` in `{ truncated, preview, originalChars, note }` for structured
+  outputs. Without the service (or when `put` fails), `evict` falls back to `truncate`.
+- A tool's own `toModelOutput` is bypassed for the `{ truncated: true, … }` form (it is sent as
+  a `json` output), because that form no longer has the shape the converter expects (e.g. MCP
+  `CallToolResult`s).
+- Every limited result raises `W_TOOL_OUTPUT_LIMITED` (details: `tool`, `toolCallId`,
+  `originalChars`, `maxChars`, `strategy`).
 - The guard (spec 06 §6) and the compaction transcript use the same truncation helper.
 
 ## 5. Timeouts, retries, repair, preliminary results

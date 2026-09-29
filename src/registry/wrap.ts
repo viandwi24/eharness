@@ -20,6 +20,7 @@ import type { ApprovalConfig } from '../agent/types.ts'
 import { HarnessToolError, type HarnessWarning } from '../errors.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
+import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
 
 /** Dependencies of the wrappers. */
 export interface ToolWrapDeps {
@@ -28,6 +29,8 @@ export interface ToolWrapDeps {
   warn(warning: HarnessWarning, key?: string): void
   /** Write `data-eh.status { state: 'tool', tool }` (no-op outside a turn). */
   status(toolName: string): void
+  /** Tool output limits (spec 09 §4); omitted = no limits (unit tests). */
+  limits?: Omit<OutputLimitDeps, 'warn'>
 }
 
 /** Report a failing hook (`W_HOOK_FAILED`). */
@@ -65,9 +68,10 @@ export function isUnwrapped(name: string, tool: Tool): boolean {
 }
 
 /**
- * Wrap a tool's `execute`: status part, `tool.after` chain on the final output, preliminary
- * (AsyncIterable) results passed through, thrown errors re-thrown as `HarnessToolError` (so
- * `String(error)` is identical on the wire, in the UI and in storage).
+ * Wrap a tool's `execute`: status part, `tool.after` chain on the final output, output limits on
+ * the final output (spec 09 §4), preliminary (AsyncIterable) results passed through, thrown errors
+ * re-thrown as `HarnessToolError` (so `String(error)` is identical on the wire, in the UI and in
+ * storage).
  */
 export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
   if (isUnwrapped(name, tool)) return tool
@@ -98,6 +102,17 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
     return current
   }
 
+  const limits = deps.limits
+  /** `tool.after` chain, then the output limit: the final value only. */
+  const finish = async (input: unknown, output: unknown, toolCallId: string) => {
+    const afterOutput = deps.hooks.has('tool.after')
+      ? await after(input, output, toolCallId)
+      : output
+    return limits === undefined
+      ? afterOutput
+      : limitToolOutput(name, toolCallId, afterOutput, { ...limits, warn: deps.warn })
+  }
+
   const wrapped = (input: unknown, options: ToolExecutionOptions<unknown>): unknown => {
     deps.status(name)
     let result: unknown
@@ -120,21 +135,34 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
         } catch (error) {
           throw toToolError(error, options.toolCallId)
         }
-        if (has && deps.hooks.has('tool.after')) {
-          const final = await after(input, last, options.toolCallId)
+        if (has) {
+          const final = await finish(input, last, options.toolCallId)
           if (final !== last) yield final
         }
       })()
     }
     return Promise.resolve(result).then(
-      (output) =>
-        deps.hooks.has('tool.after') ? after(input, output, options.toolCallId) : output,
+      (output) => finish(input, output, options.toolCallId),
       (error: unknown) => {
         throw toToolError(error, options.toolCallId)
       },
     )
   }
-  return { ...tool, execute: wrapped } as Tool
+  const toModelOutput = tool.toModelOutput as
+    | ((options: { toolCallId: string; input: unknown; output: unknown }) => unknown)
+    | undefined
+  if (limits === undefined || toModelOutput === undefined) {
+    return { ...tool, execute: wrapped } as Tool
+  }
+  // a limited structured output no longer has the shape the tool's own converter expects
+  return {
+    ...tool,
+    execute: wrapped,
+    toModelOutput: (options: { toolCallId: string; input: unknown; output: unknown }) =>
+      isLimitedOutput(options.output)
+        ? { type: 'json', value: options.output }
+        : toModelOutput(options),
+  } as Tool
 }
 
 /** `experimental_refineToolInput` map running the `tool.before` chain, or `undefined`. */
