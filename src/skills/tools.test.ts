@@ -206,6 +206,39 @@ describe('load_skill', () => {
   })
 })
 
+describe('load_skill robustness', () => {
+  test('unserializable meta (BigInt, circular) becomes an ERROR string', async () => {
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    for (const meta of [{ big: 1n }, { nested: circular }]) {
+      const d = await deps([
+        { source: memory('db', [doc()], {}, { load: () => doc({ meta: meta as never }) }) },
+      ])
+      expect(await loadSkillText(d, 'pine-v6')).toStartWith(
+        'ERROR: skill "pine-v6" could not be loaded:',
+      )
+    }
+  })
+
+  test('non-plain meta is ignored', async () => {
+    const d = await deps([
+      {
+        source: memory(
+          'db',
+          [doc()],
+          {},
+          {
+            load: () => doc({ meta: new Map([['k', 1]]) as never }),
+          },
+        ),
+      },
+    ])
+    expect(await loadSkillText(d, 'pine-v6')).toStartWith(
+      '---\nname: pine-v6\ndescription: Pine v6.\n---',
+    )
+  })
+})
+
 describe('read_skill_file', () => {
   test('reads text and binary files', async () => {
     const bin = memory(
@@ -371,12 +404,14 @@ describe('search_skills', () => {
 })
 
 describe('createSkillTools', () => {
-  test('none without skills; load/read in index mode; + search_skills in search mode', async () => {
+  test('presence follows the session configuration, not what resolves', async () => {
     expect(createSkillTools(await deps([]))).toEqual([])
-    const index = createSkillTools(await deps([{ source: memory('db', [doc()]) }]))
-    expect(index.map((t) => t.name)).toEqual(['load_skill', 'read_skill_file'])
-    const search = createSkillTools(await deps([{ source: memory('db', [doc()]) }], { limit: 0 }))
-    expect(search.map((t) => t.name)).toEqual(['load_skill', 'read_skill_file', 'search_skills'])
+    const empty = createSkillTools(
+      await deps([{ source: memory('db', []) }], { limit: Number.POSITIVE_INFINITY }),
+    )
+    expect(empty.map((t) => t.name)).toEqual(['load_skill', 'read_skill_file'])
+    const dynamic = createSkillTools(await deps([{ source: memory('db', []) }]))
+    expect(dynamic.map((t) => t.name)).toEqual(['load_skill', 'read_skill_file', 'search_skills'])
   })
 
   test('tools validate their input and return strings', async () => {

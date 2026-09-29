@@ -129,10 +129,12 @@ const skillCalls: ScriptedStepInput[] = [
 
 describe('static and dynamic skills are indistinguishable for the model (golden)', () => {
   test('same tool outputs for the same content', async () => {
-    const staticRun = setup(skillCalls, { skills: [defineSkill(PINE)] })
+    // an unlimited index keeps search_skills away, so both tool lists are comparable
+    const unlimited = { skillsIndexLimit: Number.POSITIVE_INFINITY }
+    const staticRun = setup(skillCalls, { ...unlimited, skills: [defineSkill(PINE)] })
     const staticResult = await staticRun.agent.session('s').send('go').result
     const dynamicSource = rowSource([PINE])
-    const dynamicRun = setup(skillCalls, { skills: [dynamicSource] })
+    const dynamicRun = setup(skillCalls, { ...unlimited, skills: [dynamicSource] })
     const dynamicResult = await dynamicRun.agent.session('s').send('go').result
     expect(staticResult.stop).toBe('complete')
     expect(dynamicResult.stop).toBe('complete')
@@ -188,18 +190,60 @@ describe('prompt layout and tool order', () => {
       'static_tool',
       'load_skill',
       'read_skill_file',
+      'search_skills',
       'dyn_tool',
     ])
   })
 
-  test('no skills: no index, no skill tools', async () => {
-    const { agent, model } = setup([{ text: 'ok' }], {
-      instructions: 'Hi.',
-      skills: [rowSource([])],
-    })
+  test('no skill sources: no index, no skill tools', async () => {
+    const { agent, model } = setup([{ text: 'ok' }], { instructions: 'Hi.' })
     await agent.session('s').send('hi').result
     expect(systemOf(model.calls[0])).toEqual(['Hi.'])
     expect(toolNames(model.calls[0])).toEqual([])
+  })
+
+  test('the skill tool list is stable across turns (empty, failing, growing past the limit)', async () => {
+    let rows: Skill[] | 'fail' = []
+    const live = defineSkillSource({
+      id: 'db:live',
+      refresh: 'turn',
+      list: () => {
+        if (rows === 'fail') throw new Error('db down')
+        return rows.map((r) => ({ name: r.name, description: r.description }))
+      },
+      load: (name) => {
+        const row = rows === 'fail' ? undefined : rows.find((r) => r.name === name)
+        return row === undefined ? null : { ...row, manifest: [] }
+      },
+      readFile: () => null,
+    })
+    const { agent, model } = setup(
+      [
+        { toolCalls: [{ toolName: 'load_skill', input: { name: 'a' } }] },
+        { text: '1' },
+        { text: '2' },
+        { text: '3' },
+        { text: '4' },
+      ],
+      { skills: [live], skillsIndexLimit: 2 },
+    )
+    const session = agent.session('s')
+    const first = await session.send('empty').result
+    expect(toolOutputs(first.messages.find((m) => m.id === first.messageId))).toEqual([
+      ['load_skill', 'ERROR: skill "a" not found'],
+    ])
+    rows = 'fail'
+    await session.send('failing').result
+    rows = [{ name: 'a', description: 'A.', content: 'a' }]
+    await session.send('one').result
+    rows = ['a', 'b', 'c'].map((n) => ({ name: n, description: `${n}.`, content: n }))
+    await session.send('three').result
+    const lists = model.calls.map((c) => JSON.stringify(c.tools))
+    expect(model.calls).toHaveLength(5)
+    expect(new Set(lists).size).toBe(1)
+    expect(toolNames(model.calls[0])).toEqual(['load_skill', 'read_skill_file', 'search_skills'])
+    expect(systemOf(model.calls[0])).toEqual([])
+    expect(systemOf(model.calls[4])).toEqual([`# Skills\n${SKILLS_SEARCH_HINT}`])
   })
 
   test('search mode above skillsIndexLimit: hint + search_skills', async () => {
@@ -374,5 +418,64 @@ describe('skill.load hooks through a plugin (spec 07 §7)', () => {
         location: { service: 'fs', root: '/skills/pine-v6' },
       },
     ])
+  })
+})
+
+describe('ctx.warn (sources report their own problems)', () => {
+  test('reaches onWarning with the owner and the turn stream as data-eh.warning', async () => {
+    const plugin = definePlugin({
+      name: 'fsx',
+      setup: () => ({
+        skills: [
+          defineSkillSource({
+            id: 'fs:/skills',
+            list: (ctx) => {
+              ctx.warn({
+                code: 'W_INVALID_SKILL',
+                message: 'Skipped /skills/bad/SKILL.md: invalid frontmatter',
+                details: { source: 'fs:/skills' },
+              })
+              return []
+            },
+            load: () => null,
+            readFile: () => null,
+          }),
+        ],
+      }),
+    })
+    const { agent, warnings } = setup([{ text: 'ok' }], { plugins: [plugin] })
+    const run = agent.session('s').send('hi')
+    const chunks: Array<{ type: string; data?: unknown }> = []
+    for await (const chunk of run.stream as ReadableStream<{ type: string; data?: unknown }>) {
+      chunks.push(chunk)
+    }
+    await run.result
+    expect(warnings).toEqual([
+      {
+        code: 'W_INVALID_SKILL',
+        message: 'Skipped /skills/bad/SKILL.md: invalid frontmatter',
+        details: { plugin: 'fsx', source: 'fs:/skills' },
+      },
+    ])
+    expect(chunks.filter((c) => c.type === 'data-eh.warning').map((c) => c.data)).toEqual([
+      { code: 'W_INVALID_SKILL', message: 'Skipped /skills/bad/SKILL.md: invalid frontmatter' },
+    ])
+  })
+
+  test('strict mode escalates misuse codes', async () => {
+    let caught: unknown
+    const plugin = definePlugin({
+      name: 'p',
+      session: (ctx) => {
+        try {
+          ctx.warn({ code: 'W_WRITE_OUTSIDE_TURN', message: 'misuse' })
+        } catch (error) {
+          caught = error
+        }
+      },
+    })
+    const { agent } = setup([{ text: 'ok' }], { plugins: [plugin], strict: true })
+    await agent.session('s').send('hi').result
+    expect(isHarnessError(caught, 'EH_CONFIG_INVALID')).toBe(true)
   })
 })
