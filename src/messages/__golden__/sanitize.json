@@ -1,0 +1,85 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "hi"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool-call",
+        "toolCallId": "a",
+        "toolName": "t",
+        "input": {}
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "b",
+        "toolName": "t",
+        "input": {}
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "type": "tool-result",
+        "toolCallId": "a",
+        "toolName": "t",
+        "output": {
+          "type": "text",
+          "value": "ok"
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "b",
+        "toolName": "t",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool-call",
+        "toolCallId": "c",
+        "toolName": "t",
+        "input": {}
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "type": "tool-result",
+        "toolCallId": "c",
+        "toolName": "t",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "next"
+      }
+    ]
+  }
+]
