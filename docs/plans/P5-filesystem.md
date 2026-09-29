@@ -98,3 +98,9 @@ suite. Built **only** with the public API (`check:imports`).
     `SKILL.md` next turn but not mid-turn) is yours; P4's static/dynamic part is in
     `src/skills/skills.int.test.ts` and can serve as a template.
   - `locate()` results reach `skill.load` hooks as `e.location` (spec 07 §7).
+- From P6: the core now limits every tool output to `toolOutput.maxChars` (default 50_000,
+  spec 09 §4). `read_file`'s window stops before `maxReadChars` (also 50_000) but the
+  `(Showing lines …)` footer is appended after it, so a full-budget read is ~70 characters over
+  the default limit and gets a middle cut (`TOOL_OUTPUT_TRUNCATED`) that drops a few lines.
+  Suggested fix: reserve the footer inside `maxReadChars` in `renderWindow()`
+  (`src/filesystem/tools.ts`), or default `maxReadChars` slightly below the core limit.
