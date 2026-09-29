@@ -31,7 +31,7 @@ export type {
 } from './types.ts'
 export { contentVersion } from './version.ts'
 
-declare module '../index.ts' {
+declare module 'eharness' {
   interface HarnessServices {
     /** The file system of the session, provided by the `filesystem()` plugin (spec 08). */
     fs: FileSystem
