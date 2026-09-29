@@ -1,6 +1,6 @@
 # P8 — Examples, README, 0.1.0 release
 
-Status: todo · Branch: `phase/P8-release`
+Status: in progress · Branch: `phase/P8-release`
 
 ## Goal
 
