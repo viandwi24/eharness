@@ -1,0 +1,165 @@
+# Spec 09 — Tools and MCP
+
+Status: **Accepted** (v0). Modules: `src/registry/tools.ts`, `src/mcp` (`eharness/mcp`).
+
+## 1. Tools are AI SDK tools
+
+Any `Tool` from `ai` (`tool()`, `dynamicTool()`, provider-defined tools) is accepted unchanged.
+eharness only:
+
+- resolves `(ctx) => Tool` inputs once per session (spec 02 §3.1);
+- runs `tool.before` through AI SDK `experimental_refineToolInput` (before approval and
+  execution, spec 01 §5);
+- wraps `execute` (`{ ...tool, execute: wrapped }`) to run `tool.after`, apply output limits (§4),
+  write `data-eh.status { state: 'tool', tool }` and turn thrown errors into `HarnessToolError`
+  (spec 10 §1.1);
+- builds the per-step approval function (spec 11 §3);
+- adds `tool_search` when deferred tools exist (spec 02 §3.3);
+- adds skill tools (spec 07 §4.3).
+
+Not wrapped: tools without `execute` (client tools, §6), provider-executed tools and
+`toolSearch()` (AI SDK replaces its `execute`; observe searches through stream parts instead).
+
+Reserved tool names: `tool_search`, `load_skill`, `read_skill_file`, `search_skills`. Using them →
+`EH_DUPLICATE_TOOL`.
+
+Tool approval is supported through AI SDK `toolApproval` (spec 11 §3). eharness code never sets
+the deprecated tool-level `needsApproval`; a tool that sets it itself still works (AI SDK
+evaluates it) but warns once with `W_DEPRECATED`.
+
+## 2. `ToolSource`
+
+Defined in spec 02 §3.2. Semantics:
+
+- `open()` at session open (before the first `list()`), `close()` on session close/eviction.
+- `list()` errors: warning `W_TOOL_SOURCE_FAILED`, source contributes no tools for that period;
+  the turn continues.
+- Returned tool names are validated (`^[a-zA-Z0-9_-]{1,64}$`); invalid names are skipped with
+  `W_INVALID_TOOL_NAME`. Reserved names are skipped with `W_SHADOWED`.
+
+## 3. `mcpServer` (`eharness/mcp`)
+
+Thin `ToolSource` over `@ai-sdk/mcp` (optional peer dependency).
+
+```ts
+import { mcpServer } from 'eharness/mcp'
+
+export function mcpServer(opts: McpServerOptions): ToolSource
+
+export interface McpServerOptions {
+  /** Short name; used as tool prefix and source id 'mcp:<name>'. ^[a-z0-9-]{1,32}$ */
+  name: string
+  /** Passed to createMCPClient({ transport }). Or a resolver per session (per-user credentials). */
+  transport: MCPClientConfig['transport'] | ((ctx: HarnessContext) => MCPClientConfig['transport'] | Promise<MCPClientConfig['transport']>)
+  /** Tool name prefix. Default `${name}_`. Use '' to disable. */
+  prefix?: string
+  /** Allow/deny lists on the server's tool names (before prefixing). */
+  allow?: string[]
+  deny?: string[]
+  /** Mark tools deferred → discovered via tool_search. Default 'auto' = deferred when the server exposes > 20 tools. */
+  defer?: boolean | 'auto'
+  /** 'lazy' (default): connect at the first turn of the session. 'eager': connect at session open. */
+  connect?: 'lazy' | 'eager'
+  /** Pin tool definitions on first connect and block changed definitions (drift). Default false. */
+  pinDefinitions?: boolean
+  /** createMCPClient `maxRetries`: retries of tools/call requests only (not connect). Default 0. */
+  maxRetries?: number
+  refresh?: 'session' | 'turn'
+}
+```
+
+Lifecycle:
+
+- `@ai-sdk/mcp` is loaded with `await import('@ai-sdk/mcp')` at connect time (only type imports
+  are static), so importing `eharness/mcp` never fails; a missing package becomes a clear
+  `W_TOOL_SOURCE_FAILED` warning, and `mcpServer()` called with `connect: 'eager'` rejects the
+  session open with `EH_CONFIG_INVALID` ("install @ai-sdk/mcp").
+- One MCP client **per session** (credentials can differ per user). Created at the first turn
+  (`lazy`) or at `open()` (`eager`); closed in `close()`.
+- `list()` calls `client.tools()`, applies allow/deny, prefixes names, sets `deferLoading` per
+  `defer`.
+- `pinDefinitions`: on first successful connect, `await fingerprintTools(tools)` is stored in the
+  session state under `plugins[<owner plugin>]['mcp:<name>:pins']`, keyed by the **server** tool
+  name (before prefixing). On later lists `detectToolDrift()` runs; changed or added tools are
+  **excluded** and reported with `W_MCP_DRIFT`.
+- Re-pinning is an explicit application action:
+  `clearMcpPins(agent, sessionId, name, opts?: { stateAdapter?: StateAdapter }): Promise<void>`
+  (exported from `eharness/mcp`). If the session is cached (live), it clears through the live
+  session state (so the turn-end state write cannot restore the old pins); otherwise it uses the
+  session's effective `StateAdapter` (`opts.stateAdapter` when the session used a
+  `SessionOptions.storage.state` override, else the agent's). Pins are re-created on the next
+  connect.
+- MCP tool annotations (`readOnlyHint`, `destructiveHint`, …) stay in `toolMetadata`; use a
+  `tool.before` hook to deny destructive tools (annotations are untrusted hints).
+- Connection failures → `W_TOOL_SOURCE_FAILED`, zero tools, retried at the next turn regardless
+  of `refresh`.
+
+Top-level sugar: `defineHarnessAgent({ mcp: [mcpServer({...})] })` is identical to
+`tools: [mcpServer({...})]` — the `mcp` slot exists for readability.
+
+## 4. Tool output limits
+
+Large tool outputs are the main cause of context blow-ups and write amplification. The core limits
+every final output of a wrapped tool **before** it reaches the model, the stream and storage:
+
+```ts
+toolOutput?: {
+  maxChars?: number                          // default 50_000 per result (JSON-serialized length)
+  perTool?: Record<string, number | false>   // per final tool name; false = unlimited
+  strategy?: 'truncate' | 'evict'            // default 'truncate'
+}
+```
+
+- Order: `execute` → `tool.after` hooks → limit. Preliminary outputs (§5) are not limited; only
+  the final one.
+- **`truncate`:** strings keep the first 70% and the last 30% of the budget around a marker
+  `TOOL_OUTPUT_TRUNCATED` (spec 10 §5). Structured outputs are serialized
+  first; if the result is still over budget the output becomes
+  `{ truncated: true, preview: <truncated JSON string>, originalChars: N }`.
+- **`evict`:** requires the `toolOutputs` service (provided by the filesystem plugin,
+  spec 08 §2). The full output is written to `/.eharness/tool-outputs/<toolCallId>.txt` and the
+  model gets the truncated preview plus `Full output saved to <path>; use read_file with
+  offset/limit to see more.` Without the service, `evict` falls back to `truncate`.
+- Every limited result raises `W_TOOL_OUTPUT_LIMITED` (tool name, original size).
+- The guard (spec 06 §6) and the compaction transcript use the same truncation helper.
+
+## 5. Timeouts, retries, repair, preliminary results
+
+| Concern | Mechanism |
+|---|---|
+| Tool timeout | `settings.timeout.toolMs` or per tool `settings.timeout.tools.<name>Ms` (AI SDK); a timed-out tool becomes a tool error |
+| Step timeout | `settings.timeout.stepMs` / `chunkMs` / `firstChunkMs` → abort chunk → stop `'timeout'` (spec 04 §2) |
+| Turn timeout | `loop.turnTimeoutMs` (the core's own timer) |
+| Provider retries | `settings.maxRetries` (request) and `settings.streamRetries` (after streaming started; `reset-step` forwarded) |
+| Malformed tool calls | `config.repairToolCall` → AI SDK `repairToolCall`; otherwise the invalid call becomes a tool error the model can read |
+| Input normalization | `tool.before` hooks (via `experimental_refineToolInput`) |
+
+**Preliminary results.** A tool whose `execute` returns an `AsyncIterable` streams preliminary
+outputs (`preliminary: true` in the UI part) and its last value is the final output. The wrapper
+passes the iterable through untouched and applies `tool.after` and limits to the final value only.
+This is how a subagent tool streams the child's progress into the parent message; usage of the
+child is reported with `ctx.turn.addUsage()`.
+
+## 6. Client-side tools
+
+A tool without `execute` is a client tool: the model's call is streamed to the UI and the turn
+ends with `stop: 'tool-pending'` until the application calls `respond({ toolOutputs })`
+(spec 11 §4) — `handleChatRequest` does this for `useChat`'s `addToolOutput`. Client outputs pass
+through `tool.after` and output limits like server outputs.
+
+## 7. Deferred tools in practice
+
+```ts
+tools: [
+  defineToolSource({
+    id: 'catalog',
+    defer: true,
+    refresh: 'turn',
+    list: async (ctx) => buildToolsForTenant(ctx.runtime.tenantId),
+  }),
+]
+```
+
+The model sees `tool_search` and non-deferred tools; after searching, matching tools are callable
+from the next step and stay callable for the rest of the turn (eharness tracks discoveries across
+steps, spec 02 §3.3). Up to five matches are returned per search (AI SDK behaviour).

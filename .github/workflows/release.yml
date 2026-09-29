@@ -1,0 +1,136 @@
+# Release: Changesets v3 + npm trusted publishing (OIDC).
+#
+#   push to main/next ─▶ select-mode ─┬─ mode=version ─▶ version  (opens/updates "Version Packages" PR)
+#                                     └─ mode=publish ─▶ pack ─▶ publish (npm + git tags + GitHub releases)
+#
+# The npm trusted publisher MUST be configured for this exact file name: release.yml
+# and environment: npm. Docs: docs/engineering/release.md
+#
+# Gated by the repository variable RELEASE_ENABLED=true, set by the maintainer only AFTER the
+# manual first publish + trusted publisher setup (release.md §4). Until then every run is a no-op.
+name: Release
+
+on:
+  push:
+    branches: [main, next]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false # never cancel a publish half-way
+
+jobs:
+  select-mode:
+    if: >-
+      vars.RELEASE_ENABLED == 'true' &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/next')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      mode: ${{ steps.select-mode.outputs.mode }}
+      publish-plan-artifact-id: ${{ steps.select-mode.outputs.publish-plan-artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - uses: changesets/action/select-mode@v2
+        id: select-mode
+
+  version:
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'version'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # A GitHub App token (not GITHUB_TOKEN) so the version PR triggers CI; PRs opened with
+      # GITHUB_TOKEN do not start workflows and branch protection would block the merge.
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        with:
+          client-id: ${{ vars.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - uses: changesets/action/version@v2
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: bun run release:version # changeset version && bun install --lockfile-only
+          commit-message: 'chore(release): version packages'
+          pr-title: 'chore(release): version packages'
+        env:
+          # read by @changesets/changelog-github while generating CHANGELOG.md
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+
+  pack:
+    needs: select-mode
+    if: needs.select-mode.outputs.mode == 'publish'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      pack-dir-artifact-id: ${{ steps.pack.outputs.pack-dir-artifact-id }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - run: bun test
+      - run: bun run build
+      - run: bun run check:package
+      - uses: changesets/action/pack@v2
+        id: pack
+        with:
+          publish-plan-artifact-id: ${{ needs.select-mode.outputs.publish-plan-artifact-id }}
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm # must match the environment in the npm trusted publisher config
+    permissions:
+      contents: write # git tags + GitHub releases
+      id-token: write # npm trusted publishing (OIDC) + provenance
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Ensure npm supports trusted publishing (>= 11.5.1)
+        run: npm install -g npm@11 && npm --version
+      # @changesets/cli is needed by the publish sub-action; no lifecycle scripts while holding id-token
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - uses: changesets/action/publish@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pack-dir-artifact-id: ${{ needs.pack.outputs.pack-dir-artifact-id }}
+          create-github-releases: true
