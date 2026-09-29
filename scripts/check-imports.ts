@@ -3,6 +3,8 @@
  *
  * 1. Subpath modules (`src/filesystem|storage|mcp|testing`) import core only through the relative
  *    path to `src/index.ts`, never through other core files or the `eharness` self-reference.
+ *    Non-test files never import another subpath; test files of a subpath may (e.g. a filesystem
+ *    test running `fileSystemConformance` from `src/testing`), but still never core internals.
  * 2. Non-test files under `src/` never use `Bun.` or import `node:` built-ins.
  *
  * Exits with code 1 and lists every violation.
@@ -48,8 +50,10 @@ for await (const file of new Glob('**/*.{ts,mts,cts,js,mjs}').scan({ cwd: src })
 
     const target = resolve(dirname(path), specifier)
     const insideOwnSubpath = target.startsWith(`${join(src, subpath)}/`)
+    const insideOtherSubpath =
+      isTest && subpaths.some((name) => target.startsWith(`${join(src, name)}/`))
     const isCoreIndex = target === coreIndex || target === join(src, 'index')
-    if (!insideOwnSubpath && !isCoreIndex) {
+    if (!insideOwnSubpath && !insideOtherSubpath && !isCoreIndex) {
       violations.push(`${shown}: imports '${specifier}'; core is reachable only via src/index.ts`)
     }
   }
