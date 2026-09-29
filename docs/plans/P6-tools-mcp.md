@@ -1,6 +1,6 @@
 # P6 — Tool sources and MCP
 
-Status: todo · Branch: `phase/P6-tools-mcp`
+Status: in progress · Branch: `phase/P6-tools-mcp`
 
 ## Goal
 
