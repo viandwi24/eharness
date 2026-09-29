@@ -353,8 +353,8 @@ Validation runs on cold loads only (spec 05 §6), never on hot-path turns.
   The bump applies to that one id only; it does not move the generator's clock, so a skewed floor
   of one session never shifts the ids of other sessions (the session passes its newest id as the
   floor on every call).
-- **Exception:** a custom `config.generateId` takes no floor and is not bumped; the core warns when
-  such an id does not sort after the session floor (P2).
+- **Exception:** a custom `config.generateId` takes no floor and is not bumped; the core logs a
+  warning (`ctx.log.warn`, once per session) when such an id does not sort after the session floor.
 - The server always generates user message ids. A client-supplied id is kept only as
   `metadata.eharness.clientId` (useful for optimistic UIs).
 

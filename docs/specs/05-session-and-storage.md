@@ -24,8 +24,8 @@ export interface SessionOptions {
   /**
    * Marks a child session (e.g. a subagent run by a tool). Exposed as ctx.session.parent.
    * The core only records it (message metadata `parentId` is unrelated, spec 03 §3) and rejects
-   * depth > 8 with EH_CONFIG_INVALID. Child usage is reported to the parent turn with
-   * ctx.turn.addUsage() by the plugin that runs the child.
+   * depth > 8 with EH_CONFIG_INVALID when the session opens (ready() / run error). Child usage is
+   * reported to the parent turn with ctx.turn.addUsage() by the plugin that runs the child.
    */
   parent?: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
 }
@@ -177,7 +177,9 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
    model call: without `persist` it ends here and nothing is persisted; with `persist: true` the
    turn goes through the commit point (steps 10–12, so recovery and pending denial happen as for
    any input), saves the user message and an `eh.notice` (level `warning`, code
-   `EH_INPUT_BLOCKED`, the reason), and then ends.
+   `EH_INPUT_BLOCKED`, the reason), and then ends. A blocked turn creates no assistant message:
+   its `start` chunk carries a throwaway id (never stored), `TurnResult.messageId` is undefined and
+   `TurnResult.messages` holds the user message and the notice (`turn-end` names the notice id).
 9. **`turn.prepare` hooks** → final model, settings and active tools of the turn
    (`ctx.turn.model` / `settings`).
 10. **Generate ids** with the floor (spec 03 §8), in this order: the `eh.rewind` marker
@@ -211,7 +213,9 @@ written in this order:
     emit `turn-end`; `turn.end` hooks; release lock; clear running flag; resolve `run.result`;
     start the next queued turn, if any. Every step catches its own errors (a failing final save
     sets `stop: 'error'` / `EH_STORAGE` in `run.result`, spec 10 §1); the lock is always released
-    and the running flag always cleared.
+    and the running flag always cleared. `turn-end` and `turn.end` belong to committed turns only
+    (symmetric with `turn-start` / `turn.start`); an early failure, an early abort or a block
+    without `persist` emits only the `status` events.
 
 **Early failure (`committed === false`):** nothing is persisted — no assistant message, no
 `eh.notice`, no state write; `onEnd` skips the final save. The stream is `start` (with a throwaway id that is never stored, if
@@ -264,7 +268,10 @@ Then, before actually stopping:
 - **`turn.beforeEnd`** runs for `'complete'`, `'max-steps'` and `'length'` (spec 01 §5). A
   `continue` result delivers its reason as `data-eh.input` and runs one more step; `extendSteps`
   raises the budget (only for `'max-steps'`). At most `loop.maxContinues` forced continuations per
-  turn; further results are ignored with `W_CONTINUE_LIMIT`.
+  turn (`continue` and `extendSteps` both count); further results are ignored with
+  `W_CONTINUE_LIMIT`.
+- `step.end` `context` that is still waiting when the turn stops with anything but `'complete'` is
+  discarded: it is plugin context, not user input (no queued turn, no `input-dropped` event).
 
 Stops decided outside a step: `'aborted'` (user/abort signal), `'timeout'`, `'blocked'`
 (`input.submit`), `'interrupted'` (set on a recovered message, §9). Full list: spec 10 §4.
