@@ -50,3 +50,8 @@ Make eharness usable by someone who has never seen this repo, and publish `0.1.0
   answer `doGenerate` calls from the same script (recorded in `calls`), so users can test
   compaction with a single scripted model; P3's tests use a separate mock
   (`src/compaction/test-kit.ts`).
+- From P5: `scripts/check-imports.ts` (P0-owned) was relaxed so that **test files** of a subpath
+  may import other subpaths (e.g. `src/filesystem/*.test.ts` → `src/testing`), never core
+  internals; non-test files keep the strict rule. Mention it in `docs/engineering/conventions.md`
+  if you touch that file. Examples: `filesystem({ fs: memoryFs(seed), skills: { root: '/skills' } })`
+  plus `classifyToolResult` for terminal rendering of tool results.

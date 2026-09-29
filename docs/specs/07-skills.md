@@ -239,10 +239,19 @@ Adds `fsSkillSource(fs, { root })`:
   the keys `__proto__`/`constructor`/`prototype`, several documents. A numeric
   `name`/`description` is read as text.
 - Warnings: a source reports `W_INVALID_SKILL` itself through `ctx.warn` (spec 01 §4) and skips
-  the skill.
-- `load`: body + manifest of every other file under `<root>/<name>/`.
-- `readFile`: `fs.read(join(root, name, path))` after §5 validation.
-- `locate`: `{ service: 'fs', root: '<root>/<name>' }`.
+  the skill. `fsSkillSource` warns once per file version (`details: { source, path }`), so
+  `refresh: 'turn'` does not repeat the warning every turn.
+- `load`: body + manifest of every other file under `<root>/<name>/` (relative paths that pass §5
+  unchanged, UTF-8 sizes from `FileMeta.size`). A name that is not a valid skill name, a missing
+  `SKILL.md` or a mismatched `name` → `null`; an unparsable `SKILL.md` throws (the core answers
+  `ERROR: skill "<name>" could not be loaded: invalid SKILL.md: …`).
+- `readFile`: `fs.read(join(root, name, path))` after §5 validation (re-validated by the source;
+  invalid names or paths → `null`).
+- `locate`: `{ service: 'fs', root: '<root>/<name>' }` (the service name of the filesystem plugin).
+- Exported as `fsSkillSource(fs, { root, refresh? })` from `eharness/filesystem` (id
+  `fs:<normalized root>`, default `refresh: 'session'`; an invalid root or refresh throws
+  `EH_CONFIG_INVALID`), usable without the plugin. The plugin's `skills` option adds one per
+  session over its `fs`.
 - The skills root is **hidden** from the file tools by default (`hideSkillsRoot: true`), so there
   is one official way to read skills and the agent cannot edit its own skills unless explicitly
   allowed.
