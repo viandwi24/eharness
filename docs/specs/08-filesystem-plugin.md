@@ -38,6 +38,11 @@ declare module 'eharness' {
 }
 ```
 
+The augmentation declares both services as present; `toolOutputs` is not provided with
+`toolOutputs: false` (§2), and accessing a service that no plugin provides throws
+`EH_SERVICE_MISSING` (spec 01 §6). Code that may run without it (e.g. the core's `evict`
+strategy) looks the service up by name and falls back.
+
 Rules for adapters:
 
 - Paths are **normalized absolute POSIX** (`/src/main.pine`). The plugin normalizes before calling
@@ -115,8 +120,10 @@ export interface ToolOutputStore {
 }
 ```
 
-`put` writes `<dir>/<toolCallId>.txt` unconditionally (characters outside `[A-Za-z0-9_-]` in the
-id become `_`) and returns that path. The directory is read-only for the model (writes/deletes
+`put` writes `<dir>/<toolCallId>.txt` unconditionally and returns that path. Characters outside
+`[A-Za-z0-9_-]` in the id become `_`, and a changed (or empty) id gets `-<first 8 hex of
+contentVersion(id)>` appended, so distinct ids never share a file (`call/1` →
+`call_1-<hash>.txt`). The directory is read-only for the model (writes/deletes
 rejected) and omitted from `list_files` and `grep` unless the requested prefix is the directory or
 inside it; `read_file` with `offset`/`limit` pages through evicted outputs. Evicted files are never
 cleaned up by the core (the application owns retention). `dir` must not be `/`.
@@ -193,8 +200,10 @@ Exact formats (model-visible, api-stability.md):
   than one exact match without `replace_all` → `ERROR:` (never guess the location). The first level
   with any match decides, and the ambiguity rule applies at every level. Line-trimmed: the needle's
   lines (blank lines around it ignored, CRLF tolerated) are compared with whole file lines, both
-  trimmed; the replaced range starts after the first line's indentation and ends before the last
-  line's trailing whitespace. Whitespace-normalized: every whitespace run counts as one space.
+  trimmed; the replaced range ends before the last line's trailing whitespace. When the needle's
+  first line is indented, whole lines are replaced from the line start (`new_string` carries its
+  own indentation, so nothing is indented twice); an unindented needle keeps the file's
+  indentation of the first line. Whitespace-normalized: every whitespace run counts as one space.
   `new_string` is inserted verbatim; `replace_all` replaces all non-overlapping matches. An empty
   `old_string` or one equal to `new_string` → `ERROR:`.
 - **Optimistic lock:** all writes use `ifVersion` with the version read; `{ ok: false }` →

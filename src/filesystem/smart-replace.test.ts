@@ -33,6 +33,31 @@ describe('smartReplace cascade (spec 08 §4)', () => {
     expect(result.content).toBe('function f() {\n    if (x) {\n        return 2\n    }\n}\n')
   })
 
+  test('line-trimmed: an indented needle replaces whole lines (no double indentation)', () => {
+    const content = 'class A {\n    foo() {\n        return 1\n    }\n}'
+    const result = replaced(content, '  foo() {\n    return 1\n  }', '  foo() {\n    return 2\n  }')
+    expect(result.strategy).toBe('line-trimmed')
+    expect(result.content).toBe('class A {\n  foo() {\n    return 2\n  }\n}')
+  })
+
+  test('line-trimmed: Python-like indented needle keeps the replacement indentation verbatim', () => {
+    const content = 'def f():\n        if x:\n            return 1\n        return 0\n'
+    const result = replaced(
+      content,
+      '    if x:\n        return 1',
+      '        if x:\n            return 2',
+    )
+    expect(result.strategy).toBe('line-trimmed')
+    expect(result.content).toBe('def f():\n        if x:\n            return 2\n        return 0\n')
+  })
+
+  test('line-trimmed: an unindented needle keeps the file indentation of the first line', () => {
+    const content = 'def f():\n    if x:\n        return 1\n'
+    const result = replaced(content, 'if x:\nreturn 1', 'if y:\n        return 2')
+    expect(result.strategy).toBe('line-trimmed')
+    expect(result.content).toBe('def f():\n    if y:\n        return 2\n')
+  })
+
   test('line-trimmed match ignores blank lines around the needle and CRLF', () => {
     const content = 'a\r\n  b\r\n  c\r\nd'
     const result = replaced(content, '\nb\r\nc\n\n', 'X')
