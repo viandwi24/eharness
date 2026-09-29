@@ -124,7 +124,11 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
    `metadata.eharness.pending = null`; `metadata.eharness.stop` is removed (the message is running
    again, so a crash during the continuation is recovered like any turn, spec 05 §9). Record
    grants (effective later, §3.1). Save A → A'. If anything after the consumption fails, the turn
-   ends on A' (or A) and its answered calls are answered as interrupted (spec 05 §3).
+   ends on A' (or A) and its answered calls are answered as interrupted (spec 05 §3). If the
+   process dies between the consuming state write and the save of A', the next operation finds a
+   message whose `metadata.eharness.pending` is set although `state.core.pending` does not name it
+   and heals it at its commit point: open calls → `INTERRUPTED_CRASH`, `pending: null`,
+   `stop: 'interrupted'` (same for the `onNewInput: 'deny'` patch).
 4. **Continue the same message**: `createUIMessageStream({ originalMessages: [A'], … })`, `start`
    with `messageId: A.id` and no metadata (so `run.messageId` resolves to A's id and A's
    `createdAt`/`turnId` are kept), then one `tool-output-available` / `tool-output-error` chunk
@@ -251,7 +255,13 @@ the model saw it, stored order equals model order and reloads project identicall
 it in an in-memory FIFO per live session and returns a `HarnessRun` whose `turnId` is fixed now and
 whose stream starts when that turn starts (`run.messageId` resolves then; `input.submit` runs then,
 with `via: 'queue'`). `run.abort()` of a queued run that has not started removes and drops only
-that run. Queued turns are ordinary `send` turns
+that run.
+
+**Held while pending.** The queue does not start a turn while `state.core.pending` is set: a queued
+turn (send or wake) never applies `onNewInput` to approvals the user has not answered. It starts
+once the pending state is resolved — by `respond()`, or by an explicit new `send()` /
+`regenerate()` / `edit()` (which applies `onNewInput`). A continuation that ends `tool-pending`
+again keeps the queue held. Queued turns are ordinary `send` turns
 (`TurnInfo.queued = true`) and run in order after the current turn ends. `abort()` and `close()`
 drop the queue (dropped runs resolve with `stop: 'aborted'`, spec 05 §2). The queue is per process
 and lost on restart; cross-instance queuing is the application's job (a `SessionLock` rejection
@@ -278,13 +288,17 @@ inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, opts?: {
 - `wake` requires the session to be live in this process. Cross-process wake-ups are done by the
   application calling `agent.session(id).inject(…, { wake: true })` in the right process.
 - The delivered text is the kind's model projection (spec 03 §5.1), text parts joined with a blank
-  line; a kind that is not projected (`'omit'`, `null`) is not delivered inline (it stays a plain
-  saved message). File parts of a projection are not delivered inline.
+  line. A kind that is not projected (`'omit'`, `null`), a projection with file parts, or a
+  projection that throws (`W_HOOK_FAILED`) is not delivered inline: the message stays a plain
+  saved message without `deliveredIn` and reaches the model (whole) at the next turn.
 - An injection that was not delivered before the turn stopped stays undelivered (no
-  `deliveredIn`): it reaches the model at the next turn. No turn is started for it.
-- `wake` on an idle session whose `state.core.pending` is set starts **no** turn (a background
-  event must never deny approvals the user is looking at, §4.1); the event reaches the model at the
-  next turn. `run` is then `undefined`.
+  `deliveredIn`) and reaches the model at the next turn.
+- **`wake` is never lost.** When it cannot be delivered inline — the running turn no longer takes
+  input (it is ending), a manual `compact()` runs, the event is not deliverable inline, or it was
+  still waiting when the turn stopped (any stop but `aborted` / `timeout`) — a no-input `wake`
+  turn is queued (§6.2) and runs when the session is free; `inject()` returns its `run` when it
+  queued it. While `state.core.pending` is set the queue is held (§6.2), so a background event
+  never denies approvals the user is looking at (§4.1): the wake turn runs after `respond()`.
 
 ### 6.4 Hook-provided context
 
