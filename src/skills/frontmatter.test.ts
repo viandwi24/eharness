@@ -99,9 +99,65 @@ describe('parseFrontmatter (YAML subset)', () => {
     })
   })
 
+  test('block scalars: literal and folded, clip and strip', () => {
+    expect(
+      parse(
+        [
+          'lit: |',
+          '  line one',
+          '    indented',
+          '',
+          '  # not a comment',
+          'strip: |-',
+          '  a',
+          '  b',
+          '',
+          '',
+          'folded: >',
+          '  Use when writing Pine Script v6 indicators',
+          '  or strategies.',
+          '',
+          '  New paragraph.',
+          '    kept as is',
+          '  back.',
+          'foldstrip: >- # comment',
+          '  x',
+          '  y',
+          'meta:',
+          '  note: >',
+          '    nested',
+          '    fold',
+          '  after: 1',
+          'last: z',
+        ].join('\n'),
+      ),
+    ).toEqual({
+      lit: 'line one\n  indented\n\n# not a comment\n',
+      strip: 'a\nb',
+      folded:
+        'Use when writing Pine Script v6 indicators or strategies.\nNew paragraph.\n  kept as is\nback.\n',
+      foldstrip: 'x y',
+      meta: { note: 'nested fold\n', after: 1 },
+      last: 'z',
+    })
+  })
+
+  test('__proto__ and friends never touch the prototype', () => {
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+    rejects('__proto__:\n  polluted: 1')
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined()
+  })
+
   test('rejects unsupported syntax', () => {
-    rejects('description: |\n  multi\n  line')
-    rejects('description: >\n  folded')
+    rejects('description: |+\n  keep')
+    rejects('description: |2\n  indicator')
+    rejects('description: >\n')
+    rejects('description: |\nnot indented')
+    rejects('description: |\n    four\n  two')
+    rejects('__proto__: x')
+    rejects('constructor: x')
+    rejects('m:\n  prototype: 1')
+    rejects('l:\n  - |\n    x')
     rejects('description: first\n  continued')
     rejects('a: &anchor x')
     rejects('a: *alias')
@@ -132,7 +188,7 @@ describe('parseFrontmatter (YAML subset)', () => {
   })
 
   test('error messages carry the line number', () => {
-    expect(rejects('ok: 1\nbad: |\n  x')).toContain('line 2')
+    expect(rejects('ok: 1\nbad: &x')).toContain('line 2')
   })
 })
 
@@ -200,6 +256,29 @@ describe('parseSkillMarkdown', () => {
     })
   })
 
+  test('a realistic folded description', () => {
+    const text = [
+      '---',
+      'name: pdf-forms',
+      'description: >',
+      '  Fill and extract PDF form fields. Use when the user asks to fill a PDF',
+      '  form, read its fields, or flatten it.',
+      'license: Apache-2.0',
+      '---',
+      '# PDF forms',
+      '',
+    ].join('\n')
+    expect(parseSkillMarkdown(text)).toEqual({
+      meta: {
+        name: 'pdf-forms',
+        description:
+          'Fill and extract PDF form fields. Use when the user asks to fill a PDF form, read its fields, or flatten it.',
+        meta: { license: 'Apache-2.0' },
+      },
+      body: '# PDF forms\n',
+    })
+  })
+
   test('numeric names and descriptions are read as text', () => {
     expect(parseSkillMarkdown(doc('name: 404\ndescription: 12'))).toMatchObject({
       meta: { name: '404', description: '12' },
@@ -221,7 +300,7 @@ describe('parseSkillMarkdown', () => {
     expect(error(doc('name: a'))).toContain('description')
     expect(error(doc('name: a\ndescription: ""'))).toContain('empty')
     expect(error(doc(`name: a\ndescription: ${'x'.repeat(1025)}`))).toContain('1024')
-    expect(error(doc('name: a\ndescription: |\n  block'))).toContain('invalid frontmatter')
+    expect(error(doc('name: a\ndescription: &a x'))).toContain('invalid frontmatter')
     expect(error(doc('name: [a]\ndescription: d'))).toContain('string')
     expect(error(42 as unknown as string)).toContain('text')
   })
