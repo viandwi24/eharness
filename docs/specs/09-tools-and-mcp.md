@@ -49,8 +49,9 @@ export function mcpServer(opts: McpServerOptions): ToolSource
 export interface McpServerOptions {
   /** Short name; used as tool prefix and source id 'mcp:<name>'. ^[a-z0-9-]{1,32}$ */
   name: string
-  /** Passed to createMCPClient({ transport }). Or a resolver per session (per-user credentials). */
-  transport: MCPClientConfig['transport'] | ((ctx: HarnessContext) => MCPClientConfig['transport'] | Promise<MCPClientConfig['transport']>)
+  /** A transport config for createMCPClient({ transport }), or a resolver per session (per-user
+   *  credentials, custom transports). An MCPTransport instance → EH_CONFIG_INVALID (one client per session). */
+  transport: McpTransportConfig | ((ctx: HarnessContext) => McpTransportInput | Promise<McpTransportInput>)
   /** Tool name prefix. Default `${name}_`. Use '' to disable. */
   prefix?: string
   /** Allow/deny lists on the server's tool names (before prefixing). */
@@ -67,6 +68,7 @@ export interface McpServerOptions {
   refresh?: 'session' | 'turn'
 }
 
+export type McpTransportConfig = Exclude<MCPClientConfig['transport'], MCPTransport>
 export type McpTransportInput = MCPClientConfig['transport']
 export const MCP_AUTO_DEFER_THRESHOLD = 20   // defer: 'auto' defers above this many tools
 ```
@@ -83,10 +85,14 @@ Lifecycle:
 - One MCP client **per session** (credentials can differ per user). Created at the first turn
   (`lazy`) or at `open()` (`eager`); closed when the session closes. `ToolSource.close()` carries
   no session, so the source closes a session's client when that session's `ctx.signal` aborts
-  (session close/eviction) and `close()` waits for those clients to finish closing. A `transport`
-  must therefore be a config or a resolver that returns a **new** `MCPTransport` per call, never
-  one shared `MCPTransport` instance. An eager connect that fails for another reason than the
-  missing package does not fail the session open; the first `list()` retries it.
+  (session close/eviction) and `close()` waits for those clients to finish closing. When a session
+  open fails after this source opened (a later source's `open()` threw), the session's signal
+  never aborts; `close()` then runs as a disposer without a preceding abort and releases the most
+  recently opened session that has not listed its tools yet. A `transport` must therefore be a
+  config or a resolver that returns a **new** `MCPTransport` per call; an `MCPTransport` instance
+  is rejected with `EH_CONFIG_INVALID`. An eager connect that fails for another reason than the
+  missing package does not fail the session open: it only logs (`ctx.log.warn`), and the
+  `W_TOOL_SOURCE_FAILED` warning comes from the first `list()`, which retries the connect.
 - `list()` calls `client.tools()`, applies allow/deny, prefixes names, sets `deferLoading` per
   `defer`. `defer: 'auto'` counts the tools that remain after allow/deny and drift exclusion. A
   failing `client.tools()` closes the client, so the next turn reconnects.
@@ -98,7 +104,12 @@ Lifecycle:
   that allow/deny would have exposed). Pins are never updated by a drifted listing.
 - Re-pinning is an explicit application action:
   `clearMcpPins(agent, sessionId, name, opts?: { stateAdapter?: StateAdapter }): Promise<void>`
-  (exported from `eharness/mcp`). If the session is cached (live), it clears through the live
+  (exported from `eharness/mcp`). The server is resolved through the agent's own configuration:
+  the `mcpServer()` named `name` in the root `mcp` / `tools` config; if there is none (e.g. a
+  source contributed by a plugin), more than one, or the instance is shared by several agents, it
+  throws `EH_CONFIG_INVALID` instead of guessing (use one `mcpServer()` instance per agent). It
+  never reads or writes another agent's sessions. If the session is open in that source (live),
+  it clears through the live
   session state (so the turn-end state write cannot restore the old pins); otherwise it uses the
   session's effective `StateAdapter` (`opts.stateAdapter` when the session used a
   `SessionOptions.storage.state` override, else the agent's `storage.state`; the pins key is
@@ -106,8 +117,7 @@ Lifecycle:
   default in-memory storage (not reachable through the public API) it opens the session
   (`ready()`, without connecting the MCP server) and clears through the live state. Pins are
   re-created on the next listing that finds none (for a live `refresh: 'session'` source: the next
-  session open). Live sessions are matched by `agent.id` + `sessionId`; agents that share an id in
-  one process are not told apart.
+  session open).
 - MCP tool annotations (`readOnlyHint`, `destructiveHint`, …) stay in `toolMetadata`; use a
   `tool.before` hook to deny destructive tools (annotations are untrusted hints).
 - Connection failures → `W_TOOL_SOURCE_FAILED`, zero tools, retried at the next turn regardless
