@@ -254,7 +254,9 @@ A `step.prepare` `messages` rewrite is treated as the current turn (no droppable
      (`{ type: 'error-text', value: INTERRUPTED_UNKNOWN }`, spec 10 §5) instead of being removed —
      the model learns the call did not complete instead of silently losing it; the only
      exceptions are the calls whose `tool-approval-response` ends the wire of a `respond()`
-     continuation's first step (AI SDK executes those);
+     continuation's first step (AI SDK executes those); a result that shares the final tool
+     message with its approved response (an automatic approval) is kept, so the call is never
+     executed again;
    - a tool result without a call is removed;
    - empty messages are removed.
 2. **Hard cap:** limit = `window × maxContextRatio − reserveTokens`. While over the limit:

@@ -280,7 +280,7 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
     ctx: HarnessContext<DP>,
     e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown },
   ): Awaitable<ToolApprovalStatus | void>
-  /** Chainable. Rewrite tool input before approval and execution. Must be idempotent. */
+  /** Chainable. Rewrite tool input before approval and execution. Must be deterministic (spec 11 §3). */
   'tool.before'?(
     ctx: HarnessContext<DP>,
     e: { toolName: string; input: unknown },
