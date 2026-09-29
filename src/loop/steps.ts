@@ -497,7 +497,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       response === undefined || finishReason !== 'tool-calls'
         ? undefined
         : findPending(input.messageId, response, registry.clientTools)
-    const stop = decideStop({
+    let stop: StopReason | undefined = decideStop({
       finishReason,
       sawError,
       pending,
@@ -509,8 +509,12 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     })
     if (stop === undefined) continue
 
-    // pending input wins over 'complete'
-    if (stop === 'complete' && waiting.length > 0) continue
+    // pending input wins over 'complete' — but never past the step budget or the cost cap
+    if (stop === 'complete' && waiting.length > 0) {
+      if (stepIndex >= budget) stop = 'max-steps'
+      else if ((total.outputTokens ?? 0) > input.maxOutputTokens) stop = 'cost-cap'
+      else continue
+    }
     waiting = []
 
     if (stop === 'complete' || stop === 'max-steps' || stop === 'length') {
@@ -547,6 +551,13 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
           continue
         }
         if (out === undefined || out === null) continue
+        const isContinue = 'continue' in out && typeof out.continue?.reason === 'string'
+        const isExtend =
+          'extendSteps' in out &&
+          typeof out.extendSteps === 'number' &&
+          current === 'max-steps' &&
+          out.extendSteps > 0
+        if (!isContinue && !isExtend) continue // not actionable for this stop: ignored silently
         if (continues >= input.maxContinues) {
           rt.warn(
             {
@@ -565,7 +576,6 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
           return 'continue'
         }
         if ('extendSteps' in out && typeof out.extendSteps === 'number') {
-          if (current !== 'max-steps' || out.extendSteps <= 0) continue
           continues++
           budget += Math.floor(out.extendSteps)
           return 'continue'
