@@ -109,7 +109,9 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
 ## 5. Normal release
 
 1. Merge feature PRs with changesets into `main`.
-2. `release.yml` opens/updates **"chore(release): version packages"** PR.
+2. `release.yml` opens/updates **"chore(release): version packages"** PR (`bun run
+   release:version`: `changeset version`, then `scripts/sync-version.ts` copies the new version
+   into `export const version` of `src/index.ts`; a test fails if they ever differ).
 3. On that PR click **"Approve workflows to run"**: GitHub holds CI on PRs opened with
    `GITHUB_TOKEN` until someone with write access approves it. Wait for CI to pass, then review
    the generated `CHANGELOG.md` and version. Edit wording in the PR if needed.
