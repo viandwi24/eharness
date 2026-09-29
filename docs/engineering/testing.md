@@ -148,7 +148,8 @@ Harness interaction and robustness (spec 05, 11; mostly P2 and P7):
     `cacheControl` only in cache mode and only for Anthropic model ids; `toolOrder` stable.
 34. Overflow recovery: first call fails with a context-length `APICallError` before streaming →
     `W_OVERFLOW_RETRY`, compaction, retry succeeds, the held-back error chunk never reaches the
-    client; second failure → `stop: 'error'` `EH_CONTEXT_OVERFLOW`.
+    client; when the compaction retry and the tighter-guard retry overflow too (three failed
+    calls) → `stop: 'error'` `EH_CONTEXT_OVERFLOW`, the error chunk forwarded once.
 35. Per-turn overrides: `send({ model, settings, options })` validated by `callOptions`,
     `turn.prepare` can switch model; a model switch drops foreign-provider reasoning in projection.
 36. Chunk cloning: `attach()` replays chunks equal to what the first reader saw even when a data

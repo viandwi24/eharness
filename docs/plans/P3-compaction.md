@@ -16,7 +16,9 @@ one-query cold loads, the complete guard, `session.compact()` and `session.stats
 ## Owns
 
 `src/compaction/**`; edits in `src/session/load-context.ts` and `src/loop/**` limited to calling
-into compaction (coordinate via "Requests" if larger changes are needed).
+into compaction (coordinate via "Requests" if larger changes are needed); the hook-point edits in
+`src/session/session.ts` (token annotation in `persist()`, `stats()`, `compact()`, `TurnHost.compaction`)
+and `src/session/turn.ts` (turn wire + pre-turn check) named in P2's handoff.
 
 ## Checklist
 
@@ -105,7 +107,9 @@ into compaction (coordinate via "Requests" if larger changes are needed).
    `compaction: false`. Spec 06 §4 updated.
 7. **Pointer without a boundary in its range** (history changed behind our back): fall back to
    paging and delete the pointer. Spec 05 §5 updated.
-8. **Summarizer model in tests:** `scriptedModel` implements only `doStream`, so compaction with
+8. **Auto-shrink measures only the kept completed turns** (T is "never counted", §5.1), as
+   implemented; spec 06 §5.2 now says so explicitly.
+9. **Summarizer model in tests:** `scriptedModel` implements only `doStream`, so compaction with
    the agent's default model (no `compaction.model`) cannot be scripted; tests pass a
    `compaction.model` mock. Suggested for the owner of `src/testing` (see P8 request).
 
