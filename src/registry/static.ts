@@ -7,8 +7,9 @@
  *
  * @see docs/specs/02-context-registry.md#7-resolution-timing-and-conflicts
  */
-import { HarnessError } from '../errors.ts'
+import { HarnessError, isHarnessError } from '../errors.ts'
 import type { HarnessHooks, HookName, PluginContribution } from '../plugin/types.ts'
+import { defineSkill, defineSkillSource } from '../skills/define.ts'
 import { isToolSource } from './tool-source.ts'
 import {
   type InstructionFn,
@@ -178,8 +179,10 @@ export function addContribution(
     if (!Array.isArray(contribution.skills)) invalid(owner, '`skills` must be an array.')
     for (const entry of contribution.skills) {
       if (isSkillSource(entry)) {
+        validateSkillInput(owner, () => defineSkillSource(entry))
         registry.skillSources.push({ owner, source: entry })
       } else if (isSkill(entry)) {
+        validateSkillInput(owner, () => defineSkill(entry))
         const existing = registry.skills.find((s) => s.skill.name === entry.name)
         if (existing !== undefined) {
           throw new HarnessError(
@@ -203,6 +206,16 @@ export function addContribution(
       if (typeof fn !== 'function') invalid(owner, `hook '${name}' must be a function.`)
     }
     registry.hooks.push({ owner, phase, hooks: hooks as HarnessHooks })
+  }
+}
+
+/** Run a skill validator (spec 07 §1–§3), naming the owner in the error. */
+function validateSkillInput(owner: string, check: () => unknown): void {
+  try {
+    check()
+  } catch (error) {
+    if (isHarnessError(error, 'EH_CONFIG_INVALID')) invalid(owner, error.message)
+    throw error
   }
 }
 

@@ -28,7 +28,13 @@ export interface Skill {
 }
 ```
 
-A static skill is internally wrapped in an in-memory `SkillSource`. There is no separate code path.
+A static skill is internally wrapped in an in-memory `SkillSource` (one per owner, id
+`static:<owner>`; manifest sorted by path with UTF-8 byte sizes). There is no separate code path.
+
+`defineSkill` validates the name and description (§1), a string `content`, an object `meta` and
+every file path (§5, already normalized, no duplicates) and throws `EH_CONFIG_INVALID`. Skills and
+sources passed without `defineSkill` / `defineSkillSource` get the same checks at boot / session
+open, with the owner named in the error.
 
 ## 3. Dynamic skills — `SkillSource`
 
@@ -60,12 +66,20 @@ export interface SkillDoc extends SkillMeta {
 export type SkillFileContent = { type: 'text'; text: string } | { type: 'binary'; mediaType: string; data: Uint8Array }
 ```
 
-Contract tests: `skillSourceConformance(factory)` in `eharness/testing`.
+Contract tests: `skillSourceConformance(factory, options?)` in `eharness/testing`. The factory
+receives the fixture skills (`SKILL_SOURCE_FIXTURE`: nested files, non-ASCII text, one extra
+frontmatter field) and returns a source serving exactly them. It checks `id`/`refresh`, metadata-only
+`list()` whose items pass §1, `load()` bodies (compared trimmed) and manifests (valid relative
+paths, no `SKILL.md`, UTF-8 sizes when given), exact `readFile()` text, `null` for unknown
+skills/paths, `SKILL.md`, other skills' files and directories, copies on read, and well-formed `search()` / `locate()` results when
+implemented.
 
 Public helpers (exported from `eharness`, used by `fsSkillSource` and by anyone writing a source):
 
 ```ts
-/** Parse a SKILL.md: YAML-subset frontmatter (§8) + body. */
+/** Parse a SKILL.md: YAML-subset frontmatter (§8) + body (leading blank lines removed, `\n` line
+ *  endings); `name`/`description` validated (§1, description trimmed), other keys → `meta`
+ *  (omitted when empty). */
 export function parseSkillMarkdown(text: string): { meta: SkillMeta; body: string } | { error: string }
 /** Validate a skill-relative path (§5). Returns the normalized path or an error string. */
 export function validateSkillPath(path: string): { ok: true; path: string } | { ok: false; error: string }
@@ -76,7 +90,8 @@ export function validateSkillPath(path: string): { ok: true; path: string } | { 
 ### 4.1 Index (L1) — small catalogs
 
 If the registry has ≤ 50 skills (`config.skillsIndexLimit`), a block is appended to the static
-instructions (spec 02 §2, sorted by name):
+instructions (spec 02 §2, sorted by name; the two intro lines are literal, including the line
+break; whitespace inside a description is collapsed to single spaces):
 
 ```
 # Skills
@@ -86,6 +101,12 @@ task it covers; read its files with read_skill_file(name, path) only when the sk
 - …
 ```
 
+Static skills (in-memory sources) are listed at the end of system block 1, skills of dynamic
+sources at the end of block 2 (spec 02 §5). When both exist, the block 2 part starts with
+`# More skills` instead of the header and intro; each part is sorted by name. Static skills always
+win name collisions (§6), so block 1 depends only on static skills and stays byte-identical for the
+session. Blocks are separated from preceding instruction text by a blank line.
+
 ### 4.2 Search — large catalogs
 
 Above the limit, the index is replaced by a one-line hint and a `search_skills(query)` tool
@@ -93,24 +114,68 @@ returning ≤ 10 matches as text lines `- <name>: <description>` (or `No skills 
 with `search` are queried; the others are matched by the core with a case-insensitive token match
 over name + description of their `list()` results.
 
-### 4.3 Tools (added automatically when any skill exists)
+Layout in search mode (block 1 never depends on dynamic listings):
+
+- static skills ≤ limit: block 1 keeps the static index (§4.1); block 2 holds, instead of the
+  dynamic list, `# More skills` + `More skills are available: find them with search_skills(query),
+  then open one with load_skill(name).`
+- static skills > limit: block 1 holds the hint below; block 2 adds nothing.
+- no static skills: block 2 holds the hint below.
+
+```
+# Skills
+Skills are playbooks you can open when relevant. Find them with search_skills(query), then open one with load_skill(name) before doing the task it covers.
+```
+
+Search details: query tokens are the lowercase letter/digit runs of the query; a skill's score is
+the number of distinct query tokens contained in `name + ' ' + description`. Core-matched skills
+need a score > 0; results of a source's `search()` are kept only for skills that source resolved
+this turn (unknown and shadowed names are dropped) and get a score ≥ 1. Ranking: score descending,
+ties keep source order, then the source's result order (search) or name order (core). A failing
+`search()` falls back to the core matcher (`W_SKILL_SOURCE_FAILED`). An empty query matches
+nothing.
+
+### 4.3 Tools (added automatically when any skill source is configured)
 
 | Tool | Input | Output (string) |
 |---|---|---|
 | `load_skill` | `{ name }` | frontmatter summary + body + `Files:` manifest list (+ notes from `skill.load` hooks) |
 | `read_skill_file` | `{ name, path }` | file text (binary → `[binary <mediaType>, N bytes]`), or `ERROR: …` |
-| `search_skills` | `{ query }` | only in search mode (§4.2) |
+| `search_skills` | `{ query }` | when the session can reach search mode (see below) |
 
 Errors are returned as strings (`ERROR: skill "x" not found`, `ERROR: invalid path`). Skill content
 enters history as tool results, never the system prompt (prompt-cache rule, spec 02 §6).
+
+Exact formats (model-visible, api-stability.md):
+
+- `load_skill`: `---`, the frontmatter summary (`name`, `description`, then `meta` keys in order,
+  serialized with the §8 subset), `---`, the body (trimmed); then, separated by blank lines,
+  `Files:` with one `- <path>` line per manifest entry (sorted, deduplicated, invalid paths
+  dropped, ` (<size> bytes)` when the size is known; omitted without files), then each
+  non-empty `skill.load` note.
+- Errors: `ERROR: skill "<name>" not found` (unknown in this turn, or `load()` returned `null`);
+  `ERROR: skill "<name>" could not be loaded: <message>` (`load()` threw or returned an invalid
+  doc); `ERROR: invalid path: <reason>` (§5); `ERROR: file "<path>" not found in skill "<name>"`;
+  `ERROR: file "<path>" of skill "<name>" could not be read: <message>`; `ERROR: \`<field>\` must
+  be a string` for malformed input. The tools never throw for these.
+- Tool presence is decided per session, never by what one turn resolves (stable tool list, spec
+  02 §6 rule 1, ADR-0013): `load_skill` and `read_skill_file` are present whenever the session has
+  at least one skill source (static skills count); when nothing resolves they answer
+  `ERROR: skill "x" not found`. `search_skills` is present iff `skillsIndexLimit` is finite and
+  (the static skill count exceeds it, or any dynamic source exists); it searches the turn's
+  skills in index mode too. `skillsIndexLimit: Infinity` disables search entirely. The tools are
+  ordinary tools of the turn (wrapped with `tool.before`/`tool.after`, subject to approval).
 
 ## 5. Addressing (normative)
 
 - The canonical address of a skill file is `(skillName, relativePath)`. The model never sees a
   filesystem path for reading.
 - `relativePath` rules: POSIX separators, no leading `/`, no `..` segment, no `\`, no NUL, no empty
-  segments, max 512 chars. Violations → `ERROR: invalid path` (and never reach the source).
-- `SKILL.md` itself is not addressable via `read_skill_file` (use `load_skill`).
+  segments (so no `//`, no trailing `/`), max 512 chars. `.` segments are removed (normalization;
+  a path of only `.` segments is invalid). Violations → `ERROR: invalid path: <reason>` (and never
+  reach the source; sources receive the normalized path).
+- `SKILL.md` itself (at the skill root, compared case-insensitively) is not addressable via
+  `read_skill_file` (use `load_skill`).
 
 This makes static skills, filesystem skills, database skills and remote skills interchangeable:
 moving a skill between sources never requires editing its `SKILL.md`.
@@ -118,11 +183,20 @@ moving a skill between sources never requires editing its `SKILL.md`.
 ## 6. Registry, collisions, refresh
 
 - Sources are ordered: root (static skills first, then root sources), then plugins in order.
-- Static/static duplicate name → boot error `EH_DUPLICATE_SKILL`.
-- Anything involving a dynamic source → first wins, `W_SHADOWED` warning.
+  Within one plugin: its static skills (setup, then session phase) as one in-memory source, then
+  its sources (setup, then session phase).
+- Static/static duplicate name → boot error `EH_DUPLICATE_SKILL` (session-phase duplicates at
+  session open).
+- A static skill always wins over a dynamic source (spec 02 §7), whatever the plugin order;
+  between dynamic sources the first (registry order) wins. Losers are skipped with `W_SHADOWED`.
+- Listed metadata that fails §1 (or is not an object) → skipped, `W_INVALID_SKILL`.
 - `list()` results are cached per `refresh` period (`'session'` = listed at the first turn and
-  kept; a failed `list()` is retried at the next turn). The filesystem source additionally caches
+  kept; a failed `list()` — thrown or not an array — contributes nothing, warns
+  `W_SKILL_SOURCE_FAILED` and is retried at the next turn). The filesystem source additionally caches
   parsed frontmatter by file version (hash), so `refresh: 'turn'` is cheap.
+- Per-turn lock (spec 02 §7): the index and the name → source mapping are resolved at turn start;
+  the skill tools only address skills of that set, so a skill added mid-turn is found at the next
+  turn. `load()` / `readFile()` are called on demand (content may be newer than the index).
 
 ## 7. Executable skill files (for executor plugins)
 
@@ -130,6 +204,9 @@ Reading needs only the logical address. Executing (e.g. `scripts/check.py`) need
 inside an executor (sandbox). Rules:
 
 - A source may implement `locate(name)` → `{ service, root }`, e.g. `{ service: 'fs', root: '/skills/pine-v6' }`.
+- The core calls `locate(name)` when a `skill.load` hook exists and passes the result as
+  `location` in the hook event (omitted when `locate` is absent or returns `null`; a throwing
+  `locate` warns `W_SKILL_SOURCE_FAILED`).
 - An executor plugin (future `sandbox`) implements the `skill.load` hook:
   - if `locate()` points to the executor's own filesystem service → use `root` directly;
   - otherwise materialize the skill files into the executor (once per session, keyed by content
@@ -151,7 +228,18 @@ Adds `fsSkillSource(fs, { root })`:
   (`name`, `description`, others → `meta`). Invalid or mismatched `name` → skip + `W_INVALID_SKILL`.
   The parser is a small built-in YAML **subset** (scalars, quoted strings, flow/block lists of
   scalars, one level of nesting) — no YAML dependency (CLAUDE.md rule 10). Unsupported syntax →
-  `W_INVALID_SKILL`.
+  `W_INVALID_SKILL`. Exactly (implemented in `parseSkillMarkdown`, P4): plain scalars (`true`/
+  `false`, `null`/`~`/empty, numbers, strings), `'…'` (`''` escape) and `"…"` (JSON escapes)
+  strings, one-line flow lists, block lists (`- item`, indented or not), block scalars for
+  strings (`|`, `|-` literal; `>`, `>-` folded; clip or strip chomping; indentation taken from the
+  first content line, no explicit indentation indicator), one nested map level whose values are
+  scalars, flow lists or block scalars, blank lines, `#` comments (full line, or after whitespace
+  in plain values). Rejected: `+` chomping and indentation indicators, multi-line plain/quoted
+  scalars, anchors/aliases/tags, flow maps, deeper nesting, tabs in indentation, duplicate keys,
+  the keys `__proto__`/`constructor`/`prototype`, several documents. A numeric
+  `name`/`description` is read as text.
+- Warnings: a source reports `W_INVALID_SKILL` itself through `ctx.warn` (spec 01 §4) and skips
+  the skill.
 - `load`: body + manifest of every other file under `<root>/<name>/`.
 - `readFile`: `fs.read(join(root, name, path))` after §5 validation.
 - `locate`: `{ service: 'fs', root: '<root>/<name>' }`.
