@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { tool, type UIMessage, type UIMessageChunk } from 'ai'
+import { MockLanguageModelV4 } from 'ai/test'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../../agent/define-agent.ts'
 import type { SessionEvent, StateAdapter } from '../../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../../agent/types.ts'
 import { summarizerModel, summarizerPromptText } from '../../compaction/test-kit.ts'
 import type { HarnessWarning } from '../../errors.ts'
-import { isKindMessage } from '../../messages/kinds.ts'
+import { defineMessageKind, isKindMessage } from '../../messages/kinds.ts'
 import type { HarnessUIMessage } from '../../messages/types.ts'
 import { definePlugin } from '../../plugin/define-plugin.ts'
 import { type ScriptedPrompt, scriptedModel } from '../../testing/scripted-model.ts'
@@ -525,15 +526,164 @@ describe('scenario 26: inject delivery and wake', () => {
     expect(normalizeVolatile(cold)).toEqual(normalizeVolatile(hot))
   })
 
-  test('wake while a turn runs implies next-step; wake while pending starts nothing', async () => {
+  test('wake and queued sends are held while pending; they run after respond()', async () => {
     const client = tool({ description: 'client', inputSchema: z.object({}) })
-    const model = scriptedModel([{ toolCalls: [{ toolName: 'client', input: {} }] }])
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'client', input: {} }] },
+      { text: 'got it' },
+      { text: 'woke' },
+    ])
     const { agent } = setup({ model, tools: { client } })
     const session = agent.session('s1')
-    await session.send('go').result
-    const { run } = await session.inject('eh.event', { name: 'x', text: 'y' }, { wake: true })
-    expect(run).toBeUndefined()
+    const first = await session.send('go').result
+    const { run } = await session.inject('eh.event', { name: 'x', text: 'EVENT' }, { wake: true })
+    expect(run?.kind).toBe('wake')
+    await sleep(20)
+    expect(model.prompts).toHaveLength(1) // held: approvals are never auto-denied
+    expect(session.running).toBe(false)
+    const toolCallId = first.pending?.clientTools[0]?.toolCallId as string
+    const answered = await session.respond({ toolOutputs: [{ toolCallId, output: 'here' }] }).result
+    expect(answered.stop).toBe('complete')
+    const woke = await run?.result
+    expect(woke?.stop).toBe('complete')
+    expect(JSON.stringify(model.prompts[2])).toContain('EVENT')
+  })
+
+  test('a queued send waits while a turn it follows ends tool-pending', async () => {
+    const client = tool({ description: 'client', inputSchema: z.object({}) })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'client', input: {} }], delayMs: 10 },
+      { text: 'thanks' },
+      { text: 'queued answer' },
+    ])
+    const { agent, state } = setup({ model, tools: { client } })
+    const session = agent.session('s1')
+    const main = session.send('go')
+    const queued = session.send('later', { ifBusy: 'queue' })
+    const first = await main.result
+    expect(first.stop).toBe('tool-pending')
+    await sleep(20)
     expect(model.prompts).toHaveLength(1)
+    expect((await state.get('s1'))?.core.pending).toBeDefined()
+    const toolCallId = first.pending?.clientTools[0]?.toolCallId as string
+    await session.respond({ toolOutputs: [{ toolCallId, output: 'ok' }] }).result
+    const later = await queued.result
+    expect(later.stop).toBe('complete')
+    expect(texts(model.prompts[2]).at(-1)).toBe('user: later')
+  })
+
+  test('wake during compact() runs a wake turn afterwards', async () => {
+    const slowSummarizer = new MockLanguageModelV4({
+      doGenerate: async () => {
+        await sleep(30)
+        return {
+          content: [{ type: 'text', text: 'SUMMARY' }],
+          finishReason: { unified: 'stop', raw: 'stop' },
+          usage: {
+            inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
+            outputTokens: { total: 5, text: 5, reasoning: undefined },
+          },
+          warnings: [],
+        }
+      },
+    })
+    const model = scriptedModel([{ text: 'A1' }, { text: 'A2' }, { text: 'woke' }])
+    const { agent } = setup({
+      model,
+      compaction: { model: slowSummarizer, keepLast: 1, maxSummaryTokens: 100 },
+    })
+    const session = agent.session('s1')
+    await session.send('Q1').result
+    await session.send('Q2').result
+    const compacting = session.compact()
+    const { run } = await session.inject('eh.event', { name: 'ci', text: 'DURING' }, { wake: true })
+    expect(run?.kind).toBe('wake')
+    await compacting
+    const woke = await run?.result
+    expect(woke?.stop).toBe('complete')
+    expect(JSON.stringify(model.prompts[2])).toContain('DURING')
+  })
+
+  test('wake during the end of a turn (turn.end hook) queues a wake turn', async () => {
+    let session!: ReturnType<ReturnType<typeof setup>['agent']['session']>
+    let injected: Promise<unknown> | undefined
+    const late = definePlugin({
+      name: 'late',
+      setup: () => ({
+        hooks: {
+          'turn.end': async () => {
+            if (injected !== undefined) return
+            injected = session.inject('eh.event', { name: 'late', text: 'LATE' }, { wake: true })
+            await injected
+          },
+        },
+      }),
+    })
+    const model = scriptedModel([{ text: 'A1' }, { text: 'woke' }])
+    const { agent } = setup({ model, plugins: [late] })
+    session = agent.session('s1')
+    await session.send('Q1').result
+    const { run } = (await injected) as { run?: { result: Promise<{ stop: string }> } }
+    expect(run).toBeDefined()
+    expect((await run?.result)?.stop).toBe('complete')
+    expect(JSON.stringify(model.prompts[1])).toContain('LATE')
+  })
+
+  test('a projection with file parts is not delivered inline; it reaches the model next turn', async () => {
+    const shot = defineMessageKind({
+      role: 'user',
+      schema: z.object({ url: z.string() }),
+      model: (d) => [
+        { type: 'text', text: 'SCREENSHOT' },
+        { type: 'file', data: new URL(d.url), mediaType: 'image/png' },
+      ],
+    })
+    const log: string[] = []
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'work', input: { n: 1 } }] },
+      { text: 'done' },
+      { text: 'next' },
+    ])
+    const { agent, messages } = setup({
+      model,
+      tools: { work: slowTool(log) },
+      messageKinds: { shot },
+    })
+    const session = agent.session('s1')
+    const main = session.send('go')
+    await sleep(10)
+    const { message } = await session.inject(
+      'shot' as never,
+      { url: 'data:image/png;base64,iVBORw0KGgo=' } as never,
+      {
+        deliver: 'next-step',
+      },
+    )
+    await main.result
+    expect(JSON.stringify(model.prompts[1])).not.toContain('SCREENSHOT')
+    const stored = (await all(messages)).find((m) => m.id === (message as HarnessUIMessage).id)
+    expect(stored?.metadata?.eharness?.deliveredIn).toBeUndefined()
+    await session.send('more').result
+    expect(JSON.stringify(model.prompts[2])).toContain('SCREENSHOT')
+  })
+
+  test('a throwing kind projection is not delivered inline; inject() still resolves', async () => {
+    const bad = defineMessageKind({
+      role: 'user',
+      schema: z.object({}),
+      model: () => {
+        throw new Error('projection broke')
+      },
+    })
+    const model = scriptedModel([{ text: 'slow', delayMs: 10 }])
+    const { agent, warnings } = setup({ model, messageKinds: { bad } })
+    const session = agent.session('s1')
+    const main = session.send('go')
+    await sleep(5)
+    const out = await session.inject('bad' as never, {} as never, { deliver: 'next-step' })
+    expect(out.message).toBeDefined()
+    await main.result
+    expect(warnings.map((w) => w.code)).toContain('W_HOOK_FAILED')
   })
 })
 

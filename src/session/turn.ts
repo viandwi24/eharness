@@ -101,6 +101,8 @@ export interface TurnHost {
   onTurnEnd(): void
   /** Queue an undelivered steer as a `send` turn (spec 11 §6.1). */
   enqueueSteer(submitted: { input: NormalizedInput; contexts: string[] }): void
+  /** Queue a no-input wake turn for an injection that was not delivered (spec 11 §6.3). */
+  enqueueWake(): void
 }
 
 /** The running turn as seen by the session (attach, abort, steer, next-step delivery). */
@@ -113,8 +115,11 @@ export interface RunningTurn {
    * boundary (spec 11 §6.1). False when the turn no longer takes input.
    */
   steer(input: NormalizedInput): boolean
-  /** Deliver a saved kind message into the running turn (`next-step`, spec 11 §6.3). */
-  deliverEvent(message: HarnessUIMessage, text: string): boolean
+  /**
+   * Deliver a saved kind message into the running turn (`next-step`, spec 11 §6.3). With `wake`,
+   * an undelivered event queues a wake turn. False when the turn no longer takes input.
+   */
+  deliverEvent(message: HarnessUIMessage, text: string, wake?: boolean): boolean
 }
 
 const DEFAULT_MAX_STEPS = 50
@@ -895,6 +900,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         stop: 'interrupted',
       })
     }
+    await healOrphanPending()
     // the pending message: patched for the continuation (respond) or denied (new input)
     if (plan !== undefined) await continuePending(prep.open, plan)
     if (denyPending !== undefined) {
@@ -914,6 +920,41 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (prep.user !== undefined) created.push(...(await host.persist([prep.user])))
     if (prep.blockNotice !== undefined) created.push(...(await host.persist([prep.blockNotice])))
     createdBeforeAssistant = created.length
+  }
+
+  /**
+   * A message still marked pending (`metadata.eharness.pending`) although `state.core.pending` no
+   * longer names it: a process died between the state write that consumed / denied the pending
+   * state and the save of the patched message. Its calls never ran: answer them with
+   * `INTERRUPTED_CRASH` and mark the message resolved (spec 05 §9, spec 11 §8).
+   */
+  async function healOrphanPending(): Promise<void> {
+    const handled = new Set<string | undefined>([
+      plan?.pending.messageId,
+      denyPending?.messageId,
+      rt.state.core().pending?.messageId,
+    ])
+    const orphans = (rt.view ?? []).filter((m) => {
+      const pending = m.metadata?.eharness?.pending
+      return (
+        m.role === 'assistant' && pending !== undefined && pending !== null && !handled.has(m.id)
+      )
+    })
+    for (const message of orphans) {
+      const patched = answerDanglingToolParts(structuredClone(message), INTERRUPTED_CRASH)
+      const eharness = patched.metadata?.eharness
+      if (eharness === undefined) continue
+      const stop =
+        eharness.stop === undefined || eharness.stop === 'tool-pending'
+          ? 'interrupted'
+          : eharness.stop
+      await host.persist([
+        {
+          ...patched,
+          metadata: { ...patched.metadata, eharness: { ...eharness, pending: null, stop } },
+        },
+      ])
+    }
   }
 
   function afterIdOf(marker: HarnessUIMessage): string | null {
@@ -1177,9 +1218,14 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   /** Undelivered steers: queued `send` turns, or `input-dropped` for tool-pending / aborts. */
   async function settleInbox(stop: StopReason): Promise<void> {
     const leftovers = await inbox.close()
+    let wake = false
     for (const item of leftovers) {
       const steer = item.steer
-      if (steer === undefined) continue // an undelivered event stays for the next turn
+      if (steer === undefined) {
+        // an undelivered event stays for the next turn; a wake starts that turn (not after aborts)
+        if (item.wake === true && stop !== 'aborted' && stop !== 'timeout') wake = true
+        continue
+      }
       if (stop === 'tool-pending' || stop === 'aborted' || stop === 'timeout') {
         rt.events.emit(
           withoutUndefined({
@@ -1193,6 +1239,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         host.enqueueSteer({ input: steer.input, contexts: steer.contexts })
       }
     }
+    if (wake) host.enqueueWake()
   }
 
   async function onEnd(message: HarnessUIMessage | undefined): Promise<void> {
@@ -1454,9 +1501,15 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         })(),
       )
     },
-    deliverEvent(message, text) {
+    deliverEvent(message, text, wake) {
       if (!inbox.open || ended) return false
-      return inbox.push(Promise.resolve({ data: { source: 'event', text }, event: message }))
+      return inbox.push(
+        Promise.resolve({
+          data: { source: 'event', text },
+          event: message,
+          ...(wake === true ? { wake: true } : {}),
+        }),
+      )
     },
   }
 }
