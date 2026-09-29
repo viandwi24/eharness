@@ -66,7 +66,13 @@ export interface McpServerOptions {
   maxRetries?: number
   refresh?: 'session' | 'turn'
 }
+
+export type McpTransportInput = MCPClientConfig['transport']
+export const MCP_AUTO_DEFER_THRESHOLD = 20   // defer: 'auto' defers above this many tools
 ```
+
+Invalid options (name pattern, missing transport, unknown `defer`/`connect`, negative
+`maxRetries`, …) throw `EH_CONFIG_INVALID` from `mcpServer()`.
 
 Lifecycle:
 
@@ -75,20 +81,33 @@ Lifecycle:
   `W_TOOL_SOURCE_FAILED` warning, and `mcpServer()` called with `connect: 'eager'` rejects the
   session open with `EH_CONFIG_INVALID` ("install @ai-sdk/mcp").
 - One MCP client **per session** (credentials can differ per user). Created at the first turn
-  (`lazy`) or at `open()` (`eager`); closed in `close()`.
+  (`lazy`) or at `open()` (`eager`); closed when the session closes. `ToolSource.close()` carries
+  no session, so the source closes a session's client when that session's `ctx.signal` aborts
+  (session close/eviction) and `close()` waits for those clients to finish closing. A `transport`
+  must therefore be a config or a resolver that returns a **new** `MCPTransport` per call, never
+  one shared `MCPTransport` instance. An eager connect that fails for another reason than the
+  missing package does not fail the session open; the first `list()` retries it.
 - `list()` calls `client.tools()`, applies allow/deny, prefixes names, sets `deferLoading` per
-  `defer`.
-- `pinDefinitions`: on first successful connect, `await fingerprintTools(tools)` is stored in the
-  session state under `plugins[<owner plugin>]['mcp:<name>:pins']`, keyed by the **server** tool
-  name (before prefixing). On later lists `detectToolDrift()` runs; changed or added tools are
-  **excluded** and reported with `W_MCP_DRIFT`.
+  `defer`. `defer: 'auto'` counts the tools that remain after allow/deny and drift exclusion. A
+  failing `client.tools()` closes the client, so the next turn reconnects.
+- `pinDefinitions`: on first successful connect, `await fingerprintTools(tools)` of **all** server
+  tools (before allow/deny) is stored in the session state under
+  `plugins[<owner plugin>]['mcp:<name>:pins']`, keyed by the **server** tool name (before
+  prefixing). On later lists `detectToolDrift()` runs; changed or added tools are **excluded**
+  and reported with one `W_MCP_DRIFT` per listing (`details.tools`: the excluded server names
+  that allow/deny would have exposed). Pins are never updated by a drifted listing.
 - Re-pinning is an explicit application action:
   `clearMcpPins(agent, sessionId, name, opts?: { stateAdapter?: StateAdapter }): Promise<void>`
   (exported from `eharness/mcp`). If the session is cached (live), it clears through the live
   session state (so the turn-end state write cannot restore the old pins); otherwise it uses the
   session's effective `StateAdapter` (`opts.stateAdapter` when the session used a
-  `SessionOptions.storage.state` override, else the agent's). Pins are re-created on the next
-  connect.
+  `SessionOptions.storage.state` override, else the agent's `storage.state`; the pins key is
+  removed from every plugin namespace, written with `setIf` when available). With the agent's
+  default in-memory storage (not reachable through the public API) it opens the session
+  (`ready()`, without connecting the MCP server) and clears through the live state. Pins are
+  re-created on the next listing that finds none (for a live `refresh: 'session'` source: the next
+  session open). Live sessions are matched by `agent.id` + `sessionId`; agents that share an id in
+  one process are not told apart.
 - MCP tool annotations (`readOnlyHint`, `destructiveHint`, …) stay in `toolMetadata`; use a
   `tool.before` hook to deny destructive tools (annotations are untrusted hints).
 - Connection failures → `W_TOOL_SOURCE_FAILED`, zero tools, retried at the next turn regardless
