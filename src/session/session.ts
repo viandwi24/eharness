@@ -4,7 +4,7 @@
  *
  * @see docs/specs/05-session-and-storage.md#2-session-api
  */
-import { asSchema, type LanguageModel, type Tool, type UIMessage, type UIMessageChunk } from 'ai'
+import { asSchema, type Tool, type UIMessage, type UIMessageChunk } from 'ai'
 import type { AgentInternals } from '../agent/internals.ts'
 import type {
   HarnessRun,
@@ -13,11 +13,12 @@ import type {
   SessionOptions,
   StateAdapter,
 } from '../agent/session-types.ts'
+import { createSessionCompaction } from '../compaction/compact.ts'
+import { toolTokens } from '../compaction/tokens.ts'
+import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
-import { estimateTokens } from '../loop/steps.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import { project } from '../messages/project.ts'
-import type { ContextStats, HarnessUIMessage, TurnKind, TurnResult } from '../messages/types.ts'
+import type { HarnessUIMessage, TurnKind, TurnResult } from '../messages/types.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
 import {
   addContribution,
@@ -36,9 +37,6 @@ import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
 import { createStateStore } from './state.ts'
 import { type RunningTurn, startTurn, type TurnHost } from './turn.ts'
-
-/** Default context window when none is configured (spec 06 §1). */
-export const DEFAULT_CONTEXT_WINDOW = 128_000
 
 /** A live session plus the handles the agent needs. */
 export interface SessionHandle {
@@ -452,7 +450,8 @@ export function createSessionHandle(args: {
           hookFailed(rt, 'message.beforeSave', hook.owner, error)
         }
       }
-      out.push(message)
+      // cached token estimate of the projection (spec 06 §2)
+      out.push(await compaction.annotate(message))
     }
     try {
       await rt.messages.save(id, out)
@@ -467,43 +466,17 @@ export function createSessionHandle(args: {
     return out
   }
 
-  let windowWarned = false
-  function stats(
-    model: LanguageModel,
-    parts: { instructions: string; tools: number; wire: unknown },
-  ): ContextStats {
-    let window: number | undefined
-    const configured = config.contextWindow
-    if (typeof configured === 'number') window = configured
-    else if (typeof configured === 'function') window = configured(model)
-    if (window === undefined || !(window > 0)) {
-      window = DEFAULT_CONTEXT_WINDOW
-      if (!windowWarned) {
-        windowWarned = true
-        rt.warn(
-          {
-            code: 'W_DEFAULT_CONTEXT_WINDOW',
-            message: `No contextWindow configured for model '${typeof model === 'string' ? model : `${model.provider}/${model.modelId}`}'; using ${DEFAULT_CONTEXT_WINDOW}.`,
-          },
-          'window',
-        )
-      }
-    }
-    const instructions = estimateTokens(parts.instructions || undefined)
-    const messages = estimateTokens(parts.wire)
-    const reserve =
-      config.guard?.reserveTokens ?? config.settings?.maxOutputTokens ?? Math.floor(window * 0.08)
-    const summarizeAt =
-      config.compaction === false ? 0.75 : (config.compaction?.summarizeAt ?? 0.75)
-    return {
-      window,
-      tokens: instructions + parts.tools + messages,
-      instructions,
-      tools: parts.tools,
-      messages,
-      summarizeAt: Math.floor(window * summarizeAt),
-      hardLimit: Math.floor(window * (config.guard?.maxContextRatio ?? 0.9) - reserve),
-    }
+  const compaction = createSessionCompaction({ rt, persist })
+
+  /** Uncalibrated tokens of the static instructions (+ session block) and static tools. */
+  async function staticTokens(open: OpenSession): Promise<{ instructions: number; tools: number }> {
+    const texts: string[] = []
+    for (const i of open.instructions) if (i.kind === 'static') texts.push(i.text)
+    if (open.sessionBlock) texts.push(open.sessionBlock)
+    const text = texts.join('\n\n')
+    let tools = 0
+    for (const t of open.tools) tools += await toolTokens(t.name, t.tool, compaction.count)
+    return { instructions: text.length === 0 ? 0 : compaction.count(text), tools }
   }
 
   // ─── turns ────────────────────────────────────────────────────────────────────────────────
@@ -513,7 +486,7 @@ export function createSessionHandle(args: {
     ensureOpen,
     ensureContext: () => ensureContext(true),
     persist,
-    stats,
+    compaction,
     onTurnEnd() {
       current = undefined
       touch()
@@ -679,7 +652,77 @@ export function createSessionHandle(args: {
     async compact() {
       assertOpen()
       if (rt.running) throw busyError(id)
-      throw notImplemented('compact()', 'P3')
+      // exclusive like a turn (spec 05 §8): send() throws EH_SESSION_BUSY meanwhile
+      rt.running = true
+      touch()
+      let release: (() => Promise<void>) | undefined
+      try {
+        const open = await ensureOpen()
+        const lock = rt.options.lock
+        if (lock !== undefined) {
+          try {
+            release = await lock.acquire(id, { signal: closeController.signal })
+          } catch (error) {
+            throw new HarnessError(
+              'EH_SESSION_BUSY',
+              'The session is locked by another instance.',
+              { cause: error },
+            )
+          }
+        }
+        await ensureContext(true)
+        const core = rt.state.core()
+        const active = core.activeTurn
+        const staleMs =
+          (config.recovery === false ? undefined : config.recovery?.staleMs) ?? 120_000
+        if (
+          config.recovery !== false &&
+          active !== undefined &&
+          release === undefined &&
+          active.owner !== rt.owner &&
+          Date.now() - active.heartbeatAt <= staleMs
+        ) {
+          throw new HarnessError(
+            'EH_SESSION_BUSY',
+            'A turn of this session is running in another instance.',
+            { details: { turnId: active.turnId, owner: active.owner } },
+          )
+        }
+        const view = rt.view ?? []
+        const pending = core.pending
+        const fixed = await staticTokens(open)
+        const fixedTokens = fixed.instructions + fixed.tools
+        const outcome = await compaction.compact({
+          mode: 'manual',
+          trigger: 'manual',
+          // the pending message's turn is kept like a current turn (spec 06 §5.1)
+          currentStartId:
+            pending === undefined
+              ? undefined
+              : currentTurnStartId(
+                  view,
+                  { kind: 'respond', messageId: pending.messageId },
+                  internals.messages,
+                ),
+          model: config.model,
+          fixedTokens,
+          beforeTokens: compaction.calibration.apply(
+            fixedTokens + (await compaction.viewTokens(view)),
+          ),
+        })
+        if (outcome.status === 'failed') throw outcome.error
+        return outcome.status === 'compacted' ? (structuredClone(outcome.marker) as never) : null
+      } finally {
+        if (release !== undefined) {
+          try {
+            await release()
+          } catch (error) {
+            log.warn('eharness: releasing the session lock failed', { error })
+          }
+        }
+        rt.running = false
+        touch()
+      }
     },
     async clearGrants() {
       assertOpen()
@@ -716,23 +759,13 @@ export function createSessionHandle(args: {
       touch()
       const open = await ensureOpen()
       if (rt.view === undefined) await ensureContext()
-      const model = config.model
-      const wire = await project(rt.view ?? [], {
-        registry: internals.messages,
-        sessionId: id,
-        model,
-      })
-      const instructions = open.instructions
-        .filter((i) => i.kind === 'static')
-        .map((i) => (i.kind === 'static' ? i.text : ''))
-      if (open.sessionBlock) instructions.push(open.sessionBlock)
-      const tools = open.tools.reduce(
-        (sum, t) => sum + estimateTokens({ name: t.name, description: t.tool.description ?? '' }),
-        0,
-      )
+      const fixed = await staticTokens(open)
       const core = rt.state.core()
       return {
-        ...stats(model, { instructions: instructions.join('\n\n'), tools, wire }),
+        ...compaction.stats(config.model, {
+          ...fixed,
+          messages: await compaction.viewTokens(rt.view ?? []),
+        }),
         pending: core.pending ?? null,
         activeTurn: core.activeTurn ?? null,
       }

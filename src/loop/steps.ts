@@ -19,9 +19,10 @@ import {
   type UIMessageChunk,
 } from 'ai'
 import type { CacheConfig, ModelSettings } from '../agent/types.ts'
+import type { TurnCompaction } from '../compaction/turn-context.ts'
 import { HarnessToolError } from '../errors.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
-import type { ContextStats, PendingState, StopReason } from '../messages/types.ts'
+import type { PendingState, StopReason } from '../messages/types.ts'
 import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
@@ -79,13 +80,6 @@ export function addUsage(totals: UsageTotals, usage: LanguageModelUsage, nested 
   if (write !== undefined) totals.cacheWrite = (totals.cacheWrite ?? 0) + write
 }
 
-/** Rough token estimate of any value (P3 replaces it with calibrated accounting). */
-export function estimateTokens(value: unknown): number {
-  if (value === undefined) return 0
-  const text = typeof value === 'string' ? value : JSON.stringify(value)
-  return Math.ceil((text?.length ?? 0) / 4)
-}
-
 /** Input of {@link runSteps}. */
 export interface StepLoopInput {
   rt: SessionRuntime
@@ -112,8 +106,8 @@ export interface StepLoopInput {
   usage: UsageTotals
   discovered: Set<string>
   heartbeat(): Promise<void>
-  /** Context statistics written as transient `data-eh.context` after every step. */
-  stats(model: LanguageModel, wire: readonly ModelMessage[]): ContextStats
+  /** Compaction triggers, guard, calibration and overflow recovery of the turn (spec 06). */
+  compaction: TurnCompaction
 }
 
 /** Outcome of the step loop. */
@@ -242,7 +236,7 @@ async function guarded<T>(value: PromiseLike<T>): Promise<T | undefined> {
 
 /** Run steps until a stop rule matches. Never throws for model or tool failures. */
 export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
-  const { rt, registry, info, wire } = input
+  const { rt, registry, info, wire, compaction } = input
   const open = rt.open
   if (open === undefined) throw new Error('eharness: session is not open')
   const hooks = open.hooks
@@ -256,6 +250,10 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   let waiting: Array<{ source: `plugin:${string}`; text: string }> = []
   let lastPrefix: string | undefined
   let cacheBustWarned = false
+  /** Wire index of the current turn's first message (moves when a compaction rebuilds the wire). */
+  let turnStart = input.turnStart
+  /** Wire length after the last step barrier: later messages are not in the cached view yet. */
+  let sinceBarrier = wire.length
 
   const aborted = (): LoopResult => ({
     stop: input.timedOut() ? 'timeout' : 'aborted',
@@ -274,8 +272,21 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     }
     waiting = []
 
-    // guard (P2: sanitize + final overflow stop; P3 adds truncation and compaction)
-    let requestWire = sanitizeModelMessages(wire)
+    // mid-turn compaction (spec 06 §4): rebuild the wire from the compacted view
+    if (stepIndex >= 1) {
+      const delivered = wire.slice(sinceBarrier)
+      const rebuilt = await compaction.midTurn({ wire, stepIndex, delivered })
+      if (rebuilt !== undefined) {
+        wire.splice(0, wire.length, ...rebuilt.wire)
+        turnStart = rebuilt.turnStart
+        sinceBarrier = wire.length - delivered.length
+      }
+      if (input.signal.aborted) return aborted()
+    }
+
+    // guard step 1: sanitize (spec 06 §6)
+    const sanitized = compaction.sanitize(wire, turnStart)
+    const requestWire = sanitized.flat
 
     // step.prepare (chainable)
     let stepModel: LanguageModel = info.model
@@ -322,20 +333,38 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     model = stepModel
     if (input.signal.aborted) return aborted()
 
-    // prompt layout: system blocks + reminders (spec 02 §5)
-    // a step.prepare `messages` rewrite replaces the wire; reminders are inserted afterwards
-    if (rewrite !== undefined) requestWire = sanitizeModelMessages(rewrite)
-    const layout = layoutMessages(
-      requestWire,
-      input.turnStart,
-      registry.turnReminder,
-      reminders.length > 0 ? reminders.join('\n\n') : undefined,
-    )
-    requestWire = layout.messages
-
     const tools = registry.toolsForStep(input.discovered)
     const toolNames = Object.keys(tools).filter(
       (n) => activeTools === undefined || activeTools.includes(n),
+    )
+    const stepReminder = reminders.length > 0 ? reminders.join('\n\n') : undefined
+
+    // guard step 2: hard cap (drop old turns, truncate tool outputs, or stop) for the step model
+    // a step.prepare `messages` rewrite replaces the wire; reminders are inserted afterwards
+    const capped = await compaction.hardCap({
+      wire: sanitized,
+      rewrite: rewrite === undefined ? undefined : sanitizeModelMessages(rewrite),
+      model: stepModel,
+      maxOutputTokens: settings.maxOutputTokens,
+      tools: Object.fromEntries(toolNames.map((n) => [n, tools[n] as ToolSet[string]])),
+      reminder: stepReminder,
+    })
+    if ('overflow' in capped) {
+      input.write({ type: 'error', errorText: capped.overflow })
+      return {
+        stop: 'error',
+        error: { code: 'EH_CONTEXT_OVERFLOW', message: capped.overflow },
+        steps: stepIndex,
+        model,
+      }
+    }
+
+    // prompt layout: system blocks + reminders (spec 02 §5)
+    const layout = layoutMessages(
+      capped.messages,
+      capped.turnStart,
+      registry.turnReminder,
+      stepReminder,
     )
     const system = systemBlocks(registry.block1, registry.block2)
     const prefix = `${JSON.stringify(system)}\u0000${toolNames.join(',')}`
@@ -353,23 +382,10 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     }
     lastPrefix = prefix
 
-    // guard: final overflow stop
-    const stats = input.stats(stepModel, requestWire)
-    if (stats.tokens > stats.hardLimit) {
-      const message = `The context (~${stats.tokens} tokens) exceeds the hard limit of ${stats.hardLimit} tokens.`
-      input.write({ type: 'error', errorText: message })
-      return {
-        stop: 'error',
-        error: { code: 'EH_CONTEXT_OVERFLOW', message },
-        steps: stepIndex,
-        model,
-      }
-    }
-
     const cached = applyCache({
       config: input.cache,
       model: stepModel,
-      prompt: { system, messages: requestWire, tools, providerOptions },
+      prompt: { system, messages: layout.messages, tools, providerOptions },
       lastStable: layout.lastStable,
       lastStaticTool:
         registry.staticCount > 0 ? registry.entries[registry.staticCount - 1]?.name : undefined,
@@ -386,6 +402,10 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     let sawError = false
     let errorText: string | undefined
     let stepAborted = false
+    let stepStarted = false
+    /** An error chunk before the step's first start-step, held back for overflow recovery. */
+    let held: UIMessageChunk | undefined
+    let rawError: unknown
     const result = streamText({
       model: stepModel,
       ...(cached.system.length > 0 ? { instructions: cached.system } : {}),
@@ -408,6 +428,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       ...(rt.agent.config.telemetry === undefined ? {} : { telemetry: rt.agent.config.telemetry }),
       ...(input.toolsContext === undefined ? {} : { toolsContext: input.toolsContext as never }),
       onError: ({ error }: { error: unknown }) => {
+        rawError ??= error
         rt.log.debug('eharness: step error', { error })
       },
       ...callSettings(settings),
@@ -418,34 +439,82 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       tools: cached.tools,
       sendStart: false,
       sendFinish: false,
-      onError: (error: unknown) =>
-        error instanceof HarnessToolError
+      onError: (error: unknown) => {
+        if (!(error instanceof HarnessToolError)) rawError ??= error
+        return error instanceof HarnessToolError
           ? String(error)
-          : describeError(error, (m, d) => rt.log.error(m, d)),
+          : describeError(error, (m, d) => rt.log.error(m, d))
+      },
     })
     for await (const chunk of ui) {
       if (chunk.type === 'abort') {
         stepAborted = true
         continue // the core writes the single terminal abort
       }
+      if (chunk.type === 'start-step') stepStarted = true
       if (chunk.type === 'error') {
+        if (!stepStarted && held === undefined) {
+          held = chunk as UIMessageChunk // decided after the stream (spec 06 §7)
+          continue
+        }
         sawError = true
         errorText ??= chunk.errorText
       }
       input.write(chunk as UIMessageChunk)
     }
     const response = await guarded(result.responseMessages)
+    if (held !== undefined) {
+      const heldText = (held as { errorText?: string }).errorText ?? 'The model call failed.'
+      if (
+        !stepStarted &&
+        !stepAborted &&
+        !input.signal.aborted &&
+        compaction.isOverflow(rawError)
+      ) {
+        const decision = await compaction.onOverflow({
+          error: rawError,
+          raw: capped.raw,
+          delivered: wire.slice(sinceBarrier),
+        })
+        if (input.signal.aborted) return aborted()
+        if (decision.retry) {
+          if (decision.rebuilt !== undefined) {
+            const delivered = wire.slice(sinceBarrier)
+            wire.splice(0, wire.length, ...decision.rebuilt.wire)
+            turnStart = decision.rebuilt.turnStart
+            sinceBarrier = wire.length - delivered.length
+          }
+          if (turnState !== undefined) turnState.step = undefined
+          continue // the held-back error chunk is discarded; retry the same step
+        }
+        input.write(held)
+        if (turnState !== undefined) turnState.step = undefined
+        return {
+          stop: 'error',
+          error: { code: 'EH_CONTEXT_OVERFLOW', message: heldText },
+          steps: stepIndex,
+          model,
+        }
+      }
+      input.write(held)
+      sawError = true
+      errorText ??= heldText
+    }
     if (response !== undefined) {
       wire.push(...response)
       collectDiscovered(response, input.discovered)
     }
     await input.barrier()
+    sinceBarrier = wire.length
     if (turnState !== undefined) turnState.step = undefined
     stepIndex++
 
     const finishReason = response === undefined ? undefined : await guarded(result.finishReason)
     const stepUsage = response === undefined ? undefined : await guarded(result.usage)
-    if (stepUsage !== undefined) addUsage(input.usage, stepUsage)
+    if (stepUsage !== undefined) {
+      addUsage(input.usage, stepUsage)
+      compaction.observe(capped.raw, stepUsage.inputTokens)
+    }
     const total = totalUsageOf(input.usage)
     input.write({
       type: 'data-eh.usage',
@@ -457,7 +526,11 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       },
       transient: true,
     })
-    input.write({ type: 'data-eh.context', data: input.stats(stepModel, wire), transient: true })
+    input.write({
+      type: 'data-eh.context',
+      data: await compaction.contextStats(stepModel, wire, settings.maxOutputTokens),
+      transient: true,
+    })
     await input.heartbeat()
 
     if (stepAborted || input.signal.aborted) {

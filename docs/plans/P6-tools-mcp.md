@@ -68,3 +68,8 @@ adding deferred tools.
   `src/loop/steps.ts`, `seedDiscovered()` in `src/session/turn.ts`, and
   `registry.toolsForStep(discovered)` every step. `W_DEPRECATED` for tool-level `needsApproval`
   is emitted in `resolveTurnRegistry()`.
+- From P3: the head + tail truncation helper exists as `truncateMiddle(text, maxChars)` in
+  `src/compaction/truncate.ts` (70% head / 30% tail around `TOOL_OUTPUT_TRUNCATED`); the guard and
+  the compaction transcript use it. Reuse it for tool output limits (spec 09 §4) instead of a second
+  copy. The guard's structured-output form `{ truncated: true, preview, originalChars }` lives in
+  `src/compaction/guard.ts` (`truncateOutput`) — move/share it if the output limits need the same.

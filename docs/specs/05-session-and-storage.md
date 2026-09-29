@@ -203,8 +203,8 @@ written in this order:
 14. Pre-turn compaction check (spec 06 §4) with `data-eh.status { state: 'compacting' }`.
 15. **Step loop** (architecture §3.4). At every step boundary, in order: deliver waiting steers,
     `next-step` injections and hook context as `data-eh.input` (spec 11 §6; never before the
-    first step of a `respond` continuation, spec 11 §4); mid-turn compaction check; guard;
-    `step.prepare`; model call; **step barrier** — wait until `onStepEnd` has updated the cache
+    first step of a `respond` continuation, spec 11 §4); mid-turn compaction check; guard (sanitize);
+    `step.prepare`; guard hard cap for the step's model (spec 06 §6); model call; **step barrier** — wait until `onStepEnd` has updated the cache
     with the step's accumulated message and saved the snapshot (`persistEachStep`, spec 04 §5);
     heartbeat (§9); `step.end`; stop rules (§3.1).
 16. **End of `execute`:** answer dangling tool calls (below; also written to the stream as
@@ -329,14 +329,15 @@ loadContext(sessionId):
   ptr = state.core.compaction
   if ptr:
     msgs = adapter.load({ sessionId, fromId: ptr.resumeFromId ?? ptr.markerId })     (1 query)
-  else:
+    if no boundary in msgs: fall back to paging (below)       ← history changed behind our back
+  if !ptr or fallback:
     msgs = []
     page backwards with load({ sessionId, limit: 100, beforeId: oldest(msgs) }) until
       a boundary B is loaded AND (B's payload.resumeFromId == null OR some loaded id <= payload.resumeFromId),
       or history is exhausted
   validate each message (spec 03 §7)
   B = newest boundary in msgs (by id)                    ← may be newer than ptr (crash healing)
-  if no B: view = msgs (non-boundary, id order)
+  if no B: view = msgs (non-boundary, id order); delete ptr if set (state dirty)
   else:
     payload = B.parts[0].data                            ← CompactionPayload (spec 06 §3)
     start = payload.resumeFromId ?? B.id

@@ -10,7 +10,7 @@ Update this table in the same commit that changes a phase's status.
 | P0 | [Bootstrap repo, tooling, CI, release](P0-bootstrap.md) | done | — | — |
 | P1 | [Core foundations: errors, ids, messages, plugins, registries](P1-core-foundations.md) | done | P0 | — |
 | P2 | [Session, loop, streaming, storage contracts](P2-session-loop-stream.md) | done | P1 | — |
-| P3 | [Context loading and compaction](P3-compaction.md) | todo | P2 | P4, P6 |
+| P3 | [Context loading and compaction](P3-compaction.md) | done | P2 | P4, P6 |
 | P4 | [Skills](P4-skills.md) | todo | P2 | P3, P6 |
 | P5 | [Filesystem plugin](P5-filesystem.md) | todo | P2 (tools), P4 (skills autoload part) | P3, P6 |
 | P6 | [Tool sources and MCP](P6-tools-mcp.md) | todo | P2 | P3, P4, P5 |

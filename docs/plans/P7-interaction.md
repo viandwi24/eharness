@@ -77,3 +77,15 @@ delivery queue).
   (per-tool function or generic function) propagate, while throwing `tool.approve` hooks count as
   `denied`. Spec 11 §3 is fail-closed: catch policy errors too and treat them as `denied` (with the
   error message as reason), and add a test.
+- From P3: compaction is wired for `send()` only. `src/session/turn.ts` builds the turn wire with
+  `createTurnCompaction()` (`src/compaction/turn-context.ts`) and `currentTurnStartId()`
+  (`src/compaction/turns.ts`), which already implements the current-turn rules of spec 06 §5.1 for
+  `{ kind: 'respond', messageId }`, `{ kind: 'regenerate', assistantId }` and `edit` (= `'input'`).
+  For `respond()` pass `pending` / `continuing` to `createTurnCompaction()` (used for projection)
+  and pass the continuation's extra wire (the `tool` message with the approval responses, which is
+  not in the cached view) as `delivered` to `build()` — the loop re-appends
+  `wire.slice(sinceBarrier)` after a mid-turn rebuild, so it must also be counted there. Manual
+  `compact()` already keeps the pending message's turn (`currentTurnStartId(…, { kind: 'respond' })`).
+  Rewind × compaction: the loader and `rt.view` exclude hidden messages before compaction sees them;
+  `'beyond-compaction'` must compare `afterId` with the newest boundary's `resumeFromId`
+  (`payloadOf()` in `src/compaction/turns.ts`).
