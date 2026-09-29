@@ -101,7 +101,7 @@ Harness interaction and robustness (spec 05, 11; mostly P2 and P7):
     model as `execution-denied` with the reason. Golden chunk order of the continuation. With a
     steer waiting and a step reminder configured, step 0's prompt still ends with the `tool`
     approval message (reminder/steer appear from step 1). With `approval.secret`, the patched part
-    keeps its `signature` and the continuation succeeds; a non-idempotent `tool.before` is caught
+    keeps its `signature` and the continuation succeeds; a non-deterministic `tool.before` is caught
     by a test helper.
 18. `respond()` safety: unknown id, incomplete answers, stale (a newer message exists) and a
     replayed identical request all end with `EH_INVALID_INPUT` and execute nothing; the replay

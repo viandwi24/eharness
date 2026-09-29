@@ -38,11 +38,15 @@ Turn kinds (spec 01 `TurnInfo.kind`) differ only at the start:
 | Kind | Assistant message | Stream start |
 |---|---|---|
 | `send`, `regenerate`, `edit`, `wake`, `queue` | new | `start` with a new id |
-| `respond` | the pending message A, **continued** | `createUIMessageStream({ originalMessages: [A'] })` where A' is the patched stored A (spec 11 §4); `start { messageId: A.id }` without metadata (A's `createdAt`/`turnId` are kept); the first chunks are `tool-output-available` / `tool-output-denied` for the answered calls, **before** any `start-step` |
+| `respond` | the pending message A, **continued** | `createUIMessageStream({ originalMessages: [A'] })` where A' is the patched stored A (spec 11 §4); `start { messageId: A.id }` without metadata (A's `createdAt`/`turnId` are kept); the first chunks are `tool-output-available` / `tool-output-error` for client tool answers (written by the core) and `tool-output-available` / `tool-output-denied` for the answered approvals (AI SDK), **before** any `start-step` |
 
 A continuation must stream into the existing UI message: a fresh message fails in AI SDK with
 `No tool invocation found for tool call ID`. `usage` and `steps` in the final metadata are
 cumulative over all turns that wrote the message.
+
+The core creates the `createUIMessageStream` when it writes `start` (a continuation only knows A'
+after the commit point). Transient chunks written earlier (warnings of the preparation) follow
+`start`, so every turn stream begins with `start`.
 
 Built with (normative shape):
 

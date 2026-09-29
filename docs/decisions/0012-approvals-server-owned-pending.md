@@ -28,8 +28,9 @@ fresh UI message for the continuation (AI SDK then fails with `No tool invocatio
 + Works with stock `useChat` (`lastAssistantMessageIsCompleteWithApprovalResponses`).
 − Requires a persistent `StateAdapter` for approvals to survive restarts.
 − Exactly-once across instances needs a `SessionLock` or a `StateAdapter` with `setIf` (spec 05 §8).
-− AI SDK re-validates approved calls on continuation, so `tool.before` must be idempotent and
-  approval hooks deterministic (spec 11 §3).
+− AI SDK re-validates approved calls on continuation, so `tool.before` must be deterministic
+  (and idempotent for requests stored without `inputSchemaInput`) and approval hooks
+  deterministic (spec 11 §3).
 − No partial answers in v0.
 
 ## Alternatives considered
