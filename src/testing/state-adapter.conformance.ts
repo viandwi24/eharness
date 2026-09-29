@@ -38,7 +38,6 @@ function snapshot(rev: number, extra: Partial<SessionStateSnapshot> = {}): Sessi
  *
  * @example
  * ```ts
- * import { stateAdapterConformance } from 'eharness/testing'
  * for (const c of stateAdapterConformance(() => postgresState(db))) test(c.name, c.run)
  * ```
  * @see docs/specs/05-session-and-storage.md#7-state
