@@ -1,0 +1,5 @@
+---
+"eharness": patch
+---
+
+update docs
