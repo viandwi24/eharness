@@ -31,6 +31,11 @@ Changes in this release on top of the 0.0.x previews:
 - `scriptedModel()` also answers `doGenerate` calls (e.g. the compaction summarizer) from the same
   script, so one scripted model can drive a conversation that compacts.
 - The exported `version` constant now always equals the package version.
+- Tool functions (`tools: { x: (ctx) => tool(…) }`) get `ctx.stream.data(name, data)` typed with
+  their owner's data parts: the plugin's `dataParts` for tools a plugin contributes (setup or
+  session phase), the app's `dataParts` for top-level tools. `ToolInput` / `ToolsInput` and
+  `HarnessAgentConfig` take the data part map as an optional type parameter (defaults keep
+  existing code compiling).
 
 Stability: 0.x — breaking changes ship only in minor versions with a migration note. No public API
 is `experimental_`. Requires `ai@^7`, `zod@^3.25.76 || ^4.1.8`, Node ≥ 22 or Bun; `@ai-sdk/mcp@^2`

@@ -64,14 +64,16 @@ Decided conservatively:
    `export const agent = defineHarnessAgent(…)` in examples. Examples now have
    `examples/tsconfig.json` (extends the root, `isolatedDeclarations`/`declaration` off) and the
    root `include` no longer lists `examples`; `bun run typecheck` checks both projects.
-2. **Root-context tool typing (finding, not fixed).** In a top-level `tools: { x: (ctx) => tool(…) }`
-   function, `ctx.stream.data('invoice', …)` is typed `never` for app data parts, although it
-   works at runtime (spec 04 §3 says `data` is typed with the owner's parts; the owner is the root
-   plugin `app`). Guides use `ctx.stream.write({ type: 'data-invoice', … })` (works and is
-   typed loosely) and point to plugins for typed writes. Suggested follow-up for the owner of
-   `src/agent` / `src/plugin` (non-breaking: widening a parameter type). Related: P1 open
-   question 3 (plugin tool parts missing from `AgentMessageOf` when the app declares static
-   tools) is unchanged for 0.1.0.
+2. **Tool-factory context typing (fixed after review).** `ToolInput` used the default parts type,
+   so `ctx.stream.data(…)` accepted only `never` in top-level tool functions and in tools a plugin
+   contributes as functions. Now `ToolInput<DP>` / `ToolsInput<DP>` take the owner's part map:
+   `PluginContribution<DP>.tools` is `ToolsInput<DP>`, and `HarnessAgentConfig<DP>` +
+   `defineHarnessAgent<const C extends HarnessAgentConfig<DP>, const DP>(config: C & { dataParts?: DP })`
+   infer the app's `dataParts` for top-level tools (both cases work; existing inference and a
+   config typed as plain `HarnessAgentConfig` unchanged). Type tests:
+   `src/agent/tool-context.test-d.ts`. Specs 01 §1/§2 and 04 §3, the plugin and rendering guides
+   and the changeset updated. Related, unchanged for 0.1.0: P1 open question 3 (plugin tool parts
+   are not in `AgentMessageOf` when the app declares static tools).
 3. **`version` export drift.** `export const version` in `src/index.ts` was a literal that the
    version PR would not update (0.1.0 would have reported `0.0.2`). `bun run release:version`
    now runs `scripts/sync-version.ts` after `changeset version`, and `scripts/sync-version.test.ts`
