@@ -123,7 +123,7 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
 
 | File | Trigger | Jobs | Permissions |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | PR, push main/next | `check` (lint, typecheck, test, build, publint+attw, import rule, changeset status), `node-compat` (Node 22 & 24: pack tarball → clean install → `scripts/smoke.mjs`) | `contents: read` |
+| `.github/workflows/ci.yml` | PR, push main/next | `check` (lint, typecheck incl. `examples/`, test incl. the examples with a Postgres service container, build, publint+attw, import rule, changeset status), `node-compat` (Node 22 & 24: pack tarball → clean install → `scripts/smoke.mjs`) | `contents: read` |
 | `.github/workflows/release.yml` | push main/next, manual (main/next only) | `select-mode` → `version` (`GITHUB_TOKEN`) or `pack` → `publish` (environment `npm`) | least privilege per job; `id-token: write` only on `publish` |
 | `.github/dependabot.yml` | weekly | actions + bun deps; peer majors ignored | — |
 
@@ -170,5 +170,6 @@ Never publish an old line without `--tag`, or it becomes `latest`.
 
 - [ ] CHANGELOG entries are user-facing and mention BREAKING + migration where relevant
 - [ ] Specs touched by the release are marked with the new status (Frozen after 1.0)
-- [ ] `README.md` snippets match the current API (they are not compiled; `examples/` is)
+- [ ] `README.md` snippets match the current API (the quick start is checked against
+      `examples/quick-start.ts` by `examples/examples.test.ts`; other snippets are not compiled)
 - [ ] Peer dependency ranges (`ai`, `zod`, `@ai-sdk/mcp`) are correct
