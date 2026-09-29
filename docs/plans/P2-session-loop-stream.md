@@ -110,3 +110,7 @@ from P1; the dynamic tool-source parts of `src/registry/tools.ts` go to P6),
   any release — spec 10 §1 says it must not exist in a release.
 - From P1 (review): `project()` answers pending client tool calls like any call without a result;
   patch pending parts in the stored message (respond / onNewInput deny) before projecting.
+- From P1 (re-review, minor): `nextId` bumps the timestamp whenever `floorMs >= lastMs`, also when
+  the floor is the generator's own last id in the same millisecond, so bursts with a per-call floor
+  advance 1 ms per id instead of using the counter. Ordering is correct; optionally bump only when
+  the floor sorts after the last issued id (`src/messages/ids.ts:66`).
