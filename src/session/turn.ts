@@ -15,12 +15,14 @@ import {
   type UIMessageStreamWriterWithOutcome,
 } from 'ai'
 import type { ActiveTurn, HarnessRun, SendInput, SendOptions } from '../agent/session-types.ts'
+import type { SessionCompaction } from '../compaction/compact.ts'
+import { createTurnCompaction } from '../compaction/turn-context.ts'
+import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, isHarnessError } from '../errors.ts'
 import { describeModel } from '../internal/model.ts'
 import {
   addUsage,
   emptyUsage,
-  estimateTokens,
   type LoopResult,
   mergeSettings,
   runSteps,
@@ -28,11 +30,9 @@ import {
   type UsageTotals,
 } from '../loop/steps.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import { project } from '../messages/project.ts'
 import { INTERRUPTED_CRASH, INTERRUPTED_TURN } from '../messages/texts.ts'
 import { answerDanglingToolParts } from '../messages/tool-parts.ts'
 import type {
-  ContextStats,
   HarnessUIMessage,
   HarnessUsageMeta,
   PendingState,
@@ -66,11 +66,8 @@ export interface TurnHost {
   ensureContext(): Promise<void>
   /** Save messages (after `message.beforeSave`) and cache them. Throws `EH_STORAGE`. */
   persist(messages: HarnessUIMessage[]): Promise<HarnessUIMessage[]>
-  /** Context statistics (plain estimates in P2). */
-  stats(
-    model: LanguageModel,
-    parts: { instructions: string; tools: number; wire: unknown },
-  ): ContextStats
+  /** Token accounting and compaction of the session (spec 06). */
+  compaction: SessionCompaction
   /** Called when the turn fully ended (running flag cleared). */
   onTurnEnd(): void
 }
@@ -748,31 +745,38 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         hookFailed(rt, 'turn.start', hook.owner, error)
       }
     }
-    // pre-turn compaction check: P3
-
     const registry = prep.registry as TurnRegistry
     try {
       const view = rt.view ?? []
-      const prior = prep.user === undefined ? view : view.filter((m) => m.id !== prep.user?.id)
-      const projectOptions = {
-        registry: rt.agent.messages,
-        sessionId: rt.id,
-        tools: registry.tools,
-        model: info.model,
+      const messageId = assistantId as string
+      const compaction = createTurnCompaction({
+        engine: host.compaction,
+        rt,
+        turnId,
+        assistantId: messageId,
+        currentStartId: currentTurnStartId(
+          view,
+          prep.user === undefined
+            ? { kind: 'no-input', assistantId: messageId }
+            : { kind: 'input', userMessageId: prep.user.id },
+          rt.agent.messages,
+        ),
+        info,
+        registry,
+        write,
+        signal: controller.signal,
         pending: null,
-      }
-      const priorWire = await project(prior, projectOptions)
-      const wire: ModelMessage[] = [
-        ...priorWire,
-        ...(prep.user === undefined ? [] : await project([prep.user], projectOptions)),
-      ]
+      })
+      // pre-turn compaction check (spec 05 §3 step 14, spec 06 §4)
+      const built = await compaction.preTurn(await compaction.build())
+      const wire: ModelMessage[] = built.wire
       const result: LoopResult = await runSteps({
         rt,
         registry,
         info,
         wire,
-        turnStart: priorWire.length,
-        messageId: assistantId as string,
+        turnStart: built.turnStart,
+        messageId,
         activeTools: prep.activeTools,
         maxSteps: op.options.maxSteps ?? config.loop?.maxSteps ?? DEFAULT_MAX_STEPS,
         maxContinues: config.loop?.maxContinues ?? DEFAULT_MAX_CONTINUES,
@@ -786,18 +790,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         usage,
         discovered: seedDiscovered(view),
         heartbeat,
-        stats: (model, currentWire) =>
-          host.stats(model, {
-            instructions: [registry.block1, registry.block2, registry.turnReminder]
-              .filter((t) => t !== undefined)
-              .join('\n\n'),
-            tools: registry.entries.reduce(
-              (sum, e) =>
-                sum + estimateTokens({ name: e.name, description: e.tool.description ?? '' }),
-              0,
-            ),
-            wire: currentWire,
-          }),
+        compaction,
       })
       outcome = withoutUndefined({ ...result }) as Outcome
     } catch (error) {

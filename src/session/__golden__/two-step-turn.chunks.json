@@ -63,10 +63,10 @@
     "type": "data-eh.context",
     "data": {
       "window": 100000,
-      "tokens": 106,
+      "tokens": 80,
       "instructions": 4,
-      "tools": 14,
-      "messages": 88,
+      "tools": 49,
+      "messages": 27,
       "summarizeAt": 75000,
       "hardLimit": 82000
     },
@@ -113,10 +113,10 @@
     "type": "data-eh.context",
     "data": {
       "window": 100000,
-      "tokens": 125,
-      "instructions": 4,
-      "tools": 14,
-      "messages": 107,
+      "tokens": 76,
+      "instructions": 3,
+      "tools": 43,
+      "messages": 30,
       "summarizeAt": 75000,
       "hardLimit": 82000
     },
