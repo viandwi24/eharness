@@ -136,6 +136,8 @@ export interface PluginStreamWriter<DP extends DataPartMap = {}> {
   persistent writes are rejected with `W_WRITE_OUTSIDE_TURN` (use `session.inject` for durable
   out-of-turn content).
 - Tools use the same writer through the `ctx` they closed over (spec 01 §4) — no `emit` plumbing.
+  Tool functions are typed with their owner's parts: a plugin's `dataParts` for tools it
+  contributes (setup or session phase), the app's `dataParts` for top-level `tools`.
 
 ## 4. Persistent vs transient vs metadata (normative guidance)
 

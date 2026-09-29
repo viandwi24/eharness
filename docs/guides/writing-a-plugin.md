@@ -53,12 +53,14 @@ of instructions and hooks.
 
 ## The context object
 
-Hooks, `session()` and tool functions receive `ctx` (`HarnessContext`), one per session and plugin:
+Hooks, `session()` and tool functions (`tools: { x: (ctx) => tool(…) }`, from `setup()` or
+`session()`) receive `ctx` (`HarnessContext<DP>`, typed with this plugin's data parts), one per
+session and plugin:
 
 | Field | Use |
 |---|---|
 | `ctx.state` | `get` / `set` JSON values, namespaced per plugin, saved with the session |
-| `ctx.stream.data(name, data, { id?, transient? })` | write this plugin's data parts ([rendering guide](rendering-data-parts.md)) |
+| `ctx.stream.data(name, data, { id?, transient? })` | write this plugin's data parts; `name` and `data` are type-checked ([rendering guide](rendering-data-parts.md)) |
 | `ctx.services` | typed services of all plugins (see below) |
 | `ctx.turn` | the running turn: `id`, `kind`, `input`, `options`, `model`, `abortSignal`, `addUsage()` — `undefined` outside a turn |
 | `ctx.runtime` | what the app passed as `SessionOptions.runtime` / `SendOptions.runtime` (user id, tenant, …) |

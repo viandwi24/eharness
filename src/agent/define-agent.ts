@@ -152,7 +152,10 @@ function rootContribution(config: HarnessAgentConfig): PluginContribution {
  *   `EH_SERVICE_MISSING`, `EH_PLUGIN_ORDER`. Messages name every involved owner.
  * @see docs/specs/01-agent-and-plugins.md#1-defineharnessagent
  */
-export function defineHarnessAgent<const C extends HarnessAgentConfig>(config: C): HarnessAgent<C> {
+export function defineHarnessAgent<
+  const C extends HarnessAgentConfig<DP>,
+  const DP extends DataPartMap = Record<never, never>,
+>(config: C & { dataParts?: DP }): HarnessAgent<C> {
   validateConfig(config)
   const id = config.id ?? 'agent'
   const plugins = orderPlugins(config)
