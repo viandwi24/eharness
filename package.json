@@ -1,0 +1,76 @@
+{
+  "name": "eharness",
+  "version": "0.0.1",
+  "description": "Build your own agent harness on AI SDK v7: plugins, context, messages, streaming, sessions, compaction.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/viandwi24/eharness.git"
+  },
+  "homepage": "https://github.com/viandwi24/eharness#readme",
+  "bugs": "https://github.com/viandwi24/eharness/issues",
+  "keywords": [
+    "ai",
+    "ai-sdk",
+    "agent",
+    "harness",
+    "llm",
+    "tools",
+    "skills",
+    "mcp"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "bun@1.4.2",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "build": "tsdown",
+    "check:package": "publint && attw --pack . --profile esm-only",
+    "check:imports": "bun scripts/check-imports.ts",
+    "release:version": "changeset version && bun install --lockfile-only"
+  },
+  "peerDependencies": {
+    "@ai-sdk/mcp": "^2.0.0",
+    "ai": "^7.0.0",
+    "zod": "^3.25.76 || ^4.1.8"
+  },
+  "peerDependenciesMeta": {
+    "@ai-sdk/mcp": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@ai-sdk/mcp": "^2.0.62",
+    "@arethetypeswrong/cli": "^0.18.5",
+    "@biomejs/biome": "^2.5.14",
+    "@changesets/changelog-github": "^1.0.1",
+    "@changesets/cli": "^3.0.3",
+    "@types/bun": "1.4.2",
+    "ai": "^7.0.122",
+    "publint": "^0.3.24",
+    "tsdown": "^0.23.0",
+    "typescript": "^7.0.2",
+    "zod": "^4.6.5"
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./filesystem": "./dist/filesystem/index.js",
+    "./filesystem/memory": "./dist/filesystem/memory.js",
+    "./mcp": "./dist/mcp/index.js",
+    "./storage/memory": "./dist/storage/memory.js",
+    "./testing": "./dist/testing/index.js",
+    "./package.json": "./package.json"
+  }
+}

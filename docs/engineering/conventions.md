@@ -6,7 +6,7 @@
 |---|---|---|
 | Package manager, scripts, tests | Bun (`packageManager: bun@<pinned>`) | dev only |
 | Types | TypeScript 7 (`tsc --noEmit`) | `strict`, `isolatedDeclarations`, `verbatimModuleSyntax`, `noUncheckedIndexedAccess` |
-| Build | tsdown | ESM only, `.d.mts` via isolated declarations, `exports` generated |
+| Build | tsdown | ESM only, `.js` + `.d.ts` (`"type": "module"`) via isolated declarations, `exports` generated |
 | Lint + format | Biome | `biome check` in CI, `biome format --write` locally |
 | Package checks | publint, `@arethetypeswrong/cli` (profile `esm-only`) | `bun run check:package` |
 | Versioning | Changesets v3 | see release.md |
@@ -14,6 +14,7 @@
 Install versions are whatever the official docs recommend at scaffold time (P0); after that,
 Dependabot keeps them current. TypeScript 7 is the native (Go) compiler: P0 verifies that tsdown's
 isolated-declarations dts path and attw work with it, and pins the major here if they do not.
+Verified in P0 with TypeScript 7.0.2, tsdown 0.23.0 and attw 0.18.5: no pin needed.
 
 ## Source layout
 

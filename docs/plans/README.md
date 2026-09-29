@@ -7,7 +7,7 @@ Update this table in the same commit that changes a phase's status.
 
 | Phase | File | Status | Depends on | Can run in parallel with |
 |---|---|---|---|---|
-| P0 | [Bootstrap repo, tooling, CI, release](P0-bootstrap.md) | todo | — | — |
+| P0 | [Bootstrap repo, tooling, CI, release](P0-bootstrap.md) | in progress | — | — |
 | P1 | [Core foundations: errors, ids, messages, plugins, registries](P1-core-foundations.md) | todo | P0 | — |
 | P2 | [Session, loop, streaming, storage contracts](P2-session-loop-stream.md) | todo | P1 | — |
 | P3 | [Context loading and compaction](P3-compaction.md) | todo | P2 | P4, P6 |
