@@ -124,6 +124,12 @@ export type {
   ToolSourceDef,
   ToolsInput,
 } from './registry/types.ts'
+export {
+  defineSkill,
+  defineSkillSource,
+  parseSkillMarkdown,
+  validateSkillPath,
+} from './skills/index.ts'
 
 /** Package version of this build. */
 export const version: string = '0.0.2'

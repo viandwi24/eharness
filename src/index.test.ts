@@ -28,11 +28,15 @@ describe('core entry', () => {
       'defineHarnessAgent',
       'defineMessageKind',
       'definePlugin',
+      'defineSkill',
+      'defineSkillSource',
       'defineToolSource',
       'isHarnessError',
       'isKindMessage',
       'isUuidV7',
+      'parseSkillMarkdown',
       'uuidv7',
+      'validateSkillPath',
       'version',
     ])
   })
