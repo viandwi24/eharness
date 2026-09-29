@@ -69,6 +69,25 @@ describe('scriptedModel with generateText', () => {
     expect(model.prompts[1]?.at(-1)?.role).toBe('user')
   })
 
+  test('doGenerate honours delayMs and the abort signal', async () => {
+    const model = scriptedModel([
+      { text: 'late', delayMs: 30 },
+      { text: 'never', delayMs: 1000 },
+    ])
+    const started = Date.now()
+    expect((await generateText({ model, prompt: 'x' })).text).toBe('late')
+    expect(Date.now() - started).toBeGreaterThanOrEqual(25)
+
+    const controller = new AbortController()
+    setTimeout(() => controller.abort('stop'), 10)
+    const aborted = Date.now()
+    await expect(
+      generateText({ model, prompt: 'x', maxRetries: 0, abortSignal: controller.signal }),
+    ).rejects.toBeDefined()
+    expect(Date.now() - aborted).toBeLessThan(500)
+    expect(model.calls).toHaveLength(2)
+  })
+
   test('doGenerate throws scripted errors', async () => {
     const model = scriptedModel([{ throws: new Error('boom') }, { streamError: new Error('late') }])
     await expect(generateText({ model, prompt: 'x', maxRetries: 0 })).rejects.toThrow('boom')
