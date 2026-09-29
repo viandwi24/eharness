@@ -44,3 +44,9 @@ filesystem source (P5).
 ## Open questions
 
 ## Requests to other phases
+
+- From P1: `Skill`, `SkillSource`, `SkillMeta`, `SkillDoc`, `SkillFileContent` are declared in
+  `src/registry/types.ts` and exported. Boot tells skills from sources structurally (`id` +
+  `list`/`load` functions = source; string `name` + `content` = skill) and throws
+  `EH_DUPLICATE_SKILL` for duplicate static names. `defineSkill`, `defineSkillSource`,
+  `parseSkillMarkdown`, `validateSkillPath` and skill name validation are not implemented.

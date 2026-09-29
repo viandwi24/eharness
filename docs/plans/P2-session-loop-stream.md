@@ -95,3 +95,12 @@ from P1; the dynamic tool-source parts of `src/registry/tools.ts` go to P6),
 ## Open questions
 
 ## Requests to other phases
+
+- From P1: boot state via `getAgentInternals(agent)` (`src/agent/internals.ts`). Reuse
+  `project()` (`src/messages/project.ts`), `validateStoredMessages()` (`src/messages/validate.ts`,
+  returns warnings to emit), `answerDanglingToolParts()` (`src/messages/tool-parts.ts`),
+  `sanitizeModelMessages()` and `describeModel()` (`src/internal/model.ts`, the format of
+  `metadata.eharness.model`). Session/storage/run types are declared in
+  `src/agent/session-types.ts` — implement against them (move if you like, keep the exports).
+  `agent.session()` currently throws `EH_NOT_IMPLEMENTED`. `describeError` is still to do.
+  The id generator ignores the floor when `config.generateId` is custom.
