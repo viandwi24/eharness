@@ -121,11 +121,10 @@ command/flags. Never hand-write a file the tool generates.
 12. [x] `LICENSE` file matching `license` (after maintainer confirmation).
 13. [x] All scripts green locally: lint, typecheck, test (one trivial test), build, check:package,
     check:imports. Commit: `chore: bootstrap repository`.
-14. [ ] Push; CI green on `main`. The Release workflow is skipped (repository variable
-    `RELEASE_ENABLED` is not set yet) — expected.
-15. [ ] **Maintainer:** release.md §4 steps 1–7 in order: repository settings (environment `npm`
-    with branch policy, release GitHub App), first manual publish of `0.0.1`, trusted publisher,
-    disallow tokens, then `RELEASE_ENABLED=true`.
+14. [ ] Push; CI green on `main`.
+15. [ ] **Maintainer:** release.md §4 in order: repository settings (allow Actions to create PRs,
+    environment `npm` with branch policy), first manual publish of `0.0.1` (done), trusted
+    publisher, disallow tokens.
 
 ## Acceptance criteria
 
@@ -134,8 +133,8 @@ command/flags. Never hand-write a file the tool generates.
 - [ ] CI `check` and `node-compat` (22, 24) green.
 - [ ] `npm view eharness` shows `0.0.1`; trusted publisher configured for `release.yml` / env `npm`.
 - [ ] A test PR with a changeset produces a "chore(release): version packages" PR after merge, CI
-      runs on that PR (GitHub App token), and merging it publishes `0.0.2` with provenance and a
-      `v0.0.2` tag + GitHub release (end-to-end test of the pipeline).
+      runs on that PR (after "Approve workflows to run"), and merging it publishes `0.0.2` with
+      provenance and a `v0.0.2` tag + GitHub release (end-to-end test of the pipeline).
 
 ## Open questions
 

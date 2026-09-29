@@ -65,12 +65,9 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
    - Environments → create `npm`; **Deployment branches and tags → Selected branches: `main`,
      `next`** (so a manual dispatch from another branch can never publish); optionally add
      required reviewers (= manual release approval).
-   - Branch protection on `main`: require PR, require the `CI` checks, squash merge.
-   - **Release GitHub App** (so the version PR triggers CI — PRs opened with `GITHUB_TOKEN` do not
-     start workflows, and branch protection would block the merge forever): create a GitHub App
-     owned by the account/org with repository permissions *Contents: write* and *Pull requests:
-     write*, install it on this repository, then store its client ID as repository **variable**
-     `RELEASE_APP_CLIENT_ID` and a private key as repository **secret** `RELEASE_APP_PRIVATE_KEY`.
+   - Branch protection on `main` (optional): require PR, require the `CI` checks, squash merge.
+   - Nothing else: the workflows use only the built-in `GITHUB_TOKEN` (no GitHub App, PAT or npm
+     token).
 2. **Changesets config** (created by `bunx changeset init` in P0, then edited):
    ```jsonc
    {
@@ -107,15 +104,13 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
 5. **Lock down tokens:** npmjs.com → package → Settings → Publishing access → "Require two-factor
    authentication and disallow tokens". From now on only the workflow can publish.
 6. Revoke any automation tokens you created for the first publish.
-7. **Enable the release workflow:** set repository variable `RELEASE_ENABLED=true`. Until then
-   `release.yml` is a no-op (its `select-mode` job is skipped), which is what keeps it from trying
-   to publish the unpublished `0.0.1` before the trusted publisher exists.
-
 ## 5. Normal release
 
 1. Merge feature PRs with changesets into `main`.
 2. `release.yml` opens/updates **"chore(release): version packages"** PR.
-3. Review the generated `CHANGELOG.md` and version. Edit wording in the PR if needed.
+3. On that PR click **"Approve workflows to run"**: GitHub holds CI on PRs opened with
+   `GITHUB_TOKEN` until someone with write access approves it. Wait for CI to pass, then review
+   the generated `CHANGELOG.md` and version. Edit wording in the PR if needed.
 4. Merge it. `release.yml` runs `pack` then `publish`:
    - `npm publish` via OIDC with provenance,
    - git tag `vX.Y.Z` (Changesets tags single-package repos as `v<version>`),
@@ -127,7 +122,7 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
 | File | Trigger | Jobs | Permissions |
 |---|---|---|---|
 | `.github/workflows/ci.yml` | PR, push main/next | `check` (lint, typecheck, test, build, publint+attw, import rule, changeset status), `node-compat` (Node 22 & 24: pack tarball → clean install → `scripts/smoke.mjs`) | `contents: read` |
-| `.github/workflows/release.yml` | push main/next, manual (main/next only) | gated by `vars.RELEASE_ENABLED`; `select-mode` → `version` (GitHub App token) or `pack` → `publish` (environment `npm`) | least privilege per job; `id-token: write` only on `publish` |
+| `.github/workflows/release.yml` | push main/next, manual (main/next only) | `select-mode` → `version` (`GITHUB_TOKEN`) or `pack` → `publish` (environment `npm`) | least privilege per job; `id-token: write` only on `publish` |
 | `.github/dependabot.yml` | weekly | actions + bun deps; peer majors ignored | — |
 
 ## 7. Prereleases (`next` channel)
