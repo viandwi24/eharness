@@ -68,7 +68,9 @@ function fileLines(content: string): string[] {
 
 /**
  * Line-numbered window of a file (`cat -n` style: number right-aligned to 6, a tab, the line),
- * bounded by `limit` lines and `maxChars` characters, with a continuation hint.
+ * bounded by `limit` lines and `maxChars` characters, with a continuation hint. The whole text,
+ * continuation hint included, stays within `maxChars` (so the core's tool output limit, spec 09
+ * §4, never cuts a full window).
  */
 export function renderWindow(
   content: string,
@@ -81,26 +83,33 @@ export function renderWindow(
   if (offset > lines.length) {
     return { error: `offset ${offset} is past the end of the file (${lines.length} lines)` }
   }
-  const out: string[] = []
-  let used = 0
-  let last = offset - 1
-  for (let n = offset; n <= Math.min(lines.length, offset + limit - 1); n++) {
-    let line = `${String(n).padStart(6)}\t${lines[n - 1] as string}`
-    const cost = line.length + 1
-    if (used + cost > maxChars) {
-      if (out.length > 0) break
-      // a single line longer than the budget: show its head
-      line = `${line.slice(0, Math.max(0, maxChars - 40))} … [line truncated]`
+  const hint = (last: number) =>
+    `\n\n(Showing lines ${offset}-${last} of ${lines.length}. Continue with offset=${last + 1}.)`
+  const fill = (budget: number) => {
+    const out: string[] = []
+    let used = 0
+    let last = offset - 1
+    for (let n = offset; n <= Math.min(lines.length, offset + limit - 1); n++) {
+      let line = `${String(n).padStart(6)}\t${lines[n - 1] as string}`
+      const cost = line.length + 1
+      if (used + cost > budget) {
+        if (out.length > 0) break
+        // a single line longer than the budget: show its head
+        line = `${line.slice(0, Math.max(0, budget - 40))} … [line truncated]`
+      }
+      out.push(line)
+      used += cost
+      last = n
     }
-    out.push(line)
-    used += cost
-    last = n
+    return { text: out.join('\n'), last }
   }
-  let text = out.join('\n')
-  if (last < lines.length) {
-    text += `\n\n(Showing lines ${offset}-${last} of ${lines.length}. Continue with offset=${last + 1}.)`
+  let window = fill(maxChars)
+  if (window.last < lines.length) {
+    // reserve room for the hint (its longest form) and fill again
+    window = fill(Math.max(0, maxChars - hint(lines.length).length))
+    window.text += hint(window.last)
   }
-  return { text }
+  return { text: window.text }
 }
 
 const pathSchema = z.string().describe('Absolute path of the file, e.g. /src/main.pine')

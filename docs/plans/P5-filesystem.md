@@ -104,3 +104,6 @@ suite. Built **only** with the public API (`check:imports`).
   the default limit and gets a middle cut (`TOOL_OUTPUT_TRUNCATED`) that drops a few lines.
   Suggested fix: reserve the footer inside `maxReadChars` in `renderWindow()`
   (`src/filesystem/tools.ts`), or default `maxReadChars` slightly below the core limit.
+  - Resolved in P6 (orchestrator decision): `renderWindow()` now reserves room for the hint, so
+    the whole `read_file` result stays within `maxReadChars`; regression tests in
+    `src/filesystem/tools.test.ts` and `src/registry/tool-sources.int.test.ts`, spec 08 updated.

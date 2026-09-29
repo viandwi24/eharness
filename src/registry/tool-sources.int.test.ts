@@ -483,6 +483,24 @@ describe('tool output limits (spec 09 §4)', () => {
     )
   })
 
+  test('a full default read_file window is not cut by the default output limit', async () => {
+    const content = Array.from({ length: 20_000 }, (_, i) => `row ${i} ${'x'.repeat(30)}`).join(
+      '\n',
+    )
+    const { agent, warnings } = setup(
+      [
+        { toolCalls: [{ toolName: 'read_file', input: { path: '/big.txt', limit: 2000 } }] },
+        { text: 'ok' },
+      ],
+      { plugins: [filesystem({ fs: memoryFs({ '/big.txt': content }) })] },
+    )
+    const result = await agent.session('s1').send('go').result
+    const [[, output]] = toolOutputs(assistantOf(result)) as [[string, string]]
+    expect(output).toContain('Continue with offset=')
+    expect(output).not.toContain('…[truncated')
+    expect(warnings.some((w) => w.code === 'W_TOOL_OUTPUT_LIMITED')).toBe(false)
+  })
+
   test('preliminary outputs are not limited; the final one is, and addUsage counts nested usage', async () => {
     const subagent = definePlugin({
       name: 'sub',
