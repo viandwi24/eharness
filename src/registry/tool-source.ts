@@ -28,6 +28,26 @@ export function defineToolSource(def: ToolSourceDef): ToolSource {
       `defineToolSource('${def.id}'): \`list\` must be a function.`,
     )
   }
+  if (def.refresh !== undefined && def.refresh !== 'session' && def.refresh !== 'turn') {
+    throw new HarnessError(
+      'EH_CONFIG_INVALID',
+      `defineToolSource('${def.id}'): \`refresh\` must be 'session' or 'turn'.`,
+    )
+  }
+  if (def.defer !== undefined && typeof def.defer !== 'boolean') {
+    throw new HarnessError(
+      'EH_CONFIG_INVALID',
+      `defineToolSource('${def.id}'): \`defer\` must be a boolean.`,
+    )
+  }
+  for (const hook of ['open', 'close'] as const) {
+    if (def[hook] !== undefined && typeof def[hook] !== 'function') {
+      throw new HarnessError(
+        'EH_CONFIG_INVALID',
+        `defineToolSource('${def.id}'): \`${hook}\` must be a function.`,
+      )
+    }
+  }
   return Object.freeze({ ...def, '~toolSource': true as const })
 }
 
