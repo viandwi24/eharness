@@ -1,0 +1,68 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Deploy"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool-call",
+        "toolCallId": "c1",
+        "toolName": "deploy",
+        "input": {
+          "env": "prod"
+        }
+      },
+      {
+        "type": "tool-approval-request",
+        "approvalId": "ap-1",
+        "toolCallId": "c1",
+        "signature": "sig"
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c2",
+        "toolName": "deploy",
+        "input": {
+          "env": "dev"
+        }
+      },
+      {
+        "type": "tool-approval-request",
+        "approvalId": "ap-2",
+        "toolCallId": "c2"
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "type": "tool-approval-response",
+        "approvalId": "ap-1",
+        "approved": true
+      },
+      {
+        "type": "tool-approval-response",
+        "approvalId": "ap-2",
+        "approved": false,
+        "reason": "no"
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c2",
+        "toolName": "deploy",
+        "output": {
+          "type": "execution-denied",
+          "reason": "no"
+        }
+      }
+    ]
+  }
+]

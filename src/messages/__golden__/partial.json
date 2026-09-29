@@ -1,0 +1,51 @@
+[
+  {
+    "role": "user",
+    "content": "<conversation-summary>Steps 0-1 read three files.</conversation-summary>"
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Refactor"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool-call",
+        "toolCallId": "c3",
+        "toolName": "weather",
+        "input": {
+          "city": "Oslo"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "type": "tool-result",
+        "toolCallId": "c3",
+        "toolName": "weather",
+        "output": {
+          "type": "text",
+          "value": "file c"
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Done."
+      }
+    ]
+  }
+]

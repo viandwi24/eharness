@@ -1,0 +1,28 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Save the note"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "<data type=\"note\">{\"value\":\"remember milk\"}</data>"
+      },
+      {
+        "type": "text",
+        "text": "Saved."
+      },
+      {
+        "type": "text",
+        "text": "[changed /a.md in s1/02]"
+      }
+    ]
+  }
+]
