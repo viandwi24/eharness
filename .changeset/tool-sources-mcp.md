@@ -17,3 +17,5 @@ eager connect, allow/deny, prefixing, `defer: 'auto'`, `maxRetries`, reconnects 
 `eharness/mcp` no longer exports the `experimental_placeholder` constant (it was a placeholder with
 no behaviour). `read_file` now keeps its continuation hint inside `maxReadChars`, so a full window
 fits the default tool output limit.
+A failed session open now aborts the session's `ctx.signal` before that attempt's disposers run
+(a retried open gets a fresh signal), so plugins and tool sources release per-session resources.
