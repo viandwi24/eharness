@@ -97,7 +97,9 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
                                   # 2FA prompts in the browser (or pass --otp <code>)
    ```
 4. **Configure the trusted publisher** on npmjs.com → package → Settings → Trusted publishing →
-   GitHub Actions: repository `OWNER/eharness`, workflow `release.yml`, environment `npm`.
+   GitHub Actions: repository `OWNER/eharness`, workflow `release.yml`, environment `npm`, and
+   **check "Allow npm publish"** (otherwise only `npm stage publish` is allowed and the publish job
+   is rejected).
    (Equivalent CLI, needs npm ≥ 11.15:
    `npm trust github eharness --repo OWNER/eharness --file release.yml --env npm --allow-publish`.)
    The workflow file name (`release.yml`) and environment (`npm`) must match exactly.

@@ -1,6 +1,6 @@
 # P0 — Bootstrap repo, tooling, CI, release
 
-Status: in progress (steps 1–13 done; 14–15 + acceptance need the maintainer) · Owner: coordinator agent + maintainer · Branch: `main` (initial commits)
+Status: done · Owner: coordinator agent + maintainer · Branch: `main` (initial commits)
 
 ## Goal
 
@@ -121,20 +121,24 @@ command/flags. Never hand-write a file the tool generates.
 12. [x] `LICENSE` file matching `license` (after maintainer confirmation).
 13. [x] All scripts green locally: lint, typecheck, test (one trivial test), build, check:package,
     check:imports. Commit: `chore: bootstrap repository`.
-14. [ ] Push; CI green on `main`.
-15. [ ] **Maintainer:** release.md §4 in order: repository settings (allow Actions to create PRs,
+14. [x] Push; CI green on `main`.
+15. [x] **Maintainer:** release.md §4 in order: repository settings (allow Actions to create PRs,
     environment `npm` with branch policy), first manual publish of `0.0.1` (done), trusted
-    publisher, disallow tokens.
+    publisher ("Allow npm publish" checked), disallow tokens (recommended, see note below).
 
 ## Acceptance criteria
 
-- [ ] Fresh clone → `bun install && bun run build && bun run check:package` passes.
-- [ ] `npm pack` tarball contains only `dist/**`, `package.json`, `README.md`, `LICENSE`.
-- [ ] CI `check` and `node-compat` (22, 24) green.
-- [ ] `npm view eharness` shows `0.0.1`; trusted publisher configured for `release.yml` / env `npm`.
-- [ ] A test PR with a changeset produces a "chore(release): version packages" PR after merge, CI
+- [x] Fresh clone → `bun install && bun run build && bun run check:package` passes.
+- [x] `npm pack` tarball contains only `dist/**`, `package.json`, `README.md`, `LICENSE`.
+- [x] CI `check` and `node-compat` (22, 24) green.
+- [x] `npm view eharness` shows `0.0.1`; trusted publisher configured for `release.yml` / env `npm`.
+- [x] A test PR with a changeset produces a "chore(release): version packages" PR after merge, CI
       runs on that PR (after "Approve workflows to run"), and merging it publishes `0.0.2` with
       provenance and a `v0.0.2` tag + GitHub release (end-to-end test of the pipeline).
+
+  Verified 2026-09-29: PR #1 → version PR #3 → `eharness@0.0.2` with SLSA provenance, tag and
+  GitHub release `v0.0.2`. CI on PR #3 was not approved before merge (the `pack` job re-ran
+  test/build/package checks); approve it on future version PRs.
 
 ## Open questions
 
@@ -158,4 +162,8 @@ command/flags. Never hand-write a file the tool generates.
   that tarball (`attw --pack` would shell out to `npm pack`); the first publish uses
   `bun publish` and the trusted publisher is configured on npmjs.com (release.md §4). Node is
   exercised only in CI (`node-compat`, Node 22/24) and by the npm-based publish job.
+- npm trusted publisher: the "Allow npm publish" box must be checked, otherwise the publisher may
+  only `npm stage publish` and the `publish` job is rejected.
+- Maintainer follow-up: npmjs.com → Settings → Publishing access → "Require two-factor
+  authentication and disallow tokens" once no local publishing is needed.
 - No changeset for the bootstrap commit: `0.0.1` is published by hand (release.md §4.3).
