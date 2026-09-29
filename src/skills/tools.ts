@@ -93,9 +93,38 @@ export function formatSkillFile(content: SkillFileContent): string {
     : `[binary ${content.mediaType}, ${content.data.byteLength} bytes]`
 }
 
+/** `SkillSource.locate(name)` for the `skill.load` event; failures warn and yield `undefined`. */
+async function locate(
+  deps: SkillToolDeps,
+  entry: SkillSourceEntry,
+  name: string,
+): Promise<{ service: string; root: string } | undefined> {
+  if (typeof entry.source.locate !== 'function') return undefined
+  try {
+    const location: unknown = await entry.source.locate(name, deps.contextOf(entry.owner))
+    if (location === null || location === undefined) return undefined
+    const { service, root } = location as { service?: unknown; root?: unknown }
+    if (typeof service !== 'string' || typeof root !== 'string') {
+      throw new Error('locate() must return null or { service, root }')
+    }
+    return { service, root }
+  } catch (error) {
+    deps.warn(
+      {
+        code: 'W_SKILL_SOURCE_FAILED',
+        message: `Skill source '${entry.source.id}' failed to locate skill '${name}': ${describe(error)}`,
+        details: { source: entry.source.id, owner: entry.owner, skill: name },
+      },
+      `${entry.source.id}:locate`,
+    )
+    return undefined
+  }
+}
+
 /**
  * Load a skill of the turn: `SkillSource.load`, then the `skill.load` hook chain (plugin order;
- * a hook may replace the doc and add notes; a throwing hook is skipped with `W_HOOK_FAILED`).
+ * the event carries `SkillSource.locate()`'s result; a hook may replace the doc and add notes; a
+ * throwing hook is skipped with `W_HOOK_FAILED`).
  * Returns the model-visible text.
  */
 export async function loadSkillText(deps: SkillToolDeps, name: string): Promise<string> {
@@ -117,11 +146,14 @@ export async function loadSkillText(deps: SkillToolDeps, name: string): Promise<
     current = { ...current, description: listed?.description ?? '' }
   }
   const notes: string[] = []
-  for (const hook of deps.hooks.list('skill.load')) {
+  const hooks = deps.hooks.list('skill.load')
+  const location = hooks.length > 0 ? await locate(deps, entry, name) : undefined
+  for (const hook of hooks) {
     try {
       const out = await hook.fn(deps.contextOf(hook.owner), {
         skill: current,
         source: entry.source.id,
+        ...(location === undefined ? {} : { location }),
       })
       if (out === undefined || out === null) continue
       if (out.skill !== undefined) {
