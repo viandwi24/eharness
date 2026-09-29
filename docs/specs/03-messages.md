@@ -67,6 +67,9 @@ export interface HarnessMessageMeta {
   deliveredIn?: string
 
   // assistant messages only
+  /** Gateway strings as-is ('anthropic/claude-sonnet-4.6'); provider instances as
+   *  '<provider>/<modelId>' ('anthropic.messages/claude-sonnet-4-6'). The provider family used by
+   *  projection (§6 step 5) is the part before the first '/', then before the first '.'. */
   model?: string
   /** Flattened from AI SDK LanguageModelUsage: reasoningTokens = outputTokenDetails.reasoningTokens,
    *  cachedInputTokens = inputTokenDetails.cacheReadTokens. */
@@ -213,6 +216,9 @@ await session.inject('eh.event', {...}, { deliver: 'next-step' })   // into the 
 await session.inject('eh.event', {...}, { wake: true })             // start a turn if idle
 ```
 
+- `createKindMessage(kind, data, { role?, id?, createdAt?, turnId?, parentId?, deliveredIn?, partId? })`
+  builds the normative shape (§5.2) without validating `data`; `role` defaults to the core kind's
+  role for `eh.*` kinds and to `'user'` otherwise. `isKindMessage(message, kind?)` checks the shape.
 - `session.inject(kind, data, opts?)` validates `data`, creates the message, saves it, and emits it
   on the session event channel (spec 04 §6). Delivery and wake-up options: spec 11 §6.3.
 - Default (`next-turn`) keeps stored order equal to model order trivially. `next-step` delivery
@@ -224,7 +230,7 @@ await session.inject('eh.event', {...}, { wake: true })             // start a t
 ## 6. Projection to the model
 
 ```
-project(view: HarnessUIMessage[], ctx: { registry; tools; model;
+project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   // sessionId → ProjectionContext
         pending: PendingState | null;        // spec 11 §2
         continuing?: string                  // id of the message a respond() continues
       }) → Promise<ModelMessage[]>
@@ -255,6 +261,30 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model;
      })
   7. sanitize: remove tool results without calls and empty messages (spec 06 §6)
 ```
+
+Details (normative for the implementation in `src/messages/project.ts`):
+
+- Only the newest boundary (highest id) of the view is projected, and only its `partial` counts;
+  older boundaries are dropped (the loader normally removes them already). If
+  `partial.messageId` has fewer `step-start` parts than `fromStep + 1`, all its parts are dropped.
+- Kind messages whose kind is not registered, or whose projection returns `null` / an empty
+  result, are dropped. `role: 'system'` messages are never projected (spec 02 §5).
+- Step 3 answers `approval-requested` parts unless they belong to `ctx.pending` (same message id
+  and tool call id). Pending client tool calls are never projected while still pending: `respond()`
+  and `onNewInput: 'deny'` patch them before the next projection. A preliminary
+  `output-available` part (`preliminary: true`) has no final result and is answered too. The
+  answered part is `output-error` with `input` (or `{}` when the input never finished streaming)
+  and without its `approval` object.
+- Step 4: the user message built from a `data-eh.input` part has one text part (`text`) followed
+  by its `files`. Consecutive inputs become consecutive user messages.
+- Step 5 applies only when both the stored `metadata.eharness.model` and `ctx.model` have a
+  provider family (§3) and they differ; it drops `reasoning` / `reasoning-file` parts and
+  `providerMetadata` / `callProviderMetadata` / `resultProviderMetadata`.
+- `'text'` data part projection uses the part name without the `data-` prefix:
+  `<data type="filesystem.change">{…}</data>`. Transient and unregistered data parts are omitted.
+- Step 7 synthesizes missing results into the tool message that follows the assistant message
+  (or a new one) and matches results only against the calls of the directly preceding assistant
+  message; orphan `tool-approval-response` parts are removed like orphan results.
 
 - Transient data parts never exist in stored messages (AI SDK never adds them), so projection does
   not need to filter them; unknown data part types were removed in memory by validation (§7).
@@ -298,8 +328,14 @@ for each message m (individually — never validate the whole array at once):
 
 `safeValidateUIMessages` rejects data parts without a schema, which is why step 2 must run first.
 
+A kind message whose kind is not registered is skipped like an unknown part (W_UNKNOWN_STORED_PART
+with its `data-<kind>` type), not reported as invalid. A kind message must have exactly one part,
+of type `data-<kind>`; otherwise it is invalid. `metadata.eharness`, when present, must have
+`v: 1` and a numeric `createdAt`.
+
 Policy `SessionOptions.onInvalidMessage` applies per message: `'drop'` (default: skip that message,
-warn `W_INVALID_MESSAGE`), `'keep'` (use the unvalidated copy), `'throw'` (`EH_INVALID_MESSAGE`).
+warn `W_INVALID_MESSAGE`), `'keep'` (use the unvalidated copy — only if it is message-shaped, i.e. has a `parts` array;
+otherwise it is dropped with the warning), `'throw'` (`EH_INVALID_MESSAGE`).
 Validation runs on cold loads only (spec 05 §6), never on hot-path turns.
 
 ## 8. Ids

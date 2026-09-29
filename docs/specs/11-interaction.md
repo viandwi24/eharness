@@ -233,7 +233,7 @@ is a run error).
 ### 6.3 `inject()` delivery and wake
 
 ```ts
-inject<K extends KindName<M>>(kind: K, data: KindData<M, K>, opts?: {
+inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, opts?: {
   /** 'next-turn' (default) or 'next-step' (delivered into the running turn like a steer). */
   deliver?: 'next-turn' | 'next-step'
   /** If idle, start a no-input turn now; if running, implies deliver: 'next-step'. */

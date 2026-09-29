@@ -41,7 +41,10 @@ an `events()` reader is open. After eviction, held references throw `EH_SESSION_
 ## 2. Session API
 
 ```ts
-export interface HarnessSession<M extends HarnessUIMessage = HarnessUIMessage> {
+export interface HarnessSession<
+  M extends HarnessUIMessage = HarnessUIMessage,
+  Kinds extends Record<string, unknown> = HarnessKindTypes,   // kind name → payload (spec 01 §1.2)
+> {
   readonly id: string
   readonly running: boolean
 
@@ -66,7 +69,7 @@ export interface HarnessSession<M extends HarnessUIMessage = HarnessUIMessage> {
   abort(reason?: string): void
 
   /** Save a kind message; optionally deliver it into the running turn or wake the agent (spec 11 §6.3). */
-  inject<K extends KindName<M>>(kind: K, data: KindData<M, K>, options?: InjectOptions)
+  inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, options?: InjectOptions)
     : Promise<{ message: M; run?: HarnessRun<M> }>
   /** Manual compaction (spec 06). Rejects EH_SESSION_BUSY while a turn runs. */
   compact(): Promise<M | null>
@@ -86,12 +89,15 @@ export interface HarnessSession<M extends HarnessUIMessage = HarnessUIMessage> {
 }
 
 /**
- * Kind names / payload types of an agent message type. Derived in P1 from the same maps that build
- * AgentMessageOf<C> (spec 01 §1.2): union of registered kind names ('eh.event' | 'eh.notice' |
- * 'app-reminder' | 'myplugin.report' …) and the payload type of kind K.
+ * Kind names / payload types of a kind payload map. The map of an agent is `AgentKindTypes<C>`,
+ * derived from the same config maps that build AgentMessageOf<C> (spec 01 §1.2): core kinds
+ * (`HarnessKindTypes`) + app kinds + `<plugin>.<key>` kinds. A message type alone cannot tell kinds
+ * from data parts, so the session carries the map as its second type parameter.
  */
-export type KindName<M> = /* P1 */ string
-export type KindData<M, K> = /* P1 */ unknown
+export type HarnessKindTypes = { 'eh.compaction': CompactionPayload; 'eh.notice': NoticePayload
+                                 'eh.event': EventPayload; 'eh.rewind': RewindPayload }
+export type KindName<Kinds> = keyof Kinds & string
+export type KindData<Kinds, K extends keyof Kinds> = Kinds[K]
 
 export type SendInput = string | { text?: string; files?: FileUIPart[] } | UIMessage   // a user UIMessage (e.g. from useChat)
 

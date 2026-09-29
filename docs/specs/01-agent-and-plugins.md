@@ -119,17 +119,18 @@ export interface HarnessAgent<C = HarnessAgentConfig> {
   readonly id: string
   readonly config: Readonly<C>
   /** Get (hot) or create a live session. Does no I/O until first use. */
-  session(sessionId: string, options?: SessionOptions): HarnessSession<InferHarnessUIMessage<HarnessAgent<C>>>
+  session(sessionId: string, options?: SessionOptions): HarnessSession<AgentMessageOf<C>, AgentKindTypes<C>>
   /** Close and evict a cached session (runs plugin dispose). */
   closeSession(sessionId: string): Promise<void>
   /** Close all sessions. Call on shutdown. */
   close(): Promise<void>
   /**
-   * Type-only brand used by InferHarnessUIMessage. `AgentMessageOf<C>` is computed in P1 from the
-   * config type: core data parts + every plugin's namespaced parts/kinds + app parts/kinds, and the
-   * static tools' InferUITools.
+   * Type-only brand used by InferHarnessUIMessage (undefined at runtime). `AgentMessageOf<C>` is
+   * computed from the config type: core data parts + every plugin's namespaced parts/kinds + app
+   * parts/kinds, and the static app tools' InferUITools (`config.tools` records; any tool when there
+   * are none). `AgentKindTypes<C>` maps every kind name (core, app, `<plugin>.<key>`) to its payload.
    */
-  readonly '~types': { message: AgentMessageOf<C> }
+  readonly '~types': { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> }
 }
 
 /** Opaque value returned by definePlugin (carries its literal name and part maps for inference). */
@@ -402,10 +403,20 @@ declare module 'eharness' {
 | Required service has no provider | `EH_SERVICE_MISSING` |
 | Requirer ordered before provider | `EH_PLUGIN_ORDER` |
 | `callOptions` is not a schema, `settings.timeout.totalMs` set | `EH_CONFIG_INVALID` |
-| App data part / kind name contains `.` or starts with `eh` | `EH_CONFIG_INVALID` |
+| App data part / kind name contains `.` or starts with `eh` (plugin keys follow the same rule) | `EH_CONFIG_INVALID` |
+| Data part / kind without `schema`, kind without `role` `'user' \| 'assistant'` | `EH_CONFIG_INVALID` |
+| Static tool name not matching `^[a-zA-Z0-9_-]{1,64}$`, tool that is neither a `Tool` nor a function | `EH_CONFIG_INVALID` |
+| Unknown hook name, hook that is not a function, invalid instruction/skill shape | `EH_CONFIG_INVALID` |
+| `setup()` returns a promise or throws (the error is kept in `cause`) | `EH_CONFIG_INVALID` |
+| `model` missing, `contextWindow` not a positive number or function, `mcp` entry not a `ToolSource` | `EH_CONFIG_INVALID` |
 
 All thrown as `HarnessError` with `code` and a message naming every involved owner (plugin names,
-source ids).
+source ids). Owners are named `the app (agent config)` for the root plugin and `plugin '<name>'`
+otherwise; `details` carries the same names (`owners`, `plugin`, `service`, …).
+
+Static skills are told apart from skill sources structurally: an object with `id` and `list` /
+`load` functions is a `SkillSource`, an object with string `name` and `content` is a `Skill`.
+Tool sources carry a `'~toolSource'` brand set by `defineToolSource` (spec 02 §3.2).
 
 ## 8. Example
 
