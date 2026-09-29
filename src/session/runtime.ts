@@ -10,6 +10,7 @@ import type { HarnessUIMessage } from '../messages/types.ts'
 import type { HarnessContext, HarnessLogger, TurnInfo } from '../plugin/types.ts'
 import type { NormalizedInstruction } from '../registry/static.ts'
 import type { ToolSource } from '../registry/types.ts'
+import type { SessionSkills } from '../skills/registry.ts'
 import type { HookRunner } from './hooks.ts'
 import type { StateStore } from './state.ts'
 
@@ -33,6 +34,8 @@ export interface OpenSession {
   sessionBlock: string | undefined
   /** `list()` results of `refresh: 'session'` sources. */
   sourceCache: Map<ToolSource, Array<{ name: string; tool: Tool }>>
+  /** Skill sources in registry order (static skills wrapped), `list()` cache, index limit. */
+  skills: SessionSkills
   /** Plugin dispose functions and tool source `close()`, in registration order. */
   disposers: Array<{ owner: string; dispose: () => unknown }>
 }
