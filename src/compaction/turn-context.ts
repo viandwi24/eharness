@@ -125,6 +125,8 @@ export function createTurnCompaction(args: {
   let overflowCompacted = false
   let tightened = false
   let truncationWarned = false
+  /** A failed automatic compaction is not retried in the same turn (the guard takes over). */
+  let failed = false
 
   const projectOptions = {
     registry: messages,
@@ -183,7 +185,8 @@ export function createTurnCompaction(args: {
     forceMode?: 'pre-turn' | 'mid-turn',
   ): Promise<CompactOutcome> {
     const mode = forceMode ?? (hasCompletedStep() ? 'mid-turn' : 'pre-turn')
-    return engine.compact({
+    if (failed) return { status: 'skipped', reason: 'failed-earlier' }
+    const outcome = await engine.compact({
       mode,
       trigger,
       currentStartId: args.currentStartId,
@@ -195,6 +198,8 @@ export function createTurnCompaction(args: {
       write: args.write,
       signal: args.signal,
     })
+    if (outcome.status === 'failed') failed = true
+    return outcome
   }
 
   return {

@@ -735,6 +735,111 @@ describe('scenario 34: overflow recovery', () => {
   })
 })
 
+describe('triggers and windows', () => {
+  test('no-input turn: the injected events start the current turn and are kept', async () => {
+    const steps = Array.from({ length: 5 }, (_, i) => answer(`A${i + 1}`))
+    const { agent, model, messages } = setup(steps)
+    const session = agent.session('s1')
+    await fillTurns(session, 4)
+    const { message: event } = await session.inject('eh.event', {
+      name: 'report',
+      text: big('EVENT-TEXT'),
+    })
+    const result = await session.send().result
+    expect(result.stop).toBe('complete')
+    const [marker] = await markers(messages)
+    const stored = await all(messages)
+    const q4 = stored.find((m) => JSON.stringify(m.parts).includes('Q4 '))
+    expect(payload(marker)).toMatchObject({ trigger: 'turn', resumeFromId: q4?.id })
+    const wire = promptText(model.prompts[4])
+    expect(wire).toContain('EVENT-TEXT')
+    expect(wire).not.toContain('Q3 ')
+    expect(event.id > (q4?.id ?? '')).toBe(true)
+  })
+
+  test('compaction.prompt hooks replace the prompt; config.prompt is the base', async () => {
+    const seen: Array<string | undefined> = []
+    const replace = definePlugin({
+      name: 'brief',
+      setup: () => ({
+        hooks: {
+          'compaction.prompt': (_ctx, out) => {
+            seen.push(out.prompt)
+            out.prompt = 'CUSTOM PROMPT'
+          },
+        },
+      }),
+    })
+    const summarizer = summarizerModel(['S'])
+    const steps = Array.from({ length: 5 }, (_, i) => answer(`A${i + 1}`))
+    const { agent } = setup(steps, {
+      plugins: [replace],
+      compaction: { model: summarizer, keepLast: 1, maxSummaryTokens: 100, prompt: 'BASE' },
+    })
+    await fillTurns(agent.session('s1'), 5)
+    expect(seen).toEqual(['BASE'])
+    expect(summarizer.calls[0]?.prompt[0]).toMatchObject({
+      role: 'system',
+      content: 'CUSTOM PROMPT',
+    })
+  })
+
+  test('a step model with a smaller window is checked against that window (guard)', async () => {
+    const window = (m: unknown) =>
+      typeof m !== 'string' && (m as { modelId?: string }).modelId === 'small' ? 1_000 : 2_000
+    const steps = Array.from({ length: 3 }, (_, i) => answer(`A${i + 1}`))
+    const first = setup(steps, { compaction: false, contextWindow: window })
+    await fillTurns(first.agent.session('s1'), 3)
+    expect(first.warnings.some((w) => w.code === 'W_CONTEXT_TRUNCATED')).toBe(false)
+
+    const small = scriptedModel([answer('small')], { modelId: 'small' })
+    const switcher = definePlugin({
+      name: 'switch',
+      setup: () => ({ hooks: { 'step.prepare': () => ({ model: small }) } }),
+    })
+    const second = setup(
+      [],
+      { compaction: false, contextWindow: window, plugins: [switcher] },
+      { messages: first.messages, state: first.state },
+    )
+    // ~1235 tokens: fits the turn model (limit 1640) but not the step model (limit 820)
+    const result = await second.agent.session('s1').send(big('Q4')).result
+    expect(result.stop).toBe('complete')
+    expect(second.warnings.some((w) => w.code === 'W_CONTEXT_TRUNCATED')).toBe(true)
+    const wire = promptText(small.prompts[0])
+    expect(wire).not.toContain('Q1 ')
+    expect(wire).toContain('Q3 ')
+    expect(wire).toContain('Q4 ')
+  })
+
+  test('a failing summarizer mid-turn: W_COMPACTION_FAILED, the turn continues with the guard', async () => {
+    const { agent, messages, warnings } = setup(
+      [
+        answer('A1'),
+        answer('A2'),
+        callTool('read', { n: 0 }),
+        callTool('read', { n: 1 }),
+        answer('Done.'),
+      ],
+      {
+        tools: { read },
+        compaction: {
+          model: summarizerModel([new Error('down')]),
+          keepLast: 1,
+          maxSummaryTokens: 100,
+        },
+      },
+    )
+    const session = agent.session('s1')
+    await fillTurns(session, 2)
+    const result = await session.send('Refactor the module').result
+    expect(result.stop).toBe('complete')
+    expect(warnings.filter((w) => w.code === 'W_COMPACTION_FAILED')).toHaveLength(1)
+    expect(warnings.some((w) => w.code === 'W_CONTEXT_TRUNCATED')).toBe(true)
+    expect(await markers(messages)).toHaveLength(0)
+  })
+})
+
 describe('acceptance', () => {
   test('30 turns in a small window: compacts at the ratio, never over the hard limit, full history kept', async () => {
     const steps = Array.from({ length: 30 }, (_, i) => answer(`A${i + 1}`))
