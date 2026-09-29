@@ -25,7 +25,6 @@ export type HarnessErrorCode =
   | 'EH_STORAGE'
   | 'EH_COMPACTION_FAILED'
   | 'EH_CONTEXT_OVERFLOW'
-  | 'EH_NOT_IMPLEMENTED'
 
 /**
  * Codes of `eh.notice` kind messages. Never thrown.
