@@ -1,6 +1,6 @@
 {
   "name": "eharness",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Build your own agent harness on AI SDK v7: plugins, context, messages, streaming, sessions, compaction.",
   "type": "module",
   "license": "MIT",
