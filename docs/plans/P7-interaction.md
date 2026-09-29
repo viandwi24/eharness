@@ -1,6 +1,6 @@
 # P7 — Interaction: approvals, respond, regenerate/edit, steer, queue, wake
 
-Status: in progress · Branch: `phase/P7-interaction`
+Status: done · Branch: `phase/P7-interaction`
 
 ## Goal
 
