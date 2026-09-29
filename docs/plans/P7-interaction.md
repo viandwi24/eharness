@@ -64,10 +64,11 @@ Decided conservatively (specs updated where the answer is normative):
    queued turns (non-pending/abort stops) are appended to the FIFO and do **not** run
    `input.submit` again (they already passed it with `via: 'steer'`); the steer's `SendOptions`
    are not carried over. Spec 11 §6.1.
-2. **`wake` while pending** starts no turn (a background event must never auto-deny approvals);
-   an undelivered `next-step` injection stays for the next turn and never starts one; kinds without
-   a model projection are not delivered inline; projection file parts are not delivered inline.
-   Spec 11 §6.3.
+2. **`wake` is never lost** (review): not deliverable inline / turn ending / `compact()` running /
+   undelivered at stop → a queued no-input wake turn. **Queued turns are held while
+   `state.core.pending` is set** (orchestrator decision) and start after `respond()` (or an
+   explicit new input). Kinds without a text-only projection (or a throwing one) are not delivered
+   inline and reach the model whole at the next turn. Spec 11 §6.2, §6.3.
 3. **`edit()` client id.** The new user message gets `U.clientId ?? U.id`, so editing the same id
    again targets the replacement (useChat keeps the id). Spec 11 §5.
 4. **Grants at step 0.** Only the grants recorded by the current `respond()` wait for step 1;
@@ -91,6 +92,9 @@ Decided conservatively (specs updated where the answer is normative):
 10. **P3 handoff (`delivered` for respond).** Not needed: A' (with its `approval-responded` parts)
     is saved and cached before the wire is built, so `build()` projects the trailing approval
     `tool` message itself (`continuing: A.id`); `delivered` keeps its meaning (step-boundary input).
+11. **Orphan pending heal** (review): a crash between the consuming state write and the save of A'
+    (or the deny patch) is healed at the next commit point (`INTERRUPTED_CRASH`, `pending: null`,
+    `stop: 'interrupted'`). Spec 11 §4.
 
 ## Requests to other phases
 
