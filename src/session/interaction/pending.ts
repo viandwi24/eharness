@@ -214,7 +214,9 @@ function base(part: ToolPartLike): Record<string, unknown> {
  * Patch the pending message for a continuation (spec 11 §4 step 3): approval parts →
  * `approval-responded` with the approval object **merged** (`signature` and `inputSchemaInput`
  * survive); client tool parts → `output-available` / `output-error` (outputs already passed
- * through `tool.after` and the output limits); `metadata.eharness.pending = null`.
+ * through `tool.after` and the output limits); `metadata.eharness.pending = null`. The message
+ * is running again: its `stop` is removed until the continuation ends (so crash recovery sees an
+ * unfinished message, spec 05 §9).
  */
 export function patchForRespond(
   message: HarnessUIMessage,
@@ -223,7 +225,7 @@ export function patchForRespond(
 ): HarnessUIMessage {
   const byCall = new Map(approvals.map((a) => [a.toolCallId, a]))
   const outputByCall = new Map(outputs.map((o) => [o.toolCallId, o]))
-  return setPendingNull(
+  const patched = setPendingNull(
     mapToolParts(structuredClone(message), (part) => {
       const approval = byCall.get(part.toolCallId)
       if (approval !== undefined && part.state === 'approval-requested') {
@@ -243,6 +245,10 @@ export function patchForRespond(
       return undefined
     }),
   )
+  const eharness = patched.metadata?.eharness
+  if (eharness?.stop === undefined) return patched
+  const { stop: _stop, ...running } = eharness
+  return { ...patched, metadata: { ...patched.metadata, eharness: running } }
 }
 
 /**
