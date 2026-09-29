@@ -73,3 +73,12 @@ adding deferred tools.
   the compaction transcript use it. Reuse it for tool output limits (spec 09 §4) instead of a second
   copy. The guard's structured-output form `{ truncated: true, preview, originalChars }` lives in
   `src/compaction/guard.ts` (`truncateOutput`) — move/share it if the output limits need the same.
+- From P5: the `toolOutputs` service for `toolOutput.strategy: 'evict'` is provided by
+  `filesystem()` (spec 08 §2): `ctx.services.toolOutputs.put(toolCallId, text)` resolves to the
+  path (`/.eharness/tool-outputs/<id>.txt` by default; ids are sanitized to `[A-Za-z0-9_-]`) and
+  the model can page it with `read_file` `offset`/`limit` (the dir is read-only and unlisted).
+  The core cannot import the `ToolOutputStore` type (it is declared by augmentation): look the
+  service up by name in the session's service registry without throwing and fall back to
+  `truncate` when no plugin provides it (`toolOutputs: false` removes it from `provides`). Scenario 32 ("with
+  evict + filesystem the full text is readable via read_file") can seed from
+  `src/filesystem/filesystem.int.test.ts` ('toolOutputs service: …').
