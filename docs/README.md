@@ -8,6 +8,9 @@ Reading order for a new contributor (human or agent):
 4. [`decisions/`](decisions/) — ADRs: why the contracts look the way they do.
 5. [`engineering/`](engineering/) — conventions, testing, API stability, release process.
 6. [`plans/`](plans/) — the build board and phase files.
+
+Using eharness (not contributing)? Start with the [guides](guides/) and the runnable
+[examples](../examples).
 7. [`reference/prior-art.md`](reference/prior-art.md) — lessons from the predecessor harness and
    from other frameworks.
 
@@ -35,4 +38,6 @@ Specs carry a status line:
 - **Accepted** — implementation follows it; changes need a PR that updates spec + code together.
 - **Frozen** — public since a release; changes follow `engineering/api-stability.md`.
 
-All specs start as **Accepted** for v0 (nothing is released yet).
+All specs are **Accepted (reviewed for 0.1.0)**. They become **Frozen** at 1.0
+([api-stability](engineering/api-stability.md)); until then changes follow the 0.x rules there.
+Nothing in the public API is `experimental_` in 0.1.0.

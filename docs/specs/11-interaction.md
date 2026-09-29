@@ -1,6 +1,6 @@
 # Spec 11 — Interaction: approvals, client tools, regenerate/edit, steering, wake
 
-Status: **Accepted** (v0). Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
+Status: **Accepted (reviewed for 0.1.0)**. Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
 
 This spec covers everything a user (or a UI) does to a session besides "send a new message":
 answering tool approvals, returning client-side tool results, regenerating or editing, talking to

@@ -1,6 +1,6 @@
 # Spec 01 — Agent and plugins
 
-Status: **Accepted** (v0). Module: `src/agent`, `src/plugin`.
+Status: **Accepted (reviewed for 0.1.0)**. Module: `src/agent`, `src/plugin`.
 
 ## 1. `defineHarnessAgent`
 

@@ -1,6 +1,6 @@
 # Spec 02 — Context registry (static vs dynamic)
 
-Status: **Accepted** (v0). Module: `src/registry`.
+Status: **Accepted (reviewed for 0.1.0)**. Module: `src/registry`.
 
 The registry decides **what the model can see and call** in a given turn: instructions, tools,
 skills (index), MCP tools. Every slot accepts either a **static value** (known at compile time,
