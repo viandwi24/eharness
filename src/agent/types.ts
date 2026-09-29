@@ -20,8 +20,6 @@ import type {
 } from 'ai'
 import type { HarnessWarning } from '../errors.ts'
 import type { ProviderOptions } from '../internal/ai-types.ts'
-import type { DataPartDef } from '../messages/data-parts.ts'
-import type { MessageKindDef } from '../messages/kinds.ts'
 import type { HarnessDataTypes, HarnessMetadata, HarnessUIMessage } from '../messages/types.ts'
 import type {
   DataPartMap,
@@ -302,6 +300,3 @@ export interface HarnessAgent<C = HarnessAgentConfig> {
   /** Type-only brand used by `InferHarnessUIMessage`. Undefined at runtime. */
   readonly '~types': { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> }
 }
-
-/** A data part or kind definition of any schema (for helpers that accept both). */
-export type AnyPartDef = DataPartDef | MessageKindDef

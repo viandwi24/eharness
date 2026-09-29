@@ -22,7 +22,6 @@ export interface IdGeneratorConformanceOptions {
  *
  * @example
  * ```ts
- * import { idGeneratorConformance } from 'eharness/testing'
  * for (const c of idGeneratorConformance(() => myGenerateId)) test(c.name, c.run)
  * ```
  * @see docs/specs/03-messages.md#8-ids
