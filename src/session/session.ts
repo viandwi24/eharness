@@ -621,7 +621,9 @@ export function createSessionHandle(args: {
     if (idleTimer !== undefined) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
       idleTimer = undefined
-      if (rt.running || queue.length > 0 || events.readers > 0) touch()
+      // a queue held by pending approvals does not keep the session alive: idle close drops it
+      const queued = queue.length > 0 && rt.state.core().pending === undefined
+      if (rt.running || queued || events.readers > 0) touch()
       else void close()
     }, args.idleMs)
     unref(idleTimer)

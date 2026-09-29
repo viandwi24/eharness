@@ -755,3 +755,31 @@ describe('more interaction edges', () => {
     expect(normalizeVolatile(await run(true))).toEqual(normalizeVolatile(hot))
   })
 })
+
+describe('held queue and idle eviction', () => {
+  test('pending never answered: idle close drops a held send and a held wake (aborted)', async () => {
+    const client = tool({ description: 'client', inputSchema: z.object({}) })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'client', input: {} }], delayMs: 5 },
+      { text: 'next turn' },
+    ])
+    const { agent, messages, state } = setup({ model, tools: { client }, sessionIdleMs: 30 })
+    const session = agent.session('s1')
+    const main = session.send('go')
+    const queued = session.send('later', { ifBusy: 'queue' })
+    expect((await main.result).stop).toBe('tool-pending')
+    const { message, run } = await session.inject(
+      'eh.event',
+      { name: 'e', text: 'EVT' },
+      { wake: true },
+    )
+    expect((await queued.result).stop).toBe('aborted')
+    expect((await run?.result)?.stop).toBe('aborted')
+    expect(() => session.send('x')).toThrow()
+    // the wake's kind message stays stored and reaches the model at the next turn
+    const fresh = setup({ model, tools: { client } }, { messages, state }).agent.session('s1')
+    expect((await all(messages)).some((m) => m.id === (message as HarnessUIMessage).id)).toBe(true)
+    await fresh.send('hello').result
+    expect(JSON.stringify(model.prompts[1])).toContain('EVT')
+  })
+})

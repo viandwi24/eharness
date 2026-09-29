@@ -34,8 +34,9 @@ export interface SessionOptions {
 `agent.session(id, options)` returns the cached live session when one exists; options passed to a
 cached session are merged (`runtime` replaced, others ignored with `W_SESSION_OPTIONS_IGNORED`
 when they differ). Cache eviction: `closeSession(id)`, `close()`, or idle eviction
-(`config.sessionIdleMs`, default 30 min) which is skipped while a turn runs, a turn is queued, or
-an `events()` reader is open. After eviction, held references throw `EH_SESSION_CLOSED`; call
+(`config.sessionIdleMs`, default 30 min) which is skipped while a turn runs, a turn is queued (and
+can start: a queue held by pending approvals, spec 11 §6.2, does not count), or an `events()` reader
+is open. Idle close drops held queued turns like `close()` (`stop: 'aborted'`). After eviction, held references throw `EH_SESSION_CLOSED`; call
 `agent.session(id)` again to get a fresh instance.
 
 ## 2. Session API
