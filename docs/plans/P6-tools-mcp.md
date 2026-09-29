@@ -75,7 +75,8 @@ adding deferred tools.
   `src/compaction/guard.ts` (`truncateOutput`) — move/share it if the output limits need the same.
 - From P5: the `toolOutputs` service for `toolOutput.strategy: 'evict'` is provided by
   `filesystem()` (spec 08 §2): `ctx.services.toolOutputs.put(toolCallId, text)` resolves to the
-  path (`/.eharness/tool-outputs/<id>.txt` by default; ids are sanitized to `[A-Za-z0-9_-]`) and
+  path (`/.eharness/tool-outputs/<id>.txt` by default; ids are sanitized to `[A-Za-z0-9_-]` plus a
+  short hash when sanitizing changed them) and
   the model can page it with `read_file` `offset`/`limit` (the dir is read-only and unlisted).
   The core cannot import the `ToolOutputStore` type (it is declared by augmentation): look the
   service up by name in the session's service registry without throwing and fall back to

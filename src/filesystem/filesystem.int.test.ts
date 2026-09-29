@@ -387,6 +387,46 @@ describe('read_file windows, list_files and grep', () => {
   })
 })
 
+describe('grep fast path', () => {
+  function spied(seed: Record<string, string>) {
+    const inner = memoryFs(seed)
+    const counts = { grep: 0, read: 0 }
+    const fs: FileSystem = {
+      ...inner,
+      grep: (pattern, opts) => {
+        counts.grep++
+        return inner.grep?.(pattern, opts) ?? Promise.resolve([])
+      },
+      read: (path) => {
+        counts.read++
+        return inner.read(path)
+      },
+    }
+    return { fs, counts }
+  }
+
+  test('root grep uses the adapter grep with default options and filters hidden hits', async () => {
+    const { fs, counts } = spied({ '/a.md': 'needle', '/skills/s/x.md': 'needle' })
+    const { agent } = setup(steps(call('grep', { pattern: 'needle' })), {
+      fs,
+      skills: { root: '/skills' },
+    })
+    expect(outputs(await agent.session('s').send('go').result)).toEqual(['/a.md:1: needle'])
+    expect(counts).toEqual({ grep: 1, read: 0 })
+  })
+
+  test('falls back to list + read when hidden hits use up the adapter budget', async () => {
+    const hidden = Array.from({ length: 600 }, () => 'needle').join('\n')
+    const { fs, counts } = spied({ '/a/hidden.md': hidden, '/z.md': 'needle' })
+    const { agent } = setup(steps(call('grep', { pattern: 'needle' })), {
+      fs,
+      hiddenPrefixes: ['/a'],
+    })
+    expect(outputs(await agent.session('s').send('go').result)).toEqual(['/z.md:1: needle'])
+    expect(counts).toEqual({ grep: 1, read: 1 })
+  })
+})
+
 describe('skills autoload and the hidden skills root (scenarios 8 and 9)', () => {
   const skill = (name: string, description: string, body = `Body of ${name}.`) =>
     `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`
@@ -621,6 +661,7 @@ describe('services, state and resolver', () => {
   })
 
   test('toolOutputs service: evicted outputs are readable, read-only and unlisted', async () => {
+    const OUT = `/.eharness/tool-outputs/call_1-${(await contentVersion('call/1')).slice(0, 8)}.txt`
     const fs = memoryFs({ '/a.md': 'a' })
     let stored = ''
     const producer = definePlugin({
@@ -645,9 +686,9 @@ describe('services, state and resolver', () => {
           toolCalls: [
             call('list_files', {}),
             call('list_files', { prefix: '/.eharness/tool-outputs' }),
-            call('read_file', { path: '/.eharness/tool-outputs/call_1.txt', offset: 2 }),
-            call('write_file', { path: '/.eharness/tool-outputs/call_1.txt', content: 'x' }),
-            call('delete_file', { path: '/.eharness/tool-outputs/call_1.txt' }),
+            call('read_file', { path: `${OUT}`, offset: 2 }),
+            call('write_file', { path: `${OUT}`, content: 'x' }),
+            call('delete_file', { path: `${OUT}` }),
             call('grep', { pattern: 'line' }),
             call('grep', { pattern: 'line 2', prefix: '/.eharness' }),
             call('grep', { pattern: 'line 2', prefix: '/.eharness/tool-outputs' }),
@@ -659,17 +700,17 @@ describe('services, state and resolver', () => {
       { plugins: [producer] },
     )
     const result = await agent.session('s').send('go').result
-    expect(stored).toBe('/.eharness/tool-outputs/call_1.txt')
+    expect(stored).toBe(OUT)
     expect(outputs(result)).toEqual([
-      '/.eharness/tool-outputs/call_1.txt',
+      `${OUT}`,
       '/a.md (1 bytes)',
-      '/.eharness/tool-outputs/call_1.txt (14 bytes)',
+      `${OUT} (14 bytes)`,
       '     2\tline 2',
-      'REJECTED: /.eharness/tool-outputs/call_1.txt is read-only.',
-      'REJECTED: /.eharness/tool-outputs/call_1.txt is read-only.',
+      `REJECTED: ${OUT} is read-only.`,
+      `REJECTED: ${OUT} is read-only.`,
       'No matches.',
       'No matches.',
-      '/.eharness/tool-outputs/call_1.txt:2: line 2',
+      `${OUT}:2: line 2`,
     ])
   })
 
@@ -683,11 +724,14 @@ describe('services, state and resolver', () => {
     ).toThrow(expect.objectContaining({ code: 'EH_SERVICE_MISSING' }))
     const fs = memoryFs()
     let path = ''
+    const paths: string[] = []
     const producer = definePlugin({
       name: 'producer',
       requires: ['toolOutputs'],
       session: async (ctx) => {
         path = await ctx.services.toolOutputs.put('abc', 'text')
+        paths.push(await ctx.services.toolOutputs.put('a.b', '1'))
+        paths.push(await ctx.services.toolOutputs.put('a_b', '2'))
       },
     })
     const { agent } = setup(
@@ -700,6 +744,8 @@ describe('services, state and resolver', () => {
     await agent.session('s').send('go').result
     expect(path).toBe('/outputs/abc.txt')
     expect((await fs.read('/outputs/abc.txt'))?.content).toBe('text')
+    expect(paths[0]).not.toBe(paths[1])
+    expect(paths[1]).toBe('/outputs/a_b.txt')
   })
 
   test('tools option selects the exposed tools', async () => {

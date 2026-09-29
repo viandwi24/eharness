@@ -95,6 +95,13 @@ describe('fsSkillSource', () => {
     await fs.write('/skills/broken/SKILL.md', '---\nname: [\n---\n')
     await source.list(ctx)
     expect(warnings).toHaveLength(3)
+    // a deleted file is forgotten: the same broken content warns again when it comes back
+    const broken = (await fs.read('/skills/broken/SKILL.md'))?.content as string
+    await fs.delete('/skills/broken/SKILL.md')
+    await source.list(ctx)
+    await fs.write('/skills/broken/SKILL.md', broken)
+    await source.list(ctx)
+    expect(warnings).toHaveLength(4)
     // a fixed file appears
     await fs.write('/skills/broken/SKILL.md', valid('broken'))
     expect((await source.list(ctx)).map((m) => m.name)).toEqual(['broken', 'good'])

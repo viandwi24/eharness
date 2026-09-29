@@ -35,7 +35,11 @@ declare module 'eharness' {
   interface HarnessServices {
     /** The file system of the session, provided by the `filesystem()` plugin (spec 08). */
     fs: FileSystem
-    /** Store for evicted tool outputs, provided by the `filesystem()` plugin (spec 08 §2). */
+    /**
+     * Store for evicted tool outputs, provided by the `filesystem()` plugin (spec 08 §2).
+     * Absent with `filesystem({ toolOutputs: false })`: accessing it then throws
+     * `EH_SERVICE_MISSING` (declare `requires: ['toolOutputs']` to get a boot error instead).
+     */
     toolOutputs: ToolOutputStore
   }
 }

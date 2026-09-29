@@ -25,6 +25,7 @@ import type {
   FileToolName,
   ToolOutputStore,
 } from './types.ts'
+import { contentVersion } from './version.ts'
 
 /** Default directory of the `toolOutputs` service. */
 export const DEFAULT_TOOL_OUTPUTS_DIR = '/.eharness/tool-outputs'
@@ -91,7 +92,11 @@ function directory(path: unknown, what: string): string {
 function toolOutputStore(fs: FileSystem, dir: string): ToolOutputStore {
   return {
     async put(toolCallId, text) {
-      const name = String(toolCallId).replace(/[^A-Za-z0-9_-]/g, '_') || 'output'
+      const id = String(toolCallId)
+      let name = id.replace(/[^A-Za-z0-9_-]/g, '_')
+      // sanitizing may merge distinct ids (a.b / a_b): disambiguate with a short content hash
+      if (name !== id || name === '')
+        name = `${name || 'output'}-${(await contentVersion(id)).slice(0, 8)}`
       const path = joinPath(dir, `${name}.txt`)
       const result = await fs.write(path, text)
       if (!result.ok) throw new Error(`toolOutputs: could not write ${path} (${result.reason})`)
