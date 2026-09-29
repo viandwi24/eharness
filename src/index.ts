@@ -130,6 +130,7 @@ export {
   parseSkillMarkdown,
   validateSkillPath,
 } from './skills/index.ts'
+export { type ChatRequestBody, handleChatRequest } from './stream/chat-request.ts'
 
 /** Package version of this build. */
 export const version: string = '0.0.2'

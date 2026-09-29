@@ -26,6 +26,8 @@ import type { PendingState, StopReason } from '../messages/types.ts'
 import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
+import type { InboxItem, TurnInbox } from '../session/interaction/inbox.ts'
+import { inputWireMessage } from '../session/interaction/inbox.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { describeError } from '../stream/describe-error.ts'
 import { applyCache, deepMerge, layoutMessages, systemBlocks } from './prompt.ts'
@@ -108,6 +110,15 @@ export interface StepLoopInput {
   heartbeat(): Promise<void>
   /** Compaction triggers, guard, calibration and overflow recovery of the turn (spec 06). */
   compaction: TurnCompaction
+  /**
+   * The turn continues a pending message (`respond()`): step 0 must end with the approval `tool`
+   * message — no step reminder, no input delivery, no rewrite that moves it (spec 11 §4 step 5).
+   */
+  continuation?: boolean
+  /** Steers and `next-step` injections waiting for the next step boundary (spec 11 §6). */
+  inbox?: TurnInbox
+  /** Called after an inbox item was written as `data-eh.input` (and appended to the wire). */
+  delivered?(item: InboxItem): void
 }
 
 /** Outcome of the step loop. */
@@ -255,17 +266,37 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   /** Wire length after the last step barrier: later messages are not in the cached view yet. */
   let sinceBarrier = wire.length
 
-  const aborted = (): LoopResult => ({
-    stop: input.timedOut() ? 'timeout' : 'aborted',
-    steps: stepIndex,
-    model,
-    abortReason: input.timedOut() ? 'timeout' : abortReasonText(input.signal),
-  })
+  /** Steers / injections taken from the inbox and not delivered yet. */
+  let external: InboxItem[] = []
+  const inbox = input.inbox
+  /** No step reminder, input delivery or moving rewrite before the first call of a continuation. */
+  const firstOfContinuation = () => input.continuation === true && stepIndex === 0
+
+  const aborted = (): LoopResult => {
+    if (external.length > 0) input.inbox?.unshift(external)
+    external = []
+    return {
+      stop: input.timedOut() ? 'timeout' : 'aborted',
+      steps: stepIndex,
+      model,
+      abortReason: input.timedOut() ? 'timeout' : abortReasonText(input.signal),
+    }
+  }
 
   while (true) {
     if (input.signal.aborted) return aborted()
 
-    // step boundary: deliver waiting input as data-eh.input (ADR-0011)
+    // step boundary: deliver waiting input as data-eh.input (ADR-0011): steers and next-step
+    // injections first (arrival order), then hook context
+    if (!firstOfContinuation()) {
+      if (inbox !== undefined) external.push(...(await inbox.take()))
+      for (const item of external) {
+        input.write({ type: 'data-eh.input', data: structuredClone(item.data) })
+        wire.push(...(await inputWireMessage(item.data)))
+        input.delivered?.(item)
+      }
+      external = []
+    }
     for (const item of waiting) {
       input.write({ type: 'data-eh.input', data: { source: item.source, text: item.text } })
       wire.push({ role: 'user', content: [{ type: 'text', text: item.text }] })
@@ -296,6 +327,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     const reminders: string[] = []
     let providerOptions = settings.providerOptions
     let rewrite: ModelMessage[] | undefined
+    const approvalMessage = firstOfContinuation() ? JSON.stringify(requestWire.at(-1)) : undefined
     for (const hook of hooks.list('step.prepare')) {
       let patch: StepPreparePatch | undefined
       try {
@@ -327,7 +359,23 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       if (patch.providerOptions !== undefined) {
         providerOptions = deepMerge(providerOptions, patch.providerOptions)
       }
-      if (patch.messages !== undefined) rewrite = patch.messages
+      if (patch.messages !== undefined) {
+        if (
+          approvalMessage !== undefined &&
+          JSON.stringify(patch.messages.at(-1)) !== approvalMessage
+        ) {
+          hookFailed(
+            rt,
+            'step.prepare',
+            hook.owner,
+            new Error(
+              'a `messages` rewrite of the first step of a respond() continuation must end with the approval tool message; rewrite ignored',
+            ),
+          )
+        } else {
+          rewrite = patch.messages
+        }
+      }
     }
     providerOptions = deepMerge(settings.providerOptions, providerOptions)
     model = stepModel
@@ -337,7 +385,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     const toolNames = Object.keys(tools).filter(
       (n) => activeTools === undefined || activeTools.includes(n),
     )
-    const stepReminder = reminders.length > 0 ? reminders.join('\n\n') : undefined
+    const stepReminder =
+      reminders.length > 0 && !firstOfContinuation() ? reminders.join('\n\n') : undefined
 
     // guard step 2: hard cap (drop old turns, truncate tool outputs, or stop) for the step model
     // a step.prepare `messages` rewrite replaces the wire; reminders are inserted afterwards
@@ -583,7 +632,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     if (stop === undefined) continue
 
     // pending input wins over 'complete' — but never past the step budget or the cost cap
-    if (stop === 'complete' && waiting.length > 0) {
+    if (stop === 'complete' && inbox !== undefined) external.push(...(await inbox.take()))
+    if (stop === 'complete' && (waiting.length > 0 || external.length > 0)) {
       if (stepIndex >= budget) stop = 'max-steps'
       else if ((total.outputTokens ?? 0) > input.maxOutputTokens) stop = 'cost-cap'
       else continue
@@ -594,6 +644,9 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       const decision = await beforeEnd(stop)
       if (decision === 'continue') continue
     }
+    // not delivered: back to the inbox, the turn decides (queued turn or input-dropped)
+    if (external.length > 0) inbox?.unshift(external)
+    external = []
     if (stop === 'error') {
       return {
         stop,

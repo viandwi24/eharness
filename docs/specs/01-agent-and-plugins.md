@@ -319,7 +319,7 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   /** Most restrictive wins (spec 11 §3). Throw = denied. Must be deterministic and side-effect free: AI SDK calls it again for approved calls when a continuation starts. */
   'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown })
     : Awaitable<ToolApprovalStatus | void>
-  /** Chainable. Rewrite tool input before approval and execution (implemented via experimental_refineToolInput). Must be idempotent (spec 11 §3). */
+  /** Chainable. Rewrite tool input before approval and execution (implemented via experimental_refineToolInput). Must be deterministic (spec 11 §3). */
   'tool.before'?(ctx: HarnessContext<DP>, e: { toolName: string; input: unknown })
     : Awaitable<{ input: unknown } | void>
   /** Chainable. Rewrite the final output (before size limits, spec 09 §4). */

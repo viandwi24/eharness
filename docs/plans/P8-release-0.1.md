@@ -42,6 +42,11 @@ Make eharness usable by someone who has never seen this repo, and publish `0.1.0
 
 ## Requests to other phases
 
+- From P7 (review): the approvals guide must mention that a denied call reaches the model as
+  `execution-denied` in the first step of the continuation (AI SDK) but as an `error-text` result
+  (the denial reason) when projected in later turns (`output-denied` part) — one prompt-cache miss
+  after a denial; not a correctness issue.
+
 - From P2: before releasing 0.1.0, verify that no code path uses `EH_NOT_IMPLEMENTED` (P3/P7 remove
   their stubs) and remove it from `HarnessErrorCode` (spec 10 §1: development only) — a breaking
   type change that is fine before 0.1.0.

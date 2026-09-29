@@ -14,7 +14,13 @@ import {
   type UIMessageChunk,
   type UIMessageStreamWriterWithOutcome,
 } from 'ai'
-import type { ActiveTurn, HarnessRun, SendInput, SendOptions } from '../agent/session-types.ts'
+import type {
+  ActiveTurn,
+  HarnessRun,
+  PendingResponse,
+  SendInput,
+  SendOptions,
+} from '../agent/session-types.ts'
 import type { SessionCompaction } from '../compaction/compact.ts'
 import { createTurnCompaction } from '../compaction/turn-context.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
@@ -41,11 +47,22 @@ import type {
   TurnResult,
 } from '../messages/types.ts'
 import type { TurnInfo } from '../plugin/types.ts'
+import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
-import { hookFailed } from '../registry/wrap.ts'
+import { finishToolOutput, hookFailed } from '../registry/wrap.ts'
 import { describeError } from '../stream/describe-error.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
+import { createInbox, type InboxItem } from './interaction/inbox.ts'
+import {
+  type ClientToolAnswer,
+  patchForNewInput,
+  patchForRespond,
+  planRespond,
+  type RespondPlan,
+} from './interaction/pending.ts'
+import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
+import { hiddenByRewind } from './load-context.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
 import type { StateCheckpoint } from './state.ts'
 
@@ -55,6 +72,18 @@ export interface TurnOperation {
   input: SendInput | undefined
   options: SendOptions
   queued: boolean
+  /** Preset turn id (a queued run exposes its turn id before the turn starts). */
+  turnId?: string
+  /** Input normalized when it was queued (skips normalization). */
+  normalized?: NormalizedInput
+  /** Input that already passed `input.submit` (an undelivered steer, spec 11 §6.1). */
+  submitted?: { input: NormalizedInput; contexts: string[] }
+  /** `via` of `input.submit` (default `'send'`). */
+  via?: 'send' | 'edit' | 'queue'
+  /** `respond()` answers; `ignoreUnknown` skips answers that are not pending (handleChatRequest). */
+  respond?: { response: PendingResponse; ignoreUnknown: boolean }
+  /** `regenerate()` / `edit()` target (message id or client id). */
+  target?: string
 }
 
 /** What the session provides to a turn. */
@@ -70,13 +99,27 @@ export interface TurnHost {
   compaction: SessionCompaction
   /** Called when the turn fully ended (running flag cleared). */
   onTurnEnd(): void
+  /** Queue an undelivered steer as a `send` turn (spec 11 §6.1). */
+  enqueueSteer(submitted: { input: NormalizedInput; contexts: string[] }): void
+  /** Queue a no-input wake turn for an injection that was not delivered (spec 11 §6.3). */
+  enqueueWake(): void
 }
 
-/** The running turn as seen by the session (attach, abort). */
+/** The running turn as seen by the session (attach, abort, steer, next-step delivery). */
 export interface RunningTurn {
   run: HarnessRun<UIMessage>
   buffer: TurnBuffer
   abort(reason?: string): void
+  /**
+   * Steer the running turn: `input.submit` (`via: 'steer'`) now, delivery at the next step
+   * boundary (spec 11 §6.1). False when the turn no longer takes input.
+   */
+  steer(input: NormalizedInput): boolean
+  /**
+   * Deliver a saved kind message into the running turn (`next-step`, spec 11 §6.3). With `wake`,
+   * an undelivered event queues a wake turn. False when the turn no longer takes input.
+   */
+  deliverEvent(message: HarnessUIMessage, text: string, wake?: boolean): boolean
 }
 
 const DEFAULT_MAX_STEPS = 50
@@ -84,7 +127,7 @@ const DEFAULT_MAX_OUTPUT_TOKENS = 100_000
 const DEFAULT_MAX_CONTINUES = 3
 const DEFAULT_STALE_MS = 120_000
 
-type TurnError = { code?: string; message: string }
+type TurnError = { code?: string; message: string; details?: Record<string, unknown> }
 
 type Outcome = {
   stop: StopReason
@@ -104,7 +147,17 @@ function toTurnError(
   log: (m: string, d?: Record<string, unknown>) => void,
 ): TurnError {
   const message = describeError(error, log)
-  return isHarnessError(error) ? { code: error.code, message } : { message }
+  if (!isHarnessError(error)) return { message }
+  return error.details === undefined
+    ? { code: error.code, message }
+    : { code: error.code, message, details: structuredClone(error.details) }
+}
+
+/** The stored / streamed error of `metadata.eharness.error` (`details` stay in `run.result`). */
+function metaError(error: TurnError | undefined): { code?: string; message: string } | undefined {
+  if (error === undefined) return undefined
+  const { details: _details, ...rest } = error
+  return rest
 }
 
 function withoutUndefined<T extends Record<string, unknown>>(value: T): T {
@@ -146,7 +199,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   const { rt } = host
   const config = rt.agent.config
   const log = (m: string, d?: Record<string, unknown>) => rt.log.error(m, d)
-  const turnId = rt.agent.generateId()
+  const turnId = op.turnId ?? rt.agent.generateId()
   const startedAt = Date.now()
   const recovery = config.recovery !== false
   const staleMs =
@@ -180,6 +233,35 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   const created: HarnessUIMessage[] = []
   let createdBeforeAssistant = 0
   const usage: UsageTotals = emptyUsage()
+
+  // ─── interaction state (spec 11) ──────────────────────────────────────────────────────────
+  /** Steers and next-step injections waiting for a step boundary. */
+  const inbox = createInbox()
+  /** Validated respond() answers. */
+  let plan: RespondPlan | undefined
+  /** Pending state denied by this turn's new input (`onNewInput: 'deny'`). */
+  let denyPending: PendingState | undefined
+  /** The eh.rewind marker of regenerate/edit (saved at the commit point). */
+  let rewind: HarnessUIMessage | undefined
+  /** `originalMessages` of the stream: `[A']` for a respond continuation. */
+  let original: UIMessage[] | undefined
+  /** The continued message A' (fallback of the final save). */
+  let baseMessage: HarnessUIMessage | undefined
+  /** Client tool outputs of respond(), after tool.after and output limits. */
+  let clientOutputs: ClientToolAnswer[] = []
+  /** Kind messages delivered as data-eh.input (updated with deliveredIn after a save). */
+  const deliveredEvents: Array<{ message: HarnessUIMessage; afterFinish: number; done: boolean }> =
+    []
+  /** Session grants before this respond() recorded new ones (those apply from step 1, §3.1). */
+  let grantsBefore: Record<string, 'always' | 'never'> | undefined
+  let grantsRecorded = false
+  function currentGrants(): Readonly<Record<string, 'always' | 'never'>> | undefined {
+    if (grantsRecorded && (turnState.step?.index ?? 0) === 0) return grantsBefore
+    return rt.state.core().grants
+  }
+  /** Chunks written before `start` (transient warnings), flushed right after it. */
+  const preStart: UIMessageChunk[] = []
+  let finishExecute: (() => void) | undefined
 
   let finishStepsWritten = 0
   let stepEndsDone = 0
@@ -223,7 +305,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     info,
     step: undefined,
     runtime: { ...(rt.options.runtime ?? {}), ...(op.options.runtime ?? {}) },
-    active: false,
+    active: true,
     write,
   }
   rt.turn = turnState
@@ -234,11 +316,26 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   const interrupted = new Set<string>()
 
   function write(chunk: UIMessageChunk): void {
-    if (writer === undefined || !turnState.active) return
+    if (!turnState.active) return
+    if (writer === undefined) {
+      // the stream is created at `start`: a continuation needs the patched message A' first
+      if (chunk.type !== 'start') {
+        preStart.push(chunk)
+        return
+      }
+      openStream()
+      emit(chunk)
+      for (const early of preStart.splice(0)) emit(early)
+      return
+    }
+    emit(chunk)
+  }
+
+  function emit(chunk: UIMessageChunk): void {
     buffer.push(chunk)
     if (chunk.type === 'finish-step') finishStepsWritten++
     trackToolCall(chunk)
-    writer.write(chunk)
+    writer?.write(chunk)
   }
 
   function trackToolCall(chunk: UIMessageChunk): void {
@@ -278,15 +375,20 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
   }
 
-  function writeStart(id: string, parentId: string | null | undefined): void {
+  /** `start`; a continuation writes it without metadata (A's createdAt/turnId are kept). */
+  function writeStart(id: string, parentId: string | null | undefined, metadata = true): void {
     startWritten = true
-    write({
-      type: 'start',
-      messageId: id,
-      messageMetadata: {
-        eharness: withoutUndefined({ v: 1, createdAt: startedAt, turnId, parentId }),
-      },
-    })
+    write(
+      metadata
+        ? {
+            type: 'start',
+            messageId: id,
+            messageMetadata: {
+              eharness: withoutUndefined({ v: 1, createdAt: startedAt, turnId, parentId }),
+            },
+          }
+        : { type: 'start', messageId: id },
+    )
     resolveMessageId(id)
   }
 
@@ -303,20 +405,38 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     return meta
   }
 
+  /** Usage and steps are cumulative over all turns that wrote the message (spec 04 §2). */
+  function cumulativeUsage(): HarnessUsageMeta {
+    const current = usageMeta()
+    const previous = baseMessage?.metadata?.eharness?.usage
+    if (previous === undefined) return current
+    const out: Record<string, number> = {}
+    for (const key of new Set([...Object.keys(previous), ...Object.keys(current)])) {
+      const a = (previous as Record<string, unknown>)[key]
+      const b = (current as Record<string, unknown>)[key]
+      out[key] = (typeof a === 'number' ? a : 0) + (typeof b === 'number' ? b : 0)
+    }
+    return out as HarnessUsageMeta
+  }
+
   /** Interrupted calls + message-metadata + setOutcome + finish | abort (spec 04 §2). */
   function writeEnd(): void {
+    if (!startWritten)
+      writeStart(assistantId ?? rt.agent.generateId(), undefined, plan === undefined)
     answerOpenCalls()
+    const previousSteps = baseMessage?.metadata?.eharness?.steps ?? 0
     const eharness: Record<string, unknown> = committed
       ? withoutUndefined({
           model: describeModel(outcome.model),
-          usage: usageMeta(),
+          usage: cumulativeUsage(),
           stop: outcome.stop,
-          steps: outcome.steps,
+          steps: previousSteps + outcome.steps,
           durationMs: Date.now() - startedAt,
-          pending: outcome.pending,
-          error: outcome.error,
+          // a continuation resolved A's pending state: null, not absent (metadata is deep-merged)
+          pending: plan === undefined ? outcome.pending : (outcome.pending ?? null),
+          error: metaError(outcome.error),
         })
-      : withoutUndefined({ stop: outcome.stop, error: outcome.error })
+      : withoutUndefined({ stop: outcome.stop, error: metaError(outcome.error) })
     write({ type: 'message-metadata', messageMetadata: { eharness } })
     const aborted = outcome.stop === 'aborted' || outcome.stop === 'timeout'
     writer?.setOutcome(
@@ -403,8 +523,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const open = await host.ensureOpen()
     if (controller.signal.aborted) return { kind: 'aborted' }
 
-    // 2. load context / validate the hot cache
+    // 2. load context / validate the hot cache; respond() re-reads the state (freshest pending)
     await host.ensureContext()
+    if (op.kind === 'respond' && !rt.state.dirty) await rt.state.load()
     // hooks of the preparation may change ctx.state: discarded if the turn ends before committing
     stateCheckpoint = rt.state.checkpoint()
 
@@ -424,6 +545,48 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         )
       }
       stale = active
+    }
+
+    // 4. operation checks (spec 11 §4, §4.1, §5)
+    const core = rt.state.core()
+    const view = rt.view ?? []
+    if (op.kind === 'respond') {
+      plan = planRespond({
+        pending: core.pending,
+        response: op.respond?.response ?? {},
+        view,
+        ignoreUnknown: op.respond?.ignoreUnknown === true,
+      })
+    } else if (core.pending !== undefined) {
+      if (config.approval?.onNewInput === 'reject') {
+        throw new HarnessError(
+          'EH_PENDING_RESPONSE',
+          'Tool approvals or client tool calls are waiting; call respond() first.',
+          { details: { messageId: core.pending.messageId } },
+        )
+      }
+      denyPending = core.pending
+    }
+    let target: RewindTarget | undefined
+    if (op.kind === 'regenerate' || op.kind === 'edit') {
+      target = resolveRewindTarget({
+        view,
+        registry: rt.agent.messages,
+        role: op.kind === 'edit' ? 'user' : 'assistant',
+        messageId: op.target,
+      })
+    }
+    /** Generate the rewind id first (id order: rewind < notices < user < assistant). */
+    const makeRewind = () => {
+      if (target === undefined) return
+      rewind = createRewind({
+        id: rt.nextId(),
+        afterId: target.afterId,
+        reason: op.kind === 'edit' ? 'edit' : 'regenerate',
+        turnId,
+        createdAt: startedAt,
+        parentId: target.afterId,
+      })
     }
 
     // 5. options and per-turn settings
@@ -452,6 +615,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       warn: rt.warn,
       status: (tool) =>
         write({ type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
+      grants: { current: currentGrants },
     })
     const toolsContext =
       rt.options.toolsContext === undefined && op.options.toolsContext === undefined
@@ -464,21 +628,35 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
 
     // 7. normalize input
-    let normalized: NormalizedInput | undefined
-    if (op.input !== undefined) {
+    let normalized: NormalizedInput | undefined = op.submitted?.input ?? op.normalized
+    if (normalized === undefined && op.input !== undefined) {
       normalized = normalizeInput(op.input, {
         acceptClientMetadata: rt.options.acceptClientMetadata === true,
       })
     }
+    if (op.kind === 'edit' && normalized === undefined) {
+      throw new HarnessError('EH_INVALID_INPUT', 'edit() needs the replacement input.')
+    }
+    if (normalized !== undefined && target !== undefined && op.kind === 'edit') {
+      // the replaced message's client id is carried over so the UI can reconcile (spec 11 §5)
+      normalized = {
+        ...normalized,
+        clientId: target.message.metadata?.eharness?.clientId ?? target.message.id,
+      }
+    }
 
     // 8. input.submit (chainable, fail closed)
-    let contexts: string[] = []
-    if (normalized !== undefined) {
-      const submitted = await inputSubmit(normalized)
+    let contexts: string[] = op.submitted?.contexts ?? []
+    if (normalized !== undefined && op.submitted === undefined) {
+      const submitted = await inputSubmit(
+        normalized,
+        op.via ?? (op.kind === 'edit' ? 'edit' : 'send'),
+      )
       if ('block' in submitted) {
         if (submitted.block.persist !== true)
           return { kind: 'blocked', reason: submitted.block.reason }
-        const floor = rt.view?.at(-1)?.id ?? null
+        const floor = target === undefined ? (rt.view?.at(-1)?.id ?? null) : target.afterId
+        makeRewind()
         const recoveryNoticeId = stale === undefined ? undefined : rt.nextId()
         const user = buildUserMessage(submitted.input, {
           id: rt.nextId(),
@@ -534,8 +712,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
     if (controller.signal.aborted) return { kind: 'aborted' }
 
-    // 10. ids with the floor: recovery notice < user < assistant; then `start`
-    const newest = rt.view?.at(-1)?.id ?? null
+    // 10. ids with the floor: rewind < recovery notice < user < assistant; then `start` (a
+    //     continuation keeps A's id and writes `start` after the commit point, with A')
+    const newest = target === undefined ? (rt.view?.at(-1)?.id ?? null) : target.afterId
+    makeRewind()
     const recoveryNoticeId = stale === undefined ? undefined : rt.nextId()
     let user: HarnessUIMessage | undefined
     if (normalized !== undefined) {
@@ -559,8 +739,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       )
       info.input = user
     }
-    assistantId = rt.nextId()
-    writeStart(assistantId, user?.id ?? newest)
+    if (plan !== undefined) {
+      assistantId = plan.pending.messageId
+    } else {
+      assistantId = rt.nextId()
+      writeStart(assistantId, user?.id ?? newest)
+    }
     return {
       kind: 'turn',
       open,
@@ -576,6 +760,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
 
   async function inputSubmit(
     input: NormalizedInput,
+    via: 'send' | 'edit' | 'steer' | 'queue',
   ): Promise<
     | { input: NormalizedInput; contexts: string[] }
     | { input: NormalizedInput; block: { reason: string; persist?: boolean } }
@@ -591,7 +776,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       })
       let out: Awaited<ReturnType<typeof hook.fn>>
       try {
-        out = await hook.fn(rt.contextOf(hook.owner), { message, via: 'send' })
+        out = await hook.fn(rt.contextOf(hook.owner), { message, via })
       } catch (error) {
         return {
           input: current,
@@ -636,9 +821,27 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       })
       needWrite = true
     }
-    if (core.pending !== undefined) {
-      // P2: new input while pending — projection answers the open calls; P7 adds onNewInput
+    // consume (respond) or deny (new input) the pending state in the same write (spec 11 §4, §4.1)
+    if ((plan !== undefined || denyPending !== undefined) && core.pending !== undefined) {
       delete core.pending
+      needWrite = true
+    }
+    if (plan !== undefined) {
+      const remembered = plan.approvals.filter((a) => a.remember === 'session')
+      if (remembered.length > 0) {
+        grantsBefore = core.grants === undefined ? undefined : { ...core.grants }
+        core.grants = { ...(core.grants ?? {}) }
+        for (const a of remembered) core.grants[a.toolName] = a.approved ? 'always' : 'never'
+        grantsRecorded = true
+        needWrite = true
+      }
+    }
+    if (rewind !== undefined) {
+      const payload = rewind.parts[0] as { data: { afterId: string | null } }
+      core.rewinds = [
+        ...(core.rewinds ?? []),
+        { afterId: payload.data.afterId, rewindId: rewind.id },
+      ]
       needWrite = true
     }
     if (needWrite) {
@@ -697,9 +900,119 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         stop: 'interrupted',
       })
     }
+    await healOrphanPending()
+    // the pending message: patched for the continuation (respond) or denied (new input)
+    if (plan !== undefined) await continuePending(prep.open, plan)
+    if (denyPending !== undefined) {
+      const pending = denyPending
+      const message = rt.view?.find((m) => m.id === pending.messageId)
+      if (message !== undefined) await host.persist([patchForNewInput(message, pending)])
+      rt.events.emit({ type: 'pending', pending: null })
+    }
+    if (rewind !== undefined) {
+      created.push(...(await host.persist([rewind])))
+      const marker = rewind
+      const hidden = [{ afterId: afterIdOf(marker), rewindId: marker.id }]
+      if (rt.view !== undefined) {
+        rt.view = rt.view.filter((m) => !hiddenByRewind(m, hidden, rt.agent.messages))
+      }
+    }
     if (prep.user !== undefined) created.push(...(await host.persist([prep.user])))
     if (prep.blockNotice !== undefined) created.push(...(await host.persist([prep.blockNotice])))
     createdBeforeAssistant = created.length
+  }
+
+  /**
+   * A message still marked pending (`metadata.eharness.pending`) although `state.core.pending` no
+   * longer names it: a process died between the state write that consumed / denied the pending
+   * state and the save of the patched message. Its calls never ran: answer them with
+   * `INTERRUPTED_CRASH` and mark the message resolved (spec 05 §9, spec 11 §8).
+   */
+  async function healOrphanPending(): Promise<void> {
+    const handled = new Set<string | undefined>([
+      plan?.pending.messageId,
+      denyPending?.messageId,
+      rt.state.core().pending?.messageId,
+    ])
+    const orphans = (rt.view ?? []).filter((m) => {
+      const pending = m.metadata?.eharness?.pending
+      return (
+        m.role === 'assistant' && pending !== undefined && pending !== null && !handled.has(m.id)
+      )
+    })
+    for (const message of orphans) {
+      const patched = answerDanglingToolParts(structuredClone(message), INTERRUPTED_CRASH)
+      const eharness = patched.metadata?.eharness
+      if (eharness === undefined) continue
+      const stop =
+        eharness.stop === undefined || eharness.stop === 'tool-pending'
+          ? 'interrupted'
+          : eharness.stop
+      await host.persist([
+        {
+          ...patched,
+          metadata: { ...patched.metadata, eharness: { ...eharness, pending: null, stop } },
+        },
+      ])
+    }
+  }
+
+  function afterIdOf(marker: HarnessUIMessage): string | null {
+    return (marker.parts[0] as { data: { afterId: string | null } }).data.afterId
+  }
+
+  /**
+   * Build and save A' (spec 11 §4 step 3): client tool outputs pass through `tool.after` and the
+   * output limits (spec 09 §6), then approval / client parts are patched and `pending` set to
+   * null. A' becomes the stream's `originalMessages` (the continuation streams into it).
+   */
+  async function continuePending(open: OpenSession, answers: RespondPlan): Promise<void> {
+    const message = rt.view?.find((m) => m.id === answers.pending.messageId)
+    if (message === undefined) {
+      throw new HarnessError('EH_INVALID_INPUT', 'The pending message is no longer stored.', {
+        details: { reason: 'stale', messageId: answers.pending.messageId },
+      })
+    }
+    // if anything below fails, the turn still ends on A (its answered calls become interrupted)
+    baseMessage = structuredClone(message)
+    original = [baseMessage as UIMessage]
+    rt.events.emit({ type: 'pending', pending: null })
+    const deps = {
+      hooks: open.hooks,
+      contextOf: rt.contextOf,
+      warn: rt.warn,
+      status: () => {},
+      limits: {
+        config: config.toolOutput,
+        toolOutputs: open.services.get('toolOutputs') as ToolOutputSink | undefined,
+      },
+    }
+    clientOutputs = []
+    for (const answer of answers.toolOutputs) {
+      if ('errorText' in answer) {
+        clientOutputs.push(answer)
+        continue
+      }
+      const part = message.parts.find(
+        (p) => (p as { toolCallId?: string }).toolCallId === answer.toolCallId,
+      ) as { input?: unknown } | undefined
+      const output = await finishToolOutput(
+        answer.toolName,
+        answer.toolCallId,
+        part?.input,
+        answer.output,
+        deps,
+      )
+      clientOutputs.push({ ...answer, output })
+    }
+    const patched = patchForRespond(message, answers.approvals, clientOutputs)
+    baseMessage = patched
+    original = [patched as UIMessage]
+    const [saved] = await host.persist([patched])
+    if (saved !== undefined) {
+      baseMessage = saved
+      original = [saved as UIMessage]
+    }
   }
 
   // ─── execute ──────────────────────────────────────────────────────────────────────────────
@@ -718,9 +1031,31 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       await commit(prep)
     } catch (error) {
       if (!committed) return earlyEnd('error', error)
+      if (!startWritten)
+        writeStart(assistantId ?? rt.agent.generateId(), undefined, plan === undefined)
       outcome = { stop: 'error', steps: 0, model: info.model, error: toTurnError(error, log) }
       write({ type: 'error', errorText: outcome.error?.message ?? '' })
       return writeEnd()
+    }
+    if (plan !== undefined) {
+      // continuation: stream into A' (spec 04 §2); client outputs first, approved calls are open
+      writeStart(plan.pending.messageId, undefined, false)
+      for (const answer of clientOutputs) {
+        write(
+          'errorText' in answer
+            ? {
+                type: 'tool-output-error',
+                toolCallId: answer.toolCallId,
+                errorText: answer.errorText,
+              }
+            : {
+                type: 'tool-output-available',
+                toolCallId: answer.toolCallId,
+                output: answer.output,
+              },
+        )
+      }
+      for (const answer of plan.approvals) openCalls.add(answer.toolCallId)
     }
     if (prep.blockNotice !== undefined) {
       outcome = { stop: 'blocked', steps: 0, model: info.model }
@@ -757,9 +1092,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         assistantId: messageId,
         currentStartId: currentTurnStartId(
           view,
-          prep.user === undefined
-            ? { kind: 'no-input', assistantId: messageId }
-            : { kind: 'input', userMessageId: prep.user.id },
+          op.kind === 'respond'
+            ? { kind: 'respond', messageId }
+            : op.kind === 'regenerate'
+              ? { kind: 'regenerate', assistantId: messageId }
+              : prep.user === undefined
+                ? { kind: 'no-input', assistantId: messageId }
+                : { kind: 'input', userMessageId: prep.user.id },
           rt.agent.messages,
         ),
         info,
@@ -767,6 +1106,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         write,
         signal: controller.signal,
         pending: null,
+        // A' is cached: its approval-responded parts project to the trailing approval message
+        ...(op.kind === 'respond' ? { continuing: messageId } : {}),
       })
       // pre-turn compaction check (spec 05 §3 step 14, spec 06 §4)
       const built = await compaction.preTurn(await compaction.build())
@@ -792,6 +1133,17 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         discovered: seedDiscovered(view),
         heartbeat,
         compaction,
+        continuation: op.kind === 'respond',
+        inbox,
+        delivered: (item) => {
+          if (item.event !== undefined) {
+            deliveredEvents.push({
+              message: item.event,
+              afterFinish: finishStepsWritten,
+              done: false,
+            })
+          }
+        },
       })
       outcome = withoutUndefined({ ...result }) as Outcome
     } catch (error) {
@@ -816,20 +1168,78 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         lastStepMessage = message
         rt.cacheMessage(message)
         if (config.loop?.persistEachStep !== false) {
+          let saved = false
           try {
             await host.persist([structuredClone(message)])
+            saved = true
           } catch (error) {
             // retried by the next step's (or the final) save
             rt.log.warn('eharness: assistant snapshot save failed; retrying at the next step', {
               error,
             })
           }
+          // events delivered before this finish-step are in the saved snapshot now
+          if (saved) await markDelivered(stepEndsDone + 1)
         }
       }
     } finally {
       stepEndsDone++
       checkBarrier()
     }
+  }
+
+  /**
+   * Set `deliveredIn` on kind messages delivered as `data-eh.input` whose part is in the saved
+   * snapshot of finish-step `upTo` (spec 11 §6.3: at-least-once, never zero times).
+   */
+  async function markDelivered(upTo: number): Promise<void> {
+    for (const entry of deliveredEvents) {
+      if (entry.done || entry.afterFinish >= upTo || assistantId === undefined) continue
+      entry.done = true
+      const eharness = entry.message.metadata?.eharness
+      const updated: HarnessUIMessage = {
+        ...entry.message,
+        metadata: {
+          ...entry.message.metadata,
+          eharness: { ...(eharness ?? { v: 1, createdAt: startedAt }), deliveredIn: assistantId },
+        },
+      }
+      try {
+        await host.persist([updated])
+      } catch (error) {
+        entry.done = false
+        rt.log.warn('eharness: marking a delivered event failed; it may be projected again', {
+          error,
+        })
+      }
+    }
+  }
+
+  /** Undelivered steers: queued `send` turns, or `input-dropped` for tool-pending / aborts. */
+  async function settleInbox(stop: StopReason): Promise<void> {
+    const leftovers = await inbox.close()
+    let wake = false
+    for (const item of leftovers) {
+      const steer = item.steer
+      if (steer === undefined) {
+        // an undelivered event stays for the next turn; a wake starts that turn (not after aborts)
+        if (item.wake === true && stop !== 'aborted' && stop !== 'timeout') wake = true
+        continue
+      }
+      if (stop === 'tool-pending' || stop === 'aborted' || stop === 'timeout') {
+        rt.events.emit(
+          withoutUndefined({
+            type: 'input-dropped' as const,
+            reason: stop === 'tool-pending' ? ('tool-pending' as const) : ('aborted' as const),
+            text: steer.text,
+            clientId: steer.input.clientId,
+          }),
+        )
+      } else {
+        host.enqueueSteer({ input: steer.input, contexts: steer.contexts })
+      }
+    }
+    if (wake) host.enqueueWake()
   }
 
   async function onEnd(message: HarnessUIMessage | undefined): Promise<void> {
@@ -846,7 +1256,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       if (assistantId !== undefined) {
         let final = structuredClone(
           message ??
-            lastStepMessage ?? {
+            lastStepMessage ??
+            baseMessage ?? {
               id: assistantId,
               role: 'assistant' as const,
               metadata: { eharness: { v: 1 as const, createdAt: startedAt, turnId } },
@@ -874,6 +1285,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         assistant = final
         try {
           assistant = (await host.persist([final]))[0] ?? final
+          await markDelivered(Number.POSITIVE_INFINITY)
         } catch (saveError) {
           stop = 'error'
           error = toTurnError(saveError, log)
@@ -961,6 +1373,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         }
       }
     }
+    await settleInbox(stop)
     if (releaseLock !== undefined) {
       try {
         await releaseLock()
@@ -976,55 +1389,68 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   }
 
   // ─── the stream ───────────────────────────────────────────────────────────────────────────
-  const stream = createUIMessageStream<UIMessage>({
-    generateId: () => rt.agent.generateId(),
-    // also receives AI SDK echoes of error chunks already written (and described) by the core
-    onError: (error) => describeError(error),
-    onStepEnd: ({ responseMessage }) => onStepEnd(responseMessage as HarnessUIMessage),
-    onEnd: ({ responseMessage }) => onEnd(responseMessage as HarnessUIMessage),
-    execute: async ({ writer: w }) => {
-      writer = w
-      turnState.active = true
-      try {
-        await body()
-      } catch (error) {
-        // defensive: body() handles its own errors
-        rt.log.error('eharness: unexpected turn failure', { error })
-        if (!startWritten) writeStart(rt.agent.generateId(), undefined)
-        outcome = {
-          stop: 'error',
-          steps: outcome.steps,
-          model: info.model,
-          error: toTurnError(error, log),
-        }
-        write({ type: 'error', errorText: outcome.error?.message ?? '' })
-        writeEnd()
-      } finally {
-        turnState.active = false
-        buffer.close()
-      }
-    },
-  })
+  /**
+   * Create the AI SDK stream (at `start`, so a continuation can pass `originalMessages: [A']`).
+   * `execute` only hands out the writer; the turn runs in `body()` and resolves it at the end.
+   */
+  function openStream(): void {
+    const stream = createUIMessageStream<UIMessage>({
+      generateId: () => rt.agent.generateId(),
+      ...(original === undefined ? {} : { originalMessages: original }),
+      // also receives AI SDK echoes of error chunks already written (and described) by the core
+      onError: (error) => describeError(error),
+      onStepEnd: ({ responseMessage }) => onStepEnd(responseMessage as HarnessUIMessage),
+      onEnd: ({ responseMessage }) => onEnd(responseMessage as HarnessUIMessage),
+      execute: ({ writer: w }) => {
+        writer = w
+        return new Promise<void>((resolve) => {
+          finishExecute = resolve
+        })
+      },
+    })
 
-  // the core drains the stream itself, so the turn never stalls and is always persisted even
-  // if the caller never reads run.stream (which replays the turn buffer, spec 04 §5)
-  void (async () => {
-    const reader = stream.getReader()
-    try {
-      while (!(await reader.read()).done) {
-        // drain
+    // the core drains the stream itself, so the turn never stalls and is always persisted even
+    // if the caller never reads run.stream (which replays the turn buffer, spec 04 §5)
+    void (async () => {
+      const reader = stream.getReader()
+      try {
+        while (!(await reader.read()).done) {
+          // drain
+        }
+      } catch (error) {
+        rt.log.error('eharness: turn stream failed', { error })
+      } finally {
+        drained = true
+        checkBarrier()
+        // AI SDK skips onEnd when its pipeline fails; the end sequence must still run
+        if (!ended) await onEnd(undefined)
       }
+    })()
+  }
+
+  rt.events.emit({ type: 'status', running: true })
+  void (async () => {
+    try {
+      await body()
     } catch (error) {
-      rt.log.error('eharness: turn stream failed', { error })
+      // defensive: body() handles its own errors
+      rt.log.error('eharness: unexpected turn failure', { error })
+      if (!startWritten) writeStart(rt.agent.generateId(), undefined)
+      outcome = {
+        stop: 'error',
+        steps: outcome.steps,
+        model: info.model,
+        error: toTurnError(error, log),
+      }
+      write({ type: 'error', errorText: outcome.error?.message ?? '' })
+      writeEnd()
     } finally {
-      drained = true
-      checkBarrier()
-      // AI SDK skips onEnd when its pipeline fails; the end sequence must still run
-      if (!ended) await onEnd(undefined)
+      turnState.active = false
+      buffer.close()
+      finishExecute?.()
     }
   })()
 
-  rt.events.emit({ type: 'status', running: true })
   const abort = (reason?: string) => {
     if (!controller.signal.aborted) controller.abort(reason ?? 'aborted')
   }
@@ -1036,5 +1462,54 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     result,
     abort,
   })
-  return { run, buffer, abort }
+  return {
+    run,
+    buffer,
+    abort,
+    steer(input) {
+      if (!inbox.open || ended) return false
+      const text = input.parts
+        .filter((p) => p.type === 'text')
+        .map((p) => p.text)
+        .join('\n\n')
+      return inbox.push(
+        (async (): Promise<InboxItem | undefined> => {
+          const submitted = await inputSubmit(input, 'steer')
+          if ('block' in submitted) {
+            // a block drops only this input; the running turn continues (spec 11 §6.1)
+            rt.events.emit(
+              withoutUndefined({
+                type: 'input-dropped' as const,
+                reason: 'blocked' as const,
+                text,
+                clientId: input.clientId,
+              }),
+            )
+            return undefined
+          }
+          const texts = submitted.input.parts.filter((p) => p.type === 'text').map((p) => p.text)
+          const files = submitted.input.parts.filter((p) => p.type === 'file')
+          return {
+            data: withoutUndefined({
+              source: 'user' as const,
+              text: [...texts, ...submitted.contexts].join('\n\n'),
+              files: files.length === 0 ? undefined : structuredClone(files),
+              clientId: input.clientId,
+            }),
+            steer: { input: submitted.input, contexts: submitted.contexts, text },
+          }
+        })(),
+      )
+    },
+    deliverEvent(message, text, wake) {
+      if (!inbox.open || ended) return false
+      return inbox.push(
+        Promise.resolve({
+          data: { source: 'event', text },
+          event: message,
+          ...(wake === true ? { wake: true } : {}),
+        }),
+      )
+    },
+  }
 }

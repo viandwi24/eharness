@@ -35,6 +35,7 @@ const entries = {
     'defineSkill',
     'defineSkillSource',
     'defineToolSource',
+    'handleChatRequest',
     'isHarnessError',
     'isKindMessage',
     'isUuidV7',
@@ -233,7 +234,45 @@ if (noMcp) {
 }
 await mcpAgent.close()
 
+// approval → handleChatRequest (useChat body) → continuation of the same message, under Node
+const paid = []
+const approvalModel = scriptedModel([
+  { toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] },
+  { text: 'Paid.' },
+])
+const approvalAgent = core.defineHarnessAgent({
+  model: approvalModel,
+  contextWindow: 100_000,
+  approval: { policy: { pay: 'user-approval' } },
+  tools: {
+    pay: tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async ({ amount }) => {
+        paid.push(amount)
+        return 'ok'
+      },
+    }),
+  },
+})
+const approvalSession = approvalAgent.session('approval')
+const pendingTurn = await approvalSession.send('pay 5').result
+assert.equal(pendingTurn.stop, 'tool-pending')
+const [pendingMessage] = (await approvalSession.messages()).slice(-1)
+const answered = {
+  ...pendingMessage,
+  parts: pendingMessage.parts.map((p) =>
+    p.type === 'tool-pay'
+      ? { ...p, state: 'approval-responded', approval: { ...p.approval, approved: true } }
+      : p,
+  ),
+}
+const continued = await core.handleChatRequest(approvalSession, { messages: [answered] }).result
+assert.equal(continued.stop, 'complete')
+assert.equal(continued.messageId, pendingTurn.messageId)
+assert.deepEqual(paid, [5])
+await approvalAgent.close()
+
 await rm(shim)
 console.log(
-  `smoke: ok (${Object.keys(entries).length} entry points, three scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
+  `smoke: ok (${Object.keys(entries).length} entry points, four scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
 )

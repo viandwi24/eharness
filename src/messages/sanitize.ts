@@ -77,6 +77,8 @@ export function sanitizeModelMessages(
     i++
 
     const toolMessages: ToolModelMessage[] = []
+    /** Calls AI SDK executes from a trailing approved response (answered, but a result wins). */
+    const executable = new Set<string>()
     let lastToolIndex = -1
     while (i < input.length && (input[i] as ModelMessage).role === 'tool') {
       const tool = input[i] as ToolModelMessage
@@ -88,8 +90,9 @@ export function sanitizeModelMessages(
         } else if (part.type === 'tool-approval-response') {
           if (!approvalToCall.has(part.approvalId)) continue
           if (i === input.length - 1 && part.approved) {
-            // trailing approval of a respond() continuation: AI SDK executes the call
-            answered.add(approvalToCall.get(part.approvalId) as string)
+            // trailing approval of a respond() continuation: AI SDK executes the call (unless
+            // the same message already holds its result, e.g. an automatic approval)
+            executable.add(approvalToCall.get(part.approvalId) as string)
           }
         }
         content.push(part)
@@ -103,7 +106,7 @@ export function sanitizeModelMessages(
 
     const synthesized: ToolPart[] = []
     for (const [toolCallId, toolName] of calls) {
-      if (answered.has(toolCallId)) continue
+      if (answered.has(toolCallId) || executable.has(toolCallId)) continue
       synthesized.push({
         type: 'tool-result',
         toolCallId,

@@ -31,6 +31,7 @@ describe('core entry', () => {
       'defineSkill',
       'defineSkillSource',
       'defineToolSource',
+      'handleChatRequest',
       'isHarnessError',
       'isKindMessage',
       'isUuidV7',

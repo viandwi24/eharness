@@ -10,6 +10,7 @@ import type {
   HarnessRun,
   HarnessSession,
   MessageAdapter,
+  SendOptions,
   SessionOptions,
   StateAdapter,
 } from '../agent/session-types.ts'
@@ -34,6 +35,10 @@ import { createRun, createTurnBuffer } from '../stream/run.ts'
 import { createContext, defaultLogger, pendingServices } from './context.ts'
 import { createEventHub } from './events.ts'
 import { createHookRunner } from './hooks.ts'
+import { type NormalizedInput, normalizeInput } from './input.ts'
+import { kindText } from './interaction/inbox.ts'
+import { RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
+import { createDeferredRun, type QueuedTurn } from './interaction/queue.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
 import { createStateStore } from './state.ts'
@@ -60,8 +65,15 @@ function busyError(id: string): HarnessError {
   })
 }
 
-function notImplemented(what: string, phase: string): HarnessError {
-  return new HarnessError('EH_NOT_IMPLEMENTED', `${what} is not implemented yet (phase ${phase}).`)
+function asHarnessError(error: unknown): HarnessError {
+  if (isHarnessError(error)) return error
+  return new HarnessError(
+    'EH_INVALID_INPUT',
+    error instanceof Error ? error.message : String(error),
+    {
+      cause: error,
+    },
+  )
 }
 
 /** A run that fails before it starts (valid stream: start → error → message-metadata → finish). */
@@ -94,7 +106,10 @@ function failedRun(
     usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     steps: 0,
     durationMs: 0,
-    error: { code: error.code, message: error.message },
+    error:
+      error.details === undefined
+        ? { code: error.code, message: error.message }
+        : { code: error.code, message: error.message, details: structuredClone(error.details) },
   }
   return createRun({
     turnId,
@@ -495,6 +510,8 @@ export function createSessionHandle(args: {
 
   // ─── turns ────────────────────────────────────────────────────────────────────────────────
   let current: RunningTurn | undefined
+  /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
+  const queue: QueuedTurn[] = []
   const host: TurnHost = {
     rt,
     ensureOpen,
@@ -503,8 +520,94 @@ export function createSessionHandle(args: {
     compaction,
     onTurnEnd() {
       current = undefined
+      startNext()
       touch()
     },
+    enqueueSteer(submitted) {
+      enqueue({ input: submitted.input, submitted, options: {} })
+    },
+    enqueueWake() {
+      enqueue({ kind: 'wake', input: undefined, options: {} })
+    },
+  }
+
+  function enqueue(
+    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options'> & { kind?: QueuedTurn['kind'] },
+  ): HarnessRun<UIMessage> {
+    const turnId = internals.generateId()
+    const kind = item.kind ?? 'send'
+    const entry: QueuedTurn = {
+      ...item,
+      kind,
+      turnId,
+      handle: createDeferredRun({
+        turnId,
+        kind,
+        generateId: () => internals.generateId(),
+        onAbort: () => {
+          const index = queue.indexOf(entry)
+          if (index >= 0) queue.splice(index, 1)
+          entry.handle.drop()
+        },
+      }),
+    }
+    queue.push(entry)
+    // the session may have gone idle meanwhile (e.g. a steer that arrived as its turn ended)
+    queueMicrotask(startNext)
+    return entry.handle.run
+  }
+
+  /**
+   * Start the next queued turn when the session is idle. The queue is held while approvals or
+   * client tool calls wait for `respond()`: a queued turn never auto-denies them (spec 11 §6.2).
+   */
+  function startNext(): void {
+    if (rt.closed || rt.running || queue.length === 0) return
+    if (rt.state.core().pending !== undefined) return
+    const next = queue.shift()
+    if (next === undefined) return
+    rt.running = true
+    touch()
+    current = startTurn(host, {
+      kind: next.kind,
+      input: undefined,
+      ...(next.input === undefined ? {} : { normalized: next.input }),
+      ...(next.submitted === undefined ? {} : { submitted: next.submitted }),
+      options: next.options,
+      queued: true,
+      turnId: next.turnId,
+      via: 'queue',
+    })
+    next.handle.bind(current.run)
+  }
+
+  /** The kind's projection for inline delivery; a throwing projection is not delivered inline. */
+  function inlineText(message: HarnessUIMessage, kind: string): string | undefined {
+    try {
+      return kindText(message, internals.messages, id)
+    } catch (error) {
+      rt.warn(
+        {
+          code: 'W_HOOK_FAILED',
+          message: `The model projection of kind '${kind}' threw; the message is not delivered into the running turn: ${error instanceof Error ? error.message : String(error)}`,
+          details: { kind },
+        },
+        `kind:${kind}`,
+      )
+      return undefined
+    }
+  }
+
+  function dropQueue(): void {
+    for (const entry of queue.splice(0)) entry.handle.drop()
+  }
+
+  /** A turn operation that starts now (the caller checked the running flag). */
+  function begin(op: Parameters<typeof startTurn>[1]): HarnessRun<UIMessage> {
+    rt.running = true
+    touch()
+    current = startTurn(host, op)
+    return current.run
   }
 
   function assertOpen(): void {
@@ -518,7 +621,9 @@ export function createSessionHandle(args: {
     if (idleTimer !== undefined) clearTimeout(idleTimer)
     idleTimer = setTimeout(() => {
       idleTimer = undefined
-      if (rt.running || events.readers > 0) touch()
+      // a queue held by pending approvals does not keep the session alive: idle close drops it
+      const queued = queue.length > 0 && rt.state.core().pending === undefined
+      if (rt.running || queued || events.readers > 0) touch()
       else void close()
     }, args.idleMs)
     unref(idleTimer)
@@ -530,6 +635,7 @@ export function createSessionHandle(args: {
     if (closing !== undefined) return closing
     rt.closed = true
     if (idleTimer !== undefined) clearTimeout(idleTimer)
+    dropQueue()
     closing = (async () => {
       const running = current
       if (running !== undefined) {
@@ -583,30 +689,64 @@ export function createSessionHandle(args: {
     },
     send(input, options = {}) {
       assertOpen()
-      if (rt.running) throw busyError(id) // ifBusy 'queue' / 'steer' arrive with P7
-      rt.running = true
-      touch()
-      current = startTurn(host, { kind: 'send', input, options, queued: false })
-      return current.run
+      if (rt.running) {
+        const ifBusy = options.ifBusy ?? 'reject'
+        if (ifBusy === 'reject') throw busyError(id)
+        touch()
+        let normalized: NormalizedInput | undefined
+        try {
+          normalized =
+            input === undefined
+              ? undefined
+              : normalizeInput(input, {
+                  acceptClientMetadata: rt.options.acceptClientMetadata === true,
+                })
+        } catch (error) {
+          return failedRun('send', () => internals.generateId(), asHarnessError(error))
+        }
+        if (ifBusy === 'steer' && current !== undefined) {
+          const running = session.attach() as HarnessRun<UIMessage>
+          // a turn that stopped taking input: the steer becomes a queued turn (spec 11 §6.1)
+          if (normalized === undefined || !current.steer(normalized)) {
+            enqueue({ input: normalized, options })
+          }
+          return running
+        }
+        return enqueue({ input: normalized, options })
+      }
+      return begin({ kind: 'send', input, options, queued: false })
     },
-    respond() {
+    respond(response, options = {}) {
       assertOpen()
       if (rt.running) throw busyError(id)
-      return failedRun('respond', () => internals.generateId(), notImplemented('respond()', 'P7'))
+      const ignoreUnknown =
+        (options as SendOptions & { [RESPOND_IGNORE_UNKNOWN]?: boolean })[
+          RESPOND_IGNORE_UNKNOWN
+        ] === true
+      return begin({
+        kind: 'respond',
+        input: undefined,
+        options,
+        queued: false,
+        respond: { response, ignoreUnknown },
+      })
     },
-    regenerate() {
+    regenerate(options = {}) {
       assertOpen()
       if (rt.running) throw busyError(id)
-      return failedRun(
-        'regenerate',
-        () => internals.generateId(),
-        notImplemented('regenerate()', 'P7'),
-      )
+      const { messageId, ...rest } = options
+      return begin({
+        kind: 'regenerate',
+        input: undefined,
+        options: rest,
+        queued: false,
+        ...(messageId === undefined ? {} : { target: messageId }),
+      })
     },
-    edit() {
+    edit(messageId, input, options = {}) {
       assertOpen()
       if (rt.running) throw busyError(id)
-      return failedRun('edit', () => internals.generateId(), notImplemented('edit()', 'P7'))
+      return begin({ kind: 'edit', input, options, queued: false, target: messageId })
     },
     attach() {
       assertOpen()
@@ -623,13 +763,11 @@ export function createSessionHandle(args: {
     },
     abort(reason) {
       assertOpen()
+      dropQueue()
       current?.abort(reason)
     },
     async inject(kind, data, options = {}) {
       assertOpen()
-      if (options.deliver === 'next-step' || options.wake === true) {
-        throw notImplemented("inject() with deliver: 'next-step' or wake", 'P7')
-      }
       const registered = internals.messages.kind(kind)
       if (registered === undefined) {
         throw new HarnessError('EH_INVALID_INPUT', `Unknown message kind '${kind}'.`, {
@@ -662,7 +800,23 @@ export function createSessionHandle(args: {
       const [saved] = await persist([message])
       const out = saved ?? message
       events.emit({ type: 'message', message: out as never })
-      return { message: structuredClone(out) as never }
+      const result = { message: structuredClone(out) as never }
+      const wake = options.wake === true
+      // next-step delivery (wake while running implies it, spec 11 §6.3)
+      if ((options.deliver === 'next-step' || wake) && current !== undefined) {
+        const text = inlineText(out, kind)
+        if (text !== undefined && current.deliverEvent(out, text, wake)) return result
+      }
+      if (!wake || rt.closed) return result
+      // wake an idle session now; otherwise (a turn is ending, compact() runs, or approvals wait
+      // for an answer) a no-input wake turn is queued and runs when the session is free
+      if (!rt.running && rt.state.core().pending === undefined) {
+        return {
+          ...result,
+          run: begin({ kind: 'wake', input: undefined, options: {}, queued: false }) as never,
+        }
+      }
+      return { ...result, run: enqueue({ kind: 'wake', input: undefined, options: {} }) as never }
     },
     async compact() {
       assertOpen()
@@ -736,6 +890,7 @@ export function createSessionHandle(args: {
           }
         }
         rt.running = false
+        startNext()
         touch()
       }
     },
