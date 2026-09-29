@@ -1,0 +1,85 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Weather?"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Checking."
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c1",
+        "toolName": "weather",
+        "input": {
+          "city": "Oslo"
+        }
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c2",
+        "toolName": "fails",
+        "input": {}
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c3",
+        "toolName": "mcp_lookup",
+        "input": {
+          "q": "x"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "type": "tool-result",
+        "toolCallId": "c1",
+        "toolName": "weather",
+        "output": {
+          "type": "json",
+          "value": {
+            "temp": 20
+          }
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c2",
+        "toolName": "fails",
+        "output": {
+          "type": "error-text",
+          "value": "Error: boom"
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c3",
+        "toolName": "mcp_lookup",
+        "output": {
+          "type": "text",
+          "value": "found"
+        }
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "It is 20 degrees."
+      }
+    ]
+  }
+]

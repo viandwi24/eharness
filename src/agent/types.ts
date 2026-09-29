@@ -1,0 +1,302 @@
+/**
+ * Agent configuration and the `HarnessAgent` value.
+ *
+ * @see docs/specs/01-agent-and-plugins.md#1-defineharnessagent
+ */
+import type {
+  FlexibleSchema,
+  InferUITools,
+  LanguageModel,
+  LanguageModelCallOptions,
+  RequestOptions,
+  TelemetryOptions,
+  TimeoutConfiguration,
+  Tool,
+  ToolApprovalConfiguration,
+  ToolCallRepairFunction,
+  ToolSet,
+  UIMessage,
+  UITools,
+} from 'ai'
+import type { HarnessWarning } from '../errors.ts'
+import type { ProviderOptions } from '../internal/ai-types.ts'
+import type { HarnessDataTypes, HarnessMetadata, HarnessUIMessage } from '../messages/types.ts'
+import type {
+  DataPartMap,
+  HarnessContext,
+  HarnessLogger,
+  HarnessPlugin,
+  InferDataTypes,
+  KindMap,
+  NamespacedDataTypes,
+} from '../plugin/types.ts'
+import type {
+  InstructionInput,
+  Skill,
+  SkillSource,
+  ToolInput,
+  ToolSource,
+  ToolsInput,
+} from '../registry/types.ts'
+import type {
+  HarnessKindTypes,
+  HarnessSession,
+  MessageAdapter,
+  SessionOptions,
+  StateAdapter,
+} from './session-types.ts'
+
+/**
+ * Loop limits and persistence.
+ *
+ * @see docs/specs/01-agent-and-plugins.md#1-defineharnessagent
+ */
+export interface LoopConfig {
+  /** Default 50 — per turn (stop `'max-steps'`; extensible by `turn.beforeEnd`). */
+  maxSteps?: number
+  /** Default 100_000 — output-token cap incl. nested usage (stop `'cost-cap'`). */
+  maxTurnOutputTokens?: number
+  /** Default none — wall clock per turn (stop `'timeout'`). */
+  turnTimeoutMs?: number
+  /** Default 3 — forced continuations per turn via `turn.beforeEnd`. */
+  maxContinues?: number
+  /** Default true — upsert the assistant message after every step. */
+  persistEachStep?: boolean
+}
+
+/**
+ * Model settings passed to every `streamText` call.
+ *
+ * @see docs/specs/01-agent-and-plugins.md#1-defineharnessagent
+ */
+export type ModelSettings = Pick<
+  LanguageModelCallOptions,
+  | 'maxOutputTokens'
+  | 'temperature'
+  | 'topP'
+  | 'topK'
+  | 'presencePenalty'
+  | 'frequencyPenalty'
+  | 'stopSequences'
+  | 'seed'
+  | 'reasoning'
+> &
+  Pick<RequestOptions, 'maxRetries'> & {
+    headers?: Record<string, string>
+    providerOptions?: ProviderOptions
+    /** Per step. A number means `stepMs`. `totalMs` is rejected — use `loop.turnTimeoutMs`. */
+    timeout?: number | Omit<Exclude<TimeoutConfiguration<ToolSet>, number>, 'totalMs'>
+    /** Retries of a step after streaming started (AI SDK `streamRetries`). */
+    streamRetries?: number
+  }
+
+/**
+ * Human-in-the-loop tool approval.
+ *
+ * @see docs/specs/11-interaction.md#3-tool-approval
+ */
+export interface ApprovalConfig {
+  /** Static policy; same shape as AI SDK `ToolApprovalConfiguration`. */
+  policy?: ToolApprovalConfiguration<ToolSet, unknown>
+  /** Passed as `experimental_toolApprovalSecret`: HMAC-signs requests. */
+  secret?: string
+  /** What `send()`/`regenerate()`/`edit()` do while approvals are pending. Default `'deny'`. */
+  onNewInput?: 'deny' | 'reject'
+}
+
+/**
+ * Prompt caching configuration.
+ *
+ * @see docs/specs/02-context-registry.md#61-cache-configuration
+ */
+export interface CacheConfig {
+  mode?: 'auto' | 'breakpoints'
+  ttl?: '5m' | '1h'
+}
+
+/**
+ * Tool result size limits.
+ *
+ * @see docs/specs/09-tools-and-mcp.md
+ */
+export interface ToolOutputConfig {
+  /** Default 50_000 per result. */
+  maxChars?: number
+  perTool?: Record<string, number | false>
+  /** Default `'truncate'`. */
+  strategy?: 'truncate' | 'evict'
+}
+
+/**
+ * Compaction configuration.
+ *
+ * @see docs/specs/06-compaction.md#1-configuration
+ */
+export interface CompactionConfig {
+  /** Summarize when projected context exceeds this ratio of `contextWindow`. Default 0.75. */
+  summarizeAt?: number
+  /** Most recent completed turns kept verbatim. Default 4. */
+  keepLast?: number
+  /** Summarizer model. Default: agent model. */
+  model?: LanguageModel
+  /** Summarizer context window. */
+  contextWindow?: number
+  /** Replace the default summarizer instructions. */
+  prompt?: string
+  /** Max tokens for the summary. Default 4_000. */
+  maxSummaryTokens?: number
+  /** Token counter. Default `ceil(chars / 4)`, calibrated by provider usage. */
+  countTokens?: (text: string) => number
+  /** Escape hatch: final say over the assembled view, before the guard. */
+  select?: (view: HarnessUIMessage[], ctx: HarnessContext) => HarnessUIMessage[]
+}
+
+/**
+ * Configuration of `defineHarnessAgent`.
+ *
+ * @see docs/specs/01-agent-and-plugins.md#1-defineharnessagent
+ */
+export interface HarnessAgentConfig {
+  /** Stable id used in logs/telemetry. Default `'agent'`. */
+  id?: string
+  /** Default model: gateway string or provider instance. */
+  model: LanguageModel
+  /** Context window in tokens (or a function of the model). Default 128_000. */
+  contextWindow?: number | ((model: LanguageModel) => number | undefined)
+
+  instructions?: InstructionInput | InstructionInput[]
+  tools?: ToolsInput
+  skills?: Array<Skill | SkillSource>
+  mcp?: ToolSource[]
+  /** App data parts (no namespace): part type `data-<key>`. */
+  dataParts?: DataPartMap
+  /** App message kinds (no namespace). */
+  messageKinds?: KindMap
+  plugins?: readonly HarnessPlugin<string, DataPartMap, KindMap>[]
+
+  /** Default: memory adapters. */
+  storage?: { messages?: MessageAdapter; state?: StateAdapter }
+  compaction?: CompactionConfig | false
+  guard?: { maxContextRatio?: number; reserveTokens?: number }
+  /** Extra overflow detection for providers the built-in patterns miss. */
+  isContextOverflow?: (error: unknown) => boolean
+  loop?: LoopConfig
+  /** Passed to every `streamText` call. */
+  settings?: ModelSettings
+  approval?: ApprovalConfig
+  /** Prompt caching. Default `'auto'` mode. */
+  cache?: CacheConfig | false
+  toolOutput?: ToolOutputConfig
+  /** Typed per-call options accepted by `send()`/`respond()`/… (`options`). */
+  callOptions?: FlexibleSchema
+  /** Passed to `streamText` `repairToolCall`. */
+  repairToolCall?: ToolCallRepairFunction<ToolSet>
+  /** Crash recovery of turns interrupted by a dead process. Default `{ staleMs: 120_000 }`. */
+  recovery?: { staleMs?: number } | false
+  telemetry?: TelemetryOptions
+  /** Throw `EH_CONFIG_INVALID` instead of warning on API misuse. Default false. */
+  strict?: boolean
+  logger?: HarnessLogger
+  /** Called for every warning. Default: `console.warn`, deduplicated per code + key. */
+  onWarning?: (w: HarnessWarning) => void
+  /** Id generator for messages/turns. Must produce time-sortable ids. Default: `uuidv7`. */
+  generateId?: () => string
+  /** Max skills listed in the prompt index before switching to search mode. Default 50. */
+  skillsIndexLimit?: number
+  /** Evict idle cached sessions after this many ms. Default 30 min. 0 = never. */
+  sessionIdleMs?: number
+}
+
+type UnionToIntersection<U> = (U extends unknown ? (arg: U) => void : never) extends (
+  arg: infer I,
+) => void
+  ? I
+  : never
+
+type Simplify<T> = { [K in keyof T]: T[K] } & {}
+
+type PluginsOf<C> = C extends { plugins: readonly (infer P)[] } ? P : never
+
+type PluginDataTypes<P> = UnionToIntersection<
+  P extends HarnessPlugin<infer Name, infer DP, infer MK>
+    ? NamespacedDataTypes<Name, DP> & NamespacedDataTypes<Name, MK>
+    : never
+>
+
+type PluginKindTypes<P> = UnionToIntersection<
+  P extends HarnessPlugin<infer Name, DataPartMap, infer MK> ? NamespacedDataTypes<Name, MK> : never
+>
+
+type OrEmpty<T> = [T] extends [never] ? Record<never, never> : T
+
+type AppPartTypes<C> = C extends { dataParts: infer DP } ? InferDataTypes<DP> : Record<never, never>
+type AppKindTypes<C> = C extends { messageKinds: infer MK }
+  ? InferDataTypes<MK>
+  : Record<never, never>
+
+/**
+ * All data part payload types of an agent config: core + app parts/kinds + namespaced plugin
+ * parts/kinds (keys without the `data-` prefix).
+ */
+export type AgentDataTypes<C> = Simplify<
+  HarnessDataTypes & AppPartTypes<C> & AppKindTypes<C> & OrEmpty<PluginDataTypes<PluginsOf<C>>>
+>
+
+/** All message kind payload types of an agent config: core + app + namespaced plugin kinds. */
+export type AgentKindTypes<C> = Simplify<
+  HarnessKindTypes & AppKindTypes<C> & OrEmpty<PluginKindTypes<PluginsOf<C>>>
+>
+
+type ResolvedTool<T> = T extends (...args: never[]) => infer R ? R : T
+
+type ToolRecordOf<T> = T extends ToolSource
+  ? never
+  : T extends Record<string, ToolInput>
+    ? { [K in keyof T]: ResolvedTool<T[K]> }
+    : never
+
+/** Static app tools of an agent config (records in `config.tools`), resolved to `Tool`s. */
+export type AgentStaticTools<C> = C extends { tools: infer T }
+  ? T extends readonly (infer E)[]
+    ? OrEmpty<UnionToIntersection<ToolRecordOf<E>>>
+    : OrEmpty<ToolRecordOf<T>>
+  : Record<never, never>
+
+type UIToolsOf<Tools> = keyof Tools extends never
+  ? UITools
+  : Tools extends Record<string, Tool>
+    ? InferUITools<Tools>
+    : UITools
+
+/**
+ * The exact message type of an agent config: core + plugin + app data parts/kinds, and the
+ * static app tools' `InferUITools` (any tool when there are none).
+ *
+ * @see docs/specs/01-agent-and-plugins.md#12-harnessagent
+ */
+export type AgentMessageOf<C> = UIMessage<
+  HarnessMetadata,
+  AgentDataTypes<C>,
+  UIToolsOf<AgentStaticTools<C>>
+>
+
+/**
+ * The value returned by `defineHarnessAgent`: configuration + plugins, no live state.
+ *
+ * @see docs/specs/01-agent-and-plugins.md#12-harnessagent
+ */
+export interface HarnessAgent<C = HarnessAgentConfig> {
+  readonly id: string
+  readonly config: Readonly<C>
+  /** Get (hot) or create a live session. Does no I/O until first use. */
+  session(
+    sessionId: string,
+    options?: SessionOptions,
+  ): HarnessSession<AgentMessageOf<C>, AgentKindTypes<C>>
+  /** Close and evict a cached session (runs plugin dispose). */
+  closeSession(sessionId: string): Promise<void>
+  /** Close all sessions. Call on shutdown. */
+  close(): Promise<void>
+  /** Type-only brand used by `InferHarnessUIMessage`. Undefined at runtime. */
+  readonly '~types': { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> }
+}

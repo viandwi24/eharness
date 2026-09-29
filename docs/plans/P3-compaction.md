@@ -58,3 +58,8 @@ into compaction (coordinate via "Requests" if larger changes are needed).
 ## Open questions
 
 ## Requests to other phases
+
+- From P1: the guard's sanitize step exists as `sanitizeModelMessages()`
+  (`src/messages/sanitize.ts`); `CompactionConfig`, `CompactionPayload` and `ContextStats` types
+  are declared in `src/agent/types.ts` / `src/messages/types.ts`. Projection already honours
+  `partial` and the newest boundary.

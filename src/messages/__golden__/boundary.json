@@ -1,0 +1,24 @@
+[
+  {
+    "role": "user",
+    "content": "<conversation-summary>NEW</conversation-summary>"
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Continue"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "text",
+        "text": "Continuing."
+      }
+    ]
+  }
+]

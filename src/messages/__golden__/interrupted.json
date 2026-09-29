@@ -1,0 +1,126 @@
+[
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Go"
+      }
+    ]
+  },
+  {
+    "role": "assistant",
+    "content": [
+      {
+        "type": "tool-call",
+        "toolCallId": "c1",
+        "toolName": "weather",
+        "input": {
+          "ci": 1
+        }
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c1b",
+        "toolName": "weather",
+        "input": {}
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c2",
+        "toolName": "weather",
+        "input": {
+          "city": "B"
+        }
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c3",
+        "toolName": "deploy",
+        "input": {}
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c3b",
+        "toolName": "deploy",
+        "input": {}
+      },
+      {
+        "type": "tool-call",
+        "toolCallId": "c3c",
+        "toolName": "weather",
+        "input": {
+          "city": "C"
+        }
+      }
+    ]
+  },
+  {
+    "role": "tool",
+    "content": [
+      {
+        "type": "tool-result",
+        "toolCallId": "c1",
+        "toolName": "weather",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c1b",
+        "toolName": "weather",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c2",
+        "toolName": "weather",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c3",
+        "toolName": "deploy",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c3b",
+        "toolName": "deploy",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      },
+      {
+        "type": "tool-result",
+        "toolCallId": "c3c",
+        "toolName": "weather",
+        "output": {
+          "type": "error-text",
+          "value": "Interrupted: no result was recorded for this tool call; it may or may not have taken effect."
+        }
+      }
+    ]
+  },
+  {
+    "role": "user",
+    "content": [
+      {
+        "type": "text",
+        "text": "Next"
+      }
+    ]
+  }
+]

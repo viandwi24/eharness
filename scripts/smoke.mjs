@@ -18,12 +18,32 @@ const load = (await import(pathToFileURL(shim).href)).default
 
 /** Expected runtime exports per entry point. */
 const entries = {
-  eharness: ['HarnessError', 'version'],
+  eharness: [
+    'DENIED_NEW_INPUT',
+    'HarnessError',
+    'HarnessToolError',
+    'INTERRUPTED_CRASH',
+    'INTERRUPTED_TURN',
+    'INTERRUPTED_UNKNOWN',
+    'NOT_EXECUTED_NEW_INPUT',
+    'TOOL_OUTPUT_TRUNCATED',
+    'createKindMessage',
+    'defineDataPart',
+    'defineHarnessAgent',
+    'defineMessageKind',
+    'definePlugin',
+    'defineToolSource',
+    'isHarnessError',
+    'isKindMessage',
+    'isUuidV7',
+    'uuidv7',
+    'version',
+  ],
   'eharness/filesystem': ['experimental_placeholder'],
   'eharness/filesystem/memory': ['experimental_placeholder'],
   'eharness/storage/memory': ['experimental_placeholder'],
   'eharness/mcp': ['experimental_placeholder'],
-  'eharness/testing': ['experimental_placeholder'],
+  'eharness/testing': ['idGeneratorConformance'],
 }
 
 if (noMcp) {
@@ -41,6 +61,17 @@ const core = await load('eharness')
 const error = new core.HarnessError('EH_CONFIG_INVALID', 'smoke')
 assert.ok(error instanceof Error)
 assert.equal(error.code, 'EH_CONFIG_INVALID')
+
+// boot: a plugin with a namespaced data part, and a boot error with its code
+const plugin = core.definePlugin({ name: 'smoke', provides: ['x'] })
+const agent = core.defineHarnessAgent({ model: 'openai/gpt-5', plugins: [plugin] })
+assert.equal(agent.id, 'agent')
+assert.throws(
+  () => core.defineHarnessAgent({ model: 'openai/gpt-5', plugins: [plugin, plugin] }),
+  (e) => core.isHarnessError(e, 'EH_CONFIG_INVALID'),
+)
+const a = core.uuidv7()
+assert.ok(core.isUuidV7(a) && core.uuidv7() > a)
 
 await rm(shim)
 console.log(
