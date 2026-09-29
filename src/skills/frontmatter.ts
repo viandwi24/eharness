@@ -7,11 +7,15 @@
  *   single- or double-quoted strings (`''` escape; JSON escapes in double quotes);
  * - flow lists of scalars on one line: `key: [a, "b, c", 3]`;
  * - block lists of scalars: `key:` followed by `- item` lines (indented or not);
- * - one level of nesting: `key:` followed by indented `sub: value` lines (scalars or flow lists);
+ * - block scalars for strings: `|`, `|-` (literal) and `>`, `>-` (folded), with plain indentation
+ *   (no explicit indentation indicator, no `+` chomping);
+ * - one level of nesting: `key:` followed by indented `sub: value` lines (scalars, flow lists or
+ *   block scalars);
  * - blank lines, full-line `#` comments and ` #` trailing comments after plain values.
  *
- * Everything else (block scalars `|`/`>`, multi-line scalars, anchors/aliases/tags, flow maps,
- * deeper nesting, tabs in indentation, duplicate keys) is rejected with an error message.
+ * Everything else (multi-line plain/quoted scalars, anchors/aliases/tags, flow maps, deeper
+ * nesting, tabs in indentation, duplicate keys, the keys `__proto__`/`constructor`/`prototype`)
+ * is rejected with an error message.
  *
  * @see docs/specs/07-skills.md#8-filesystem-autoload-in-eharnessfilesystem
  */
@@ -171,10 +175,46 @@ interface Line {
   text: string
 }
 
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype'])
+const BLOCK_HEADER = /^([|>])(-?)\s*(?:#.*)?$/
+
 function splitKey(text: string): { key: string; rest: string } | undefined {
   const match = /^([^\s:#'"][^:]*?):(?:\s+(.*))?$/.exec(text)
   if (match === null) return undefined
   return { key: (match[1] as string).trim(), rest: match[2] ?? '' }
+}
+
+function keyError(key: string): string | undefined {
+  if (!KEY.test(key)) return `unsupported key '${key}'`
+  if (FORBIDDEN_KEYS.has(key)) return `forbidden key '${key}'`
+  return undefined
+}
+
+function leadingSpaces(text: string): Result<number> {
+  const leading = /^[ \t]*/.exec(text)?.[0] ?? ''
+  if (leading.includes('\t')) return { ok: false, error: 'tabs are not allowed in indentation' }
+  return { ok: true, value: leading.length }
+}
+
+/** Fold the lines of a `>` block scalar (YAML line folding). */
+function fold(lines: readonly string[]): string {
+  let out = ''
+  let last: 'none' | 'text' | 'more' = 'none'
+  let empty = 0
+  for (const line of lines) {
+    if (line === '') {
+      empty++
+      continue
+    }
+    const kind = line.startsWith(' ') || line.startsWith('\t') ? 'more' : 'text'
+    if (last === 'none') out += '\n'.repeat(empty) + line
+    else if (last === 'text' && kind === 'text')
+      out += (empty > 0 ? '\n'.repeat(empty) : ' ') + line
+    else out += `\n${'\n'.repeat(empty)}${line}`
+    empty = 0
+    last = kind
+  }
+  return out
 }
 
 /**
@@ -183,56 +223,102 @@ function splitKey(text: string): { key: string; rest: string } | undefined {
  * @internal Exported for `parseSkillMarkdown` and tests.
  */
 export function parseFrontmatter(yaml: string): Result<Record<string, FrontmatterValue>> {
-  const lines: Line[] = []
   const raw = yaml.replace(/\r\n?/g, '\n').split('\n')
-  for (let i = 0; i < raw.length; i++) {
-    const text = raw[i] as string
-    const no = i + 1
-    if (text.trim() === '' || text.trim().startsWith('#')) continue
-    const leading = /^[ \t]*/.exec(text)?.[0] ?? ''
-    if (leading.includes('\t')) return fail(no, 'tabs are not allowed in indentation')
-    lines.push({ no, indent: leading.length, text: text.slice(leading.length).trimEnd() })
+  let i = 0
+
+  /** Next significant line (skips blank and comment lines), not consumed. */
+  const peek = (): Result<Line | undefined> => {
+    while (i < raw.length) {
+      const text = raw[i] as string
+      if (text.trim() === '' || text.trim().startsWith('#')) {
+        i++
+        continue
+      }
+      const indent = leadingSpaces(text)
+      if (!indent.ok) return fail(i + 1, indent.error)
+      return { ok: true, value: { no: i + 1, indent: indent.value, text: text.trim() } }
+    }
+    return { ok: true, value: undefined }
+  }
+
+  /** Read a block scalar body: raw lines indented deeper than `parent` (or blank). */
+  const blockScalar = (header: RegExpExecArray, parent: number, no: number): Result<string> => {
+    const body: string[] = []
+    let base: number | undefined
+    while (i < raw.length) {
+      const text = raw[i] as string
+      if (text.trim() === '') {
+        body.push('')
+        i++
+        continue
+      }
+      const spaces = /^ */.exec(text)?.[0].length ?? 0
+      if (spaces <= parent) break
+      if (base === undefined) base = spaces
+      if (spaces < base) return fail(i + 1, 'inconsistent block scalar indentation')
+      body.push(text.slice(base))
+      i++
+    }
+    while (body.length > 0 && body[body.length - 1] === '') body.pop()
+    if (body.length === 0) return fail(no, 'empty block scalar')
+    const text = header[1] === '|' ? body.join('\n') : fold(body)
+    return { ok: true, value: header[2] === '-' ? text : `${text}\n` }
+  }
+
+  /** Parse the value after `key:` (inline, block scalar); `undefined` = nothing inline. */
+  const value = (
+    rest: string,
+    parent: number,
+    no: number,
+  ): Result<FrontmatterScalar | FrontmatterScalar[]> | undefined => {
+    const header = BLOCK_HEADER.exec(rest.trim())
+    if (header !== null) return blockScalar(header, parent, no)
+    const trimmed = rest.trim()
+    if (stripComment(rest) === '' && !trimmed.startsWith('"') && !trimmed.startsWith("'")) {
+      return undefined
+    }
+    const parsed = parseInline(rest)
+    return parsed.ok ? parsed : fail(no, parsed.error)
   }
 
   const out: Record<string, FrontmatterValue> = {}
-  let i = 0
-  while (i < lines.length) {
-    const line = lines[i] as Line
+  for (;;) {
+    const peeked = peek()
+    if (!peeked.ok) return peeked
+    const line = peeked.value
+    if (line === undefined) break
     if (line.indent !== 0) return fail(line.no, 'unexpected indentation')
     if (line.text === '---' || line.text === '...') return fail(line.no, 'multiple documents')
     const kv = splitKey(line.text)
     if (kv === undefined) return fail(line.no, `expected 'key: value', got '${line.text}'`)
-    if (!KEY.test(kv.key)) return fail(line.no, `unsupported key '${kv.key}'`)
+    const badKey = keyError(kv.key)
+    if (badKey !== undefined) return fail(line.no, badKey)
     if (Object.hasOwn(out, kv.key)) return fail(line.no, `duplicate key '${kv.key}'`)
     i++
-    const inline = stripComment(kv.rest)
-    if (inline !== '' || kv.rest.trim().startsWith('"') || kv.rest.trim().startsWith("'")) {
-      const value = parseInline(kv.rest)
-      if (!value.ok) return fail(line.no, value.error)
-      out[kv.key] = value.value
+    const inline = value(kv.rest, 0, line.no)
+    if (inline !== undefined) {
+      if (!inline.ok) return inline
+      out[kv.key] = inline.value
       continue
     }
     // `key:` → block list, nested map, or null
-    const children: Line[] = []
-    while (i < lines.length) {
-      const next = lines[i] as Line
-      const isDashAtZero = next.indent === 0 && (next.text === '-' || next.text.startsWith('- '))
-      if (next.indent === 0 && !isDashAtZero) break
-      children.push(next)
-      i++
-    }
-    if (children.length === 0) {
+    const firstPeek = peek()
+    if (!firstPeek.ok) return firstPeek
+    const first = firstPeek.value
+    const isDash = (l: Line) => l.text === '-' || l.text.startsWith('- ')
+    if (first === undefined || (first.indent === 0 && !isDash(first))) {
       out[kv.key] = null
       continue
     }
-    const first = children[0] as Line
-    if (first.text === '-' || first.text.startsWith('- ')) {
+    if (isDash(first)) {
       const items: FrontmatterScalar[] = []
-      for (const child of children) {
+      for (;;) {
+        const next = peek()
+        if (!next.ok) return next
+        const child = next.value
+        if (child === undefined || (child.indent === 0 && !isDash(child))) break
         if (child.indent !== first.indent) return fail(child.no, 'inconsistent list indentation')
-        if (child.text !== '-' && !child.text.startsWith('- ')) {
-          return fail(child.no, 'expected a list item')
-        }
+        if (!isDash(child)) return fail(child.no, 'expected a list item')
         const itemText = child.text.slice(1)
         if (itemText.trim().startsWith('[')) {
           return fail(child.no, 'nested collections are not supported')
@@ -240,23 +326,28 @@ export function parseFrontmatter(yaml: string): Result<Record<string, Frontmatte
         const item = parseScalar(itemText)
         if (!item.ok) return fail(child.no, item.error)
         items.push(item.value)
+        i++
       }
       out[kv.key] = items
       continue
     }
     const map: Record<string, FrontmatterScalar | FrontmatterScalar[]> = {}
-    for (const child of children) {
+    for (;;) {
+      const next = peek()
+      if (!next.ok) return next
+      const child = next.value
+      if (child === undefined || child.indent === 0) break
       if (child.indent !== first.indent) return fail(child.no, 'deeper nesting is not supported')
       const sub = splitKey(child.text)
       if (sub === undefined) return fail(child.no, `expected 'key: value', got '${child.text}'`)
-      if (!KEY.test(sub.key)) return fail(child.no, `unsupported key '${sub.key}'`)
+      const badSub = keyError(sub.key)
+      if (badSub !== undefined) return fail(child.no, badSub)
       if (Object.hasOwn(map, sub.key)) return fail(child.no, `duplicate key '${sub.key}'`)
-      if (stripComment(sub.rest) === '' && !/^\s*["']/.test(sub.rest)) {
-        return fail(child.no, 'deeper nesting is not supported')
-      }
-      const value = parseInline(sub.rest)
-      if (!value.ok) return fail(child.no, value.error)
-      map[sub.key] = value.value
+      i++
+      const subValue = value(sub.rest, child.indent, child.no)
+      if (subValue === undefined) return fail(child.no, 'deeper nesting is not supported')
+      if (!subValue.ok) return subValue
+      map[sub.key] = subValue.value
     }
     out[kv.key] = map
   }
@@ -333,7 +424,8 @@ export function serializeFrontmatter(record: Record<string, unknown>): string {
 /**
  * Parse a `SKILL.md`: YAML-subset frontmatter between `---` lines, then the body.
  *
- * `name` and `description` are required and validated (spec 07 §1); every other key goes to
+ * `name` and `description` are required and validated (spec 07 §1; the description is trimmed, so
+ * a `>` block scalar carries no trailing newline); every other key goes to
  * `meta` (omitted when empty). The body has leading blank lines removed; line endings are
  * normalized to `\n`. Returns `{ error }` for a missing frontmatter, unsupported syntax or
  * invalid metadata (the filesystem source turns that into `W_INVALID_SKILL`).
@@ -366,7 +458,9 @@ export function parseSkillMarkdown(
   const descriptionValue =
     typeof description === 'number' || typeof description === 'boolean'
       ? String(description)
-      : description
+      : typeof description === 'string'
+        ? description.trim()
+        : description
   const descriptionError = skillDescriptionError(descriptionValue)
   if (descriptionError !== undefined) return { error: descriptionError }
   const meta: SkillMeta = { name: nameValue as string, description: descriptionValue as string }
