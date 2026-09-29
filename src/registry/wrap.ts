@@ -235,8 +235,9 @@ export interface ApprovalGrants {
  * The per-step approval function (spec 11 §3): `approval.policy`, then every `tool.approve` hook,
  * then session grants, combined most-restrictive-wins. A throwing policy or hook counts as
  * `denied` (fail closed). A grant `never` denies; `always` turns `user-approval` into `approved`
- * but never overrides `denied` (then `W_GRANT_IGNORED`, once per tool). `undefined` when there is
- * neither a policy, a hook nor a grant source.
+ * but never overrides `denied` (then `W_GRANT_IGNORED`, once per tool). `undefined` only when there
+ * is neither a policy, a hook nor a grant source; turns always pass a grant source, so every turn
+ * gets a function (it returns `not-applicable` when nothing applies).
  */
 export function buildApproval(
   config: ApprovalConfig | undefined,

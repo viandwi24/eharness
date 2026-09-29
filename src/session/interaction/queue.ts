@@ -10,8 +10,9 @@ import type { TurnResult } from '../../messages/types.ts'
 import { createRun } from '../../stream/run.ts'
 import type { NormalizedInput } from '../input.ts'
 
-/** A queued `send` turn. */
+/** A queued `send` turn (or a `wake` turn that could not be delivered into a running turn). */
 export interface QueuedTurn {
+  kind: 'send' | 'wake'
   turnId: string
   /** Normalized input (`undefined` = no-input send). */
   input: NormalizedInput | undefined
@@ -37,6 +38,7 @@ export interface DeferredRun {
  */
 export function createDeferredRun(args: {
   turnId: string
+  kind: 'send' | 'wake'
   generateId: () => string
   onAbort: () => void
 }): DeferredRun {
@@ -70,7 +72,7 @@ export function createDeferredRun(args: {
 
   const run = createRun<UIMessage>({
     turnId: args.turnId,
-    kind: 'send',
+    kind: args.kind,
     messageId,
     stream,
     result,
@@ -106,7 +108,7 @@ export function createDeferredRun(args: {
       resolveMessageId(id)
       resolveResult({
         turnId: args.turnId,
-        kind: 'send',
+        kind: args.kind,
         stop: 'aborted',
         messages: [],
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },

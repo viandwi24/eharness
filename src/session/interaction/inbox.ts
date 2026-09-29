@@ -19,6 +19,8 @@ export interface InboxItem {
   steer?: { input: NormalizedInput; contexts: string[]; text: string }
   /** A `next-step` injection: the saved kind message (updated with `deliveredIn` later). */
   event?: HarnessUIMessage
+  /** The injection asked for `wake`: if it is not delivered, a wake turn is queued. */
+  wake?: boolean
 }
 
 /** The inbox of one running turn. */
@@ -89,8 +91,9 @@ export async function inputWireMessage(data: InputPartData): Promise<ModelMessag
 
 /**
  * The text a kind message delivers into a running turn: its model projection (spec 03 §5.1)
- * with text parts joined; `undefined` when the kind is not projected (nothing to deliver).
- * File parts of a projection are not delivered inline (they reach the model at the next turn).
+ * with text parts joined; `undefined` when the kind is not projected or its projection has file
+ * parts — such a message is not delivered inline and reaches the model (whole) at the next turn.
+ * Throws when the projection throws.
  */
 export function kindText(
   message: HarnessUIMessage,
@@ -105,12 +108,10 @@ export function kindText(
   if (part?.type !== `data-${kind}`) return undefined
   const result = model(part.data as never, { message, sessionId })
   if (result === null || result === undefined) return undefined
+  if (typeof result !== 'string' && result.some((p) => p.type !== 'text')) return undefined
   const text =
     typeof result === 'string'
       ? result
-      : result
-          .filter((p): p is { type: 'text'; text: string } => p.type === 'text')
-          .map((p) => p.text)
-          .join('\n\n')
+      : result.map((p) => (p as { text: string }).text).join('\n\n')
   return text.length === 0 ? undefined : text
 }

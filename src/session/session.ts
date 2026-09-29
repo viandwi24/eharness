@@ -526,17 +526,23 @@ export function createSessionHandle(args: {
     enqueueSteer(submitted) {
       enqueue({ input: submitted.input, submitted, options: {} })
     },
+    enqueueWake() {
+      enqueue({ kind: 'wake', input: undefined, options: {} })
+    },
   }
 
   function enqueue(
-    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options'>,
+    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options'> & { kind?: QueuedTurn['kind'] },
   ): HarnessRun<UIMessage> {
     const turnId = internals.generateId()
+    const kind = item.kind ?? 'send'
     const entry: QueuedTurn = {
       ...item,
+      kind,
       turnId,
       handle: createDeferredRun({
         turnId,
+        kind,
         generateId: () => internals.generateId(),
         onAbort: () => {
           const index = queue.indexOf(entry)
@@ -551,15 +557,19 @@ export function createSessionHandle(args: {
     return entry.handle.run
   }
 
-  /** Start the next queued turn when the session is idle. */
+  /**
+   * Start the next queued turn when the session is idle. The queue is held while approvals or
+   * client tool calls wait for `respond()`: a queued turn never auto-denies them (spec 11 §6.2).
+   */
   function startNext(): void {
-    if (rt.closed || rt.running) return
+    if (rt.closed || rt.running || queue.length === 0) return
+    if (rt.state.core().pending !== undefined) return
     const next = queue.shift()
     if (next === undefined) return
     rt.running = true
     touch()
     current = startTurn(host, {
-      kind: 'send',
+      kind: next.kind,
       input: undefined,
       ...(next.input === undefined ? {} : { normalized: next.input }),
       ...(next.submitted === undefined ? {} : { submitted: next.submitted }),
@@ -569,6 +579,23 @@ export function createSessionHandle(args: {
       via: 'queue',
     })
     next.handle.bind(current.run)
+  }
+
+  /** The kind's projection for inline delivery; a throwing projection is not delivered inline. */
+  function inlineText(message: HarnessUIMessage, kind: string): string | undefined {
+    try {
+      return kindText(message, internals.messages, id)
+    } catch (error) {
+      rt.warn(
+        {
+          code: 'W_HOOK_FAILED',
+          message: `The model projection of kind '${kind}' threw; the message is not delivered into the running turn: ${error instanceof Error ? error.message : String(error)}`,
+          details: { kind },
+        },
+        `kind:${kind}`,
+      )
+      return undefined
+    }
   }
 
   function dropQueue(): void {
@@ -772,26 +799,22 @@ export function createSessionHandle(args: {
       const out = saved ?? message
       events.emit({ type: 'message', message: out as never })
       const result = { message: structuredClone(out) as never }
+      const wake = options.wake === true
       // next-step delivery (wake while running implies it, spec 11 §6.3)
-      if ((options.deliver === 'next-step' || options.wake === true) && current !== undefined) {
-        const text = kindText(out, internals.messages, id)
-        if (text !== undefined) current.deliverEvent(out, text)
-        return result
+      if ((options.deliver === 'next-step' || wake) && current !== undefined) {
+        const text = inlineText(out, kind)
+        if (text !== undefined && current.deliverEvent(out, text, wake)) return result
       }
-      // wake an idle session with a no-input turn; never while approvals wait for an answer
-      // (a background event must not deny them, spec 11 §4.1)
-      if (
-        options.wake === true &&
-        !rt.running &&
-        !rt.closed &&
-        rt.state.core().pending === undefined
-      ) {
+      if (!wake || rt.closed) return result
+      // wake an idle session now; otherwise (a turn is ending, compact() runs, or approvals wait
+      // for an answer) a no-input wake turn is queued and runs when the session is free
+      if (!rt.running && rt.state.core().pending === undefined) {
         return {
           ...result,
           run: begin({ kind: 'wake', input: undefined, options: {}, queued: false }) as never,
         }
       }
-      return result
+      return { ...result, run: enqueue({ kind: 'wake', input: undefined, options: {} }) as never }
     },
     async compact() {
       assertOpen()
