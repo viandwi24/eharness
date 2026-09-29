@@ -26,6 +26,11 @@ export {
   scriptedModel,
 } from './scripted-model.ts'
 export {
+  SKILL_SOURCE_FIXTURE,
+  type SkillSourceConformanceOptions,
+  skillSourceConformance,
+} from './skill-source.conformance.ts'
+export {
   type StateAdapterConformanceOptions,
   stateAdapterConformance,
 } from './state-adapter.conformance.ts'
