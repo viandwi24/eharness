@@ -173,7 +173,9 @@ calls are never separated from their results.
 ### 5.2 Auto-shrink
 
 If the kept part exceeds 25% of the window, reduce the number of completed turns kept one at a time
-down to 0 (the current turn is never removed). Mid-turn keeps exactly the last completed step; if
+down to 0 (the current turn is never removed). The kept part measured here is the kept completed
+turns only: the current turn T is never counted (§5.1) — it cannot shrink, and a large T is left
+to the skip rule (§4) and the guard. Mid-turn keeps exactly the last completed step; if
 that step alone exceeds 25% of the window, its tool outputs are truncated in the summarizer
 transcript and the guard handles the wire.
 
