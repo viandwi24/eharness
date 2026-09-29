@@ -18,12 +18,12 @@ const load = (await import(pathToFileURL(shim).href)).default
 
 /** Expected runtime exports per entry point. */
 const entries = {
-  eharness: ['HarnessError', 'version'],
+  eharness: ['HarnessError', 'HarnessToolError', 'isHarnessError', 'isUuidV7', 'uuidv7', 'version'],
   'eharness/filesystem': ['experimental_placeholder'],
   'eharness/filesystem/memory': ['experimental_placeholder'],
   'eharness/storage/memory': ['experimental_placeholder'],
   'eharness/mcp': ['experimental_placeholder'],
-  'eharness/testing': ['experimental_placeholder'],
+  'eharness/testing': ['idGeneratorConformance'],
 }
 
 if (noMcp) {
