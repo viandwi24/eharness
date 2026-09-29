@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import * as aiSdkMcp from '@ai-sdk/mcp'
 import {
   defineHarnessAgent,
+  defineToolSource,
   type HarnessAgentConfig,
   type HarnessUIMessage,
   type HarnessWarning,
@@ -304,6 +305,28 @@ describe('mcpServer: connection lifecycle', () => {
     expect(mcpSourceInternals(source)?.liveSessions()).toBe(0)
   })
 
+  test('a session open that fails after an eager connect closes that client only', async () => {
+    const server = fakeMcpServer(tools())
+    const source = gh(server, { connect: 'eager' })
+    const failing = defineToolSource({
+      id: 'failing',
+      list: () => ({}),
+      open: (ctx) => {
+        if (ctx.session.id === 'bad') throw new Error('boom')
+      },
+    })
+    const { agent } = setup([{ text: 'a' }], { tools: [source, failing] })
+    await agent.session('good').ready()
+    await expect(agent.session('bad').ready()).rejects.toThrow('boom')
+    expect(server.transports).toHaveLength(2)
+    expect(server.transports[0]?.isOpen).toBe(true)
+    expect(server.transports[1]?.isOpen).toBe(false)
+    expect(mcpSourceInternals(source)?.liveSessions()).toBe(1)
+    await agent.close()
+    expect(server.transports.every((t) => !t.isOpen)).toBe(true)
+    expect(mcpSourceInternals(source)?.liveSessions()).toBe(0)
+  })
+
   test('closing a session while it connects closes the new client', async () => {
     const server = fakeMcpServer(tools())
     let release: () => void = () => {}
@@ -450,6 +473,70 @@ describe('mcpServer: definition pinning', () => {
     await agent.close()
   })
 
+  test('clearMcpPins never touches another agent with the same (default) id', async () => {
+    const a = drifting()
+    const b = drifting()
+    const stateA = memoryState()
+    const stateB = memoryState()
+    const agentA = setup(
+      [{ text: 'a1' }, { text: 'a2' }, { text: 'a3' }],
+      {
+        mcp: [gh(a.server, { pinDefinitions: true, refresh: 'turn' })],
+      },
+      stateA,
+    )
+    const agentB = setup(
+      [{ text: 'b1' }, { text: 'b2' }, { text: 'b3' }],
+      {
+        mcp: [gh(b.server, { pinDefinitions: true, refresh: 'turn' })],
+      },
+      stateB,
+    )
+    expect(agentA.agent.id).toBe(agentB.agent.id)
+    const sa = agentA.agent.session('s1')
+    const sb = agentB.agent.session('s1')
+    await sa.send('x').result
+    await sb.send('x').result
+    a.drift()
+    b.drift()
+    await sa.send('y').result
+    await sb.send('y').result
+    await clearMcpPins(agentA.agent, 's1', 'gh')
+    await sa.send('z').result
+    await sb.send('z').result
+    expect(toolNames(agentA.model.calls[2])).toContain('gh_search_issues')
+    expect(toolNames(agentB.model.calls[2])).not.toContain('gh_search_issues')
+    // stored sessions of the other agent stay untouched too
+    await agentA.agent.close()
+    await agentB.agent.close()
+    const pinsB = await pinsOf(stateB, 's1')
+    await clearMcpPins(agentA.agent, 's1', 'gh')
+    expect(await pinsOf(stateB, 's1')).toEqual(pinsB)
+  })
+
+  test('clearMcpPins throws EH_CONFIG_INVALID when the source cannot be resolved safely', async () => {
+    const server = fakeMcpServer(tools())
+    const isConfigError = async (promise: Promise<void>) => {
+      try {
+        await promise
+      } catch (error) {
+        return isHarnessError(error, 'EH_CONFIG_INVALID')
+      }
+      return false
+    }
+    const none = setup([])
+    expect(await isConfigError(clearMcpPins(none.agent, 's1', 'gh'))).toBe(true)
+    // one instance shared by two agents: sessions cannot be told apart
+    const shared = gh(server, { pinDefinitions: true })
+    const one = setup([{ text: 'a' }], { mcp: [shared] })
+    const two = setup([{ text: 'b' }], { id: 'other', mcp: [shared] })
+    await one.agent.session('s1').send('x').result
+    await two.agent.session('s2').send('x').result
+    expect(await isConfigError(clearMcpPins(one.agent, 's1', 'gh'))).toBe(true)
+    await one.agent.close()
+    await two.agent.close()
+  })
+
   test('mcpServer and clearMcpPins validate their options', async () => {
     const bad = (opts: unknown) => {
       try {
@@ -467,6 +554,8 @@ describe('mcpServer: definition pinning', () => {
     expect(bad({ name: 'gh', transport, connect: 'now' })).toBe(true)
     expect(bad({ name: 'gh', transport, maxRetries: -1 })).toBe(true)
     expect(bad({ name: 'gh', transport, allow: 'search' })).toBe(true)
+    // a shared MCPTransport instance is rejected (one client per session)
+    expect(bad({ name: 'gh', transport: fakeMcpServer().transport() })).toBe(true)
     expect(bad({ name: 'gh-2', transport, defer: true, connect: 'eager', maxRetries: 3 })).toBe(
       false,
     )

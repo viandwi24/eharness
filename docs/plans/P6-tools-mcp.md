@@ -56,10 +56,10 @@ adding deferred tools.
   `ctx.signal` aborts (close/eviction abort it before disposers run); `close()` releases any
   aborted session left and awaits the pending client closes. Documented in spec 09 §3. A future
   `close(ctx)` parameter would be additive.
-- **`clearMcpPins` through the public API only** (rule 4): live sessions are found through a
-  registry of open sessions kept by `eharness/mcp` itself (entries removed on session close),
-  matched by `agent.id` + `sessionId` (agents sharing an id in one process are not told apart).
-  Non-live sessions use `opts.stateAdapter ?? agent.config.storage.state`; the agent's default
+- **`clearMcpPins` through the public API only** (rule 4): after review, the server is resolved
+  through the agent's own root config (`mcp` / `tools`) and that source instance's open sessions
+  (`ctx.session.id`); unresolvable cases (plugin-contributed source, duplicates, an instance
+  shared by several agents) throw `EH_CONFIG_INVALID`. No global registry. Non-live sessions use `opts.stateAdapter ?? agent.config.storage.state`; the agent's default
   in-memory adapter is not reachable, so the session is opened (`ready()`, MCP connect skipped)
   and cleared through its live state. For a live `refresh: 'session'` source the cached tool list
   stays until the session reopens (pins re-created at the next listing). Spec 09 §3 updated.
@@ -67,7 +67,10 @@ adding deferred tools.
 - **Pins cover all server tools** (before allow/deny), so widening `allow` later does not look
   like drift; `W_MCP_DRIFT` names only drifted tools allow/deny would expose.
 - **Eager connect failures** other than the missing package do not fail the session open (spec:
-  connection failures → `W_TOOL_SOURCE_FAILED`, retried); the first `list()` retries.
+  connection failures → `W_TOOL_SOURCE_FAILED`, retried); they only log, and the first `list()`
+  retries and warns.
+- **Failed session open after an eager connect** (review): `close()` without a preceding abort
+  releases the most recently opened session that never listed its tools.
 - **Output size**: strings are measured by length, other outputs by JSON length. `evict` of a
   structured output keeps the `{ truncated, preview, originalChars }` form and adds `note`
   (a string would break converters such as MCP's `toModelOutput`); a tool's own `toModelOutput`

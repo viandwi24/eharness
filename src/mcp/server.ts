@@ -8,7 +8,7 @@
  *
  * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
  */
-import type { MCPClient, MCPClientConfig } from '@ai-sdk/mcp'
+import type { MCPClient, MCPClientConfig, MCPTransport } from '@ai-sdk/mcp'
 import { detectToolDrift, fingerprintTools, type Tool, type ToolSet } from 'ai'
 import {
   defineToolSource,
@@ -20,7 +20,10 @@ import {
   type ToolSource,
 } from '../index.ts'
 
-/** What `createMCPClient({ transport })` accepts: a transport config or an `MCPTransport`. */
+/** A transport config accepted by `createMCPClient({ transport })` (`{ type: 'http' | 'sse', url, … }`). */
+export type McpTransportConfig = Exclude<MCPClientConfig['transport'], MCPTransport>
+
+/** What a transport resolver may return: a config, or a **new** `MCPTransport` for this session. */
 export type McpTransportInput = MCPClientConfig['transport']
 
 /**
@@ -32,12 +35,12 @@ export interface McpServerOptions {
   /** Short name; used as tool prefix and source id `'mcp:<name>'`. `^[a-z0-9-]{1,32}$` */
   name: string
   /**
-   * Passed to `createMCPClient({ transport })`, or a resolver called once per session (per-user
-   * credentials). Every session gets its own client: pass a transport **config** or a resolver
-   * that creates a new `MCPTransport` per call, never one shared `MCPTransport` instance.
+   * A transport config passed to `createMCPClient({ transport })`, or a resolver called once per
+   * session (per-user credentials, custom transports). Every session gets its own client, so an
+   * `MCPTransport` instance is only accepted from a resolver that creates a new one per call.
    */
   transport:
-    | McpTransportInput
+    | McpTransportConfig
     | ((ctx: HarnessContext) => McpTransportInput | Promise<McpTransportInput>)
   /** Tool name prefix. Default `` `${name}_` ``. Use `''` to disable. */
   prefix?: string
@@ -82,6 +85,8 @@ interface Conn {
   client: MCPClient | undefined
   connecting: Promise<MCPClient> | undefined
   closed: boolean
+  /** A `list()` ran for this session, so its open completed. */
+  confirmed: boolean
 }
 
 /** Internals of one `mcpServer()` source (tests and `clearMcpPins`). */
@@ -89,23 +94,13 @@ export interface McpSourceInternals {
   readonly name: string
   /** Number of sessions with state in this source (open, not yet released). */
   liveSessions(): number
+  /** Contexts of the open sessions with this id. */
+  contexts(sessionId: string): HarnessContext[]
+  /** True once sessions of more than one agent used this source instance. */
+  shared(): boolean
+  /** Session ids opened by `clearMcpPins` only to clear their pins (no connect). */
+  readonly pendingClears: Set<string>
 }
-
-// ─── live sessions (for clearMcpPins) ───────────────────────────────────────────────────────
-// Holds the contexts of open sessions only: entries are removed when the session closes.
-
-interface LiveEntry {
-  readonly name: string
-  readonly ctx: HarnessContext
-}
-
-const live = new Map<string, Set<LiveEntry>>()
-/** `clearMcpPins` requests for sessions being opened just to clear their pins. */
-const pendingClears = new Set<string>()
-
-const sessionKey = (agentId: string, sessionId: string) => `${agentId}\u0000${sessionId}`
-const clearKey = (agentId: string, sessionId: string, name: string) =>
-  `${sessionKey(agentId, sessionId)}\u0000${name}`
 
 /** State key of the pins of server `name` (in the owner plugin's namespace). */
 export function mcpPinsKey(name: string): string {
@@ -122,12 +117,24 @@ function validate(opts: McpServerOptions): void {
     invalid(`mcpServer: \`name\` must match ${NAME} (got '${String(opts.name)}').`)
   }
   const at = `mcpServer('${opts.name}')`
+  const transport = opts.transport as unknown
   if (
-    opts.transport === undefined ||
-    opts.transport === null ||
-    (typeof opts.transport !== 'object' && typeof opts.transport !== 'function')
+    transport === undefined ||
+    transport === null ||
+    (typeof transport !== 'object' && typeof transport !== 'function')
   ) {
-    invalid(`${at}: \`transport\` must be a transport config, an MCPTransport or a resolver.`)
+    invalid(
+      `${at}: \`transport\` must be a transport config ({ type, url }) or a resolver (ctx) => transport.`,
+    )
+  }
+  if (
+    typeof transport === 'object' &&
+    typeof (transport as { start?: unknown }).start === 'function' &&
+    typeof (transport as { send?: unknown }).send === 'function'
+  ) {
+    invalid(
+      `${at}: an MCPTransport instance cannot be shared by the per-session clients; pass a resolver that creates a new transport per session: transport: () => createTransport().`,
+    )
   }
   if (opts.prefix !== undefined && typeof opts.prefix !== 'string') {
     invalid(`${at}: \`prefix\` must be a string.`)
@@ -184,6 +191,11 @@ export function createMcpServer(
   const pinsKey = mcpPinsKey(name)
   const conns = new Map<HarnessContext, Conn>()
   const closings = new Set<Promise<void>>()
+  const agentIds = new Set<string>()
+  let sharedSessions = false
+  const pendingClears = new Set<string>()
+  /** Sessions released by their close signal whose disposer (`close()`) has not run yet. */
+  let abortReleases = 0
 
   const loadModule = async (): Promise<McpModule> => {
     try {
@@ -202,13 +214,6 @@ export function createMcpServer(
     if (conn.closed) return
     conn.closed = true
     if (conns.get(conn.ctx) === conn) conns.delete(conn.ctx)
-    const key = sessionKey(conn.ctx.agent.id, conn.ctx.session.id)
-    const entries = live.get(key)
-    if (entries !== undefined) {
-      for (const entry of entries)
-        if (entry.ctx === conn.ctx && entry.name === name) entries.delete(entry)
-      if (entries.size === 0) live.delete(key)
-    }
     const closing = (async () => {
       // a connect in flight closes its own client when it sees `closed`
       await conn.connecting?.catch(() => undefined)
@@ -227,17 +232,32 @@ export function createMcpServer(
   function register(ctx: HarnessContext): Conn {
     const existing = conns.get(ctx)
     if (existing !== undefined && !existing.closed) return existing
-    const conn: Conn = { ctx, client: undefined, connecting: undefined, closed: false }
-    conns.set(ctx, conn)
-    const key = sessionKey(ctx.agent.id, ctx.session.id)
-    let entries = live.get(key)
-    if (entries === undefined) {
-      entries = new Set()
-      live.set(key, entries)
+    const conn: Conn = {
+      ctx,
+      client: undefined,
+      connecting: undefined,
+      closed: false,
+      confirmed: false,
     }
-    entries.add({ name, ctx })
+    agentIds.add(ctx.agent.id)
+    for (const other of conns.values()) {
+      // one agent has at most one open session per id: a second one belongs to another agent
+      if (other.ctx.session.id === ctx.session.id && !other.ctx.signal.aborted)
+        sharedSessions = true
+    }
+    conns.set(ctx, conn)
     if (ctx.signal.aborted) release(conn)
-    else ctx.signal.addEventListener('abort', () => release(conn), { once: true })
+    else {
+      ctx.signal.addEventListener(
+        'abort',
+        () => {
+          if (conn.closed) return
+          abortReleases++
+          release(conn)
+        },
+        { once: true },
+      )
+    }
     return conn
   }
 
@@ -302,7 +322,7 @@ export function createMcpServer(
     ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
     async open(ctx) {
       const conn = register(ctx)
-      if (pendingClears.has(clearKey(ctx.agent.id, ctx.session.id, name))) {
+      if (pendingClears.has(ctx.session.id)) {
         ctx.state.set(pinsKey, undefined) // opened by clearMcpPins: clear, do not connect
         return
       }
@@ -329,6 +349,7 @@ export function createMcpServer(
     },
     async list(ctx) {
       const conn = register(ctx)
+      conn.confirmed = true
       const all = await serverTools(conn)
       const blocked = opts.pinDefinitions === true ? await pinned(ctx, all) : new Set<string>()
       const exposed: Array<[string, Tool]> = []
@@ -357,13 +378,35 @@ export function createMcpServer(
       return out
     },
     async close() {
-      // `close()` carries no session: release every session whose context was closed (the
-      // abort listener normally did already) and wait for their clients to close.
-      for (const conn of [...conns.values()]) if (conn.ctx.signal.aborted) release(conn)
+      // `close()` carries no session. It runs as a disposer (1) on session close, after the
+      // session's signal aborted (the abort listener released it), or (2) when a session open
+      // failed after this source opened; that session's signal never aborts, so release the most
+      // recently opened session that never listed its tools.
+      for (const conn of [...conns.values()]) {
+        if (conn.ctx.signal.aborted && !conn.closed) {
+          abortReleases++
+          release(conn)
+        }
+      }
+      if (abortReleases > 0) abortReleases--
+      else {
+        const unconfirmed = [...conns.values()].filter((c) => !c.confirmed && !c.closed)
+        const failed = unconfirmed.at(-1)
+        if (failed !== undefined) release(failed)
+      }
       await Promise.allSettled([...closings])
     },
   })
-  internalsOf.set(source, { name, liveSessions: () => conns.size })
+  internalsOf.set(source, {
+    name,
+    liveSessions: () => conns.size,
+    contexts: (sessionId) =>
+      [...conns.values()]
+        .filter((c) => !c.closed && !c.ctx.signal.aborted && c.ctx.session.id === sessionId)
+        .map((c) => c.ctx),
+    shared: () => sharedSessions || agentIds.size > 1,
+    pendingClears,
+  })
   return source
 }
 
@@ -401,6 +444,22 @@ export function createMcpServer(
  */
 export function mcpServer(opts: McpServerOptions): ToolSource {
   return createMcpServer(opts)
+}
+
+/** Internals of the `mcpServer()` sources in an agent's root `mcp` / `tools` config. */
+function configuredSources(config: { tools?: unknown; mcp?: unknown }): McpSourceInternals[] {
+  const candidates: unknown[] = []
+  for (const slot of [config.mcp, config.tools]) {
+    if (Array.isArray(slot)) candidates.push(...slot)
+    else if (slot !== undefined) candidates.push(slot)
+  }
+  const out: McpSourceInternals[] = []
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'object' || candidate === null) continue
+    const internals = internalsOf.get(candidate as ToolSource)
+    if (internals !== undefined && !out.includes(internals)) out.push(internals)
+  }
+  return out
 }
 
 function stripPins(snapshot: SessionStateSnapshot, key: string): SessionStateSnapshot | undefined {
@@ -443,23 +502,38 @@ export async function clearMcpPins(
     invalid(`clearMcpPins: \`name\` must match ${NAME} (got '${String(name)}').`)
   }
   const key = mcpPinsKey(name)
-  const entries = [...(live.get(sessionKey(agent.id, sessionId)) ?? [])].filter(
-    (entry) => entry.name === name && !entry.ctx.signal.aborted,
-  )
-  if (entries.length > 0) {
-    for (const entry of entries) entry.ctx.state.set(key, undefined)
+  const config = agent.config as {
+    tools?: unknown
+    mcp?: unknown
+    storage?: { state?: StateAdapter }
+  }
+  const internals = configuredSources(config).filter((i) => i.name === name)
+  if (internals.length !== 1) {
+    invalid(
+      internals.length === 0
+        ? `clearMcpPins: agent '${agent.id}' has no mcpServer('${name}') in its \`mcp\` or \`tools\` config (sources contributed by plugins cannot be resolved).`
+        : `clearMcpPins: agent '${agent.id}' has more than one mcpServer('${name}').`,
+    )
+  }
+  const own = internals[0] as McpSourceInternals
+  if (own.shared()) {
+    invalid(
+      `clearMcpPins: mcpServer('${name}') is used by more than one agent; create one mcpServer() per agent so its sessions can be told apart.`,
+    )
+  }
+  const contexts = own.contexts(sessionId)
+  if (contexts.length > 0) {
+    for (const ctx of contexts) ctx.state.set(key, undefined)
     return
   }
-  const config = agent.config as { storage?: { state?: StateAdapter } }
   const adapter = opts.stateAdapter ?? config.storage?.state
   if (adapter === undefined) {
     // default in-memory storage: only reachable through the session itself
-    const pending = clearKey(agent.id, sessionId, name)
-    pendingClears.add(pending)
+    own.pendingClears.add(sessionId)
     try {
       await agent.session(sessionId).ready()
     } finally {
-      pendingClears.delete(pending)
+      own.pendingClears.delete(sessionId)
     }
     return
   }

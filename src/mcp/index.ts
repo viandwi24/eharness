@@ -8,6 +8,7 @@ export {
   clearMcpPins,
   MCP_AUTO_DEFER_THRESHOLD,
   type McpServerOptions,
+  type McpTransportConfig,
   type McpTransportInput,
   mcpServer,
 } from './server.ts'
