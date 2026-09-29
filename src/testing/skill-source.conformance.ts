@@ -35,6 +35,20 @@ export const SKILL_SOURCE_FIXTURE: readonly Skill[] = [
 ]
 
 const encoder = new TextEncoder()
+const NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/
+
+/** Spec 07 §1 check of one listed item (the suite imports only the public API). */
+function metaError(meta: unknown): string | undefined {
+  if (typeof meta !== 'object' || meta === null || Array.isArray(meta)) return 'not an object'
+  const { name, description } = meta as { name?: unknown; description?: unknown }
+  if (typeof name !== 'string' || name.length > 64 || !NAME.test(name)) {
+    return `invalid name ${JSON.stringify(name)}`
+  }
+  if (typeof description !== 'string' || description.trim() === '' || description.length > 1024) {
+    return `invalid description of ${name}`
+  }
+  return undefined
+}
 
 function stubContext(): HarnessContext {
   const noop = () => {}
@@ -50,6 +64,7 @@ function stubContext(): HarnessContext {
     runtime: {},
     log: { debug: noop, info: noop, warn: noop, error: noop },
     signal: new AbortController().signal,
+    warn: noop,
   } as HarnessContext
 }
 
@@ -62,10 +77,10 @@ const byName = <T extends { name: string }>(list: readonly T[]): T[] =>
  * database, write `SKILL.md` files, …).
  *
  * Checks: a non-empty `id` and a valid `refresh`; `list()` returns metadata only (names and
- * descriptions of the fixture); `load()` returns the body and a manifest of every supporting file
+ * descriptions of the fixture, each valid per spec 07 §1); `load()` returns the body and a manifest of every supporting file
  * (relative, valid paths, never `SKILL.md`, sizes in UTF-8 bytes when given) or `null`;
- * `readFile()` returns the exact text or `null` (unknown skill, unknown path, a file of another
- * skill); results are copies; `search()` and `locate()`, when implemented, return well-formed
+ * `readFile()` returns the exact text or `null` (unknown skill, unknown path, `SKILL.md`, a file
+ * of another skill); results are copies; `search()` and `locate()`, when implemented, return well-formed
  * values. Bodies are compared with surrounding whitespace trimmed.
  *
  * @example
@@ -112,6 +127,8 @@ export function skillSourceConformance(
           'list()',
         )
         for (const meta of listed) {
+          const error = metaError(meta)
+          assertTrue(error === undefined, `list() item fails spec 07 §1: ${error}`)
           assertTrue(!('content' in meta), `list() must not return content (${meta.name})`)
           assertTrue(!('manifest' in meta), `list() must not return a manifest (${meta.name})`)
         }
@@ -174,11 +191,12 @@ export function skillSourceConformance(
       },
     },
     {
-      name: 'readFile returns null for unknown skills, unknown paths and files of other skills',
+      name: 'readFile returns null for unknown skills, unknown paths, SKILL.md and files of other skills',
       run: async () => {
         const source = await make()
         assertJsonEqual(await source.readFile(pine.name, 'missing.md', ctx), null, 'unknown path')
         assertJsonEqual(await source.readFile(pine.name, 'scripts', ctx), null, 'a directory')
+        assertJsonEqual(await source.readFile(pine.name, 'SKILL.md', ctx), null, 'SKILL.md')
         assertJsonEqual(
           await source.readFile('no-such-skill', 'reference.md', ctx),
           null,
