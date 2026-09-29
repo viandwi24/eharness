@@ -72,9 +72,9 @@ suite. Built **only** with the public API (`check:imports`).
   through the tsconfig `paths`. Two casts in `src/session/hooks.int.test.ts` and
   `src/testing/skill-source.conformance.ts` needed `as unknown as` once `HarnessServices` gained
   required members.
-- **Line-trimmed replace range** (not specified): starts after the first matched line's
-  indentation and ends before the last line's trailing whitespace, so a needle without
-  indentation keeps the file's indentation of the first line.
+- **Line-trimmed replace range** (not specified; fixed after review): ends before the last line's
+  trailing whitespace; an indented needle replaces whole lines from the line start (no double
+  indentation), an unindented needle keeps the file's indentation of the first line.
 
 ## Requests to other phases
 

@@ -45,8 +45,9 @@ function lineSpans(content: string): Range[] {
 }
 
 /**
- * Windows of whole lines whose trimmed text equals the trimmed needle lines. The range starts
- * after the first line's indentation and ends before the last line's trailing whitespace.
+ * Windows of whole lines whose trimmed text equals the trimmed needle lines. The range ends before
+ * the last line's trailing whitespace; it starts at the line start when the needle's first line is
+ * indented (the replacement carries its own indentation), otherwise after the file's indentation.
  */
 function lineTrimmedRanges(content: string, needle: string): Range[] {
   const wanted = needle.replace(/\r\n/g, '\n').split('\n')
@@ -54,18 +55,23 @@ function lineTrimmedRanges(content: string, needle: string): Range[] {
   while (wanted.length > 0 && wanted.at(-1)?.trim() === '') wanted.pop()
   if (wanted.length === 0) return []
   const trimmed = wanted.map((line) => line.trim())
+  // a needle that carries its own indentation replaces whole lines (new_string brings its own)
+  const indented = /^\s/.test(wanted[0] as string)
   const spans = lineSpans(content)
   const texts = spans.map((span) => content.slice(span.start, span.end).trim())
   const ranges: Range[] = []
   for (let i = 0; i + trimmed.length <= spans.length; ) {
     if (trimmed.every((line, j) => texts[i + j] === line)) {
-      // keep the indentation of the first line and trailing whitespace of the last line
+      // keep trailing whitespace of the last line; keep the first line's indentation only
+      // when the needle has none
       const first = spans[i] as Range
       const last = spans[i + trimmed.length - 1] as Range
       const firstText = content.slice(first.start, first.end)
       const lastText = content.slice(last.start, last.end)
       ranges.push({
-        start: first.start + (firstText.length - firstText.trimStart().length),
+        start: indented
+          ? first.start
+          : first.start + (firstText.length - firstText.trimStart().length),
         end: last.end - (lastText.length - lastText.trimEnd().length),
       })
       i += trimmed.length
