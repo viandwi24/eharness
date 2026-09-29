@@ -103,6 +103,18 @@ export async function resolveTurnRegistry(args: {
       warn: args.warn,
     })),
   )
+  for (const entry of raw) {
+    if (entry.tool.needsApproval !== undefined) {
+      args.warn(
+        {
+          code: 'W_DEPRECATED',
+          message: `Tool '${entry.name}' sets the deprecated \`needsApproval\`; use \`approval.policy\` or a \`tool.approve\` hook (AI SDK still evaluates it).`,
+          details: { tool: entry.name, api: 'needsApproval' },
+        },
+        `needsApproval:${entry.name}`,
+      )
+    }
+  }
   const entries = raw.map((entry) => ({ ...entry, tool: wrapTool(entry.name, entry.tool, deps) }))
   const tools: ToolSet = {}
   const clientTools = new Set<string>()
