@@ -140,7 +140,10 @@ export interface HarnessContext<DP extends DataPartMap = Record<never, never>> {
   /** Developer runtime context (`SessionOptions.runtime` / send options). */
   readonly runtime: Readonly<Record<string, unknown>>
   readonly log: HarnessLogger
-  /** Aborts on session close. Turn-level abort is `turn.abortSignal`. */
+  /**
+   * Aborts on session close, and when the session open fails (release per-session resources on
+   * abort; a retried open sees a fresh signal). Turn-level abort is `turn.abortSignal`.
+   */
   readonly signal: AbortSignal
   /**
    * Emit a non-fatal warning on the session's warning channel: `config.onWarning` (or the

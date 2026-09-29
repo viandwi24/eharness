@@ -1,6 +1,6 @@
 # P6 — Tool sources and MCP
 
-Status: todo · Branch: `phase/P6-tools-mcp`
+Status: done · Branch: `phase/P6-tools-mcp`
 
 ## Goal
 
@@ -16,42 +16,80 @@ connect and optional definition pinning.
 
 ## Owns
 
-`src/registry/tools.ts` (dynamic parts: sources, deferral, `tool_search` injection), `src/mcp/**`.
+`src/registry/tools.ts` (dynamic parts: sources, deferral, `tool_search` injection),
+`src/registry/output-limits.ts`, the output-limit part of `src/registry/wrap.ts`, `src/mcp/**`,
+and (orchestrator decision) the `renderWindow()` budget fix in `src/filesystem/tools.ts`.
 The per-step discovery tracking in the loop is P2's (spec 02 §3.3); P6 makes it observable by
 adding deferred tools.
 
 ## Checklist
 
-1. [ ] `defineToolSource`, `open`/`list`/`close` lifecycle, `refresh`, name validation,
+1. [x] `defineToolSource`, `open`/`list`/`close` lifecycle, `refresh`, name validation,
    `W_TOOL_SOURCE_FAILED`, `W_SHADOWED`.
-2. [ ] Deferral: set `deferLoading` on source tools; add `toolSearch()` as `tool_search` when any
+2. [x] Deferral: set `deferLoading` on source tools; add `toolSearch()` as `tool_search` when any
    deferred tool exists; reserved-name checks.
-3. [ ] `mcpServer`: `await import('@ai-sdk/mcp')` at connect (type-only static imports),
+3. [x] `mcpServer`: `await import('@ai-sdk/mcp')` at connect (type-only static imports),
    transport resolver per session, lazy (first turn) / eager (session open) connect,
    `client.tools()`, allow/deny, prefix, `defer: 'auto'`, `maxRetries` (tool calls only), close
    on dispose, retry failed connects at the next turn.
-4. [ ] Pinning: `await fingerprintTools(...)` stored under `plugins[<owner>]['mcp:<name>:pins']`
+4. [x] Pinning: `await fingerprintTools(...)` stored under `plugins[<owner>]['mcp:<name>:pins']`
    keyed by server tool name, `detectToolDrift` on list, exclusion + `W_MCP_DRIFT`,
    `clearMcpPins(agent, sessionId, name)`.
-5. [ ] Tests with an in-process MCP server (custom `MCPTransport` test double, no network):
+5. [x] Tests with an in-process MCP server (custom `MCPTransport` test double, no network):
    listing, prefixing, allow/deny, drift, connection failure, close on session close.
-6. [ ] Integration: a deferred source is not visible until `tool_search`, then callable next step.
-7. [ ] Tool output limits (spec 09 §4): `maxChars`, `perTool`, head+tail truncation helper shared
+6. [x] Integration: a deferred source is not visible until `tool_search`, then callable next step.
+7. [x] Tool output limits (spec 09 §4): `maxChars`, `perTool`, head+tail truncation helper shared
    with the guard, `evict` via the `toolOutputs` service with fallback, `W_TOOL_OUTPUT_LIMITED`
    (scenario 32).
-8. [ ] Timeout / repair mapping table of spec 09 §5 covered by tests (per-tool `toolMs`,
+8. [x] Timeout / repair mapping table of spec 09 §5 covered by tests (per-tool `toolMs`,
    `repairToolCall`, preliminary results + `addUsage` in a subagent-style test tool).
 
 ## Acceptance criteria
 
-- [ ] `eharness/mcp` works when `@ai-sdk/mcp` is installed; without it, importing still works,
+- [x] `eharness/mcp` works when `@ai-sdk/mcp` is installed; without it, importing still works,
       `connect: 'eager'` fails session open with `EH_CONFIG_INVALID` ("install @ai-sdk/mcp") and
       lazy connects produce `W_TOOL_SOURCE_FAILED` (CI `smoke.mjs --no-mcp` covers this).
-- [ ] No MCP client outlives its session (leak test with 100 open/close cycles).
+- [x] No MCP client outlives its session (leak test with 100 open/close cycles).
 
 ## Open questions
 
+- **`ToolSource.close()` has no session context**, but `mcpServer` keeps one client per session.
+  Decision (no core change): the source closes a session's client when that session's
+  `ctx.signal` aborts (close/eviction abort it before disposers run); `close()` releases any
+  aborted session left and awaits the pending client closes. Documented in spec 09 §3. A future
+  `close(ctx)` parameter would be additive.
+- **`clearMcpPins` through the public API only** (rule 4): after review, the server is resolved
+  through the agent's own root config (`mcp` / `tools`) and that source instance's open sessions
+  (`ctx.session.id`); unresolvable cases (plugin-contributed source, duplicates, an instance
+  shared by several agents) throw `EH_CONFIG_INVALID`. No global registry. Non-live sessions use `opts.stateAdapter ?? agent.config.storage.state`; the agent's default
+  in-memory adapter is not reachable, so the session is opened (`ready()`, MCP connect skipped)
+  and cleared through its live state. For a live `refresh: 'session'` source the cached tool list
+  stays until the session reopens (pins re-created at the next listing). Spec 09 §3 updated.
+- **`defer: 'auto'`** counts the tools left after allow/deny and drift exclusion ("exposes").
+- **Pins cover all server tools** (before allow/deny), so widening `allow` later does not look
+  like drift; `W_MCP_DRIFT` names only drifted tools allow/deny would expose.
+- **Eager connect failures** other than the missing package do not fail the session open (spec:
+  connection failures → `W_TOOL_SOURCE_FAILED`, retried); they only log, and the first `list()`
+  retries and warns.
+- **Failed session open after an eager connect** (review, orchestrator decision): the core now
+  aborts `ctx.signal` when a session open fails (authorized minimal change in
+  `src/session/session.ts` / `context.ts`; a retried open gets a fresh signal; spec 05 §2 and
+  spec 01 §4 updated), so MCP clients are released through the normal abort path. The earlier
+  "release the most recent unlisted session" heuristic was dropped (it closed healthy sessions).
+- **Output size**: strings are measured by length, other outputs by JSON length. `evict` of a
+  structured output keeps the `{ truncated, preview, originalChars }` form and adds `note`
+  (a string would break converters such as MCP's `toModelOutput`); a tool's own `toModelOutput`
+  is bypassed for the limited form. Spec 09 §4 updated.
+
 ## Requests to other phases
+
+- To P7: client tool outputs must pass `tool.after` + output limits (request in P7 file).
+- P5: `read_file` full-budget reads exceeded the default output limit by the footer; fixed in P6
+  by orchestrator decision (`renderWindow()` keeps the hint inside `maxReadChars`, spec 08
+  updated, regression tests).
+- Hook points used outside P6's folders: `src/session/turn.ts` passes `config.toolOutput` to
+  `resolveTurnRegistry()` (one line); `src/session/session.ts` + `context.ts` abort `ctx.signal`
+  on a failed session open (orchestrator decision).
 
 - From P1: `defineToolSource()` exists (`src/registry/tool-source.ts`, runtime brand
   `'~toolSource'`, `isToolSource()`); `config.mcp` entries must be tool sources.

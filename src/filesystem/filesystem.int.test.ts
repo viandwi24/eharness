@@ -310,7 +310,8 @@ describe('read_file windows, list_files and grep', () => {
     expect(outputs(result)).toEqual([
       '    28\tline 28\n    29\tline 29\n    30\tline 30',
       '     2\tline 2\n     3\tline 3\n\n(Showing lines 2-3 of 30. Continue with offset=4.)',
-      '     1\tline 1\n     2\tline 2\n     3\tline 3\n     4\tline 4\n     5\tline 5\n     6\tline 6\n     7\tline 7\n\n(Showing lines 1-7 of 30. Continue with offset=8.)',
+      // the continuation hint counts toward maxReadChars (100)
+      '     1\tline 1\n     2\tline 2\n     3\tline 3\n\n(Showing lines 1-3 of 30. Continue with offset=4.)',
       '(empty file)',
       'ERROR: offset 31 is past the end of the file (30 lines)',
       'ERROR: file not found: /missing.md',
