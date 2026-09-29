@@ -54,7 +54,7 @@ const entries = {
   ],
   'eharness/filesystem/memory': ['memoryFs'],
   'eharness/storage/memory': ['memoryMessages', 'memoryState'],
-  'eharness/mcp': ['experimental_placeholder'],
+  'eharness/mcp': ['MCP_AUTO_DEFER_THRESHOLD', 'clearMcpPins', 'mcpServer'],
   'eharness/testing': [
     'SKILL_SOURCE_FIXTURE',
     'fileSystemConformance',
@@ -159,7 +159,81 @@ assert.equal((await fs.read('/notes.md')).content, 'hello node\n')
 assert.equal(classifyToolResult('STALE: x'), 'stale')
 await fsAgent.close()
 
+// eharness/mcp: an in-process MCP server behind a custom transport (no network)
+const { mcpServer } = await load('eharness/mcp')
+/** A minimal MCP server speaking JSON-RPC over an in-memory `MCPTransport`. */
+const fakeTransport = () => {
+  const transport = {
+    open: false,
+    async start() {
+      transport.open = true
+    },
+    async close() {
+      transport.open = false
+      transport.onclose?.()
+    },
+    async send(message) {
+      if (!('id' in message) || !('method' in message)) return
+      const results = {
+        initialize: {
+          protocolVersion: message.params?.protocolVersion,
+          capabilities: { tools: {} },
+          serverInfo: { name: 'smoke', version: '1.0.0' },
+        },
+        'tools/list': {
+          tools: [
+            { name: 'ping', description: 'Ping.', inputSchema: { type: 'object', properties: {} } },
+          ],
+        },
+        'tools/call': { content: [{ type: 'text', text: 'pong' }], isError: false },
+      }
+      queueMicrotask(() =>
+        transport.onmessage?.({ jsonrpc: '2.0', id: message.id, result: results[message.method] }),
+      )
+    },
+  }
+  return transport
+}
+const mcpWarnings = []
+const mcpModel = scriptedModel([
+  { toolCalls: [{ toolName: 'smoke_ping', input: {} }] },
+  { text: 'pong received' },
+])
+const mcpAgent = core.defineHarnessAgent({
+  model: mcpModel,
+  contextWindow: 100_000,
+  onWarning: (w) => mcpWarnings.push(w),
+  // without @ai-sdk/mcp the scripted call hits an unavailable tool (logged as an error)
+  ...(noMcp ? { logger: { debug() {}, info() {}, warn() {}, error() {} } } : {}),
+  mcp: [mcpServer({ name: 'smoke', transport: () => fakeTransport() })],
+})
+const mcpResult = await mcpAgent.session('smoke-mcp').send('Ping').result
+assert.equal(mcpResult.stop, 'complete')
+if (noMcp) {
+  // lazy connect without @ai-sdk/mcp: W_TOOL_SOURCE_FAILED, the turn still completes
+  const failed = mcpWarnings.find((w) => w.code === 'W_TOOL_SOURCE_FAILED')
+  assert.ok(failed?.message.includes('install @ai-sdk/mcp'), 'expected W_TOOL_SOURCE_FAILED')
+  // eager connect without @ai-sdk/mcp: the session open fails with EH_CONFIG_INVALID
+  const eagerAgent = core.defineHarnessAgent({
+    model: scriptedModel([]),
+    contextWindow: 100_000,
+    onWarning: () => {},
+    mcp: [mcpServer({ name: 'smoke', connect: 'eager', transport: () => fakeTransport() })],
+  })
+  await assert.rejects(eagerAgent.session('eager').ready(), (e) =>
+    core.isHarnessError(e, 'EH_CONFIG_INVALID'),
+  )
+  await eagerAgent.close()
+} else {
+  const part = mcpResult.messages
+    .find((m) => m.id === mcpResult.messageId)
+    .parts.find((p) => p.type === 'dynamic-tool')
+  assert.equal(part?.output?.content?.[0]?.text, 'pong')
+  assert.equal(mcpWarnings.length, 0)
+}
+await mcpAgent.close()
+
 await rm(shim)
 console.log(
-  `smoke: ok (${Object.keys(entries).length} entry points, two scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
+  `smoke: ok (${Object.keys(entries).length} entry points, three scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
 )

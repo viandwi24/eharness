@@ -1,13 +1,12 @@
 /**
  * Tool resolution per turn (internal): static tools resolved at session open, then tool source
- * listings with `refresh` caching, name validation and shadowing.
- *
- * Deferral (`defer`, `deferLoading`) and the automatic `tool_search` tool are added by P6.
+ * listings with `refresh` caching, name validation, shadowing and deferral (`defer` →
+ * `deferLoading`), and the automatic `tool_search` tool when deferred tools exist.
  *
  * @see docs/specs/02-context-registry.md#3-tools
  * @see docs/specs/09-tools-and-mcp.md#2-toolsource
  */
-import type { Tool, ToolSet } from 'ai'
+import { type Tool, type ToolSet, toolSearch } from 'ai'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import { TOOL_NAME_PATTERN } from './static.ts'
@@ -31,6 +30,7 @@ export interface TurnToolEntry {
  *   (`W_TOOL_SOURCE_FAILED`).
  * - Invalid names are skipped (`W_INVALID_TOOL_NAME`); reserved names and names already taken
  *   (static tools, earlier sources) are skipped (`W_SHADOWED`).
+ * - `defer: true` sources return their tools with `deferLoading: true`.
  */
 export async function listSourceTools(args: {
   sources: ReadonlyArray<{ owner: string; source: ToolSource }>
@@ -57,7 +57,11 @@ export async function listSourceTools(args: {
         )
         continue
       }
-      listed = Object.entries(set ?? {}).map(([name, tool]) => ({ name, tool }))
+      listed = Object.entries(set ?? {}).map(([name, tool]) => ({
+        name,
+        // `defer: true` marks every tool of the source deferred (spec 02 §3.3)
+        tool: source.defer === true ? ({ ...tool, deferLoading: true } as Tool) : tool,
+      }))
       if (source.refresh !== 'turn') args.cache.set(source, listed)
     }
     for (const { name, tool } of listed) {
@@ -88,4 +92,16 @@ export async function listSourceTools(args: {
     }
   }
   return out
+}
+
+/** Reserved name of the automatic tool search tool. */
+export const TOOL_SEARCH_NAME = 'tool_search'
+
+/**
+ * Append AI SDK's `toolSearch()` as `tool_search` (last, spec 02 §6 rule 1) when at least one tool
+ * of the turn is deferred (spec 02 §3.3). Returns `entries` unchanged otherwise.
+ */
+export function withToolSearch(entries: TurnToolEntry[]): TurnToolEntry[] {
+  if (!entries.some((entry) => entry.tool.deferLoading === true)) return entries
+  return [...entries, { owner: 'eh', name: TOOL_SEARCH_NAME, tool: toolSearch() }]
 }

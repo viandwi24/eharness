@@ -447,6 +447,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const registry = await resolveTurnRegistry({
       open,
       approval: config.approval,
+      toolOutput: config.toolOutput,
       contextOf: rt.contextOf,
       warn: rt.warn,
       status: (tool) =>

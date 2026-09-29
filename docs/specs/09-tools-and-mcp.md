@@ -49,8 +49,9 @@ export function mcpServer(opts: McpServerOptions): ToolSource
 export interface McpServerOptions {
   /** Short name; used as tool prefix and source id 'mcp:<name>'. ^[a-z0-9-]{1,32}$ */
   name: string
-  /** Passed to createMCPClient({ transport }). Or a resolver per session (per-user credentials). */
-  transport: MCPClientConfig['transport'] | ((ctx: HarnessContext) => MCPClientConfig['transport'] | Promise<MCPClientConfig['transport']>)
+  /** A transport config for createMCPClient({ transport }), or a resolver per session (per-user
+   *  credentials, custom transports). An MCPTransport instance → EH_CONFIG_INVALID (one client per session). */
+  transport: McpTransportConfig | ((ctx: HarnessContext) => McpTransportInput | Promise<McpTransportInput>)
   /** Tool name prefix. Default `${name}_`. Use '' to disable. */
   prefix?: string
   /** Allow/deny lists on the server's tool names (before prefixing). */
@@ -66,7 +67,14 @@ export interface McpServerOptions {
   maxRetries?: number
   refresh?: 'session' | 'turn'
 }
+
+export type McpTransportConfig = Exclude<MCPClientConfig['transport'], MCPTransport>
+export type McpTransportInput = MCPClientConfig['transport']
+export const MCP_AUTO_DEFER_THRESHOLD = 20   // defer: 'auto' defers above this many tools
 ```
+
+Invalid options (name pattern, missing transport, unknown `defer`/`connect`, negative
+`maxRetries`, …) throw `EH_CONFIG_INVALID` from `mcpServer()`.
 
 Lifecycle:
 
@@ -75,20 +83,40 @@ Lifecycle:
   `W_TOOL_SOURCE_FAILED` warning, and `mcpServer()` called with `connect: 'eager'` rejects the
   session open with `EH_CONFIG_INVALID` ("install @ai-sdk/mcp").
 - One MCP client **per session** (credentials can differ per user). Created at the first turn
-  (`lazy`) or at `open()` (`eager`); closed in `close()`.
+  (`lazy`) or at `open()` (`eager`); closed when the session closes. `ToolSource.close()` carries
+  no session, so the source closes a session's client when that session's `ctx.signal` aborts
+  (session close/eviction, and a failed session open, spec 05 §2) and `close()` waits for those
+  clients to finish closing. A session closed while it is still opening releases its connection
+  in `open()` and never connects. A `transport` must therefore be a
+  config or a resolver that returns a **new** `MCPTransport` per call; an `MCPTransport` instance
+  is rejected with `EH_CONFIG_INVALID`. An eager connect that fails for another reason than the
+  missing package does not fail the session open: it only logs (`ctx.log.warn`), and the
+  `W_TOOL_SOURCE_FAILED` warning comes from the first `list()`, which retries the connect.
 - `list()` calls `client.tools()`, applies allow/deny, prefixes names, sets `deferLoading` per
-  `defer`.
-- `pinDefinitions`: on first successful connect, `await fingerprintTools(tools)` is stored in the
-  session state under `plugins[<owner plugin>]['mcp:<name>:pins']`, keyed by the **server** tool
-  name (before prefixing). On later lists `detectToolDrift()` runs; changed or added tools are
-  **excluded** and reported with `W_MCP_DRIFT`.
+  `defer`. `defer: 'auto'` counts the tools that remain after allow/deny and drift exclusion. A
+  failing `client.tools()` closes the client, so the next turn reconnects.
+- `pinDefinitions`: on first successful connect, `await fingerprintTools(tools)` of **all** server
+  tools (before allow/deny) is stored in the session state under
+  `plugins[<owner plugin>]['mcp:<name>:pins']`, keyed by the **server** tool name (before
+  prefixing). On later lists `detectToolDrift()` runs; changed or added tools are **excluded**
+  and reported with one `W_MCP_DRIFT` per listing (`details.tools`: the excluded server names
+  that allow/deny would have exposed). Pins are never updated by a drifted listing.
 - Re-pinning is an explicit application action:
   `clearMcpPins(agent, sessionId, name, opts?: { stateAdapter?: StateAdapter }): Promise<void>`
-  (exported from `eharness/mcp`). If the session is cached (live), it clears through the live
+  (exported from `eharness/mcp`). The server is resolved through the agent's own configuration:
+  the `mcpServer()` named `name` in the root `mcp` / `tools` config; if there is none (e.g. a
+  source contributed by a plugin), more than one, or the instance is shared by several agents, it
+  throws `EH_CONFIG_INVALID` instead of guessing (use one `mcpServer()` instance per agent). It
+  never reads or writes another agent's sessions. If the session is open in that source (live),
+  it clears through the live
   session state (so the turn-end state write cannot restore the old pins); otherwise it uses the
   session's effective `StateAdapter` (`opts.stateAdapter` when the session used a
-  `SessionOptions.storage.state` override, else the agent's). Pins are re-created on the next
-  connect.
+  `SessionOptions.storage.state` override, else the agent's `storage.state`; the pins key is
+  removed from every plugin namespace, written with `setIf` when available). With the agent's
+  default in-memory storage (not reachable through the public API) it opens the session
+  (`ready()`, without connecting the MCP server) and clears through the live state. Pins are
+  re-created on the next listing that finds none (for a live `refresh: 'session'` source: the next
+  session open).
 - MCP tool annotations (`readOnlyHint`, `destructiveHint`, …) stay in `toolMetadata`; use a
   `tool.before` hook to deny destructive tools (annotations are untrusted hints).
 - Connection failures → `W_TOOL_SOURCE_FAILED`, zero tools, retried at the next turn regardless
@@ -115,12 +143,22 @@ toolOutput?: {
 - **`truncate`:** strings keep the first 70% and the last 30% of the budget around a marker
   `TOOL_OUTPUT_TRUNCATED` (spec 10 §5). Structured outputs are serialized
   first; if the result is still over budget the output becomes
-  `{ truncated: true, preview: <truncated JSON string>, originalChars: N }`.
+  `{ truncated: true, preview: <truncated JSON string>, originalChars: N }`. The preview is sized so
+  that its kept characters plus the JSON escaping they need (it is a string inside a JSON value)
+  fit the budget; the marker is not counted.
+- Size: a string output is measured by its length, any other output by the length of its JSON
+  serialization. `perTool` wins over `maxChars`.
 - **`evict`:** requires the `toolOutputs` service (provided by the filesystem plugin,
-  spec 08 §2). The full output is written to `/.eharness/tool-outputs/<toolCallId>.txt` and the
-  model gets the truncated preview plus `Full output saved to <path>; use read_file with
-  offset/limit to see more.` Without the service, `evict` falls back to `truncate`.
-- Every limited result raises `W_TOOL_OUTPUT_LIMITED` (tool name, original size).
+  spec 08 §2). The full output (strings as is, structured outputs as indented JSON) is written to
+  `/.eharness/tool-outputs/<toolCallId>.txt` and the model gets the truncated preview plus
+  `Full output saved to <path>; use read_file with offset/limit to see more.` — appended after a
+  blank line for strings, as `note` in `{ truncated, preview, originalChars, note }` for structured
+  outputs. Without the service (or when `put` fails), `evict` falls back to `truncate`.
+- A tool's own `toModelOutput` is bypassed for the `{ truncated: true, … }` form (it is sent as
+  a `json` output), because that form no longer has the shape the converter expects (e.g. MCP
+  `CallToolResult`s).
+- Every limited result raises `W_TOOL_OUTPUT_LIMITED` (details: `tool`, `toolCallId`,
+  `originalChars`, `maxChars`, `strategy`).
 - The guard (spec 06 §6) and the compaction transcript use the same truncation helper.
 
 ## 5. Timeouts, retries, repair, preliminary results

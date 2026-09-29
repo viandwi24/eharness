@@ -1,6 +1,14 @@
 /**
- * Placeholder so this entry point builds and can be imported.
+ * `eharness/mcp`: MCP servers as dynamic tool sources, over the optional peer dependency
+ * `@ai-sdk/mcp` (loaded lazily at connect time).
  *
- * @experimental Not implemented yet.
+ * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
  */
-export const experimental_placeholder: true = true
+export {
+  clearMcpPins,
+  MCP_AUTO_DEFER_THRESHOLD,
+  type McpServerOptions,
+  type McpTransportConfig,
+  type McpTransportInput,
+  mcpServer,
+} from './server.ts'

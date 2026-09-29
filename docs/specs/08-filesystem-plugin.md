@@ -162,7 +162,9 @@ Exact formats (model-visible, api-stability.md):
   `cat -n` style: the number right-aligned to 6 characters, a tab, the text. The window stops
   before `maxReadChars` output characters (a single longer line is cut, ending in
   ` … [line truncated]`). When lines remain: a blank line and
-  `(Showing lines <a>-<b> of <n>. Continue with offset=<b+1>.)`. Empty file → `(empty file)`;
+  `(Showing lines <a>-<b> of <n>. Continue with offset=<b+1>.)`. The hint counts toward
+  `maxReadChars` (the whole result stays within it), so a full window is never cut by the core's
+  tool output limit (spec 09 §4). Empty file → `(empty file)`;
   `offset` past the end → `ERROR: offset <o> is past the end of the file (<n> lines)`; missing →
   `ERROR: file not found: <path>`. Every successful read records `lastRead[path]`.
 - `write_file` → `Created <path> (<bytes> bytes).` / `Wrote <path> (<bytes> bytes).`

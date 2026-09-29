@@ -79,7 +79,21 @@ describe('renderWindow', () => {
   test('a single line longer than the budget is cut', () => {
     const window = renderWindow(`${'x'.repeat(500)}\nnext`, 1, 10, 100)
     expect('text' in window && window.text).toBe(
-      `     1\t${'x'.repeat(53)} … [line truncated]\n\n(Showing lines 1-1 of 2. Continue with offset=2.)`,
+      `     1\txx … [line truncated]\n\n(Showing lines 1-1 of 2. Continue with offset=2.)`,
     )
+    expect('text' in window && window.text.length).toBeLessThanOrEqual(100)
+  })
+
+  test('the continuation hint fits inside maxChars (no cut by the 50k tool output limit)', () => {
+    const content = Array.from({ length: 20_000 }, (_, i) => `row ${i} ${'x'.repeat(30)}`).join(
+      '\n',
+    )
+    const window = renderWindow(content, 1, 2_000, 50_000)
+    const text = 'text' in window ? window.text : ''
+    expect(text.length).toBeLessThanOrEqual(50_000)
+    expect(text).toContain('Continue with offset=')
+    // a window without a hint may use the whole budget
+    const exact = renderWindow('a'.repeat(50), 1, 10, 58)
+    expect('text' in exact && exact.text).toBe(`     1\t${'a'.repeat(50)}`)
   })
 })

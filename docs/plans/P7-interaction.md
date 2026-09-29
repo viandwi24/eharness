@@ -89,3 +89,11 @@ delivery queue).
   Rewind × compaction: the loader and `rt.view` exclude hidden messages before compaction sees them;
   `'beyond-compaction'` must compare `afterId` with the newest boundary's `resumeFromId`
   (`payloadOf()` in `src/compaction/turns.ts`).
+- From P6: client tool outputs (`respond({ toolOutputs })`, spec 09 §6) must pass through
+  `tool.after` and the output limits like server outputs. The limit helper is
+  `limitToolOutput(toolName, toolCallId, output, { config: rt.agent.config.toolOutput,
+  toolOutputs: open.services.get('toolOutputs'), warn: rt.warn })` in
+  `src/registry/output-limits.ts` (strings → head + tail, structured →
+  `{ truncated, preview, originalChars }`, `evict` via the `toolOutputs` service,
+  `W_TOOL_OUTPUT_LIMITED`); run the `tool.after` chain first (see `finish` in `wrapTool()`,
+  `src/registry/wrap.ts`).

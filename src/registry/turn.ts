@@ -4,19 +4,21 @@
  *
  * The resolved set is locked for the turn (spec 02 §7), except tools discovered via tool search.
  * Skills: the index is appended to block 1 (static skills) / block 2 (dynamic sources), and the
- * skill tools follow the static tools (spec 02 §6 rule 1). Deferral and `tool_search` are P6's.
+ * skill tools follow the static tools (spec 02 §6 rule 1); source tools follow, and `tool_search`
+ * comes last when any tool is deferred.
  *
  * @see docs/specs/02-context-registry.md#8-registry-api-internal-but-tested
  */
 import type { GenericToolApprovalFunction, Tool, ToolInputRefinement, ToolSet } from 'ai'
-import type { ApprovalConfig } from '../agent/types.ts'
+import type { ApprovalConfig, ToolOutputConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
 import { resolveTurnSkills, type SkillIndexEntry } from '../skills/registry.ts'
 import { createSkillTools } from '../skills/tools.ts'
+import type { ToolOutputSink } from './output-limits.ts'
 import type { NormalizedInstruction } from './static.ts'
-import { listSourceTools, type TurnToolEntry } from './tools.ts'
+import { listSourceTools, type TurnToolEntry, withToolSearch } from './tools.ts'
 import { buildApproval, buildRefinement, type ToolWrapDeps, wrapTool } from './wrap.ts'
 
 /** Everything the model can see and call in one turn. */
@@ -71,6 +73,8 @@ async function evaluate(
 export async function resolveTurnRegistry(args: {
   open: OpenSession
   approval: ApprovalConfig | undefined
+  /** `config.toolOutput` (spec 09 §4). */
+  toolOutput?: ToolOutputConfig | undefined
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
   status: (toolName: string) => void
@@ -102,8 +106,13 @@ export async function resolveTurnRegistry(args: {
     contextOf,
     warn: args.warn,
     status: args.status,
+    limits: {
+      config: args.toolOutput,
+      // looked up by name without throwing: absent when no plugin provides it (spec 09 §4)
+      toolOutputs: open.services.get('toolOutputs') as ToolOutputSink | undefined,
+    },
   }
-  const raw: TurnToolEntry[] = open.tools.map((t) => ({
+  let raw: TurnToolEntry[] = open.tools.map((t) => ({
     owner: t.owner,
     name: t.name,
     tool: t.tool,
@@ -125,6 +134,7 @@ export async function resolveTurnRegistry(args: {
       warn: args.warn,
     })),
   )
+  raw = withToolSearch(raw)
   for (const entry of raw) {
     if (entry.tool.needsApproval !== undefined) {
       args.warn(
