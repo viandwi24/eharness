@@ -1,6 +1,6 @@
 # Spec 04 — Streaming
 
-Status: **Accepted** (v0). Module: `src/stream`.
+Status: **Accepted (reviewed for 0.1.0)**. Module: `src/stream`.
 
 ## 1. One protocol
 
