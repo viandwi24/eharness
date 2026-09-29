@@ -14,7 +14,7 @@ Update this table in the same commit that changes a phase's status.
 | P4 | [Skills](P4-skills.md) | done | P2 | P3, P6 |
 | P5 | [Filesystem plugin](P5-filesystem.md) | done | P2 (tools), P4 (skills autoload part) | P3, P6 |
 | P6 | [Tool sources and MCP](P6-tools-mcp.md) | done | P2 | P3, P4, P5 |
-| P7 | [Interaction: approvals, respond, regenerate/edit, steer, queue, wake](P7-interaction.md) | todo | P2 (P3 for rewind × compaction tests) | P3–P6 |
+| P7 | [Interaction: approvals, respond, regenerate/edit, steer, queue, wake](P7-interaction.md) | done | P2 (P3 for rewind × compaction tests) | P3–P6 |
 | P8 | [Examples, README, 0.1.0 release](P8-release-0.1.md) | todo | P3–P7 | — |
 
 After 0.1.0: [roadmap.md](roadmap.md).

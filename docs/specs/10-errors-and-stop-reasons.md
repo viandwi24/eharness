@@ -32,7 +32,6 @@ export function isHarnessError(e: unknown, code?: HarnessErrorCode): e is Harnes
 | `EH_STORAGE` | `ready()`, `messages()`, `inject`, `compact` (thrown); in `send` → run error | adapter threw; original error in `cause` |
 | `EH_COMPACTION_FAILED` | `session.compact()` | summarizer failed |
 | `EH_CONTEXT_OVERFLOW` | never thrown; recorded as `metadata.eharness.error.code` of a turn ending with `stop: 'error'` | guard could not fit the context, or the provider still rejected it after the overflow retry (spec 06 §6–7) |
-| `EH_NOT_IMPLEMENTED` | internal stubs during development only; must not exist in a release | — |
 
 **Notice codes** (never thrown; `code` field of an `eh.notice` kind message):
 
@@ -149,7 +148,8 @@ export interface TurnResult<M = HarnessUIMessage> {
   usage: { inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number; cacheWriteTokens?: number }
   steps: number
   durationMs: number
-  error?: { code?: string; message: string }
+  /** `details` of an EH_* error (e.g. `{ reason: 'stale' }` for respond(), spec 11); not stored. */
+  error?: { code?: string; message: string; details?: Record<string, unknown> }
 }
 ```
 

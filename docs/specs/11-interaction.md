@@ -46,12 +46,15 @@ Built on AI SDK v7 `streamText({ toolApproval })` (tool-level `needsApproval` is
 and must not be used by eharness code).
 
 **AI SDK re-validates approved calls** when a continuation starts (`validateApprovedToolApprovals`):
-it re-verifies the signature (`approval.secret`), re-runs `experimental_refineToolInput` and
-requires the result to deep-equal the stored input, and calls `toolApproval` again (a `denied`
-now denies the call). Consequences, normative for eharness:
+it re-verifies the signature (`approval.secret`), re-runs `experimental_refineToolInput` on the
+request's `inputSchemaInput` (the input before refinement, stored on the approval object when the
+refinement changed the input; otherwise the stored input) and requires the result to deep-equal
+the stored (refined) input, and calls `toolApproval` again (a `denied` now denies the call).
+Consequences, normative for eharness:
 
-- `tool.before` hooks must be **idempotent** (applied to their own output they return it
-  unchanged); otherwise every approved call is rejected as invalid input.
+- `tool.before` hooks must be **deterministic** (the same input always gives the same result)
+  and, for requests without `inputSchemaInput` (stored by older AI SDK versions), idempotent;
+  otherwise the approved call is rejected as invalid input (a tool error result, never executed).
 - The approval function (below) runs a second time for approved calls; policies and
   `tool.approve` hooks must be deterministic and side-effect free.
 - Stored approval objects are patched by merging, never replaced (`signature` and
@@ -86,8 +89,10 @@ Results are normalized to `{ type, reason? }` and combined **most restrictive wi
 `respond({ approvals: [{ id, approved, remember: 'session' }] })` stores
 `state.core.grants[toolName] = 'always' | 'never'`. At step 3 above: `never` → `denied`;
 `always` turns a `user-approval` into `approved` but never overrides `denied`. Grants are
-per session, cleared by `session.clearGrants()`, and take effect **after the first step of the
-continuation** (so AI SDK's re-validation of the calls just answered is not affected by them).
+per session, cleared by `session.clearGrants()`, and the grants recorded by a `respond()` take
+effect **after the first step of its continuation** (so AI SDK's re-validation of the calls just
+answered is not affected by them; grants recorded earlier apply from step 0). A grant is recorded
+in the commit-point state write of the `respond()` that carries it.
 A grant that can never apply (the policy or a hook returns `denied` for that tool) raises
 `W_GRANT_IGNORED` once.
 
@@ -114,11 +119,22 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
    request finds nothing pending).
 3. Patch the stored assistant message A: approval parts → `state: 'approval-responded'`,
    `approval: { ...part.approval, approved, reason }` (merge: keep `signature`,
-   `inputSchemaInput`); client tool parts → `output-available` / `output-error`;
-   `metadata.eharness.pending = null`. Record grants (effective later, §3.1). Save A → A'.
+   `inputSchemaInput`); client tool parts → `output-available` / `output-error` (outputs pass
+   through `tool.after` and the output limits first, spec 09 §6);
+   `metadata.eharness.pending = null`; `metadata.eharness.stop` is removed (the message is running
+   again, so a crash during the continuation is recovered like any turn, spec 05 §9). Record
+   grants (effective later, §3.1). Save A → A'. If anything after the consumption fails, the turn
+   ends on A' (or A) and its answered calls are answered as interrupted (spec 05 §3). If the
+   process dies between the consuming state write and the save of A', the next operation finds a
+   message whose `metadata.eharness.pending` is set although `state.core.pending` does not name it
+   and heals it at its commit point: open calls → `INTERRUPTED_CRASH`, `pending: null`,
+   `stop: 'interrupted'` (same for the `onNewInput: 'deny'` patch).
 4. **Continue the same message**: `createUIMessageStream({ originalMessages: [A'], … })`, `start`
    with `messageId: A.id` and no metadata (so `run.messageId` resolves to A's id and A's
-   `createdAt`/`turnId` are kept). The projected wire ends with a `tool` message holding the
+   `createdAt`/`turnId` are kept), then one `tool-output-available` / `tool-output-error` chunk
+   per client tool answer (headless readers see the outputs). The final `message-metadata`
+   carries `pending: null` (or the new pending state) and usage/steps cumulative over both turns.
+   The projected wire ends with a `tool` message holding the
    `tool-approval-response`s, so the first `streamText` call executes approved tools and emits
    denials (`execution-denied` with the reason) **before** calling the model. From there the
    turn runs normally (steps, stop rules, hooks).
@@ -174,8 +190,12 @@ edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
   `eh.rewind { afterId: <id of the message just before A>, reason: 'regenerate' }`, then run a
   no-input turn. The current turn (spec 06 §5.1) is the turn of the re-answered user message.
 - `edit`: target user message U. Save `eh.rewind { afterId: <id just before U>, reason: 'edit' }`,
-  then a normal `send(input)` (new server id; the client id of U is copied to
-  `metadata.eharness.clientId` of the new message so the UI can reconcile).
+  then a normal `send(input)` (new server id; the client id of U — or U's id when U has none — is
+  copied to `metadata.eharness.clientId` of the new message so the UI can reconcile; editing that
+  id again therefore targets the replacement). `input.submit` runs with `via: 'edit'`.
+- "The message just before" is the previous message of the current view (kind messages count,
+  compaction markers do not); `afterId: null` when the target is the first message of an
+  uncompacted session.
 - A target that is not in the current view (unknown id, hidden, or not of the expected role) →
   `EH_INVALID_INPUT` (`'not-found'`).
 - Both run through §4.1 first when pending.
@@ -215,6 +235,15 @@ step's tool results, before the next model call):
     with `queued: true`.
 - `send(…, { ifBusy: 'steer' })` returns `session.attach()` of the running turn. If the session
   is idle, it behaves like a normal `send()`.
+- The delivered `text` is the input's text parts followed by `input.submit` `context` strings,
+  joined with a blank line; `files` are its file parts.
+- A steer that arrives when the running turn no longer takes input (its step loop ended), a steer
+  without input, and a steer while a manual `compact()` runs become queued `send` turns (§6.2,
+  `input.submit` with `via: 'queue'`). Invalid steer input (normalization, spec 05 §3) is a run
+  error of a separate failed run (`EH_INVALID_INPUT`), never thrown; the running turn is not
+  affected.
+- At a boundary, steers and `next-step` injections are delivered first (arrival order), then hook
+  context (§6.4). No input is delivered before the first step of a `respond()` continuation.
 
 **Projection** (spec 03 §6) splits an assistant message at each `data-eh.input` part into
 `assistant(before) → user(text, files) → assistant(after)`. Because the part sits exactly where
@@ -222,9 +251,19 @@ the model saw it, stored order equals model order and reloads project identicall
 
 ### 6.2 Queue
 
-`ifBusy: 'queue'` normalizes the input, keeps it in an in-memory FIFO per live session and
-returns a `HarnessRun` whose stream starts when that turn starts (`run.messageId` resolves then;
-`input.submit` runs then, with `via: 'queue'`). Queued turns are ordinary `send` turns
+`ifBusy: 'queue'` normalizes the input (invalid input → a failed run, `EH_INVALID_INPUT`), keeps
+it in an in-memory FIFO per live session and returns a `HarnessRun` whose `turnId` is fixed now and
+whose stream starts when that turn starts (`run.messageId` resolves then; `input.submit` runs then,
+with `via: 'queue'`). `run.abort()` of a queued run that has not started removes and drops only
+that run.
+
+**Held while pending.** The queue does not start a turn while `state.core.pending` is set: a queued
+turn (send or wake) never applies `onNewInput` to approvals the user has not answered. It starts
+once the pending state is resolved — by `respond()`, or by an explicit new `send()` /
+`regenerate()` / `edit()` (which applies `onNewInput`). A continuation that ends `tool-pending`
+again keeps the queue held. A held queue does not keep the session alive: idle eviction (spec 05
+§1) closes it and drops the held runs (`stop: 'aborted'`, like `close()`). A dropped wake turn loses
+nothing: its kind message is stored and reaches the model at the next turn. Queued turns are ordinary `send` turns
 (`TurnInfo.queued = true`) and run in order after the current turn ends. `abort()` and `close()`
 drop the queue (dropped runs resolve with `stop: 'aborted'`, spec 05 §2). The queue is per process
 and lost on restart; cross-instance queuing is the application's job (a `SessionLock` rejection
@@ -250,6 +289,18 @@ inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, opts?: {
   after the final save.
 - `wake` requires the session to be live in this process. Cross-process wake-ups are done by the
   application calling `agent.session(id).inject(…, { wake: true })` in the right process.
+- The delivered text is the kind's model projection (spec 03 §5.1), text parts joined with a blank
+  line. A kind that is not projected (`'omit'`, `null`), a projection with file parts, or a
+  projection that throws (`W_HOOK_FAILED`) is not delivered inline: the message stays a plain
+  saved message without `deliveredIn` and reaches the model (whole) at the next turn.
+- An injection that was not delivered before the turn stopped stays undelivered (no
+  `deliveredIn`) and reaches the model at the next turn.
+- **`wake` is never lost.** When it cannot be delivered inline — the running turn no longer takes
+  input (it is ending), a manual `compact()` runs, the event is not deliverable inline, or it was
+  still waiting when the turn stopped (any stop but `aborted` / `timeout`) — a no-input `wake`
+  turn is queued (§6.2) and runs when the session is free; `inject()` returns its `run` when it
+  queued it. While `state.core.pending` is set the queue is held (§6.2), so a background event
+  never denies approvals the user is looking at (§4.1): the wake turn runs after `respond()`.
 
 ### 6.4 Hook-provided context
 
@@ -260,9 +311,14 @@ step boundary.
 ## 7. `handleChatRequest` (useChat adapter)
 
 ```ts
-export function handleChatRequest<M extends HarnessUIMessage>(
-  session: HarnessSession<M>,
-  body: { messages: UIMessage[]; trigger?: 'submit-message' | 'regenerate-message'; messageId?: string },
+export interface ChatRequestBody {
+  messages: UIMessage[]
+  trigger?: 'submit-message' | 'regenerate-message'
+  messageId?: string
+}
+export function handleChatRequest<M extends UIMessage, Kinds extends Record<string, unknown>>(
+  session: HarnessSession<M, Kinds>,
+  body: ChatRequestBody,
   options?: SendOptions,
 ): HarnessRun<M>
 ```
@@ -279,7 +335,10 @@ run and reported as a run error):
    and a pending item without an answer → `EH_INVALID_INPUT` (`'incomplete'`).
 3. `body.messageId` is set (useChat sends it when a message is replaced) and the last message has
    `role: 'user'` → `edit(body.messageId, last)`.
-4. otherwise → `send(last, options)`.
+4. otherwise → `send(last, options)` (a body without messages → run error `EH_INVALID_INPUT`).
+
+`options` are passed to every operation (e.g. `{ ifBusy: 'steer' }` makes a request that arrives
+while a turn runs steer it; `respond`/`regenerate`/`edit` still throw `EH_SESSION_BUSY`).
 
 Typical route:
 

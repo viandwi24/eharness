@@ -144,6 +144,20 @@ export async function loadContext(args: {
   const rewinds = rewindsIn(messages)
   if (rewinds.length > 0) view = view.filter((m) => !hiddenByRewind(m, rewinds, registry))
 
+  // heal the rewind mirror (spec 11 §5): the markers in the loaded range are the source of truth;
+  // mirror entries older than the loaded range (not visible here) are kept
+  const oldestLoaded = typeof raw[0]?.id === 'string' ? (raw[0]?.id as string) : undefined
+  const mirror = args.core.rewinds ?? []
+  const healed = [
+    ...mirror.filter((r) => oldestLoaded !== undefined && r.rewindId < oldestLoaded),
+    ...rewinds,
+  ]
+  if (JSON.stringify(healed) !== JSON.stringify(mirror)) {
+    if (healed.length === 0) delete args.core.rewinds
+    else args.core.rewinds = healed
+    args.markDirty()
+  }
+
   // heal activeTurn: its assistant message was finalized (the end-of-turn state write was lost)
   const active = args.core.activeTurn
   if (active !== undefined) {
