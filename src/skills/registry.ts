@@ -27,8 +27,12 @@ export interface SessionSkills {
   sources: SkillSourceEntry[]
   /** `list()` results of `refresh: 'session'` sources. */
   cache: Map<SkillSource, SkillMeta[]>
-  /** `config.skillsIndexLimit` (default 50). */
+  /** `config.skillsIndexLimit` (default 50; `Infinity` = never search). */
   indexLimit: number
+  /** `load_skill` / `read_skill_file` exist: at least one skill source (static skills count). */
+  hasTools: boolean
+  /** `search_skills` exists (decided once per session, spec 07 §4.3). */
+  hasSearch: boolean
 }
 
 /**
@@ -56,6 +60,10 @@ export const SKILLS_INDEX_MORE_HEADER = '# More skills'
 export const SKILLS_SEARCH_HINT: string =
   'Skills are playbooks you can open when relevant. Find them with search_skills(query), then open one with load_skill(name) before doing the task it covers.'
 
+/** Hint in block 2 when static skills are indexed in block 1 but the total exceeds the limit. */
+export const SKILLS_SEARCH_MORE_HINT: string =
+  'More skills are available: find them with search_skills(query), then open one with load_skill(name).'
+
 /** The resolved skills of one turn. */
 export interface TurnSkills {
   /** Sorted by name. */
@@ -70,6 +78,9 @@ export interface TurnSkills {
   sourceOf(name: string): SkillSourceEntry | undefined
   /** All sources of the session, in registry order. */
   sources: readonly SkillSourceEntry[]
+  /** Session-level tool presence (see {@link SessionSkills}). */
+  hasTools: boolean
+  hasSearch: boolean
 }
 
 /**
@@ -93,13 +104,17 @@ export function buildSessionSkills(
       if (entry.owner === owner) out.push({ owner, source: entry.source, static: false })
     }
   }
+  const limit =
+    typeof indexLimit === 'number' && !Number.isNaN(indexLimit) && indexLimit >= 0
+      ? Math.floor(indexLimit)
+      : DEFAULT_SKILLS_INDEX_LIMIT
   return {
     sources: out,
     cache: new Map(),
-    indexLimit:
-      typeof indexLimit === 'number' && Number.isFinite(indexLimit) && indexLimit >= 0
-        ? Math.floor(indexLimit)
-        : DEFAULT_SKILLS_INDEX_LIMIT,
+    indexLimit: limit,
+    hasTools: out.length > 0,
+    hasSearch:
+      Number.isFinite(limit) && (skills.length > limit || out.some((entry) => !entry.static)),
   }
 }
 
@@ -127,7 +142,12 @@ export async function resolveTurnSkills(args: {
 }): Promise<TurnSkills> {
   const { skills, contextOf, warn } = args
   const winners = new Map<string, { meta: SkillMeta; entry: SkillSourceEntry }>()
-  for (const entry of skills.sources) {
+  // static skills always win over dynamic sources (spec 02 §7): resolve them first
+  const ordered = [
+    ...skills.sources.filter((s) => s.static),
+    ...skills.sources.filter((s) => !s.static),
+  ]
+  for (const entry of ordered) {
     const { source, owner } = entry
     let listed = source.refresh === 'turn' ? undefined : skills.cache.get(source)
     if (listed === undefined) {
@@ -188,26 +208,35 @@ export async function resolveTurnSkills(args: {
   const entries: SkillIndexEntry[] = [...winners.values()]
     .map(({ meta, entry }) => ({ ...meta, source: entry.source.id }))
     .sort(byName)
-  const staticNames = new Set(
-    [...winners.values()].filter((w) => w.entry.static).map((w) => w.meta.name),
-  )
+  const statics = entries.filter((e) => winners.get(e.name)?.entry.static === true)
+  const dynamics = entries.filter((e) => winners.get(e.name)?.entry.static !== true)
 
-  let mode: TurnSkills['mode'] = 'none'
+  const limit = skills.indexLimit
+  const mode: TurnSkills['mode'] =
+    entries.length === 0 ? 'none' : entries.length > limit ? 'search' : 'index'
+  // block 1 depends on static skills only (stable for the session)
   let staticText: string | undefined
+  if (statics.length > limit) staticText = `${SKILLS_INDEX_HEADER}\n${SKILLS_SEARCH_HINT}`
+  else if (statics.length > 0) {
+    staticText = [`${SKILLS_INDEX_HEADER}\n${SKILLS_INDEX_INTRO}`, ...statics.map(indexLine)].join(
+      '\n',
+    )
+  }
+  // block 2: the dynamic part, or the search hint when everything together exceeds the limit
   let dynamicText: string | undefined
-  if (entries.length > skills.indexLimit) {
-    mode = 'search'
-    const hint = `${SKILLS_INDEX_HEADER}\n${SKILLS_SEARCH_HINT}`
-    if (skills.sources.some((s) => !s.static)) dynamicText = hint
-    else staticText = hint
-  } else if (entries.length > 0) {
-    mode = 'index'
-    const statics = entries.filter((e) => staticNames.has(e.name)).map(indexLine)
-    const dynamics = entries.filter((e) => !staticNames.has(e.name)).map(indexLine)
-    const intro = `${SKILLS_INDEX_HEADER}\n${SKILLS_INDEX_INTRO}`
-    if (statics.length > 0) staticText = [intro, ...statics].join('\n')
-    if (dynamics.length > 0) {
-      dynamicText = [statics.length > 0 ? SKILLS_INDEX_MORE_HEADER : intro, ...dynamics].join('\n')
+  if (statics.length <= limit && dynamics.length > 0) {
+    if (mode === 'search') {
+      dynamicText =
+        statics.length > 0
+          ? `${SKILLS_INDEX_MORE_HEADER}\n${SKILLS_SEARCH_MORE_HINT}`
+          : `${SKILLS_INDEX_HEADER}\n${SKILLS_SEARCH_HINT}`
+    } else {
+      dynamicText = [
+        statics.length > 0
+          ? SKILLS_INDEX_MORE_HEADER
+          : `${SKILLS_INDEX_HEADER}\n${SKILLS_INDEX_INTRO}`,
+        ...dynamics.map(indexLine),
+      ].join('\n')
     }
   }
 
@@ -217,6 +246,8 @@ export async function resolveTurnSkills(args: {
     staticText,
     dynamicText,
     sources: skills.sources,
+    hasTools: skills.hasTools,
+    hasSearch: skills.hasSearch,
     sourceOf: (name) => winners.get(name)?.entry,
   }
 }

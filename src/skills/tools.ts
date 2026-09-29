@@ -63,7 +63,13 @@ function isFileContent(value: unknown): value is SkillFileContent {
  */
 export function formatSkillDoc(name: string, doc: SkillDoc, notes: readonly string[]): string {
   const front: Record<string, unknown> = { name, description: doc.description }
-  for (const [key, value] of Object.entries(doc.meta ?? {})) {
+  const meta = doc.meta
+  const plainMeta =
+    typeof meta === 'object' &&
+    meta !== null &&
+    !Array.isArray(meta) &&
+    [Object.prototype, null].includes(Object.getPrototypeOf(meta))
+  for (const [key, value] of Object.entries(plainMeta ? meta : {})) {
     if (key !== 'name' && key !== 'description') front[key] = value
   }
   const sections = [`---\n${serializeFrontmatter(front)}\n---\n${doc.content.trim()}`.trimEnd()]
@@ -165,7 +171,11 @@ export async function loadSkillText(deps: SkillToolDeps, name: string): Promise<
       hookFailed(deps, 'skill.load', hook.owner, error)
     }
   }
-  return formatSkillDoc(name, current, notes)
+  try {
+    return formatSkillDoc(name, current, notes)
+  } catch (error) {
+    return `ERROR: skill ${JSON.stringify(name)} could not be loaded: ${describe(error)}`
+  }
 }
 
 /** Read a supporting file of a skill of the turn. Returns the model-visible text. */
@@ -274,11 +284,12 @@ const stringField = (value: unknown, key: string): string | undefined => {
 }
 
 /**
- * The skill tools of one turn, in stable order (spec 02 §6 rule 1): `load_skill`,
- * `read_skill_file`, and `search_skills` in search mode. Empty without skills.
+ * The skill tools of one turn, in stable order (spec 02 §6 rule 1): `load_skill` and
+ * `read_skill_file` whenever the session has a skill source (static skills count), `search_skills`
+ * when the session can reach search mode. Presence never depends on what one turn resolves.
  */
 export function createSkillTools(deps: SkillToolDeps): Array<{ name: string; tool: Tool }> {
-  if (deps.skills.mode === 'none') return []
+  if (!deps.skills.hasTools) return []
   const out: Array<{ name: string; tool: Tool }> = [
     {
       name: 'load_skill',
@@ -322,7 +333,7 @@ export function createSkillTools(deps: SkillToolDeps): Array<{ name: string; too
       }) as Tool,
     },
   ]
-  if (deps.skills.mode === 'search') {
+  if (deps.skills.hasSearch) {
     out.push({
       name: 'search_skills',
       tool: tool({

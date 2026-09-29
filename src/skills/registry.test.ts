@@ -9,6 +9,7 @@ import {
   type SessionSkills,
   SKILLS_INDEX_INTRO,
   SKILLS_SEARCH_HINT,
+  SKILLS_SEARCH_MORE_HINT,
 } from './registry.ts'
 
 const ctx = (owner: string) => ({ plugin: { name: owner } }) as unknown as HarnessContext
@@ -71,6 +72,34 @@ describe('buildSessionSkills', () => {
       ['p2', 'c', false],
     ])
     expect(built.indexLimit).toBe(DEFAULT_SKILLS_INDEX_LIMIT)
+  })
+
+  test('tool presence is decided per session', () => {
+    const dyn = source('db', () => [])
+    const none = buildSessionSkills([], [], ['app'], undefined)
+    expect([none.hasTools, none.hasSearch]).toEqual([false, false])
+    const staticSmall = buildSessionSkills([{ owner: 'app', skill: skill('a') }], [], ['app'], 1)
+    expect([staticSmall.hasTools, staticSmall.hasSearch]).toEqual([true, false])
+    const staticLarge = buildSessionSkills(
+      [
+        { owner: 'app', skill: skill('a') },
+        { owner: 'app', skill: skill('b') },
+      ],
+      [],
+      ['app'],
+      1,
+    )
+    expect([staticLarge.hasTools, staticLarge.hasSearch]).toEqual([true, true])
+    const dynamic = buildSessionSkills([], [{ owner: 'app', source: dyn }], ['app'], undefined)
+    expect([dynamic.hasTools, dynamic.hasSearch]).toEqual([true, true])
+    const unlimited = buildSessionSkills(
+      [],
+      [{ owner: 'app', source: dyn }],
+      ['app'],
+      Number.POSITIVE_INFINITY,
+    )
+    expect([unlimited.hasTools, unlimited.hasSearch]).toEqual([true, false])
+    expect(unlimited.indexLimit).toBe(Number.POSITIVE_INFINITY)
   })
 
   test('index limit: explicit values, invalid values fall back to the default', () => {
@@ -145,8 +174,9 @@ describe('resolveTurnSkills', () => {
       ),
     )
     expect(withDynamic.turn.mode).toBe('search')
-    expect(withDynamic.turn.staticText).toBeUndefined()
-    expect(withDynamic.turn.dynamicText).toBe(`# Skills\n${SKILLS_SEARCH_HINT}`)
+    // block 1 keeps the static index; block 2 only points to search
+    expect(withDynamic.turn.staticText).toBe(`# Skills\n${SKILLS_INDEX_INTRO}\n- a: About a.`)
+    expect(withDynamic.turn.dynamicText).toBe(`# More skills\n${SKILLS_SEARCH_MORE_HINT}`)
     expect(withDynamic.turn.entries.map((e) => e.name)).toEqual(['a', 'b', 'c'])
 
     const staticOnly = await resolve(
@@ -163,6 +193,40 @@ describe('resolveTurnSkills', () => {
     expect(staticOnly.turn.staticText).toBe(`# Skills\n${SKILLS_SEARCH_HINT}`)
     expect(staticOnly.turn.dynamicText).toBeUndefined()
     expect(SKILLS_SEARCH_HINT).not.toContain('\n')
+
+    const dynamicOnly = await resolve(
+      buildSessionSkills([], [{ owner: 'app', source: dyn }], ['app'], 1),
+    )
+    expect(dynamicOnly.turn.staticText).toBeUndefined()
+    expect(dynamicOnly.turn.dynamicText).toBe(`# Skills\n${SKILLS_SEARCH_HINT}`)
+  })
+
+  test('block 1 never depends on dynamic listings', async () => {
+    let rows: SkillMeta[] = []
+    const dyn = source('db', () => rows, { refresh: 'turn' })
+    const skills = buildSessionSkills(
+      [
+        { owner: 'app', skill: skill('a') },
+        { owner: 'app', skill: skill('b') },
+      ],
+      [{ owner: 'app', source: dyn }],
+      ['app'],
+      3,
+    )
+    const texts: Array<string | undefined> = []
+    for (const next of [
+      [],
+      [{ name: 'c', description: 'C.' }],
+      [
+        { name: 'c', description: 'C.' },
+        { name: 'd', description: 'D.' },
+      ],
+      [{ name: 'a', description: 'Shadowed.' }],
+    ]) {
+      rows = next
+      texts.push((await resolve(skills)).turn.staticText)
+    }
+    expect(new Set(texts).size).toBe(1)
   })
 
   test('first source wins; later duplicates are shadowed with W_SHADOWED', async () => {
@@ -198,7 +262,7 @@ describe('resolveTurnSkills', () => {
     ])
   })
 
-  test('a dynamic source listed before a plugin static skill shadows it', async () => {
+  test('static skills win over dynamic sources listed earlier (spec 02 §7)', async () => {
     const dyn = source('db', () => [{ name: 'x', description: 'Dynamic x.' }])
     const { turn, warnings } = await resolve(
       buildSessionSkills(
@@ -208,9 +272,12 @@ describe('resolveTurnSkills', () => {
         undefined,
       ),
     )
-    expect(turn.entries).toEqual([{ name: 'x', description: 'Dynamic x.', source: 'db' }])
-    expect(turn.staticText).toBeUndefined()
-    expect(warnings.map((w) => [w.code, w.details?.source])).toEqual([['W_SHADOWED', 'static:p']])
+    expect(turn.entries).toEqual([{ name: 'x', description: 'About x.', source: 'static:p' }])
+    expect(turn.staticText).toBe(`# Skills\n${SKILLS_INDEX_INTRO}\n- x: About x.`)
+    expect(turn.dynamicText).toBeUndefined()
+    expect(warnings.map((w) => [w.code, w.details?.source, w.details?.winner])).toEqual([
+      ['W_SHADOWED', 'db', 'static:p'],
+    ])
   })
 
   test('invalid metadata is skipped with W_INVALID_SKILL', async () => {
