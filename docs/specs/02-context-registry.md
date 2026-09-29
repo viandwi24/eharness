@@ -36,7 +36,8 @@ type InstructionFn = (ctx: HarnessContext) => string | undefined | Promise<strin
 | `step.prepare` `reminder` | per step | **step reminder** message, not the system prompt |
 
 Within a block, texts appear in plugin order (root first, so `config.instructions` leads) and are
-joined with a blank line; empty results are skipped. Use `refresh: 'turn'` only for values that
+joined with a blank line; empty results are skipped. An instruction function that throws fails the
+turn before the commit point (a run error; instructions are never silently dropped). Use `refresh: 'turn'` only for values that
 really change every turn (time, live counters); everything else should be `'session'` so the
 system prompt stays byte-identical for the whole session (prompt cache, §6).
 
@@ -127,7 +128,11 @@ messages:     projection of the view (spec 03 §6)
   message that carries the approval responses (AI SDK only collects approvals when the last
   message has role `tool`), so that step gets no step reminder (spec 11 §4 step 5). The turn
   reminder still sits before the turn's first message.
-- `step.prepare` `messages` rewrites apply after reminders are inserted.
+- A `step.prepare` `messages` rewrite replaces the (projected, sanitized) wire of that step; the
+  hook sees the wire **without** reminders (`StepPrepareEvent.messages`), and the turn and step
+  reminders are inserted into the rewritten wire afterwards, so a rewrite never drops them.
+- Reminder text format (model-visible): `<system-reminder>\n{text}\n</system-reminder>`; several
+  `step.prepare` reminders of one step are joined with a blank line.
 
 ## 6. Prompt caching (normative)
 
