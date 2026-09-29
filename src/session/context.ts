@@ -3,7 +3,7 @@
  *
  * @see docs/specs/01-agent-and-plugins.md#4-harnesscontext-sessionturnstep-context
  */
-import { HarnessError } from '../errors.ts'
+import { HarnessError, type HarnessWarning } from '../errors.ts'
 import type { HarnessContext, HarnessLogger, HarnessServices } from '../plugin/types.ts'
 import { createPluginWriter } from '../stream/writer.ts'
 import type { SessionRuntime } from './runtime.ts'
@@ -71,5 +71,11 @@ export function createContext(rt: SessionRuntime, plugin: string): HarnessContex
     },
     log: rt.log,
     signal: rt.signal,
+    warn(warning: HarnessWarning) {
+      rt.warn(
+        { ...warning, details: { plugin, ...warning.details } },
+        `plugin:${plugin}\u0000${warning.message}`,
+      )
+    },
   }
 }

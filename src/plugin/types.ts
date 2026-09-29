@@ -16,6 +16,7 @@ import type {
   ToolChoice,
 } from 'ai'
 import type { ModelSettings } from '../agent/types.ts'
+import type { HarnessWarning } from '../errors.ts'
 import type { Awaitable, ProviderOptions } from '../internal/ai-types.ts'
 import type { DataChunk, DataPartDef } from '../messages/data-parts.ts'
 import type { MessageKindDef } from '../messages/kinds.ts'
@@ -141,6 +142,17 @@ export interface HarnessContext<DP extends DataPartMap = Record<never, never>> {
   readonly log: HarnessLogger
   /** Aborts on session close. Turn-level abort is `turn.abortSignal`. */
   readonly signal: AbortSignal
+  /**
+   * Emit a non-fatal warning on the session's warning channel: `config.onWarning` (or the
+   * deduplicated console default), `strict` escalation, and a transient `data-eh.warning` part
+   * during a turn. `details.plugin` is set to this plugin unless given.
+   *
+   * @example
+   * ```ts
+   * ctx.warn({ code: 'W_INVALID_SKILL', message: `Skipped /skills/x/SKILL.md: ${error}` })
+   * ```
+   */
+  warn(warning: HarnessWarning): void
 }
 
 /**
