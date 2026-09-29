@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { isStepCount, streamText, tool } from 'ai'
+import { generateText, isStepCount, streamText, tool } from 'ai'
 import { z } from 'zod/v4'
 import { scriptedModel } from './scripted-model.ts'
 
@@ -46,5 +46,35 @@ describe('scriptedModel', () => {
     const started = Date.now()
     await expect(result.responseMessages).rejects.toBeDefined()
     expect(Date.now() - started).toBeLessThan(500)
+  })
+})
+
+describe('scriptedModel with generateText', () => {
+  test('doGenerate plays the same script as doStream and records the call', async () => {
+    const model = scriptedModel([
+      { text: 'streamed' },
+      { reasoning: 'hmm', text: 'Summary.', usage: { inputTokens: 7, outputTokens: 2 } },
+      { toolCalls: [{ toolName: 'echo', input: { text: 'x' }, toolCallId: 'c1' }] },
+    ])
+    expect(await streamText({ model, prompt: 'a' }).text).toBe('streamed')
+    const summary = await generateText({ model, prompt: 'summarize' })
+    expect(summary.text).toBe('Summary.')
+    expect(summary.reasoningText).toBe('hmm')
+    expect(summary.usage.outputTokens).toBe(2)
+    const calls = await generateText({ model, tools, prompt: 'call', stopWhen: isStepCount(1) })
+    expect(calls.toolCalls.map((c) => [c.toolCallId, c.toolName, c.input])).toEqual([
+      ['c1', 'echo', { text: 'x' }],
+    ])
+    expect(model.calls).toHaveLength(3)
+    expect(model.prompts[1]?.at(-1)?.role).toBe('user')
+  })
+
+  test('doGenerate throws scripted errors', async () => {
+    const model = scriptedModel([{ throws: new Error('boom') }, { streamError: new Error('late') }])
+    await expect(generateText({ model, prompt: 'x', maxRetries: 0 })).rejects.toThrow('boom')
+    await expect(generateText({ model, prompt: 'x', maxRetries: 0 })).rejects.toThrow('late')
+    await expect(generateText({ model, prompt: 'x', maxRetries: 0 })).rejects.toThrow(
+      'no scripted step',
+    )
   })
 })

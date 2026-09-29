@@ -1,14 +1,17 @@
 /**
  * `scriptedModel`: a `MockLanguageModelV4` that plays a scripted conversation, one entry per
- * model call (= one eharness step), and records every call's prompt.
+ * model call (= one eharness step, or one `generateText` call such as the compaction summarizer),
+ * and records every call's prompt.
  *
  * @see docs/engineering/testing.md#model-mocking
  */
 import { MockLanguageModelV4 } from 'ai/test'
 
 type DoStream = MockLanguageModelV4['doStream']
+type GenerateResult = Awaited<ReturnType<MockLanguageModelV4['doGenerate']>>
+type GenerateContent = GenerateResult['content'][number]
 
-/** Options AI SDK passed to one `doStream` call (prompt, tools, provider options, …). */
+/** Options AI SDK passed to one `doStream` / `doGenerate` call (prompt, tools, provider options, …). */
 export type ScriptedCallOptions = Parameters<DoStream>[0]
 
 /** The prompt (model wire) of one call, as the provider receives it. */
@@ -48,7 +51,7 @@ export interface ScriptedStep {
   }
   /** Thrown by `doStream` before streaming starts (e.g. an `APICallError` with status 429). */
   throws?: unknown
-  /** Emitted as a stream `error` part before `finish`. */
+  /** Emitted as a stream `error` part before `finish` (thrown by a `doGenerate` call). */
   streamError?: unknown
   /** Delay before every stream part, in ms (for abort and timeout tests). */
   delayMs?: number
@@ -69,9 +72,9 @@ export interface ScriptedModelOptions {
 
 /** The model returned by {@link scriptedModel}. */
 export type ScriptedModel = MockLanguageModelV4 & {
-  /** Prompts of every call so far, in call order. */
+  /** Prompts of every call so far (`doStream` and `doGenerate`), in call order. */
   readonly prompts: ScriptedPrompt[]
-  /** Full options of every call so far (tools, tool choice, provider options, …). */
+  /** Full options of every call so far (tools, tool choice, provider options, …), in call order. */
   readonly calls: ScriptedCallOptions[]
 }
 
@@ -125,6 +128,66 @@ function buildParts(step: ScriptedStep, callIndex: number): ScriptedStreamPart[]
   return parts
 }
 
+/** The `doGenerate` result equivalent to a scripted step's stream parts. */
+function generateResult(parts: ScriptedStreamPart[]): GenerateResult {
+  const content: GenerateContent[] = []
+  const open = new Map<string, { type: 'text' | 'reasoning'; text: string }>()
+  let finish: Extract<ScriptedStreamPart, { type: 'finish' }> | undefined
+  for (const part of parts) {
+    switch (part.type) {
+      case 'text-start':
+      case 'reasoning-start': {
+        const entry: { type: 'text' | 'reasoning'; text: string } = {
+          type: part.type === 'text-start' ? 'text' : 'reasoning',
+          text: '',
+        }
+        open.set(part.id, entry)
+        content.push(entry)
+        break
+      }
+      case 'text-delta':
+      case 'reasoning-delta': {
+        const entry = open.get(part.id)
+        if (entry !== undefined) entry.text += part.delta
+        break
+      }
+      case 'tool-call':
+        content.push({
+          type: 'tool-call',
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          input: part.input,
+        })
+        break
+      case 'error':
+        throw part.error
+      case 'finish':
+        finish = part
+        break
+      default:
+        break
+    }
+  }
+  if (finish === undefined) throw new Error('scriptedModel: a scripted step has no finish part')
+  return { content, finishReason: finish.finishReason, usage: finish.usage, warnings: [] }
+}
+
+/** Resolves after `ms`, or rejects with the abort reason when `signal` aborts first. */
+function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      clearTimeout(timer)
+      if (signal !== undefined) reject(abortError(signal))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort)
+      resolve()
+    }, ms)
+    if (signal?.aborted) onAbort()
+    else signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 function abortError(signal: AbortSignal): unknown {
   return signal.reason instanceof Error
     ? signal.reason
@@ -132,8 +195,12 @@ function abortError(signal: AbortSignal): unknown {
 }
 
 /**
- * Create a model that plays `steps` in order (one entry per `doStream` call) and records every
- * prompt. A call beyond the script rejects. Streams honour the call's abort signal.
+ * Create a model that plays `steps` in order and records every prompt. Every model call takes
+ * the next entry: `doStream` calls (eharness steps) and `doGenerate` calls (e.g. the compaction
+ * summarizer, which uses `generateText`) share one script, so a single scripted model can drive a
+ * whole conversation including compaction. A `doGenerate` call answers with the step's reasoning,
+ * text and tool calls as content (`streamError` is thrown). A call beyond the script rejects.
+ * Calls honour their abort signal.
  *
  * @example
  * ```ts
@@ -152,18 +219,28 @@ export function scriptedModel(
   options: ScriptedModelOptions = {},
 ): ScriptedModel {
   const calls: ScriptedCallOptions[] = []
+  const next = (call: ScriptedCallOptions): { step: ScriptedStep; index: number } => {
+    const index = calls.length
+    calls.push(call)
+    const input = steps[index]
+    if (input === undefined) {
+      throw new Error(`scriptedModel: no scripted step for call #${index}`)
+    }
+    const step = typeof input === 'function' ? input(call) : input
+    if (step.throws !== undefined) throw step.throws
+    return { step, index }
+  }
   const model = new MockLanguageModelV4({
     provider: options.provider ?? 'mock',
     modelId: options.modelId ?? 'scripted',
+    doGenerate: async (call) => {
+      const { step, index } = next(call)
+      if (step.delayMs !== undefined && step.delayMs > 0)
+        await delay(step.delayMs, call.abortSignal)
+      return generateResult(buildParts(step, index))
+    },
     doStream: async (call) => {
-      const index = calls.length
-      calls.push(call)
-      const input = steps[index]
-      if (input === undefined) {
-        throw new Error(`scriptedModel: no scripted step for call #${index}`)
-      }
-      const step = typeof input === 'function' ? input(call) : input
-      if (step.throws !== undefined) throw step.throws
+      const { step, index } = next(call)
       const parts = buildParts(step, index)
       const delayMs = step.delayMs ?? 0
       const signal = call.abortSignal
