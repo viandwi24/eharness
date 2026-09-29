@@ -75,7 +75,11 @@ const noticeSchema = z.looseObject({
   message: z.string(),
 })
 
-const eventSchema = z.looseObject({ name: z.string(), text: z.string(), data: z.unknown() })
+const eventSchema = z.looseObject({
+  name: z.string(),
+  text: z.string(),
+  data: z.unknown().optional(),
+})
 
 const rewindSchema = z.looseObject({
   afterId: z.string().nullable(),

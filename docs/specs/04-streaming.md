@@ -19,7 +19,7 @@ the preparation phase of the lifecycle (spec 05 §3 steps 1–10), because the a
 generated after the user id:
 
 ```
-start { messageId: <assistant UUIDv7>, messageMetadata: { eharness: { v: 1, createdAt, turnId } } }
+start { messageId: <assistant UUIDv7>, messageMetadata: { eharness: { v: 1, createdAt, turnId, parentId } } }
   data-eh.status (transient) { state: 'compacting' }        ← only if pre-turn compaction runs (no `step`)
   data-eh.status (transient) { state: 'thinking', step: 0 }
   start-step
@@ -58,7 +58,7 @@ const stream = createUIMessageStream<AgentMessage>({
   execute: async ({ writer }) => {
     // spec 05 §3 steps 1–9: lock, load, checks, sources, normalize, input.submit, turn.prepare
     // step 10: ids (rewind, notices, user, assistant; per-session floor) → start
-    writer.write({ type: 'start', messageId, messageMetadata: { eharness: { v: 1, createdAt, turnId } } })
+    writer.write({ type: 'start', messageId, messageMetadata: { eharness: { v: 1, createdAt, turnId, parentId } } })
     // steps 11–14 … (early failures before step 11: start with a throwaway id → error → finish, nothing saved)
     for each step:
       const result = streamText({ …, stopWhen: isStepCount(1), abortSignal: turnSignal })
@@ -114,7 +114,7 @@ export interface PluginStreamWriter<DP extends DataPartMap = {}> {
   readonly active: boolean
   /** Write a data part declared by THIS plugin (name is the local key, type-checked). */
   data<K extends keyof DP & string>(name: K, data: InferSchema<DP[K]['schema']>, opts?: { id?: string; transient?: boolean }): void
-  /** Escape hatch: write any registered data chunk. */
+  /** Escape hatch: write any registered data chunk, un-namespaced (the full `data-…` type). */
   write(chunk: Extract<InferUIMessageChunk<AgentMessage>, { type: `data-${string}` }>): void
 }
 ```
@@ -123,7 +123,11 @@ export interface PluginStreamWriter<DP extends DataPartMap = {}> {
 - `transient` defaults to the part definition's `transient`. Passing `transient: false` for a part
   defined as transient raises `W_TRANSIENT_OVERRIDE` and the part is sent as transient
   (`config.strict: true` turns this and other misuse warnings into thrown `EH_CONFIG_INVALID`).
-- Writing a data part that is not registered → `W_UNKNOWN_DATA_PART`, dropped.
+- `write(chunk)` is an **un-namespaced escape hatch**: it accepts the full part type of any
+  registered data part or kind (core, app or another plugin's), so a plugin can write parts it does
+  not own; only the core-only `data-eh.input` is refused.
+- Writing a data part that is not registered → `W_UNKNOWN_DATA_PART`, dropped. The core-only
+  `data-eh.input` part is treated the same way when a plugin writes it (§2: only the core writes it).
 - **Outside a turn** (`active === false`): transient writes go to the session event channel (§6);
   persistent writes are rejected with `W_WRITE_OUTSIDE_TURN` (use `session.inject` for durable
   out-of-turn content).
@@ -158,15 +162,17 @@ The stored assistant message is built by AI SDK itself from the same chunks the 
   `onError` and ignores the result) and implement the retry / `EH_STORAGE` rules of spec 10 §1
   themselves. `endTurn` skips all saves and state writes when the turn never reached the commit
   point (`committed === false`, spec 05 §3).
-- These callbacks run only while the stream is read. The core therefore `tee()`s the stream: one
-  branch is `run.stream` for the caller, the other is **drained by the core**. A turn never stalls
-  and is always persisted even if the client never reads or disconnects (the caller branch buffers
-  until the turn buffer (§6) holds it).
+- These callbacks run only while the stream is read. The core therefore **drains the
+  `createUIMessageStream` output itself**, and `run.stream` is a reader of the turn buffer (§6)
+  (like `attach()`, from the first chunk). A turn never stalls and is always persisted even if the
+  client never reads or disconnects (the turn buffer holds the chunks until the turn ends).
 - Transient parts never enter `responseMessage.parts` (AI SDK behaviour), so they are never stored.
 - **Chunks are mutated after they are written.** AI SDK reconciles data parts by `type` + `id` by
-  mutating the part object, and the written chunk *is* that object; `tee()` branches share it.
-  The core therefore `structuredClone`s every chunk it keeps (turn buffer, §6) and pipes
-  `run.stream` through a cloning transform, so consumers see each chunk exactly as it was written.
+  mutating the part object, and the written chunk *is* that object. The core therefore
+  `structuredClone`s every chunk **when it writes it** into the turn buffer (§6), and every
+  buffer reader (`run.stream`, `attach()`) gets its own copy of each chunk, so consumers see each
+  chunk exactly as it was written. (A `tee()` of the output would share — and buffer — the
+  mutable objects, so the caller branch could observe later reconciliations.)
 
 Because the stored message is produced by the same reader logic the client uses, reconciliation,
 ordering and part shapes are identical on both sides (ADR-0003).

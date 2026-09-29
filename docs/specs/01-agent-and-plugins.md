@@ -193,7 +193,8 @@ Rules:
 - `session` may do I/O (connect MCP, open a sandbox, read config). Its contributions are
   **session-scoped** and validated when the session opens (a duplicate static name throws
   `EH_DUPLICATE_*`; see spec 02 §5 for dynamic sources).
-- A plugin may use both phases. Hooks from both phases are merged (setup hooks first).
+- A plugin may use both phases. Hooks from both phases are merged (setup hooks first): hooks run
+  in plugin order, and within one plugin its setup-phase hooks run before its session-phase hooks.
 - Plugins are ordered `[root, ...config.plugins]`. That order defines instruction order, hook order
   and "first wins" for dynamic conflicts.
 
@@ -292,7 +293,7 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
       | { block: { reason: string; persist?: boolean } }     // end with stop 'blocked'
       | { context: string[] }>                               // extra text parts on the stored user message
 
-  /** Chainable. Choose model/settings/active tools for the turn. */
+  /** Chainable. Choose model/settings/active tools for the turn (`activeTools` of several hooks are intersected). */
   'turn.prepare'?(ctx: HarnessContext<DP>, e: { model: LanguageModel; settings: ModelSettings; options: unknown })
     : Awaitable<{ model?: LanguageModel; settings?: Partial<ModelSettings>; activeTools?: string[] } | void>
   'turn.start'?(ctx: HarnessContext<DP>, e: { kind: TurnInfo['kind']; input: HarnessUIMessage | undefined }): Awaitable<void>
@@ -364,7 +365,9 @@ Implementation notes:
 - `tool.before` runs inside AI SDK's `experimental_refineToolInput` (one generated function per
   tool), so the stream, stored parts, approval and telemetry all see the refined input.
 - `tool.after` and size limits run in an `execute` wrapper (`{ ...tool, execute: wrapped }`).
-  AsyncIterable (preliminary) results are passed through; `tool.after` runs on the final value.
+  AsyncIterable (preliminary) results are passed through unchanged; `tool.after` runs on the last
+  yielded value, and when it changes the value the result is yielded once more as the final output
+  (so the raw last value also appears as a preliminary output).
   Tools without `execute` (client tools), provider-executed tools and `toolSearch()` are not
   wrapped (AI SDK replaces `toolSearch()`'s `execute` anyway).
 - Errors thrown by a tool become tool-error results (`String(error)` is what the model sees); the

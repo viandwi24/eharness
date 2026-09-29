@@ -100,16 +100,15 @@ describe('defineHarnessAgent: normalization', () => {
     expect(internals.services.get('fs')).toBe('a')
   })
 
-  test('defaults and session stub', () => {
+  test('defaults; session() returns a live session without I/O', async () => {
     const created = defineHarnessAgent({ model })
     expect(created.id).toBe('agent')
     expect(Object.isFrozen(created.config)).toBe(true)
-    try {
-      created.session('s1')
-      throw new Error('expected a throw')
-    } catch (error) {
-      expect(isHarnessError(error, 'EH_NOT_IMPLEMENTED')).toBe(true)
-    }
+    const session = created.session('s1')
+    expect(session.id).toBe('s1')
+    expect(session.running).toBe(false)
+    expect(created.session('s1')).toBe(session)
+    await created.close()
   })
 
   test('two agents never share warning dedupe or ids state', () => {

@@ -23,7 +23,8 @@ import type {
 import { addContribution, createStaticRegistry, describeOwner } from '../registry/static.ts'
 import { isToolSource } from '../registry/tool-source.ts'
 import type { ToolsInput } from '../registry/types.ts'
-import { setAgentInternals } from './internals.ts'
+import { type AgentInternals, setAgentInternals } from './internals.ts'
+import { type AgentSessions, createAgentSessions } from './sessions.ts'
 import type { AgentKindTypes, AgentMessageOf, HarnessAgent, HarnessAgentConfig } from './types.ts'
 
 type AnyPlugin = HarnessPlugin<string, DataPartMap, KindMap>
@@ -255,20 +256,7 @@ export function defineHarnessAgent<const C extends HarnessAgentConfig>(config: C
 
   const custom = config.generateId
   const uuid = createUuidV7Generator()
-  const agent: HarnessAgent<C> = {
-    id,
-    config: Object.freeze({ ...config }),
-    session: () => {
-      throw new HarnessError(
-        'EH_NOT_IMPLEMENTED',
-        'agent.session() is not implemented yet (phase P2).',
-      )
-    },
-    closeSession: async () => {},
-    close: async () => {},
-    '~types': undefined as unknown as { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> },
-  }
-  setAgentInternals(agent, {
+  const internals: AgentInternals = {
     id,
     config,
     plugins,
@@ -280,6 +268,22 @@ export function defineHarnessAgent<const C extends HarnessAgentConfig>(config: C
       ...(config.strict === undefined ? {} : { strict: config.strict }),
     }),
     generateId: custom === undefined ? uuid : () => custom(),
-  })
+  }
+  // the session cache is created on first use (defineHarnessAgent does no I/O and no timers)
+  let sessions: AgentSessions | undefined
+  const runtime = (): AgentSessions => {
+    sessions ??= createAgentSessions(internals)
+    return sessions
+  }
+  const agent: HarnessAgent<C> = {
+    id,
+    config: Object.freeze({ ...config }),
+    session: (sessionId, options) =>
+      runtime().session(sessionId, options) as unknown as ReturnType<HarnessAgent<C>['session']>,
+    closeSession: (sessionId) => runtime().closeSession(sessionId),
+    close: () => runtime().close(),
+    '~types': undefined as unknown as { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> },
+  }
+  setAgentInternals(agent, internals)
   return agent
 }
