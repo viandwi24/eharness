@@ -8,6 +8,8 @@ import { type HarnessWarning, isHarnessError } from '../../errors.ts'
 import { nextId } from '../../messages/ids.ts'
 import {
   DENIED_NEW_INPUT,
+  INTERRUPTED_CRASH,
+  INTERRUPTED_TURN,
   INTERRUPTED_UNKNOWN,
   NOT_EXECUTED_NEW_INPUT,
 } from '../../messages/texts.ts'
@@ -795,3 +797,96 @@ describe('reload after respond reproduces the hot wire', () => {
 })
 
 void isHarnessError
+
+describe('continuations that do not finish', () => {
+  test('abort during step 0: approved calls end as interrupted, never re-executed', async () => {
+    const log: string[] = []
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] },
+      { text: 'next' },
+    ])
+    const { agent, messages } = setup({
+      model,
+      tools: { pay: payTool(log, 40) },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('pay').result
+    const approvalId = first.pending?.approvals[0]?.approvalId as string
+    const run = session.respond({ approvals: [{ id: approvalId, approved: true }] })
+    await new Promise((r) => setTimeout(r, 10))
+    run.abort('stop')
+    const chunks = await collect<UIMessageChunk>(run.stream)
+    const result = await run.result
+    expect(result.stop).toBe('aborted')
+    expect(chunks.find((c) => c.type === 'tool-output-error')).toMatchObject({
+      toolCallId: 'call-0-0',
+      errorText: INTERRUPTED_TURN,
+    })
+    const stored = (await messages.load({ sessionId: 's1' })).find(
+      (m) => m.id === first.messageId,
+    ) as HarnessUIMessage
+    expect(toolPart(stored, 'pay')).toMatchObject({
+      state: 'output-error',
+      errorText: INTERRUPTED_TURN,
+    })
+    expect(stored.metadata?.eharness?.stop).toBe('aborted')
+    await new Promise((r) => setTimeout(r, 50)) // the aborted tool may still finish its sleep
+    const before = log.length
+    await session.send('status?').result
+    expect(log.length).toBe(before)
+    expect(log.filter((l) => l === 'pay:5').length).toBeLessThanOrEqual(1)
+  })
+
+  test('a continuation whose process died is recovered (INTERRUPTED_CRASH, stop interrupted)', async () => {
+    const log: string[] = []
+    const messages = spyMessages()
+    const shared = spyState()
+    let started!: () => void
+    const running = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const hang = tool({
+      description: 'Pay slowly',
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async () => {
+        log.push('hang')
+        started()
+        return new Promise<string>(() => {}) // the process "dies" while this runs
+      },
+    })
+    const stateA = spyState(shared)
+    const a = setup(
+      {
+        model: scriptedModel([{ toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] }]),
+        tools: { pay: hang },
+        approval: { policy: { pay: 'user-approval' } },
+        recovery: { staleMs: 40 },
+      },
+      { messages, state: stateA },
+    )
+    const first = await a.agent.session('s1').send('pay').result
+    const approvalId = first.pending?.approvals[0]?.approvalId as string
+    void a.agent.session('s1').respond({ approvals: [{ id: approvalId, approved: true }] })
+    await running
+    stateA.failWrite = true // no more heartbeats from the dead instance
+    await new Promise((r) => setTimeout(r, 80))
+
+    const model = scriptedModel([{ text: 'recovered' }])
+    const b = setup(
+      { model, tools: { pay: payTool(log) }, recovery: { staleMs: 40 } },
+      { messages, state: shared },
+    )
+    const result = await b.agent.session('s1').send('hello?').result
+    expect(result.stop).toBe('complete')
+    expect(log).toEqual(['hang'])
+    const stored = (await messages.load({ sessionId: 's1' })).find(
+      (m) => m.id === first.messageId,
+    ) as HarnessUIMessage
+    expect(stored.metadata?.eharness?.stop).toBe('interrupted')
+    expect(toolPart(stored, 'pay')).toMatchObject({
+      state: 'output-error',
+      errorText: INTERRUPTED_CRASH,
+    })
+  })
+})

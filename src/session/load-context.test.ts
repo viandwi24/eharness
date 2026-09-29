@@ -114,3 +114,45 @@ describe('loadContext: compaction pointer path (spec 05 §5)', () => {
     expect(core.compaction).toEqual({ markerId: m2, resumeFromId: u3 })
   })
 })
+
+describe('loadContext: rewind view rule and mirror healing (spec 11 §5)', () => {
+  const rewind = (id: string, afterId: string | null) =>
+    createKindMessage('eh.rewind', { afterId, reason: 'regenerate' }, { id })
+
+  test('hidden messages leave the view; the mirror is rebuilt from the markers', async () => {
+    const [u1, a1, r1, a2] = Array.from({ length: 4 }, () => uuidv7()) as [
+      string,
+      string,
+      string,
+      string,
+    ]
+    const messages = spyMessages()
+    await messages.save('s1', [user(u1), user(a1), rewind(r1, u1), user(a2)])
+    const core: SessionStateSnapshot['core'] = {}
+    const { view, dirty } = await load(messages, core)
+    expect(view).toEqual([u1, r1, a2])
+    expect(core.rewinds).toEqual([{ afterId: u1, rewindId: r1 }])
+    expect(dirty).toBe(1)
+    // consistent mirror: nothing to heal
+    expect((await load(messages, core)).dirty).toBe(0)
+  })
+
+  test('a mirror entry without its marker (lost save) is dropped; older entries are kept', async () => {
+    const [old, u1, lost] = Array.from({ length: 3 }, () => uuidv7()) as [string, string, string]
+    const [m1] = [uuidv7()]
+    const [u2] = [uuidv7()]
+    const messages = spyMessages()
+    // only the range from the compaction pointer is loaded: `old` lies before it
+    await messages.save('s1', [user(u1), marker(m1 as string, u1), user(u2 as string)])
+    const core: SessionStateSnapshot['core'] = {
+      compaction: { markerId: m1 as string, resumeFromId: u1 },
+      rewinds: [
+        { afterId: null, rewindId: old },
+        { afterId: u1, rewindId: lost },
+      ],
+    }
+    const { dirty } = await load(messages, core)
+    expect(core.rewinds).toEqual([{ afterId: null, rewindId: old }])
+    expect(dirty).toBe(1)
+  })
+})

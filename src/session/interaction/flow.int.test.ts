@@ -536,3 +536,72 @@ describe('scenario 26: inject delivery and wake', () => {
     expect(model.prompts).toHaveLength(1)
   })
 })
+
+describe('more interaction edges', () => {
+  test('close() drops queued turns (stop aborted, nothing persisted)', async () => {
+    const model = scriptedModel([{ text: 'slow', delayMs: 10 }])
+    const { agent, messages } = setup({ model })
+    const session = agent.session('s1')
+    const r1 = session.send('one')
+    const queued = session.send('two', { ifBusy: 'queue' })
+    await session.close()
+    expect((await queued.result).stop).toBe('aborted')
+    await r1.result
+    expect((await all(messages)).some((m) => textOf(m) === 'two')).toBe(false)
+  })
+
+  test('regenerate while approvals are pending denies them first (onNewInput deny)', async () => {
+    const log: string[] = []
+    const pay = tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async () => {
+        log.push('pay')
+        return 'paid'
+      },
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'pay', input: { amount: 1 } }] },
+      { text: 'fresh answer' },
+    ])
+    const { agent, state } = setup({
+      model,
+      tools: { pay },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    await session.send('pay').result
+    const result = await session.regenerate().result
+    expect(result.stop).toBe('complete')
+    expect(log).toEqual([])
+    expect((await state.get('s1'))?.core.pending).toBeUndefined()
+    expect(texts(model.prompts[1])).toEqual(['user: pay'])
+  })
+
+  test('edit: reload reproduces the hot wire', async () => {
+    const run = async (reload: boolean) => {
+      const messages = spyMessages()
+      const state = spyState()
+      const model = scriptedModel([{ text: 'A1' }, { text: 'A2' }, { text: 'A2b' }, { text: 'A3' }])
+      const env = setup({ model }, { messages, state })
+      let session = env.agent.session('s1')
+      await session.send('Q1').result
+      const second = await session.send('Q2').result
+      await session.edit((second.messages[0] as HarnessUIMessage).id, 'Q2b').result
+      if (reload) {
+        await env.agent.close()
+        session = setup({ model }, { messages, state }).agent.session('s1')
+      }
+      await session.send('Q3').result
+      return model.prompts[3]
+    }
+    const hot = await run(false)
+    expect(texts(hot)).toEqual([
+      'user: Q1',
+      'assistant: A1',
+      'user: Q2b',
+      'assistant: A2b',
+      'user: Q3',
+    ])
+    expect(normalizeVolatile(await run(true))).toEqual(normalizeVolatile(hot))
+  })
+})
