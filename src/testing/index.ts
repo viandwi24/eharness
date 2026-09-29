@@ -7,6 +7,11 @@
  */
 
 export {
+  type FileSystemConformanceOptions,
+  type FileSystemUnderTest,
+  fileSystemConformance,
+} from './file-system.conformance.ts'
+export {
   type IdGeneratorConformanceOptions,
   idGeneratorConformance,
 } from './id-generator.conformance.ts'
