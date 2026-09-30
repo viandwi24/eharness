@@ -133,4 +133,4 @@ export {
 export { type ChatRequestBody, handleChatRequest } from './stream/chat-request.ts'
 
 /** Package version of this build. */
-export const version: string = '0.1.0'
+export const version: string = '0.2.0'
