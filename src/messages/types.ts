@@ -34,6 +34,8 @@ export type StopReason =
   | 'timeout'
   /** An `input.submit` hook blocked the input. */
   | 'blocked'
+  /** The progress guard found the turn repeating itself or failing, and a nudge did not help (spec 05 §3.2). */
+  | 'stuck'
   /** The process died mid-turn; set by crash recovery. */
   | 'interrupted'
   /** Step budget reached. */
@@ -44,6 +46,12 @@ export type StopReason =
   | `plugin:${string}`
 
 /**
+ * Risk class of a tool (spec 11 §3.2): `tool({ metadata: { risk } })`. MCP tools whose server marks
+ * them `destructiveHint` are `'destructive'`.
+ */
+export type ToolRisk = 'read' | 'write' | 'destructive'
+
+/**
  * Approvals and client tool calls waiting for `respond()`.
  *
  * @see docs/specs/11-interaction.md#2-pending-state
@@ -51,8 +59,18 @@ export type StopReason =
 export interface PendingState {
   /** The assistant message waiting for answers. */
   messageId: string
-  /** Tool calls waiting for a user approval decision. */
-  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string }>
+  /**
+   * Tool calls waiting for a user approval decision. `input` (the refined tool input) and `risk`
+   * (spec 11 §3.2) let an inbox show the request without loading messages; absent in state
+   * written before 0.2.
+   */
+  approvals: Array<{
+    approvalId: string
+    toolCallId: string
+    toolName: string
+    input?: unknown
+    risk?: ToolRisk
+  }>
   /** Calls of tools without `execute` waiting for a client-provided output. */
   clientTools: Array<{ toolCallId: string; toolName: string }>
 }
@@ -73,6 +91,8 @@ export interface HarnessUsageMeta {
   cacheWriteTokens?: number
   /** Total reported through `ctx.turn.addUsage()` (nested work, subagents). */
   nested?: number
+  /** Estimated USD (spec 12 §3); absent when no priced usage was recorded. */
+  costUsd?: number
 }
 
 /**
@@ -172,6 +192,8 @@ export interface UsagePartData {
   outputTokens: number
   totalTokens: number
   steps: number
+  /** Estimated USD of the turn so far; absent when no priced usage was recorded (spec 12). */
+  costUsd?: number
 }
 
 /** Data of the transient `data-eh.warning` part. */
@@ -285,6 +307,8 @@ export interface TurnResult<M = HarnessUIMessage> {
     totalTokens: number
     cachedInputTokens?: number
     cacheWriteTokens?: number
+    /** Estimated USD (spec 12); absent when nothing was priced. */
+    costUsd?: number
   }
   steps: number
   durationMs: number

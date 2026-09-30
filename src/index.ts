@@ -10,6 +10,7 @@
 export { defineHarnessAgent } from './agent/define-agent.ts'
 export type {
   ActiveTurn,
+  ApprovalActor,
   HarnessKindTypes,
   HarnessRun,
   HarnessSession,
@@ -32,12 +33,14 @@ export type {
   AgentMessageOf,
   AgentStaticTools,
   ApprovalConfig,
+  BudgetConfig,
   CacheConfig,
   CompactionConfig,
   HarnessAgent,
   HarnessAgentConfig,
   LoopConfig,
   ModelSettings,
+  ProgressConfig,
   ToolOutputConfig,
 } from './agent/types.ts'
 export {
@@ -64,7 +67,9 @@ export {
   INTERRUPTED_CRASH,
   INTERRUPTED_TURN,
   INTERRUPTED_UNKNOWN,
+  MAX_STEPS_WRAP_UP,
   NOT_EXECUTED_NEW_INPUT,
+  PROGRESS_NUDGE,
   TOOL_OUTPUT_TRUNCATED,
 } from './messages/texts.ts'
 export type {
@@ -84,14 +89,20 @@ export type {
   RewindPayload,
   StatusPartData,
   StopReason,
+  ToolRisk,
   TurnKind,
   TurnResult,
   UsagePartData,
   WarningPartData,
 } from './messages/types.ts'
+export { lookupModel, modelsDevCatalog } from './models/catalog.ts'
+export { computeCost } from './models/cost.ts'
+export type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './models/types.ts'
 export { definePlugin } from './plugin/define-plugin.ts'
 export type {
+  AddUsageOptions,
   AgentSetupContext,
+  ApprovalDecision,
   DataPartMap,
   HarnessContext,
   HarnessHooks,

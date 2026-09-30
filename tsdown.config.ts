@@ -7,6 +7,7 @@ export default defineConfig({
     'filesystem/memory': 'src/filesystem/memory.ts',
     'storage/memory': 'src/storage/memory.ts',
     'mcp/index': 'src/mcp/index.ts',
+    'todos/index': 'src/todos/index.ts',
     'testing/index': 'src/testing/index.ts',
   },
   format: 'esm',

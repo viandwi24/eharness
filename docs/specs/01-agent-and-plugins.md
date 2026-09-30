@@ -27,6 +27,10 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * actually used (models can change per turn/step, §5). Default 128_000 (+ W_DEFAULT_CONTEXT_WINDOW).
    */
   contextWindow?: number | ((model: LanguageModel) => number | undefined)
+  /** Limits and prices of the models in use (spec 12): record keyed by model id, or a function. */
+  models?: ModelCatalog
+  /** USD spending limits (spec 12 §4). */
+  budget?: BudgetConfig
 
   instructions?: InstructionInput | InstructionInput[]          // spec 02 §2
   tools?: ToolsInput<DP>                                         // tool functions: ctx typed with DP
@@ -71,11 +75,22 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
 }
 
 export interface LoopConfig {
-  maxSteps?: number              // default 50 — per turn (stop: 'max-steps'; extensible by turn.beforeEnd)
-  maxTurnOutputTokens?: number   // default 100_000 — output-token cap incl. nested usage (stop: 'cost-cap')
+  maxSteps?: number              // default 500 — per turn (stop: 'max-steps'; extensible by turn.beforeEnd)
+  wrapUp?: boolean               // default true — one tool-less summary step when maxSteps runs out (spec 05 §3.1)
+  maxTurnOutputTokens?: number   // default none — output-token cap incl. nested usage (stop: 'cost-cap')
   turnTimeoutMs?: number         // default none — wall clock per turn (stop: 'timeout')
-  maxContinues?: number          // default 3 — forced continuations per turn via turn.beforeEnd (§5)
+  maxContinues?: number          // default none — absolute cap on turn.beforeEnd continuations (§5)
+  maxIdleContinues?: number      // default 3 — continuations in a row without progress (spec 05 §3.2)
+  progress?: ProgressConfig | false  // stuck detection (spec 05 §3.2)
   persistEachStep?: boolean      // default true — upsert assistant message after every step
+}
+
+export interface ProgressConfig {
+  repeats?: number               // default 3 — same (tool, input, output) within the window
+  window?: number                // default 20 — steps that called tools
+  errorStreak?: number           // default 5 — steps in a row whose tool calls all failed
+  nudges?: number                // default 1 — PROGRESS_NUDGE reminders before stop 'stuck'
+  ignoreTools?: string[]         // tools that may legitimately repeat (polling)
 }
 
 // CallSettings is deprecated in AI SDK v7; use LanguageModelCallOptions + RequestOptions.
@@ -92,6 +107,7 @@ export type ModelSettings = Pick<LanguageModelCallOptions,
 
 export interface ApprovalConfig {                                // spec 11 §3
   policy?: ToolApprovalConfiguration<ToolSet, unknown>
+  risk?: Partial<Record<ToolRisk | 'unknown', ToolApprovalStatus>> // spec 11 §3.2
   secret?: string
   onNewInput?: 'deny' | 'reject'
 }
@@ -264,8 +280,8 @@ export interface TurnInfo {
   model: LanguageModel
   settings: ModelSettings
   abortSignal: AbortSignal
-  /** Add usage from nested work (subagents, tool-internal model calls) to this turn's totals and cost cap. */
-  addUsage(usage: LanguageModelUsage, source?: string): void
+  /** Add usage from nested work (subagents, tool-internal model calls) to this turn's totals, cost and caps (spec 12 §3). */
+  addUsage(usage: LanguageModelUsage, source?: string | { source?: string; model?: LanguageModel; costUsd?: number }): void
 }
 
 export interface HarnessLogger {
@@ -309,9 +325,11 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'turn.start'?(ctx: HarnessContext<DP>, e: { kind: TurnInfo['kind']; input: HarnessUIMessage | undefined }): Awaitable<void>
   /**
    * The loop is about to stop with `stop` ∈ 'complete' | 'max-steps' | 'length' (spec 05 §3.1).
-   * First non-void result wins (plugin order). Bounded by loop.maxContinues (W_CONTINUE_LIMIT).
+   * First non-void result wins (plugin order). Bounded by progress (loop.maxIdleContinues) and
+   * loop.maxContinues (W_CONTINUE_LIMIT), spec 05 §3.1–3.2. `idleContinues` > 0 means the previous
+   * continuation(s) produced no new tool results — a hook should give up or change its reason.
    */
-  'turn.beforeEnd'?(ctx: HarnessContext<DP>, e: { stop: StopReason; stepIndex: number; continues: number; lastText: string })
+  'turn.beforeEnd'?(ctx: HarnessContext<DP>, e: { stop: StopReason; stepIndex: number; continues: number; idleContinues: number; lastText: string })
     : Awaitable<void
       | { continue: { reason: string } }     // delivered as data-eh.input { source: 'plugin:<name>' }, one more step
       | { extendSteps: number }>             // only for 'max-steps': raise this turn's budget
@@ -323,8 +341,10 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'step.end'?(ctx: HarnessContext<DP>, e: StepEndEvent): Awaitable<{ stop?: string; context?: string } | void>
 
   /** Most restrictive wins (spec 11 §3). Throw = denied. Must be deterministic and side-effect free: AI SDK calls it again for approved calls when a continuation starts. */
-  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown })
+  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown; risk?: ToolRisk })
     : Awaitable<ToolApprovalStatus | void>
+  /** Every automatic approval decision and every respond() answer (spec 11 §3.3). Observational; errors are W_HOOK_FAILED. */
+  'approval.decided'?(ctx: HarnessContext<DP>, e: ApprovalDecision): Awaitable<void>
   /** Chainable. Rewrite tool input before approval and execution (implemented via experimental_refineToolInput). Must be deterministic (spec 11 §3). */
   'tool.before'?(ctx: HarnessContext<DP>, e: { toolName: string; input: unknown })
     : Awaitable<{ input: unknown } | void>
@@ -360,6 +380,7 @@ export interface StepEndEvent {
   finishReason: FinishReason
   usage: LanguageModelUsage          // this step
   totalUsage: LanguageModelUsage     // turn so far (incl. addUsage)
+  costUsd?: number                   // turn so far, estimated (spec 12); absent when nothing was priced
   toolCalls: Array<{ toolName: string; toolCallId: string; input: unknown }>
   toolResults: Array<{ toolName: string; toolCallId: string; status: 'output' | 'error' | 'denied' }>
   responseMessages: ModelMessage[]   // appended to the wire by this step

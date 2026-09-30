@@ -4,7 +4,7 @@
  * @see docs/specs/05-session-and-storage.md#31-continue-vs-stop-after-a-step-normative
  */
 import type { FinishReason, ModelMessage } from 'ai'
-import type { PendingState, StopReason } from '../messages/types.ts'
+import type { PendingState, StopReason, ToolRisk } from '../messages/types.ts'
 
 /** Facts about one finished step. */
 export interface StepFacts {
@@ -50,8 +50,10 @@ export function findPending(
   messageId: string,
   response: readonly ModelMessage[],
   clientTools: ReadonlySet<string>,
+  riskOfTool?: (toolName: string) => ToolRisk | undefined,
 ): PendingState | undefined {
   const calls = new Map<string, string>()
+  const inputs = new Map<string, unknown>()
   const results = new Set<string>()
   const approvals = new Map<string, string>() // toolCallId -> approvalId
   for (const message of response) {
@@ -59,6 +61,7 @@ export function findPending(
     for (const part of message.content) {
       if (part.type === 'tool-call' && part.providerExecuted !== true) {
         calls.set(part.toolCallId, part.toolName)
+        inputs.set(part.toolCallId, part.input)
       } else if (part.type === 'tool-result') {
         results.add(part.toolCallId)
       } else if (part.type === 'tool-approval-request') {
@@ -70,8 +73,16 @@ export function findPending(
   for (const [toolCallId, toolName] of calls) {
     if (results.has(toolCallId)) continue
     const approvalId = approvals.get(toolCallId)
-    if (approvalId !== undefined) pending.approvals.push({ approvalId, toolCallId, toolName })
-    else if (clientTools.has(toolName)) pending.clientTools.push({ toolCallId, toolName })
+    if (approvalId !== undefined) {
+      const risk = riskOfTool?.(toolName)
+      pending.approvals.push({
+        approvalId,
+        toolCallId,
+        toolName,
+        input: inputs.get(toolCallId),
+        ...(risk === undefined ? {} : { risk }),
+      })
+    } else if (clientTools.has(toolName)) pending.clientTools.push({ toolCallId, toolName })
   }
   return pending.approvals.length + pending.clientTools.length > 0 ? pending : undefined
 }
