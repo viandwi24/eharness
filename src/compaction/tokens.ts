@@ -5,7 +5,7 @@
  *
  * @see docs/specs/06-compaction.md#2-token-accounting
  */
-import { asSchema, type LanguageModel, type ModelMessage, type Tool } from 'ai'
+import { asSchema, type LanguageModel, type ModelMessage, type Tool, type ToolResultPart } from 'ai'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { describeModel } from '../internal/model.ts'
@@ -56,9 +56,13 @@ function json(value: unknown): string {
 
 type LoosePart = { type?: unknown; [key: string]: unknown }
 
+/** Tool result output variants (AI SDK): a new variant is a compile error below. */
+type ToolOutput = ToolResultPart['output']
+
 function outputTokens(output: unknown, count: CountTokens): number {
   if (typeof output !== 'object' || output === null) return count(json(output))
-  const o = output as { type?: unknown; value?: unknown; reason?: unknown }
+  // stored data: typed as AI SDK's union, but every access stays defensive
+  const o = output as ToolOutput
   switch (o.type) {
     case 'text':
     case 'error-text':
@@ -70,12 +74,13 @@ function outputTokens(output: unknown, count: CountTokens): number {
       return count(typeof o.reason === 'string' ? o.reason : '') + 2
     case 'content': {
       let n = 0
-      for (const item of Array.isArray(o.value) ? (o.value as LoosePart[]) : []) {
+      for (const item of Array.isArray(o.value) ? o.value : []) {
         n += item.type === 'text' ? count(String(item.text ?? '')) : FILE_TOKENS
       }
       return n
     }
     default:
+      o satisfies never
       return count(json(output))
   }
 }
