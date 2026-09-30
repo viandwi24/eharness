@@ -156,8 +156,14 @@ Exact formats (model-visible, api-stability.md):
 - Errors: `ERROR: skill "<name>" not found` (unknown in this turn, or `load()` returned `null`);
   `ERROR: skill "<name>" could not be loaded: <message>` (`load()` threw or returned an invalid
   doc); `ERROR: invalid path: <reason>` (§5); `ERROR: file "<path>" not found in skill "<name>"`;
-  `ERROR: file "<path>" of skill "<name>" could not be read: <message>`; `ERROR: \`<field>\` must
-  be a string` for malformed input. The tools never throw for these.
+  `ERROR: file "<path>" of skill "<name>" could not be read: <message>`. The tools never throw
+  for these.
+- Input schemas are zod objects (`z.object({ name: z.string() })`, …). The JSON schema sent to
+  the model is draft-07 with a `$schema` key, `required` fields and `additionalProperties: false`
+  (pinned by `src/skills/__golden__/skill-tool-schemas.json`). Malformed input (missing or non-string fields) is rejected by
+  AI SDK's input validation before `execute` runs: the model gets AI SDK's tool error
+  (`AI_InvalidToolInputError: Invalid input for tool <tool>: …`), and the UI and stored part carry
+  the same text (spec 04 §8).
 - Tool presence is decided per session, never by what one turn resolves (stable tool list, spec
   02 §6 rule 1, ADR-0013): `load_skill` and `read_skill_file` are present whenever the session has
   at least one skill source (static skills count); when nothing resolves they answer

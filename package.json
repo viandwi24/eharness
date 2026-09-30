@@ -42,8 +42,8 @@
     "release:version": "changeset version && bun scripts/sync-version.ts && bun install --lockfile-only"
   },
   "peerDependencies": {
-    "@ai-sdk/mcp": "^2.0.0",
-    "ai": "^7.0.0",
+    "@ai-sdk/mcp": "^2.0.63",
+    "ai": "^7.0.123",
     "zod": "^3.25.76 || ^4.1.8"
   },
   "peerDependenciesMeta": {
@@ -52,13 +52,13 @@
     }
   },
   "devDependencies": {
-    "@ai-sdk/mcp": "^2.0.62",
+    "@ai-sdk/mcp": "^2.0.63",
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.14",
     "@changesets/changelog-github": "^1.0.1",
     "@changesets/cli": "^3.0.3",
     "@types/bun": "1.4.2",
-    "ai": "^7.0.122",
+    "ai": "^7.0.123",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
     "typescript": "^7.0.2",

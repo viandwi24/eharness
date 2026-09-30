@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { ModelMessage, Tool } from 'ai'
 import { applyCache, deepMerge, isAnthropicModel, layoutMessages, systemBlocks } from './prompt.ts'
-import { toolSearchNames } from './steps.ts'
+import { stepEndEvent, toolSearchNames } from './steps.ts'
 import { decideStop, findPending, type StepFacts } from './stop.ts'
 
 const facts = (patch: Partial<StepFacts>): StepFacts => ({
@@ -147,5 +147,50 @@ describe('toolSearchNames', () => {
     ).toEqual(['a', 'b'])
     expect(toolSearchNames({ tools: [{ name: 'c' }, {}] })).toEqual(['c'])
     expect(toolSearchNames('nope')).toEqual([])
+  })
+})
+
+describe('stepEndEvent without a StepResult', () => {
+  test('falls back to the wire: tool calls, results (call order) and no `step`', () => {
+    const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2 } as never
+    const response: ModelMessage[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'text', text: 'Checking.' },
+          { type: 'tool-call', toolCallId: 'a', toolName: 'read', input: { p: 1 } },
+          { type: 'tool-call', toolCallId: 'b', toolName: 'pay', input: {} },
+        ],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'a',
+            toolName: 'read',
+            output: { type: 'text', value: 'x' },
+          },
+          {
+            type: 'tool-result',
+            toolCallId: 'b',
+            toolName: 'pay',
+            output: { type: 'execution-denied', reason: 'no' },
+          },
+        ],
+      },
+    ]
+    const event = stepEndEvent(0, 'tool-calls', usage, usage, response, undefined)
+    expect(event.step).toBeUndefined()
+    expect('step' in event).toBe(false)
+    expect(event.toolCalls).toEqual([
+      { toolName: 'read', toolCallId: 'a', input: { p: 1 } },
+      { toolName: 'pay', toolCallId: 'b', input: {} },
+    ])
+    expect(event.toolResults).toEqual([
+      { toolName: 'read', toolCallId: 'a', status: 'output' },
+      { toolName: 'pay', toolCallId: 'b', status: 'denied' },
+    ])
+    expect(event.responseMessages).toEqual(response)
   })
 })

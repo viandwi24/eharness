@@ -7,7 +7,7 @@ import type { HarnessWarning } from '../errors.ts'
 import { isHarnessError } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
-import type { HarnessContext } from '../plugin/types.ts'
+import type { HarnessContext, StepEndEvent } from '../plugin/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { collect, spyMessages, spyState } from './int-kit.ts'
 
@@ -297,6 +297,75 @@ describe('hook order and context', () => {
       { type: 'data-eh.input', data: { source: 'plugin:budget', text: 'Hurry up.' } },
     ])
     expect(userTexts(model.prompts[1])).toContain('Hurry up.')
+  })
+})
+
+describe('step.end event (spec 01 §5)', () => {
+  test('exposes the AI SDK StepResult as `step`; toolCalls/toolResults are derived from it', async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'slow', input: { n: 1 } },
+          { toolName: 'fails', input: {} },
+        ],
+      },
+      { text: 'done' },
+    ])
+    const slow = tool({
+      inputSchema: z.object({ n: z.number() }),
+      execute: async ({ n }) => {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        return n + 1
+      },
+    })
+    const fails = tool({
+      inputSchema: z.object({}),
+      execute: async (): Promise<string> => {
+        throw new Error('boom')
+      },
+    })
+    const events: StepEndEvent[] = []
+    const plugin = definePlugin({
+      name: 'spy',
+      setup: () => ({ hooks: { 'step.end': (_ctx, event) => void events.push(event) } }),
+    })
+    const { agent } = setup({ model, tools: { slow, fails }, plugins: [plugin] })
+    expect((await agent.session('s1').send('go').result).stop).toBe('complete')
+    expect(events).toHaveLength(2)
+    const [first, second] = events as [StepEndEvent, StepEndEvent]
+    expect(first.step).toBeDefined()
+    expect(first.step?.toolCalls.map((c) => [c.toolName, c.input])).toEqual([
+      ['slow', { n: 1 }],
+      ['fails', {}],
+    ])
+    expect(first.step?.toolResults.map((r) => [r.toolName, r.output])).toEqual([['slow', 2]])
+    expect(first.step?.content.some((p) => p.type === 'tool-error')).toBe(true)
+    expect(first.step?.finishReason).toBe(first.finishReason)
+    // call order, not completion order ('fails' finishes first)
+    expect(first.toolCalls.map((c) => c.toolName)).toEqual(['slow', 'fails'])
+    expect(first.toolResults).toEqual([
+      { toolName: 'slow', toolCallId: first.toolCalls[0]?.toolCallId ?? '', status: 'output' },
+      { toolName: 'fails', toolCallId: first.toolCalls[1]?.toolCallId ?? '', status: 'error' },
+    ])
+    expect(second.step?.text).toBe('done')
+    expect(second.toolCalls).toEqual([])
+    expect(second.toolResults).toEqual([])
+  })
+
+  test('an aborted step fires no step.end', async () => {
+    const model = scriptedModel([{ text: 'slow', delayMs: 200 }])
+    let calls = 0
+    const plugin = definePlugin({
+      name: 'spy',
+      setup: () => ({ hooks: { 'step.end': () => void calls++ } }),
+    })
+    const { agent } = setup({ model, plugins: [plugin] })
+    const session = agent.session('s1')
+    const run = session.send('go')
+    await run.messageId
+    session.abort()
+    expect((await run.result).stop).toBe('aborted')
+    expect(calls).toBe(0)
   })
 })
 

@@ -3,7 +3,13 @@
  *
  * @see docs/decisions/0014-interrupted-tool-calls-answered.md
  */
-import type { UIMessage } from 'ai'
+import {
+  type DynamicToolUIPart,
+  getToolName,
+  isToolUIPart,
+  type ToolUIPart,
+  type UIMessage,
+} from 'ai'
 
 type AnyPart = UIMessage['parts'][number]
 
@@ -18,14 +24,17 @@ export interface ToolPartLike {
   [key: string]: unknown
 }
 
-/** True for `tool-<name>` and `dynamic-tool` parts. */
+/**
+ * True for `tool-<name>` and `dynamic-tool` parts: AI SDK `isToolUIPart` for loosely typed parts
+ * (stored or client data). Typed `UIMessage` parts should use `isToolUIPart` directly.
+ */
 export function isToolPart(part: { type: string }): part is ToolPartLike {
-  return part.type === 'dynamic-tool' || part.type.startsWith('tool-')
+  return isToolUIPart(part as AnyPart)
 }
 
-/** Tool name of a tool part. */
+/** Tool name of a loosely typed tool part (AI SDK `getToolName`). */
 export function toolNameOf(part: ToolPartLike): string {
-  return part.type === 'dynamic-tool' ? String(part.toolName) : part.type.slice(5)
+  return String(getToolName(part as unknown as ToolUIPart | DynamicToolUIPart))
 }
 
 /**
@@ -57,7 +66,7 @@ export function answerDanglingToolParts<M extends { parts: AnyPart[] }>(
 ): M {
   let changed = false
   const parts = message.parts.map((original) => {
-    if (!isToolPart(original)) return original
+    if (!isToolUIPart(original)) return original
     const part = original as unknown as ToolPartLike
     if (hasToolResult(part) || keep(part)) return original
     changed = true

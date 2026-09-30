@@ -3,7 +3,6 @@
  *
  * @see docs/specs/04-streaming.md#3-plugin-stream-writer
  */
-import type { UIMessageChunk } from 'ai'
 import type { DataChunk } from '../messages/data-parts.ts'
 import type { PluginStreamWriter } from '../plugin/types.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
@@ -46,12 +45,12 @@ export function writeDataChunk(
     )
   }
   const transient = definedTransient || transientOption === true
-  const out = {
+  const out: DataChunk = {
     type: chunk.type,
     ...(chunk.id === undefined ? {} : { id: chunk.id }),
     data: chunk.data,
     ...(transient ? { transient: true } : {}),
-  } as UIMessageChunk & DataChunk
+  }
   const turn = rt.turn
   if (turn?.active === true) {
     turn.write(out)
