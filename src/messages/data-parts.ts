@@ -3,7 +3,7 @@
  *
  * @see docs/specs/03-messages.md#4-data-parts
  */
-import type { FilePart, FlexibleSchema, InferSchema, TextPart } from 'ai'
+import type { FilePart, FlexibleSchema, InferSchema, TextPart, UIMessageChunk } from 'ai'
 import { z } from 'zod/v4'
 import type {
   ContextStats,
@@ -57,13 +57,11 @@ export function defineDataPart<const S extends FlexibleSchema>(
   return def
 }
 
-/** A data-part chunk as written to the UI message stream. */
-export interface DataChunk {
-  type: `data-${string}`
-  id?: string
-  data: unknown
-  transient?: boolean
-}
+/**
+ * A data-part chunk as written to the UI message stream: AI SDK's data chunk (`data-<name>`,
+ * `id?`, `data`, `transient?`), which `ai` does not export by name.
+ */
+export type DataChunk = Extract<UIMessageChunk, { type: `data-${string}` }>
 
 /** Local names of app data parts/kinds and plugin keys: `^[a-z][a-zA-Z0-9-]*$`, not `eh…`. */
 export const LOCAL_NAME_PATTERN: RegExp = /^[a-z][a-zA-Z0-9-]*$/
