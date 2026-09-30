@@ -4,7 +4,7 @@
 
 **BREAKING:** the minimum peer versions are now `ai@^7.0.123` and `@ai-sdk/mcp@^2.0.63` (the tested
 versions). eharness imports values such as `StreamProviderError` and `toolSearch` that early
-`ai` 7.0.x releases do not export; 0.1.0 already needed `ai` ≥ ~7.0.90 in practice.
+`ai` 7.0.x releases do not export; 0.1.0 already needed `ai` ≥ 7.0.104 in practice (first release exporting `toolSearch`).
 Migration: `npm install ai@^7.0.123` (and `@ai-sdk/mcp@^2.0.63` if you use `eharness/mcp`).
 
 **BREAKING (model-visible behaviour):** the built-in skill tools (`load_skill`, `read_skill_file`,
