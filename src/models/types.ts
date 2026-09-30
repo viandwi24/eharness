@@ -33,7 +33,10 @@ export interface ModelPricing extends TokenRates {
 export interface ModelInfo {
   /** Total context window in tokens (used when `contextWindow` is not configured). */
   contextWindow?: number
-  /** Maximum output tokens of one call. */
+  /**
+   * Maximum output tokens of one call. Informational (for the application): the core does not use
+   * it; set `settings.maxOutputTokens` to cap calls.
+   */
   maxOutputTokens?: number
   pricing?: ModelPricing
 }
