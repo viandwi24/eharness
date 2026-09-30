@@ -81,6 +81,51 @@ export async function POST(req: Request) {
 On the client: `useChat<InferHarnessUIMessage<typeof agent>>()` — every data part, tool and
 message kind is typed. Full route + client: [`examples/next-route.ts`](examples/next-route.ts).
 
+### Tools that use the running chat and stream custom UI data
+
+Write a tool as a function `(ctx) => tool()` to get the session context, and declare `dataParts`
+to stream your own typed UI data from inside the tool:
+
+```ts
+const agent = defineHarnessAgent({
+  model: 'anthropic/claude-sonnet-4.6',
+  dataParts: {
+    invoice: defineDataPart({ schema: z.object({ total: z.number(), status: z.string() }) }),
+    progress: defineDataPart({ schema: z.object({ percent: z.number() }), transient: true }),
+  },
+  tools: {
+    create_invoice: (ctx) =>
+      tool({
+        inputSchema: z.object({ total: z.number() }),
+        execute: async ({ total }, { toolCallId, messages, abortSignal }) => {
+          const userText = ctx.turn?.input?.parts.find((p) => p.type === 'text')?.text
+          const userId = String(ctx.runtime.userId) // agent.session(id, { runtime: { userId } })
+          ctx.state.set('lastInvoice', total) // persisted with the session
+
+          ctx.stream.data('progress', { percent: 50 }) // transient: streamed, never stored
+          ctx.stream.data('invoice', { total, status: 'draft' }, { id: toolCallId })
+          ctx.stream.data('invoice', { total, status: 'sent' }, { id: toolCallId }) // same id → replaced
+          return `Invoice sent for ${userId}`
+        },
+      }),
+  },
+})
+```
+
+| In a tool | What you get |
+|---|---|
+| `ctx.session.id`, `ctx.agent.id` | which chat and agent the call belongs to |
+| `ctx.turn` | this turn's user message (`input`), model, `abortSignal`, `addUsage()` |
+| `ctx.runtime` | your app values (user, tenant, request) from `agent.session(id, { runtime })` and `send(…, { runtime })` |
+| `ctx.state` | JSON state stored with the session |
+| `ctx.services` | services from plugins, e.g. `ctx.services.fs` |
+| `ctx.stream.data(name, data, { id })` | write a declared data part (type-checked); `ctx.stream.write(chunk)` for any registered part |
+| 2nd `execute` argument (AI SDK) | `toolCallId`, `messages` (model messages so far), `abortSignal` |
+
+The client sees `data-invoice` in `message.parts` (typed) and transient parts in
+`useChat({ onData })`. Runnable: [`examples/tool-context.ts`](examples/tool-context.ts); more in
+[rendering data parts](docs/guides/rendering-data-parts.md).
+
 ## Why
 
 AI SDK gives you `streamText`, tools, `UIMessage` and UI streams. Every serious agent then
@@ -119,6 +164,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | Example | Shows |
 |---|---|
 | [`quick-start.ts`](examples/quick-start.ts) | the code above |
+| [`tool-context.ts`](examples/tool-context.ts) | a tool that reads the running chat and streams custom data parts |
 | [`basic-cli.ts`](examples/basic-cli.ts) | terminal rendering with `readUIMessageStream`, filesystem plugin |
 | [`next-route.ts`](examples/next-route.ts) · [`.demo.ts`](examples/next-route.demo.ts) | Next.js routes, `useChat` client, approvals, resume |
 | [`plugin-authoring.ts`](examples/plugin-authoring.ts) | a plugin with a service, tool, data part, hooks and state |
