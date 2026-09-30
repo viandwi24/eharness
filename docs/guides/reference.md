@@ -1,0 +1,152 @@
+# Reference
+
+Every option and method at a glance, with defaults and the guide or spec that explains it. The
+specs in [`../specs`](../specs) are the full contracts.
+
+## `defineHarnessAgent(config)`
+
+| Option | Default | Notes |
+|---|---|---|
+| `model` | required | AI Gateway string or AI SDK `LanguageModel` |
+| `id` | `'agent'` | used in logs and telemetry |
+| `contextWindow` | from `models`, else 128k (`W_DEFAULT_CONTEXT_WINDOW`) | number or `(model) => number \| undefined` — [compaction](compaction.md) |
+| `models` | none | `ModelCatalog`: record keyed by model id, or function — [models and cost](models-and-cost.md) |
+| `budget` | none | `{ maxTurnUsd?, maxSessionUsd?, warnAt? = 0.8 }` → `'cost-cap'` — [models and cost](models-and-cost.md#budgets) |
+| `instructions` | none | string, `{ text, id? }`, function, or `{ text: fn, refresh: 'session' \| 'turn' }` — [tools and MCP](tools-and-mcp.md#instructions) |
+| `tools` | none | record of `Tool` / `(ctx) => Tool`, a `ToolSource`, or an array of both |
+| `skills` | none | `defineSkill(…)` / `defineSkillSource(…)` — [skills](skills.md) |
+| `mcp` | none | `mcpServer(…)` sources (same as putting them into `tools`) |
+| `dataParts`, `messageKinds` | none | app parts `data-<key>` and kinds — [rendering data parts](rendering-data-parts.md) |
+| `plugins` | `[]` | `definePlugin(…)` values, in order — [writing a plugin](writing-a-plugin.md) |
+| `storage` | memory adapters | `{ messages?: MessageAdapter; state?: StateAdapter }` — [storage adapters](writing-a-storage-adapter.md) |
+| `compaction` | `{ summarizeAt: 0.75, keepLast: 4, maxSummaryTokens: 4_000 }` | or `false` — [compaction](compaction.md) |
+| `guard` | `{ maxContextRatio: 0.9 }` | `reserveTokens` default: `settings.maxOutputTokens` ?? 8% of the window |
+| `isContextOverflow` | built-in patterns | extra "context too long" detection |
+| `loop` | see below | [long-running turns](long-running-turns.md) |
+| `settings` | none | `streamText` settings: `maxOutputTokens`, `temperature`, `topP`, `topK`, `presencePenalty`, `frequencyPenalty`, `stopSequences`, `seed`, `reasoning`, `maxRetries`, `headers`, `providerOptions`, `timeout` (per step), `streamRetries` |
+| `approval` | `{ onNewInput: 'deny' }` | `policy`, `risk`, `secret`, `onNewInput` — [approvals](approvals-and-interaction.md) |
+| `cache` | `{ mode: 'auto' }` | `{ mode?: 'auto' \| 'breakpoints'; ttl?: '5m' \| '1h' }` or `false`; Anthropic models only |
+| `toolOutput` | `{ maxChars: 50_000, strategy: 'truncate' }` | plus `perTool` — [tools and MCP](tools-and-mcp.md#tool-output-limits) |
+| `callOptions` | none | schema for `SendOptions.options` → `ctx.turn.options` |
+| `repairToolCall` | none | AI SDK `repairToolCall` |
+| `recovery` | `{ staleMs: 120_000 }` | crash recovery of turns whose process died; `false` disables |
+| `telemetry` | none | AI SDK telemetry options |
+| `strict` | `false` | misuse warnings throw `EH_CONFIG_INVALID` |
+| `logger` | debug/info off, warn/error to console | `ctx.log` |
+| `onWarning` | `console.warn`, deduplicated | every `HarnessWarning` |
+| `generateId` | `uuidv7` | must produce time-sortable ids (`idGeneratorConformance`) |
+| `skillsIndexLimit` | 50 | above it, skills switch to `search_skills` |
+| `sessionIdleMs` | 30 min | evict idle cached sessions; `0` = never |
+
+`loop`: `maxSteps` 500 · `wrapUp` `true` · `progress` `{ repeats: 3, window: 20, errorStreak: 5,
+nudges: 1, ignoreTools }` or `false` · `maxIdleContinues` 3 · `maxContinues` none ·
+`maxTurnOutputTokens` none · `turnTimeoutMs` none · `persistEachStep` `true`.
+
+The returned `HarnessAgent` has `id`, `config`, `session(id, options?)`, `closeSession(id)` and
+`close()`. `InferHarnessUIMessage<typeof agent>` is its exact message type (for `useChat`).
+
+## Sessions
+
+`agent.session(id, options?)` — `SessionOptions`: `storage` (per-session adapters), `runtime`
+(`ctx.runtime`), `toolsContext`, `lock` (`SessionLock`), `onInvalidMessage` (`'drop'` default,
+`'keep'`, `'throw'`), `acceptClientMetadata` (default `false`), `parent` (subagents, depth ≤ 8).
+Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNORED`).
+
+| Method | Does |
+|---|---|
+| `send(input?, options?)` | start a turn (`string`, `{ text, files }` or a `UIMessage`; none = continue) |
+| `respond({ approvals, toolOutputs }, options?)` | answer pending approvals / client tools and continue the same message |
+| `regenerate({ messageId?, … })`, `edit(messageId, input, options?)` | answer again / replace a user message |
+| `attach()` | replay and follow the running turn (`undefined` when idle) |
+| `abort(reason?)` | abort the running turn and drop queued turns |
+| `inject(kind, data, { deliver?, wake? })` | store an event message; deliver it into the running turn or wake the agent |
+| `compact()` | manual compaction (idle only) |
+| `clearGrants()` | forget `remember: 'session'` grants |
+| `messages({ beforeId?, limit?, includeHidden? })` | stored history for UIs |
+| `stats()` | `ContextStats` + `pending` + `activeTurn` |
+| `events()` | long-lived stream of `SessionEvent`s |
+| `ready()`, `close()`, `running`, `id` | open now (configuration errors as exceptions), close, state |
+
+`SendOptions`: `ifBusy` (`'reject'` default, `'queue'`, `'steer'`; `send` only), `model`,
+`settings`, `options` (validated by `callOptions`), `maxSteps`, `abortSignal`, `runtime`,
+`toolsContext`. Every turn operation returns a `HarnessRun`: `turnId`, `kind`, `messageId`
+(promise), `stream` (AI SDK UI message stream, single consumer), `result` (never rejects),
+`abort()`, `toResponse()`, `pipeTo(res)`. `handleChatRequest(session, body, options?)` maps a
+`useChat` request (`ChatRequestBody`) to `send` / `respond` / `regenerate` / `edit`.
+
+## Turn results and stop reasons
+
+`TurnResult`: `turnId`, `kind`, `messageId?`, `stop`, `pending?`, `messages`, `usage`
+(`inputTokens`, `outputTokens`, `totalTokens`, `cachedInputTokens?`, `cacheWriteTokens?`,
+`costUsd?`), `steps`, `durationMs`, `error?` (`{ code?, message, details? }`).
+
+| `stop` | Meaning |
+|---|---|
+| `complete` | the model answered without tool calls |
+| `tool-pending` | waiting for `respond()` |
+| `max-steps` | step budget used up (after the wrap-up step) |
+| `stuck` | the progress guard stopped a repeating or failing turn |
+| `cost-cap` | `loop.maxTurnOutputTokens` exceeded or a USD budget used up |
+| `length`, `content-filter` | provider finish reasons |
+| `error` | provider, stream, storage or overflow error (`error.code`, e.g. `EH_CONTEXT_OVERFLOW`) |
+| `aborted`, `timeout`, `blocked`, `interrupted` | abort, time limit, `input.submit` block, crashed process |
+| `plugin:<name>:<reason>` | a `step.end` hook stopped the turn |
+
+## Errors
+
+Thrown `HarnessError`s (`isHarnessError(e, code)`) are programmer or configuration errors: boot
+conflicts (`EH_CONFIG_INVALID`, `EH_DUPLICATE_TOOL`, `EH_DUPLICATE_SKILL`,
+`EH_DUPLICATE_DATA_PART`, `EH_SERVICE_CONFLICT`, `EH_SERVICE_MISSING`, `EH_PLUGIN_ORDER`) and
+misuse. Turn operations throw only `EH_SESSION_BUSY` and `EH_SESSION_CLOSED`; everything else is a
+run error in `run.result.error` (`EH_INVALID_INPUT`, `EH_PENDING_RESPONSE`, `EH_INVALID_MESSAGE`,
+`EH_STORAGE`, `EH_CONTEXT_OVERFLOW`, …). `session.compact()` may throw `EH_COMPACTION_FAILED`.
+
+```ts
+import { isHarnessError } from 'eharness'
+
+try {
+  await session.ready() // surfaces configuration errors (missing services, bad MCP config, …)
+  const result = await session.send('Hi').result
+  if (result.stop === 'error') console.error(result.error?.code, result.error?.message)
+} catch (error) {
+  if (isHarnessError(error, 'EH_SESSION_BUSY')) console.log('a turn is already running')
+  else throw error
+}
+```
+
+A tool that throws becomes a tool error result wrapped as `HarnessToolError` (`toolName`,
+`toolCallId`, same message) — the turn continues. `eh.notice` messages carry
+`EH_TURN_INTERRUPTED`, `EH_INPUT_BLOCKED` and `EH_TURN_TIMEOUT` (`HarnessNoticeCode`).
+
+## Warnings
+
+Non-fatal problems go to `onWarning` (`HarnessWarning`: `code`, `message`, `details?`), to the turn
+stream as transient `data-eh.warning` parts, and to `session.events()` outside a turn. Plugins emit
+their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
+
+| Area | Codes |
+|---|---|
+| Loop and cost | `W_LOOP_STUCK`, `W_CONTINUE_LIMIT`, `W_BUDGET`, `W_MODEL_UNPRICED` |
+| Context | `W_DEFAULT_CONTEXT_WINDOW`, `W_COMPACTION_FAILED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CACHE_BUST` |
+| Tools and sources | `W_SHADOWED`, `W_TOOL_SOURCE_FAILED`, `W_INVALID_TOOL_NAME`, `W_MCP_DRIFT`, `W_TOOL_OUTPUT_LIMITED`, `W_GRANT_IGNORED` |
+| Skills | `W_INVALID_SKILL`, `W_SKILL_SOURCE_FAILED` |
+| Messages and parts | `W_INVALID_MESSAGE`, `W_UNKNOWN_DATA_PART`, `W_UNKNOWN_STORED_PART`, `W_WRITE_OUTSIDE_TURN`, `W_TRANSIENT_OVERRIDE` |
+| API use | `W_HOOK_FAILED`, `W_DEPRECATED`, `W_SESSION_OPTIONS_IGNORED` |
+
+## Fixed texts
+
+Model- or UI-visible texts the core writes, exported so apps and tests can match them (changing
+one is a minor change): `INTERRUPTED_TURN`, `INTERRUPTED_CRASH`, `INTERRUPTED_UNKNOWN` (results of
+tool calls that never finished), `DENIED_NEW_INPUT`, `NOT_EXECUTED_NEW_INPUT` (pending calls
+answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
+`TOOL_OUTPUT_TRUNCATED` (truncation marker). `eharness/todos` exports its own (`TODOS_*`).
+
+## Other exports
+
+- Messages: `uuidv7()`, `isUuidV7()`, `createKindMessage()`, `isKindMessage()`,
+  `defineMessageKind()`, `defineDataPart()`, types `HarnessUIMessage`, `HarnessMetadata`
+  (`metadata.eharness`: `createdAt`, `kind`, `turnId`, `model`, `usage`, `stop`, `steps`,
+  `durationMs`, `pending`, `error`, …), `DataChunk`.
+- Skills: `defineSkill()`, `defineSkillSource()`, `parseSkillMarkdown()`, `validateSkillPath()`.
+- Models: `modelsDevCatalog()`, `lookupModel()`, `computeCost()`.
+- `version`: the package version of the build.

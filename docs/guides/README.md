@@ -6,9 +6,17 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | Guide | You will learn |
 |---|---|
 | [Getting started](getting-started.md) | install, a first agent, run it on Node or Bun, offline testing |
+| [Instructions, tools and MCP](tools-and-mcp.md) | static and dynamic instructions/tools, tool sources, tool search, `mcpServer`, output limits, timeouts, per-turn models |
 | [Writing a plugin](writing-a-plugin.md) | `definePlugin`: tools, services, hooks, state, data parts |
 | [Writing a storage adapter](writing-a-storage-adapter.md) | `MessageAdapter`, `StateAdapter`, `SessionLock`, conformance tests |
 | [Rendering data parts](rendering-data-parts.md) | custom UI data: persistent vs transient, kinds, typed rendering |
 | [Skills](skills.md) | static skills, `SKILL.md` folders, custom skill sources |
-| [Approvals and interaction](approvals-and-interaction.md) | tool approval, client tools, regenerate/edit, steer, queue, wake |
-| [Subagents](subagents.md) | a tool that runs a child session with live progress and usage |
+| [Filesystem](filesystem.md) | the `filesystem()` plugin: file tools, safety rules, services, custom adapters |
+| [Context and compaction](compaction.md) | summarization, markers, context stats, the guard, overflow recovery |
+| [Approvals and interaction](approvals-and-interaction.md) | tool approval by policy or risk, audit hook, approval inbox, client tools, regenerate/edit, steer, queue, wake |
+| [Long-running turns](long-running-turns.md) | step budget, wrap-up, progress guard (`'stuck'`), continuations, stop reasons |
+| [Models and cost](models-and-cost.md) | model catalog, models.dev, `costUsd`, nested usage, USD budgets |
+| [Todos](todos.md) | the `todos()` plugin: checklist tool, rendering, reminders, enforcement |
+| [Subagents](subagents.md) | a tool that runs a child session with live progress, usage and cost |
+| [Testing](testing.md) | `scriptedModel`, asserting on prompts and results, conformance suites |
+| [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |
