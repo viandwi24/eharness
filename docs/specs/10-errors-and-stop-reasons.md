@@ -96,7 +96,10 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_DEPRECATED` | a deprecated API was used (once per API) |
 | `W_SESSION_OPTIONS_IGNORED` | options passed to a cached session differ |
 | `W_DEFAULT_CONTEXT_WINDOW` | `contextWindow` not set (or its function returned `undefined`) for a model; using 128k |
-| `W_CONTINUE_LIMIT` | `turn.beforeEnd` asked to continue more than `loop.maxContinues` times; ignored |
+| `W_CONTINUE_LIMIT` | `turn.beforeEnd` asked to continue but the continuation is refused: `details.reason` `'no-progress'` (`loop.maxIdleContinues`) or `'max'` (`loop.maxContinues`) |
+| `W_BUDGET` | a USD budget reached `warnAt` or is used up (`details: { scope, limitUsd, spentUsd, exceeded }`, spec 12 §4) |
+| `W_MODEL_UNPRICED` | a budget is configured but the step model has no pricing in `models` (`details.model`) |
+| `W_LOOP_STUCK` | the progress guard found the turn stuck and reminded the model (`details: { kind, toolName?, count, stepIndex }`, spec 05 §3.2) |
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6) |
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
@@ -129,9 +132,10 @@ export type StopReason =
   | 'aborted'         // run.abort() / session.abort() / abortSignal
   | 'timeout'         // loop.turnTimeoutMs, or an AI SDK step timeout (settings.timeout)
   | 'blocked'         // an input.submit hook blocked the input (spec 05 §3)
+  | 'stuck'           // the progress guard found the turn repeating or failing; a reminder did not help (spec 05 §3.2)
   | 'interrupted'     // the process died mid-turn; set by crash recovery (spec 05 §9)
   | 'max-steps'       // step budget reached (loop.maxSteps / SendOptions.maxSteps, + extendSteps)
-  | 'cost-cap'        // loop.maxTurnOutputTokens exceeded
+  | 'cost-cap'        // loop.maxTurnOutputTokens or a budget exceeded
   | `plugin:${string}` // a step.end hook stopped the turn: 'plugin:<plugin>:<reason>'
 ```
 
@@ -150,7 +154,7 @@ export interface TurnResult<M = HarnessUIMessage> {
   /** Messages created by this turn (user, assistant, and any kind messages such as markers). */
   messages: M[]
   /** This turn only; includes addUsage() contributions. Cache fields when the provider reports them. */
-  usage: { inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number; cacheWriteTokens?: number }
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number; cacheWriteTokens?: number; costUsd?: number }
   steps: number
   durationMs: number
   /** `details` of an EH_* error (e.g. `{ reason: 'stale' }` for respond(), spec 11); not stored. */
@@ -170,4 +174,6 @@ UIs and tests). Changing one is a minor change (it changes what models see).
 | `INTERRUPTED_UNKNOWN` | `Interrupted: no result was recorded for this tool call; it may or may not have taken effect.` | projection and guard (spec 03 §6, spec 06 §6) |
 | `DENIED_NEW_INPUT` | `The user sent a new message instead of answering.` | approval denial reason, `onNewInput: 'deny'` (spec 11 §4.1) |
 | `NOT_EXECUTED_NEW_INPUT` | `Not executed: the user sent a new message.` | client tool error, `onNewInput: 'deny'` |
+| `PROGRESS_NUDGE` | `You are not making progress: {what}. Do not repeat it. Try a different approach, or stop and explain what blocks you.` | progress guard reminder (spec 05 §3.2) |
+| `MAX_STEPS_WRAP_UP` | `The step limit of this turn is reached and tools are disabled. Summarize what you did, what is left, and how to continue.` | wrap-up step reminder (spec 05 §3.1) |
 | `TOOL_OUTPUT_TRUNCATED` | `…[truncated {n} chars]…` | output limits (spec 09 §4) |

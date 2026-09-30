@@ -19,3 +19,7 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0012](0012-approvals-server-owned-pending.md) | Tool approvals via AI SDK `toolApproval` with server-owned pending state |
 | [0013](0013-cache-friendly-prompt-layout.md) | Cache-friendly prompt layout with reminders |
 | [0014](0014-interrupted-tool-calls-answered.md) | Interrupted tool calls are answered, not dropped |
+| [0015](0015-progress-bounded-loop.md) | Long turns are bounded by progress, not by small counts |
+| [0016](0016-model-catalog-and-budgets.md) | Model limits and prices come from an app-supplied catalog |
+| [0017](0017-tool-risk-and-approval-decisions.md) | Tool risk in AI SDK metadata; approval decisions are observable |
+| [0018](0018-todos-in-history.md) | Todos live in the conversation, reminders are volatile |

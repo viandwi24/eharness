@@ -18,9 +18,10 @@ import type {
 } from 'ai'
 import type { ApprovalConfig } from '../agent/types.ts'
 import { HarnessToolError, type HarnessWarning } from '../errors.ts'
-import type { HarnessContext } from '../plugin/types.ts'
+import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
+import { riskOf } from './risk.ts'
 
 /** Dependencies of the wrappers. */
 export interface ToolWrapDeps {
@@ -245,21 +246,28 @@ export function buildApproval(
   grants?: ApprovalGrants,
 ): GenericToolApprovalFunction<ToolSet, never, unknown> | undefined {
   const policy = config?.policy
+  const byRisk = config?.risk
   const hooks = deps.hooks.list('tool.approve')
-  if (policy === undefined && hooks.length === 0 && grants === undefined) return undefined
+  if (policy === undefined && byRisk === undefined && hooks.length === 0 && grants === undefined) {
+    return undefined
+  }
   const ignoredWarned = new Set<string>()
+  /** Calls already reported to `approval.decided` (AI SDK re-runs the function for approved calls). */
+  const reported = new Set<string>()
   const failed = (error: unknown): Normalized => ({
     type: 'denied',
     reason: error instanceof Error ? error.message : String(error),
   })
   return async (options) => {
     const { toolCall } = options
-    const statuses: Normalized[] = []
+    const toolMetadata = (toolCall as { toolMetadata?: unknown }).toolMetadata
+    const risk = riskOf(toolMetadata)
+    const statuses: Array<{ status: Normalized; by: ApprovalDecision['by'] }> = []
     if (typeof policy === 'function') {
       try {
-        statuses.push(normalizeStatus(await policy(options as never)))
+        statuses.push({ status: normalizeStatus(await policy(options as never)), by: 'policy' })
       } catch (error) {
-        statuses.push(failed(error))
+        statuses.push({ status: failed(error), by: 'policy' })
       }
     } else if (policy !== undefined) {
       const entry = (policy as Record<string, unknown>)[toolCall.toolName]
@@ -273,13 +281,16 @@ export function buildApproval(
             ],
             runtimeContext: options.runtimeContext,
           })
-          statuses.push(normalizeStatus(status as ToolApprovalStatus))
+          statuses.push({ status: normalizeStatus(status as ToolApprovalStatus), by: 'policy' })
         } catch (error) {
-          statuses.push(failed(error))
+          statuses.push({ status: failed(error), by: 'policy' })
         }
       } else {
-        statuses.push(normalizeStatus(entry as ToolApprovalStatus))
+        statuses.push({ status: normalizeStatus(entry as ToolApprovalStatus), by: 'policy' })
       }
+    }
+    if (byRisk !== undefined) {
+      statuses.push({ status: normalizeStatus(byRisk[risk ?? 'unknown']), by: 'risk' })
     }
     for (const hook of hooks) {
       try {
@@ -287,23 +298,33 @@ export function buildApproval(
           toolName: toolCall.toolName,
           toolCallId: toolCall.toolCallId,
           input: toolCall.input,
-          ...((toolCall as { toolMetadata?: unknown }).toolMetadata === undefined
-            ? {}
-            : { toolMetadata: (toolCall as { toolMetadata?: unknown }).toolMetadata }),
+          ...(toolMetadata === undefined ? {} : { toolMetadata }),
+          ...(risk === undefined ? {} : { risk }),
         })
-        statuses.push(normalizeStatus(status ?? undefined))
+        statuses.push({ status: normalizeStatus(status ?? undefined), by: `plugin:${hook.owner}` })
       } catch (error) {
-        statuses.push(failed(error))
+        statuses.push({ status: failed(error), by: `plugin:${hook.owner}` })
       }
     }
     let winner: Normalized = { type: 'not-applicable' }
-    for (const status of statuses) if (RANK[status.type] > RANK[winner.type]) winner = status
+    let by: ApprovalDecision['by'] = 'policy'
+    for (const entry of statuses) {
+      if (RANK[entry.status.type] > RANK[winner.type]) {
+        winner = entry.status
+        by = entry.by
+      }
+    }
     const grant = grants?.current()?.[toolCall.toolName]
     if (grant === 'never') {
-      if (winner.type !== 'denied') winner = { type: 'denied' }
+      if (winner.type !== 'denied') {
+        winner = { type: 'denied' }
+        by = 'grant'
+      }
     } else if (grant === 'always') {
-      if (winner.type === 'user-approval') winner = { type: 'approved' }
-      else if (winner.type === 'denied' && !ignoredWarned.has(toolCall.toolName)) {
+      if (winner.type === 'user-approval') {
+        winner = { type: 'approved' }
+        by = 'grant'
+      } else if (winner.type === 'denied' && !ignoredWarned.has(toolCall.toolName)) {
         ignoredWarned.add(toolCall.toolName)
         deps.warn(
           {
@@ -315,8 +336,37 @@ export function buildApproval(
         )
       }
     }
+    if (
+      (winner.type === 'approved' || winner.type === 'denied') &&
+      !reported.has(toolCall.toolCallId)
+    ) {
+      reported.add(toolCall.toolCallId)
+      await reportDecision(deps, {
+        toolName: toolCall.toolName,
+        toolCallId: toolCall.toolCallId,
+        input: toolCall.input,
+        ...(risk === undefined ? {} : { risk }),
+        approved: winner.type === 'approved',
+        by,
+        ...(winner.reason === undefined ? {} : { reason: winner.reason }),
+      })
+    }
     return winner.reason === undefined
       ? winner.type
       : ({ type: winner.type, reason: winner.reason } as ToolApprovalStatus)
+  }
+}
+
+/** Run the `approval.decided` hooks (failures are `W_HOOK_FAILED`). */
+export async function reportDecision(
+  deps: Pick<ToolWrapDeps, 'hooks' | 'contextOf' | 'warn'>,
+  decision: ApprovalDecision,
+): Promise<void> {
+  for (const hook of deps.hooks.list('approval.decided')) {
+    try {
+      await hook.fn(deps.contextOf(hook.owner), structuredClone(decision))
+    } catch (error) {
+      hookFailed(deps, 'approval.decided', hook.owner, error)
+    }
   }
 }

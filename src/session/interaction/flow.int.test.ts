@@ -440,7 +440,11 @@ describe('scenario 25: queue', () => {
       { toolCalls: [{ toolName: 'work', input: { n: 1 } }] },
       { text: 'answer to steer' },
     ])
-    const { agent } = setup({ model, tools: { work: slowTool(log) }, loop: { maxSteps: 1 } })
+    const { agent } = setup({
+      model,
+      tools: { work: slowTool(log) },
+      loop: { maxSteps: 1, wrapUp: false },
+    })
     const session = agent.session('s1')
     const events: SessionEvent[] = []
     const reader = session.events().getReader()

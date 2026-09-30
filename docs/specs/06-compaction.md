@@ -33,7 +33,8 @@ export interface CompactionConfig {
 the compaction step) still run.
 
 **Window.** The window is resolved per step from the model of that step:
-`config.contextWindow` (number, or function of the model; spec 01 §1), else 128k with
+`config.contextWindow` (number, or function of the model; spec 01 §1), else the `models` catalog
+entry (spec 12 §1), else 128k with
 `W_DEFAULT_CONTEXT_WINDOW` (once per model and session). A turn or step that switches to a model
 with a smaller window is checked against the smaller window before the call: the pre-turn and
 mid-turn triggers use the turn's model (after `turn.prepare`); the guard's hard cap runs after

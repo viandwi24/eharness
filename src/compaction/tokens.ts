@@ -12,6 +12,7 @@ import { describeModel } from '../internal/model.ts'
 import { project } from '../messages/project.ts'
 import type { MessageRegistry } from '../messages/registry.ts'
 import type { ContextStats, HarnessUIMessage } from '../messages/types.ts'
+import { lookupModel } from '../models/catalog.ts'
 
 /** A token counter: text → tokens. */
 export type CountTokens = (text: string) => number
@@ -246,11 +247,12 @@ export function createCalibration(): Calibration {
 }
 
 /**
- * Resolve the context window of a model: `config.contextWindow` (number or function), else
- * {@link DEFAULT_CONTEXT_WINDOW} with a `W_DEFAULT_CONTEXT_WINDOW` warning (via `warn`).
+ * Resolve the context window of a model: `config.contextWindow` (number or function), else the
+ * `config.models` entry, else {@link DEFAULT_CONTEXT_WINDOW} with a `W_DEFAULT_CONTEXT_WINDOW`
+ * warning (via `warn`).
  */
 export function resolveWindow(
-  config: Pick<HarnessAgentConfig, 'contextWindow'>,
+  config: Pick<HarnessAgentConfig, 'contextWindow' | 'models'>,
   model: LanguageModel,
   warn?: (warning: HarnessWarning, key?: string) => void,
 ): number {
@@ -265,6 +267,8 @@ export function resolveWindow(
     }
   }
   if (window !== undefined && window > 0 && Number.isFinite(window)) return window
+  const known = lookupModel(config.models, model)?.contextWindow
+  if (known !== undefined && known > 0 && Number.isFinite(known)) return known
   warn?.(
     {
       code: 'W_DEFAULT_CONTEXT_WINDOW',

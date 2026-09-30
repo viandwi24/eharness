@@ -28,7 +28,7 @@ A turn that ends with `stop: 'tool-pending'` leaves the session **pending**:
 ```ts
 export interface PendingState {
   messageId: string                                   // the assistant message waiting for answers
-  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string }>
+  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk }>  // input/risk since 0.2 (§3.2)
   clientTools: Array<{ toolCallId: string; toolName: string }>
 }
 // state.core.pending: PendingState (spec 05 §7) — authoritative, used to validate respond()
@@ -65,6 +65,8 @@ defineHarnessAgent({
   approval?: {
     /** Static policy; same shape as AI SDK ToolApprovalConfiguration (per-tool map or generic function). */
     policy?: ToolApprovalConfiguration<ToolSet, unknown>
+    /** Status per tool risk (§3.2); `unknown` = tools without a risk. */
+    risk?: Partial<Record<ToolRisk | 'unknown', ToolApprovalStatus>>
     /** Passed as experimental_toolApprovalSecret: HMAC-signs requests; responses are verified. */
     secret?: string
     /** What send()/regenerate()/edit() do while approvals are pending. Default 'deny'. */
@@ -76,8 +78,9 @@ defineHarnessAgent({
 Per step the core builds **one** `GenericToolApprovalFunction` and passes it as `toolApproval`:
 
 1. `approval.policy` result (per-tool entry or generic function);
-2. every `tool.approve` hook (spec 01 §5), in plugin order;
-3. session grants (§3.1).
+2. `approval.risk[risk ?? 'unknown']` (§3.2);
+3. every `tool.approve` hook (spec 01 §5), in plugin order (the event carries `risk`);
+4. session grants (§3.1).
 
 Results are normalized to `{ type, reason? }` and combined **most restrictive wins**:
 `denied` > `user-approval` > `approved` > `not-applicable`. A hook that throws counts as
@@ -96,13 +99,46 @@ in the commit-point state write of the `respond()` that carries it.
 A grant that can never apply (the policy or a hook returns `denied` for that tool) raises
 `W_GRANT_IGNORED` once.
 
+### 3.2 Tool risk
+
+A tool declares its risk in AI SDK's tool metadata: `tool({ …, metadata: { risk: 'read' | 'write' |
+'destructive' } })` (AI SDK surfaces it as `toolCall.toolMetadata`). An MCP tool whose server sets
+`annotations.destructiveHint: true` is `'destructive'`; `readOnlyHint` is **ignored** — annotations
+are untrusted and may never make a tool look safer. A tool without either has no risk (`unknown` in
+`approval.risk`). `approval.risk` maps a risk to a status; it is one more input of the
+most-restrictive combination, so it can require approval or deny, but never loosen a stricter
+policy, hook or grant. Pending approvals carry the tool input (after `tool.before` refinement, as
+the model call recorded it) and the risk, so an inbox can show them from `state.core.pending` or
+`TurnResult.pending` without loading messages.
+
+### 3.3 Decisions (`approval.decided`)
+
+Every decision is reported to `approval.decided` hooks (spec 01 §5) with an `ApprovalDecision`:
+`{ toolName, toolCallId, input, risk?, approved, by, reason?, actor?, approvalId?, remember? }`.
+
+- **Automatic** decisions, from the approval function when the combined status is `approved` or
+  `denied` (not `user-approval`, not `not-applicable`): `by` is the source of the winning status —
+  `'policy'`, `'risk'`, `'plugin:<name>'` or `'grant'`. Reported once per tool call (AI SDK calls
+  the function again when it re-validates approved calls).
+- **Answers** through `respond()`: `by: 'user'`, with the answer's `reason`, `remember` and
+  `actor` — an `ApprovalActor { id: string; name?: string; …JSON }` the application passes to say
+  who answered. The actor is never stored in messages nor sent to the model. Reported after the
+  answers were consumed (the commit point), in answer order.
+- **New input** while pending with `onNewInput: 'deny'`: `by: 'new-input'`, `approved: false`,
+  `reason: DENIED_NEW_INPUT`.
+
+Hook failures raise `W_HOOK_FAILED` and never change a decision. Together with `turn.end`
+(`TurnResult.pending`) and session `pending` events, this is enough to build an approval inbox
+across sessions: record requests from `pending`, resolve them with `respond()`, audit from
+`approval.decided`. The core owns no inbox, no endpoint and no audit table.
+
 ## 4. `respond()`
 
 ```ts
 respond(response: PendingResponse, options?: SendOptions): HarnessRun<M>
 
 export interface PendingResponse {
-  approvals?: Array<{ id: string; approved: boolean; reason?: string; remember?: 'once' | 'session' }>
+  approvals?: Array<{ id: string; approved: boolean; reason?: string; remember?: 'once' | 'session'; actor?: ApprovalActor }>
   toolOutputs?: Array<{ toolCallId: string; output: unknown } | { toolCallId: string; errorText: string }>
 }
 ```

@@ -36,7 +36,7 @@ import {
   type UsageTotals,
 } from '../loop/steps.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import { INTERRUPTED_CRASH, INTERRUPTED_TURN } from '../messages/texts.ts'
+import { DENIED_NEW_INPUT, INTERRUPTED_CRASH, INTERRUPTED_TURN } from '../messages/texts.ts'
 import { answerDanglingToolParts } from '../messages/tool-parts.ts'
 import type {
   HarnessUIMessage,
@@ -46,10 +46,11 @@ import type {
   TurnKind,
   TurnResult,
 } from '../messages/types.ts'
+import { costOf } from '../models/cost.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
-import { finishToolOutput, hookFailed } from '../registry/wrap.ts'
+import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.ts'
 import { describeError } from '../stream/describe-error.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
@@ -122,9 +123,8 @@ export interface RunningTurn {
   deliverEvent(message: HarnessUIMessage, text: string, wake?: boolean): boolean
 }
 
-const DEFAULT_MAX_STEPS = 50
-const DEFAULT_MAX_OUTPUT_TOKENS = 100_000
-const DEFAULT_MAX_CONTINUES = 3
+const DEFAULT_MAX_STEPS = 500
+const DEFAULT_MAX_IDLE_CONTINUES = 3
 const DEFAULT_STALE_MS = 120_000
 
 type TurnError = { code?: string; message: string; details?: Record<string, unknown> }
@@ -299,7 +299,16 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     model: op.options.model ?? config.model,
     settings: mergeSettings(config.settings ?? {}, op.options.settings),
     abortSignal: controller.signal,
-    addUsage: (value) => addUsage(usage, value, true),
+    addUsage: (value, source) => {
+      const options = typeof source === 'object' && source !== null ? source : {}
+      const cost =
+        typeof options.costUsd === 'number'
+          ? options.costUsd
+          : options.model === undefined
+            ? undefined
+            : costOf(config.models, options.model, value)
+      addUsage(usage, value, true, cost)
+    },
   }
   const turnState: TurnState = {
     info,
@@ -402,6 +411,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (usage.cacheRead !== undefined) meta.cachedInputTokens = usage.cacheRead
     if (usage.cacheWrite !== undefined) meta.cacheWriteTokens = usage.cacheWrite
     if (usage.nestedTotal > 0) meta.nested = usage.nestedTotal
+    if (usage.costUsd !== undefined) meta.costUsd = usage.costUsd
     return meta
   }
 
@@ -862,6 +872,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
     }
     committed = true
+    await reportAnswers(prep.open)
 
     // crash recovery of a stale turn (spec 05 §9)
     const stale = prep.stale
@@ -966,6 +977,47 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
    * output limits (spec 09 §6), then approval / client parts are patched and `pending` set to
    * null. A' becomes the stream's `originalMessages` (the continuation streams into it).
    */
+  /** `approval.decided` for respond() answers and new-input denials (spec 11 §3.3), after commit. */
+  async function reportAnswers(open: OpenSession): Promise<void> {
+    const deps = { hooks: open.hooks, contextOf: rt.contextOf, warn: rt.warn }
+    if (open.hooks.list('approval.decided').length === 0) return
+    const pendingOf = (pending: PendingState | undefined, id: string) =>
+      pending?.approvals.find((a) => a.approvalId === id)
+    for (const answer of plan?.approvals ?? []) {
+      const entry = pendingOf(plan?.pending, answer.approvalId)
+      await reportDecision(
+        deps,
+        withoutUndefined({
+          toolName: answer.toolName,
+          toolCallId: answer.toolCallId,
+          input: entry?.input,
+          risk: entry?.risk,
+          approved: answer.approved,
+          by: 'user' as const,
+          reason: answer.reason,
+          actor: answer.actor,
+          approvalId: answer.approvalId,
+          remember: answer.remember,
+        }),
+      )
+    }
+    for (const entry of denyPending?.approvals ?? []) {
+      await reportDecision(
+        deps,
+        withoutUndefined({
+          toolName: entry.toolName,
+          toolCallId: entry.toolCallId,
+          input: entry.input,
+          risk: entry.risk,
+          approved: false,
+          by: 'new-input' as const,
+          reason: DENIED_NEW_INPUT,
+          approvalId: entry.approvalId,
+        }),
+      )
+    }
+  }
+
   async function continuePending(open: OpenSession, answers: RespondPlan): Promise<void> {
     const message = rt.view?.find((m) => m.id === answers.pending.messageId)
     if (message === undefined) {
@@ -1121,8 +1173,14 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         messageId,
         activeTools: prep.activeTools,
         maxSteps: op.options.maxSteps ?? config.loop?.maxSteps ?? DEFAULT_MAX_STEPS,
-        maxContinues: config.loop?.maxContinues ?? DEFAULT_MAX_CONTINUES,
-        maxOutputTokens: config.loop?.maxTurnOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        maxContinues: config.loop?.maxContinues ?? Number.POSITIVE_INFINITY,
+        maxIdleContinues: config.loop?.maxIdleContinues ?? DEFAULT_MAX_IDLE_CONTINUES,
+        maxOutputTokens: config.loop?.maxTurnOutputTokens ?? Number.POSITIVE_INFINITY,
+        wrapUp: config.loop?.wrapUp ?? true,
+        progress: config.loop?.progress,
+        models: config.models,
+        budget: config.budget,
+        sessionCostBefore: rt.state.core().usage?.costUsd ?? 0,
         toolsContext: prep.toolsContext,
         cache: config.cache,
         signal: controller.signal,
@@ -1330,6 +1388,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         outputTokens: previous.outputTokens + usage.output + usage.nestedOutput,
         turns: previous.turns + (outcome.steps > 0 ? 1 : 0),
       }
+      const cost = (previous.costUsd ?? 0) + (usage.costUsd ?? 0)
+      if (previous.costUsd !== undefined || usage.costUsd !== undefined) core.usage.costUsd = cost
       rt.state.markDirty()
       try {
         await rt.state.writeIfDirty()
@@ -1357,6 +1417,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         totalTokens: usage.total + usage.nestedTotal,
         cachedInputTokens: usage.cacheRead,
         cacheWriteTokens: usage.cacheWrite,
+        costUsd: usage.costUsd,
       }),
       steps: outcome.steps,
       durationMs: Date.now() - startedAt,

@@ -7,7 +7,7 @@
  * @see docs/specs/11-interaction.md#41-new-input-while-pending
  */
 import { isToolUIPart } from 'ai'
-import type { PendingResponse } from '../../agent/session-types.ts'
+import type { ApprovalActor, PendingResponse } from '../../agent/session-types.ts'
 import { HarnessError } from '../../errors.ts'
 import { kindOf } from '../../messages/kinds.ts'
 import { DENIED_NEW_INPUT, NOT_EXECUTED_NEW_INPUT } from '../../messages/texts.ts'
@@ -31,6 +31,7 @@ export interface ApprovalAnswer {
   approved: boolean
   reason?: string
   remember?: 'once' | 'session'
+  actor?: ApprovalActor
 }
 
 /** One validated client tool answer. */
@@ -86,7 +87,13 @@ export function planRespond(args: {
   const answeredOutputs = new Map<string, ClientToolAnswer>()
 
   for (const answer of approvals as unknown[]) {
-    const a = answer as { id?: unknown; approved?: unknown; reason?: unknown; remember?: unknown }
+    const a = answer as {
+      id?: unknown
+      approved?: unknown
+      reason?: unknown
+      remember?: unknown
+      actor?: unknown
+    }
     if (typeof a !== 'object' || a === null || typeof a.id !== 'string') {
       throw invalidShape('every approval needs a string `id`.')
     }
@@ -96,6 +103,14 @@ export function planRespond(args: {
     }
     if (a.remember !== undefined && a.remember !== 'once' && a.remember !== 'session') {
       throw invalidShape("`remember` must be 'once' or 'session'.")
+    }
+    if (
+      a.actor !== undefined &&
+      (a.actor === null ||
+        typeof a.actor !== 'object' ||
+        typeof (a.actor as { id?: unknown }).id !== 'string')
+    ) {
+      throw invalidShape('`actor` must be an object with a string `id`.')
     }
     const entry = byApprovalId.get(a.id)
     if (entry === undefined || answeredApprovals.has(a.id)) {
@@ -116,6 +131,7 @@ export function planRespond(args: {
     }
     if (typeof a.reason === 'string') out.reason = a.reason
     if (a.remember === 'once' || a.remember === 'session') out.remember = a.remember
+    if (a.actor !== undefined) out.actor = structuredClone(a.actor) as ApprovalActor
     answeredApprovals.set(a.id, out)
   }
 

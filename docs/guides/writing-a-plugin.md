@@ -97,7 +97,7 @@ const report = definePlugin({
 | `turn.prepare` / `step.prepare` | pick model and settings, restrict active tools, add a volatile `reminder` |
 | `tool.before` / `tool.after` | normalize input / transform output (chainable) |
 | `tool.approve` | human-in-the-loop decisions ([approvals guide](approvals-and-interaction.md)) |
-| `step.end` / `turn.beforeEnd` | stop early, or keep going (`continue`, bounded by `loop.maxContinues`) |
+| `step.end` / `turn.beforeEnd` | stop early, or keep going (`continue`, bounded by progress: `loop.maxIdleContinues`, and `loop.maxContinues`) |
 | `turn.start` / `turn.end`, `session.start` / `session.close` | lifecycle side effects |
 | `message.beforeSave`, `compaction.prompt`, `compaction.after`, `skill.load` | storage, compaction and skill integration |
 
