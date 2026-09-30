@@ -9,10 +9,11 @@ Reading order for a new contributor (human or agent):
 5. [`engineering/`](engineering/) — conventions, testing, API stability, release process.
 6. [`plans/`](plans/) — the build board and phase files.
 
-Using eharness (not contributing)? Start with the [guides](guides/) and the runnable
-[examples](../examples).
 7. [`reference/prior-art.md`](reference/prior-art.md) — lessons from the predecessor harness and
    from other frameworks.
+
+Using eharness (not contributing)? Start with the [README](../README.md), the [guides](guides/)
+and the runnable [examples](../examples); the [changelog](../CHANGELOG.md) has migration notes.
 
 ## Specs index
 
@@ -22,13 +23,15 @@ Using eharness (not contributing)? Start with the [guides](guides/) and the runn
 | 02 | [context-registry](specs/02-context-registry.md) | Static vs dynamic instructions/tools/skills/MCP, refresh timing, collisions, prompt-cache rules |
 | 03 | [messages](specs/03-messages.md) | Message model, metadata, data parts, message kinds, model projection, validation, ids |
 | 04 | [streaming](specs/04-streaming.md) | UI message stream protocol, writer, namespacing, transient vs persistent, attach/resume |
-| 05 | [session-and-storage](specs/05-session-and-storage.md) | Session API, turn lifecycle, stop rules, `MessageAdapter`, `StateAdapter`, loading, caching, locking, crash recovery |
+| 05 | [session-and-storage](specs/05-session-and-storage.md) | Session API, turn lifecycle, stop rules, wrap-up, progress guard, `MessageAdapter`, `StateAdapter`, loading, caching, locking, crash recovery |
 | 06 | [compaction](specs/06-compaction.md) | The fixed compaction algorithm, config, triggers, guard, overflow recovery |
 | 07 | [skills](specs/07-skills.md) | `Skill`, `SkillSource`, three-level loading, addressing, filesystem autoload |
 | 08 | [filesystem-plugin](specs/08-filesystem-plugin.md) | `FileSystem` contract, file tools, staleness, `memoryFs` |
 | 09 | [tools-and-mcp](specs/09-tools-and-mcp.md) | `ToolSource`, deferred tools, tool search, output limits, timeouts, client tools, `mcpServer` |
 | 10 | [errors-and-stop-reasons](specs/10-errors-and-stop-reasons.md) | Error codes, stop reasons, warning codes |
-| 11 | [interaction](specs/11-interaction.md) | Approvals, client tools, `respond`, regenerate/edit/rewind, steering, queue, wake, `handleChatRequest` |
+| 11 | [interaction](specs/11-interaction.md) | Approvals (policy, risk, `approval.decided`), client tools, `respond`, regenerate/edit/rewind, steering, queue, wake, `handleChatRequest` |
+| 12 | [models-and-cost](specs/12-models-and-cost.md) | Model catalog (`models`, `modelsDevCatalog`, `lookupModel`), pricing, `computeCost`, `costUsd`, USD budgets |
+| 13 | [todos-plugin](specs/13-todos-plugin.md) | `eharness/todos`: `todo_write`, `data-todos.list`, reminders, enforcement |
 
 ## Status vocabulary
 
@@ -38,6 +41,7 @@ Specs carry a status line:
 - **Accepted** — implementation follows it; changes need a PR that updates spec + code together.
 - **Frozen** — public since a release; changes follow `engineering/api-stability.md`.
 
-All specs are **Accepted (reviewed for 0.1.0)**. They become **Frozen** at 1.0
-([api-stability](engineering/api-stability.md)); until then changes follow the 0.x rules there.
-Nothing in the public API is `experimental_` in 0.1.0.
+Specs 01–11 are **Accepted (reviewed for 0.1.0)** and have been updated with every release since;
+specs 12–13 are **Draft (0.3)** — shipped in 0.3.0, still open to changes under the 0.x rules.
+All become **Frozen** at 1.0 ([api-stability](engineering/api-stability.md)); until then changes
+follow the 0.x rules there. Nothing in the public API is `experimental_`.

@@ -1,4 +1,10 @@
-# Roadmap (after 0.1.0)
+# Roadmap
+
+Shipped: 0.1.0 (first release), 0.2.0 (AI SDK helper refactor, `ai@^7.0.123` peer floor),
+0.3.0 (long-running turns and progress guard, model catalog / cost / USD budgets, risk-based
+approvals with `approval.decided`, `eharness/todos`). Details: `CHANGELOG.md`.
+
+## Open items
 
 Not scheduled. Each item needs a spec (or spec change) and, where it changes a decision, an ADR
 before implementation.
@@ -6,9 +12,9 @@ before implementation.
 | Item | Notes |
 |---|---|
 | **Sandbox plugin** (`eharness/sandbox`) | Provides `fs` + `shell` services (conflicts with `filesystem` by design), shell tools, skill materialization via `skill.load` + `locate()`, driver contract (local, Docker, Vercel Sandbox via `@ai-sdk/sandbox-vercel`, AI SDK `experimental_sandbox`). |
-| **Loop guard plugin** | Deterministic detection is in core since 0.2 (progress guard, spec 05 §3.2). Remaining: step checkpoints, optional cheap-model auditor. |
-| **Subagents plugin** | Ready-made `subagent()` tool: child session with `SessionOptions.parent`, streamed progress via preliminary results, summary return, `addUsage`, depth limit. The core hooks exist in v0. |
-| ~~Todos plugin~~ | Done in 0.2 (`eharness/todos`, spec 13). |
+| **Loop guard plugin** | Deterministic detection is in core since 0.3 (progress guard, spec 05 §3.2). Remaining: step checkpoints, optional cheap-model auditor. |
+| **Subagents plugin** | Ready-made `subagent()` tool: child session with `SessionOptions.parent`, streamed progress via preliminary results, summary return, `addUsage` (tokens + `costUsd`), depth limit. The core pieces exist since 0.1 (guide: `docs/guides/subagents.md`). |
+| ~~Todos plugin~~ | Done in 0.3.0 (`eharness/todos`, spec 13). |
 | **Code mode / cache-preserving tool discovery** | Support `@ai-sdk/code-mode` with `toolDiscovery: 'conversation'`. |
 | **AI SDK `Agent` interface adapter** | `agent.asAgent(session)` implementing `agent-v1` so `createAgentUIStream` and `@ai-sdk/tui` work directly. |
 | **HarnessAgent adapter** | Publish `@ai-sdk/harness`-compatible adapter so an eharness agent can run behind `HarnessAgent`. |
@@ -20,7 +26,7 @@ before implementation.
 | **Fork** | `session.fork(atMessageId)` → new session id with a copied prefix (needs adapter support or a copy loop). |
 | **Prune stage** | Cheap pre-compaction pruning of old tool outputs (opencode-style) before summarizing. |
 | **Output guardrails** | Validate the final answer (schema, policy) and retry with feedback; builds on `turn.beforeEnd`. |
-| ~~USD budget~~ | Done in 0.2 (spec 12). |
+| ~~USD budget~~ | Done in 0.3.0 (spec 12). |
 | **Immediate steer** | Interrupt the current model stream for urgent input instead of waiting for the step boundary. |
 | **Cross-process queue / wake** | Queue and wake-up delivery across instances (via the application's job queue contract). |
 | **Continuation replay on resume** | `attach()` of a `respond()` continuation replays the stored prefix so `useChat` resume needs no re-fetch. |

@@ -1,6 +1,6 @@
 # Spec 13 — Todos plugin (`eharness/todos`)
 
-Status: **Draft (0.2)**. Module: `src/todos/*`. Built only with the public core API (ADR-0008).
+Status: **Draft (0.3)** (shipped in 0.3.0). Module: `src/todos/*`. Built only with the public core API (ADR-0008).
 
 A checklist the model keeps while it works on a multi-step task, visible to the UI, reminded to the
 model without breaking the prompt cache, and optionally used to keep a turn going until the work

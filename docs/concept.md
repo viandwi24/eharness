@@ -10,7 +10,8 @@ developer plug in any storage, filesystem or infrastructure.**
 
 Every project that builds a serious agent on AI SDK ends up writing the same things again:
 
-- a step loop around `streamText` with stop conditions and cost caps,
+- a step loop around `streamText` with stop conditions, progress checks and cost caps,
+- model limits and prices, to compact in time and to stop before the bill gets out of hand,
 - system-prompt assembly from many sources,
 - tools that need per-session state (files read, versions, credentials),
 - skills (`SKILL.md` folders) and on-demand loading,
@@ -37,8 +38,8 @@ Code, Codex, OpenCode, Pi, …) behind one surface. eharness is for building **y
 ## What eharness is
 
 - A **library** (`eharness` on npm), ESM-only, runs on Node ≥ 22 and Bun.
-- A **skeleton**: core runtime + contracts + one reference plugin (`filesystem` with a memory
-  adapter) + memory storage adapters + conformance test suites.
+- A **skeleton**: core runtime + contracts + small reference plugins (`filesystem` with a memory
+  adapter, `todos`) + an MCP tool source + memory storage adapters + conformance test suites.
 - **Idiomatic AI SDK**: the stream is the AI SDK UI message stream; messages are `UIMessage`;
   tools are `tool()`; models are `LanguageModel`.
 - **Adapter-driven where it matters**: message storage, session state, filesystems and skill
@@ -50,6 +51,8 @@ Code, Codex, OpenCode, Pi, …) behind one surface. eharness is for building **y
   `sessionId: string`.
 - Not a storage product. It ships memory adapters and examples; Postgres/JSON/S3 adapters are the
   developer's code (the contracts are two or three methods).
+- Not a pricing service. It computes cost estimates from prices the application supplies (a record,
+  a function or the models.dev database the app fetched); it never fetches anything itself.
 - Not a sandbox/shell runtime (v0). Sandboxing is a future plugin built on the same service model.
 - Not a replacement for AI SDK Harnesses or for eve.
 
@@ -92,7 +95,13 @@ Code, Codex, OpenCode, Pi, …) behind one surface. eharness is for building **y
 | **Boundary** | A message kind that starts the model context (the latest compaction marker). |
 | **Transient** | A data part sent to the client stream but never stored or projected. |
 | **Pending** | A session whose last turn stopped with `tool-pending`: approvals or client tool calls wait for `respond()`. |
-| **Approval** | A per-call decision (`approved` / `denied` / `user-approval`) made by policy, hooks and grants before a tool runs. |
+| **Approval** | A per-call decision (`approved` / `denied` / `user-approval`) made by policy, risk rules, hooks and grants before a tool runs; every decision is reported to `approval.decided`. |
+| **Risk** | A tool's class in its AI SDK metadata (`read` / `write` / `destructive`) that `approval.risk` maps to an approval status. |
+| **Model catalog** | `models`: context window, max output and prices per model, supplied by the app. |
+| **Budget** | A USD limit per turn or session (`budget`); a turn that uses it up stops with `cost-cap`. |
+| **Progress guard** | The loop check that stops a turn repeating the same call or failing over and over (`stuck`). |
+| **Wrap-up** | One tool-less step after the step budget runs out, in which the model summarizes what is left. |
+| **Continuation** | An extra step requested by a `turn.beforeEnd` hook; refused after idle continuations. |
 | **Grant** | A session-scoped "always / never" answer for a tool, set by `respond(… remember: 'session')`. |
 | **Steer** | Input sent while a turn runs, delivered at the next step boundary as a `data-eh.input` part. |
 | **Wake** | Starting a no-input turn from background work with `inject(…, { wake: true })`. |
