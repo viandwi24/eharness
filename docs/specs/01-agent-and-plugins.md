@@ -107,6 +107,7 @@ export type ModelSettings = Pick<LanguageModelCallOptions,
 
 export interface ApprovalConfig {                                // spec 11 §3
   policy?: ToolApprovalConfiguration<ToolSet, unknown>
+  risk?: Partial<Record<ToolRisk | 'unknown', ToolApprovalStatus>> // spec 11 §3.2
   secret?: string
   onNewInput?: 'deny' | 'reject'
 }
@@ -340,8 +341,10 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'step.end'?(ctx: HarnessContext<DP>, e: StepEndEvent): Awaitable<{ stop?: string; context?: string } | void>
 
   /** Most restrictive wins (spec 11 §3). Throw = denied. Must be deterministic and side-effect free: AI SDK calls it again for approved calls when a continuation starts. */
-  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown })
+  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown; risk?: ToolRisk })
     : Awaitable<ToolApprovalStatus | void>
+  /** Every automatic approval decision and every respond() answer (spec 11 §3.3). Observational; errors are W_HOOK_FAILED. */
+  'approval.decided'?(ctx: HarnessContext<DP>, e: ApprovalDecision): Awaitable<void>
   /** Chainable. Rewrite tool input before approval and execution (implemented via experimental_refineToolInput). Must be deterministic (spec 11 §3). */
   'tool.before'?(ctx: HarnessContext<DP>, e: { toolName: string; input: unknown })
     : Awaitable<{ input: unknown } | void>

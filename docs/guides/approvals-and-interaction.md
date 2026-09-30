@@ -80,6 +80,46 @@ if (result.stop === 'error') console.log(result.error?.details?.reason) // 'unkn
 as a tool error result carrying the same reason. The model gets the same information, but the
 two encodings differ, so the prompt cache misses once after a denial. This is expected.
 
+## Risk-based rules and an approval inbox
+
+Tag tools with a risk instead of listing every tool name in the policy:
+
+```ts
+const deleteRecord = tool({ description: '…', inputSchema, metadata: { risk: 'destructive' }, execute })
+
+defineHarnessAgent({
+  model,
+  tools: { deleteRecord, readRecord },
+  approval: { risk: { destructive: 'user-approval', unknown: 'user-approval' } },
+})
+```
+
+MCP tools marked `destructiveHint` by their server count as `'destructive'`; `readOnlyHint` is
+ignored (a server could lie). Risk rules only add restrictions: a stricter policy or hook still wins.
+
+For approvals outside the chat (a manager approves in a web inbox), keep three pieces in your app:
+
+1. **Requests:** `TurnResult.pending` (or the session `pending` event, or `state.core.pending`) lists
+   each waiting call with `toolName`, `input` and `risk` — store them with the session id.
+2. **Answers:** your endpoint calls
+   `agent.session(id).respond({ approvals: [{ id, approved, reason, actor: { id: user.id, name } }] })`.
+3. **Audit:** an `approval.decided` hook receives every decision — automatic ones (`by: 'policy' |
+   'risk' | 'grant' | 'plugin:<name>'`) and answers (`by: 'user'` with the `actor`) — and writes your
+   audit log. Clear the inbox entry there too.
+
+```ts
+const audit = definePlugin({
+  name: 'audit',
+  setup: () => ({
+    hooks: {
+      'approval.decided': async (ctx, d) => {
+        await db.approvals.insert({ session: ctx.session.id, ...d, at: new Date() })
+      },
+    },
+  }),
+})
+```
+
 ## Client-side tools
 
 A tool without `execute` runs on the client. The turn stops with `tool-pending` until its output

@@ -17,12 +17,19 @@ import type {
   ToolChoice,
   ToolSet,
 } from 'ai'
+import type { ApprovalActor } from '../agent/session-types.ts'
 import type { ModelSettings } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { Awaitable, ProviderOptions } from '../internal/ai-types.ts'
 import type { DataChunk, DataPartDef } from '../messages/data-parts.ts'
 import type { MessageKindDef } from '../messages/kinds.ts'
-import type { HarnessUIMessage, StopReason, TurnKind, TurnResult } from '../messages/types.ts'
+import type {
+  HarnessUIMessage,
+  StopReason,
+  ToolRisk,
+  TurnKind,
+  TurnResult,
+} from '../messages/types.ts'
 import type {
   InstructionInput,
   Skill,
@@ -308,8 +315,21 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   /** Most restrictive wins. Throw = denied. Must be deterministic and side-effect free. */
   'tool.approve'?(
     ctx: HarnessContext<DP>,
-    e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown },
+    e: {
+      toolName: string
+      toolCallId: string
+      input: unknown
+      toolMetadata?: unknown
+      /** Risk of the tool (spec 11 §3.2), when known. */
+      risk?: ToolRisk
+    },
   ): Awaitable<ToolApprovalStatus | void>
+  /**
+   * Observe every approval decision (spec 11 §3.3): automatic ones (policy, risk, hook, grant) when
+   * the call is approved or denied without asking, and answers given through `respond()`. For
+   * audit logs and cross-session inboxes; errors are `W_HOOK_FAILED`.
+   */
+  'approval.decided'?(ctx: HarnessContext<DP>, e: ApprovalDecision): Awaitable<void>
   /** Chainable. Rewrite tool input before approval and execution. Must be deterministic (spec 11 §3). */
   'tool.before'?(
     ctx: HarnessContext<DP>,
@@ -346,6 +366,30 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
 }
 
 /** Name of a hook. */
+/**
+ * One approval decision (spec 11 §3.3).
+ */
+export interface ApprovalDecision {
+  toolName: string
+  toolCallId: string
+  input: unknown
+  risk?: ToolRisk
+  approved: boolean
+  /**
+   * Who decided: `'policy'` (`approval.policy`), `'risk'` (`approval.risk`), `'plugin:<name>'`
+   * (`tool.approve` hook), `'grant'` (session grant), `'user'` (`respond()`), `'new-input'`
+   * (denied because new input arrived, `onNewInput: 'deny'`).
+   */
+  by: 'policy' | 'risk' | 'grant' | 'user' | 'new-input' | `plugin:${string}`
+  reason?: string
+  /** `respond()` answers only: the actor the application passed. */
+  actor?: ApprovalActor
+  /** Set for `respond()` answers (and new-input denials). */
+  approvalId?: string
+  /** `respond()` answers: `remember` as given. */
+  remember?: 'once' | 'session'
+}
+
 export type HookName = keyof HarnessHooks
 
 /**

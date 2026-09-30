@@ -18,7 +18,7 @@ Update this table in the same commit that changes a phase's status.
 | P8 | [Examples, README, 0.1.0 release](P8-release-0.1.md) | done | P3–P7 | — |
 | P9 | [Progress-bounded loop](P9-progress-loop.md) | done | P8 | — |
 | P10 | [Model catalog, cost and budgets](P10-models-cost.md) | done | P9 | P11 |
-| P11 | [Approval: risk, decisions, pending details](P11-approval.md) | todo | P9 | P10 |
+| P11 | [Approval: risk, decisions, pending details](P11-approval.md) | done | P9 | P10 |
 | P12 | [Todos plugin](P12-todos.md) | todo | P9 | — |
 
 After 0.1.0: [roadmap.md](roadmap.md).

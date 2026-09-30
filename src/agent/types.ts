@@ -13,6 +13,7 @@ import type {
   TimeoutConfiguration,
   Tool,
   ToolApprovalConfiguration,
+  ToolApprovalStatus,
   ToolCallRepairFunction,
   ToolSet,
   UIMessage,
@@ -20,7 +21,12 @@ import type {
 } from 'ai'
 import type { HarnessWarning } from '../errors.ts'
 import type { ProviderOptions } from '../internal/ai-types.ts'
-import type { HarnessDataTypes, HarnessMetadata, HarnessUIMessage } from '../messages/types.ts'
+import type {
+  HarnessDataTypes,
+  HarnessMetadata,
+  HarnessUIMessage,
+  ToolRisk,
+} from '../messages/types.ts'
 import type { ModelCatalog } from '../models/types.ts'
 import type {
   DataPartMap,
@@ -145,6 +151,13 @@ export type ModelSettings = Pick<
 export interface ApprovalConfig {
   /** Static policy; same shape as AI SDK `ToolApprovalConfiguration`. */
   policy?: ToolApprovalConfiguration<ToolSet, unknown>
+  /**
+   * Status per tool risk (spec 11 §3.2); `unknown` applies to tools without a risk. Combined with
+   * the policy and hooks, most restrictive wins.
+   *
+   * @example { destructive: 'user-approval', unknown: 'user-approval' }
+   */
+  risk?: Partial<Record<ToolRisk | 'unknown', ToolApprovalStatus>>
   /** Passed as `experimental_toolApprovalSecret`: HMAC-signs requests. */
   secret?: string
   /** What `send()`/`regenerate()`/`edit()` do while approvals are pending. Default `'deny'`. */

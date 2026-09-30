@@ -182,6 +182,16 @@ export interface InjectOptions {
 }
 
 /**
+ * Who answered an approval (spec 11 §3.2). `id` is the application's user id; the object is
+ * passed to `approval.decided` hooks as given (JSON values only).
+ */
+export interface ApprovalActor {
+  id: string
+  name?: string
+  [key: string]: JSONValue | undefined
+}
+
+/**
  * Answers to pending approvals / client tool calls.
  *
  * @see docs/specs/11-interaction.md#4-respond
@@ -192,6 +202,8 @@ export interface PendingResponse {
     approved: boolean
     reason?: string
     remember?: 'once' | 'session'
+    /** Who answered (for audit, `approval.decided`); never sent to the model. */
+    actor?: ApprovalActor
   }>
   toolOutputs?: Array<
     { toolCallId: string; output: unknown } | { toolCallId: string; errorText: string }
