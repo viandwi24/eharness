@@ -415,6 +415,21 @@ describe('createSkillTools', () => {
     expect(dynamic.map((t) => t.name)).toEqual(['load_skill', 'read_skill_file', 'search_skills'])
   })
 
+  test('input JSON schemas are pinned (model-visible, golden)', async () => {
+    const d = await deps([{ source: memory('db', [doc()], {}) }], { limit: 0 })
+    const schemas: Record<string, unknown> = {}
+    for (const { name, tool } of createSkillTools(d)) {
+      schemas[name] = await asSchema(tool.inputSchema).jsonSchema
+    }
+    expect(Object.keys(schemas)).toEqual(['load_skill', 'read_skill_file', 'search_skills'])
+    const file = Bun.file(new URL('./__golden__/skill-tool-schemas.json', import.meta.url))
+    if (process.env.UPDATE_GOLDEN === '1') {
+      await Bun.write(file, `${JSON.stringify(schemas, null, 2)}\n`)
+      return
+    }
+    expect(schemas).toEqual(await file.json())
+  })
+
   test('input schemas reject invalid input (AI SDK validates before execute); tools return strings', async () => {
     const d = await deps([{ source: memory('db', [doc()], { 'pine-v6:a.md': 'A' }) }], {
       limit: 0,

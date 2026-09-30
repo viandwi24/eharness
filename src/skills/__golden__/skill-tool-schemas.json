@@ -1,0 +1,42 @@
+{
+  "load_skill": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Skill name."
+      }
+    },
+    "required": ["name"],
+    "additionalProperties": false
+  },
+  "read_skill_file": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "name": {
+        "type": "string",
+        "description": "Skill name."
+      },
+      "path": {
+        "type": "string",
+        "description": "File path relative to the skill."
+      }
+    },
+    "required": ["name", "path"],
+    "additionalProperties": false
+  },
+  "search_skills": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Keywords."
+      }
+    },
+    "required": ["query"],
+    "additionalProperties": false
+  }
+}
