@@ -99,8 +99,9 @@ It stops pushing when:
 
 The core bounds it further: `loop.maxIdleContinues` (default 3), `loop.maxContinues`, budgets and
 aborts ([long-running turns](long-running-turns.md)). Any other stop (`'length'`, `'tool-pending'`,
-`'max-steps'`, errors, aborts) is never extended by the plugin. A model that needs the user can
-always end the turn by asking, or by marking items `cancelled`.
+`'max-steps'`, errors, aborts) is never extended by the plugin. The first stop with open todos is
+always nudged; a model that needs the user can end the turn after at most one reminder by asking
+without touching the list (or at once by marking the blocked items `cancelled`).
 
 ## Exports
 

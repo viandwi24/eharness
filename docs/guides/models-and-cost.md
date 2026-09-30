@@ -182,7 +182,8 @@ defineHarnessAgent({
   `details: { scope: 'turn' | 'session', limitUsd, spentUsd, exceeded }` — also streamed as a
   transient `data-eh.warning` part for the UI.
 - With a budget configured, a step whose model has no pricing raises `W_MODEL_UNPRICED` once per
-  model (`details.model`) and its usage does not count. Fix the catalog key (see `lookupModel`).
+  model (`details.model`): its cost is left out of `costUsd` and the budgets, while its tokens still
+  count toward `usage` and `loop.maxTurnOutputTokens`. Fix the catalog key (see `lookupModel`).
 - Token limits stay available as `loop.maxTurnOutputTokens`, which also stops with `'cost-cap'`.
 
 To cap a single user or tenant across sessions, keep your own ledger: add `result.usage.costUsd`
