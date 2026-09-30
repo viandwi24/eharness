@@ -163,6 +163,23 @@ describe('static and dynamic skills are indistinguishable for the model (golden)
   })
 })
 
+describe('skill tool input validation', () => {
+  test('invalid input becomes an AI SDK tool error the model can read', async () => {
+    const { agent, model } = setup(
+      [{ toolCalls: [{ toolName: 'load_skill', input: { name: 42 } }] }, { text: 'done' }],
+      { skills: [defineSkill(PINE)] },
+    )
+    const result = await agent.session('s').send('go').result
+    expect(result.stop).toBe('complete')
+    const [entry] = toolOutputs(result.messages.find((m) => m.id === result.messageId))
+    expect(entry?.[0]).toBe('load_skill')
+    expect(String(entry?.[1])).toStartWith(
+      'AI_InvalidToolInputError: Invalid input for tool load_skill:',
+    )
+    expect(JSON.stringify(model.prompts[1])).toContain('Invalid input for tool load_skill:')
+  })
+})
+
 describe('prompt layout and tool order', () => {
   test('index appended to static instructions; skill tools after static tools, before source tools', async () => {
     const source = defineToolSource({
