@@ -1,7 +1,7 @@
 /**
  * A subagent as a tool: the tool runs a child session of another agent, streams the child's
  * progress into the parent message as preliminary tool results, and reports the child's usage to
- * the parent turn (`ctx.turn.addUsage`) so cost caps see it.
+ * the parent turn (`ctx.turn.addUsage`) so cost caps and budgets see it.
  *
  *   bun examples/subagent-tool.ts
  *
@@ -65,7 +65,12 @@ const agent = defineHarnessAgent({
             yield { status: 'working' as const, text } // shown live in the parent's tool part
           }
           const result = await run.result // never rejects
-          turn.addUsage(usageOf(result.usage), 'researcher')
+          // The child's tokens (and its cost, when the researcher has `models` pricing) count
+          // toward this turn's usage, `loop.maxTurnOutputTokens` and `budget`.
+          turn.addUsage(usageOf(result.usage), {
+            costUsd: result.usage.costUsd,
+            source: 'subagent:researcher',
+          })
           await researcher.closeSession(child.id)
           yield {
             status: result.stop === 'complete' ? ('done' as const) : ('failed' as const),
