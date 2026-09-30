@@ -52,16 +52,47 @@ import type {
  * @see docs/specs/01-agent-and-plugins.md#1-defineharnessagent
  */
 export interface LoopConfig {
-  /** Default 50 — per turn (stop `'max-steps'`; extensible by `turn.beforeEnd`). */
+  /** Default 500 — per turn (stop `'max-steps'`; extensible by `turn.beforeEnd`). */
   maxSteps?: number
-  /** Default 100_000 — output-token cap incl. nested usage (stop `'cost-cap'`). */
+  /**
+   * Default true — when the step budget runs out, run one more step without tools that asks the
+   * model to summarize what it did and what is left (the stop stays `'max-steps'`).
+   */
+  wrapUp?: boolean
+  /** Default none — output-token cap incl. nested usage (stop `'cost-cap'`). */
   maxTurnOutputTokens?: number
   /** Default none — wall clock per turn (stop `'timeout'`). */
   turnTimeoutMs?: number
-  /** Default 3 — forced continuations per turn via `turn.beforeEnd`. */
+  /** Default none — absolute cap on forced continuations per turn via `turn.beforeEnd`. */
   maxContinues?: number
+  /**
+   * Default 3 — continuations in a row after which the turn made no progress (no new successful
+   * tool result) before further continuations are refused (`W_CONTINUE_LIMIT`).
+   */
+  maxIdleContinues?: number
+  /** Stuck detection (spec 05 §3.2). `false` disables it. */
+  progress?: ProgressConfig | false
   /** Default true — upsert the assistant message after every step. */
   persistEachStep?: boolean
+}
+
+/**
+ * Progress guard: a turn that repeats the same call with the same result, or whose tool calls keep
+ * failing, gets one reminder and then stops with `'stuck'`.
+ *
+ * @see docs/specs/05-session-and-storage.md#32-progress-guard-normative
+ */
+export interface ProgressConfig {
+  /** Default 3 — the same call with the same result this many times within `window` steps. */
+  repeats?: number
+  /** Default 20 — steps (that called tools) examined for repeats. */
+  window?: number
+  /** Default 5 — steps in a row whose tool calls all failed. */
+  errorStreak?: number
+  /** Default 1 — reminders before the turn stops with `'stuck'`. 0 stops at once. */
+  nudges?: number
+  /** Tools that may legitimately repeat (polling, waiting); ignored by the guard. */
+  ignoreTools?: string[]
 }
 
 /**

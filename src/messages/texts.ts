@@ -21,5 +21,16 @@ export const DENIED_NEW_INPUT: string = 'The user sent a new message instead of 
 /** Client tool error when the user sent new input instead of answering. */
 export const NOT_EXECUTED_NEW_INPUT: string = 'Not executed: the user sent a new message.'
 
+/**
+ * Step reminder after the progress guard found the turn stuck (spec 05 §3.2); `{what}` describes
+ * the repetition.
+ */
+export const PROGRESS_NUDGE: string =
+  'You are not making progress: {what}. Do not repeat it. Try a different approach, or stop and explain what blocks you.'
+
+/** Step reminder of the wrap-up step after the step budget ran out (spec 05 §3.1, `loop.wrapUp`). */
+export const MAX_STEPS_WRAP_UP: string =
+  'The step limit of this turn is reached and tools are disabled. Summarize what you did, what is left, and how to continue.'
+
 /** Marker inserted into truncated tool outputs; `{n}` is the number of removed characters. */
 export const TOOL_OUTPUT_TRUNCATED: string = '…[truncated {n} chars]…'

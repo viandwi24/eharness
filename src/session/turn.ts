@@ -122,9 +122,8 @@ export interface RunningTurn {
   deliverEvent(message: HarnessUIMessage, text: string, wake?: boolean): boolean
 }
 
-const DEFAULT_MAX_STEPS = 50
-const DEFAULT_MAX_OUTPUT_TOKENS = 100_000
-const DEFAULT_MAX_CONTINUES = 3
+const DEFAULT_MAX_STEPS = 500
+const DEFAULT_MAX_IDLE_CONTINUES = 3
 const DEFAULT_STALE_MS = 120_000
 
 type TurnError = { code?: string; message: string; details?: Record<string, unknown> }
@@ -1121,8 +1120,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         messageId,
         activeTools: prep.activeTools,
         maxSteps: op.options.maxSteps ?? config.loop?.maxSteps ?? DEFAULT_MAX_STEPS,
-        maxContinues: config.loop?.maxContinues ?? DEFAULT_MAX_CONTINUES,
-        maxOutputTokens: config.loop?.maxTurnOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        maxContinues: config.loop?.maxContinues ?? Number.POSITIVE_INFINITY,
+        maxIdleContinues: config.loop?.maxIdleContinues ?? DEFAULT_MAX_IDLE_CONTINUES,
+        maxOutputTokens: config.loop?.maxTurnOutputTokens ?? Number.POSITIVE_INFINITY,
+        wrapUp: config.loop?.wrapUp ?? true,
+        progress: config.loop?.progress,
         toolsContext: prep.toolsContext,
         cache: config.cache,
         signal: controller.signal,

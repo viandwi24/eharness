@@ -23,10 +23,11 @@ import {
   toUIMessageStream,
   type UIMessageChunk,
 } from 'ai'
-import type { CacheConfig, ModelSettings } from '../agent/types.ts'
+import type { CacheConfig, ModelSettings, ProgressConfig } from '../agent/types.ts'
 import type { TurnCompaction } from '../compaction/turn-context.ts'
 import { HarnessToolError } from '../errors.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
+import { MAX_STEPS_WRAP_UP, PROGRESS_NUDGE } from '../messages/texts.ts'
 import type { PendingState, StopReason } from '../messages/types.ts'
 import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
@@ -35,6 +36,7 @@ import type { InboxItem, TurnInbox } from '../session/interaction/inbox.ts'
 import { inputWireMessage } from '../session/interaction/inbox.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { describeError } from '../stream/describe-error.ts'
+import { createProgressTracker, DEFAULT_PROGRESS, type StuckReason } from './progress.ts'
 import { applyCache, deepMerge, layoutMessages, systemBlocks } from './prompt.ts'
 import { decideStop, findPending } from './stop.ts'
 
@@ -100,8 +102,15 @@ export interface StepLoopInput {
   messageId: string
   activeTools: string[] | undefined
   maxSteps: number
+  /** Absolute cap on `turn.beforeEnd` continuations (`Infinity` = none). */
   maxContinues: number
+  /** Continuations in a row without progress before further ones are refused. */
+  maxIdleContinues: number
   maxOutputTokens: number
+  /** Run a tool-less summary step when the step budget runs out. */
+  wrapUp: boolean
+  /** Stuck detection; `false` disables it (progress is still measured for continuations). */
+  progress: ProgressConfig | false | undefined
   toolsContext: Record<string, unknown> | undefined
   cache: CacheConfig | false | undefined
   signal: AbortSignal
@@ -357,6 +366,19 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
 
   let budget = input.maxSteps
   let continues = 0
+  /** Continuations in a row after which no new successful tool result appeared. */
+  let idleContinues = 0
+  /** `progress.novel` when the last continuation was granted. */
+  let novelAtContinue: number | undefined
+  const progress = createProgressTracker(input.progress === false ? {} : input.progress)
+  const maxNudges =
+    input.progress === false ? 0 : (input.progress?.nudges ?? DEFAULT_PROGRESS.nudges)
+  let nudges = 0
+  /** Reminder of the next step after a nudge. */
+  let nudge: string | undefined
+  /** The next step is the wrap-up step (tools off) after the step budget ran out. */
+  let wrapping = false
+  let wrapped = false
   let stepIndex = 0
   let model: LanguageModel = info.model
   /** Input waiting for the next step boundary (`step.end` context, `turn.beforeEnd` continue). */
@@ -427,6 +449,12 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     let activeTools = input.activeTools
     let toolChoice: ToolChoice<ToolSet> | undefined
     const reminders: string[] = []
+    if (nudge !== undefined) reminders.push(nudge)
+    nudge = undefined
+    if (wrapping) {
+      reminders.push(MAX_STEPS_WRAP_UP)
+      toolChoice = 'none'
+    }
     let providerOptions = settings.providerOptions
     let rewrite: ModelMessage[] | undefined
     const approvalMessage = firstOfContinuation() ? JSON.stringify(requestWire.at(-1)) : undefined
@@ -480,6 +508,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       }
     }
     providerOptions = deepMerge(settings.providerOptions, providerOptions)
+    if (wrapping) toolChoice = 'none' // a step.prepare toolChoice cannot re-enable tools
     model = stepModel
     if (input.signal.aborted) return aborted()
 
@@ -731,6 +760,11 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       response === undefined || finishReason !== 'tool-calls'
         ? undefined
         : findPending(input.messageId, response, registry.clientTools)
+    let stuck: StuckReason | undefined
+    if (response !== undefined) {
+      const found = progress.observe(response)
+      if (found !== undefined && input.progress !== false) stuck = found
+    }
     let stop: StopReason | undefined = decideStop({
       finishReason,
       sawError,
@@ -741,6 +775,29 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       outputTokens: total.outputTokens ?? 0,
       maxOutputTokens: input.maxOutputTokens,
     })
+    if (wrapping) {
+      // the wrap-up step ends the turn whatever it answered (errors stay errors)
+      wrapping = false
+      if (stop !== 'error') stop = 'max-steps'
+    } else if (stop === undefined && stuck !== undefined) {
+      if (nudges < maxNudges) {
+        nudges++
+        progress.reset()
+        nudge = PROGRESS_NUDGE.replace('{what}', describeStuck(stuck))
+        rt.warn(
+          {
+            code: 'W_LOOP_STUCK',
+            message: `The turn looks stuck (${describeStuck(stuck)}); the model was reminded.`,
+            details: { ...stuck, stepIndex: stepIndex - 1 },
+          },
+          info.id,
+        )
+      } else {
+        if (external.length > 0) inbox?.unshift(external)
+        external = []
+        return { stop: 'stuck', steps: stepIndex, model }
+      }
+    }
     if (stop === undefined) continue
 
     // pending input wins over 'complete' — but never past the step budget or the cost cap
@@ -752,9 +809,16 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     }
     waiting = []
 
-    if (stop === 'complete' || stop === 'max-steps' || stop === 'length') {
+    if (!wrapped && (stop === 'complete' || stop === 'max-steps' || stop === 'length')) {
       const decision = await beforeEnd(stop)
       if (decision === 'continue') continue
+    }
+    if (stop === 'max-steps' && input.wrapUp && !wrapped) {
+      // one more step without tools: the model summarizes what is done and what is left
+      wrapped = true
+      wrapping = true
+      budget = stepIndex + 1
+      continue
     }
     // not delivered: back to the inbox, the turn decides (queued turn or input-dropped)
     if (external.length > 0) inbox?.unshift(external)
@@ -782,6 +846,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
             stop: current,
             stepIndex: stepIndex - 1,
             continues,
+            idleContinues: idleNow(),
             lastText,
           })
         } catch (error) {
@@ -801,12 +866,26 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
             {
               code: 'W_CONTINUE_LIMIT',
               message: `turn.beforeEnd asked to continue more than loop.maxContinues (${input.maxContinues}) times; ignored.`,
-              details: { owner: hook.owner, continues },
+              details: { owner: hook.owner, continues, reason: 'max' },
             },
             info.id,
           )
           return 'stop'
         }
+        const idle = idleNow()
+        if (idle >= input.maxIdleContinues) {
+          rt.warn(
+            {
+              code: 'W_CONTINUE_LIMIT',
+              message: `turn.beforeEnd asked to continue, but the last ${idle} continuations made no progress (loop.maxIdleContinues); ignored.`,
+              details: { owner: hook.owner, continues, idleContinues: idle, reason: 'no-progress' },
+            },
+            info.id,
+          )
+          return 'stop'
+        }
+        idleContinues = idle
+        novelAtContinue = progress.novel
         if ('continue' in out && typeof out.continue?.reason === 'string') {
           continues++
           waiting.push({ source: `plugin:${hook.owner}`, text: out.continue.reason })
@@ -821,11 +900,24 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       }
       return 'stop'
     }
+
+    /** Idle continuations in a row, counting the last one when nothing new happened since. */
+    function idleNow(): number {
+      return novelAtContinue !== undefined && progress.novel === novelAtContinue
+        ? idleContinues + 1
+        : 0
+    }
   }
 
   function totalUsage(): LanguageModelUsage {
     return totalUsageOf(emptyUsage())
   }
+}
+
+function describeStuck(stuck: StuckReason): string {
+  return stuck.kind === 'repeat'
+    ? `'${stuck.toolName}' was called ${stuck.count} times with the same input and the same result`
+    : `the last ${stuck.count} steps' tool calls all failed`
 }
 
 function abortReasonText(signal: AbortSignal): string {

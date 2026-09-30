@@ -271,7 +271,14 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   /** The loop is about to stop with `complete`, `max-steps` or `length`. First non-void result wins. */
   'turn.beforeEnd'?(
     ctx: HarnessContext<DP>,
-    e: { stop: StopReason; stepIndex: number; continues: number; lastText: string },
+    e: {
+      stop: StopReason
+      stepIndex: number
+      continues: number
+      /** Continuations in a row after which the turn made no progress (spec 05 §3.2). */
+      idleContinues: number
+      lastText: string
+    },
   ): Awaitable<void | { continue: { reason: string } } | { extendSteps: number }>
   'turn.end'?(ctx: HarnessContext<DP>, e: TurnResult): Awaitable<void>
 
