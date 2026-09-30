@@ -19,3 +19,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0012](0012-approvals-server-owned-pending.md) | Tool approvals via AI SDK `toolApproval` with server-owned pending state |
 | [0013](0013-cache-friendly-prompt-layout.md) | Cache-friendly prompt layout with reminders |
 | [0014](0014-interrupted-tool-calls-answered.md) | Interrupted tool calls are answered, not dropped |
+| [0015](0015-progress-bounded-loop.md) | Long turns are bounded by progress, not by small counts |

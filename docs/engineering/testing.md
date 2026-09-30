@@ -132,7 +132,8 @@ Harness interaction and robustness (spec 05, 11; mostly P2 and P7):
     `deliver: 'next-step'` during a turn is delivered once (kind message has `deliveredIn`, not
     projected twice).
 27. `turn.beforeEnd`: `continue` runs one more step with `data-eh.input { source: 'plugin:…' }`;
-    `maxContinues` bound → `W_CONTINUE_LIMIT`; `extendSteps` lifts `max-steps`.
+    `maxContinues` / `maxIdleContinues` bound → `W_CONTINUE_LIMIT`; `extendSteps` lifts `max-steps`;
+    progress guard (repeat, error streak, nudge, `'stuck'`); wrap-up step after `max-steps`.
 28. `input.submit`: rewrite is re-normalized; `block` → `stop: 'blocked'`, nothing persisted (or
     user message + notice with `persist`); a throwing hook blocks (fail closed).
 29. Crash recovery: kill a turn after the tool call was saved (simulated by dropping the session

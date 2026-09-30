@@ -5,6 +5,7 @@ import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { isHarnessError } from '../errors.ts'
+import { MAX_STEPS_WRAP_UP } from '../messages/texts.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import type { HarnessContext, StepEndEvent } from '../plugin/types.ts'
@@ -376,7 +377,7 @@ describe('waiting input and limits', () => {
       name: 'chatty',
       setup: () => ({ hooks: { 'step.end': () => ({ context: 'one more thing' }) } }),
     })
-    const { agent } = setup({ model, plugins: [plugin], loop: { maxSteps: 3 } })
+    const { agent } = setup({ model, plugins: [plugin], loop: { maxSteps: 3, wrapUp: false } })
     const result = await agent.session('s1').send('go').result
     expect(result.stop).toBe('max-steps')
     expect(model.calls).toHaveLength(3)
@@ -408,6 +409,94 @@ describe('waiting input and limits', () => {
     })
     const result = await agent.session('s1').send('go').result
     expect(result.stop).toBe('complete')
+    expect(warnings.map((w) => w.code)).not.toContain('W_CONTINUE_LIMIT')
+  })
+})
+
+describe('progress guard (spec 05 §3.2)', () => {
+  const repeating = () =>
+    scriptedModel(
+      Array.from({ length: 12 }, () => ({ toolCalls: [{ toolName: 'look', input: {} }] })),
+    )
+  const look = tool({ inputSchema: z.object({}), execute: async () => 'same' })
+
+  test('a repeated call gets one reminder (W_LOOP_STUCK), then the turn stops with stuck', async () => {
+    const model = repeating()
+    const { agent, warnings } = setup({ model, tools: { look } })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('stuck')
+    // 3 repeats → nudge (window reset) → 3 more repeats → stuck
+    expect(result.steps).toBe(6)
+    expect(warnings.filter((w) => w.code === 'W_LOOP_STUCK')).toHaveLength(1)
+    expect(JSON.stringify(model.calls[3]?.prompt)).toContain('You are not making progress')
+    expect(JSON.stringify(model.calls[4]?.prompt)).not.toContain('You are not making progress')
+  })
+
+  test('nudges: 0 stops at the first detection; progress: false disables it', async () => {
+    const first = setup({ model: repeating(), tools: { look }, loop: { progress: { nudges: 0 } } })
+    expect((await first.agent.session('s1').send('go').result).stop).toBe('stuck')
+    const off = setup({
+      model: repeating(),
+      tools: { look },
+      loop: { progress: false, maxSteps: 8, wrapUp: false },
+    })
+    const result = await off.agent.session('s1').send('go').result
+    expect(result.stop).toBe('max-steps')
+    expect(off.warnings.map((w) => w.code)).not.toContain('W_LOOP_STUCK')
+  })
+
+  test('continuations without progress are refused after maxIdleContinues', async () => {
+    const model = scriptedModel(Array.from({ length: 10 }, () => ({ text: 'thinking' })))
+    const seen: number[] = []
+    const plugin = definePlugin({
+      name: 'nag',
+      setup: () => ({
+        hooks: {
+          'turn.beforeEnd': (_ctx, e) => {
+            seen.push(e.idleContinues)
+            return { continue: { reason: 'keep going' } }
+          },
+        },
+      }),
+    })
+    const { agent, warnings } = setup({ model, plugins: [plugin], loop: { maxIdleContinues: 2 } })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    expect(result.steps).toBe(3) // first continue is free, then 1 idle one, then refused
+    expect(seen).toEqual([0, 1, 2])
+    const limit = warnings.find((w) => w.code === 'W_CONTINUE_LIMIT')
+    expect(limit?.details).toMatchObject({ reason: 'no-progress', idleContinues: 2 })
+  })
+
+  test('continuations that lead to new tool results are not idle', async () => {
+    let n = 0
+    const work = tool({ inputSchema: z.object({}), execute: async () => `result ${n++}` })
+    const model = scriptedModel([
+      { text: 'a' },
+      { toolCalls: [{ toolName: 'work', input: {} }] },
+      { text: 'b' },
+      { toolCalls: [{ toolName: 'work', input: {} }] },
+      { text: 'c' },
+      { toolCalls: [{ toolName: 'work', input: {} }] },
+      { text: 'd' },
+    ])
+    let continues = 0
+    const plugin = definePlugin({
+      name: 'nag',
+      setup: () => ({
+        hooks: {
+          'turn.beforeEnd': () => (continues++ < 3 ? { continue: { reason: 'next' } } : undefined),
+        },
+      }),
+    })
+    const { agent, warnings } = setup({
+      model,
+      tools: { work },
+      plugins: [plugin],
+      loop: { maxIdleContinues: 1 },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(result.steps).toBe(7)
     expect(warnings.map((w) => w.code)).not.toContain('W_CONTINUE_LIMIT')
   })
 })
@@ -486,12 +575,28 @@ describe('scenario 27: turn.beforeEnd', () => {
     expect(result.steps).toBe(3)
   })
 
-  test('without hooks max-steps stops the loop', async () => {
+  test('without hooks max-steps stops the loop (wrapUp: false)', async () => {
     const noop = tool({ inputSchema: z.object({}), execute: async () => 'ok' })
     const model = scriptedModel([{ toolCalls: [{ toolName: 'noop', input: {} }] }])
+    const { agent } = setup({ model, tools: { noop }, loop: { wrapUp: false } })
+    const result = await agent.session('s1').send('go', { maxSteps: 1 }).result
+    expect(result.stop).toBe('max-steps')
+    expect(model.calls).toHaveLength(1)
+  })
+
+  test('max-steps runs one wrap-up step without tools (default wrapUp)', async () => {
+    const noop = tool({ inputSchema: z.object({}), execute: async () => 'ok' })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'noop', input: {} }] },
+      { text: 'Done: called noop. Left: nothing.' },
+    ])
     const { agent } = setup({ model, tools: { noop } })
     const result = await agent.session('s1').send('go', { maxSteps: 1 }).result
     expect(result.stop).toBe('max-steps')
+    expect(result.steps).toBe(2)
+    expect(model.calls).toHaveLength(2)
+    expect(model.calls[1]?.toolChoice).toEqual({ type: 'none' })
+    expect(JSON.stringify(model.calls[1]?.prompt)).toContain(MAX_STEPS_WRAP_UP)
   })
 
   test('cost-cap stops the loop when output tokens exceed maxTurnOutputTokens', async () => {

@@ -34,6 +34,8 @@ export type StopReason =
   | 'timeout'
   /** An `input.submit` hook blocked the input. */
   | 'blocked'
+  /** The progress guard found the turn repeating itself or failing, and a nudge did not help (spec 05 §3.2). */
+  | 'stuck'
   /** The process died mid-turn; set by crash recovery. */
   | 'interrupted'
   /** Step budget reached. */

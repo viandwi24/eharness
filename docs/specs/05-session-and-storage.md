@@ -266,7 +266,8 @@ Evaluate in this order; the first match decides:
 | 7 | cumulative output tokens (incl. `addUsage`) > `loop.maxTurnOutputTokens` | `'cost-cap'` |
 
 If none matches (`finishReason: 'tool-calls'` and every call has a result — automatic denials and
-tool errors count as results), the loop continues.
+tool errors count as results), the loop continues — unless the progress guard (§3.2) found the
+turn stuck and has no reminder left, which stops it with `'stuck'`.
 
 Then, before actually stopping:
 
@@ -279,11 +280,45 @@ Then, before actually stopping:
   an `input-dropped` event for `'tool-pending'` and `'aborted'`).
 - **`turn.beforeEnd`** runs for `'complete'`, `'max-steps'` and `'length'` (spec 01 §5). A
   `continue` result delivers its reason as `data-eh.input` and runs one more step; `extendSteps`
-  raises the budget (only for `'max-steps'`). At most `loop.maxContinues` forced continuations per
-  turn (`continue` and `extendSteps` both count); further results are ignored with
-  `W_CONTINUE_LIMIT`.
+  raises the budget (only for `'max-steps'`). Continuations are bounded by **progress**, not by a
+  fixed count (§3.2): a continuation is refused with `W_CONTINUE_LIMIT`
+  (`details.reason: 'no-progress'`) once the last `loop.maxIdleContinues` (default 3)
+  continuations in a row were followed by no progress. `loop.maxContinues` (default none) is an
+  absolute cap on top (`details.reason: 'max'`). `continue` and `extendSteps` both count.
+- **Wrap-up.** When the stop is still `'max-steps'` after `turn.beforeEnd` and `loop.wrapUp` is
+  on (default), the loop runs **one** more step with `toolChoice: 'none'` (a `step.prepare`
+  `toolChoice` cannot change it) and the step reminder `MAX_STEPS_WRAP_UP` (spec 10 §5), so the
+  model summarizes what it did and what is left instead of stopping mid-action. That step ends the
+  turn with `'max-steps'` whatever it answers (`'error'` stays `'error'`); `turn.beforeEnd` does
+  not run for it.
 - `step.end` `context` that is still waiting when the turn stops with anything but `'complete'` is
   discarded: it is plugin context, not user input (no queued turn, no `input-dropped` event).
+
+### 3.2 Progress guard (normative)
+
+Long autonomous turns have no small step cap (`loop.maxSteps` default 500); instead the loop
+checks that the turn keeps producing something new. After every step the core records each tool
+call of the step as a key of *(tool name, input, output)* — inputs and outputs compared as JSON
+with sorted keys; denied calls (`execution-denied`) and `progress.ignoreTools` are skipped. The
+last `progress.window` (20) steps that called tools are kept.
+
+- **Repeat:** a key occurring `progress.repeats` (3) times in the window (this also catches A/B
+  cycles).
+- **Error streak:** `progress.errorStreak` (5) steps in a row whose tool calls all failed
+  (`error-text` / `error-json` results).
+
+When the rules of §3.1 would continue and the turn is stuck: while fewer than `progress.nudges`
+(1) reminders were given, the next step gets the step reminder `PROGRESS_NUDGE` (spec 10 §5,
+never stored), the window and streak are cleared, and `W_LOOP_STUCK` is raised with
+`details: { kind, toolName?, count, stepIndex }`. Otherwise the turn stops with `'stuck'`. A step
+that ends the turn anyway (§3.1 rules 1–7) is not affected. `loop.progress: false` disables the
+guard.
+
+**Progress** for continuations (§3.1) is the number of tool calls whose key was not in the window
+and whose result is not an error. A continuation is *idle* when this number did not grow since the
+previous continuation; `turn.beforeEnd` receives `idleContinues` (idle continuations in a row,
+counting the last one if nothing new happened since). This is measured even when the guard is
+disabled.
 
 Stops decided outside a step: `'aborted'` (user/abort signal), `'timeout'`, `'blocked'`
 (`input.submit`), `'interrupted'` (set on a recovered message, §9). Full list: spec 10 §4.
