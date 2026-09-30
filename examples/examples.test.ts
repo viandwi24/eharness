@@ -69,6 +69,20 @@ describe('examples run offline', () => {
   )
 
   test(
+    'tool-context',
+    async () => {
+      const out = await run('tool-context.ts')
+      expect(out).toContain('progress 50%')
+      expect(out).toContain('invoice draft')
+      expect(out).toContain('invoice sent')
+      expect(out).toContain('complete: 1 invoice part stored')
+      expect(out).toContain('Invoice #1 for u_42 in session chat-1')
+      expect(out).toContain('request: "Invoice 120 for me"')
+    },
+    timeout,
+  )
+
+  test(
     'next-route (useChat approval round trip)',
     async () => {
       const out = await run('next-route.demo.ts')

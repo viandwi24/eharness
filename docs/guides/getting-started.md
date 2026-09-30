@@ -92,7 +92,69 @@ const model = scriptedModel([
 // defineHarnessAgent({ model, … }) — then assert on model.prompts[i] (what the model saw)
 ```
 
-## 5. Next steps
+## 5. Tools that use the running chat
+
+A plain `tool()` knows only its input. Write the tool as a function `(ctx) => tool()` and it gets
+the session context: which chat it runs in, this turn's user message, your app values, session
+state, plugin services, and a typed writer for custom UI data parts.
+
+```ts
+import { tool } from 'ai'
+import { defineDataPart, defineHarnessAgent } from 'eharness'
+import { z } from 'zod/v4'
+
+const agent = defineHarnessAgent({
+  model: 'anthropic/claude-sonnet-4.6',
+  contextWindow: 200_000,
+  dataParts: {
+    invoice: defineDataPart({ schema: z.object({ total: z.number(), status: z.string() }) }),
+    progress: defineDataPart({ schema: z.object({ percent: z.number() }), transient: true }),
+  },
+  tools: {
+    create_invoice: (ctx) =>
+      tool({
+        description: 'Create and send an invoice',
+        inputSchema: z.object({ total: z.number() }),
+        execute: async ({ total }, { toolCallId, messages, abortSignal }) => {
+          const userText = ctx.turn?.input?.parts.find((p) => p.type === 'text')?.text
+          const userId = String(ctx.runtime.userId)
+          ctx.state.set('lastInvoice', total)
+
+          ctx.stream.data('progress', { percent: 50 })
+          ctx.stream.data('invoice', { total, status: 'draft' }, { id: toolCallId })
+          if (abortSignal?.aborted) return 'Cancelled.'
+          ctx.stream.data('invoice', { total, status: 'sent' }, { id: toolCallId })
+          return `Invoice sent for ${userId} (${messages.length} messages so far, asked: "${userText}")`
+        },
+      }),
+  },
+})
+
+const session = agent.session('chat-1', { runtime: { userId: 'u_42' } })
+await session.send('Invoice 120 for me').result
+```
+
+- **`ctx.session.id`** / **`ctx.agent.id`**: the chat and agent this call belongs to.
+- **`ctx.turn`**: the running turn: `input` (the user message that started it), `model`,
+  `abortSignal`, and `addUsage()` for model calls you make inside the tool.
+- **`ctx.runtime`**: your own values (user, tenant, request id). Pass them with
+  `agent.session(id, { runtime })` and/or `send(input, { runtime })`; both are merged per turn.
+  Never trust the model for them.
+- **`ctx.state`**: JSON state stored with the session (`get` / `set`).
+- **`ctx.services`**: services provided by plugins, e.g. `ctx.services.fs` from `filesystem()`.
+- **`ctx.stream.data(name, data, { id })`**: writes a part you declared in `dataParts`; names and
+  payloads are type-checked. A persistent part is stored in the assistant message, and writing the
+  same `id` again replaces it in place. A `transient` part is only streamed.
+  `ctx.stream.write({ type: 'data-…', data })` writes any registered part without typing.
+- **The second `execute` argument** comes from AI SDK: `toolCallId`, `messages` (the model
+  messages so far) and `abortSignal`.
+
+On the client, `useChat<InferHarnessUIMessage<typeof agent>>()` shows `data-invoice` in
+`message.parts` with typed `data`; transient parts arrive in `onData`. Runnable:
+[`examples/tool-context.ts`](../../examples/tool-context.ts). Rendering details:
+[rendering data parts](rendering-data-parts.md).
+
+## 6. Next steps
 
 - **Keep history across restarts:** pass `storage: { messages, state }`. The default is in memory;
   see [writing a storage adapter](writing-a-storage-adapter.md) and the JSON-file and Postgres
