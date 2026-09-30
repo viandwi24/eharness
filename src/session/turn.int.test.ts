@@ -400,6 +400,40 @@ describe('scenario 15: failure semantics', () => {
 })
 
 describe('scenario 31: tool errors', () => {
+  test('invalid tool input and unknown tools: UI, stored part and wire carry the same text', async () => {
+    const typed = tool({
+      inputSchema: z.object({ n: z.number() }),
+      execute: async ({ n }) => n,
+    })
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'typed', input: { n: 'x' } },
+          { toolName: 'ghost', input: {} },
+        ],
+      },
+      { text: 'Sorry.' },
+    ])
+    const { agent } = makeAgent({ model, tools: { typed } })
+    const run = agent.session('s1').send('Go')
+    const chunks = await collect(run.stream)
+    const result = await run.result
+    const ui = chunks
+      .filter((c) => c.type === 'tool-output-error')
+      .map((c) => (c as { errorText: string }).errorText)
+    expect(ui).toHaveLength(2)
+    expect(ui[0]).toStartWith('AI_InvalidToolInputError: Invalid input for tool typed:')
+    expect(ui[1]).toStartWith('AI_NoSuchToolError:')
+    const assistant = result.messages.find((m) => m.id === result.messageId)
+    const stored = (assistant?.parts ?? [])
+      .filter((p) => (p as { state?: string }).state === 'output-error')
+      .map((p) => (p as { errorText: string }).errorText)
+    expect(stored).toEqual(ui)
+    const wire = JSON.stringify(model.prompts[1])
+    for (const text of ui) expect(wire).toContain(JSON.stringify(text).slice(1, -1))
+    expect(result.stop).toBe('complete')
+  })
+
   test('UI errorText, stored part and model wire carry the same String(error)', async () => {
     const fails = tool({
       inputSchema: z.object({}),

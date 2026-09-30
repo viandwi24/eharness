@@ -9,10 +9,12 @@
 import {
   type FinishReason,
   type InferToolOutput,
+  InvalidToolInputError,
   isStepCount,
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
+  NoSuchToolError,
   type StepResult,
   streamText,
   type ToolChoice,
@@ -291,6 +293,19 @@ function totalUsageOf(totals: UsageTotals): LanguageModelUsage {
   }
 }
 
+/**
+ * Errors AI SDK answers a tool call with (`error-text` = `String(error)` on the wire): a tool's
+ * `execute` threw (`HarnessToolError`), the input failed the tool's schema
+ * (`InvalidToolInputError`) or the tool does not exist (`NoSuchToolError`).
+ */
+function isToolCallError(error: unknown): boolean {
+  return (
+    error instanceof HarnessToolError ||
+    InvalidToolInputError.isInstance(error) ||
+    NoSuchToolError.isInstance(error)
+  )
+}
+
 async function guarded<T>(value: PromiseLike<T>): Promise<T | undefined> {
   try {
     return await value
@@ -509,6 +524,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     /** An error chunk before the step's first start-step, held back for overflow recovery. */
     let held: UIMessageChunk | undefined
     let rawError: unknown
+    const toolErrorTexts = new Set<string>()
     const result = streamText({
       model: stepModel,
       ...(cached.system.length > 0 ? { instructions: cached.system } : {}),
@@ -543,10 +559,16 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       sendStart: false,
       sendFinish: false,
       onError: (error: unknown) => {
-        if (!(error instanceof HarnessToolError)) rawError ??= error
-        return error instanceof HarnessToolError
-          ? String(error)
-          : describeError(error, (m, d) => rt.log.error(m, d))
+        // tool call errors: the text the wire got (spec 04 §8). For invalid/unknown tool calls AI
+        // SDK reports the error object (tool-input-error), then its text (tool-output-error).
+        if (isToolCallError(error)) {
+          const text = String(error)
+          toolErrorTexts.add(text)
+          return text
+        }
+        if (typeof error === 'string' && toolErrorTexts.has(error)) return error
+        rawError ??= error
+        return describeError(error, (m, d) => rt.log.error(m, d))
       },
     })
     for await (const chunk of ui) {
