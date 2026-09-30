@@ -8,6 +8,7 @@
  */
 import {
   type FinishReason,
+  type InferToolOutput,
   isStepCount,
   type LanguageModel,
   type LanguageModelUsage,
@@ -16,6 +17,7 @@ import {
   streamText,
   type ToolChoice,
   type ToolSet,
+  type toolSearch,
   toUIMessageStream,
   type UIMessageChunk,
 } from 'ai'
@@ -159,16 +161,30 @@ function mergeSettings(
 
 export { mergeSettings }
 
-/** Names of tools found by `tool_search` in a tool output (`{ tools: [{ name }] }`). */
+/** Output of AI SDK's `toolSearch()` tool: `{ tools: [{ name, description? }] }`. */
+type ToolSearchOutput = InferToolOutput<ReturnType<typeof toolSearch>>
+
+function isToolSearchOutput(value: unknown): value is ToolSearchOutput {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as { tools?: unknown }).tools)
+  )
+}
+
+/**
+ * Names of tools found by `tool_search` in a tool output: the raw {@link ToolSearchOutput}, or a
+ * model tool result output (`{ type: 'json', value }`) wrapping it. Stored data is untrusted, so
+ * the shape is checked at runtime.
+ */
 export function toolSearchNames(output: unknown): string[] {
   const value =
     typeof output === 'object' && output !== null && 'type' in output && 'value' in output
-      ? (output as { value: unknown }).value
+      ? output.value
       : output
-  const tools = (value as { tools?: unknown } | null)?.tools
-  if (!Array.isArray(tools)) return []
-  return tools
-    .map((t) => (t as { name?: unknown } | null)?.name)
+  if (!isToolSearchOutput(value)) return []
+  return value.tools
+    .map((t: unknown) => (t as { name?: unknown } | null)?.name)
     .filter((n): n is string => typeof n === 'string')
 }
 
