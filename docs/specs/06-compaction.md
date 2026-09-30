@@ -286,12 +286,13 @@ because the context is too long, the core recovers instead of failing the turn:
 
    | Shape | Status | Texts matched |
    |---|---|---|
-   | AI SDK `RetryError` (any `reason`, e.g. `errorNotRetryable` after a 429 then a 400) | — | unwrapped: `lastError`, then the other `errors`, most recent first |
+   | AI SDK `RetryError` (any `reason`, e.g. `errorNotRetryable` after a 429 then a 400) | — | unwrapped: `lastError` with its whole `.cause` chain, then the other `errors`, most recent first |
    | AI SDK `APICallError` | `statusCode` | `message`, `responseBody`, `data` |
    | AI SDK `StreamProviderError` | `statusCode` (none → never an overflow) | `message`, `data`, `code`, `type` |
    | anything else (gateway, fetch, wrappers) | `statusCode` or `status` (integer) | `message`, `responseBody`, `body`, `data`, `error` |
 
-   `.cause` is followed for every error (breadth first, cycle-safe, at most 8 errors).
+   `.cause` is followed for every error (depth first: an error, the errors it wraps, then its
+   causes; cycle-safe, at most 8 errors).
 2. **Recalibrate.** If the provider reports the actual token count, set `k = actual / estimate`
    (the clamp of §2 no longer applies for this session); otherwise `k = k × 1.25`.
 3. **Compact and retry once per turn** (`W_OVERFLOW_RETRY`): run a mid-turn compaction (pre-turn
