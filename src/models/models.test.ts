@@ -65,6 +65,22 @@ describe('computeCost', () => {
     )
   })
 
+  test('the highest matching tier wins regardless of array order', () => {
+    const tiers = [
+      { above: 250_000, input: 3, output: 6 },
+      { above: 200_000, input: 2, output: 4 },
+    ]
+    const pricing = { input: 1, output: 2, tiers }
+    expect(computeCost(usage({ inputTokens: 300_000, outputTokens: 0 }), pricing)).toBeCloseTo(
+      0.9,
+      10,
+    )
+    expect(computeCost(usage({ inputTokens: 220_000, outputTokens: 0 }), pricing)).toBeCloseTo(
+      0.44,
+      10,
+    )
+  })
+
   test('NaN and negative counts are ignored', () => {
     expect(
       computeCost(usage({ inputTokens: Number.NaN, outputTokens: -5 }), { input: 1, output: 1 }),

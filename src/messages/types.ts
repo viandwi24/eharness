@@ -40,7 +40,7 @@ export type StopReason =
   | 'interrupted'
   /** Step budget reached. */
   | 'max-steps'
-  /** `loop.maxTurnOutputTokens` exceeded. */
+  /** `loop.maxTurnOutputTokens` exceeded, or a USD `budget` used up (spec 12 §4). */
   | 'cost-cap'
   /** A `step.end` hook stopped the turn: `plugin:<plugin>:<reason>`. */
   | `plugin:${string}`
@@ -62,7 +62,7 @@ export interface PendingState {
   /**
    * Tool calls waiting for a user approval decision. `input` (the refined tool input) and `risk`
    * (spec 11 §3.2) let an inbox show the request without loading messages; absent in state
-   * written before 0.2.
+   * written before 0.3.
    */
   approvals: Array<{
     approvalId: string

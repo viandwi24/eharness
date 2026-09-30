@@ -28,8 +28,15 @@ export function computeCost(usage: LanguageModelUsage, pricing: ModelPricing): n
   const reasoning = Math.min(output, count(usage.outputTokenDetails?.reasoningTokens))
   const text = output - reasoning
   const prompt = uncached + cacheRead + cacheWrite
+  // the matching tier with the largest threshold wins, whatever the array order
   let rates: TokenRates = pricing
-  for (const tier of pricing.tiers ?? []) if (prompt > tier.above) rates = tier
+  let above = Number.NEGATIVE_INFINITY
+  for (const tier of pricing.tiers ?? []) {
+    if (prompt > tier.above && tier.above > above) {
+      rates = tier
+      above = tier.above
+    }
+  }
   const usd =
     uncached * rates.input +
     cacheRead * (rates.cacheRead ?? rates.input) +
