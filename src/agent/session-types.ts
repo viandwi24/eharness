@@ -90,7 +90,8 @@ export interface SessionStateSnapshot {
   rev: number
   core: {
     compaction?: { markerId: string; resumeFromId: string | null }
-    usage?: { inputTokens: number; outputTokens: number; turns: number }
+    /** `costUsd`: estimated USD of all turns (spec 12), when anything was priced. */
+    usage?: { inputTokens: number; outputTokens: number; turns: number; costUsd?: number }
     activeTurn?: ActiveTurn
     pending?: PendingState
     grants?: Record<string, 'always' | 'never'>

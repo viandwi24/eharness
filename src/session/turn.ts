@@ -46,6 +46,7 @@ import type {
   TurnKind,
   TurnResult,
 } from '../messages/types.ts'
+import { costOf } from '../models/cost.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
@@ -298,7 +299,16 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     model: op.options.model ?? config.model,
     settings: mergeSettings(config.settings ?? {}, op.options.settings),
     abortSignal: controller.signal,
-    addUsage: (value) => addUsage(usage, value, true),
+    addUsage: (value, source) => {
+      const options = typeof source === 'object' && source !== null ? source : {}
+      const cost =
+        typeof options.costUsd === 'number'
+          ? options.costUsd
+          : options.model === undefined
+            ? undefined
+            : costOf(config.models, options.model, value)
+      addUsage(usage, value, true, cost)
+    },
   }
   const turnState: TurnState = {
     info,
@@ -401,6 +411,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (usage.cacheRead !== undefined) meta.cachedInputTokens = usage.cacheRead
     if (usage.cacheWrite !== undefined) meta.cacheWriteTokens = usage.cacheWrite
     if (usage.nestedTotal > 0) meta.nested = usage.nestedTotal
+    if (usage.costUsd !== undefined) meta.costUsd = usage.costUsd
     return meta
   }
 
@@ -1125,6 +1136,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         maxOutputTokens: config.loop?.maxTurnOutputTokens ?? Number.POSITIVE_INFINITY,
         wrapUp: config.loop?.wrapUp ?? true,
         progress: config.loop?.progress,
+        models: config.models,
+        budget: config.budget,
+        sessionCostBefore: rt.state.core().usage?.costUsd ?? 0,
         toolsContext: prep.toolsContext,
         cache: config.cache,
         signal: controller.signal,
@@ -1332,6 +1346,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         outputTokens: previous.outputTokens + usage.output + usage.nestedOutput,
         turns: previous.turns + (outcome.steps > 0 ? 1 : 0),
       }
+      const cost = (previous.costUsd ?? 0) + (usage.costUsd ?? 0)
+      if (previous.costUsd !== undefined || usage.costUsd !== undefined) core.usage.costUsd = cost
       rt.state.markDirty()
       try {
         await rt.state.writeIfDirty()
@@ -1359,6 +1375,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         totalTokens: usage.total + usage.nestedTotal,
         cachedInputTokens: usage.cacheRead,
         cacheWriteTokens: usage.cacheWrite,
+        costUsd: usage.costUsd,
       }),
       steps: outcome.steps,
       durationMs: Date.now() - startedAt,

@@ -21,6 +21,7 @@ import type {
 import type { HarnessWarning } from '../errors.ts'
 import type { ProviderOptions } from '../internal/ai-types.ts'
 import type { HarnessDataTypes, HarnessMetadata, HarnessUIMessage } from '../messages/types.ts'
+import type { ModelCatalog } from '../models/types.ts'
 import type {
   DataPartMap,
   HarnessContext,
@@ -74,6 +75,21 @@ export interface LoopConfig {
   progress?: ProgressConfig | false
   /** Default true — upsert the assistant message after every step. */
   persistEachStep?: boolean
+}
+
+/**
+ * Spending limits in USD, computed from `models` pricing (estimates, spec 12 §4). Exceeding one
+ * stops the turn with `'cost-cap'` after the step that crossed it.
+ *
+ * @see docs/specs/12-models-and-cost.md#4-budgets
+ */
+export interface BudgetConfig {
+  /** USD per turn, incl. `ctx.turn.addUsage()` contributions. */
+  maxTurnUsd?: number
+  /** USD per session: all turns so far (`state.core.usage.costUsd`) plus the running turn. */
+  maxSessionUsd?: number
+  /** Default 0.8 — `W_BUDGET` once per turn and budget when spending reaches this share. */
+  warnAt?: number
 }
 
 /**
@@ -194,6 +210,13 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   model: LanguageModel
   /** Context window in tokens (or a function of the model). Default 128_000. */
   contextWindow?: number | ((model: LanguageModel) => number | undefined)
+  /**
+   * Limits and prices of the models in use (spec 12): a record keyed by model id or a function.
+   * Supplies the context window when `contextWindow` does not, and prices for cost and budgets.
+   */
+  models?: ModelCatalog
+  /** USD spending limits (spec 12 §4). Needs `models` with pricing. */
+  budget?: BudgetConfig
 
   instructions?: InstructionInput | InstructionInput[]
   /** Tool functions get the app context: `ctx.stream.data` is typed with `dataParts`. */

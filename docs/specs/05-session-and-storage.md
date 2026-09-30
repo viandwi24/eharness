@@ -439,7 +439,7 @@ export interface SessionStateSnapshot {
   core: {
     compaction?: { markerId: string; resumeFromId: string | null }
     /** Cumulative over the session; `turns` counts turns that ran at least one model step. */
-    usage?: { inputTokens: number; outputTokens: number; turns: number }
+    usage?: { inputTokens: number; outputTokens: number; turns: number; costUsd?: number }   // costUsd: spec 12
     /** The turn currently running somewhere (§9). */
     activeTurn?: ActiveTurn
     /** Approvals / client tool calls waiting for respond() (spec 11 §2). */

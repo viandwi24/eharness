@@ -23,12 +23,15 @@ import {
   toUIMessageStream,
   type UIMessageChunk,
 } from 'ai'
-import type { CacheConfig, ModelSettings, ProgressConfig } from '../agent/types.ts'
+import type { BudgetConfig, CacheConfig, ModelSettings, ProgressConfig } from '../agent/types.ts'
 import type { TurnCompaction } from '../compaction/turn-context.ts'
 import { HarnessToolError } from '../errors.ts'
+import { describeModel } from '../internal/model.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import { MAX_STEPS_WRAP_UP, PROGRESS_NUDGE } from '../messages/texts.ts'
 import type { PendingState, StopReason } from '../messages/types.ts'
+import { costOf } from '../models/cost.ts'
+import type { ModelCatalog } from '../models/types.ts'
 import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
@@ -51,6 +54,10 @@ export interface UsageTotals {
   nestedInput: number
   nestedOutput: number
   nestedTotal: number
+  /** Estimated USD of the priced contributions; `undefined` until one was priced. */
+  costUsd: number | undefined
+  /** Some contribution had no known price. */
+  unpriced: boolean
 }
 
 /** Empty usage totals. */
@@ -65,11 +72,23 @@ export function emptyUsage(): UsageTotals {
     nestedInput: 0,
     nestedOutput: 0,
     nestedTotal: 0,
+    costUsd: undefined,
+    unpriced: false,
   }
 }
 
-/** Add AI SDK usage to totals (`nested` for `addUsage()`). */
-export function addUsage(totals: UsageTotals, usage: LanguageModelUsage, nested = false): void {
+/** Add AI SDK usage to totals (`nested` for `addUsage()`); `costUsd` undefined = unpriced. */
+export function addUsage(
+  totals: UsageTotals,
+  usage: LanguageModelUsage,
+  nested = false,
+  costUsd?: number,
+): void {
+  if (costUsd !== undefined && Number.isFinite(costUsd) && costUsd >= 0) {
+    totals.costUsd = (totals.costUsd ?? 0) + costUsd
+  } else {
+    totals.unpriced = true
+  }
   const input = usage.inputTokens ?? 0
   const output = usage.outputTokens ?? 0
   const total = usage.totalTokens ?? input + output
@@ -111,6 +130,12 @@ export interface StepLoopInput {
   wrapUp: boolean
   /** Stuck detection; `false` disables it (progress is still measured for continuations). */
   progress: ProgressConfig | false | undefined
+  /** Model limits and prices (spec 12). */
+  models?: ModelCatalog | undefined
+  /** USD budgets (spec 12 §4). */
+  budget?: BudgetConfig | undefined
+  /** USD spent by the session's earlier turns (`state.core.usage.costUsd`). */
+  sessionCostBefore?: number
   toolsContext: Record<string, unknown> | undefined
   cache: CacheConfig | false | undefined
   signal: AbortSignal
@@ -379,6 +404,39 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   /** The next step is the wrap-up step (tools off) after the step budget ran out. */
   let wrapping = false
   let wrapped = false
+  const budgetWarned = new Set<string>()
+  /** The budget that is used up, checking the warn threshold on the way (spec 12 §4). */
+  const overBudget = (): 'turn' | 'session' | undefined => {
+    const budget = input.budget
+    if (budget === undefined) return undefined
+    const turn = input.usage.costUsd ?? 0
+    const checks: Array<['turn' | 'session', number | undefined, number]> = [
+      ['turn', budget.maxTurnUsd, turn],
+      ['session', budget.maxSessionUsd, (input.sessionCostBefore ?? 0) + turn],
+    ]
+    let over: 'turn' | 'session' | undefined
+    for (const [scope, limit, spent] of checks) {
+      if (limit === undefined || !(limit >= 0)) continue
+      const exceeded = spent >= limit
+      const warnAt = budget.warnAt ?? 0.8
+      const key = `${scope}:${exceeded ? 'exceeded' : 'warn'}`
+      if ((exceeded || spent >= limit * warnAt) && !budgetWarned.has(key)) {
+        budgetWarned.add(key)
+        rt.warn(
+          {
+            code: 'W_BUDGET',
+            message: exceeded
+              ? `The ${scope} budget of $${limit} is used up ($${spent.toFixed(4)}); the turn stops.`
+              : `The ${scope} budget of $${limit} is ${Math.round((spent / limit) * 100)}% used.`,
+            details: { scope, limitUsd: limit, spentUsd: spent, exceeded },
+          },
+          `${info.id}:${key}`,
+        )
+      }
+      if (exceeded && over === undefined) over = scope
+    }
+    return over
+  }
   let stepIndex = 0
   let model: LanguageModel = info.model
   /** Input waiting for the next step boundary (`step.end` context, `turn.beforeEnd` continue). */
@@ -409,6 +467,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
 
   while (true) {
     if (input.signal.aborted) return aborted()
+    // a session budget used up by earlier turns stops the turn before any model call
+    if (stepIndex === 0 && overBudget() !== undefined) return { stop: 'cost-cap', steps: 0, model }
 
     // step boundary: deliver waiting input as data-eh.input (ADR-0011): steers and next-step
     // injections first (arrival order), then hook context
@@ -701,7 +761,18 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     // rejects like responseMessages on abort / early provider failure
     const step = response === undefined ? undefined : await guarded(result.finalStep)
     if (stepUsage !== undefined) {
-      addUsage(input.usage, stepUsage)
+      const cost = costOf(input.models, stepModel, stepUsage)
+      if (cost === undefined && input.budget !== undefined) {
+        rt.warn(
+          {
+            code: 'W_MODEL_UNPRICED',
+            message: `No pricing for model '${describeModel(stepModel)}' in \`models\`; its usage does not count toward the budget.`,
+            details: { model: describeModel(stepModel) },
+          },
+          `unpriced:${describeModel(stepModel)}`,
+        )
+      }
+      addUsage(input.usage, stepUsage, false, cost)
       compaction.observe(capped.raw, stepUsage.inputTokens)
     }
     const total = totalUsageOf(input.usage)
@@ -712,6 +783,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         outputTokens: total.outputTokens ?? 0,
         totalTokens: total.totalTokens ?? 0,
         steps: stepIndex,
+        ...(input.usage.costUsd === undefined ? {} : { costUsd: input.usage.costUsd }),
       },
       transient: true,
     })
@@ -739,6 +811,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         response,
         step,
       )
+      if (input.usage.costUsd !== undefined) event.costUsd = input.usage.costUsd
       for (const hook of hooks.list('step.end')) {
         try {
           const out = await hook.fn(contextOf(hook.owner), event)
@@ -775,6 +848,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       outputTokens: total.outputTokens ?? 0,
       maxOutputTokens: input.maxOutputTokens,
     })
+    if (stop === undefined && overBudget() !== undefined) stop = 'cost-cap'
     if (wrapping) {
       // the wrap-up step ends the turn whatever it answered (errors stay errors)
       wrapping = false
@@ -805,15 +879,17 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     if (stop === 'complete' && (waiting.length > 0 || external.length > 0)) {
       if (stepIndex >= budget) stop = 'max-steps'
       else if ((total.outputTokens ?? 0) > input.maxOutputTokens) stop = 'cost-cap'
+      else if (overBudget() !== undefined) stop = 'cost-cap'
       else continue
     }
     waiting = []
 
-    if (!wrapped && (stop === 'complete' || stop === 'max-steps' || stop === 'length')) {
+    const spent = overBudget() !== undefined
+    if (!wrapped && !spent && (stop === 'complete' || stop === 'max-steps' || stop === 'length')) {
       const decision = await beforeEnd(stop)
       if (decision === 'continue') continue
     }
-    if (stop === 'max-steps' && input.wrapUp && !wrapped) {
+    if (stop === 'max-steps' && input.wrapUp && !wrapped && !spent) {
       // one more step without tools: the model summarizes what is done and what is left
       wrapped = true
       wrapping = true

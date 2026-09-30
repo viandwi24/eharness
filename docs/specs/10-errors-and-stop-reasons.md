@@ -97,6 +97,8 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_SESSION_OPTIONS_IGNORED` | options passed to a cached session differ |
 | `W_DEFAULT_CONTEXT_WINDOW` | `contextWindow` not set (or its function returned `undefined`) for a model; using 128k |
 | `W_CONTINUE_LIMIT` | `turn.beforeEnd` asked to continue but the continuation is refused: `details.reason` `'no-progress'` (`loop.maxIdleContinues`) or `'max'` (`loop.maxContinues`) |
+| `W_BUDGET` | a USD budget reached `warnAt` or is used up (`details: { scope, limitUsd, spentUsd, exceeded }`, spec 12 §4) |
+| `W_MODEL_UNPRICED` | a budget is configured but the step model has no pricing in `models` (`details.model`) |
 | `W_LOOP_STUCK` | the progress guard found the turn stuck and reminded the model (`details: { kind, toolName?, count, stepIndex }`, spec 05 §3.2) |
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6) |
@@ -152,7 +154,7 @@ export interface TurnResult<M = HarnessUIMessage> {
   /** Messages created by this turn (user, assistant, and any kind messages such as markers). */
   messages: M[]
   /** This turn only; includes addUsage() contributions. Cache fields when the provider reports them. */
-  usage: { inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number; cacheWriteTokens?: number }
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number; cachedInputTokens?: number; cacheWriteTokens?: number; costUsd?: number }
   steps: number
   durationMs: number
   /** `details` of an EH_* error (e.g. `{ reason: 'stale' }` for respond(), spec 11); not stored. */
