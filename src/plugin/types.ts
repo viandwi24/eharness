@@ -227,9 +227,10 @@ export interface StepEndEvent {
   responseMessages: ModelMessage[]
   /**
    * The AI SDK `StepResult` of this step (`result.finalStep`). `toolCalls` and `toolResults`
-   * above are derived from it.
+   * above are derived from it. Absent only if AI SDK did not provide it although the step's
+   * `responseMessages` resolved; the other fields are then derived from `responseMessages`.
    */
-  step: StepResult<ToolSet>
+  step?: StepResult<ToolSet>
 }
 
 /**

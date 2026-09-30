@@ -333,20 +333,21 @@ describe('step.end event (spec 01 §5)', () => {
     expect((await agent.session('s1').send('go').result).stop).toBe('complete')
     expect(events).toHaveLength(2)
     const [first, second] = events as [StepEndEvent, StepEndEvent]
-    expect(first.step.toolCalls.map((c) => [c.toolName, c.input])).toEqual([
+    expect(first.step).toBeDefined()
+    expect(first.step?.toolCalls.map((c) => [c.toolName, c.input])).toEqual([
       ['slow', { n: 1 }],
       ['fails', {}],
     ])
-    expect(first.step.toolResults.map((r) => [r.toolName, r.output])).toEqual([['slow', 2]])
-    expect(first.step.content.some((p) => p.type === 'tool-error')).toBe(true)
-    expect(first.step.finishReason).toBe(first.finishReason)
+    expect(first.step?.toolResults.map((r) => [r.toolName, r.output])).toEqual([['slow', 2]])
+    expect(first.step?.content.some((p) => p.type === 'tool-error')).toBe(true)
+    expect(first.step?.finishReason).toBe(first.finishReason)
     // call order, not completion order ('fails' finishes first)
     expect(first.toolCalls.map((c) => c.toolName)).toEqual(['slow', 'fails'])
     expect(first.toolResults).toEqual([
       { toolName: 'slow', toolCallId: first.toolCalls[0]?.toolCallId ?? '', status: 'output' },
       { toolName: 'fails', toolCallId: first.toolCalls[1]?.toolCallId ?? '', status: 'error' },
     ])
-    expect(second.step.text).toBe('done')
+    expect(second.step?.text).toBe('done')
     expect(second.toolCalls).toEqual([])
     expect(second.toolResults).toEqual([])
   })
