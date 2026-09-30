@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import { asSchema } from 'ai'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessContext, HarnessHooks } from '../plugin/types.ts'
 import type { SkillDoc, SkillMeta, SkillSource } from '../registry/types.ts'
@@ -414,17 +415,20 @@ describe('createSkillTools', () => {
     expect(dynamic.map((t) => t.name)).toEqual(['load_skill', 'read_skill_file', 'search_skills'])
   })
 
-  test('tools validate their input and return strings', async () => {
+  test('input schemas reject invalid input (AI SDK validates before execute); tools return strings', async () => {
     const d = await deps([{ source: memory('db', [doc()], { 'pine-v6:a.md': 'A' }) }], {
       limit: 0,
     })
     const [load, read, search] = createSkillTools(d)
     const run = (t: typeof load, input: unknown) =>
       t?.tool.execute?.(input, { toolCallId: 'c', messages: [] } as never)
-    expect(await run(load, {})).toBe('ERROR: `name` must be a string')
-    expect(await run(read, { name: 'pine-v6' })).toBe('ERROR: `path` must be a string')
-    expect(await run(read, { path: 'a.md' })).toBe('ERROR: `name` must be a string')
-    expect(await run(search, null)).toBe('ERROR: `query` must be a string')
+    const valid = async (t: typeof load, input: unknown) =>
+      (await asSchema(t?.tool.inputSchema).validate?.(input))?.success
+    expect(await valid(load, {})).toBe(false)
+    expect(await valid(read, { name: 'pine-v6' })).toBe(false)
+    expect(await valid(read, { path: 'a.md' })).toBe(false)
+    expect(await valid(search, null)).toBe(false)
+    expect(await valid(read, { name: 'pine-v6', path: 'a.md' })).toBe(true)
     expect(await run(load, { name: 'pine-v6' })).toStartWith('---\nname: pine-v6')
     expect(await run(read, { name: 'pine-v6', path: 'a.md' })).toBe('A')
     expect(await run(search, { query: 'pine' })).toBe('- pine-v6: Pine v6.')

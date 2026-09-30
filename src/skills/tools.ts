@@ -7,7 +7,8 @@
  *
  * @see docs/specs/07-skills.md#43-tools-added-automatically-when-any-skill-exists
  */
-import { jsonSchema, type Tool, tool } from 'ai'
+import { type Tool, tool } from 'ai'
+import { z } from 'zod/v4'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { SkillDoc, SkillFileContent, SkillMeta } from '../registry/types.ts'
@@ -277,11 +278,7 @@ export async function searchSkillsText(deps: SkillToolDeps, query: string): Prom
     .join('\n')
 }
 
-const stringField = (value: unknown, key: string): string | undefined => {
-  if (typeof value !== 'object' || value === null) return undefined
-  const field = (value as Record<string, unknown>)[key]
-  return typeof field === 'string' ? field : undefined
-}
+const skillName = z.string().describe('Skill name.')
 
 /**
  * The skill tools of one turn, in stable order (spec 02 §6 rule 1): `load_skill` and
@@ -296,17 +293,8 @@ export function createSkillTools(deps: SkillToolDeps): Array<{ name: string; too
       tool: tool({
         description:
           'Open a skill by name. Returns its instructions and the list of its supporting files.',
-        inputSchema: jsonSchema<{ name: string }>({
-          type: 'object',
-          properties: { name: { type: 'string', description: 'Skill name.' } },
-          required: ['name'],
-          additionalProperties: false,
-        }),
-        execute: async (input) => {
-          const name = stringField(input, 'name')
-          if (name === undefined) return 'ERROR: `name` must be a string'
-          return loadSkillText(deps, name)
-        },
+        inputSchema: z.object({ name: skillName }),
+        execute: async ({ name }) => loadSkillText(deps, name),
       }) as Tool,
     },
     {
@@ -314,22 +302,11 @@ export function createSkillTools(deps: SkillToolDeps): Array<{ name: string; too
       tool: tool({
         description:
           'Read one supporting file of a skill. `path` is relative to the skill, as listed by load_skill.',
-        inputSchema: jsonSchema<{ name: string; path: string }>({
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'Skill name.' },
-            path: { type: 'string', description: 'File path relative to the skill.' },
-          },
-          required: ['name', 'path'],
-          additionalProperties: false,
+        inputSchema: z.object({
+          name: skillName,
+          path: z.string().describe('File path relative to the skill.'),
         }),
-        execute: async (input) => {
-          const name = stringField(input, 'name')
-          const path = stringField(input, 'path')
-          if (name === undefined) return 'ERROR: `name` must be a string'
-          if (path === undefined) return 'ERROR: `path` must be a string'
-          return readSkillFileText(deps, name, path)
-        },
+        execute: async ({ name, path }) => readSkillFileText(deps, name, path),
       }) as Tool,
     },
   ]
@@ -338,17 +315,8 @@ export function createSkillTools(deps: SkillToolDeps): Array<{ name: string; too
       name: 'search_skills',
       tool: tool({
         description: `Search the available skills by keywords. Returns up to ${MAX_SKILL_SEARCH_RESULTS} matches as "- name: description" lines.`,
-        inputSchema: jsonSchema<{ query: string }>({
-          type: 'object',
-          properties: { query: { type: 'string', description: 'Keywords.' } },
-          required: ['query'],
-          additionalProperties: false,
-        }),
-        execute: async (input) => {
-          const query = stringField(input, 'query')
-          if (query === undefined) return 'ERROR: `query` must be a string'
-          return searchSkillsText(deps, query)
-        },
+        inputSchema: z.object({ query: z.string().describe('Keywords.') }),
+        execute: async ({ query }) => searchSkillsText(deps, query),
       }) as Tool,
     })
   }
