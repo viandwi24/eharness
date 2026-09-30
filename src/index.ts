@@ -10,6 +10,7 @@
 export { defineHarnessAgent } from './agent/define-agent.ts'
 export type {
   ActiveTurn,
+  ApprovalActor,
   HarnessKindTypes,
   HarnessRun,
   HarnessSession,
@@ -88,6 +89,7 @@ export type {
   RewindPayload,
   StatusPartData,
   StopReason,
+  ToolRisk,
   TurnKind,
   TurnResult,
   UsagePartData,
@@ -100,6 +102,7 @@ export { definePlugin } from './plugin/define-plugin.ts'
 export type {
   AddUsageOptions,
   AgentSetupContext,
+  ApprovalDecision,
   DataPartMap,
   HarnessContext,
   HarnessHooks,

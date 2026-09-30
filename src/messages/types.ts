@@ -46,6 +46,12 @@ export type StopReason =
   | `plugin:${string}`
 
 /**
+ * Risk class of a tool (spec 11 §3.2): `tool({ metadata: { risk } })`. MCP tools whose server marks
+ * them `destructiveHint` are `'destructive'`.
+ */
+export type ToolRisk = 'read' | 'write' | 'destructive'
+
+/**
  * Approvals and client tool calls waiting for `respond()`.
  *
  * @see docs/specs/11-interaction.md#2-pending-state
@@ -53,8 +59,18 @@ export type StopReason =
 export interface PendingState {
   /** The assistant message waiting for answers. */
   messageId: string
-  /** Tool calls waiting for a user approval decision. */
-  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string }>
+  /**
+   * Tool calls waiting for a user approval decision. `input` (the refined tool input) and `risk`
+   * (spec 11 §3.2) let an inbox show the request without loading messages; absent in state
+   * written before 0.2.
+   */
+  approvals: Array<{
+    approvalId: string
+    toolCallId: string
+    toolName: string
+    input?: unknown
+    risk?: ToolRisk
+  }>
   /** Calls of tools without `execute` waiting for a client-provided output. */
   clientTools: Array<{ toolCallId: string; toolName: string }>
 }

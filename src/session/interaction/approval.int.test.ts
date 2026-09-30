@@ -935,3 +935,159 @@ describe('continuations that do not finish', () => {
     })
   })
 })
+
+describe('risk, decisions and pending details (spec 11 §3.2–3.3)', () => {
+  const deleteTool = () =>
+    tool({
+      description: 'Delete a record',
+      inputSchema: z.object({ id: z.string() }),
+      metadata: { risk: 'destructive' },
+      execute: async ({ id }) => `deleted ${id}`,
+    })
+  const readTool = () =>
+    tool({
+      inputSchema: z.object({ id: z.string() }),
+      metadata: { risk: 'read' },
+      execute: async ({ id }) => `record ${id}`,
+    })
+
+  test('approval.risk asks for destructive tools; pending carries input and risk', async () => {
+    const decisions: unknown[] = []
+    const audit = definePlugin({
+      name: 'audit',
+      setup: () => ({ hooks: { 'approval.decided': (_ctx, e) => void decisions.push(e) } }),
+    })
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'read', input: { id: 'a' } },
+          { toolName: 'remove', input: { id: 'a' } },
+        ],
+      },
+      { text: 'done' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { read: readTool(), remove: deleteTool() },
+      plugins: [audit],
+      approval: { risk: { read: 'approved', destructive: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('clean up').result
+    expect(first.stop).toBe('tool-pending')
+    expect(first.pending?.approvals).toEqual([
+      expect.objectContaining({ toolName: 'remove', input: { id: 'a' }, risk: 'destructive' }),
+    ])
+    expect(decisions).toEqual([
+      expect.objectContaining({ toolName: 'read', approved: true, by: 'risk', risk: 'read' }),
+    ])
+
+    const approvalId = first.pending?.approvals[0]?.approvalId ?? ''
+    const second = await session.respond({
+      approvals: [
+        { id: approvalId, approved: false, reason: 'keep it', actor: { id: 'u-7', name: 'Rina' } },
+      ],
+    }).result
+    expect(second.stop).toBe('complete')
+    expect(decisions.at(-1)).toEqual({
+      toolName: 'remove',
+      toolCallId: expect.any(String),
+      input: { id: 'a' },
+      risk: 'destructive',
+      approved: false,
+      by: 'user',
+      reason: 'keep it',
+      actor: { id: 'u-7', name: 'Rina' },
+      approvalId,
+    })
+  })
+
+  test('unknown covers tools without a risk; MCP destructiveHint counts as destructive', async () => {
+    const plain = tool({ inputSchema: z.object({}), execute: async () => 'x' })
+    const hinted = tool({
+      inputSchema: z.object({}),
+      metadata: { annotations: { destructiveHint: true, readOnlyHint: true } },
+      execute: async () => 'y',
+    })
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'plain', input: {} },
+          { toolName: 'hinted', input: {} },
+        ],
+      },
+      { text: 'ok' },
+    ])
+    const seen: unknown[] = []
+    const spy = definePlugin({
+      name: 'spy',
+      setup: () => ({
+        hooks: { 'tool.approve': (_ctx, e) => void seen.push([e.toolName, e.risk]) },
+      }),
+    })
+    const { agent } = setup({
+      model,
+      tools: { plain, hinted },
+      plugins: [spy],
+      approval: { risk: { unknown: 'denied', destructive: 'user-approval' } },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(result.pending?.approvals.map((a) => [a.toolName, a.risk])).toEqual([
+      ['hinted', 'destructive'],
+    ])
+    expect(seen).toEqual([
+      ['plain', undefined],
+      ['hinted', 'destructive'],
+    ])
+  })
+
+  test('grant and hook decisions are reported with their source; new input denies with new-input', async () => {
+    const decisions: Array<{ by: string; approved: boolean }> = []
+    const plugin = definePlugin({
+      name: 'guard',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) =>
+            (e.input as { amount: number }).amount > 100 ? 'denied' : undefined,
+          'approval.decided': (_ctx, e) => void decisions.push({ by: e.by, approved: e.approved }),
+        },
+      }),
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'pay', input: { amount: 500 } }] },
+      { toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] },
+      { text: 'waiting' },
+      { text: 'new topic' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { pay: payTool() },
+      plugins: [plugin],
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('pay').result
+    expect(first.stop).toBe('tool-pending')
+    expect(decisions).toEqual([{ by: 'plugin:guard', approved: false }])
+    await session.send('never mind').result
+    expect(decisions.at(-1)).toEqual({ by: 'new-input', approved: false })
+  })
+
+  test('respond() rejects a malformed actor', async () => {
+    const model = scriptedModel([{ toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] }])
+    const { agent } = setup({
+      model,
+      tools: { pay: payTool() },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('pay').result
+    const id = first.pending?.approvals[0]?.approvalId ?? ''
+    const run = session.respond({
+      approvals: [{ id, approved: true, actor: { name: 'x' } as never }],
+    })
+    const result = await run.result
+    expect(result.stop).toBe('error')
+    expect(result.error?.code).toBe('EH_INVALID_INPUT')
+  })
+})

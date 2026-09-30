@@ -36,7 +36,7 @@ import {
   type UsageTotals,
 } from '../loop/steps.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import { INTERRUPTED_CRASH, INTERRUPTED_TURN } from '../messages/texts.ts'
+import { DENIED_NEW_INPUT, INTERRUPTED_CRASH, INTERRUPTED_TURN } from '../messages/texts.ts'
 import { answerDanglingToolParts } from '../messages/tool-parts.ts'
 import type {
   HarnessUIMessage,
@@ -50,7 +50,7 @@ import { costOf } from '../models/cost.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
-import { finishToolOutput, hookFailed } from '../registry/wrap.ts'
+import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.ts'
 import { describeError } from '../stream/describe-error.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
@@ -872,6 +872,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
     }
     committed = true
+    await reportAnswers(prep.open)
 
     // crash recovery of a stale turn (spec 05 §9)
     const stale = prep.stale
@@ -976,6 +977,47 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
    * output limits (spec 09 §6), then approval / client parts are patched and `pending` set to
    * null. A' becomes the stream's `originalMessages` (the continuation streams into it).
    */
+  /** `approval.decided` for respond() answers and new-input denials (spec 11 §3.3), after commit. */
+  async function reportAnswers(open: OpenSession): Promise<void> {
+    const deps = { hooks: open.hooks, contextOf: rt.contextOf, warn: rt.warn }
+    if (open.hooks.list('approval.decided').length === 0) return
+    const pendingOf = (pending: PendingState | undefined, id: string) =>
+      pending?.approvals.find((a) => a.approvalId === id)
+    for (const answer of plan?.approvals ?? []) {
+      const entry = pendingOf(plan?.pending, answer.approvalId)
+      await reportDecision(
+        deps,
+        withoutUndefined({
+          toolName: answer.toolName,
+          toolCallId: answer.toolCallId,
+          input: entry?.input,
+          risk: entry?.risk,
+          approved: answer.approved,
+          by: 'user' as const,
+          reason: answer.reason,
+          actor: answer.actor,
+          approvalId: answer.approvalId,
+          remember: answer.remember,
+        }),
+      )
+    }
+    for (const entry of denyPending?.approvals ?? []) {
+      await reportDecision(
+        deps,
+        withoutUndefined({
+          toolName: entry.toolName,
+          toolCallId: entry.toolCallId,
+          input: entry.input,
+          risk: entry.risk,
+          approved: false,
+          by: 'new-input' as const,
+          reason: DENIED_NEW_INPUT,
+          approvalId: entry.approvalId,
+        }),
+      )
+    }
+  }
+
   async function continuePending(open: OpenSession, answers: RespondPlan): Promise<void> {
     const message = rt.view?.find((m) => m.id === answers.pending.messageId)
     if (message === undefined) {
