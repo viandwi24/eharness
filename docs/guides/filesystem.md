@@ -92,7 +92,9 @@ defineHarnessAgent({
 
 - `ctx.services.fs` — the session's `FileSystem` (bypasses the tool policies; you are the app).
 - `ctx.services.toolOutputs` — where `toolOutput.strategy: 'evict'` stores oversized tool results
-  ([tools and MCP](tools-and-mcp.md#tool-output-limits)). Absent with `toolOutputs: false`.
+  ([tools and MCP](tools-and-mcp.md#tool-output-limits)). With `toolOutputs: false` it is not
+  provided: accessing it throws `EH_SERVICE_MISSING` (declare `requires: ['toolOutputs']` to get a
+  boot error instead).
 
 ## Skills from files
 
