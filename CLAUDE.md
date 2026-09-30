@@ -43,8 +43,8 @@ bunx changeset              # add a changeset (required for every user-facing ch
 3. **Runtime-neutral source.** `src/` must run on Node ≥ 22 and Bun. No `Bun.*`, no `node:fs` in core.
    Node built-ins are allowed only in clearly Node-only modules (none exist in v0). Use Web APIs
    (`crypto.subtle`, `TextEncoder`, `ReadableStream`).
-4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`
-   and `src/testing/**` may import core only through `src/index.ts` (dogfooding, ADR-0008).
+4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`,
+   `src/todos/**` and `src/testing/**` may import core only through `src/index.ts` (dogfooding, ADR-0008).
 5. **The library ships memory adapters only.** Database/S3/JSON-file adapters are examples in
    `examples/`, never dependencies (ADR-0008).
 6. **Tools return errors as strings, never throw** for expected failures (bad input, stale file,
@@ -80,6 +80,8 @@ src/
   filesystem/       eharness/filesystem + eharness/filesystem/memory
   storage/          eharness/storage/memory
   mcp/              eharness/mcp
+  todos/            eharness/todos
+  models/           model catalog, cost (core)
   testing/          eharness/testing (conformance suites, mocks)
 examples/           runnable examples, NOT published
 docs/               concept, architecture, specs, decisions, engineering, plans
