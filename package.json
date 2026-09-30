@@ -42,8 +42,8 @@
     "release:version": "changeset version && bun scripts/sync-version.ts && bun install --lockfile-only"
   },
   "peerDependencies": {
-    "@ai-sdk/mcp": "^2.0.0",
-    "ai": "^7.0.0",
+    "@ai-sdk/mcp": "^2.0.63",
+    "ai": "^7.0.123",
     "zod": "^3.25.76 || ^4.1.8"
   },
   "peerDependenciesMeta": {

@@ -52,8 +52,9 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
 | `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, mock model helpers |
 
-Peer dependencies: `ai@^7`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional peer:
-`@ai-sdk/mcp@^2`. No runtime dependencies.
+Peer dependencies: `ai@^7.0.123`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
+peer: `@ai-sdk/mcp@^2.0.63`. No runtime dependencies. The `ai` floor is the tested version: the
+core imports values (`StreamProviderError`, `toolSearch`, …) that early 7.0.x releases lack.
 
 ## 3. Lifecycles
 
