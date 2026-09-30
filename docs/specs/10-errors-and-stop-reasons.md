@@ -108,7 +108,10 @@ Maps any error to a user-safe message for `error` chunks and `eh.notice`:
 
 - walks `.cause` chains and AI SDK `RetryError.lastError` / `errors` (the same error shapes as
   overflow detection, spec 06 §7: `APICallError`, `StreamProviderError`, duck-typed
-  `statusCode` / `status`); prefers the provider's own message for API errors (status 4xx) with
+  `statusCode` / `status`); the first error in that order with a status decides, so a
+  `RetryError` whose last attempt has no status (e.g. a network error) but an earlier attempt was
+  a 429 / 5xx reads `Rate limited:` / `Provider unavailable:`; prefers the provider's own message
+  for API errors (status 4xx) with
   prefixes `Provider rejected the request:` (400/401/402/403/404/422), `Rate limited:` (429),
   `Provider unavailable:` (5xx);
 - never includes headers, API keys, request bodies or stack traces;

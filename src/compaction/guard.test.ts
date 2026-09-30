@@ -82,6 +82,18 @@ describe('overflow detection', () => {
     expect(isContextOverflow(onlyRateLimit)).toBe(false)
   })
 
+  test("many retries: lastError's cause chain is walked before older attempts", () => {
+    const overflow = apiError(400, 'prompt is too long: 215000 tokens > 200000 maximum')
+    const last = new Error('gateway failed', { cause: new Error('proxy', { cause: overflow }) })
+    const retry = new RetryError({
+      message: 'Failed after 8 attempts',
+      reason: 'errorNotRetryable',
+      errors: [...Array.from({ length: 7 }, () => apiError(429, 'rate limited')), last],
+    })
+    expect(isContextOverflow(retry)).toBe(true)
+    expect(reportedTokenCount(retry)).toBe(215_000)
+  })
+
   test('StreamProviderError with status 400 and an overflow payload is an overflow', () => {
     const streamed = new StreamProviderError({
       message: 'Invalid request',

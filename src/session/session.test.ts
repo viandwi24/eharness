@@ -46,6 +46,13 @@ describe('describeError (spec 10 §3)', () => {
     expect(describeError(retry)).toBe('Provider rejected the request: status 400')
     const streamed = new StreamProviderError({ message: 'Overloaded', statusCode: 529 })
     expect(describeError(streamed)).toBe('Provider unavailable: Overloaded')
+    // no status on the last attempt: an earlier attempt's status classifies the failure
+    const lastWithoutStatus = new RetryError({
+      message: 'Failed after 2 attempts',
+      reason: 'maxRetriesExceeded',
+      errors: [api(429), new Error('socket hang up')],
+    })
+    expect(describeError(lastWithoutStatus)).toBe('Rate limited: status 429')
     expect(describeError(new StreamProviderError({ message: 'no status' }))).toBe(
       UNEXPECTED_ERROR_TEXT,
     )
