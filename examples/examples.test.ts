@@ -100,9 +100,65 @@ describe('examples run offline', () => {
     async () => {
       const out = await run('plugin-authoring.ts')
       expect(out).toContain('stop: complete, steps: 4')
-      expect(out).toContain('input (plugin:todos): 2 todos are still open')
-      expect(out).toContain('todos part: ✓ outline, ✓ draft')
-      expect(out).toContain('turn complete: 0 todos open')
+      expect(out).toContain('input (plugin:checklist): 2 items are still open')
+      expect(out).toContain('checklist part: ✓ outline, ✓ draft')
+      expect(out).toContain('turn complete: 0 items open')
+    },
+    timeout,
+  )
+
+  test(
+    'long-running (progress guard, wrap-up)',
+    async () => {
+      const out = await run('long-running.ts')
+      expect(out).toContain('warning W_LOOP_STUCK:')
+      expect(out).toContain('→ stuck after 6 steps')
+      expect(out).toContain('→ max-steps after 4 steps: Read pages 1–3 of 10.')
+    },
+    timeout,
+  )
+
+  test(
+    'budget-and-cost',
+    async () => {
+      const out = await run('budget-and-cost.ts')
+      expect(out).toContain('step 1: turn so far $0.2300') // incl. the nested summarizer call
+      expect(out).toContain('→ complete after 3 steps, $0.3275')
+      expect(out).toContain('warning W_BUDGET: The turn budget of $0.5 is 84% used.')
+      expect(out).toContain('→ cost-cap after 3 steps, $0.6300')
+      expect(out).toContain('→ cost-cap after 0 steps') // session budget used up before the turn
+      expect(out).toContain('stored on the first answer: $0.3275')
+      expect(out).toContain('session total: $0.9575')
+      expect(out).toContain('context window from the catalog: 200000')
+    },
+    timeout,
+  )
+
+  test(
+    'risk-approvals',
+    async () => {
+      const out = await run('risk-approvals.ts')
+      expect(out).toContain('audit: read_record approved by risk in ops-1')
+      expect(out).toContain('turn: tool-pending')
+      expect(out).toContain('inbox: delete_record {"id":"r1"} (risk: destructive)')
+      expect(out).toContain('audit: delete_record approved by user u_7 in ops-1')
+      expect(out).toContain('respond: complete; same message: true')
+      expect(out).toContain('r1 exists: false; audit entries: 2')
+    },
+    timeout,
+  )
+
+  test(
+    'todos',
+    async () => {
+      const out = await run('todos.ts')
+      expect(out).toContain('[>] Read the report')
+      expect(out).toContain('nudge (plugin:todos): You stopped with open todos:')
+      expect(out).toContain('[-] Send it')
+      expect(out).toContain('complete after 5 steps')
+      expect(out).toContain(
+        'latest: Read the report (completed), Fix the typos (completed), Send it (cancelled)',
+      )
     },
     timeout,
   )

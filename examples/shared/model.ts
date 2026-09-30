@@ -7,12 +7,20 @@
  * runs offline (and in CI) with `bun examples/<name>.ts`.
  */
 import type { LanguageModel } from 'ai'
-import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
+import { type ScriptedModelOptions, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 
 /** True when the examples use a real model. */
 export const live: boolean = Boolean(process.env.AI_GATEWAY_API_KEY)
 
-/** A real gateway model when `AI_GATEWAY_API_KEY` is set, otherwise `scriptedModel(script)`. */
-export function exampleModel(script: ScriptedStepInput[]): LanguageModel {
-  return live ? (process.env.EXAMPLE_MODEL ?? 'anthropic/claude-sonnet-4.6') : scriptedModel(script)
+/**
+ * A real gateway model when `AI_GATEWAY_API_KEY` is set, otherwise `scriptedModel(script)`.
+ * `options` names the scripted model (provider / model id), e.g. to match a model catalog entry.
+ */
+export function exampleModel(
+  script: ScriptedStepInput[],
+  options?: ScriptedModelOptions,
+): LanguageModel {
+  return live
+    ? (process.env.EXAMPLE_MODEL ?? 'anthropic/claude-sonnet-4.6')
+    : scriptedModel(script, options)
 }
