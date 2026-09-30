@@ -158,8 +158,9 @@ Exact formats (model-visible, api-stability.md):
   doc); `ERROR: invalid path: <reason>` (§5); `ERROR: file "<path>" not found in skill "<name>"`;
   `ERROR: file "<path>" of skill "<name>" could not be read: <message>`. The tools never throw
   for these.
-- Input schemas are zod objects (`z.object({ name: z.string() })`, …; JSON schema with
-  `additionalProperties: false`). Malformed input (missing or non-string fields) is rejected by
+- Input schemas are zod objects (`z.object({ name: z.string() })`, …). The JSON schema sent to
+  the model is draft-07 with a `$schema` key, `required` fields and `additionalProperties: false`
+  (pinned by `src/skills/__golden__/skill-tool-schemas.json`). Malformed input (missing or non-string fields) is rejected by
   AI SDK's input validation before `execute` runs: the model gets AI SDK's tool error
   (`AI_InvalidToolInputError: Invalid input for tool <tool>: …`), and the UI and stored part carry
   the same text (spec 04 §8).
