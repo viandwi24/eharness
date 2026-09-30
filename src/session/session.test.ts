@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { APICallError, RetryError } from 'ai'
+import { APICallError, RetryError, StreamProviderError } from 'ai'
 import { HarnessError, isHarnessError } from '../errors.ts'
 import { uuidv7 } from '../messages/ids.ts'
 import { createKindMessage } from '../messages/kinds.ts'
@@ -36,6 +36,26 @@ describe('describeError (spec 10 §3)', () => {
     })
     expect(describeError(retry)).toBe('Rate limited: status 429')
     expect(describeError(api(429))).not.toContain('sk-secret')
+  })
+  test('RetryError (non-retryable after retries) and StreamProviderError use the same classification', () => {
+    const retry = new RetryError({
+      message: 'Failed after 2 attempts with non-retryable error',
+      reason: 'errorNotRetryable',
+      errors: [api(429), api(400)],
+    })
+    expect(describeError(retry)).toBe('Provider rejected the request: status 400')
+    const streamed = new StreamProviderError({ message: 'Overloaded', statusCode: 529 })
+    expect(describeError(streamed)).toBe('Provider unavailable: Overloaded')
+    // no status on the last attempt: an earlier attempt's status classifies the failure
+    const lastWithoutStatus = new RetryError({
+      message: 'Failed after 2 attempts',
+      reason: 'maxRetriesExceeded',
+      errors: [api(429), new Error('socket hang up')],
+    })
+    expect(describeError(lastWithoutStatus)).toBe('Rate limited: status 429')
+    expect(describeError(new StreamProviderError({ message: 'no status' }))).toBe(
+      UNEXPECTED_ERROR_TEXT,
+    )
   })
   test('HarnessErrors keep their message; others fall back and are logged', () => {
     expect(describeError(new HarnessError('EH_STORAGE', 'Storage failed.'))).toBe('Storage failed.')

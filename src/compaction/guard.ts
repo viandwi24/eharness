@@ -4,7 +4,7 @@
  *
  * @see docs/specs/06-compaction.md#6-guard-always-on-not-configurable-away
  */
-import type { ModelMessage } from 'ai'
+import type { ModelMessage, ToolResultPart } from 'ai'
 import { truncateMiddle } from './truncate.ts'
 
 /** Tool outputs at or below this size are never truncated by the guard. */
@@ -42,59 +42,89 @@ export interface HardCapResult {
   over: boolean
 }
 
-type ToolResultLike = { type: 'tool-result'; output: unknown; [key: string]: unknown }
+/** Tool result output variants (AI SDK): a new variant is a compile error below. */
+type ToolOutput = ToolResultPart['output']
+type ContentItem = Extract<ToolOutput, { type: 'content' }>['value'][number]
 
-function outputChars(output: unknown): number {
-  const o = output as { type?: unknown; value?: unknown }
-  if (o?.type === 'text' || o?.type === 'error-text') return String(o.value ?? '').length
-  if (o?.type === 'json' || o?.type === 'error-json') return (JSON.stringify(o.value) ?? '').length
-  if (o?.type === 'content' && Array.isArray(o.value)) {
-    return (o.value as Array<{ type?: string; text?: unknown }>).reduce(
-      (sum, item) => sum + (item.type === 'text' ? String(item.text ?? '').length : 0),
-      0,
-    )
-  }
-  return 0
+function textChars(item: ContentItem): number {
+  return item.type === 'text' ? String(item.text ?? '').length : 0
 }
 
-function truncateOutput(output: unknown, maxChars: number): unknown {
-  const o = output as { type?: unknown; value?: unknown }
-  if (o.type === 'text' || o.type === 'error-text') {
-    return { ...o, value: truncateMiddle(String(o.value ?? ''), maxChars) }
+function outputChars(output: ToolOutput | undefined): number {
+  // stored data: typed as AI SDK's union, but every access stays defensive
+  switch (output?.type) {
+    case undefined:
+      return 0
+    case 'text':
+    case 'error-text':
+      return String(output.value ?? '').length
+    case 'json':
+    case 'error-json':
+      return (JSON.stringify(output.value) ?? '').length
+    case 'content':
+      return Array.isArray(output.value)
+        ? output.value.reduce((sum, item) => sum + textChars(item), 0)
+        : 0
+    case 'execution-denied':
+      return 0
+    default:
+      output satisfies never
+      return 0
   }
-  if (o.type === 'json' || o.type === 'error-json') {
-    const value = o.value as { truncated?: unknown; preview?: unknown; originalChars?: unknown }
-    if (value?.truncated === true && typeof value.preview === 'string') {
-      return { ...o, value: { ...value, preview: truncateMiddle(value.preview, maxChars) } }
+}
+
+function truncateOutput(output: ToolOutput, maxChars: number): ToolOutput {
+  switch (output.type) {
+    case 'text':
+    case 'error-text':
+      return { ...output, value: truncateMiddle(String(output.value ?? ''), maxChars) }
+    case 'json':
+    case 'error-json': {
+      const value = output.value as {
+        truncated?: unknown
+        preview?: unknown
+        originalChars?: unknown
+      } | null
+      if (value?.truncated === true && typeof value.preview === 'string') {
+        return {
+          ...output,
+          value: { ...(output.value as object), preview: truncateMiddle(value.preview, maxChars) },
+        } as ToolOutput
+      }
+      const text = JSON.stringify(output.value) ?? ''
+      return {
+        ...output,
+        value: {
+          truncated: true,
+          preview: truncateMiddle(text, maxChars),
+          originalChars: text.length,
+        },
+      }
     }
-    const text = JSON.stringify(o.value) ?? ''
-    return {
-      ...o,
-      value: {
-        truncated: true,
-        preview: truncateMiddle(text, maxChars),
-        originalChars: text.length,
-      },
+    case 'content': {
+      if (!Array.isArray(output.value)) return output
+      const total = outputChars(output)
+      return {
+        ...output,
+        value: output.value.map((item) =>
+          item.type === 'text'
+            ? {
+                ...item,
+                text: truncateMiddle(
+                  String(item.text ?? ''),
+                  Math.floor((String(item.text ?? '').length / Math.max(1, total)) * maxChars),
+                ),
+              }
+            : item,
+        ),
+      }
     }
+    case 'execution-denied':
+      return output
+    default:
+      output satisfies never
+      return output
   }
-  if (o.type === 'content' && Array.isArray(o.value)) {
-    const total = outputChars(o)
-    return {
-      ...o,
-      value: (o.value as Array<{ type?: string; text?: unknown }>).map((item) =>
-        item.type === 'text'
-          ? {
-              ...item,
-              text: truncateMiddle(
-                String(item.text ?? ''),
-                Math.floor((String(item.text ?? '').length / Math.max(1, total)) * maxChars),
-              ),
-            }
-          : item,
-      ),
-    }
-  }
-  return output
 }
 
 /** Locations of the tool results of a message list. */
@@ -106,7 +136,7 @@ function toolResults(
     if (typeof message.content === 'string') continue
     for (const [p, part] of (message.content as Array<{ type: string }>).entries()) {
       if (part.type !== 'tool-result') continue
-      out.push({ m, p, chars: outputChars((part as ToolResultLike).output) })
+      out.push({ m, p, chars: outputChars((part as ToolResultPart).output) })
     }
   }
   return out
@@ -146,7 +176,7 @@ export function applyHardCap(input: HardCapInput): HardCapResult {
     const max = Math.max(MIN_TRUNCATED_OUTPUT_CHARS, Math.floor(target.chars / 2))
     const message = current[target.m] as ModelMessage
     const content = message.content as Array<{ type: string }>
-    const part = content[target.p] as ToolResultLike
+    const part = content[target.p] as ToolResultPart
     const output = truncateOutput(part.output, max)
     if (outputChars(output) >= target.chars) {
       exhausted.add(key)

@@ -6,11 +6,12 @@
  * @see docs/specs/11-interaction.md#4-respond
  * @see docs/specs/11-interaction.md#41-new-input-while-pending
  */
+import { isToolUIPart } from 'ai'
 import type { PendingResponse } from '../../agent/session-types.ts'
 import { HarnessError } from '../../errors.ts'
 import { kindOf } from '../../messages/kinds.ts'
 import { DENIED_NEW_INPUT, NOT_EXECUTED_NEW_INPUT } from '../../messages/texts.ts'
-import { isToolPart, type ToolPartLike } from '../../messages/tool-parts.ts'
+import type { ToolPartLike } from '../../messages/tool-parts.ts'
 import type { HarnessUIMessage, PendingState } from '../../messages/types.ts'
 
 /**
@@ -197,7 +198,7 @@ function mapToolParts(
   return {
     ...message,
     parts: message.parts.map((original) => {
-      if (!isToolPart(original)) return original
+      if (!isToolUIPart(original)) return original
       const next = patch(original as unknown as ToolPartLike)
       return (next ?? original) as unknown as HarnessUIMessage['parts'][number]
     }),

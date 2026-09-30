@@ -191,7 +191,8 @@ Reference: [concept](docs/concept.md) · [architecture](docs/architecture.md) ·
 
 | eharness | ai | zod | @ai-sdk/mcp (optional) | Runtime |
 |---|---|---|---|---|
-| 0.1.x | ^7 | ^3.25.76 \|\| ^4.1.8 | ^2 | Node ≥ 22, Bun |
+| 0.2.x | ^7.0.123 | ^3.25.76 \|\| ^4.1.8 | ^2.0.63 | Node ≥ 22, Bun |
+| 0.1.x | ^7 (≥ 7.0.104 needed in practice) | ^3.25.76 \|\| ^4.1.8 | ^2 | Node ≥ 22, Bun |
 
 A new AI SDK major needs a new eharness minor (0.x) / major (≥ 1.0).
 

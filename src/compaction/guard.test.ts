@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { APICallError, type ModelMessage } from 'ai'
+import { APICallError, type ModelMessage, RetryError, StreamProviderError } from 'ai'
 import { applyHardCap, MIN_TRUNCATED_OUTPUT_CHARS } from './guard.ts'
 import { isContextOverflow, reportedTokenCount } from './overflow.ts'
 import { defaultCountTokens, wireTokens } from './tokens.ts'
@@ -63,6 +63,56 @@ describe('overflow detection', () => {
     const cyclic: { message: string; cause?: unknown } = { message: 'x' }
     cyclic.cause = cyclic
     expect(isContextOverflow(cyclic)).toBe(false)
+  })
+
+  test('a RetryError wrapping a non-retryable overflow (429 then 400) is an overflow', () => {
+    const overflow = apiError(400, 'prompt is too long: 215000 tokens > 200000 maximum')
+    const retry = new RetryError({
+      message: 'Failed after 2 attempts with non-retryable error',
+      reason: 'errorNotRetryable',
+      errors: [apiError(429, 'rate limited'), overflow],
+    })
+    expect(isContextOverflow(retry)).toBe(true)
+    expect(reportedTokenCount(retry)).toBe(215_000)
+    const onlyRateLimit = new RetryError({
+      message: 'Failed after 3 attempts',
+      reason: 'maxRetriesExceeded',
+      errors: [apiError(429, 'too many tokens per minute')],
+    })
+    expect(isContextOverflow(onlyRateLimit)).toBe(false)
+  })
+
+  test("many retries: lastError's cause chain is walked before older attempts", () => {
+    const overflow = apiError(400, 'prompt is too long: 215000 tokens > 200000 maximum')
+    const last = new Error('gateway failed', { cause: new Error('proxy', { cause: overflow }) })
+    const retry = new RetryError({
+      message: 'Failed after 8 attempts',
+      reason: 'errorNotRetryable',
+      errors: [...Array.from({ length: 7 }, () => apiError(429, 'rate limited')), last],
+    })
+    expect(isContextOverflow(retry)).toBe(true)
+    expect(reportedTokenCount(retry)).toBe(215_000)
+  })
+
+  test('StreamProviderError with status 400 and an overflow payload is an overflow', () => {
+    const streamed = new StreamProviderError({
+      message: 'Invalid request',
+      type: 'invalid_request_error',
+      statusCode: 400,
+      data: { error: { message: 'input is too long for requested model' } },
+    })
+    expect(isContextOverflow(streamed)).toBe(true)
+    expect(
+      isContextOverflow(
+        new StreamProviderError({ message: 'prompt is too long', type: 'overloaded_error' }),
+      ),
+    ).toBe(false)
+    const retry = new RetryError({
+      message: 'x',
+      reason: 'errorNotRetryable',
+      errors: [new StreamProviderError({ message: 'prompt is too long', statusCode: 400 })],
+    })
+    expect(isContextOverflow(retry)).toBe(true)
   })
 
   test('config.isContextOverflow extends detection; a throwing callback is false', () => {

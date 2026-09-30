@@ -8,13 +8,18 @@
  */
 import {
   type FinishReason,
+  type InferToolOutput,
+  InvalidToolInputError,
   isStepCount,
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
+  NoSuchToolError,
+  type StepResult,
   streamText,
   type ToolChoice,
   type ToolSet,
+  type toolSearch,
   toUIMessageStream,
   type UIMessageChunk,
 } from 'ai'
@@ -158,16 +163,30 @@ function mergeSettings(
 
 export { mergeSettings }
 
-/** Names of tools found by `tool_search` in a tool output (`{ tools: [{ name }] }`). */
+/** Output of AI SDK's `toolSearch()` tool: `{ tools: [{ name, description? }] }`. */
+type ToolSearchOutput = InferToolOutput<ReturnType<typeof toolSearch>>
+
+function isToolSearchOutput(value: unknown): value is ToolSearchOutput {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as { tools?: unknown }).tools)
+  )
+}
+
+/**
+ * Names of tools found by `tool_search` in a tool output: the raw {@link ToolSearchOutput}, or a
+ * model tool result output (`{ type: 'json', value }`) wrapping it. Stored data is untrusted, so
+ * the shape is checked at runtime.
+ */
 export function toolSearchNames(output: unknown): string[] {
   const value =
     typeof output === 'object' && output !== null && 'type' in output && 'value' in output
-      ? (output as { value: unknown }).value
+      ? output.value
       : output
-  const tools = (value as { tools?: unknown } | null)?.tools
-  if (!Array.isArray(tools)) return []
-  return tools
-    .map((t) => (t as { name?: unknown } | null)?.name)
+  if (!isToolSearchOutput(value)) return []
+  return value.tools
+    .map((t: unknown) => (t as { name?: unknown } | null)?.name)
     .filter((n): n is string => typeof n === 'string')
 }
 
@@ -183,35 +202,49 @@ function collectDiscovered(response: readonly ModelMessage[], into: Set<string>)
   }
 }
 
-function stepEndEvent(
+/**
+ * The `step.end` event (exported for tests). Derived from the step's `StepResult`; when AI SDK
+ * did not provide one (`step` undefined while `responseMessages` resolved), from the wire.
+ */
+export function stepEndEvent(
   stepIndex: number,
   finishReason: FinishReason,
   usage: LanguageModelUsage,
   totalUsage: LanguageModelUsage,
   response: readonly ModelMessage[],
+  step: StepResult<ToolSet> | undefined,
 ): StepEndEvent {
-  const toolCalls: StepEndEvent['toolCalls'] = []
-  const toolResults: StepEndEvent['toolResults'] = []
-  for (const message of response) {
-    if (typeof message.content === 'string') continue
-    for (const part of message.content) {
-      if (part.type === 'tool-call') {
-        toolCalls.push({ toolName: part.toolName, toolCallId: part.toolCallId, input: part.input })
-      } else if (part.type === 'tool-result') {
-        const type = (part.output as { type?: string }).type
-        toolResults.push({
-          toolName: part.toolName,
-          toolCallId: part.toolCallId,
-          status:
-            type === 'execution-denied'
-              ? 'denied'
-              : type === 'error-text' || type === 'error-json'
-                ? 'error'
-                : 'output',
-        })
-      }
+  const toolCalls: StepEndEvent['toolCalls'] =
+    step === undefined
+      ? responseToolCalls(response)
+      : step.toolCalls.map((call) => ({
+          toolName: call.toolName,
+          toolCallId: call.toolCallId,
+          input: call.input,
+        }))
+  // results of this step's calls, in call order (step.content lists them in completion order)
+  const statuses = new Map<string, StepEndEvent['toolResults'][number]>()
+  for (const part of step?.content ?? []) {
+    if (part.type === 'tool-result' || part.type === 'tool-error') {
+      statuses.set(part.toolCallId, {
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        status: part.type === 'tool-error' ? 'error' : 'output',
+      })
+    } else if (part.type === 'tool-approval-response' && !part.approved) {
+      statuses.set(part.toolCall.toolCallId, {
+        toolName: part.toolCall.toolName,
+        toolCallId: part.toolCall.toolCallId,
+        status: 'denied',
+      })
     }
   }
+  const toolResults: StepEndEvent['toolResults'] = [
+    ...continuationResults(response, statuses),
+    ...toolCalls.flatMap((call) => statuses.get(call.toolCallId) ?? []),
+  ]
+  const listed = new Set(toolResults.map((r) => r.toolCallId))
+  for (const [id, result] of statuses) if (!listed.has(id)) toolResults.push(result)
   return {
     stepIndex,
     finishReason,
@@ -220,7 +253,63 @@ function stepEndEvent(
     toolCalls,
     toolResults,
     responseMessages: [...response],
+    ...(step === undefined ? {} : { step }),
   }
+}
+
+/** Tool calls on the wire of a step (fallback without a `StepResult`). */
+function responseToolCalls(response: readonly ModelMessage[]): StepEndEvent['toolCalls'] {
+  const out: StepEndEvent['toolCalls'] = []
+  for (const message of response) {
+    if (message.role !== 'assistant' || typeof message.content === 'string') continue
+    for (const part of message.content) {
+      if (part.type === 'tool-call') {
+        out.push({ toolName: part.toolName, toolCallId: part.toolCallId, input: part.input })
+      }
+    }
+  }
+  return out
+}
+
+/** Assistant text on the wire of a step (fallback without a `StepResult`). */
+function responseText(response: readonly ModelMessage[]): string {
+  const texts: string[] = []
+  for (const message of response) {
+    if (message.role !== 'assistant') continue
+    if (typeof message.content === 'string') texts.push(message.content)
+    else for (const part of message.content) if (part.type === 'text') texts.push(part.text)
+  }
+  return texts.join('')
+}
+
+/**
+ * Results that are on the wire of this step but not in its `StepResult`: approved or denied tool
+ * calls of a `respond()` continuation, executed by AI SDK before the model call (spec 11) — or
+ * every result when there is no `StepResult`.
+ */
+function continuationResults(
+  response: readonly ModelMessage[],
+  own: ReadonlyMap<string, unknown>,
+): StepEndEvent['toolResults'] {
+  const out: StepEndEvent['toolResults'] = []
+  for (const message of response) {
+    if (message.role !== 'tool') continue
+    for (const part of message.content) {
+      if (part.type !== 'tool-result' || own.has(part.toolCallId)) continue
+      const type = part.output.type
+      out.push({
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        status:
+          type === 'execution-denied'
+            ? 'denied'
+            : type === 'error-text' || type === 'error-json'
+              ? 'error'
+              : 'output',
+      })
+    }
+  }
+  return out
 }
 
 function totalUsageOf(totals: UsageTotals): LanguageModelUsage {
@@ -235,6 +324,19 @@ function totalUsageOf(totals: UsageTotals): LanguageModelUsage {
     outputTokenDetails: { textTokens: undefined, reasoningTokens: totals.reasoning },
     totalTokens: totals.total + totals.nestedTotal,
   }
+}
+
+/**
+ * Errors AI SDK answers a tool call with (`error-text` = `String(error)` on the wire): a tool's
+ * `execute` threw (`HarnessToolError`), the input failed the tool's schema
+ * (`InvalidToolInputError`) or the tool does not exist (`NoSuchToolError`).
+ */
+function isToolCallError(error: unknown): boolean {
+  return (
+    error instanceof HarnessToolError ||
+    InvalidToolInputError.isInstance(error) ||
+    NoSuchToolError.isInstance(error)
+  )
 }
 
 async function guarded<T>(value: PromiseLike<T>): Promise<T | undefined> {
@@ -455,6 +557,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     /** An error chunk before the step's first start-step, held back for overflow recovery. */
     let held: UIMessageChunk | undefined
     let rawError: unknown
+    const toolErrorTexts = new Set<string>()
     const result = streamText({
       model: stepModel,
       ...(cached.system.length > 0 ? { instructions: cached.system } : {}),
@@ -489,10 +592,16 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       sendStart: false,
       sendFinish: false,
       onError: (error: unknown) => {
-        if (!(error instanceof HarnessToolError)) rawError ??= error
-        return error instanceof HarnessToolError
-          ? String(error)
-          : describeError(error, (m, d) => rt.log.error(m, d))
+        // tool call errors: the text the wire got (spec 04 §8). For invalid/unknown tool calls AI
+        // SDK reports the error object (tool-input-error), then its text (tool-output-error).
+        if (isToolCallError(error)) {
+          const text = String(error)
+          toolErrorTexts.add(text)
+          return text
+        }
+        if (typeof error === 'string' && toolErrorTexts.has(error)) return error
+        rawError ??= error
+        return describeError(error, (m, d) => rt.log.error(m, d))
       },
     })
     for await (const chunk of ui) {
@@ -560,6 +669,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
 
     const finishReason = response === undefined ? undefined : await guarded(result.finishReason)
     const stepUsage = response === undefined ? undefined : await guarded(result.usage)
+    // rejects like responseMessages on abort / early provider failure
+    const step = response === undefined ? undefined : await guarded(result.finalStep)
     if (stepUsage !== undefined) {
       addUsage(input.usage, stepUsage)
       compaction.observe(capped.raw, stepUsage.inputTokens)
@@ -597,6 +708,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         stepUsage ?? totalUsage(),
         total,
         response,
+        step,
       )
       for (const hook of hooks.list('step.end')) {
         try {
@@ -662,7 +774,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     async function beforeEnd(current: StopReason): Promise<'continue' | 'stop'> {
       const list = hooks.list('turn.beforeEnd')
       if (list.length === 0) return 'stop'
-      const lastText = lastAssistantText(response ?? [])
+      const lastText = step?.text ?? responseText(response ?? [])
       for (const hook of list) {
         let out: Awaited<ReturnType<typeof hook.fn>>
         try {
@@ -714,16 +826,6 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   function totalUsage(): LanguageModelUsage {
     return totalUsageOf(emptyUsage())
   }
-}
-
-function lastAssistantText(response: readonly ModelMessage[]): string {
-  const texts: string[] = []
-  for (const message of response) {
-    if (message.role !== 'assistant') continue
-    if (typeof message.content === 'string') texts.push(message.content)
-    else for (const part of message.content) if (part.type === 'text') texts.push(part.text)
-  }
-  return texts.join('')
 }
 
 function abortReasonText(signal: AbortSignal): string {
