@@ -28,7 +28,7 @@ A turn that ends with `stop: 'tool-pending'` leaves the session **pending**:
 ```ts
 export interface PendingState {
   messageId: string                                   // the assistant message waiting for answers
-  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk }>  // input/risk since 0.2 (§3.2)
+  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk }>  // input/risk since 0.3 (§3.2)
   clientTools: Array<{ toolCallId: string; toolName: string }>
 }
 // state.core.pending: PendingState (spec 05 §7) — authoritative, used to validate respond()

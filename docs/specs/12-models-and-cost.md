@@ -1,6 +1,6 @@
 # Spec 12 — Models, cost and budgets
 
-Status: **Draft (0.2)**. Modules: `src/models/*`, cost accounting in `src/loop/steps.ts`,
+Status: **Draft (0.3)** (shipped in 0.3.0). Modules: `src/models/*`, cost accounting in `src/loop/steps.ts`,
 `src/session/turn.ts`.
 
 AI SDK knows a model only as `{ provider, modelId }`: no context window, no prices. The core needs

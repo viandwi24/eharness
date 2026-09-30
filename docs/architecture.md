@@ -15,7 +15,8 @@ Status: **Accepted** (v0).
 │ registry   instructions · tools · skills · data parts · message kinds            │
 │ session    send/respond/regenerate/edit/attach/abort/inject/compact, lock, load, │
 │            persist, pending, rewinds, steer/queue, crash recovery                │
-│ loop       manual step loop (1 streamText per step), stop reasons                │
+│ loop       manual step loop (1 streamText per step), stop rules, progress guard  │
+│ models     model catalog lookup, models.dev adapter, cost, budgets               │
 │ stream     createUIMessageStream, namespaced writers, turn buffer                │
 │ messages   HarnessUIMessage, metadata, ids (UUIDv7), projection, validation      │
 │ compaction token accounting, fixed summarize algorithm, guard, sanitize          │
@@ -27,6 +28,7 @@ Status: **Accepted** (v0).
 │ eharness/filesystem/memory  memoryFs()                                           │
 │ eharness/storage/memory     memoryMessages(), memoryState()                      │
 │ eharness/mcp                mcpServer() tool source over @ai-sdk/mcp             │
+│ eharness/todos              todos() plugin: todo_write, data-todos.list          │
 │ eharness/testing            conformance suites + mock helpers                    │
 └──────────────┬─────────────────────────────────────────────────────────────────────┘
                │
@@ -50,7 +52,8 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/filesystem/memory` | `src/filesystem/memory.ts` | `memoryFs()` |
 | `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
-| `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, mock model helpers |
+| `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, fixed texts |
+| `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
 
 Peer dependencies: `ai@^7.0.123`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
 peer: `@ai-sdk/mcp@^2.0.63`. No runtime dependencies. The `ai` floor is the tested version: the
@@ -134,7 +137,9 @@ overflow before streaming? → compact + retry once (spec 06 §7)
 wire.push(...await result.responseMessages) (guarded); update discovered set
 await step barrier: onStepEnd (runs in AI SDK's output pipeline) updated the cache and saved the
   snapshot (persistEachStep) · heartbeat if due
-hook step.end; stop rules (spec 05 §3.1) → pending input / turn.beforeEnd may continue
+price the step with the step model (models catalog, spec 12) → usage, costUsd, data-eh.usage
+hook step.end; stop rules (spec 05 §3.1) → budgets ('cost-cap') · progress guard (nudge, 'stuck')
+  → pending input / turn.beforeEnd may continue (bounded by idle continuations) → wrap-up step
 ```
 
 The loop is manual (ADR-0002): one `streamText` call per step, so compaction, per-step persistence,
@@ -179,12 +184,15 @@ process died mid-turn ──▶ next operation recovers: dangling calls answered
 | Intercept tool calls, steps, turns, saves, compaction | hooks | 01 §5 |
 | Send custom UI data | `defineDataPart` + `ctx.stream.data()` | 03 §4, 04 |
 | Insert non-model messages (notices, events) | `defineMessageKind` + `session.inject()` | 03 §5 |
-| Gate tools behind approval | `approval.policy`, `tool.approve` hook | 11 §3 |
+| Gate tools behind approval | `approval.policy`, `approval.risk` + tool `metadata.risk`, `tool.approve` hook | 11 §3 |
+| Audit approvals / build an approval inbox | `approval.decided` hook, `TurnResult.pending`, `respond({ approvals: [{ actor }] })` | 11 §3.3 |
+| Know context windows and prices | `models` (record, function, `modelsDevCatalog`) | 12 |
+| Limit spending | `budget` (USD), `loop.maxTurnOutputTokens` | 12 §4, 05 §3.1 |
 | Validate / rewrite / block user input | `input.submit` hook | 01 §5 |
 | Pick model/settings per turn | `SendOptions`, `callOptions`, `turn.prepare` hook | 01, 05 |
-| Keep the agent going (todos, checks) | `turn.beforeEnd` hook | 01 §5 |
+| Keep the agent going (todos, checks) | `turn.beforeEnd` hook, or `todos({ enforce: true })` | 01 §5, 05 §3.2, 13 |
 | Add volatile per-step context | `step.prepare` `reminder` | 02 §5 |
-| Run subagents | a tool that opens a child session (`SessionOptions.parent`), preliminary results, `addUsage` | 05 §1, 09 §5 |
+| Run subagents | a tool that opens a child session (`SessionOptions.parent`), preliminary results, `addUsage` (tokens + cost) | 05 §1, 09 §5, 12 §3 |
 | Store messages anywhere | implement `MessageAdapter` (2 methods) | 05 |
 | Persist plugin state | `ctx.state` + `StateAdapter` | 05 |
 | Store files anywhere | implement `FileSystem` | 08 |
