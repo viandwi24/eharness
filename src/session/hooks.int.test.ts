@@ -501,6 +501,99 @@ describe('progress guard (spec 05 §3.2)', () => {
   })
 })
 
+describe('cost and budgets (spec 12)', () => {
+  // input 10 + output 5 tokens per scripted step; $1 per 1k output tokens → $0.005 per step
+  const models = () => ({ pricing: { input: 0, output: 1_000 } })
+  const work = tool({ inputSchema: z.object({ n: z.number() }), execute: async ({ n }) => `r${n}` })
+  const looping = (n: number) =>
+    scriptedModel(
+      Array.from({ length: n }, (_, i) => ({ toolCalls: [{ toolName: 'work', input: { n: i } }] })),
+    )
+
+  test('cost is recorded in the turn result, message metadata and session state', async () => {
+    const model = scriptedModel([{ text: 'a' }, { text: 'b' }])
+    const { agent, state } = setup({ model, models })
+    const session = agent.session('s1')
+    const first = await session.send('one').result
+    expect(first.usage.costUsd).toBeCloseTo(0.005, 10)
+    const assistant = first.messages.find((m) => m.role === 'assistant')
+    expect(assistant?.metadata?.eharness?.usage?.costUsd).toBeCloseTo(0.005, 10)
+    await session.send('two').result
+    expect(state.writes.at(-1)?.core.usage?.costUsd).toBeCloseTo(0.01, 10)
+  })
+
+  test('maxTurnUsd stops with cost-cap after the step that crossed it (W_BUDGET)', async () => {
+    const { agent, warnings } = setup({
+      model: looping(10),
+      tools: { work },
+      models,
+      budget: { maxTurnUsd: 0.012 },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('cost-cap')
+    expect(result.steps).toBe(3)
+    const budget = warnings.filter((w) => w.code === 'W_BUDGET').map((w) => w.details)
+    expect(budget).toEqual([
+      expect.objectContaining({ scope: 'turn', exceeded: false }),
+      expect.objectContaining({ scope: 'turn', exceeded: true }),
+    ])
+  })
+
+  test('a used-up session budget stops the next turn before any model call', async () => {
+    const model = scriptedModel([{ text: 'a' }, { text: 'b' }])
+    const { agent } = setup({ model, models, budget: { maxSessionUsd: 0.004 } })
+    const session = agent.session('s1')
+    expect((await session.send('one').result).stop).toBe('complete')
+    const second = await session.send('two').result
+    expect(second.stop).toBe('cost-cap')
+    expect(second.steps).toBe(0)
+    expect(model.calls).toHaveLength(1)
+  })
+
+  test('addUsage counts costUsd or prices a model; unpriced models warn once', async () => {
+    const nested = tool({
+      inputSchema: z.object({}),
+      execute: async () => 'done',
+    })
+    let seen: unknown
+    const plugin = definePlugin({
+      name: 'sub',
+      setup: () => ({
+        hooks: {
+          'step.end': (ctx, e) => {
+            if (e.stepIndex === 0) {
+              const u = { inputTokens: 0, outputTokens: 0, totalTokens: 0 } as never
+              ctx.turn?.addUsage(u, { costUsd: 0.5, source: 'gateway' })
+            }
+            seen = e.costUsd
+          },
+        },
+      }),
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'nested', input: {} }] },
+      { text: 'ok' },
+    ])
+    const priced = setup({ model, tools: { nested }, models, plugins: [plugin] })
+    const result = await priced.agent.session('s1').send('go').result
+    expect(result.usage.costUsd).toBeCloseTo(0.51, 10)
+    expect(seen).toBeCloseTo(0.51, 10)
+
+    const unpriced = setup({ model: scriptedModel([{ text: 'x' }]), budget: { maxTurnUsd: 1 } })
+    const r = await unpriced.agent.session('s1').send('go').result
+    expect(r.usage.costUsd).toBeUndefined()
+    expect(unpriced.warnings.map((w) => w.code)).toContain('W_MODEL_UNPRICED')
+  })
+
+  test('the models catalog supplies the context window when contextWindow is not set', async () => {
+    const { resolveWindow } = await import('../compaction/tokens.ts')
+    expect(resolveWindow({ models: { 'a/b': { contextWindow: 42_000 } } }, 'a/b')).toBe(42_000)
+    expect(
+      resolveWindow({ contextWindow: 7, models: { 'a/b': { contextWindow: 42_000 } } }, 'a/b'),
+    ).toBe(7)
+  })
+})
+
 describe('scenario 27: turn.beforeEnd', () => {
   test('continue runs one more step with data-eh.input { source: plugin:… }', async () => {
     const model = scriptedModel([{ text: 'first' }, { text: 'second' }])

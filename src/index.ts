@@ -32,6 +32,7 @@ export type {
   AgentMessageOf,
   AgentStaticTools,
   ApprovalConfig,
+  BudgetConfig,
   CacheConfig,
   CompactionConfig,
   HarnessAgent,
@@ -92,8 +93,12 @@ export type {
   UsagePartData,
   WarningPartData,
 } from './messages/types.ts'
+export { lookupModel, modelsDevCatalog } from './models/catalog.ts'
+export { computeCost } from './models/cost.ts'
+export type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './models/types.ts'
 export { definePlugin } from './plugin/define-plugin.ts'
 export type {
+  AddUsageOptions,
   AgentSetupContext,
   DataPartMap,
   HarnessContext,

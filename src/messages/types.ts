@@ -75,6 +75,8 @@ export interface HarnessUsageMeta {
   cacheWriteTokens?: number
   /** Total reported through `ctx.turn.addUsage()` (nested work, subagents). */
   nested?: number
+  /** Estimated USD (spec 12 §3); absent when no priced usage was recorded. */
+  costUsd?: number
 }
 
 /**
@@ -174,6 +176,8 @@ export interface UsagePartData {
   outputTokens: number
   totalTokens: number
   steps: number
+  /** Estimated USD of the turn so far; absent when no priced usage was recorded (spec 12). */
+  costUsd?: number
 }
 
 /** Data of the transient `data-eh.warning` part. */
@@ -287,6 +291,8 @@ export interface TurnResult<M = HarnessUIMessage> {
     totalTokens: number
     cachedInputTokens?: number
     cacheWriteTokens?: number
+    /** Estimated USD (spec 12); absent when nothing was priced. */
+    costUsd?: number
   }
   steps: number
   durationMs: number

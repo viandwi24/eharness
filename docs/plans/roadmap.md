@@ -20,7 +20,7 @@ before implementation.
 | **Fork** | `session.fork(atMessageId)` → new session id with a copied prefix (needs adapter support or a copy loop). |
 | **Prune stage** | Cheap pre-compaction pruning of old tool outputs (opencode-style) before summarizing. |
 | **Output guardrails** | Validate the final answer (schema, policy) and retry with feedback; builds on `turn.beforeEnd`. |
-| **USD budget** | Cost caps in money using a price table per model, next to `maxTurnOutputTokens`. |
+| ~~USD budget~~ | Done in 0.2 (spec 12). |
 | **Immediate steer** | Interrupt the current model stream for urgent input instead of waiting for the step boundary. |
 | **Cross-process queue / wake** | Queue and wake-up delivery across instances (via the application's job queue contract). |
 | **Continuation replay on resume** | `attach()` of a `respond()` continuation replays the stored prefix so `useChat` resume needs no re-fetch. |

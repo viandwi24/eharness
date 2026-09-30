@@ -27,6 +27,10 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * actually used (models can change per turn/step, §5). Default 128_000 (+ W_DEFAULT_CONTEXT_WINDOW).
    */
   contextWindow?: number | ((model: LanguageModel) => number | undefined)
+  /** Limits and prices of the models in use (spec 12): record keyed by model id, or a function. */
+  models?: ModelCatalog
+  /** USD spending limits (spec 12 §4). */
+  budget?: BudgetConfig
 
   instructions?: InstructionInput | InstructionInput[]          // spec 02 §2
   tools?: ToolsInput<DP>                                         // tool functions: ctx typed with DP
@@ -275,8 +279,8 @@ export interface TurnInfo {
   model: LanguageModel
   settings: ModelSettings
   abortSignal: AbortSignal
-  /** Add usage from nested work (subagents, tool-internal model calls) to this turn's totals and cost cap. */
-  addUsage(usage: LanguageModelUsage, source?: string): void
+  /** Add usage from nested work (subagents, tool-internal model calls) to this turn's totals, cost and caps (spec 12 §3). */
+  addUsage(usage: LanguageModelUsage, source?: string | { source?: string; model?: LanguageModel; costUsd?: number }): void
 }
 
 export interface HarnessLogger {
@@ -373,6 +377,7 @@ export interface StepEndEvent {
   finishReason: FinishReason
   usage: LanguageModelUsage          // this step
   totalUsage: LanguageModelUsage     // turn so far (incl. addUsage)
+  costUsd?: number                   // turn so far, estimated (spec 12); absent when nothing was priced
   toolCalls: Array<{ toolName: string; toolCallId: string; input: unknown }>
   toolResults: Array<{ toolName: string; toolCallId: string; status: 'output' | 'error' | 'denied' }>
   responseMessages: ModelMessage[]   // appended to the wire by this step

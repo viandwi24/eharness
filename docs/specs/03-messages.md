@@ -74,7 +74,7 @@ export interface HarnessMessageMeta {
   /** Flattened from AI SDK LanguageModelUsage: reasoningTokens = outputTokenDetails.reasoningTokens,
    *  cachedInputTokens = inputTokenDetails.cacheReadTokens. */
   usage?: { inputTokens?: number; outputTokens?: number; totalTokens?: number; reasoningTokens?: number
-            cachedInputTokens?: number; cacheWriteTokens?: number; nested?: number }   // nested = addUsage() total
+            cachedInputTokens?: number; cacheWriteTokens?: number; nested?: number; costUsd?: number }   // nested = addUsage() total; costUsd spec 12
   stop?: StopReason
   /** Set when the turn ended with stop 'tool-pending'; null once resolved (spec 11 §2). Metadata is
    *  deep-merged by AI SDK, so resolution writes null instead of deleting the key. */
@@ -135,7 +135,7 @@ export interface DataPartDef<S extends FlexibleSchema = FlexibleSchema> {
 | Type | Transient | Data | Purpose |
 |---|---|---|---|
 | `data-eh.status` | yes | `{ state: 'thinking' \| 'tool' \| 'compacting' \| 'idle'; step?: number; tool?: string }` | live spinner |
-| `data-eh.usage` | yes | `{ inputTokens; outputTokens; totalTokens; steps }` cumulative for the turn | live cost |
+| `data-eh.usage` | yes | `{ inputTokens; outputTokens; totalTokens; steps; costUsd? }` cumulative for the turn (cost: spec 12) | live cost |
 | `data-eh.context` | yes | `ContextStats` (spec 06 §2, absolute token counts), written after each step | context meter |
 | `data-eh.warning` | yes | `{ code: string; message: string }` | non-fatal problems (spec 10) |
 | `data-eh.input` | **no** | `{ source: 'user' \| 'event' \| \`plugin:${string}\`; text: string; files?: FileUIPart[]; clientId?: string }` | input delivered **inside** a running assistant message (steer, next-step events, hook context — spec 11 §6); projected by splitting the message (§6) |

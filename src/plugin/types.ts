@@ -113,8 +113,21 @@ export interface TurnInfo {
   /** Settings chosen for the turn (after `turn.prepare`). */
   settings: ModelSettings
   abortSignal: AbortSignal
-  /** Add usage from nested work (subagents, tool-internal model calls) to this turn. */
-  addUsage(usage: LanguageModelUsage, source?: string): void
+  /**
+   * Add usage from nested work (subagents, tool-internal model calls) to this turn. Pass `model`
+   * (priced from the agent's `models`) or `costUsd` so it counts toward cost and budgets (spec 12).
+   */
+  addUsage(usage: LanguageModelUsage, source?: string | AddUsageOptions): void
+}
+
+/** Options of {@link TurnInfo.addUsage}. */
+export interface AddUsageOptions {
+  /** Label for logs (e.g. `'subagent:research'`). */
+  source?: string
+  /** Model that produced the usage; priced from the agent's `models`. */
+  model?: LanguageModel
+  /** Known cost in USD (e.g. reported by a gateway); wins over `model`. */
+  costUsd?: number
 }
 
 /**
@@ -217,6 +230,8 @@ export interface StepEndEvent {
   usage: LanguageModelUsage
   /** Turn so far (incl. `addUsage`). */
   totalUsage: LanguageModelUsage
+  /** Estimated USD of the turn so far; absent when nothing was priced (spec 12). */
+  costUsd?: number
   toolCalls: Array<{ toolName: string; toolCallId: string; input: unknown }>
   toolResults: Array<{
     toolName: string
