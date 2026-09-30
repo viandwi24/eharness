@@ -278,11 +278,20 @@ because the context is too long, the core recovers instead of failing the turn:
 1. **Detect.** The core's `onError` for `toUIMessageStream` records the raw error of the step.
    An `error` chunk that arrives **before the step's first `start-step`** (the provider call
    failed before streaming) is held back until the core has decided. The error is an overflow
-   when, walking the error and its `.cause` chain, some error has an HTTP status (`statusCode` or
-   `status`: 400 or 413 — `APICallError`, gateway errors and others) **and** a message or response
-   body matching the built-in patterns (`prompt is too long`, `context_length_exceeded`,
+   when, walking its chain, some error has HTTP status 400 or 413 **and** a message or provider
+   payload matching the built-in patterns (`prompt is too long`, `context_length_exceeded`,
    `maximum context length`, `too many tokens`, …; list in `src/compaction/overflow.ts`), or when
-   `config.isContextOverflow?(error)` returns true.
+   `config.isContextOverflow?(error)` returns true. Recognised error shapes (shared with
+   `describeError`, spec 10 §3; `src/internal/provider-errors.ts`):
+
+   | Shape | Status | Texts matched |
+   |---|---|---|
+   | AI SDK `RetryError` (any `reason`, e.g. `errorNotRetryable` after a 429 then a 400) | — | unwrapped: `lastError`, then the other `errors`, most recent first |
+   | AI SDK `APICallError` | `statusCode` | `message`, `responseBody`, `data` |
+   | AI SDK `StreamProviderError` | `statusCode` (none → never an overflow) | `message`, `data`, `code`, `type` |
+   | anything else (gateway, fetch, wrappers) | `statusCode` or `status` (integer) | `message`, `responseBody`, `body`, `data`, `error` |
+
+   `.cause` is followed for every error (breadth first, cycle-safe, at most 8 errors).
 2. **Recalibrate.** If the provider reports the actual token count, set `k = actual / estimate`
    (the clamp of §2 no longer applies for this session); otherwise `k = k × 1.25`.
 3. **Compact and retry once per turn** (`W_OVERFLOW_RETRY`): run a mid-turn compaction (pre-turn
