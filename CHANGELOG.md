@@ -1,5 +1,64 @@
 # eharness
 
+## 0.3.0
+
+### Minor Changes
+
+- [#9](https://github.com/viandwi24/eharness/pull/9) [`ca0ba6e`](https://github.com/viandwi24/eharness/commit/ca0ba6ed63d2123f051aa54080ede3f4b053d3b7) Thanks [@viandwi24](https://github.com/viandwi24)! - **New: risk-based approval and approval decisions** (spec 11 §3.2–3.3, ADR-0017):
+  
+  - Tools declare a risk in AI SDK metadata: `tool({ metadata: { risk: 'read' | 'write' | 'destructive' } })`;
+    MCP tools with `destructiveHint` are `'destructive'` (`readOnlyHint` is ignored). New exported
+    type `ToolRisk`.
+  - `approval.risk` maps a risk (or `unknown`) to an approval status, combined most-restrictive-wins
+    with the policy, hooks and grants. `tool.approve` hooks receive `risk`.
+  - Pending approvals (`TurnResult.pending`, `state.core.pending`, `pending` events) now include the
+    tool `input` and `risk`.
+  - New hook `approval.decided` receives every automatic decision (`by: 'policy' | 'risk' | 'grant' |
+    'plugin:<name>'`), every `respond()` answer (`by: 'user'`) and new-input denials
+    (`by: 'new-input'`), for audit logs and approval inboxes.
+  - `respond({ approvals: [{ …, actor: { id, name } }] })` records who answered; it is passed to
+    `approval.decided` and never stored or sent to the model.
+
+- [#9](https://github.com/viandwi24/eharness/pull/9) [`b9c7d89`](https://github.com/viandwi24/eharness/commit/b9c7d89b1347ae1d7933449b80c59e587bf06f35) Thanks [@viandwi24](https://github.com/viandwi24)! - **New: model catalog, cost and USD budgets** (spec 12, ADR-0016):
+  
+  - `defineHarnessAgent({ models })` — a record keyed by model id, or a function — gives each model's
+    `contextWindow`, `maxOutputTokens` and `pricing` (USD per 1M tokens: input, output, cache read,
+    cache write, reasoning, context tiers). The context window is taken from it when `contextWindow`
+    is not set.
+  - `modelsDevCatalog(json)` converts the models.dev database (fetched by your app); `lookupModel`
+    and `computeCost` are exported.
+  - Every turn records its estimated cost as `costUsd` in `TurnResult.usage`,
+    `metadata.eharness.usage`, `data-eh.usage`, `StepEndEvent.costUsd` and `state.core.usage` (all
+    additive, absent when nothing was priced).
+  - `budget: { maxTurnUsd, maxSessionUsd, warnAt }` stops the turn with `'cost-cap'` when a budget
+    is used up; warnings `W_BUDGET` and `W_MODEL_UNPRICED`.
+  - `ctx.turn.addUsage(usage, { model | costUsd, source })` prices nested usage (subagents); a plain
+    string `source` still works.
+
+- [#9](https://github.com/viandwi24/eharness/pull/9) [`f3716ec`](https://github.com/viandwi24/eharness/commit/f3716ec2de72fe60337e74d42eb295bdc6499334) Thanks [@viandwi24](https://github.com/viandwi24)! - **Long-running turns** (ADR-0015, spec 05 §3.1–3.2):
+  
+  - **BREAKING (defaults):** `loop.maxSteps` defaults to 500 (was 50); `loop.maxTurnOutputTokens` and
+    `loop.maxContinues` default to none (were 100_000 and 3). Migration: set them explicitly to keep
+    the old limits.
+  - **New:** when the step budget runs out, one wrap-up step without tools asks the model for a
+    summary of what is done and what is left (`loop.wrapUp`, default `true`; the stop stays
+    `'max-steps'`). New fixed text `MAX_STEPS_WRAP_UP`.
+  - **New:** progress guard (`loop.progress`): the same tool call with the same result 3 times in the
+    last 20 tool steps, or 5 steps whose tool calls all failed, gets one reminder (`PROGRESS_NUDGE`,
+    warning `W_LOOP_STUCK`) and then stops the turn with the new stop reason `'stuck'`.
+    `loop.progress: false` disables it.
+  - **New:** `turn.beforeEnd` continuations are bounded by progress: after `loop.maxIdleContinues`
+    (default 3) continuations in a row without a new successful tool result, further continuations
+    are refused (`W_CONTINUE_LIMIT` with `details.reason: 'no-progress'`). The hook event has a new
+    `idleContinues` field.
+  - `StopReason` gains `'stuck'` (exhaustive switches over `StopReason` need a new case).
+
+- [#9](https://github.com/viandwi24/eharness/pull/9) [`2dcece5`](https://github.com/viandwi24/eharness/commit/2dcece5cd31bd5244dab2ddad8172a3455044c55) Thanks [@viandwi24](https://github.com/viandwi24)! - **New: `eharness/todos`** (spec 13, ADR-0018): the `todos()` plugin gives the model a
+  `todo_write` checklist tool (whole-list replacement, one `in_progress` at a time, `cancelled`
+  status), streams `data-todos.list` for UIs (`latestTodos(messages)`), reminds open todos with
+  volatile step reminders (`remindEvery`, and once after a compaction) and, with `enforce: true`,
+  keeps the turn going while todos are open — bounded by `maxNudges` and by progress.
+
 ## 0.2.0
 
 ### Minor Changes
