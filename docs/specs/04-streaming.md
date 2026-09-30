@@ -85,7 +85,8 @@ const stream = createUIMessageStream<AgentMessage>({
 
 /** Tool errors: the exact text the model gets (String(error)), so UI and replay match the wire. */
 // HarnessToolError copies name + message of the original error, so String(e) equals what the wire got.
-const uiErrorText = (e: unknown) => (e instanceof HarnessToolError ? String(e) : describeError(e))
+// Same for InvalidToolInputError / NoSuchToolError (and the string AI SDK passes for them next).
+const uiErrorText = (e: unknown) => (isToolCallError(e) ? String(e) : describeError(e))
 ```
 
 Rules:
@@ -262,6 +263,7 @@ Verified AI SDK v7 behaviour and what the core does with it:
 | Situation | What AI SDK does | Core |
 |---|---|---|
 | Tool `execute` throws | `tool-output-error` chunk; the wire gets `error-text` = `String(error)`; the step continues | UI text = the same `String(error)` (`uiErrorText`); the loop continues |
+| Tool input fails the tool's schema / unknown tool | `tool-input-error` + `tool-output-error` chunks; the wire gets `error-text` = `String(error)` (`AI_InvalidToolInputError: …` / `AI_NoSuchToolError: …`); `onError` is called with the error, then with that text | UI text = the same `String(error)` for both chunks; the loop continues |
 | Provider stream emits an `error` part | `error` chunk, stream continues, `finishReason: 'error'`, `responseMessages` resolves with the partial output | stop `'error'` after the step |
 | Provider call throws before streaming (`doStream`) | one `error` chunk, no `start-step`/`finish-step`, `responseMessages` rejects | stop `'error'`; nothing appended to the wire |
 | Invalid `toolsContext` for a tool | stream-level `error`, the tool call has **no result** | prevented by up-front validation (spec 01 §4); dangling calls are answered (spec 05 §3) |
