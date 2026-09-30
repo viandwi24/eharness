@@ -12,6 +12,7 @@ import {
   type LanguageModel,
   type LanguageModelUsage,
   type ModelMessage,
+  type StepResult,
   streamText,
   type ToolChoice,
   type ToolSet,
@@ -189,29 +190,36 @@ function stepEndEvent(
   usage: LanguageModelUsage,
   totalUsage: LanguageModelUsage,
   response: readonly ModelMessage[],
+  step: StepResult<ToolSet>,
 ): StepEndEvent {
-  const toolCalls: StepEndEvent['toolCalls'] = []
-  const toolResults: StepEndEvent['toolResults'] = []
-  for (const message of response) {
-    if (typeof message.content === 'string') continue
-    for (const part of message.content) {
-      if (part.type === 'tool-call') {
-        toolCalls.push({ toolName: part.toolName, toolCallId: part.toolCallId, input: part.input })
-      } else if (part.type === 'tool-result') {
-        const type = (part.output as { type?: string }).type
-        toolResults.push({
-          toolName: part.toolName,
-          toolCallId: part.toolCallId,
-          status:
-            type === 'execution-denied'
-              ? 'denied'
-              : type === 'error-text' || type === 'error-json'
-                ? 'error'
-                : 'output',
-        })
-      }
+  const toolCalls: StepEndEvent['toolCalls'] = step.toolCalls.map((call) => ({
+    toolName: call.toolName,
+    toolCallId: call.toolCallId,
+    input: call.input,
+  }))
+  // results of this step's calls, in call order (step.content lists them in completion order)
+  const statuses = new Map<string, StepEndEvent['toolResults'][number]>()
+  for (const part of step.content) {
+    if (part.type === 'tool-result' || part.type === 'tool-error') {
+      statuses.set(part.toolCallId, {
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        status: part.type === 'tool-error' ? 'error' : 'output',
+      })
+    } else if (part.type === 'tool-approval-response' && !part.approved) {
+      statuses.set(part.toolCall.toolCallId, {
+        toolName: part.toolCall.toolName,
+        toolCallId: part.toolCall.toolCallId,
+        status: 'denied',
+      })
     }
   }
+  const toolResults: StepEndEvent['toolResults'] = [
+    ...continuationResults(response, statuses),
+    ...toolCalls.flatMap((call) => statuses.get(call.toolCallId) ?? []),
+  ]
+  const listed = new Set(toolResults.map((r) => r.toolCallId))
+  for (const [id, result] of statuses) if (!listed.has(id)) toolResults.push(result)
   return {
     stepIndex,
     finishReason,
@@ -220,7 +228,37 @@ function stepEndEvent(
     toolCalls,
     toolResults,
     responseMessages: [...response],
+    step,
   }
+}
+
+/**
+ * Results that are on the wire of this step but not in its `StepResult`: approved or denied tool
+ * calls of a `respond()` continuation, executed by AI SDK before the model call (spec 11).
+ */
+function continuationResults(
+  response: readonly ModelMessage[],
+  own: ReadonlyMap<string, unknown>,
+): StepEndEvent['toolResults'] {
+  const out: StepEndEvent['toolResults'] = []
+  for (const message of response) {
+    if (message.role !== 'tool') continue
+    for (const part of message.content) {
+      if (part.type !== 'tool-result' || own.has(part.toolCallId)) continue
+      const type = part.output.type
+      out.push({
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        status:
+          type === 'execution-denied'
+            ? 'denied'
+            : type === 'error-text' || type === 'error-json'
+              ? 'error'
+              : 'output',
+      })
+    }
+  }
+  return out
 }
 
 function totalUsageOf(totals: UsageTotals): LanguageModelUsage {
@@ -560,6 +598,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
 
     const finishReason = response === undefined ? undefined : await guarded(result.finishReason)
     const stepUsage = response === undefined ? undefined : await guarded(result.usage)
+    // rejects like responseMessages on abort / early provider failure
+    const step = response === undefined ? undefined : await guarded(result.finalStep)
     if (stepUsage !== undefined) {
       addUsage(input.usage, stepUsage)
       compaction.observe(capped.raw, stepUsage.inputTokens)
@@ -590,13 +630,14 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
 
     // step.end hooks
     let hookStop: string | undefined
-    if (finishReason !== undefined && response !== undefined) {
+    if (finishReason !== undefined && response !== undefined && step !== undefined) {
       const event = stepEndEvent(
         stepIndex - 1,
         finishReason,
         stepUsage ?? totalUsage(),
         total,
         response,
+        step,
       )
       for (const hook of hooks.list('step.end')) {
         try {
@@ -662,7 +703,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     async function beforeEnd(current: StopReason): Promise<'continue' | 'stop'> {
       const list = hooks.list('turn.beforeEnd')
       if (list.length === 0) return 'stop'
-      const lastText = lastAssistantText(response ?? [])
+      const lastText = step?.text ?? ''
       for (const hook of list) {
         let out: Awaited<ReturnType<typeof hook.fn>>
         try {
@@ -714,16 +755,6 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   function totalUsage(): LanguageModelUsage {
     return totalUsageOf(emptyUsage())
   }
-}
-
-function lastAssistantText(response: readonly ModelMessage[]): string {
-  const texts: string[] = []
-  for (const message of response) {
-    if (message.role !== 'assistant') continue
-    if (typeof message.content === 'string') texts.push(message.content)
-    else for (const part of message.content) if (part.type === 'text') texts.push(part.text)
-  }
-  return texts.join('')
 }
 
 function abortReasonText(signal: AbortSignal): string {

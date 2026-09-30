@@ -12,8 +12,10 @@ import type {
   LanguageModel,
   LanguageModelUsage,
   ModelMessage,
+  StepResult,
   ToolApprovalStatus,
   ToolChoice,
+  ToolSet,
 } from 'ai'
 import type { ModelSettings } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
@@ -223,6 +225,11 @@ export interface StepEndEvent {
   }>
   /** Appended to the wire by this step. */
   responseMessages: ModelMessage[]
+  /**
+   * The AI SDK `StepResult` of this step (`result.finalStep`). `toolCalls` and `toolResults`
+   * above are derived from it.
+   */
+  step: StepResult<ToolSet>
 }
 
 /**
