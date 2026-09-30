@@ -202,22 +202,29 @@ function collectDiscovered(response: readonly ModelMessage[], into: Set<string>)
   }
 }
 
-function stepEndEvent(
+/**
+ * The `step.end` event (exported for tests). Derived from the step's `StepResult`; when AI SDK
+ * did not provide one (`step` undefined while `responseMessages` resolved), from the wire.
+ */
+export function stepEndEvent(
   stepIndex: number,
   finishReason: FinishReason,
   usage: LanguageModelUsage,
   totalUsage: LanguageModelUsage,
   response: readonly ModelMessage[],
-  step: StepResult<ToolSet>,
+  step: StepResult<ToolSet> | undefined,
 ): StepEndEvent {
-  const toolCalls: StepEndEvent['toolCalls'] = step.toolCalls.map((call) => ({
-    toolName: call.toolName,
-    toolCallId: call.toolCallId,
-    input: call.input,
-  }))
+  const toolCalls: StepEndEvent['toolCalls'] =
+    step === undefined
+      ? responseToolCalls(response)
+      : step.toolCalls.map((call) => ({
+          toolName: call.toolName,
+          toolCallId: call.toolCallId,
+          input: call.input,
+        }))
   // results of this step's calls, in call order (step.content lists them in completion order)
   const statuses = new Map<string, StepEndEvent['toolResults'][number]>()
-  for (const part of step.content) {
+  for (const part of step?.content ?? []) {
     if (part.type === 'tool-result' || part.type === 'tool-error') {
       statuses.set(part.toolCallId, {
         toolName: part.toolName,
@@ -246,13 +253,39 @@ function stepEndEvent(
     toolCalls,
     toolResults,
     responseMessages: [...response],
-    step,
+    ...(step === undefined ? {} : { step }),
   }
+}
+
+/** Tool calls on the wire of a step (fallback without a `StepResult`). */
+function responseToolCalls(response: readonly ModelMessage[]): StepEndEvent['toolCalls'] {
+  const out: StepEndEvent['toolCalls'] = []
+  for (const message of response) {
+    if (message.role !== 'assistant' || typeof message.content === 'string') continue
+    for (const part of message.content) {
+      if (part.type === 'tool-call') {
+        out.push({ toolName: part.toolName, toolCallId: part.toolCallId, input: part.input })
+      }
+    }
+  }
+  return out
+}
+
+/** Assistant text on the wire of a step (fallback without a `StepResult`). */
+function responseText(response: readonly ModelMessage[]): string {
+  const texts: string[] = []
+  for (const message of response) {
+    if (message.role !== 'assistant') continue
+    if (typeof message.content === 'string') texts.push(message.content)
+    else for (const part of message.content) if (part.type === 'text') texts.push(part.text)
+  }
+  return texts.join('')
 }
 
 /**
  * Results that are on the wire of this step but not in its `StepResult`: approved or denied tool
- * calls of a `respond()` continuation, executed by AI SDK before the model call (spec 11).
+ * calls of a `respond()` continuation, executed by AI SDK before the model call (spec 11) — or
+ * every result when there is no `StepResult`.
  */
 function continuationResults(
   response: readonly ModelMessage[],
@@ -668,7 +701,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
 
     // step.end hooks
     let hookStop: string | undefined
-    if (finishReason !== undefined && response !== undefined && step !== undefined) {
+    if (finishReason !== undefined && response !== undefined) {
       const event = stepEndEvent(
         stepIndex - 1,
         finishReason,
@@ -741,7 +774,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     async function beforeEnd(current: StopReason): Promise<'continue' | 'stop'> {
       const list = hooks.list('turn.beforeEnd')
       if (list.length === 0) return 'stop'
-      const lastText = step?.text ?? ''
+      const lastText = step?.text ?? responseText(response ?? [])
       for (const hook of list) {
         let out: Awaited<ReturnType<typeof hook.fn>>
         try {
