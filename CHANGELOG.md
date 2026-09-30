@@ -1,5 +1,14 @@
 # eharness
 
+## 0.3.1
+
+### Patch Changes
+
+- [`5c150da`](https://github.com/viandwi24/eharness/commit/5c150da69a30ba4ee01ea4db35a889a3ce3aeebb) Thanks [@viandwi24](https://github.com/viandwi24)! - Pricing tiers: the highest matching tier now wins regardless of array order (`computeCost`, and
+  turn cost with a `models` record whose `pricing.tiers` are not sorted). Also clarifies TSDoc:
+  `'cost-cap'` includes USD budgets, `ModelInfo.maxOutputTokens` is informational, and pending
+  approval `input`/`risk` are absent in state written before 0.3.
+
 ## 0.3.0
 
 ### Minor Changes
