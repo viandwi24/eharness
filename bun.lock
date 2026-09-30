@@ -18,8 +18,8 @@
         "zod": "^4.6.5",
       },
       "peerDependencies": {
-        "@ai-sdk/mcp": "^2.0.0",
-        "ai": "^7.0.0",
+        "@ai-sdk/mcp": "^2.0.63",
+        "ai": "^7.0.123",
         "zod": "^3.25.76 || ^4.1.8",
       },
       "optionalPeers": [
