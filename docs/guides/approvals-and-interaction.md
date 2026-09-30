@@ -26,8 +26,9 @@ const agent = defineHarnessAgent({
 ```
 
 The policy has AI SDK's `ToolApprovalConfiguration` shape (per-tool map or one function). Plugins
-add `tool.approve` hooks; the core combines policy, hooks and session grants with **most
-restrictive wins** (`denied` > `user-approval` > `approved`), and a throwing hook denies.
+add `tool.approve` hooks; the core combines policy, [risk rules](#risk-based-rules-and-an-approval-inbox),
+hooks and session grants with **most restrictive wins** (`denied` > `user-approval` > `approved`),
+and a throwing hook denies.
 
 Two rules, because AI SDK re-validates approved calls when the conversation continues:
 
@@ -40,7 +41,8 @@ Two rules, because AI SDK re-validates approved calls when the conversation cont
 
 The turn ends with `stop: 'tool-pending'`. The assistant message keeps the tool part in state
 `approval-requested`; `run.result.pending`, `session.stats()` and the `pending` session event
-name the waiting calls. Nothing runs until someone answers.
+list the waiting calls (`approvalId`, `toolCallId`, `toolName`, `input`, `risk`) and client tools.
+Nothing runs until someone answers.
 
 **In a web app** nothing extra is needed on the server: `useChat` sends the answers and
 `handleChatRequest` calls `respond()`.
@@ -58,7 +60,15 @@ addToolApprovalResponse({ id: part.approval.id, approved: true })
 
 ```ts
 const run = session.respond({
-  approvals: [{ id: 'approval-id', approved: false, reason: 'Not in production', remember: 'session' }],
+  approvals: [
+    {
+      id: 'approval-id', // PendingState.approvals[i].approvalId
+      approved: false,
+      reason: 'Not in production',
+      remember: 'session',
+      actor: { id: 'u_7', name: 'Ada' }, // optional: who answered (audit only)
+    },
+  ],
 })
 const result = await run.result
 if (result.stop === 'error') console.log(result.error?.details?.reason) // 'unknown-id' | 'incomplete' | 'stale'
@@ -85,17 +95,35 @@ two encodings differ, so the prompt cache misses once after a denial. This is ex
 Tag tools with a risk instead of listing every tool name in the policy:
 
 ```ts
-const deleteRecord = tool({ description: '…', inputSchema, metadata: { risk: 'destructive' }, execute })
+import { tool } from 'ai'
+import { defineHarnessAgent } from 'eharness'
+import { z } from 'zod/v4'
+
+const readRecord = tool({
+  description: 'Read a record.',
+  inputSchema: z.object({ id: z.string() }),
+  metadata: { risk: 'read' }, // 'read' | 'write' | 'destructive' (type ToolRisk)
+  execute: async ({ id }) => `Record ${id}`,
+})
+const deleteRecord = tool({
+  description: 'Delete a record for good.',
+  inputSchema: z.object({ id: z.string() }),
+  metadata: { risk: 'destructive' },
+  execute: async ({ id }) => `Deleted ${id}`,
+})
 
 defineHarnessAgent({
   model,
-  tools: { deleteRecord, readRecord },
-  approval: { risk: { destructive: 'user-approval', unknown: 'user-approval' } },
+  tools: { readRecord, deleteRecord },
+  // 'unknown' = tools without a risk; 'approved' here is audited as `by: 'risk'`
+  approval: { risk: { read: 'approved', destructive: 'user-approval', unknown: 'user-approval' } },
 })
 ```
 
 MCP tools marked `destructiveHint` by their server count as `'destructive'`; `readOnlyHint` is
-ignored (a server could lie). Risk rules only add restrictions: a stricter policy or hook still wins.
+ignored (a server could lie). Risk rules are one more input of the most-restrictive combination:
+they can require approval or deny, but a stricter policy, hook or grant still wins, and a risk rule
+never loosens one. `tool.approve` hooks receive the `risk` too.
 
 For approvals outside the chat (a manager approves in a web inbox), keep three pieces in your app:
 
@@ -108,6 +136,8 @@ For approvals outside the chat (a manager approves in a web inbox), keep three p
    audit log. Clear the inbox entry there too.
 
 ```ts
+import { definePlugin } from 'eharness'
+
 const audit = definePlugin({
   name: 'audit',
   setup: () => ({
@@ -119,6 +149,19 @@ const audit = definePlugin({
   }),
 })
 ```
+
+An `ApprovalDecision` is `{ toolName, toolCallId, input, risk?, approved, by, reason?, actor?,
+approvalId?, remember? }`:
+
+| `by` | When |
+|---|---|
+| `'policy'`, `'risk'`, `'plugin:<name>'`, `'grant'` | the call was approved or denied automatically; `by` names the winning source (reported once per call) |
+| `'user'` | an answer through `respond()`, with its `reason`, `remember` and `actor` |
+| `'new-input'` | denied because new input arrived while pending (`onNewInput: 'deny'`) |
+
+The `actor` (`ApprovalActor`: `{ id, name?, …JSON }`) is only passed to the hook: it is never stored
+in messages nor sent to the model. A throwing `approval.decided` hook raises `W_HOOK_FAILED` and
+never changes a decision. Runnable: [`examples/risk-approvals.ts`](../../examples/risk-approvals.ts).
 
 ## Client-side tools
 

@@ -46,7 +46,8 @@ const agent = defineHarnessAgent({
 
 Tools a plugin contributes get the same typed `ctx.stream.data` for the plugin's own parts
 ([writing a plugin](writing-a-plugin.md)). `ctx.stream.write({ type: 'data-…', id?, data })` is
-the untyped escape hatch for parts you do not own (any registered part except `data-eh.input`).
+the untyped escape hatch for parts you do not own (any registered part except `data-eh.input`);
+its argument type is `DataChunk` (AI SDK's `data-*` chunk: `{ type, id?, data, transient? }`).
 
 Parts are validated against their schema when history is loaded and are hidden from the model
 unless the definition sets `model: 'text'` or a projection function.
@@ -55,6 +56,7 @@ unless the definition sets `model: 'text'` or a projection function.
 
 `InferHarnessUIMessage<typeof agent>` types every part — core, app, plugin parts and kinds:
 
+<!-- docs-check: continue -->
 ```ts
 import type { InferHarnessUIMessage } from 'eharness'
 
@@ -84,14 +86,22 @@ A terminal reads the chunks directly (`for await (const chunk of run.stream)`), 
 | Type | Stored | Content |
 |---|---|---|
 | `data-eh.status` | no | `{ state: 'thinking' \| 'tool' \| 'compacting' \| 'idle', step?, tool? }` |
-| `data-eh.usage` | no | cumulative tokens of the turn |
+| `data-eh.usage` | no | `{ inputTokens, outputTokens, totalTokens, steps, costUsd? }` of the turn so far ([models and cost](models-and-cost.md)) |
 | `data-eh.context` | no | context window stats after each step (a "context meter") |
-| `data-eh.warning` | no | `{ code, message }` of non-fatal problems |
+| `data-eh.warning` | no | `{ code, message }` of non-fatal problems (`W_BUDGET`, `W_LOOP_STUCK`, …) |
 | `data-eh.input` | yes | input delivered into a running turn (`source: 'user' \| 'event' \| 'plugin:<name>'`) |
 | `eh.compaction` kind | yes | compaction marker with the summary |
 | `eh.notice` kind | yes | errors, timeouts, recovered turns |
 | `eh.event` kind | yes | `session.inject('eh.event', { name, text })` from your app |
 | `eh.rewind` kind | yes | regenerate/edit marker (hidden from `session.messages()` views by default) |
+
+Shipped plugins add their own parts (namespaced `data-<plugin>.<key>`, typed through
+`InferHarnessUIMessage` as soon as the plugin is in `plugins`):
+
+| Type | Stored | Content |
+|---|---|---|
+| `data-todos.list` | yes (id `list`) | `{ todos: Todo[] }` after every `todo_write` — [todos guide](todos.md), `latestTodos(messages)` |
+| `data-filesystem.change` | yes (id = path) | `{ path, action: 'create' \| 'write' \| 'edit' \| 'delete', version, bytes? }`, latest change per file in a message (spec 08 §5) |
 
 A kind message is an ordinary `UIMessage` with exactly one part `data-<kind>`, so the same
 component renders it live and from history:
