@@ -3,7 +3,7 @@
 A subagent is a second agent that a tool runs for one delegated task. eharness has no special
 subagent runtime: the tool opens a **child session**, streams its progress into the parent
 message as **preliminary tool results**, and reports the child's token usage to the parent turn
-with **`ctx.turn.addUsage()`** so cost caps count it. Runnable:
+with **`ctx.turn.addUsage()`** so token caps and USD budgets count it. Runnable:
 [`examples/subagent-tool.ts`](../../examples/subagent-tool.ts). A ready-made `subagent()` plugin
 is on the [roadmap](../plans/roadmap.md).
 
@@ -45,7 +45,8 @@ const agent = defineHarnessAgent({
             yield { status: 'working', text } // preliminary: shown live, not sent to the model
           }
           const result = await run.result // never rejects
-          turn.addUsage(usage(result.usage), 'researcher')
+          // tokens + the child's estimated cost (set when `researcher` has `models` pricing)
+          turn.addUsage(usage(result.usage), { costUsd: result.usage.costUsd, source: 'subagent:researcher' })
           yield { status: result.stop === 'complete' ? 'done' : 'failed', text } // final output
         },
       }),
@@ -72,9 +73,13 @@ How the pieces fit:
   it a deterministic id (derived from the parent session and tool call) if you want to find it
   again, e.g. to show the full child transcript in the UI with `researcher.session(id).messages()`.
   `SessionOptions.parent` only records the link; it does not share history or state.
-- **Usage and limits.** `ctx.turn.addUsage()` adds the child's tokens to the parent turn's
-  `usage` and to `loop.maxTurnOutputTokens` (stop `cost-cap`). Give the child its own
-  `loop: { maxSteps }` to bound it.
+- **Usage, cost and limits.** `ctx.turn.addUsage(usage, options)` adds the child's tokens to the
+  parent turn's `usage` and to `loop.maxTurnOutputTokens`, and its cost to `costUsd` and the
+  parent's `budget` (both stop with `'cost-cap'`). The cost comes from `options.costUsd` (here the
+  child's own estimate, [models and cost](models-and-cost.md)), else from `options.model` priced
+  with the **parent's** `models`; without either the usage counts tokens only. `source` is a label
+  for logs; a plain string (`addUsage(usage, 'researcher')`) still works. Bound the child itself
+  with its own `loop: { maxSteps }` and `budget`.
 - **Cancellation.** Pass the tool's `abortSignal` to the child's `send()`: aborting the parent turn
   aborts the child turn.
 - **Clean up.** Child sessions stay cached until evicted (`sessionIdleMs`, default 30 min); call

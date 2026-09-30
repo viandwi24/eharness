@@ -59,11 +59,13 @@ What you declared:
 
 - **`model`** — a gateway string (needs `AI_GATEWAY_API_KEY`) or a provider model such as
   `anthropic('claude-sonnet-4-6')` from `@ai-sdk/anthropic`.
-- **`contextWindow`** — used by compaction and the context guard. Set it; the default (128k)
-  warns once.
+- **`contextWindow`** — used by compaction and the context guard. Set it (or pass `models`, a
+  catalog with each model's window and prices — [models and cost](models-and-cost.md)); the
+  default (128k) warns once with `W_DEFAULT_CONTEXT_WINDOW`.
 - **`tools`** — plain AI SDK tools. **`skills`** — playbooks the model opens on demand
   ([skills guide](skills.md)). **`plugins`** — here the reference `filesystem()` plugin with an
-  in-memory file system: the model gets `read_file`, `write_file`, `edit_file`, … tools.
+  in-memory file system: the model gets `read_file`, `write_file`, `edit_file`, … tools
+  ([filesystem guide](filesystem.md)).
 
 ## 3. Run it
 
@@ -91,6 +93,8 @@ const model = scriptedModel([
 ])
 // defineHarnessAgent({ model, … }) — then assert on model.prompts[i] (what the model saw)
 ```
+
+More in [testing](testing.md): script options, assertions and the conformance suites.
 
 ## 5. Tools that use the running chat
 
@@ -154,7 +158,29 @@ On the client, `useChat<InferHarnessUIMessage<typeof agent>>()` shows `data-invo
 [`examples/tool-context.ts`](../../examples/tool-context.ts). Rendering details:
 [rendering data parts](rendering-data-parts.md).
 
-## 6. Next steps
+## 6. Defaults worth knowing
+
+Everything is optional except `model`. The defaults are made for long, autonomous turns:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `loop.maxSteps` | 500 | step budget per turn (`SendOptions.maxSteps` per call); stop `'max-steps'` |
+| `loop.wrapUp` | `true` | when the budget runs out, one more step without tools asks the model for a summary |
+| `loop.progress` | `{ repeats: 3, window: 20, errorStreak: 5, nudges: 1 }` | a turn that repeats itself or keeps failing gets one reminder, then stops with `'stuck'` |
+| `loop.maxIdleContinues` | 3 | `turn.beforeEnd` continuations in a row without progress before they are refused |
+| `loop.maxTurnOutputTokens`, `loop.maxContinues`, `loop.turnTimeoutMs` | none | optional hard caps (`'cost-cap'`, `'timeout'`) |
+| `loop.persistEachStep` | `true` | the assistant message is saved after every step |
+| `storage` | memory adapters | history is lost on restart until you plug in your own |
+| `compaction` | `{ summarizeAt: 0.75, keepLast: 4 }` | summarize older turns when the context is 75% full |
+| `toolOutput` | `{ maxChars: 50_000, strategy: 'truncate' }` | limit tool results sent to the model |
+| `cache` | `{ mode: 'auto' }` | sets Anthropic `cacheControl` for prompt caching (spec 02 §6) |
+| `approval.onNewInput` | `'deny'` | a new message denies approvals that are still pending |
+| `sessionIdleMs` | 30 min | idle cached sessions are evicted |
+
+Nothing limits spending unless you set `budget` (with `models` pricing) or
+`loop.maxTurnOutputTokens` — see [long-running turns](long-running-turns.md).
+
+## 7. Next steps
 
 - **Keep history across restarts:** pass `storage: { messages, state }`. The default is in memory;
   see [writing a storage adapter](writing-a-storage-adapter.md) and the JSON-file and Postgres
@@ -162,7 +188,12 @@ On the client, `useChat<InferHarnessUIMessage<typeof agent>>()` shows `data-invo
 - **Serve a web UI:** `handleChatRequest(agent.session(body.id), body).toResponse()` speaks
   `useChat`'s protocol — [`examples/next-route.ts`](../../examples/next-route.ts).
 - **Stop reasons and errors:** `run.result` resolves with `stop` (`complete`, `tool-pending`,
-  `error`, `aborted`, `max-steps`, …) and `error: { code, message }`. Only `EH_SESSION_BUSY` and
-  `EH_SESSION_CLOSED` are thrown by `send()`. Call `await session.ready()` first if you want
-  configuration errors as exceptions.
+  `error`, `aborted`, `max-steps`, `stuck`, `cost-cap`, `timeout`, …) and
+  `error: { code, message }`. Only `EH_SESSION_BUSY` and `EH_SESSION_CLOSED` are thrown by
+  `send()`. Call `await session.ready()` first if you want configuration errors as exceptions.
+  Non-fatal problems arrive as warnings (`onWarning`, `W_*` codes, spec 10).
+- **Track cost and set budgets:** [models and cost](models-and-cost.md).
+- **Plan multi-step work visibly:** the [todos plugin](todos.md).
+- **Ask before risky tools run:** [approvals and interaction](approvals-and-interaction.md).
+- **Everything at a glance:** the [reference](reference.md) lists every option and default.
 - **Shut down:** `await agent.close()` closes sessions (MCP clients, plugin resources).

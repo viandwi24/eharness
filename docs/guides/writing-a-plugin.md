@@ -2,7 +2,8 @@
 
 A plugin bundles capabilities — tools, skills, instructions, hooks, services, data parts and
 message kinds — behind one `definePlugin()` call. The shipped `filesystem()` plugin is written with
-exactly the public API described here. Full runnable version:
+exactly the public API described here (so is `todos()` from `eharness/todos` — use that one if
+you need a checklist; the plugin below is a minimal teaching version). Full runnable version:
 [`examples/plugin-authoring.ts`](../../examples/plugin-authoring.ts). Contract: spec 01.
 
 ## Anatomy
@@ -12,33 +13,33 @@ import { tool } from 'ai'
 import { defineDataPart, definePlugin } from 'eharness'
 import { z } from 'zod/v4'
 
-export function todos() {
+export function checklist() {
   return definePlugin({
-    name: 'todos', // namespace: data part `data-todos.list`, state `plugins.todos.*`
-    provides: ['todos'], // services this plugin returns from session()
+    name: 'checklist', // namespace: data part `data-checklist.list`, state `plugins.checklist.*`
+    provides: ['checklist'], // services this plugin returns from session()
     dataParts: { list: defineDataPart({ schema: z.object({ items: z.array(z.string()) }) }) },
 
     // Agent phase: once, synchronous, no I/O. Static contributions are validated at boot.
-    setup: () => ({ instructions: 'Keep a checklist with todo_write for multi-step work.' }),
+    setup: () => ({ instructions: 'Keep a checklist with checklist_write for multi-step work.' }),
 
     // Session phase: once per live session, I/O allowed (connect clients, read config).
     session(ctx) {
       const items = () => ctx.state.get<string[]>('items') ?? []
       return {
-        services: { todos: { items } },
+        services: { checklist: { items } },
         tools: {
-          todo_write: tool({
-            description: 'Replace the todo list.',
+          checklist_write: tool({
+            description: 'Replace the checklist.',
             inputSchema: z.object({ items: z.array(z.string()) }),
             execute: async ({ items: next }) => {
               ctx.state.set('items', next) // persisted with the session state
-              ctx.stream.data('list', { items: next }, { id: 'todos' }) // typed, namespaced
+              ctx.stream.data('list', { items: next }, { id: 'checklist' }) // typed, namespaced
               return `Saved ${next.length} items.`
             },
           }),
         },
         hooks: {
-          'step.prepare': () => ({ reminder: `Open todos: ${items().length}` }),
+          'step.prepare': () => ({ reminder: `Open items: ${items().length}` }),
         },
         dispose: () => {}, // close clients on session close / eviction
       }
@@ -47,7 +48,7 @@ export function todos() {
 }
 ```
 
-Register it with `defineHarnessAgent({ model, plugins: [todos()] })`. Plugins run in array order
+Register it with `defineHarnessAgent({ model, plugins: [checklist()] })`. Plugins run in array order
 (after the implicit root plugin `app` that holds the top-level config); that order is the order
 of instructions and hooks.
 
@@ -62,7 +63,8 @@ session and plugin:
 | `ctx.state` | `get` / `set` JSON values, namespaced per plugin, saved with the session |
 | `ctx.stream.data(name, data, { id?, transient? })` | write this plugin's data parts; `name` and `data` are type-checked ([rendering guide](rendering-data-parts.md)) |
 | `ctx.services` | typed services of all plugins (see below) |
-| `ctx.turn` | the running turn: `id`, `kind`, `input`, `options`, `model`, `abortSignal`, `addUsage()` — `undefined` outside a turn |
+| `ctx.turn` | the running turn: `id`, `kind`, `queued`, `input`, `options`, `model`, `settings`, `abortSignal`, `addUsage(usage, { model \| costUsd, source })` — `undefined` outside a turn |
+| `ctx.step` | `{ index, model }` of the running step — `undefined` between steps |
 | `ctx.runtime` | what the app passed as `SessionOptions.runtime` / `SendOptions.runtime` (user id, tenant, …) |
 | `ctx.session`, `ctx.log`, `ctx.warn()`, `ctx.signal` | session id/parent, logger, warnings, session-close signal |
 
@@ -76,15 +78,15 @@ import { definePlugin } from 'eharness'
 
 declare module 'eharness' {
   interface HarnessServices {
-    todos: { items(): string[] }
+    checklist: { items(): string[] }
   }
 }
 
 const report = definePlugin({
-  name: 'todo-report',
-  requires: ['todos'], // boot error if missing, or if this plugin comes before the provider
+  name: 'checklist-report',
+  requires: ['checklist'], // boot error if missing, or if this plugin comes before the provider
   setup: () => ({
-    hooks: { 'turn.end': (ctx) => console.log(ctx.services.todos.items()) },
+    hooks: { 'turn.end': (ctx) => console.log(ctx.services.checklist.items()) },
   }),
 })
 ```
@@ -96,8 +98,10 @@ const report = definePlugin({
 | `input.submit` | validate, rewrite or block user input; add context |
 | `turn.prepare` / `step.prepare` | pick model and settings, restrict active tools, add a volatile `reminder` |
 | `tool.before` / `tool.after` | normalize input / transform output (chainable) |
-| `tool.approve` | human-in-the-loop decisions ([approvals guide](approvals-and-interaction.md)) |
-| `step.end` / `turn.beforeEnd` | stop early, or keep going (`continue`, bounded by progress: `loop.maxIdleContinues`, and `loop.maxContinues`) |
+| `tool.approve` | human-in-the-loop decisions, gets the tool's `risk` ([approvals guide](approvals-and-interaction.md)) |
+| `approval.decided` | observe every approval decision (automatic and `respond()` answers with `actor`) for audit logs and inboxes |
+| `step.end` | after each step: `usage`, `totalUsage`, `costUsd` (turn so far), `toolCalls`, `toolResults`, AI SDK's `step`; return `{ stop }` or `{ context }` |
+| `turn.beforeEnd` | keep going (`{ continue: { reason } }` / `{ extendSteps }`) for `complete`, `max-steps`, `length`; the event has `continues` and `idleContinues` — the core refuses continuations after `loop.maxIdleContinues` idle ones ([long-running turns](long-running-turns.md)) |
 | `turn.start` / `turn.end`, `session.start` / `session.close` | lifecycle side effects |
 | `message.beforeSave`, `compaction.prompt`, `compaction.after`, `skill.load` | storage, compaction and skill integration |
 
@@ -123,10 +127,10 @@ import { defineHarnessAgent } from 'eharness'
 import { scriptedModel } from 'eharness/testing'
 
 const model = scriptedModel([
-  { toolCalls: [{ toolName: 'todo_write', input: { items: ['outline'] } }] },
+  { toolCalls: [{ toolName: 'checklist_write', input: { items: ['outline'] } }] },
   { text: 'Planned.' },
 ])
-const agent = defineHarnessAgent({ model, plugins: [todos()] })
+const agent = defineHarnessAgent({ model, plugins: [checklist()] })
 const result = await agent.session('t').send('Plan an article').result
 // result.stop === 'complete'; model.prompts[1] is the wire of step 1 (incl. the reminder)
 ```
