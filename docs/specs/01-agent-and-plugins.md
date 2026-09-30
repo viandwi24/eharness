@@ -363,8 +363,19 @@ export interface StepEndEvent {
   toolCalls: Array<{ toolName: string; toolCallId: string; input: unknown }>
   toolResults: Array<{ toolName: string; toolCallId: string; status: 'output' | 'error' | 'denied' }>
   responseMessages: ModelMessage[]   // appended to the wire by this step
+  step: StepResult<ToolSet>          // AI SDK result of this step (`result.finalStep`)
 }
 ```
+
+`step` is AI SDK's own `StepResult` (typed `toolCalls`, `toolResults`, `content`, `text`, …).
+`toolCalls` and `toolResults` are derived from it: `toolCalls` = `step.toolCalls`; `toolResults`
+maps `tool-result` → `output`, `tool-error` → `error`, a denied `tool-approval-response` →
+`denied`, in call order (not completion order). Results of a `respond()` continuation (spec 11)
+are executed by AI SDK before the model call and are not part of `step`; they come first in
+`toolResults` and are read from `responseMessages` (`execution-denied` → `denied`,
+`error-text`/`error-json` → `error`). `turn.beforeEnd`'s `lastText` is `step.text` of the last
+step. `step.end` does not fire for an aborted step or when the provider call failed before
+streaming (`result.finalStep` rejects then, like `responseMessages`).
 
 Failure policy: a hook that throws raises `W_HOOK_FAILED` and is skipped — except
 `tool.approve` (throw = `denied`, fail closed) and `input.submit` (throw = `block` with the error
