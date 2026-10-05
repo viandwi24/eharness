@@ -359,8 +359,10 @@ Stops decided outside a step: `'aborted'` (user/abort signal), `'timeout'`, `'bl
 export interface MessageAdapter<M extends UIMessage = UIMessage> {
   /**
    * Chronological (ascending id) messages of a session.
-   * - { fromId }            → all messages with id >= fromId (inclusive), no limit
+   * - { fromId }            → all messages with id >= fromId (inclusive), no limit; fromId
+   *                           need not be a stored id (compare ids, never look up an index)
    * - { beforeId, limit }   → the `limit` newest messages with id < beforeId
+   * - { beforeId }          → all messages with id < beforeId
    * - { limit }             → the `limit` newest messages
    * - {}                    → all messages (small sessions / tests only)
    * Passing both fromId and beforeId is invalid.
@@ -376,11 +378,18 @@ export interface MessageAdapter<M extends UIMessage = UIMessage> {
 Requirements (checked by `messageAdapterConformance()` in `eharness/testing`):
 
 1. Ordering by id string (UUIDv7) — no reliance on insertion order or clocks.
-2. `save` is an upsert: same id → replace `parts`, `metadata`, `role`.
-3. Round-trips JSON **deep-equal** (no dropped unknown keys, `parts` order preserved; object key
+2. `save` is an upsert: same id → **replace** the whole message (`parts`, `metadata`, `role`,
+   any other key). Never merge: keys missing from the new version (a resolved `pending`, a
+   removed part) must be gone after the save.
+3. `fromId` is compared, not looked up: a `fromId` between two stored ids starts at the next
+   newer message; `beforeId` without `limit` returns every older message.
+4. Round-trips JSON **deep-equal** (no dropped unknown keys, `parts` order preserved; object key
    order may change, e.g. Postgres `jsonb`).
-4. `load` returns copies (mutating the result must not change stored data).
-5. Sessions are isolated.
+5. `load` returns copies (mutating the result must not change stored data).
+6. Sessions are isolated.
+
+Since 0.4.0 the suite checks 2 and 3 explicitly; adapters that merged on save or looked `fromId`
+up by index passed earlier versions of the suite and now fail it (they were wrong).
 
 Stored history is **append-only from the core's point of view**: the core upserts messages it
 owns (the running assistant message, patches of a pending message, recovery patches) but never

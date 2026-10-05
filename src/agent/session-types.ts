@@ -52,13 +52,15 @@ export type KindData<Kinds, K extends keyof Kinds> = Kinds[K]
 export interface MessageAdapter<M extends UIMessage = UIMessage> {
   /**
    * Chronological (ascending id) messages of a session.
-   * - `{ fromId }` → all messages with id >= fromId (inclusive), no limit
+   * - `{ fromId }` → all messages with id >= fromId (inclusive, compared: fromId need not be
+   *   stored), no limit
    * - `{ beforeId, limit }` → the `limit` newest messages with id < beforeId
+   * - `{ beforeId }` → all messages with id < beforeId
    * - `{ limit }` → the `limit` newest messages
    * - `{}` → all messages
    */
   load(q: { sessionId: string; fromId?: string; beforeId?: string; limit?: number }): Promise<M[]>
-  /** Upsert by id (idempotent). */
+  /** Upsert by id (idempotent): replaces the whole message, never merges. */
   save(sessionId: string, messages: M[]): Promise<void>
   /** Optional: id of the newest message, for multi-instance cache validation. */
   lastId?(sessionId: string): Promise<string | null>
