@@ -57,9 +57,12 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/memory` | `src/memory/index.ts` | `memory()` plugin, `executeMemoryCommand()`, `MEMORY_PROTOCOL`, `MEMORY_TOOLS`, `MEMORY_FLUSH_PROMPT`, `MEMORY_FLUSH_TOOLS` |
 | `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
 
-Peer dependencies: `ai@^7.0.123`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
-peer: `@ai-sdk/mcp@^2.0.63`. No runtime dependencies. The `ai` floor is the tested version: the
-core imports values (`StreamProviderError`, `toolSearch`, …) that early 7.0.x releases lack.
+Peer dependencies: `ai@^7.0.127`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
+peer: `@ai-sdk/mcp@^2.0.66`. No runtime dependencies. The floors are the locked, tested versions
+(`bun.lock`): the core imports values (`StreamProviderError`, `toolSearch`, …) that early 7.0.x
+releases lack, and UI chunk order is public API — the golden streams are recorded with the locked
+`ai` (7.0.123 orders the transient `data-eh.status { state: 'tool' }` chunk differently), so the
+floor moves with the lockfile.
 
 ## 3. Lifecycles
 

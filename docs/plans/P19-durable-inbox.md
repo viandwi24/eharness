@@ -151,9 +151,10 @@ Normative rules (spec 05 new §12 "Inbox", spec 11 §6 updates):
 
 - [x] All four item kinds work across two simulated instances; no item lost across a simulated
       crash; no item applied twice.
-- [ ] `inboxAdapterConformance` passes for `memoryInbox()` and the Postgres example.
-      (`memoryInbox()`: yes. Postgres: wired into `examples.test.ts` under `DATABASE_URL`, not run
-      locally — no database in the agent sandbox; verify on the CI Postgres service.)
+- [x] `inboxAdapterConformance` passes for `memoryInbox()` and the Postgres example.
+      (`memoryInbox()`: locally. Postgres: verified in CI (MANUAL #10) — wired into
+      `examples.test.ts` under `DATABASE_URL` on the CI Postgres service. The final review added
+      the head-of-line and renewal cases and moved the Postgres claim into `eh_inbox_claim`.)
 - [x] Without `storage.inbox`, behaviour and storage are byte-identical to 0.3 goldens.
 - [x] `check:imports`: `src/testing/inbox-adapter.conformance.ts` imports core only via
       `src/index.ts`.

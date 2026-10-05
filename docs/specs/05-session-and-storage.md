@@ -481,6 +481,11 @@ passed to only; `send`, `respond`, `regenerate` and `edit` accept it (typed over
    `'tool-pending'` returns `output: undefined`.
 8. **`handleChatRequest`** never reads `output` from a request body; it is a server-side option
    (`ChatRequestOptions`).
+9. **Not with steer or collect.** A steer or a collected input joins another turn and cannot ask
+   for its own answer: `send(input, { output, ifBusy: 'steer' | 'collect' })` returns a failed run
+   `EH_INVALID_INPUT` with `details.reason: 'output-with-steer-or-collect'` (whether the session
+   is busy or not; turn operations throw only `EH_SESSION_BUSY` / `EH_SESSION_CLOSED`). Nothing is
+   persisted.
 
 ## 4. `MessageAdapter` (the storage contract)
 
@@ -624,7 +629,7 @@ export interface SessionStateSnapshot {
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
     /** Cross-process abort request for the active turn (§9.1); written by another instance. */
     abortRequest?: { turnId: string; at: number; reason?: string; by?: string }
-    /** Ids of the last 100 inbox items applied to this session (§12 rule 5, dedupe). */
+    /** Ids of the last 100 `wake` inbox items applied to this session (§12 rule 5, dedupe). */
     inboxDelivered?: string[]
   }
   plugins: Record<string, Record<string, JSONValue>>    // plugins[<plugin name>][key]
@@ -840,7 +845,9 @@ export interface InboxAdapter {
   enqueue(sessionId: string, item: InboxItemInput): Promise<string>
   /** Atomically claim ready items of a session for `owner`, oldest first (at most `limit`).
    *  Claimed items are invisible to other claims until ack/release or until the claim expires
-   *  (`claimTtlMs`). Every claim increments `attempts`. */
+   *  (`claimTtlMs`). Every claim increments `attempts`. Head of line: never returns an item
+   *  behind an older item of the session that another owner still holds. Renewal: the claims
+   *  `owner` already holds are extended to now + `claimTtlMs` (not returned, `attempts` kept). */
   claim(sessionId: string, owner: string, opts?: { limit?: number; claimTtlMs?: number }): Promise<InboxItem[]>
   ack(ids: string[]): Promise<void>                     // unknown ids are ignored
   release(ids: string[]): Promise<void>                 // unknown ids are ignored
@@ -848,7 +855,7 @@ export interface InboxAdapter {
   notify?(sessionId: string): Promise<void>
   /** Optional subscription; without it the holder only polls (`inbox.pollMs`). */
   subscribe?(sessionId: string, onNotify: () => void): () => void
-  /** Optional: sessions with ready items (for an application sweeper). */
+  /** Optional: sessions with claimable items — the oldest is not claimed (a sweeper). */
   pending?(opts?: { limit?: number }): Promise<string[]>
 }
 
@@ -875,10 +882,10 @@ inbox?: {
 
 `eharness/storage/memory` ships `memoryInbox()`; `eharness/testing` ships
 `inboxAdapterConformance(factory, { requireNotify?, requirePending?, claimTtlMs? })` (durability,
-JSON round trip, FIFO per session, exactly one winner per item under concurrent claims, claim
-expiry, `release`, `ack`, `limit`, session isolation, copies, `notify`/`subscribe`, `pending`).
-A Postgres adapter (`SELECT … FOR UPDATE SKIP LOCKED`, `LISTEN`/`NOTIFY`) is
-`examples/postgres-inbox.ts`.
+JSON round trip, FIFO per session, exactly one winner per item under concurrent claims, head of
+line, renewal by the holder, claim expiry, `release`, `ack`, `limit`, session isolation, copies,
+`notify`/`subscribe`, `pending`). A Postgres adapter (claims serialized per session by an
+advisory lock, `LISTEN`/`NOTIFY`) is `examples/postgres-inbox.ts`.
 
 Normative rules:
 
@@ -905,8 +912,10 @@ Normative rules:
      shows that turn gone. Otherwise the context is validated (§6), `abort` items are acked
      (their turn ended), and the **first unit** starts as a queued turn (`queued: true`,
      `via: 'queue'`): one `queue`/`steer` item (a send turn), consecutive `wake` items (one wake
-     turn), or a due `collect` burst (one merged send turn). Everything after the unit is
-     released and drained when that turn ends.
+     turn), or a due `collect` burst (one merged send turn). Everything after the unit stays
+     claimed by this instance until the unit's turn commits (its ids are acked) or ends, then
+     it is released and drained again; with head-of-line claims no other holder can start an
+     item behind it meanwhile (id order across holders).
    - otherwise (a turn is starting, `compact()` runs, local turns are queued) everything is
      released.
    The lock / `activeTurn` CAS still decide who runs a turn: a unit whose turn fails before its
@@ -923,14 +932,20 @@ Normative rules:
 5. **At-least-once with dedupe.** Items are acked only after their effect is durable: a queued
    send (or a collect burst) after its user message is saved at the commit point; a steer after
    the snapshot containing its `data-eh.input` is saved (`persistEachStep`, else the final
-   save); a wake after its turn committed; an abort once applied. The commit-point state write of
-   a turn made from inbox items appends their ids to `state.core.inboxDelivered` (newest 100), a
-   delivered steer is appended in memory and written with the next state write. A redelivered
-   item (expired claim of a dead or slow claimer, lost ack) whose id is found in
-   `metadata.eharness.inboxId` / `collected` of a stored user message, in `inboxId` of a stored
-   `data-eh.input` part, or in `state.core.inboxDelivered` is acked without effect. A turn that
-   fails after its commit-point write but before its user message is saved removes its ids from
-   `inboxDelivered` again and releases them.
+   save); a wake after its turn ended and its end-of-turn state write succeeded; an abort once
+   applied. Dedupe reads the **stored view**, never a record written ahead of the effect: a
+   redelivered item (expired claim of a dead or slow claimer, lost ack) whose id is found in
+   `metadata.eharness.inboxId` / `collected` of a stored user message or in `inboxId` of a stored
+   `data-eh.input` part is acked without effect. `wake` items leave no message of their own:
+   their ids are appended to `state.core.inboxDelivered` (newest 100) by the end-of-turn state
+   write of the wake turn, and a redelivered wake listed there is acked without effect (if that
+   write fails the ids are removed again and released). A process that dies between a state
+   write and the save of an item's effect therefore causes a redelivery, never a loss. An idle
+   drain that claims an item with `attempts > 1` reloads the stored messages before deduping.
+   While an instance holds claimed items (a started unit, the items after it, steers handed to
+   the running turn) every claim it makes renews them, and it drains at least every
+   `claimTtlMs / 3`, so a long step never lets a held claim expire; a running turn takes a steer
+   once per inbox id (`steer()` is idempotent), so a redelivery is never delivered twice.
 6. **Collect.** `collect` inputs are merged into **one** user message once `quietMs` passed
    without a new one, `maxWaitMs` passed since the first, or `maxItems` are waiting (the first
    `maxItems` are taken; the rest is the next burst): the text parts of each input joined with a

@@ -1,8 +1,9 @@
 /**
  * Inbox dedupe (internal): which inbox items a session already applied. An item is applied when
  * a stored user message carries its id (`metadata.eharness.inboxId` / `collected`), a stored
- * `data-eh.input` part carries it (a delivered steer), or it is listed in
- * `state.core.inboxDelivered` (the last 100 ids, written with the commit-point state write).
+ * `data-eh.input` part carries it (a delivered steer), or — `wake` items only, they leave no
+ * message of their own — it is listed in `state.core.inboxDelivered` (the last 100 ids, written
+ * with the end-of-turn state write of the wake turn).
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
@@ -38,7 +39,7 @@ export function recordDelivered(core: SessionStateSnapshot['core'], ids: readonl
   core.inboxDelivered = [...kept, ...ids].slice(-INBOX_DELIVERED_MAX)
 }
 
-/** Remove ids from `core.inboxDelivered` (their turn failed after the commit-point write). */
+/** Remove ids from `core.inboxDelivered` (the end-of-turn write that recorded them failed). */
 export function forgetDelivered(core: SessionStateSnapshot['core'], ids: readonly string[]): void {
   if (core.inboxDelivered === undefined) return
   const kept = core.inboxDelivered.filter((id) => !ids.includes(id))

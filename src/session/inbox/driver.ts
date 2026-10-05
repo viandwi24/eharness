@@ -4,7 +4,11 @@
  * aborts into the running turn, everything else as the next turn when the session is free here.
  *
  * Items are acked only after their effect is durable (at-least-once); redelivered items that the
- * session already applied are skipped (dedupe, `./dedupe.ts`).
+ * session already applied are skipped (dedupe, `./dedupe.ts`). Items this drain still holds (the
+ * ids of a started unit, the items after it, steers handed to the running turn) stay claimed:
+ * every claim of the same owner renews them (`claimTtlMs`), and the items after a unit are
+ * released only once its turn committed or ended, so another holder never starts them out of id
+ * order.
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  * @see docs/decisions/0024-durable-inbox-port.md
@@ -39,7 +43,10 @@ export interface InboxUnit {
 /** The running turn as the drain sees it. */
 export interface DrainTurn {
   turnId: string
-  /** Deliver a steer at the next step boundary; false when the turn stopped taking input. */
+  /**
+   * Deliver a steer at the next step boundary; false when the turn stopped taking input.
+   * Idempotent per `inboxId`: a steer the turn already holds is not delivered again.
+   */
   steer(input: NormalizedInput, inboxId: string): boolean
 }
 
@@ -110,6 +117,45 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   let dueTimer: ReturnType<typeof setTimeout> | undefined
   /** A live foreign turn seen by the last drain: skip claims while it is live. */
   let foreignTurn: string | undefined
+  /** Claimed ids this drain keeps (unit ids, parked ids, steers of the turn): never re-applied. */
+  const held = new Set<string>()
+  /** The items after a started unit: kept claimed until the unit's ids are acked or released. */
+  let parked: { unit: Set<string>; ids: string[] } | undefined
+  /** Pending acks / releases: a drain waits for them, so it never acts on a stale claim. */
+  const inflight = new Set<Promise<void>>()
+  /** Drains while items are held, so their claims are renewed before they expire. */
+  let renewTimer: ReturnType<typeof setInterval> | undefined
+
+  function hold(ids: readonly string[]): void {
+    for (const id of ids) held.add(id)
+    if (renewTimer === undefined && held.size > 0 && !closed) {
+      renewTimer = setInterval(() => drain(), Math.max(1, Math.floor(host.claimTtlMs / 3)))
+      unref(renewTimer)
+    }
+  }
+
+  function unhold(ids: readonly string[]): void {
+    for (const id of ids) held.delete(id)
+    if (held.size === 0 && renewTimer !== undefined) {
+      clearInterval(renewTimer)
+      renewTimer = undefined
+    }
+  }
+
+  /** Ids of a unit were settled (acked or released): the items parked behind it, if any. */
+  function unpark(ids: readonly string[]): string[] {
+    const current = parked
+    if (current === undefined || !ids.some((id) => current.unit.has(id))) return []
+    parked = undefined
+    return current.ids
+  }
+
+  function track(work: Promise<void>): Promise<void> {
+    inflight.add(work)
+    return work.finally(() => {
+      inflight.delete(work)
+    })
+  }
 
   const warn = (what: string, error: unknown) => {
     const warning: HarnessWarning = {
@@ -120,28 +166,43 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     rt.warn(warning, `inbox:${what}`)
   }
 
-  async function ack(ids: string[], turnId?: string): Promise<void> {
-    if (ids.length === 0) return
-    try {
-      await adapter.ack(ids)
-    } catch (error) {
-      warn('ack', error) // redelivered after the claim expires; dedupe skips it then
-      return
-    }
-    rt.events.emit(
-      turnId === undefined
-        ? { type: 'inbox-drained', inboxIds: [...ids] }
-        : { type: 'inbox-drained', inboxIds: [...ids], turnId },
+  function ack(ids: string[], turnId?: string): Promise<void> {
+    if (ids.length === 0) return Promise.resolve()
+    const after = unpark(ids)
+    return track(
+      (async () => {
+        let ok = true
+        try {
+          await adapter.ack(ids)
+        } catch (error) {
+          ok = false
+          warn('ack', error) // redelivered after the claim expires; dedupe skips it then
+        }
+        unhold(ids)
+        await releaseNow(after)
+        if (!ok) return
+        rt.events.emit(
+          turnId === undefined
+            ? { type: 'inbox-drained', inboxIds: [...ids] }
+            : { type: 'inbox-drained', inboxIds: [...ids], turnId },
+        )
+      })(),
     )
   }
 
-  async function release(ids: string[]): Promise<void> {
+  function release(ids: string[]): Promise<void> {
+    if (ids.length === 0) return Promise.resolve()
+    return track(releaseNow([...ids, ...unpark(ids)]))
+  }
+
+  async function releaseNow(ids: string[]): Promise<void> {
     if (ids.length === 0) return
     try {
       await adapter.release(ids)
     } catch (error) {
       warn('release', error) // claimable again once the claim expires
     }
+    unhold(ids)
   }
 
   async function peek(): Promise<SessionStateSnapshot | null> {
@@ -173,6 +234,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     const back: string[] = []
     const seen = delivered(undefined)
     for (const item of items) {
+      if (held.has(item.id)) continue // still ours: its unit or the running turn has it
       if (item.kind === 'abort') {
         if (item.turnId === undefined || item.turnId === turn.turnId) host.abort(item.reason)
         done.push(item.id)
@@ -180,8 +242,16 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
         done.push(item.id)
       } else if (item.kind === 'send' && item.mode === 'steer') {
         const input = normalized(item)
-        if (input === undefined) done.push(item.id)
-        else if (!turn.steer(input, item.id)) back.push(item.id) // acked once delivered and saved
+        if (input === undefined) {
+          done.push(item.id)
+          continue
+        }
+        // held (claim renewed) until acked once delivered and saved, or released by the turn
+        hold([item.id])
+        if (!turn.steer(input, item.id)) {
+          unhold([item.id])
+          back.push(item.id)
+        }
       } else {
         back.push(item.id)
       }
@@ -191,7 +261,9 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   }
 
   /** Nothing runs here: the first unit starts now, the rest waits in the inbox. */
-  async function applyIdle(items: InboxItem[]): Promise<void> {
+  async function applyIdle(claimed: InboxItem[]): Promise<void> {
+    const items = claimed.filter((i) => !held.has(i.id))
+    if (items.length === 0) return
     const all = items.map((i) => i.id)
     let stored: SessionStateSnapshot | null
     try {
@@ -202,7 +274,11 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
         await release(all)
         return
       }
-      if (stored !== null && stored.rev !== rt.state.snapshot().rev && !rt.state.dirty) {
+      // the stored state changed behind this instance, or an item was claimed before (its
+      // claimer may have applied it): reload, dedupe reads the stored messages
+      const redelivered = items.some((i) => i.attempts > 1)
+      const changed = stored !== null && stored.rev !== rt.state.snapshot().rev
+      if ((changed || redelivered) && !rt.state.dirty) {
         host.invalidate()
       }
       await host.prepare()
@@ -220,22 +296,32 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
       if (item.kind === 'abort' || seen.has(item.id)) done.push(item.id)
       else rest.push(item)
     }
-    const held = (stored === null ? rt.state.core().pending : stored.core?.pending) !== undefined
-    if (rest.length === 0 || held || !host.free()) {
+    const approvals =
+      (stored === null ? rt.state.core().pending : stored.core?.pending) !== undefined
+    if (rest.length === 0 || approvals || !host.free()) {
       await ack(done)
       await release(rest.map((i) => i.id))
       return
     }
     const unit = makeUnit(rest, seen, done)
     const used = new Set(unit === undefined ? [] : unit.ids)
+    const after = rest.map((i) => i.id).filter((id) => !used.has(id) && !done.includes(id))
     await ack(done)
-    await release(rest.map((i) => i.id).filter((id) => !used.has(id) && !done.includes(id)))
     if (unit === undefined) {
+      await release(after)
       // an unusable head was dropped: the rest is drained at once (a collect wait has its timer)
       if (dueTimer === undefined && rest.length > 1) again = true
       return
     }
-    if (closed || !host.free() || !host.start(unit)) await release(unit.ids)
+    if (closed || !host.free()) {
+      await release([...unit.ids, ...after])
+      return
+    }
+    // the items after the unit stay claimed (renewed) until its turn commits or ends, so no other
+    // holder starts them before it (id order): released together with the unit's ids
+    hold([...unit.ids, ...after])
+    if (after.length > 0) parked = { unit: new Set(unit.ids), ids: after }
+    if (!host.start(unit)) await release(unit.ids)
   }
 
   /** The first unit of `rest` (its head is a send or wake item that was not applied yet). */
@@ -324,6 +410,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   }
 
   async function drainOnce(): Promise<void> {
+    while (inflight.size > 0) await Promise.all([...inflight])
     if (closed) return
     let turn = host.current()
     if (turn === undefined) {
@@ -340,14 +427,15 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     const items = await adapter.claim(sessionId, rt.owner, { claimTtlMs: host.claimTtlMs })
     if (items.length === 0) return
     items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+    const notHeld = () => items.filter((i) => !held.has(i.id)).map((i) => i.id)
     if (closed) {
-      await release(items.map((i) => i.id))
+      await release(notHeld())
       return
     }
     turn = host.current()
     if (turn !== undefined) return applyRunning(items, turn)
     if (!host.free()) {
-      await release(items.map((i) => i.id))
+      await release(notHeld())
       return
     }
     return applyIdle(items)
@@ -402,6 +490,8 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     close() {
       closed = true
       if (pollTimer !== undefined) clearInterval(pollTimer)
+      if (renewTimer !== undefined) clearInterval(renewTimer)
+      renewTimer = undefined
       if (dueTimer !== undefined) clearTimeout(dueTimer)
       dueTimer = undefined
       try {

@@ -107,18 +107,25 @@ setInterval(async () => {
 ## Writing an `InboxAdapter`
 
 Seven methods, three of them optional. `claim` is the one that needs care: it must hand each
-ready item to exactly one claimer, oldest first, and hide it until `ack` / `release` or until the
-claim expires. In Postgres:
+ready item to exactly one claimer, oldest first, hide it until `ack` / `release` or until the
+claim expires, never return an item behind an older one another owner holds (head of line), and
+renew the claims the calling owner already holds. In Postgres a function serializes the claims of
+a session with an advisory lock (`eh_inbox_claim` in `examples/postgres-inbox.ts`):
 
 ```sql
-UPDATE eh_inbox SET claimed_by = $2, attempts = attempts + 1,
-       claimed_until = now() + ($3::integer * interval '1 millisecond')
-WHERE id IN (
-  SELECT id FROM eh_inbox
-  WHERE session_id = $1 AND (claimed_until IS NULL OR claimed_until <= now())
-  ORDER BY id LIMIT $4 FOR UPDATE SKIP LOCKED
-)
-RETURNING id, item, attempts
+PERFORM pg_advisory_xact_lock(hashtext('eh_inbox:' || p_session));
+UPDATE eh_inbox SET claimed_until = v_until                 -- renew the owner's claims
+  WHERE session_id = p_session AND claimed_by = p_owner AND claimed_until > clock_timestamp();
+SELECT min(id) INTO v_head FROM eh_inbox                     -- oldest row another owner holds
+  WHERE session_id = p_session AND claimed_until > clock_timestamp()
+    AND claimed_by IS DISTINCT FROM p_owner;
+RETURN QUERY UPDATE eh_inbox SET claimed_by = p_owner, claimed_until = v_until,
+    attempts = attempts + 1
+  WHERE id IN (SELECT id FROM eh_inbox WHERE session_id = p_session
+                 AND (claimed_until IS NULL OR claimed_until <= clock_timestamp())
+                 AND (v_head IS NULL OR id < v_head)
+               ORDER BY id LIMIT p_limit)
+  RETURNING id::text, item::text, attempts;
 ```
 
 `notify` is `SELECT pg_notify('eh_inbox', $sessionId)`; `subscribe` routes the notifications of
