@@ -180,7 +180,9 @@ Normative rules (spec 05 new §12 "Inbox", spec 11 §6 updates):
    'steer' | 'collect', collect? })`, which enqueues locally-or-remotely and resolves with
    `{ inboxId, target: 'local' | 'remote' }`. `handleChatRequest` gets no new mode: a route that
    wants cross-process queuing calls `enqueue()` itself on the 409 busy run (P13 item 3).
-   Decide with the maintainer before coding and update rule 2 and the changeset.
+   **Decided (orchestrator, 2026-10-05): (c).** `send()` keeps its 0.3 semantics; the
+   cross-process path is the explicit `session.enqueue()`. Update rule 2 and the changeset
+   accordingly.
 2. Public name `InboxItem` collides with the internal type; decision: rename the internal one.
 3. Poll interval default (`pollMs` 2 000 while live): acceptable cost? Adapters with `subscribe`
    avoid it.
