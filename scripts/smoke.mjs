@@ -20,6 +20,7 @@ const load = (await import(pathToFileURL(shim).href)).default
 const entries = {
   eharness: [
     'DENIED_NEW_INPUT',
+    'FLUSH_APPROVAL_DENIED',
     'HarnessError',
     'HarnessToolError',
     'INTERRUPTED_CRASH',

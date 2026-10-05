@@ -22,6 +22,7 @@ import { describeModel } from '../internal/model.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { project } from '../messages/project.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
+import { FLUSH_APPROVAL_DENIED } from '../messages/texts.ts'
 import type { FlushPayload, HarnessUIMessage } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { CompactionBeforeEvent, CompactionBeforePatch } from '../plugin/types.ts'
@@ -32,9 +33,6 @@ import type { OpenSession, SessionRuntime } from '../session/runtime.ts'
 
 /** Default `flush.maxSteps`. */
 export const DEFAULT_FLUSH_MAX_STEPS = 3
-
-/** Reason of a tool call that would need approval during a flush (auto-denied, spec 06 §5.2a). */
-export const FLUSH_APPROVAL_DENIED = 'Not available during memory flush.'
 
 /** The merged flush request of all `compaction.before` hooks. */
 export interface MergedFlush {

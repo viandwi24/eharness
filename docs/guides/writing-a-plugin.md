@@ -103,7 +103,7 @@ const report = definePlugin({
 | `step.end` | after each step: `usage`, `totalUsage`, `costUsd` (turn so far), `toolCalls`, `toolResults`, AI SDK's `step`; return `{ stop }` or `{ context }` |
 | `turn.beforeEnd` | keep going (`{ continue: { reason } }` / `{ extendSteps }`) for `complete`, `max-steps`, `length`; the event has `continues` and `idleContinues` — the core refuses continuations after `loop.maxIdleContinues` idle ones ([long-running turns](long-running-turns.md)) |
 | `turn.start` / `turn.end`, `session.start` / `session.close` | lifecycle side effects |
-| `message.beforeSave`, `compaction.prompt`, `compaction.after`, `skill.load` | storage, compaction and skill integration |
+| `message.beforeSave`, `compaction.before`, `compaction.prompt`, `compaction.after`, `skill.load` | storage, compaction (incl. the pre-compaction flush) and skill integration |
 
 Chainable hooks see the previous hook's result. A throwing hook is skipped with `W_HOOK_FAILED`,
 except `tool.approve` and `input.submit`, which fail closed (denied / blocked).

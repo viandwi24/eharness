@@ -143,6 +143,7 @@ export interface DataPartDef<S extends FlexibleSchema = FlexibleSchema> {
 | `data-eh.notice` | — | kind payload (§5.3) | error/abort/system notices (kind) |
 | `data-eh.event` | — | kind payload (§5.3) | app-injected events (kind) |
 | `data-eh.rewind` | — | kind payload (§5.3) | regenerate/edit/revert marker (kind) |
+| `data-eh.flush` | — | kind payload (§5.3) | pre-compaction flush audit record (kind, 0.4.0); during a turn also written once as a **transient** chunk with the same payload when the flush ends (like `data-eh.compaction`) |
 
 Final numbers (usage, model, stop) go to `metadata.eharness` of the assistant message, not to data
 parts (AI SDK guidance: metadata for message-level facts).
@@ -205,6 +206,7 @@ export interface MessageKindDef<S extends FlexibleSchema = FlexibleSchema> {
 | `eh.notice` | assistant | no | omit | `{ level: 'info' \| 'warning' \| 'error'; code?: string; message: string }` — the core saves one for turns ending with `stop: 'error'`, `'timeout'`, `'blocked'` (with `persist`) and for recovered turns (`EH_TURN_INTERRUPTED`); aborts are recorded only in `metadata.eharness.stop` |
 | `eh.event` | user | no | `<event name="{name}">{text}</event>` | `{ name: string; text: string; data?: unknown }` |
 | `eh.rewind` | user | no | omit | `{ afterId: string \| null; reason: 'regenerate' \| 'edit' \| 'revert' }` — hides `afterId < id < rewind.id` (spec 11 §5) |
+| `eh.flush` (0.4.0) | assistant | no | omit | `FlushPayload` (spec 06 §5.2a): `{ trigger: 'auto' \| 'manual' \| 'turn' \| 'overflow'; prompt; model?; steps; toolCalls: Array<{ toolName; status: 'output' \| 'error' \| 'denied' }>; usage: { inputTokens; outputTokens; totalTokens }; costUsd?; error? }` — audit record of a pre-compaction flush; no tool inputs/outputs; saved before the marker; `turnId` = the running turn (manual: none) |
 
 ### 5.4 Creating kind messages
 

@@ -129,7 +129,7 @@ During compaction the core writes `data-eh.status { state: 'compacting' }` (tran
 transient `data-eh.compaction` part with the marker payload, so live UIs can show a divider.
 
 **Order per check (prune on):** prune → recompute the estimate → summarize only if still above
-`summarizeAt`. The wire is built with the prune stage applied (§6), so the pre-turn and mid-turn
+`summarizeAt` (then, 0.4.0, the flush of §5.2a runs right before the summarizer). The wire is built with the prune stage applied (§6), so the pre-turn and mid-turn
 triggers measure the pruned size; the skip rule's kept part is measured pruned too. The guard runs
 after, unchanged.
 
@@ -254,6 +254,73 @@ turns only: the current turn T is never counted (§5.1) — it cannot shrink, an
 to the skip rule (§4) and the guard. Mid-turn keeps exactly the last completed step; if
 that step alone exceeds 25% of the window, its tool outputs are truncated in the summarizer
 transcript and the guard handles the wire.
+
+### 5.2a Flush (0.4.0)
+
+Before history is summarized (lossy), plugins can give the agent one bounded, internal chance to
+save facts — typically into memory files (spec 14 §9) — through the `compaction.before` hook
+(spec 01 §5) and a **flush turn** (ADR-0020). Normative rules:
+
+1. **When.** Once per compaction, after the split (§5.1), the skip rule (§4) and the budget check
+   (§5.3 item 5) decided that summarizing will happen — so after prune (§5.0) — and after the
+   `compacting` status was written, before the summarizer. A used-up budget skips the
+   compaction and with it the hook and the flush. Without a `compaction.before` hook nothing
+   changes (0.3 behaviour and storage).
+2. **Hook.** `compaction.before` receives `{ messages, tokens, trigger }`: copies of `drop`
+   (§5.1, view messages, trimmed by a previous `partial`; not the previous summary, not the kept
+   tail), the calibrated estimate of the current context (the payload's `tokens.before`) and
+   `trigger`: `'turn'` (pre-turn), `'auto'` (mid-turn), `'manual'` (`compact()`) or `'overflow'`
+   (§7; the marker's own `trigger` stays `'auto'`/`'turn'`). Hooks run in plugin order; their
+   `flush` requests merge: prompts joined with a blank line, tool lists unioned (first
+   appearance), `maxSteps` = max (default 3 each), `model` = last defined. A hook that throws or
+   returns an invalid patch (`prompt` not a non-empty string, `tools` not an array of strings,
+   `maxSteps` not a positive integer) → `W_HOOK_FAILED`, skipped.
+3. **Run.** One `generateText` call with: `instructions` = block 1 + block 2 of the turn
+   (the stable prefix; no turn or step reminder); `messages` = the **current wire** (the wire of
+   the request that triggered the compaction, pre-compaction, guard-sanitized; manual: the
+   projected view) + a user message with the merged prompt; `tools` = the turn's wrapped tools
+   filtered to the whitelist, in the turn's `toolOrder` (so `tool.before` / `tool.after` / output
+   limits apply; deferred tools are offered loaded; client tools and unknown names are never
+   offered; none left → a text-only call); `toolsContext` of the turn; `stopWhen:
+   isStepCount(maxSteps)`; `maxOutputTokens` = the turn's `settings.maxOutputTokens`. The model
+   is `flush.model ?? compaction.model ?? the turn's model` (manual: the agent model). A manual
+   `compact()` resolves the tools as the next turn would (dynamic sources, grants).
+4. **Approval.** The turn's approval function applies (policy, risk, `tool.approve`, grants);
+   every call that would ask the user (`user-approval`) is **auto-denied** with reason
+   `Not available during memory flush.` (`FLUSH_APPROVAL_DENIED`) and reported to
+   `approval.decided` with `by: 'policy'`. Automatic approvals and denials are reported as in a
+   turn.
+5. **Window.** The flush is skipped with `W_COMPACTION_FLUSH_SKIPPED` (`details: { reason:
+   'window', trigger, window, tokens }`) when `tokens` + the prompt + `maxOutputTokens` (default
+   8% of the window) exceed the flush model's window, and for `trigger: 'overflow'` unless the
+   flush model's window is larger than the turn model's window (the provider already rejected
+   the context). Compaction continues.
+6. **No visible trace.** Flush messages are never saved, never added to the wire of the turn and
+   never projected; the main model's later requests are byte-identical to a compaction without a
+   flush. Effects exist only through tool side effects.
+7. **Audit record.** After the flush the core saves a core kind message **`eh.flush`** (spec 03
+   §5.3; role `assistant`, `model: 'omit'`, not a boundary) with `{ trigger, prompt, model, steps,
+   toolCalls: Array<{ toolName, status: 'output' | 'error' | 'denied' }>, usage, costUsd?, error? }`
+   — no tool inputs or outputs (use `tool.after` for those). It goes through `message.beforeSave`,
+   is saved **before** the marker (so the marker stays the newest message), carries the running
+   turn's `turnId` (manual: none) and is delivered as a session `message` event; during a turn the
+   payload is also written once as a transient `data-eh.flush` chunk. Mid-turn its id is greater
+   than the running assistant message: it belongs to the next turn per spec 03 §5.4 (and is
+   omitted from projection anyway). A failing save is logged and does not fail the compaction.
+8. **Accounting.** The flush's `totalUsage` is charged like summarizer usage (§5.3 item 5) with
+   `source: 'compaction-flush'`, priced with the flush model: turn usage (`TurnResult.usage`,
+   `costUsd`, budgets) during a turn, `state.core.usage` for manual. When the flush used up the
+   budget, the summarizer does not run (`W_BUDGET` with `details.compaction: true`, compaction
+   skipped).
+9. **Failure.** A flush error (provider error, failing environment) → `W_HOOK_FAILED` with
+   `details: { hook: 'compaction.before', owner, phase: 'flush' }`, the `eh.flush` record carries
+   `error`, and compaction continues. A thrown tool error inside the flush is a tool error result
+   (status `error`), as in a turn. An abort of the **turn** aborts the flush and the compaction:
+   no record, no marker (tool side effects that already happened stay).
+10. **Mid-turn.** The flush runs between two steps of the running turn (the step barrier has
+    completed; nothing streams). Flush tool calls are not streamed to the UI (tools may still
+    write the transient `data-eh.status { state: 'tool' }`); flush steps do not count toward the
+    turn's step count, `maxSteps`, progress guard or thrash window.
 
 ### 5.3 Summarize
 
@@ -409,3 +476,5 @@ already been delivered).
 - Summarize messages hidden by a rewind.
 - Run while another compaction for the same session is running.
 - Change the instructions or the tool set.
+- Leave a pre-compaction flush in the model's context (§5.2a: only its `eh.flush` audit record is
+  stored, and it is never projected).

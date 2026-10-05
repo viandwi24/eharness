@@ -7,6 +7,7 @@ import type { HarnessWarning } from '../errors.ts'
 import { coreMessageKinds, isKindMessage } from '../messages/kinds.ts'
 import { project } from '../messages/project.ts'
 import { createCoreMessageRegistry } from '../messages/registry.ts'
+import { FLUSH_APPROVAL_DENIED } from '../messages/texts.ts'
 import type { FlushPayload, HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import type {
@@ -21,13 +22,12 @@ import {
   type ScriptedStepInput,
   scriptedModel,
 } from '../testing/scripted-model.ts'
-import { FLUSH_APPROVAL_DENIED } from './flush.ts'
 import { answer, estimatedInput, summarizerModel } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 /** A user message of about `tokens` tokens, recognizable by `tag`. */
-const big = (tag: string, tokens = 300) => `${tag} ${'x'.repeat(tokens * 4)}`
+const big = (tag: string, tokens = 320) => `${tag} ${'x'.repeat(tokens * 4)}`
 
 const callTool =
   (toolName: string, input: unknown) =>
@@ -237,7 +237,7 @@ describe('pre-compaction flush (spec 06 §5.2a)', () => {
     const plain = setup(fiveTurns(), {
       flushSteps: [],
       config: { models, contextWindow: undefined },
-      noPlugin: true,
+      patch: () => undefined,
     })
     // same history with and without a flush: the difference is the flush call (10 in, 5 out)
     for (const a of [agent, plain.agent]) await fillTurns(a.session('s1'), 4)
@@ -262,7 +262,7 @@ describe('pre-compaction flush (spec 06 §5.2a)', () => {
       ],
       config: { tools: { read } },
     })
-    const plain = setup(steps(), { config: { tools: { read } }, noPlugin: true })
+    const plain = setup(steps(), { config: { tools: { read } }, patch: () => undefined })
     const results = []
     for (const s of [flushed, plain]) {
       const session = s.agent.session('s1')
@@ -452,7 +452,7 @@ describe('pre-compaction flush (spec 06 §5.2a)', () => {
 
   test('golden: next-turn wires are identical with and without a flush; storage has one extra eh.flush', async () => {
     const flushed = setup(fiveTurns(), { flushSteps: [{ text: 'ok' }] })
-    const plain = setup(fiveTurns(), { noPlugin: true })
+    const plain = setup(fiveTurns(), { patch: () => undefined })
     for (const s of [flushed, plain]) await fillTurns(s.agent.session('s1'), 6)
     expect(normalizeVolatile(flushed.model.prompts)).toEqual(normalizeVolatile(plain.model.prompts))
     const a = await all(flushed.messages)

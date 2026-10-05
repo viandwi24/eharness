@@ -17,6 +17,7 @@ describe('core entry', () => {
     expect(Object.keys(core).sort()).toEqual([
       'DENIED_NEW_INPUT',
       'FILE_UNAVAILABLE',
+      'FLUSH_APPROVAL_DENIED',
       'HarnessError',
       'HarnessToolError',
       'INTERRUPTED_CRASH',

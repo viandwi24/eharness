@@ -164,6 +164,19 @@ await executeMemoryCommand(
 
 ## Before a compaction
 
-Writing memory right before the context is summarized keeps details the summary would lose. The
-pre-compaction flush is a separate feature (P15); a `flushOnCompaction` option for this plugin
-follows it. Until then, the protocol's "record progress as you go" covers most of it.
+Writing memory right before the context is summarized keeps details the summary would lose.
+`flushOnCompaction` registers a `compaction.before` hook that runs a short internal flush turn with
+the memory tools before every compaction:
+
+```ts
+memory({ roots, flushOnCompaction: true })
+// or a custom instruction:
+memory({ roots, flushOnCompaction: { prompt: 'Save decisions, open questions and file names.' } })
+```
+
+The flush may call `memory_view`, `memory_create`, `memory_str_replace` and `memory_insert`
+(`MEMORY_FLUSH_TOOLS`; with the `tool` option, your `memory` tool). It is skipped when no root is
+writable, leaves no trace in the conversation (only a model-invisible `eh.flush` audit message)
+and its usage counts toward the turn and budgets. Details: [compaction](compaction.md#saving-facts-before-summarizing).
+The protocol's "record progress as you go" still matters: a flush is a safety net, not a
+replacement.
