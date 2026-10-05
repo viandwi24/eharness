@@ -70,8 +70,21 @@ export interface HarnessSession<
   edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
   /** Replay + follow the running turn (spec 04 §6). */
   attach(): HarnessRun<M> | undefined
-  /** Abort the running turn. Partial output is saved with stop 'aborted'. Queued turns are dropped. */
+  /**
+   * Abort the running turn. Partial output is saved with stop 'aborted'. Queued turns are dropped.
+   * When no turn of this session runs in this process, it requests the abort of a turn running in
+   * another instance (§9.1): fire-and-forget `requestAbort()`, failures go to the logger.
+   */
   abort(reason?: string): void
+  /**
+   * Awaitable form of abort() (0.4.0, §9.1): `'local'` (a turn of this process was aborted),
+   * `'remote'` (an abort request for the turn running in another instance was written),
+   * `'idle'` (no live turn anywhere; nothing written) or `'unsupported'` (no `StateAdapter.setIf`,
+   * or `recovery: false`; W_ABORT_UNSUPPORTED). Drops queued turns like abort(). Rejects with
+   * EH_STORAGE (state read/write failed), EH_SESSION_BUSY (every CAS retry conflicted) or
+   * EH_SESSION_CLOSED.
+   */
+  requestAbort(reason?: string): Promise<{ target: 'local' | 'remote' | 'idle' | 'unsupported' }>
 
   /** Save a kind message; optionally deliver it into the running turn or wake the agent (spec 11 §6.3). */
   inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, options?: InjectOptions)
@@ -462,7 +475,8 @@ Notes:
   saved. The running assistant message is updated in the cache from `onStepEnd` at every step
   (the step barrier, §3) **whether or not** `persistEachStep` is on, so compaction and projection
   always see the live message. Turns on a hot session perform **no reads** (except the state
-  re-read of `respond()`).
+  re-read of `respond()`, and the cross-process abort poll: at most one state read per
+  `recovery.abortPollMs` while a turn runs, none for turns shorter than that, §9.1).
 - Cold load happens on first use after process start, eviction, or invalidation.
 - Multi-instance deployments: if the adapter implements `lastId`, the core compares it with the
   cached newest id at turn start **before writing anything** (lifecycle step 2). On mismatch it
@@ -506,6 +520,8 @@ export interface SessionStateSnapshot {
     grants?: Record<string, 'always' | 'never'>
     /** Mirror of eh.rewind markers (spec 11 §5); the markers are the source of truth. */
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
+    /** Cross-process abort request for the active turn (§9.1); written by another instance. */
+    abortRequest?: { turnId: string; at: number; reason?: string; by?: string }
   }
   plugins: Record<string, Record<string, JSONValue>>    // plugins[<plugin name>][key]
 }
@@ -519,7 +535,16 @@ export interface PluginState {
 - `ctx.state` is namespaced per plugin (`plugins[<name>][key]`; root plugin = `app`).
 - The commit-point write (§3 step 11) uses `setIf` when the adapter has it; a conflict ends the
   turn as an early failure with `EH_SESSION_BUSY` (another instance changed the session: e.g.
-  consumed the same pending answers). `stateAdapterConformance()` checks `setIf` when present.
+  consumed the same pending answers). `stateAdapterConformance()` checks `setIf` when present;
+  an atomic `setIf` also enables cross-process abort (§9.1).
+- **One foreign-writable field.** While a turn runs, the owner is the only writer of the state,
+  except `core.abortRequest`, which another instance may write (§9.1). So every owner write
+  during a turn (heartbeat, step-time writes such as compaction, the end-of-turn write) uses
+  `setIf` when the adapter has it; on conflict the owner re-reads, takes over the stored
+  `abortRequest` (a request for another turn id is dropped) and the stored `rev`, and retries
+  (at most 5 times). If the stored state no longer names the turn as active (another instance
+  recovered it as stale, §9), the write is skipped; at the end of the turn the owner then reloads
+  the stored state (theirs wins). Without `setIf` the writes stay plain `set`s.
 - Loaded once at session open (and on cache invalidation); written at the commit point
   (`activeTurn`), during the turn only for heartbeats (§9), at the end of each turn, after
   compaction, after `respond()` consumes pending state, and on `close()` — only if something
@@ -573,8 +598,8 @@ export interface ActiveTurn {
 
 - Written at the commit point, cleared at the end of the turn. While the turn runs, `heartbeatAt`
   is refreshed (one state write) whenever the last write is older than `recovery.staleMs / 4` —
-  checked at step ends and by a timer, so long tool calls keep it fresh. Turns shorter than
-  `staleMs / 4` write no heartbeat.
+  checked at step ends and by a timer (every `min(staleMs / 4, abortPollMs)`), so long tool calls
+  keep it fresh. Turns shorter than `staleMs / 4` write no heartbeat.
 - At the start of an operation (lifecycle step 3), an `activeTurn` is **stale** if
   - it belongs to this process (`owner`) but no turn of this session is running here (e.g. the
     end-of-turn state write failed), or
@@ -589,7 +614,54 @@ export interface ActiveTurn {
 - Reads (`messages()`, `stats()`) never recover; UIs see the unfinished message until the next
   operation. `stats()` reports `activeTurn` so a UI can show "interrupted / resume".
 - `config.recovery: false` disables tracking (one state write less per turn); a crashed turn then
-  stays unfinished in storage, but projection still answers its dangling calls.
+  stays unfinished in storage, but projection still answers its dangling calls. It also disables
+  cross-process abort (§9.1).
+
+```ts
+recovery?: {
+  staleMs?: number        // default 120_000
+  abortPollMs?: number    // default 2_000; 0 = the owner never polls (§9.1)
+} | false
+```
+
+### 9.1 Cross-process abort (0.4.0)
+
+A Stop request that reaches any instance stops the turn running in another instance, ending it
+exactly like a local abort. It needs only a `StateAdapter` with `setIf` (ADR-0021); no lock, no
+inbox (P19 adds an inbox path with lower latency; this one stays the fallback).
+
+1. **Request.** `requestAbort(reason)`: if a turn of this session runs in this process → local
+   abort, `'local'`. Otherwise read the state: no **live foreign** `activeTurn` (absent, owned by
+   this instance, or stale per `recovery.staleMs`) → `'idle'`, nothing written. With one, and no
+   `setIf` → `'unsupported'` + `W_ABORT_UNSUPPORTED`, nothing written (a blind `set` would
+   clobber the owner's heartbeat and pending state). Otherwise write
+   `core.abortRequest = { turnId: activeTurn.turnId, at, reason?, by: <this instance> }` with
+   `setIf(rev)` → `'remote'`. On conflict re-read and retry, at most 3 times (then
+   `EH_SESSION_BUSY`). A request for that turn already stored → `'remote'` without a write.
+   `recovery: false` → `'unsupported'` without a read. After a written request the requester
+   drops its hot cache (the owner is changing the session). `abort()` calls this
+   fire-and-forget when no local turn runs.
+2. **Target the turn, not the session.** The request names `turnId`. A retry that finds another
+   turn active returns `'idle'` (the targeted turn ended); an owner ignores a request for another
+   turn id. So a late Stop never kills the next turn.
+3. **Owner check.** The owning turn checks for a request at every step end (the heartbeat point,
+   before the next model call) and on the heartbeat timer, but reads the state at most once per
+   `recovery.abortPollMs` (default 2 000 ms), the first time `abortPollMs` after the commit point.
+   It reads the stored snapshot without replacing the in-memory one. No poll with
+   `abortPollMs: 0`, `recovery: false` or an adapter without `setIf` (nobody can write a
+   request). A matching request aborts the turn's controller with the stored `reason` → the
+   normal abort path: `stop: 'aborted'`, terminal `abort { reason }`, partial message saved,
+   dangling calls answered (`INTERRUPTED_TURN`), the owner's queue dropped and waiting steers
+   reported as `input-dropped` (spec 11 §6). A request found by the merge of a conflicting owner
+   write (§7) aborts the same way, without waiting for the poll.
+4. **Owner writes do not clobber requests** (§7, "one foreign-writable field"). The end-of-turn
+   write clears the request.
+5. **Long tool calls.** The heartbeat timer polls too, so a turn inside a 10-minute tool call is
+   aborted mid-tool: the tool's `abortSignal` fires.
+6. **Stale requests.** A request whose `turnId` is not the active turn (its owner crashed) is
+   dropped by the next owner write and cleared by the next turn's commit-point write.
+7. **Latency:** at most `abortPollMs` plus the rest of the current step (or one heartbeat tick
+   during a tool call), when the step itself honours the abort signal.
 
 ## 10. Reference: Postgres (application code, not shipped)
 
@@ -640,7 +712,7 @@ parameter a second time.
 
 | Path | I/O |
 |---|---|
-| Hot turn | 0 reads; 1 upsert (user) + 1 upsert per step (assistant) + 1 final upsert; 2 state writes (commit point, end) + heartbeats for turns longer than `staleMs / 4` |
+| Hot turn | 0 reads (+ ≤ 1 state read per `abortPollMs` for turns longer than that, §9.1); 1 upsert (user) + 1 upsert per step (assistant) + 1 final upsert; 2 state writes (commit point, end) + heartbeats for turns longer than `staleMs / 4` |
 | Hot turn, `recovery: false` | as above with ≤ 1 state write |
 | Cold turn | 1 state read + 1 range query (with pointer) |
 | UI history page | 1 range query |

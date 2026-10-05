@@ -150,6 +150,7 @@ export type WarningCode =
   | 'W_CACHE_BUST'
   | 'W_OVERFLOW_RETRY'
   | 'W_GRANT_IGNORED'
+  | 'W_ABORT_UNSUPPORTED'
 
 /**
  * A non-fatal problem, delivered to `config.onWarning`, as a transient `data-eh.warning` part

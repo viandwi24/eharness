@@ -148,6 +148,7 @@ export interface StepLoopInput {
   barrier(): Promise<void>
   usage: UsageTotals
   discovered: Set<string>
+  /** Heartbeat and cross-process abort poll (spec 05 §9, §9.1); an abort ends the turn below. */
   heartbeat(): Promise<void>
   /** Compaction triggers, guard, calibration and overflow recovery of the turn (spec 06). */
   compaction: TurnCompaction

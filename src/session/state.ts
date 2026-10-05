@@ -5,7 +5,7 @@
  * @see docs/specs/05-session-and-storage.md#7-state
  */
 import type { JSONValue } from 'ai'
-import type { SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
+import type { AbortRequest, SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
 import { HarnessError, isHarnessError } from '../errors.ts'
 import type { PluginState } from '../plugin/types.ts'
 
@@ -17,6 +17,8 @@ export interface StateStore {
   readonly dirty: boolean
   /** Epoch ms of the last successful write (0 = never). */
   readonly lastWriteAt: number
+  /** The adapter has `setIf` (compare-and-set writes, cross-process abort). */
+  readonly canCas: boolean
   /** (Re)load the snapshot from the adapter. Throws `EH_STORAGE`. */
   load(): Promise<void>
   /** Core state (mutable). Call `markDirty()` after changing it. */
@@ -27,13 +29,27 @@ export interface StateStore {
   /** Namespaced plugin state (`plugins[<name>][key]`). */
   plugin(name: string): PluginState
   /**
+   * Read the stored snapshot without touching the in-memory one (abort poll, spec 05 §9.1).
+   * Throws `EH_STORAGE`.
+   */
+  peek(): Promise<SessionStateSnapshot | null>
+  /**
    * Write the snapshot (rev + 1). With `cas` and an adapter that has `setIf`, the write is a
-   * compare-and-set on the last read/written rev and resolves `false` on conflict. Throws
-   * `EH_STORAGE` when the adapter throws. Writes are serialized.
+   * compare-and-set on the last read/written rev and resolves `false` on conflict. While a turn
+   * guard is set (see {@link StateStore.guard}), every write is a compare-and-set that merges a
+   * foreign `core.abortRequest` on conflict and retries; it resolves `false` when the stored
+   * state no longer names the guarded turn as active. Throws `EH_STORAGE` when the adapter
+   * throws. Writes are serialized.
    */
   write(options?: { cas?: boolean }): Promise<boolean>
-  /** Write only when dirty. */
-  writeIfDirty(): Promise<void>
+  /** Write only when dirty. Resolves like {@link StateStore.write} (`true` when clean). */
+  writeIfDirty(): Promise<boolean>
+  /**
+   * Owner writes of a running turn (spec 05 §9.1): set while turn `turnId` runs (`undefined`
+   * clears). `onRequest` is called with an abort request for that turn found by a merge.
+   * No effect without `setIf`.
+   */
+  guard(turnId: string | undefined, onRequest?: (request: AbortRequest) => void): void
   /** Capture the in-memory state (before a turn's preparation). */
   checkpoint(): StateCheckpoint
   /** Discard in-memory changes made after `checkpoint()` (a turn failed before its commit point). */
@@ -55,6 +71,9 @@ export interface StateCheckpoint {
   readonly version: number
 }
 
+/** Conflicting owner writes of a guarded turn retried before giving up (spec 05 §9.1). */
+const GUARD_RETRIES = 5
+
 function empty(): SessionStateSnapshot {
   return { v: 1, rev: 0, core: {}, plugins: {} }
 }
@@ -74,6 +93,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
   let writtenVersion = 0
   let lastWriteAt = 0
   let queue: Promise<unknown> = Promise.resolve()
+  let turnGuard: { turnId: string; onRequest?: (request: AbortRequest) => void } | undefined
 
   const pluginViews = new Map<string, PluginState>()
   const listeners = new Set<(plugin: string, key: string) => void>()
@@ -87,6 +107,19 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
     },
     get lastWriteAt() {
       return lastWriteAt
+    },
+    get canCas() {
+      return adapter.setIf !== undefined
+    },
+    async peek() {
+      try {
+        return await adapter.get(sessionId)
+      } catch (error) {
+        throw storageError('get', error)
+      }
+    },
+    guard(turnId, onRequest) {
+      turnGuard = turnId === undefined ? undefined : { turnId, onRequest }
     },
     async load() {
       let stored: SessionStateSnapshot | null
@@ -145,22 +178,54 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
     },
     write(options = {}) {
       const run = async (): Promise<boolean> => {
-        const capturedVersion = version
-        const next: SessionStateSnapshot = structuredClone({ ...snapshot, rev: snapshot.rev + 1 })
-        try {
-          if (options.cas === true && adapter.setIf !== undefined) {
-            const ok = await adapter.setIf(sessionId, next, persistedRev)
-            if (!ok) return false
-          } else {
-            await adapter.set(sessionId, next)
+        const guarded = options.cas !== true && turnGuard !== undefined
+        for (let attempt = 0; ; attempt++) {
+          const capturedVersion = version
+          const next: SessionStateSnapshot = structuredClone({ ...snapshot, rev: snapshot.rev + 1 })
+          try {
+            if ((options.cas === true || guarded) && adapter.setIf !== undefined) {
+              const ok = await adapter.setIf(sessionId, next, persistedRev)
+              if (!ok) {
+                if (!guarded || attempt >= GUARD_RETRIES || !(await mergeForeign())) return false
+                continue
+              }
+            } else {
+              await adapter.set(sessionId, next)
+            }
+          } catch (error) {
+            throw storageError('set', error)
           }
-        } catch (error) {
-          throw storageError('set', error)
+          snapshot.rev = next.rev
+          persistedRev = next.rev
+          writtenVersion = capturedVersion
+          lastWriteAt = Date.now()
+          return true
         }
-        snapshot.rev = next.rev
-        persistedRev = next.rev
-        writtenVersion = capturedVersion
-        lastWriteAt = Date.now()
+      }
+      /**
+       * A guarded write conflicted: re-read, take over the foreign `core.abortRequest` (the only
+       * field another instance may write during a live turn) and the stored rev. False when the
+       * stored state no longer names the guarded turn as active (another instance owns it now).
+       */
+      const mergeForeign = async (): Promise<boolean> => {
+        const guard = turnGuard
+        if (guard === undefined) return false
+        const stored = await adapter.get(sessionId)
+        if (stored === null || stored.core?.activeTurn?.turnId !== guard.turnId) return false
+        const request = stored.core.abortRequest
+        // a request for another turn is dropped; ours is kept while the snapshot still runs it
+        if (
+          request !== undefined &&
+          request.turnId === guard.turnId &&
+          snapshot.core.activeTurn?.turnId === guard.turnId
+        ) {
+          snapshot.core.abortRequest = structuredClone(request)
+          guard.onRequest?.(structuredClone(request))
+        } else {
+          delete snapshot.core.abortRequest
+        }
+        snapshot.rev = typeof stored.rev === 'number' ? stored.rev : 0
+        persistedRev = snapshot.rev
         return true
       }
       const result = queue.then(run, run)
@@ -168,7 +233,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
       return result
     },
     async writeIfDirty() {
-      if (store.dirty) await store.write()
+      return store.dirty ? store.write() : true
     },
     checkpoint() {
       return { snapshot: structuredClone(snapshot), version }

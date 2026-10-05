@@ -41,6 +41,7 @@ import { kindText } from './interaction/inbox.ts'
 import { RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
 import { createDeferredRun, type QueuedTurn } from './interaction/queue.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
+import { DEFAULT_STALE_MS, requestRemoteAbort } from './remote-abort.ts'
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
 import { createStateStore } from './state.ts'
 import { budgetOverrun, type RunningTurn, startTurn, type TurnHost } from './turn.ts'
@@ -526,6 +527,7 @@ export function createSessionHandle(args: {
     enqueueSteer(submitted) {
       enqueue({ input: submitted.input, submitted, options: {} })
     },
+    dropQueue: () => dropQueue(false),
     enqueueWake() {
       enqueue({ kind: 'wake', input: undefined, options: {} })
     },
@@ -630,6 +632,24 @@ export function createSessionHandle(args: {
       )
       return undefined
     }
+  }
+
+  /** Request the abort of a turn running in another instance (spec 05 §9.1). */
+  function remoteAbort(reason: string | undefined) {
+    return requestRemoteAbort(
+      {
+        sessionId: id,
+        adapter: args.state,
+        owner: rt.owner,
+        staleMs: config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS),
+        warn: rt.warn,
+        // the stored state changed behind this instance's cache: reload at the next operation
+        written: () => {
+          if (current === undefined && loading === undefined) rt.view = undefined
+        },
+      },
+      reason,
+    )
   }
 
   /** Drop queued turns; `abort()` keeps `ifBusy: 'wait'` callers (only `close()` drops them). */
@@ -823,7 +843,20 @@ export function createSessionHandle(args: {
     abort(reason) {
       assertOpen()
       dropQueue(false)
-      current?.abort(reason)
+      if (current !== undefined) return current.abort(reason)
+      // no turn here: maybe one runs in another instance (spec 05 §9.1)
+      remoteAbort(reason).catch((error) =>
+        log.warn('eharness: cross-process abort request failed', { error }),
+      )
+    },
+    async requestAbort(reason) {
+      assertOpen()
+      dropQueue(false)
+      if (current !== undefined) {
+        current.abort(reason)
+        return { target: 'local' }
+      }
+      return remoteAbort(reason)
     },
     async inject(kind, data, options = {}) {
       assertOpen()

@@ -34,7 +34,8 @@ function snapshot(rev: number, extra: Partial<SessionStateSnapshot> = {}): Sessi
 /**
  * Conformance cases for a {@link StateAdapter} (spec 05 §7): `null` for unknown sessions,
  * JSON round-trip, copies on read, session isolation, overwrite, and — when implemented (or
- * required) — compare-and-set semantics of `setIf` on `rev`.
+ * required) — compare-and-set semantics of `setIf` on `rev`. An atomic `setIf` also enables
+ * cross-process abort (`session.requestAbort()`, spec 05 §9.1).
  *
  * @example
  * ```ts

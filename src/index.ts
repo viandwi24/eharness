@@ -9,6 +9,8 @@
 
 export { defineHarnessAgent } from './agent/define-agent.ts'
 export type {
+  AbortRequest,
+  AbortRequestResult,
   ActiveTurn,
   ApprovalActor,
   HarnessKindTypes,
