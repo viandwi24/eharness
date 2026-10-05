@@ -161,6 +161,11 @@ export interface ContextStats {
   /** Absolute tokens. */
   hardLimit: number
   lastCompaction?: { markerId: string; before: number; after: number; at: number }
+  /**
+   * Tool outputs replaced by the prune stage in this request (spec 06 §5.0): `chars` = characters
+   * saved (original − placeholder). Present only when `compaction.prune` is on.
+   */
+  pruned?: { outputs: number; chars: number }
 }
 
 /**

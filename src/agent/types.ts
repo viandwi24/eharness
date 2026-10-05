@@ -15,6 +15,7 @@ import type {
   ToolApprovalConfiguration,
   ToolApprovalStatus,
   ToolCallRepairFunction,
+  ToolResultPart,
   ToolSet,
   UIMessage,
   UITools,
@@ -228,6 +229,39 @@ export interface CompactionConfig {
   countTokens?: (text: string) => number
   /** Escape hatch: final say over the assembled view, before the guard. */
   select?: (view: HarnessUIMessage[], ctx: HarnessContext) => HarnessUIMessage[]
+  /**
+   * View-only pruning of old, large tool outputs before summarizing (spec 06 §5.0). Default off
+   * (`undefined` or `false`); `{}` turns it on with the defaults. Stored messages never change.
+   */
+  prune?: PruneConfig | false
+  /**
+   * Thrash detection (spec 06 §4): when the context is above `summarizeAt` again within
+   * `withinSteps` model steps after an automatic compaction, the turn stops with
+   * `'context-thrash'` instead of compacting again. Default `{ withinSteps: 2 }`; `false`
+   * compacts again (0.3 behaviour).
+   */
+  thrash?: { withinSteps?: number } | false
+}
+
+/**
+ * Options of `compaction.prune` (spec 06 §5.0): old tool outputs are replaced by a short
+ * placeholder in the request only. Errors and `execution-denied` results are never pruned; the
+ * current turn is never pruned.
+ *
+ * @see docs/specs/06-compaction.md#50-prune
+ */
+export interface PruneConfig {
+  /** Completed turns (newest first) whose tool outputs are never pruned. Default 2. */
+  keepTurns?: number
+  /** Only outputs whose projected size exceeds this many characters are pruned. Default 2_000. */
+  minChars?: number
+  /** Final tool names whose outputs are never pruned. */
+  exclude?: string[]
+  /**
+   * Placeholder text (must be pure: same part → same text). Default `TOOL_OUTPUT_PRUNED`
+   * (`[output of <tool> pruned: <n> chars]`). The text is used as a `{ type: 'text' }` output.
+   */
+  replaceWith?: (part: ToolResultPart) => string
 }
 
 /**

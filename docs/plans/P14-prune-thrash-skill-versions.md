@@ -1,6 +1,6 @@
 # P14 — Context pruning, thrash detection, skill versions
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: 0.4 proposal items **U2** (prune stage), **U8** (compaction thrash detection) and
 **U7** (skill versions).
