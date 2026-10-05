@@ -283,6 +283,13 @@ describe('parseSkillMarkdown', () => {
     expect(parseSkillMarkdown(doc('name: 404\ndescription: 12'))).toMatchObject({
       meta: { name: '404', description: '12' },
     })
+    // the raw text, not a number's string form
+    expect(parseSkillMarkdown(doc('name: 007\ndescription: 1.0 # comment'))).toMatchObject({
+      meta: { name: '007', description: '1.0' },
+    })
+    expect(parseSkillMarkdown(doc('name: 1e3\ndescription: true'))).toMatchObject({
+      meta: { name: '1e3', description: 'true' },
+    })
   })
 
   test('errors', () => {
