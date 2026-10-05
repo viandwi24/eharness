@@ -58,6 +58,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * ['data:', 'https:']) and the decoded size cap of data: URLs (default 20 MB).
    */
   inputFiles?: { protocols?: string[]; maxBytes?: number }
+  /** Text of a thrown tool error in UI, storage and wire (default String(error), spec 10 §1.1). */
+  toolErrorText?: (error: unknown, call: { toolName: string; toolCallId: string }) => string
   /** Typed per-call options accepted by send()/respond()/… (`options`), exposed as ctx.turn.options. */
   callOptions?: FlexibleSchema
   /** Passed to streamText `repairToolCall` (fix malformed tool calls). */
@@ -423,9 +425,9 @@ Implementation notes:
   (so the raw last value also appears as a preliminary output).
   Tools without `execute` (client tools), provider-executed tools and `toolSearch()` are not
   wrapped (AI SDK replaces `toolSearch()`'s `execute` anyway).
-- Errors thrown by a tool become tool-error results (`String(error)` is what the model sees); the
-  wrapper re-throws them as `HarnessToolError` so `onError` can send the same text to the UI
-  (spec 04 §2).
+- Errors thrown by a tool become tool-error results (`String(error)` is what the model sees, or
+  the text of `config.toolErrorText`, spec 10 §1.1); the wrapper re-throws them as
+  `HarnessToolError` so `onError` can send the same text to the UI (spec 04 §2).
 
 ## 6. Services
 

@@ -88,6 +88,7 @@ export function isHarnessError(error: unknown, code?: HarnessErrorCode): error i
  *
  * Copies `name` and `message` of the original error (kept in `cause`), so `String(error)` — the
  * text the model sees — is identical to the original, and the UI stream can carry the same text.
+ * With `config.toolErrorText`, `String(error)` is the mapped `text` instead (spec 10 §1.1).
  *
  * @see docs/specs/10-errors-and-stop-reasons.md#11-harnesstoolerror
  */
@@ -97,12 +98,24 @@ export class HarnessToolError extends Error {
   /** Id of the failed tool call. */
   readonly toolCallId: string
 
-  constructor(error: unknown, options: { toolName: string; toolCallId: string }) {
+  /** The mapped text (`config.toolErrorText`), when one was set. */
+  readonly text: string | undefined
+
+  constructor(
+    error: unknown,
+    options: { toolName: string; toolCallId: string; text?: string | undefined },
+  ) {
     const isError = error instanceof Error
     super(isError ? error.message : String(error), { cause: error })
     this.name = isError ? error.name : 'Error'
     this.toolName = options.toolName
     this.toolCallId = options.toolCallId
+    this.text = options.text
+  }
+
+  /** `String(error)`: the mapped text when set, else `<name>: <message>` of the original. */
+  override toString(): string {
+    return this.text ?? super.toString()
   }
 }
 
