@@ -237,10 +237,11 @@ export interface CompactionConfig {
    */
   prune?: PruneConfig | false
   /**
-   * Thrash detection (spec 06 §4): when the context is above `summarizeAt` again within
-   * `withinSteps` model steps after an automatic compaction, the turn stops with
-   * `'context-thrash'` instead of compacting again. Default `{ withinSteps: 2 }`; `false`
-   * compacts again (0.3 behaviour).
+   * Thrash detection (spec 06 §4): when a second automatic (mid-turn or overflow) compaction
+   * within `withinSteps` model steps of the previous one ran (or was skipped as no-gain) and the
+   * context is still above `summarizeAt` afterwards, the turn stops with `'context-thrash'`.
+   * Pre-turn compactions do not start the window. Default `{ withinSteps: 2 }`; `false`
+   * keeps going (0.3 behaviour).
    */
   thrash?: { withinSteps?: number } | false
 }

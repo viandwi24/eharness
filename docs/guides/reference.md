@@ -22,7 +22,7 @@ specs in [`../specs`](../specs) are the full contracts.
 | `inbox` | `{ pollMs: 2_000, claimTtlMs: recovery.staleMs, collect: { quietMs: 1_500, maxWaitMs: 10_000, maxItems: 20 } }` | durable inbox drain (`pollMs: 0` = notifications only) and the `collect` debounce (also without an inbox) — [several instances](multi-instance.md) |
 | `compaction` | `{ summarizeAt: 0.75, keepLast: 4, maxSummaryTokens: 4_000 }` | or `false` — [compaction](compaction.md) |
 | `compaction.prune` | off | `{}` = `{ keepTurns: 2, minChars: 2_000 }`; `exclude`, `replaceWith` — view-only pruning of old tool outputs ([compaction](compaction.md#pruning-old-tool-outputs)) |
-| `compaction.thrash` | `{ withinSteps: 2 }` | or `false` — stop `'context-thrash'` instead of compacting again ([compaction](compaction.md#when-a-turn-thrashes)) |
+| `compaction.thrash` | `{ withinSteps: 2 }` | or `false` — stop `'context-thrash'` when a second compaction within the window cannot get below `summarizeAt` ([compaction](compaction.md#when-a-turn-thrashes)) |
 | `guard` | `{ maxContextRatio: 0.9 }` | `reserveTokens` default: `settings.maxOutputTokens` ?? 8% of the window |
 | `isContextOverflow` | built-in patterns | extra "context too long" detection |
 | `loop` | see below | [long-running turns](long-running-turns.md) |

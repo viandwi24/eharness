@@ -939,13 +939,13 @@ describe('compaction thrash (spec 06 §4)', () => {
     inputSchema: z.object({ n: z.number(), size: z.number() }),
     execute: async ({ n, size }) => `F${n} ${'z'.repeat(size)}`,
   })
-  /** ~1 000 tokens per big output, ~50 per small one. */
-  const fetch = (n: number, size: 'big' | 'small') =>
-    callTool('fetch', { n, size: size === 'big' ? 4_000 : 200 })
+  /** ~1 000 tokens per big output, ~1 400 per huge one, ~50 per small one. */
+  const fetch = (n: number, size: 'big' | 'huge' | 'small') =>
+    callTool('fetch', { n, size: size === 'big' ? 4_000 : size === 'huge' ? 6_400 : 200 })
 
   test('context refills within 2 steps → context-thrash, W_CONTEXT_THRASH, notice saved, one summarizer call', async () => {
     const { agent, model, summarizer, messages, warnings } = setup(
-      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'big'), fetch(3, 'big'), answer('done')],
+      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'huge'), fetch(3, 'big'), answer('done')],
       { tools: { fetch: fetchTool } },
     )
     const result = await agent.session('s1').send('Go').result
@@ -982,7 +982,7 @@ describe('compaction thrash (spec 06 §4)', () => {
       }),
     })
     const { agent } = setup(
-      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'big'), fetch(3, 'big'), answer('done')],
+      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'huge'), fetch(3, 'big'), answer('done')],
       { tools: { fetch: fetchTool }, plugins: [probe] },
     )
     const result = await agent.session('s1').send('Go').result
@@ -1008,10 +1008,56 @@ describe('compaction thrash (spec 06 §4)', () => {
     expect(warnings.filter((w) => w.code === 'W_CONTEXT_THRASH')).toHaveLength(0)
   })
 
+  test('a second compaction that gets below summarizeAt is not a thrash', async () => {
+    const { agent, summarizer, warnings } = setup(
+      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'big'), fetch(3, 'big'), answer('done')],
+      { tools: { fetch: fetchTool } },
+    )
+    const result = await agent.session('s1').send('Go').result
+    expect(result.stop).toBe('complete')
+    expect(summarizer.calls.length).toBeGreaterThanOrEqual(2)
+    expect(warnings.filter((w) => w.code === 'W_CONTEXT_THRASH')).toHaveLength(0)
+  })
+
+  test('a pre-turn compaction does not start the thrash window (one big tool output completes)', async () => {
+    const run = async (thrash: false | undefined) => {
+      const summarizer = summarizerModel((_call, i) => `SUMMARY-${i + 1}`)
+      const { agent, warnings } = setup(
+        [
+          answer('A1'),
+          answer('A2'),
+          answer('A3'),
+          answer('A4'),
+          callTool('fetch', { n: 0, size: 4_400 }),
+          answer('done'),
+        ],
+        {
+          tools: { fetch: fetchTool },
+          compaction: {
+            model: summarizer,
+            keepLast: 1,
+            maxSummaryTokens: 100,
+            ...(thrash === false ? { thrash } : {}),
+          },
+        },
+      )
+      const session = agent.session('s1')
+      for (let i = 1; i <= 4; i++) await session.send(big(`Q${i}`)).result
+      const result = await session.send(big('Q5')).result
+      return { result, summarizer, warnings }
+    }
+    const on = await run(undefined)
+    const off = await run(false)
+    expect(on.result.stop).toBe('complete')
+    expect(on.result.stop).toBe(off.result.stop)
+    expect(on.summarizer.calls.length).toBe(off.summarizer.calls.length)
+    expect(on.warnings.filter((w) => w.code === 'W_CONTEXT_THRASH')).toHaveLength(0)
+  })
+
   test('thrash: false → compacts again (0.3 behaviour)', async () => {
     const summarizer = summarizerModel((_call, i) => `SUMMARY-${i + 1}`)
     const { agent, warnings } = setup(
-      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'big'), fetch(3, 'big'), answer('done')],
+      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'huge'), fetch(3, 'big'), answer('done')],
       {
         tools: { fetch: fetchTool },
         compaction: { model: summarizer, keepLast: 1, maxSummaryTokens: 100, thrash: false },
