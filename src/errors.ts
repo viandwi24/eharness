@@ -163,12 +163,15 @@ const STRICT_CODES: ReadonlySet<WarningCode> = new Set<WarningCode>([
 /** Emits one warning. `key` scopes deduplication of the default handler (e.g. a tool name). */
 export type WarningEmitter = (warning: HarnessWarning, key?: string) => void
 
+/** Keys remembered by the default warning handler (least recently used are forgotten). */
+const WARNING_DEDUPE_LIMIT = 1_000
+
 /**
  * Create the warning emitter of one agent (internal).
  *
  * - With `onWarning`, every occurrence is delivered to it.
  * - Without it, the default handler writes to `console.warn`, deduplicated per `code` + `key`
- *   for the lifetime of the emitter (one agent).
+ *   for the lifetime of the emitter (one agent), remembering the 1 000 most recently used keys.
  * - With `strict`, misuse warnings throw `EH_CONFIG_INVALID` instead.
  */
 export function createWarningEmitter(options: {
@@ -187,8 +190,18 @@ export function createWarningEmitter(options: {
       return
     }
     const dedupeKey = `${warning.code}\u0000${key ?? ''}`
-    if (seen.has(dedupeKey)) return
+    if (seen.has(dedupeKey)) {
+      // least recently used order: a key seen again moves to the end
+      seen.delete(dedupeKey)
+      seen.add(dedupeKey)
+      return
+    }
     seen.add(dedupeKey)
+    // bounded (per-turn keys would grow it forever): evict the least recently used key
+    if (seen.size > WARNING_DEDUPE_LIMIT) {
+      const oldest = seen.values().next().value
+      if (oldest !== undefined) seen.delete(oldest)
+    }
     console.warn(`[eharness] ${warning.code}: ${warning.message}`)
   }
 }
