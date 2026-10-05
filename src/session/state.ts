@@ -43,6 +43,8 @@ export interface StateStore {
    * (a turn failed before its commit point: only what its own hooks set is discarded).
    */
   revert(checkpoint: StateCheckpoint, keys: ReadonlyArray<{ plugin: string; key: string }>): void
+  /** Forget unwritten changes (mark clean): another instance owns the stored state. */
+  discard(): void
   /** Call `listener` for every plugin state `set`; returns the unsubscribe function. */
   observe(listener: (plugin: string, key: string) => void): () => void
 }
@@ -170,6 +172,9 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
     },
     checkpoint() {
       return { snapshot: structuredClone(snapshot), version }
+    },
+    discard() {
+      writtenVersion = version
     },
     observe(listener) {
       listeners.add(listener)

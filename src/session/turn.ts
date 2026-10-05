@@ -889,6 +889,20 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   // ─── commit point (spec 05 §3 steps 11–12) ────────────────────────────────────────────────
   async function commit(prep: Extract<Prepared, { kind: 'turn' }>): Promise<void> {
     const core = rt.state.core()
+    // the core fields this commit changes, as they were: put back if its write fails, so a later
+    // writeIfDirty (close, idle eviction) never publishes a turn that did not commit
+    const before = {
+      activeTurn: structuredClone(core.activeTurn),
+      pending: structuredClone(core.pending),
+      grants: structuredClone(core.grants),
+      rewinds: structuredClone(core.rewinds),
+    }
+    const undo = () => {
+      for (const key of ['activeTurn', 'pending', 'grants', 'rewinds'] as const) {
+        if (before[key] === undefined) delete core[key]
+        else (core as Record<string, unknown>)[key] = before[key]
+      }
+    }
     let needWrite = rt.state.dirty
     if (prep.stale !== undefined) {
       delete core.activeTurn
@@ -936,10 +950,19 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       try {
         ok = await rt.state.write({ cas: true })
       } catch (error) {
+        undo()
         rt.view = undefined // force a reload of state and messages at the next operation
         throw error
       }
       if (!ok) {
+        // another instance owns the stored state now: drop ours (never overwrite theirs later)
+        undo()
+        stateCheckpoint = undefined // the reloaded state is not ours to revert
+        try {
+          await rt.state.load()
+        } catch {
+          rt.state.discard()
+        }
         rt.view = undefined
         throw new HarnessError(
           'EH_SESSION_BUSY',
