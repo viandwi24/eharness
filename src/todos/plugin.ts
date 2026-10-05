@@ -130,9 +130,11 @@ function fromWire(wire: readonly ModelMessage[]): { list: Todo[]; stepsSince: nu
         if (part.type !== 'tool-result' || part.toolName !== TODO_TOOL) continue
         const output = part.output as { type?: string; value?: unknown }
         const text = typeof output.value === 'string' ? output.value : ''
+        // a denied call (approval) never ran: a failed write like an error (spec 13 §3)
         if (
           output.type === 'error-text' ||
           output.type === 'error-json' ||
+          output.type === 'execution-denied' ||
           text.startsWith('ERROR:')
         ) {
           failed.add(part.toolCallId)
@@ -150,6 +152,27 @@ function fromWire(wire: readonly ModelMessage[]): { list: Todo[]; stepsSince: nu
       if (list !== undefined) return { list, stepsSince }
     }
     stepsSince++
+  }
+  return undefined
+}
+
+/**
+ * The list of the last successful `todo_write` in UI messages (stored history): a part in
+ * `output-available` whose output is not an `ERROR:` text. Denied, failed and unanswered calls
+ * never count.
+ */
+function fromMessages(
+  messages: ReadonlyArray<{ parts: ReadonlyArray<{ type: string }> }>,
+): Todo[] | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const parts = messages[i]?.parts ?? []
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const part = parts[j] as { type: string; state?: string; input?: unknown; output?: unknown }
+      if (part.type !== `tool-${TODO_TOOL}` || part.state !== 'output-available') continue
+      if (typeof part.output === 'string' && part.output.startsWith('ERROR:')) continue
+      const list = parseList(part.input)
+      if (list !== undefined) return list
+    }
   }
   return undefined
 }
@@ -179,6 +202,8 @@ export function todos(options: TodosOptions = {}): HarnessPlugin<'todos', TodosD
       let remindCarried = false
       let nudges = 0
       let fingerprintAtNudge: string | undefined
+      /** The list `compaction.prompt` computed for the running compaction. */
+      let toCarry: Todo[] | undefined
 
       const fingerprint = (list: readonly Todo[]) =>
         JSON.stringify(list.map((t) => [t.content, t.status]))
@@ -236,15 +261,25 @@ export function todos(options: TodosOptions = {}): HarnessPlugin<'todos', TodosD
             return { continue: { reason: TODOS_CONTINUE.replace('{list}', renderTodos(current)) } }
           },
           'compaction.prompt': (_ctx, out) => {
-            if (current.length > 0) {
+            // from the summarized messages and the carried list — never from the in-memory list,
+            // which is empty on a fresh instance before its first step (spec 13 §3)
+            const list =
+              fromMessages(out.messages) ??
+              (ctx.state.get<JSONValue>('carried') as Todo[] | undefined) ??
+              []
+            toCarry = list
+            if (list.length > 0) {
               out.context.push(
-                `Current todo list (keep open items in the summary):\n${renderTodos(current)}`,
+                `Current todo list (keep open items in the summary):\n${renderTodos(list)}`,
               )
             }
           },
           'compaction.after': () => {
-            ctx.state.set('carried', current as unknown as JSONValue)
-            remindCarried = openTodos(current).length > 0
+            const list = toCarry
+            toCarry = undefined
+            if (list === undefined) return
+            ctx.state.set('carried', list as unknown as JSONValue)
+            remindCarried = openTodos(list).length > 0
           },
         },
       }

@@ -1,7 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import type { UIMessageChunk } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
-import { defineHarnessAgent, type HarnessAgentConfig, type HarnessWarning } from '../index.ts'
+import {
+  defineHarnessAgent,
+  definePlugin,
+  type HarnessAgentConfig,
+  type HarnessWarning,
+} from '../index.ts'
 import { memoryMessages, memoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { latestTodos, TODOS_INSTRUCTION, todos } from './index.ts'
@@ -30,11 +35,17 @@ function summarizer(text: string) {
   return Object.assign(model, { prompts })
 }
 
-function setup(config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>) {
+function setup(
+  config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
+  storage: NonNullable<HarnessAgentConfig['storage']> = {
+    messages: memoryMessages(),
+    state: memoryState(),
+  },
+) {
   const warnings: HarnessWarning[] = []
   const agent = defineHarnessAgent({
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState() },
+    storage,
     logger: silent,
     onWarning: (w) => warnings.push(w),
     ...config,
@@ -177,5 +188,63 @@ describe('todos plugin', () => {
     await session.send('three').result
     expect(promptText(model.calls[3]?.prompt)).not.toContain('todo_write","input')
     expect(promptText(model.calls[3]?.prompt)).toContain('Open todos (update them with todo_write')
+  })
+
+  test('the list survives a restart followed by a compaction (fresh instance, same storage)', async () => {
+    const storage = { messages: memoryMessages(), state: memoryState() }
+    const model = scriptedModel([
+      write([['Ship it', 'in_progress']]),
+      { text: 'first answer' },
+      { text: 'second answer' },
+      { text: 'third answer' },
+    ])
+    const first = setup({ model, plugins: [todos()] }, storage)
+    await first.agent.session('s1').send('one').result
+    await first.agent.session('s1').send('two').result
+    await first.agent.close()
+    const summary = summarizer('SUMMARY')
+    const { agent } = setup(
+      {
+        model,
+        plugins: [todos()],
+        compaction: { model: summary, keepLast: 0, maxSummaryTokens: 100 },
+      },
+      storage,
+    )
+    const session = agent.session('s1')
+    await session.compact()
+    expect(promptText(summary.prompts[0])).toContain('[>] Ship it')
+    await session.send('three').result
+    expect(promptText(model.calls[3]?.prompt)).not.toContain('todo_write","input')
+    expect(promptText(model.calls[3]?.prompt)).toContain('[>] Ship it')
+  })
+
+  test('a denied todo_write is a failed write: the list is unchanged', async () => {
+    const deny = definePlugin({
+      name: 'deny',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) =>
+            (e.input as { todos: Array<{ content: string }> }).todos.some(
+              (t) => t.content === 'Nope',
+            )
+              ? 'denied'
+              : undefined,
+        },
+      }),
+    })
+    const model = scriptedModel([
+      write([['Ship it', 'in_progress']]),
+      write([['Nope', 'in_progress']]),
+      { text: 'done' },
+    ])
+    const { agent } = setup({
+      model,
+      plugins: [todos({ remindEvery: 1 }), deny],
+    })
+    await agent.session('s1').send('go').result
+    const last = promptText(model.calls[2]?.prompt)
+    expect(last).toContain('Open todos (update them with todo_write as you work):\\n[>] Ship it')
+    expect(last).not.toContain('[>] Nope')
   })
 })

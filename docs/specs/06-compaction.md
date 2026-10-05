@@ -197,6 +197,8 @@ transcript and the guard handles the wire.
    Truncation uses the head + tail helper of spec 09 §4.
 2. Hooks `compaction.prompt` add `context` lines (e.g. files in progress) or replace the prompt
    (`out.prompt` starts as `config.prompt`; the default prompt applies when it is empty).
+   `out.messages` holds copies of the messages being summarized (read-only input, e.g. to carry
+   state that lives in them across the compaction).
 3. `generateText({ model, instructions: prompt, prompt: transcript + context, maxOutputTokens: maxSummaryTokens })`;
    the prompt wraps the transcript in `<transcript>…</transcript>` and lists the context lines
    after it. The summarizer window is `config.contextWindow` of `CompactionConfig`, else the agent

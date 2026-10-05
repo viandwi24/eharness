@@ -5,6 +5,7 @@
  * @see docs/specs/06-compaction.md#53-summarize
  */
 
+import type { HarnessUIMessage } from '../messages/types.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
 
@@ -50,8 +51,13 @@ export async function resolveSummarizerPrompt(args: {
   contextOf: (owner: string) => HarnessContext
   configured: string | undefined
   onError: (owner: string, error: unknown) => void
+  /** The messages being summarized (handed to the hooks as copies). */
+  messages: readonly HarnessUIMessage[]
 }): Promise<{ prompt: string; context: string[] }> {
-  const out: { context: string[]; prompt?: string } = { context: [] }
+  const out: { context: string[]; prompt?: string; readonly messages: HarnessUIMessage[] } = {
+    context: [],
+    messages: structuredClone([...args.messages]),
+  }
   if (args.configured !== undefined) out.prompt = args.configured
   for (const hook of args.hooks?.list('compaction.prompt') ?? []) {
     try {

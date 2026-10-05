@@ -350,7 +350,12 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   /** Contribute context to / replace the summarizer prompt. */
   'compaction.prompt'?(
     ctx: HarnessContext<DP>,
-    out: { context: string[]; prompt?: string },
+    out: {
+      context: string[]
+      prompt?: string
+      /** The messages being summarized (copies, id order; read-only input). */
+      readonly messages: readonly HarnessUIMessage[]
+    },
   ): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 
