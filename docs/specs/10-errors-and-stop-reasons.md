@@ -126,10 +126,15 @@ Maps any error to a user-safe message for `error` chunks and `eh.notice`:
   overflow detection, spec 06 §7: `APICallError`, `StreamProviderError`, duck-typed
   `statusCode` / `status`); the first error in that order with a status decides, so a
   `RetryError` whose last attempt has no status (e.g. a network error) but an earlier attempt was
-  a 429 / 5xx reads `Rate limited:` / `Provider unavailable:`; prefers the provider's own message
-  for API errors (status 4xx) with
-  prefixes `Provider rejected the request:` (400/401/402/403/404/422), `Rate limited:` (429),
+  a 429 / 5xx reads `Rate limited:` / `Provider unavailable:`; prefixes
+  `Provider rejected the request:` (400/401/402/403/404/422), `Rate limited:` (429),
   `Provider unavailable:` (5xx);
+- the provider's own message follows the prefix only for AI SDK `APICallError` /
+  `StreamProviderError` (checked with `isInstance`), with URLs, query strings and key-like tokens
+  (`sk-…`, `Bearer …`, long hex/base64 runs) redacted as `[redacted]` and the text capped at 300
+  characters (0.4.0). Any other error with a status (a plain `Error` with `status`, fetch or
+  gateway wrappers) reads `HTTP <status>` after the prefix — its message may carry URLs with keys
+  or connection strings. The redaction patterns are not public API; only the behaviour is;
 - never includes headers, API keys, request bodies or stack traces;
 - falls back to `Unexpected error (see server logs)`; the full error goes to `ctx.log.error`.
 

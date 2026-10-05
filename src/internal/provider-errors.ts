@@ -57,6 +57,25 @@ export function statusOf(error: object): number | undefined {
   return undefined
 }
 
+/** Longest provider message `describeError` passes on (characters). */
+export const PROVIDER_MESSAGE_MAX = 300
+
+/**
+ * A provider message made safe for clients: URLs, query parameters and key-like tokens
+ * (`sk-…`, `Bearer …`, runs of 32+ hex/base64 characters) are replaced by `[redacted]`, and the
+ * text is capped at {@link PROVIDER_MESSAGE_MAX} characters. The patterns are not public API;
+ * only the behaviour "secrets are redacted" is (spec 10 §3).
+ */
+export function redactProviderMessage(text: string): string {
+  const out = text
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, '[redacted]')
+    .replace(/[?&][\w.-]+=[^\s&"'<>]*/g, '[redacted]')
+    .replace(/\bBearer\s+[\w.~+/=-]+/gi, 'Bearer [redacted]')
+    .replace(/\b(?:sk|pk|rk|key|api[_-]?key)[-_][\w-]{8,}/gi, '[redacted]')
+    .replace(/[A-Za-z0-9+/_=-]{32,}/g, '[redacted]')
+  return out.length > PROVIDER_MESSAGE_MAX ? `${out.slice(0, PROVIDER_MESSAGE_MAX - 1)}…` : out
+}
+
 /** Non-empty `message` of one error, if any. */
 export function messageOf(error: object): string | undefined {
   const message = (error as { message?: unknown }).message
