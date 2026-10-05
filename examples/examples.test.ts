@@ -119,6 +119,20 @@ describe('examples run offline', () => {
   )
 
   test(
+    'context-prune (prune stage, thrash stop)',
+    async () => {
+      const out = await run('context-prune.ts')
+      expect(out).toContain('prune off: 1 compaction(s)')
+      expect(out).toContain('prune on:  0 compaction(s)')
+      expect(out).toContain('14 outputs pruned')
+      expect(out).toContain('stored conversation identical: true')
+      expect(out).toContain('warning W_CONTEXT_THRASH')
+      expect(out).toContain('thrash: → context-thrash after 3 steps')
+    },
+    timeout,
+  )
+
+  test(
     'budget-and-cost',
     async () => {
       const out = await run('budget-and-cost.ts')

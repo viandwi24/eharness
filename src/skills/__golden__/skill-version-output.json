@@ -1,0 +1,6 @@
+[
+  [
+    "load_skill",
+    "---\nname: pine-v6\ndescription: Pine Script v6 syntax and pitfalls. Use when writing Pine.\nversion: \"1.0\"\nlicense: MIT\ntags: [trading, pine]\n---\n# Pine v6\n\nRead reference.md before answering.\n\nFiles:\n- reference.md (29 bytes)\n- scripts/check.py (12 bytes)"
+  ]
+]

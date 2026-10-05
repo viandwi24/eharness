@@ -11,12 +11,13 @@ describe('static skills source (in-memory)', () => {
 })
 
 /** A "database" source over plain rows, written against the public contract only. */
-function rowsSource(skills: readonly Skill[], leak = false): SkillSource {
+function rowsSource(skills: readonly Skill[], leak = false, versions = true): SkillSource {
   const rows = structuredClone(skills) as Skill[]
+  const version = (r: Skill) => (versions && r.version !== undefined ? { version: r.version } : {})
   return defineSkillSource({
     id: 'db:rows',
     refresh: 'turn',
-    list: () => rows.map((r) => ({ name: r.name, description: r.description })),
+    list: () => rows.map((r) => ({ name: r.name, description: r.description, ...version(r) })),
     load: (name) => {
       const row = rows.find((r) => r.name === name)
       if (row === undefined) return null
@@ -25,6 +26,7 @@ function rowsSource(skills: readonly Skill[], leak = false): SkillSource {
       return {
         name: row.name,
         description: row.description,
+        ...version(row),
         ...(row.meta === undefined ? {} : { meta: { ...row.meta } }),
         content: row.content,
         manifest,
@@ -65,6 +67,13 @@ describe('the suite catches broken sources', () => {
         return { ...base, list: () => shared as never }
       }, 'returns copies'),
     ).rejects.toThrow()
+  })
+
+  test('a source that drops versions fails, unless { version: false }', async () => {
+    const name = 'list and load carry the skill version'
+    await expect(run((s) => rowsSource(s, false, false), name)).rejects.toThrow()
+    const optOut = skillSourceConformance((s) => rowsSource(s, false, false), { version: false })
+    for (const c of optOut) await c.run()
   })
 
   test('a list() with content fails', async () => {

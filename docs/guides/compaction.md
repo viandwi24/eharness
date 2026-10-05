@@ -20,6 +20,8 @@ const agent = defineHarnessAgent({
     // prompt: '…',                      // replace the summarizer instructions
     // countTokens: (text) => …,          // default ceil(chars / 4), calibrated by provider usage
     // select: (view, ctx) => view,       // escape hatch: final say over the view, before the guard
+    // prune: {},                         // off by default — prune old tool outputs first (below)
+    // thrash: { withinSteps: 2 },        // default — stop a turn that refills right after compacting
   },
   guard: { maxContextRatio: 0.9 }, // default; reserveTokens: settings.maxOutputTokens ?? 8% of the window
 })
@@ -38,6 +40,48 @@ const agent = defineHarnessAgent({
 Compaction is skipped when there is nothing new to summarize or when summarizing would not get
 below `summarizeAt`; the guard handles the size then. A failed automatic compaction raises
 `W_COMPACTION_FAILED` and the turn continues with the guard.
+
+## Pruning old tool outputs
+
+Tool-heavy agents (file reads, search results, logs) fill the window with outputs that matter for
+a few turns. `compaction.prune` replaces them by a short placeholder **in the request only** —
+before the summarizer is considered:
+
+```ts
+compaction: {
+  prune: {
+    keepTurns: 2, // default — the newest completed turns keep their outputs (the current turn always does)
+    minChars: 2_000, // default — only larger outputs are pruned
+    exclude: ['read_todos'], // tools whose outputs are never pruned
+    // replaceWith: (part) => `[${part.toolName} output elided]`, // pure; default TOOL_OUTPUT_PRUNED
+  },
+}
+```
+
+- An old output becomes `[output of read_file pruned: 18342 chars]`; the tool call (name, input)
+  and its result stay paired, so the model knows what it ran and can run it again. Errors and
+  denials are never pruned.
+- Stored messages never change: your UI and `session.messages()` still show every output, and the
+  summarizer still sees the originals (capped at 2 000 characters).
+- Order: prune → re-measure → summarize only if the context is still above `summarizeAt`.
+  `ContextStats.messages` reflects the pruned request; `ContextStats.pruned` says how many outputs
+  were replaced and how many characters that saved.
+- **Prompt cache trade-off:** the request is rebuilt at the start of each turn. When a turn ages
+  past `keepTurns`, the cached prefix breaks once, at its first pruned output; inside a turn the
+  prefix is stable. A larger `keepTurns` breaks the cache later but keeps more tokens. For most
+  tool-heavy agents one partial cache miss per turn is much cheaper than a summarizer call.
+
+Runnable: [`examples/context-prune.ts`](../../examples/context-prune.ts).
+
+## When a turn thrashes
+
+If a turn fills the context again right after a compaction (a step that reads huge outputs),
+compacting again would only burn money. By default, when the context is above `summarizeAt` again
+within 2 model steps after an automatic compaction, the turn stops with `stop: 'context-thrash'`
+(warning `W_CONTEXT_THRASH`, and an `eh.notice` with code `EH_CONTEXT_THRASH` is saved so the UI
+can show why). Typical fixes: limit tool outputs (`toolOutput.maxChars`), page large reads, or a
+model with a larger window. `compaction: { thrash: { withinSteps: 3 } }` widens the window;
+`thrash: false` restores 0.3 behaviour (compact again).
 
 ## What is stored
 
@@ -59,7 +103,8 @@ console.log(stats.lastCompaction, stats.pending, stats.activeTurn)
 ```
 
 `ContextStats` has `window`, `tokens` (calibrated estimate of the next request), `instructions`,
-`tools`, `messages`, `summarizeAt`, `hardLimit` (absolute tokens) and `lastCompaction`. The same
+`tools`, `messages`, `summarizeAt`, `hardLimit` (absolute tokens), `lastCompaction` and, with
+prune on, `pruned` (`{ outputs, chars }`). The same
 object streams after every step as the transient `data-eh.context` part — a ready-made context
 meter for the UI. Estimates are calibrated against the provider's reported input tokens.
 

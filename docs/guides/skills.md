@@ -34,6 +34,22 @@ What the model gets:
 Skill content enters the conversation as tool results, never the system prompt, so the prompt
 cache prefix stays stable.
 
+### Versions
+
+A skill may carry a `version` (1–64 printable characters) — `defineSkill({ …, version: '2.1.0' })`,
+or `version: 2.1.0` in the `SKILL.md` frontmatter (always read as text: `1.0` stays `"1.0"`).
+`load_skill` shows it right after the description (`version: "2.1.0"`), and `skill.load` hooks
+receive it as `e.version`, so you can audit which version a turn used:
+
+```ts
+hooks: {
+  'skill.load': (ctx, e) => void audit.log({ turn: ctx.turn?.id, skill: e.skill.name, version: e.version }),
+}
+```
+
+The skills index never shows versions, so bumping one does not break the prompt cache. Skills
+without a version look exactly as before.
+
 ## Skills from a file system
 
 Put folders with a `SKILL.md` under one root:
