@@ -306,7 +306,10 @@ again keeps the queue held. A held queue does not keep the session alive: idle e
 §1) closes it and drops the held runs (`stop: 'aborted'`, like `close()`). A dropped wake turn loses
 nothing: its kind message is stored and reaches the model at the next turn. Queued turns are ordinary `send` turns
 (`TurnInfo.queued = true`) and run in order after the current turn ends. `abort()` and `close()`
-drop the queue (dropped runs resolve with `stop: 'aborted'`, spec 05 §2). The queue is per process
+drop the queue (dropped runs resolve with `stop: 'aborted'`, spec 05 §2). A cross-process abort
+(spec 05 §9.1) drops the queue of **both** instances: the requester's (`abort()` /
+`requestAbort()` drop it first) and the owner's (its turn ends `'aborted'`, which drops the queue
+like a local abort; its waiting steers become `input-dropped`). The queue is per process
 and lost on restart; cross-instance queuing is the application's job (a `SessionLock` rejection
 is a run error).
 

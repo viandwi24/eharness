@@ -100,6 +100,7 @@ Each case uses random session ids, so the factory may return adapters on one sha
 |---|---|
 | Detect history written by another instance | `MessageAdapter.lastId` |
 | Exactly-once approvals across instances | `StateAdapter.setIf`, or a `SessionLock` |
+| Stop a turn running in another instance (`session.abort()` / `requestAbort()`) | `StateAdapter.setIf` (atomic) |
 | At most one running turn per session, exactly | a `SessionLock` (`SessionOptions.lock`) |
 
 ```ts
