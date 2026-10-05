@@ -75,7 +75,9 @@ continues the turn with a retry delivered like any continuation:
 
 - a `data-eh.input` part with `source: 'plugin:eh.output'` and the text `OUTPUT_RETRY` (with the
   validation error, trimmed to 1 000 characters) is written into the assistant message;
-- in tool mode the retry step forces the tool (`toolChoice: { type: 'tool', toolName }`).
+- in tool mode the retry step forces the tool (`toolChoice: { type: 'tool', toolName }`) — AI SDK
+  enforces it: a model that still answers in prose fails that step (`ToolChoiceViolationError`,
+  stop `'error'`).
 
 `maxRetries` (default 2) bounds it: after `maxRetries + 1` failed answers the turn stops with
 **`'output-invalid'`** and the warning `W_OUTPUT_INVALID` (`details: { attempts, lastError }`). A
