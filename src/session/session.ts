@@ -15,6 +15,7 @@ import type {
   StateAdapter,
 } from '../agent/session-types.ts'
 import { createSessionCompaction } from '../compaction/compact.ts'
+import { manualFlushEnv } from '../compaction/flush.ts'
 import { toolTokens } from '../compaction/tokens.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
@@ -983,6 +984,7 @@ export function createSessionHandle(args: {
             if (cost !== undefined) current.usage.costUsd = (previous.costUsd ?? 0) + cost
             rt.state.markDirty()
           },
+          flushEnv: () => manualFlushEnv({ rt, open }),
           overBudget: () =>
             budgetOverrun(
               config.budget === undefined ? undefined : { ...config.budget, maxTurnUsd: undefined },
