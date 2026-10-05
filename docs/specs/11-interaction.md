@@ -83,8 +83,9 @@ Per step the core builds **one** `GenericToolApprovalFunction` and passes it as 
 4. session grants (§3.1).
 
 Results are normalized to `{ type, reason? }` and combined **most restrictive wins**:
-`denied` > `user-approval` > `approved` > `not-applicable`. A hook that throws counts as
-`denied` (fail closed). The approval function sees the input **after** `tool.before` refinement
+`denied` > `user-approval` > `approved` > `not-applicable`. A hook or policy that throws, or
+that returns an unknown status (e.g. a typo such as `'deny'`), counts as `denied` (fail closed,
+reason `invalid approval status '<value>'`). The approval function sees the input **after** `tool.before` refinement
 (AI SDK runs `experimental_refineToolInput` before approval).
 
 ### 3.1 Grants
