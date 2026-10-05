@@ -79,7 +79,11 @@ export interface HarnessSession<
 
   /**
    * Read history for UIs: newest `limit` (default 50) before `beforeId`, chronological. Never
-   * compacted. Messages hidden by rewinds (spec 11 §5) are excluded unless `includeHidden`.
+   * compacted. Messages hidden by rewinds (spec 11 §5) are excluded unless `includeHidden`;
+   * the core keeps paging back until `limit` visible messages are found or the history is
+   * exhausted, so a page never comes back short because of hidden messages. Hot and cold
+   * sessions answer the same (a cold read takes the rewinds from the stored state without
+   * loading it into the session: no recovery, spec 05 §9).
    */
   messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
   /** Current context stats (spec 06 §2) and pending state (spec 11 §2). */
