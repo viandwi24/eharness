@@ -87,6 +87,8 @@ export interface HarnessMessageMeta {
   steps?: number
   durationMs?: number
   error?: { code?: string; message: string }
+  /** 0.4.0: turns with SendOptions.output (spec 05 §3.3): a valid answer was recorded; answers checked. */
+  output?: { ok: boolean; attempts: number }
 }
 ```
 
@@ -144,6 +146,7 @@ export interface DataPartDef<S extends FlexibleSchema = FlexibleSchema> {
 | `data-eh.context` | yes | `ContextStats` (spec 06 §2, absolute token counts), written after each step | context meter |
 | `data-eh.warning` | yes | `{ code: string; message: string }` | non-fatal problems (spec 10) |
 | `data-eh.input` | **no** | `{ source: 'user' \| 'event' \| \`plugin:${string}\`; text: string; files?: FileUIPart[]; clientId?: string; inboxId?: string }` (`inboxId`: a steer from the durable inbox, spec 05 §12) | input delivered **inside** a running assistant message (steer, next-step events, hook context — spec 11 §6); projected by splitting the message (§6) |
+| `data-eh.output` | **no** | `{ value: unknown; mode: 'tool' \| 'native'; attempts: number }` | the validated final answer of a turn with `SendOptions.output` (0.4.0, spec 05 §3.3); id `output` (reconciled), written once after the last step; `model: 'omit'` (never projected); `value` equals `TurnResult.output` |
 | `data-eh.compaction` | — | kind payload (§5.3) | compaction marker (kind) |
 | `data-eh.notice` | — | kind payload (§5.3) | error/abort/system notices (kind) |
 | `data-eh.event` | — | kind payload (§5.3) | app-injected events (kind) |

@@ -20,6 +20,8 @@ const load = (await import(pathToFileURL(shim).href)).default
 const entries = {
   eharness: [
     'DENIED_NEW_INPUT',
+    'FINAL_ANSWER_DESCRIPTION',
+    'FINAL_ANSWER_RECORDED',
     'FLUSH_APPROVAL_DENIED',
     'HarnessError',
     'HarnessToolError',
@@ -28,6 +30,8 @@ const entries = {
     'INTERRUPTED_UNKNOWN',
     'MAX_STEPS_WRAP_UP',
     'NOT_EXECUTED_NEW_INPUT',
+    'OUTPUT_INSTRUCTION',
+    'OUTPUT_RETRY',
     'PROGRESS_NUDGE',
     'TOOL_OUTPUT_TRUNCATED',
     'computeCost',

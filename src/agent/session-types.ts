@@ -6,6 +6,8 @@
  */
 import type {
   FileUIPart,
+  FlexibleSchema,
+  InferSchema,
   InferUIMessageChunk,
   JSONValue,
   LanguageModel,
@@ -26,6 +28,7 @@ import type {
   TurnKind,
   TurnResult,
 } from '../messages/types.ts'
+import type { OutputSpec } from '../output/types.ts'
 import type { ModelSettings } from './types.ts'
 
 /**
@@ -326,6 +329,18 @@ export interface SendOptions {
   abortSignal?: AbortSignal
   runtime?: Record<string, unknown>
   toolsContext?: Record<string, unknown>
+  /**
+   * Ask this turn for a typed final answer (0.4.0): validated against `output.schema`, retried on
+   * invalid answers, returned as `TurnResult.output`. Server-side only (`handleChatRequest` never
+   * reads it from a request body); not carried over a `'tool-pending'` stop — pass it again to
+   * `respond()`. Spec 05 §3.3.
+   */
+  output?: OutputSpec
+}
+
+/** {@link SendOptions} with a typed {@link OutputSpec} (the `send()` overload that types `output`). */
+export type SendOptionsWithOutput<S extends FlexibleSchema> = SendOptions & {
+  output: OutputSpec<S>
 }
 
 /**
@@ -404,15 +419,18 @@ export type SessionEvent<M extends UIMessage = HarnessUIMessage> =
  *
  * @see docs/specs/04-streaming.md#7-harnessrun-and-responses
  */
-export interface HarnessRun<M extends UIMessage = HarnessUIMessage> {
+export interface HarnessRun<M extends UIMessage = HarnessUIMessage, O = never> {
   readonly turnId: string
   readonly kind: TurnKind
   /** Assistant message id; resolves when `start` is written. */
   readonly messageId: Promise<string>
   /** The UI message stream. Single consumer. */
   readonly stream: ReadableStream<InferUIMessageChunk<M>>
-  /** Resolves after the turn is fully persisted. Never rejects. */
-  readonly result: Promise<TurnResult<M>>
+  /**
+   * Resolves after the turn is fully persisted. Never rejects. `output` is typed `O` for a turn
+   * started with `SendOptions.output` (spec 05 §3.3).
+   */
+  readonly result: Promise<TurnResult<M, O>>
   abort(reason?: string): void
   /** `createUIMessageStreamResponse({ stream })`. */
   toResponse(init?: ResponseInit): Response
@@ -435,13 +453,35 @@ export interface HarnessSession<
   readonly running: boolean
   /** Open the session now and surface configuration errors. Idempotent. */
   ready(): Promise<void>
-  /** Start a turn. `input` omitted = continue from history. */
+  /**
+   * Start a turn. `input` omitted = continue from history. With `options.output`, `result.output`
+   * is the validated final answer, typed from the schema (spec 05 §3.3).
+   */
+  send<S extends FlexibleSchema>(
+    input: SendInput | undefined,
+    options: SendOptionsWithOutput<S>,
+  ): HarnessRun<M, InferSchema<S>>
   send(input?: SendInput, options?: SendOptions): HarnessRun<M>
-  /** Answer pending approvals / client tool calls and continue that message. */
+  /**
+   * Answer pending approvals / client tool calls and continue that message. The output spec of the
+   * turn that stopped `'tool-pending'` is not carried over: pass `output` again.
+   */
+  respond<S extends FlexibleSchema>(
+    response: PendingResponse,
+    options: SendOptionsWithOutput<S>,
+  ): HarnessRun<M, InferSchema<S>>
   respond(response: PendingResponse, options?: SendOptions): HarnessRun<M>
   /** Answer again. */
+  regenerate<S extends FlexibleSchema>(
+    options: { messageId?: string } & SendOptionsWithOutput<S>,
+  ): HarnessRun<M, InferSchema<S>>
   regenerate(options?: { messageId?: string } & SendOptions): HarnessRun<M>
   /** Replace a user message and answer it. */
+  edit<S extends FlexibleSchema>(
+    messageId: string,
+    input: SendInput,
+    options: SendOptionsWithOutput<S>,
+  ): HarnessRun<M, InferSchema<S>>
   edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
   /** Replay + follow the running turn. */
   attach(): HarnessRun<M> | undefined

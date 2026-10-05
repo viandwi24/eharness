@@ -80,7 +80,9 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 10_000, maxItems: 20 }`; `'wait'` for `send` and `respond`: wait for the running turn and the
 queue, then run), `collect`, `model`,
 `settings`, `options` (validated by `callOptions`), `maxSteps`, `abortSignal`, `runtime`,
-`toolsContext`. Every turn operation returns a `HarnessRun`: `turnId`, `kind`, `messageId`
+`toolsContext`, `output` (`{ schema, mode?: 'tool' | 'native', maxRetries?, toolName?,
+description? }`: a typed, validated final answer in `result.output` —
+[structured output](structured-output.md)). Every turn operation returns a `HarnessRun`: `turnId`, `kind`, `messageId`
 (promise), `stream` (AI SDK UI message stream, single consumer), `result` (never rejects),
 `abort()`, `toResponse()`, `pipeTo(res)`. The stream ends only after the turn finalized: a client
 that saw `finish` can send again at once (unless a queued or other turn started meanwhile). `handleChatRequest(session, body, options?)` maps a
@@ -105,7 +107,8 @@ beyond the shown 300 characters.
 
 `TurnResult`: `turnId`, `kind`, `messageId?`, `stop`, `pending?`, `messages`, `usage`
 (`inputTokens`, `outputTokens`, `totalTokens`, `cachedInputTokens?`, `cacheWriteTokens?`,
-`costUsd?`), `steps`, `durationMs`, `error?` (`{ code?, message, details? }`).
+`costUsd?`), `steps`, `durationMs`, `error?` (`{ code?, message, details? }`), `output?` (the
+validated final answer of a turn with `SendOptions.output`, typed from the schema).
 
 | `stop` | Meaning |
 |---|---|
@@ -115,6 +118,7 @@ beyond the shown 300 characters.
 | `stuck` | the progress guard stopped a repeating or failing turn |
 | `context-thrash` | the context filled up again right after a compaction (`compaction.thrash`) |
 | `cost-cap` | `loop.maxTurnOutputTokens` exceeded or a USD budget used up |
+| `output-invalid` | `SendOptions.output`: no valid final answer within `maxRetries` retries |
 | `length`, `content-filter` | provider finish reasons |
 | `error` | provider, stream, storage or overflow error (`error.code`, e.g. `EH_CONTEXT_OVERFLOW`) |
 | `aborted`, `timeout`, `blocked`, `interrupted` | abort, time limit, `input.submit` block, crashed process |
@@ -181,7 +185,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 
 | Area | Codes |
 |---|---|
-| Loop and cost | `W_LOOP_STUCK`, `W_CONTINUE_LIMIT`, `W_BUDGET`, `W_MODEL_UNPRICED` |
+| Loop and cost | `W_LOOP_STUCK`, `W_CONTINUE_LIMIT`, `W_BUDGET`, `W_MODEL_UNPRICED`, `W_OUTPUT_INVALID` |
 | Context | `W_DEFAULT_CONTEXT_WINDOW`, `W_COMPACTION_FAILED`, `W_COMPACTION_FLUSH_SKIPPED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CONTEXT_THRASH`, `W_CACHE_BUST` |
 | Tools and sources | `W_SHADOWED`, `W_TOOL_SOURCE_FAILED`, `W_INVALID_TOOL_NAME`, `W_MCP_DRIFT`, `W_TOOL_OUTPUT_LIMITED`, `W_GRANT_IGNORED` |
 | Skills | `W_INVALID_SKILL`, `W_SKILL_SOURCE_FAILED` |
@@ -210,10 +214,11 @@ tool calls that never finished), `DENIED_NEW_INPUT`, `NOT_EXECUTED_NEW_INPUT` (p
 answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
 `TOOL_OUTPUT_TRUNCATED` (truncation marker), `TOOL_OUTPUT_PRUNED` (placeholder of a pruned tool
 output), `FLUSH_APPROVAL_DENIED` (denial reason of approval-gated calls in a pre-compaction flush), `FILE_UNAVAILABLE` (a file of an earlier turn that
-can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
-`eharness/memory` exports `MEMORY_PROTOCOL`, `PINNED_PREAMBLE` and `MEMORY_FLUSH_PROMPT` (with
-`MEMORY_TOOLS`, `MEMORY_FLUSH_TOOLS`, `DEFAULT_MAX_FILE_CHARS`, `DEFAULT_MAX_PINNED_CHARS` and
-`executeMemoryCommand()` for an app-supplied memory tool).
+can no longer be downloaded), `FINAL_ANSWER_DESCRIPTION`, `FINAL_ANSWER_RECORDED`,
+`OUTPUT_INSTRUCTION`, `OUTPUT_RETRY` (structured output). `eharness/todos` exports its own
+(`TODOS_*`), `eharness/memory` exports `MEMORY_PROTOCOL`, `PINNED_PREAMBLE` and
+`MEMORY_FLUSH_PROMPT` (with `MEMORY_TOOLS`, `MEMORY_FLUSH_TOOLS`, `DEFAULT_MAX_FILE_CHARS`,
+`DEFAULT_MAX_PINNED_CHARS` and `executeMemoryCommand()` for an app-supplied memory tool).
 
 ## Other exports
 
@@ -228,7 +233,8 @@ can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
 - Messages: `uuidv7()`, `isUuidV7()`, `createKindMessage()`, `isKindMessage()`,
   `defineMessageKind()`, `defineDataPart()`, types `HarnessUIMessage`, `HarnessMetadata`
   (`metadata.eharness`: `createdAt`, `kind`, `turnId`, `model`, `usage`, `stop`, `steps`,
-  `durationMs`, `pending`, `error`, …), `DataChunk`.
+  `durationMs`, `pending`, `error`, `output`, …), `DataChunk`, `OutputPartData` (the
+  `data-eh.output` part).
 - Skills: `defineSkill()`, `defineSkillSource()`, `parseSkillMarkdown()`, `validateSkillPath()`.
 - Models: `modelsDevCatalog()`, `lookupModel()`, `computeCost()`.
 - `version`: the package version of the build.

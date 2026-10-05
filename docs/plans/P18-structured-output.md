@@ -1,6 +1,6 @@
 # P18 — Structured final output
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: 0.4 proposal item **U6** (roadmap item "Output guardrails", schema part).
 
@@ -113,40 +113,40 @@ Normative rules (spec 05 new §3.3 "Structured output"):
 
 ## Checklist
 
-- [ ] ADR-0023 "Structured final output" (tool vs native, why `final_answer` is appended last,
+- [x] ADR-0023 "Structured final output" (tool vs native, why `final_answer` is appended last,
       why retries reuse continuations, why no carry-over across `respond()`).
-- [ ] Specs: 05 §2 (`SendOptions.output`, `HarnessRun` generic), new §3.3, §3.1 rule for
+- [x] Specs: 05 §2 (`SendOptions.output`, `HarnessRun` generic), new §3.3, §3.1 rule for
       `final_answer`; 03 §4.3 `data-eh.output`, §3 `metadata.eharness.output`; 04 §7
       `HarnessRun<M, O>`; 10 §4 stop reason + `TurnResult.output`, §2 `W_OUTPUT_INVALID`, §5 texts
       (`FINAL_ANSWER_RECORDED`, `OUTPUT_INSTRUCTION`, `OUTPUT_RETRY`); 11 §4 respond note.
-- [ ] Type tests first (`src/session/output.test-d.ts`): `result.output` is `z.infer<schema>`
+- [x] Type tests first (`src/session/output.test-d.ts`): `result.output` is `z.infer<schema>`
       for zod, `InferSchema` for `jsonSchema<T>()` and a Standard Schema; `send()` without
       `output` keeps `HarnessRun<M>` unchanged.
-- [ ] Runtime tests first (`src/session/output.int.test.ts`, scripted model):
-  - [ ] tool mode valid first try → `'complete'`, `output`, `data-eh.output` stored;
-  - [ ] invalid then valid (retry with forced `toolChoice`) → attempts 2;
-  - [ ] never valid → `'output-invalid'` after `maxRetries`, warning;
-  - [ ] model answers text without calling `final_answer` → retry reminder;
-  - [ ] native mode with a scripted model returning JSON text → `output`; invalid JSON → retry;
+- [x] Runtime tests first (`src/session/output.int.test.ts`, scripted model):
+  - [x] tool mode valid first try → `'complete'`, `output`, `data-eh.output` stored;
+  - [x] invalid then valid (retry with forced `toolChoice`) → attempts 2;
+  - [x] never valid → `'output-invalid'` after `maxRetries`, warning;
+  - [x] model answers text without calling `final_answer` → retry reminder;
+  - [x] native mode with a scripted model returning JSON text → `output`; invalid JSON → retry;
         `NoOutputGeneratedError` path;
-  - [ ] `final_answer` is last in `toolOrder`; tools of the next turn without output unchanged;
-  - [ ] Standard Schema without JSON Schema support → `EH_INVALID_INPUT` run error;
-  - [ ] tool name collision → `EH_INVALID_INPUT`;
-  - [ ] budgets / `maxSteps` / abort during retry keep their stop reasons;
-  - [ ] plugin `turn.beforeEnd` continuation still runs first.
-- [ ] Implement.
-- [ ] Guide `docs/guides/structured-output.md` (+ `guides/README.md` row); offline example
+  - [x] `final_answer` is last in `toolOrder`; tools of the next turn without output unchanged;
+  - [x] Standard Schema without JSON Schema support → `EH_INVALID_INPUT` run error;
+  - [x] tool name collision → `EH_INVALID_INPUT`;
+  - [x] budgets / `maxSteps` / abort during retry keep their stop reasons;
+  - [x] plugin `turn.beforeEnd` continuation still runs first.
+- [x] Implement.
+- [x] Guide `docs/guides/structured-output.md` (+ `guides/README.md` row); offline example
       `examples/structured-output.ts` in `examples.test.ts`.
-- [ ] `reference.md`; changeset; board.
+- [x] `reference.md`; changeset; board.
 
 ## Acceptance criteria
 
-- [ ] `const { output } = await session.send(x, { output: { schema } }).result` is typed and
+- [x] `const { output } = await session.send(x, { output: { schema } }).result` is typed and
       validated in both modes.
-- [ ] Failure is bounded (`maxRetries`, continuation bounds, budgets) and observable
+- [x] Failure is bounded (`maxRetries`, continuation bounds, budgets) and observable
       (`'output-invalid'`, warning, metadata).
-- [ ] Turns without `output` are byte-identical to 0.3 (wire golden, stored golden).
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] Turns without `output` are byte-identical to 0.3 (wire golden, stored golden).
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -169,6 +169,32 @@ Normative rules (spec 05 new §3.3 "Structured output"):
   Decision for 0.4: no (wrap-up unchanged, `output` undefined); roadmap candidate.
 - `Output.array` / `Output.choice` in native mode: only `object` in 0.4 (schema-driven);
   `choice` can be expressed as an enum object. Roadmap if requested.
+- Implementation decisions (most conservative option, recorded during implementation):
+  - A retry that is needed when the step budget is used up ends `'max-steps'` **without** the
+    wrap-up step (the model already answered in text; avoids one more paid call). A retry refused
+    by `maxContinues` / `maxIdleContinues` ends `'output-invalid'` (with `W_CONTINUE_LIMIT`,
+    `details.owner: 'eh.output'`, then `W_OUTPUT_INVALID`).
+  - The output tool is core-owned and **not** wrapped: no `tool.before` / `tool.after` hooks, no
+    output limits; the approval function answers `'not-applicable'` for it (a `policy` /
+    `risk.unknown` of `'user-approval'` never makes `final_answer` pending). It is appended to a
+    restricted `activeTools` list.
+  - A failed `final_answer` call (schema error) counts as one attempt; the next step is **not**
+    forced (the model already tries to answer); only a missing answer gets the forced
+    `toolChoice`.
+  - A successful `final_answer` in a step that also left an approval pending ends `'complete'`
+    (rule 3a before rule 4, as designed); the pending call is answered `INTERRUPTED_TURN`.
+  - Native mode passes `Output.object({ name })` only when `toolName` is set explicitly.
+  - `metadata.eharness.output` is written on every committed turn with an output spec (also
+    `{ ok: false, attempts: 0 }` for `'tool-pending'` / errors before any answer).
+  - `TurnResult<M, O = unknown>` and `HarnessRun<M, O = never>` (never keeps `HarnessRun<M>`
+    unchanged and lets an untyped run be assigned to a typed one; overloads on all four turn
+    operations). Extra fixed text `FINAL_ANSWER_DESCRIPTION` (default tool description).
+  - The forced `toolChoice` of a tool-mode retry is enforced by AI SDK 7: a model that answers
+    without calling the tool fails that step with `ToolChoiceViolationError` (stop `'error'`, not
+    `'output-invalid'`). Real providers honour forced tool choice; eharness does not catch it
+    (AI-SDK-first). Roadmap: map it to a failed attempt if it shows up in practice.
+  - `maxRetries` must be a non-negative integer and `mode` `'tool' | 'native'`, else
+    `EH_INVALID_INPUT` (`'output-spec'`); `toolName` must match `^[a-zA-Z0-9_-]{1,64}$`.
 
 ## Requests to other phases
 

@@ -121,6 +121,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_CONTEXT_THRASH` | the context was above `summarizeAt` again within `compaction.thrash.withinSteps` steps after an automatic compaction; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `lastCompaction` = step index of that compaction, spec 06 §4) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 | `W_ABORT_UNSUPPORTED` | `abort()` / `requestAbort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |
+| `W_OUTPUT_INVALID` | a turn with `SendOptions.output` found no valid final answer within `maxRetries` retries (or a retry was refused by the continuation bounds); the turn stops with `'output-invalid'` (`details: { attempts, lastError }`, spec 05 §3.3; 0.4.0) |
 | `W_INBOX_FAILED` | an `InboxAdapter` call failed (`details: { sessionId, operation }`: `claim`, `ack`, `release`, `notify`, `subscribe`, `drain`, `enqueue` of an abort — then the state request is used — or `input` for a stored input that no longer normalizes, which is dropped); items are redelivered after their claim expires (spec 05 §12) |
 
 ## 3. `describeError`
@@ -160,6 +161,7 @@ export type StopReason =
   | 'interrupted'     // the process died mid-turn; set by crash recovery (spec 05 §9)
   | 'max-steps'       // step budget reached (loop.maxSteps / SendOptions.maxSteps, + extendSteps)
   | 'cost-cap'        // loop.maxTurnOutputTokens or a budget exceeded
+  | 'output-invalid'  // SendOptions.output: no valid final answer within maxRetries (spec 05 §3.3; 0.4.0)
   | `plugin:${string}` // a step.end hook stopped the turn: 'plugin:<plugin>:<reason>'
 ```
 
@@ -167,7 +169,7 @@ The stop reason is stored in `metadata.eharness.stop` of the assistant message a
 `TurnResult`:
 
 ```ts
-export interface TurnResult<M = HarnessUIMessage> {
+export interface TurnResult<M = HarnessUIMessage, O = unknown> {
   turnId: string
   kind: TurnInfo['kind']
   /** Assistant message written by the turn (for respond(): the continued message). Undefined for early failures and blocks without persist. */
@@ -183,8 +185,16 @@ export interface TurnResult<M = HarnessUIMessage> {
   durationMs: number
   /** `details` of an EH_* error (e.g. `{ reason: 'stale' }` for respond(), spec 11); not stored. */
   error?: { code?: string; message: string; details?: Record<string, unknown> }
+  /**
+   * 0.4.0: the validated final answer of a turn started with SendOptions.output (spec 05 §3.3),
+   * typed from the schema (HarnessRun<M, O>, spec 04 §7). Set only with stop 'complete'.
+   */
+  output?: O
 }
 ```
+
+`'output-invalid'` (0.4.0) is a **type-level** addition like `'stuck'` (0.3) and
+`'context-thrash'` (0.4.0): exhaustive `switch` statements over `StopReason` must add a case.
 
 ## 5. Fixed texts
 
@@ -203,3 +213,7 @@ UIs and tests). Changing one is a minor change (it changes what models see).
 | `TOOL_OUTPUT_TRUNCATED` | `…[truncated {n} chars]…` | output limits (spec 09 §4) |
 | `TOOL_OUTPUT_PRUNED` | `[output of {tool} pruned: {n} chars]` | prune stage placeholder (`{n}` = characters of the original output; spec 06 §5.0) |
 | `FILE_UNAVAILABLE` | `[file unavailable: {mediaType} {filename}]` | a file of an earlier turn whose URL cannot be downloaded (spec 05 §3 step 7) |
+| `FINAL_ANSWER_DESCRIPTION` | `Submit the final answer of this turn. Call it once, when you are done; its input is the answer.` | default description of the output tool (`SendOptions.output`, tool mode, spec 05 §3.3; 0.4.0) |
+| `FINAL_ANSWER_RECORDED` | `Final answer recorded.` | result of a successful output tool call (spec 05 §3.3; 0.4.0) |
+| `OUTPUT_INSTRUCTION` | ``When you are done, call the `{tool}` tool once with your final answer. Its input must match the tool schema; the turn ends when the call succeeds.`` | turn reminder line in tool mode (`{tool}` = output tool name, spec 05 §3.3; 0.4.0) |
+| `OUTPUT_RETRY` | `Your final answer is missing or invalid: {error}` + newline + `Give the final answer again; it must match the required schema.` | retry input (`data-eh.input`, source `plugin:eh.output`; `{error}` trimmed to 1 000 characters, spec 05 §3.3; 0.4.0) |

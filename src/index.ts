@@ -29,6 +29,7 @@ export type {
   PendingResponse,
   SendInput,
   SendOptions,
+  SendOptionsWithOutput,
   SerializedInput,
   SessionEvent,
   SessionLock,
@@ -77,12 +78,16 @@ export {
 export {
   DENIED_NEW_INPUT,
   FILE_UNAVAILABLE,
+  FINAL_ANSWER_DESCRIPTION,
+  FINAL_ANSWER_RECORDED,
   FLUSH_APPROVAL_DENIED,
   INTERRUPTED_CRASH,
   INTERRUPTED_TURN,
   INTERRUPTED_UNKNOWN,
   MAX_STEPS_WRAP_UP,
   NOT_EXECUTED_NEW_INPUT,
+  OUTPUT_INSTRUCTION,
+  OUTPUT_RETRY,
   PROGRESS_NUDGE,
   TOOL_OUTPUT_PRUNED,
   TOOL_OUTPUT_TRUNCATED,
@@ -100,6 +105,7 @@ export type {
   InferHarnessUIMessage,
   InputPartData,
   NoticePayload,
+  OutputPartData,
   PendingState,
   ProjectionContext,
   RewindPayload,
@@ -114,6 +120,7 @@ export type {
 export { lookupModel, modelsDevCatalog } from './models/catalog.ts'
 export { computeCost } from './models/cost.ts'
 export type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './models/types.ts'
+export type { OutputSpec } from './output/types.ts'
 export { definePlugin } from './plugin/define-plugin.ts'
 export type {
   AddUsageOptions,

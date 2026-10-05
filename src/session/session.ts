@@ -14,6 +14,8 @@ import type {
   HarnessSession,
   InboxAdapter,
   MessageAdapter,
+  PendingResponse,
+  SendInput,
   SendOptions,
   SessionOptions,
   StateAdapter,
@@ -1003,7 +1005,7 @@ export function createSessionHandle(args: {
       touch()
       await ensureOpen()
     },
-    send(input, options = {}) {
+    send(input?: SendInput, options: SendOptions = {}) {
       assertOpen()
       if (rt.running) {
         const ifBusy = options.ifBusy ?? 'reject'
@@ -1043,7 +1045,7 @@ export function createSessionHandle(args: {
       }
       return begin({ kind: 'send', input, options, queued: false })
     },
-    respond(response, options = {}) {
+    respond(response: PendingResponse, options: SendOptions = {}) {
       assertOpen()
       const ignoreUnknown =
         (options as SendOptions & { [RESPOND_IGNORE_UNKNOWN]?: boolean })[
@@ -1068,7 +1070,7 @@ export function createSessionHandle(args: {
         respond: { response, ignoreUnknown },
       })
     },
-    regenerate(options = {}) {
+    regenerate(options: { messageId?: string } & SendOptions = {}) {
       assertOpen()
       if (rt.running) throw busyError(id)
       const { messageId, ...rest } = options
@@ -1080,7 +1082,7 @@ export function createSessionHandle(args: {
         ...(messageId === undefined ? {} : { target: messageId }),
       })
     },
-    edit(messageId, input, options = {}) {
+    edit(messageId: string, input: SendInput, options: SendOptions = {}) {
       assertOpen()
       if (rt.running) throw busyError(id)
       return begin({ kind: 'edit', input, options, queued: false, target: messageId })
