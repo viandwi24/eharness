@@ -18,6 +18,7 @@ import type { SessionRuntime } from '../session/runtime.ts'
 import type { BudgetOverrun, CompactOutcome, SessionCompaction } from './compact.ts'
 import { applyHardCap } from './guard.ts'
 import { isContextOverflow, reportedTokenCount } from './overflow.ts'
+import { type PruneStats, pruneTurns, resolvePrune } from './prune.ts'
 import { toolSetTokens, wireTokens } from './tokens.ts'
 import { groupTurns, isBoundaryMessage, partialOf, stepStarts, trimToPartial } from './turns.ts'
 
@@ -122,6 +123,9 @@ export function createTurnCompaction(args: {
   const messages = rt.agent.messages
   const config = rt.agent.config
   const select = config.compaction === false ? undefined : config.compaction?.select
+  const prune = resolvePrune(config.compaction)
+  /** What the prune stage replaced in the last built wire (`undefined` when prune is off). */
+  let pruned: PruneStats | undefined
   const isBoundary = (m: HarnessUIMessage) => isBoundaryMessage(m, messages)
   const instructionsText = [registry.block1, registry.block2, registry.turnReminder]
     .filter((t): t is string => t !== undefined)
@@ -178,9 +182,15 @@ export function createTurnCompaction(args: {
     const prior = body.filter((m) => m.id < args.currentStartId)
     const current = body.filter((m) => m.id >= args.currentStartId)
     const head = boundary === undefined ? [] : await project([boundary], projectOptions)
-    const turns: ModelMessage[][] = []
+    let turns: ModelMessage[][] = []
     for (const range of groupTurns(prior)) {
       turns.push(await project(prior.slice(range.start, range.end), projectOptions))
+    }
+    // prune stage (spec 06 §5.0): completed turns only, view-only, deterministic
+    if (prune !== undefined) {
+      const result = pruneTurns(turns, prune)
+      turns = result.turns
+      pruned = result.stats
     }
     const currentWire = await project(current, projectOptions)
     segments = [head.length, ...turns.map((t) => t.length)]
@@ -308,7 +318,7 @@ export function createTurnCompaction(args: {
           tools: (await fixed()) - instructionsRaw,
           messages: wireTokens(wire, engine.count),
         },
-        { maxOutputTokens },
+        { maxOutputTokens, pruned },
       )
     },
     isOverflow: (error) => isContextOverflow(error, config.isContextOverflow),

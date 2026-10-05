@@ -23,4 +23,5 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0016](0016-model-catalog-and-budgets.md) | Model limits and prices come from an app-supplied catalog |
 | [0017](0017-tool-risk-and-approval-decisions.md) | Tool risk in AI SDK metadata; approval decisions are observable |
 | [0018](0018-todos-in-history.md) | Todos live in the conversation, reminders are volatile |
+| [0019](0019-prune-stage-and-thrash-stop.md) | Prune stage and thrash stop (amends 0004) |
 | [0022](0022-memory-on-filesystem.md) | Memory on FileSystem; provider memory tools are app-supplied |

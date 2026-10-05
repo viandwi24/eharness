@@ -1034,11 +1034,13 @@ export function createSessionHandle(args: {
       if (rt.view === undefined) await ensureContext()
       const fixed = await staticTokens(open)
       const core = rt.state.core()
+      const measured = await compaction.measureView(rt.view ?? [])
       return {
-        ...compaction.stats(config.model, {
-          ...fixed,
-          messages: await compaction.viewTokens(rt.view ?? []),
-        }),
+        ...compaction.stats(
+          config.model,
+          { ...fixed, messages: measured.tokens },
+          { pruned: measured.pruned },
+        ),
         pending: core.pending ?? null,
         activeTurn: core.activeTurn ?? null,
       }

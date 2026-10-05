@@ -104,6 +104,7 @@ const contextSchema = z.looseObject({
   lastCompaction: z
     .looseObject({ markerId: z.string(), before: z.number(), after: z.number(), at: z.number() })
     .optional(),
+  pruned: z.looseObject({ outputs: z.number(), chars: z.number() }).optional(),
 })
 
 const warningSchema = z.looseObject({ code: z.string(), message: z.string() })

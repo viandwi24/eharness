@@ -2,7 +2,8 @@
 
 Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/compaction`.
 
-Compaction is **fixed** (ADR-0004): one well-tested algorithm with a few knobs. The extension point
+Compaction is **fixed** (ADR-0004, amended by ADR-0019): one well-tested algorithm with a few
+knobs; the prune stage (§5.0) is a setting of it, not a strategy. The extension point
 is storage (spec 05), not the strategy. The output of compaction is **data** — an `eh.compaction`
 kind message — so any `MessageAdapter` stores it without knowing what compaction is (ADR-0005).
 
@@ -26,8 +27,24 @@ export interface CompactionConfig {
   countTokens?: (text: string) => number
   /** Escape hatch: final say over the assembled view, before the guard (§6). */
   select?: (view: HarnessUIMessage[], ctx: HarnessContext) => HarnessUIMessage[]
+  /** View-only pruning of old tool outputs (§5.0). Default off; `{}` = on with defaults. (0.4.0) */
+  prune?: PruneConfig | false
+}
+
+export interface PruneConfig {
+  /** Completed turns (newest first) whose tool outputs are never pruned. Default 2. The current turn is never pruned. */
+  keepTurns?: number
+  /** Only outputs whose projected size exceeds this many characters are pruned. Default 2_000. */
+  minChars?: number
+  /** Final tool names never pruned. */
+  exclude?: string[]
+  /** Placeholder text (pure). Default TOOL_OUTPUT_PRUNED (`[output of <tool> pruned: <n> chars]`). */
+  replaceWith?: (part: ToolResultPart) => string   // AI SDK ToolResultPart (ADR-0001)
 }
 ```
+
+`prune.keepTurns` must be an integer ≥ 0 and `prune.minChars` a number ≥ 0
+(`EH_CONFIG_INVALID` otherwise, spec 01 §7).
 
 `compaction: false` disables summarization; the guard (§6) and overflow recovery (§7, without
 the compaction step) still run.
@@ -68,8 +85,16 @@ export interface ContextStats {
   summarizeAt: number            // absolute tokens
   hardLimit: number              // absolute tokens (§6)
   lastCompaction?: { markerId: string; before: number; after: number; at: number }
+  /** Prune stage (§5.0): outputs replaced and characters saved; present only when prune is on. */
+  pruned?: { outputs: number; chars: number }
 }
 ```
+
+With prune on, `messages` reflects the **pruned** wire: the turn's `data-eh.context` measures the
+request it built; `session.stats()` (idle) measures the next request, in which every completed
+turn except the newest `keepTurns` is pruned. The saving of a message (estimate of its projection
+minus the estimate of its pruned projection) is computed once per stored message and cached for
+the session; `metadata.eharness.tokens` stays the unpruned estimate.
 
 ## 3. Marker payload
 
@@ -101,6 +126,11 @@ by its `step-start` parts; step `n` = the parts after the `n`-th `step-start` (0
 During compaction the core writes `data-eh.status { state: 'compacting' }` (transient) and a
 transient `data-eh.compaction` part with the marker payload, so live UIs can show a divider.
 
+**Order per check (prune on):** prune → recompute the estimate → summarize only if still above
+`summarizeAt`. The wire is built with the prune stage applied (§6), so the pre-turn and mid-turn
+triggers measure the pruned size; the skip rule's kept part is measured pruned too. The guard runs
+after, unchanged.
+
 **Skip rule (no churn):** compaction is skipped — and the guard handles the size — when the part to
 summarize (`drop`, §5.1) contains no non-marker message (precisely: nothing that renders into the
 transcript of §5.3 besides the previous summary), or when the estimated result (summary
@@ -117,6 +147,38 @@ a turn, and rejects `EH_SESSION_BUSY` when a live turn of another instance owns 
 session `data` event.
 
 ## 5. Algorithm
+
+### 5.0 Prune (0.4.0, off by default)
+
+With `compaction.prune` set, old and large tool outputs are replaced by a short placeholder in
+the request — cheaper than summarizing and friendly to the prompt cache — before the summarizer
+is considered. Normative rules:
+
+1. **View-only.** Prune runs when the turn wire is built from the view (turn start and after a
+   compaction, §6): it is applied to the projection of every completed turn (§5.1 grouping)
+   except the newest `keepTurns`. The current turn is never pruned. Stored messages,
+   `metadata.eharness.tokens` and UI history are never changed.
+2. **Deterministic.** Whether an output is pruned depends only on its turn's distance from the
+   current turn, its size and its tool name. Same view → same wire, byte for byte. Size = the
+   projected output in characters: `text` the string length, `json` the serialized JSON length,
+   `content` the sum of its text items plus the serialized length of other items. Only outputs
+   with size > `minChars` are pruned. `replaceWith` must be pure; its result replaces the output
+   as `{ type: 'text', value }` (a throwing or non-string `replaceWith` falls back to the default
+   placeholder). `error-text`, `error-json` and `execution-denied` results are never pruned —
+   they are short and carry meaning. Tools named in `exclude` are never pruned.
+3. **Pairs stay intact.** Only the `output` of a `tool-result` part of a `tool` message is
+   replaced; the `tool-call` and the result part stay (ids, names, inputs unchanged). Tool inputs
+   are not pruned. Provider-executed results (inside assistant messages) are left alone (their
+   format is provider-specific).
+4. **Order per check:** prune → recompute the estimate → summarize only if still above
+   `summarizeAt` (§4). The guard (§6) runs after, unchanged.
+5. **Cache cost.** The wire is rebuilt at turn start, so when a turn ages past `keepTurns` the
+   prefix changes **once per turn**, at the oldest newly pruned output; inside a turn the prefix
+   is stable (completed turns do not change within a turn, so a mid-turn rebuild prunes nothing
+   new).
+6. **Summarizer transcript** (§5.3) uses the original outputs (capped at 2 000 characters), not
+   the placeholders: the summary is where information is condensed.
+7. **Accounting:** see §2 (`ContextStats.messages` reflects the pruned wire, `ContextStats.pruned`).
 
 ### 5.1 Split
 
@@ -261,8 +323,9 @@ the in-turn part of the wire (response messages appended by the loop), the loop 
 index where the current turn starts.
 
 The wire of a turn is built from the view (at turn start and after every compaction): the
-boundary's projection (head), one segment per completed turn (projected per turn), then the
-current turn. `select` (§1) is applied to the view here, so it changes the wire only. Sanitize
+boundary's projection (head), one segment per completed turn (projected per turn, then pruned
+when `prune` is on, §5.0), then the current turn. `select` (§1) is applied to the view here, so
+it changes the wire only. Sanitize
 (step 1) runs before `step.prepare` (hooks see the sanitized wire); the hard cap (step 2) runs
 after it, for the step's model and settings (`maxOutputTokens`), and counts the step reminder.
 A `step.prepare` `messages` rewrite is treated as the current turn (no droppable turns).
@@ -328,7 +391,8 @@ already been delivered).
 
 ## 8. What compaction never does
 
-- Delete or rewrite stored messages (history stays complete for UIs and audits).
+- Delete or rewrite stored messages (history stays complete for UIs and audits). The prune stage
+  (§5.0) changes the request only, never storage.
 - Summarize messages hidden by a rewind.
 - Run while another compaction for the same session is running.
 - Change the instructions or the tool set.

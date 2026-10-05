@@ -319,6 +319,7 @@ export function buildStats(
   limits: ContextLimits,
   raw: { instructions: number; tools: number; messages: number },
   lastCompaction?: ContextStats['lastCompaction'],
+  pruned?: ContextStats['pruned'],
 ): ContextStats {
   const instructions = calibration.apply(raw.instructions)
   const tools = calibration.apply(raw.tools)
@@ -333,5 +334,6 @@ export function buildStats(
     hardLimit: limits.hardLimit,
   }
   if (lastCompaction !== undefined) stats.lastCompaction = lastCompaction
+  if (pruned !== undefined) stats.pruned = pruned
   return stats
 }
