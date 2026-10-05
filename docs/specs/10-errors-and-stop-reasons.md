@@ -118,6 +118,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 | `W_ABORT_UNSUPPORTED` | `abort()` / `requestAbort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |
+| `W_INBOX_FAILED` | an `InboxAdapter` call failed (`details: { sessionId, operation }`: `claim`, `ack`, `release`, `notify`, `subscribe`, `drain`, `enqueue` of an abort — then the state request is used — or `input` for a stored input that no longer normalizes, which is dropped); items are redelivered after their claim expires (spec 05 §12) |
 
 ## 3. `describeError`
 

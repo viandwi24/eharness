@@ -243,10 +243,11 @@ edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
 ```ts
 export interface SendOptions {
   /**
-   * When a turn is running: 'reject' (default, EH_SESSION_BUSY thrown), 'queue' or 'steer'
-   * (send() only), or 'wait' (send() and respond(), §6.2).
+   * When a turn is running: 'reject' (default, EH_SESSION_BUSY thrown), 'queue', 'steer' or
+   * 'collect' (send() only; 'collect': merged with other collected inputs into one queued turn,
+   * spec 05 §12 rule 6), or 'wait' (send() and respond(), §6.2).
    */
-  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait' | 'collect'
   // … other fields in spec 05 §2
 }
 ```
@@ -309,9 +310,14 @@ nothing: its kind message is stored and reaches the model at the next turn. Queu
 drop the queue (dropped runs resolve with `stop: 'aborted'`, spec 05 §2). A cross-process abort
 (spec 05 §9.1) drops the queue of **both** instances: the requester's (`abort()` /
 `requestAbort()` drop it first) and the owner's (its turn ends `'aborted'`, which drops the queue
-like a local abort; its waiting steers become `input-dropped`). The queue is per process
-and lost on restart; cross-instance queuing is the application's job (a `SessionLock` rejection
-is a run error).
+like a local abort; its waiting steers become `input-dropped`). The in-memory queue is per
+process and lost on restart (a `SessionLock` rejection, or a turn running in another instance,
+is a run error of `send()`). **Cross-instance queuing** (0.4.0) goes through
+`session.enqueue(input, { mode: 'queue' | 'steer' | 'collect' })` and an optional durable
+`storage.inbox` (spec 05 §12): the input is stored, and the instance that holds the session —
+the one running its turn, or any free live instance when none runs — applies it in id order: a
+steer at the next step boundary of the running turn, a queued input or a collect burst as the
+next turn. Items survive restarts (at-least-once with dedupe). `abort()` never drops them.
 
 **`ifBusy: 'wait'`** (`send()` and `respond()`) joins the same FIFO, with three differences: the
 waiting caller is not dropped by `session.abort()` (it aborts only the running turn and the
@@ -347,8 +353,12 @@ inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, opts?: {
   the turn's inbox like any other: it is delivered once at step 0 as `data-eh.input` and is not
   also projected as a standalone message of that turn, even when its id sorts before the turn's
   user message — so the stored order projects exactly like the wire the model saw (ADR-0011).
-- `wake` requires the session to be live in this process. Cross-process wake-ups are done by the
-  application calling `agent.session(id).inject(…, { wake: true })` in the right process.
+- `wake` from the process that runs (or can run) the session works as described here. **Another
+  process** (0.4.0): with `storage.inbox`, when a turn of the session runs in another instance,
+  `inject(…, { wake: true })` saves the kind message, enqueues a `wake` item and notifies the
+  holder (no `run` is returned); the holder runs a no-input wake turn after its running turn
+  (spec 05 §12). Without an inbox, the turn starts in the calling process as soon as the session
+  is free there (a live foreign turn makes it a run error `EH_SESSION_BUSY`).
 - The delivered text is the kind's model projection (spec 03 §5.1), text parts joined with a blank
   line. A kind that is not projected (`'omit'`, `null`), a projection with file parts, or a
   projection that throws (`W_HOOK_FAILED`) is not delivered inline: the message stays a plain

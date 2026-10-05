@@ -25,3 +25,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0018](0018-todos-in-history.md) | Todos live in the conversation, reminders are volatile |
 | [0021](0021-cross-process-abort.md) | Cross-process abort through state compare-and-set |
 | [0022](0022-memory-on-filesystem.md) | Memory on FileSystem; provider memory tools are app-supplied |
+| [0024](0024-durable-inbox-port.md) | Durable inbox port: at-least-once with dedupe, drained by the session holder |
