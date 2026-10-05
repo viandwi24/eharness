@@ -63,12 +63,11 @@ Rules for adapters:
   given, is the stored version. Conditional writes and deletes are atomic compare-and-set.
 - `grep` (optional): lines are split on `\n` with a trailing `\r` removed; `line` is 1-based;
   hits sorted by path then line, at most `maxHits`; `prefix` has the `list` semantics; the
-  pattern's `g`/`y` flags must not make matching stateful. The tool has already refused patterns
-  with nested quantifiers or backreferences (§3), but that check is syntactic, not a proof: an
-  adapter that pushes `grep` down (a database, a search service) should run a linear-time engine
-  (e.g. RE2) or apply the same limits — at most 512 pattern characters, only the first 10 000
-  characters of each line matched (`memoryFs` does) — so a model's pattern can never freeze the
-  process or the backend.
+  pattern's `g`/`y` flags must not make matching stateful. The tool only passes patterns of its
+  conservative safe subset (§3), a syntactic guard, not a guarantee: an adapter that pushes `grep`
+  down (a database, a search service) should run a linear-time engine (e.g. RE2) or apply the
+  same limits — at most 512 pattern characters, only the first 2 000 characters of each line
+  matched (`memoryFs` does) — so a model's pattern cannot freeze the process or the backend.
 - Returned objects are copies (mutating them never changes stored data).
 - Text only in v0 (UTF-8). Binary files are a roadmap item.
 - Conformance: `fileSystemConformance(factory, { requireStat?, requireGrep? })` in
@@ -193,12 +192,20 @@ Exact formats (model-visible, api-stability.md):
 - Hidden prefixes: `read_file` answers exactly like a missing file, `list_files` / `grep` skip
   them (a hidden prefix lists `No files under <prefix>.`), mutations are `REJECTED`.
 - `grep`: `pattern` is a JavaScript regular expression without flags, matched per line (only
-  the first 10 000 characters of a line are matched; a pattern without regex metacharacters is a
-  plain substring search); `ERROR: invalid pattern: <message>` when it does not compile, and
-  (0.4.0, against catastrophic backtracking) `ERROR: invalid pattern: longer than 512
-  characters`, `ERROR: invalid pattern: backreferences are not supported` and
-  `ERROR: invalid pattern: nested quantifier (catastrophic backtracking)` — a quantified group
-  that itself contains `*`, `+` or `{n,}` (`(a+)+`, `(\w+\s?)*`). One line
+  the first 2 000 characters of a line are matched; a pattern without regex metacharacters is a
+  plain substring search); `ERROR: invalid pattern: <message>` when it does not compile.
+  **Safe subset (0.4.0):** a conservative guard against slow backtracking — not a guarantee of
+  linear time — refuses patterns longer than 512 characters, backreferences, lookarounds, more
+  than one unbounded quantifier (`*`, `+`, `{n,}`, `{n,m}` with m > 100: `\w*\w*x`,
+  `.*foo.*bar`), and repeated groups that contain a repeating quantifier or an alternation
+  (`(a+)+`, `(\d+\.)+\d+`, `(a|a)*b`, `(foo|bar)+`). The answer is
+  `ERROR: invalid pattern: <reason>. grep accepts a conservative safe subset of regular
+  expressions; use a simpler pattern or a plain literal.` with reason `longer than 512
+  characters`, `backreferences are not supported`, `lookaround assertions are not supported`,
+  `more than one unbounded quantifier`, `a repeated group contains a repeating quantifier` or
+  `a repeated group contains an alternation`. Search for one part at a time, or for a literal,
+  instead. With one quantifier a match is at worst quadratic in the scanned 2 000 characters (a
+  few ms per line). One line
   `<path>:<line>: <text>` per hit (text cut to 300 characters + ` …`; a cut line ends with
   ` (match at charOffset=<c>)`, the 0-based character offset of the first match, for
   `read_file`), sorted by path and line,

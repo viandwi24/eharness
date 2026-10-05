@@ -353,7 +353,9 @@ export function createFileTools(
       execute: async ({ pattern, prefix }): Promise<string> => {
         // no catastrophic backtracking: the event loop must never freeze on a model's pattern
         const unsafe = unsafePatternReason(pattern)
-        if (unsafe !== undefined) return `ERROR: invalid pattern: ${unsafe}`
+        if (unsafe !== undefined) {
+          return `ERROR: invalid pattern: ${unsafe}. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`
+        }
         let regex: RegExp
         try {
           regex = new RegExp(pattern)
