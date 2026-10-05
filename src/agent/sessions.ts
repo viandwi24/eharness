@@ -82,6 +82,8 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
         return cached.session
       }
       const storage = storageFor(options)
+      // a handle that is still closing stays the only writer until its close finished (spec 05 §1)
+      const previous = cached?.close()
       const handle: SessionHandle = createSessionHandle({
         internals,
         owner,
@@ -93,6 +95,7 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
         onClosed: () => {
           if (sessions.get(id) === handle) sessions.delete(id)
         },
+        ...(previous === undefined ? {} : { after: previous }),
       })
       sessions.set(id, handle)
       return handle.session

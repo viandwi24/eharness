@@ -372,3 +372,38 @@ describe('item 5: messages() paging skips hidden messages', () => {
     expect((await cold.messages({ limit: 4 })).map(textOf)).toEqual(['A1', 'R', 'Q2b', 'A2b'])
   })
 })
+
+describe('item 6: one live handle while a session closes', () => {
+  test('agent.session(id) during closeSession(id) waits for the close: no recovery, one writer', async () => {
+    const work = tool({
+      inputSchema: z.object({ n: z.number() }),
+      execute: async ({ n }, { abortSignal }) => {
+        await sleep(20)
+        abortSignal?.throwIfAborted()
+        return `worked ${n}`
+      },
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'work', input: { n: 1 } }] },
+      { text: 'second' },
+    ])
+    const messages = spyMessages(defaultMemoryMessages())
+    const state = defaultMemoryState()
+    const { agent } = setup({ model, tools: { work } }, { messages, state })
+    const first = agent.session('s1')
+    const running = first.send('one')
+    await sleep(5)
+    const closing = agent.closeSession('s1')
+    const next = agent.session('s1')
+    expect(next).not.toBe(first)
+    const result = await next.send('two').result
+    await closing
+    expect((await running.result).stop).toBe('aborted')
+    expect(result.stop).toBe('complete')
+    const stored = (await messages.load({ sessionId: 's1' })) as Array<{
+      parts: Array<{ type: string; data?: { code?: string } }>
+    }>
+    const notices = stored.filter((m) => m.parts[0]?.type === 'data-eh.notice')
+    expect(notices.map((m) => m.parts[0]?.data?.code)).toEqual([])
+  })
+})
