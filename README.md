@@ -265,6 +265,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`next-route.ts`](examples/next-route.ts) · [`.demo.ts`](examples/next-route.demo.ts) | Next.js routes, `useChat` client, approvals, resume |
 | [`plugin-authoring.ts`](examples/plugin-authoring.ts) | a plugin with a service, tool, data part, hooks and state |
 | [`long-running.ts`](examples/long-running.ts) | the progress guard (`'stuck'`) and the wrap-up step (`'max-steps'`) |
+| [`context-prune.ts`](examples/context-prune.ts) | view-only pruning of old tool outputs (`compaction.prune`) and the thrash stop (`'context-thrash'`) |
 | [`budget-and-cost.ts`](examples/budget-and-cost.ts) | `modelsDevCatalog`, `costUsd` per step/turn/session, nested `addUsage`, USD budgets (`'cost-cap'`) |
 | [`risk-approvals.ts`](examples/risk-approvals.ts) | tool risk, `approval.risk`, an inbox from `pending`, `respond()` with `actor`, `approval.decided` audit |
 | [`todos.ts`](examples/todos.ts) | the `todos()` plugin with `enforce`, rendering `data-todos.list`, `latestTodos()` |

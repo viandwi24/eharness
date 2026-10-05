@@ -20,6 +20,8 @@ specs in [`../specs`](../specs) are the full contracts.
 | `plugins` | `[]` | `definePlugin(…)` values, in order — [writing a plugin](writing-a-plugin.md) |
 | `storage` | memory adapters | `{ messages?: MessageAdapter; state?: StateAdapter }` — [storage adapters](writing-a-storage-adapter.md) |
 | `compaction` | `{ summarizeAt: 0.75, keepLast: 4, maxSummaryTokens: 4_000 }` | or `false` — [compaction](compaction.md) |
+| `compaction.prune` | off | `{}` = `{ keepTurns: 2, minChars: 2_000 }`; `exclude`, `replaceWith` — view-only pruning of old tool outputs ([compaction](compaction.md#pruning-old-tool-outputs)) |
+| `compaction.thrash` | `{ withinSteps: 2 }` | or `false` — stop `'context-thrash'` instead of compacting again ([compaction](compaction.md#when-a-turn-thrashes)) |
 | `guard` | `{ maxContextRatio: 0.9 }` | `reserveTokens` default: `settings.maxOutputTokens` ?? 8% of the window |
 | `isContextOverflow` | built-in patterns | extra "context too long" detection |
 | `loop` | see below | [long-running turns](long-running-turns.md) |
@@ -101,6 +103,7 @@ beyond the shown 300 characters.
 | `tool-pending` | waiting for `respond()` |
 | `max-steps` | step budget used up (after the wrap-up step) |
 | `stuck` | the progress guard stopped a repeating or failing turn |
+| `context-thrash` | the context filled up again right after a compaction (`compaction.thrash`) |
 | `cost-cap` | `loop.maxTurnOutputTokens` exceeded or a USD budget used up |
 | `length`, `content-filter` | provider finish reasons |
 | `error` | provider, stream, storage or overflow error (`error.code`, e.g. `EH_CONTEXT_OVERFLOW`) |
@@ -134,7 +137,8 @@ try {
 
 A tool that throws becomes a tool error result wrapped as `HarnessToolError` (`toolName`,
 `toolCallId`, same message) — the turn continues. `eh.notice` messages carry
-`EH_TURN_INTERRUPTED`, `EH_INPUT_BLOCKED` and `EH_TURN_TIMEOUT` (`HarnessNoticeCode`).
+`EH_TURN_INTERRUPTED`, `EH_INPUT_BLOCKED`, `EH_TURN_TIMEOUT` and `EH_CONTEXT_THRASH`
+(`HarnessNoticeCode`).
 
 ## Warnings
 
@@ -145,7 +149,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | Area | Codes |
 |---|---|
 | Loop and cost | `W_LOOP_STUCK`, `W_CONTINUE_LIMIT`, `W_BUDGET`, `W_MODEL_UNPRICED` |
-| Context | `W_DEFAULT_CONTEXT_WINDOW`, `W_COMPACTION_FAILED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CACHE_BUST` |
+| Context | `W_DEFAULT_CONTEXT_WINDOW`, `W_COMPACTION_FAILED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CONTEXT_THRASH`, `W_CACHE_BUST` |
 | Tools and sources | `W_SHADOWED`, `W_TOOL_SOURCE_FAILED`, `W_INVALID_TOOL_NAME`, `W_MCP_DRIFT`, `W_TOOL_OUTPUT_LIMITED`, `W_GRANT_IGNORED` |
 | Skills | `W_INVALID_SKILL`, `W_SKILL_SOURCE_FAILED` |
 | Messages and parts | `W_INVALID_MESSAGE`, `W_UNKNOWN_DATA_PART`, `W_UNKNOWN_STORED_PART`, `W_WRITE_OUTSIDE_TURN`, `W_TRANSIENT_OVERRIDE` |
@@ -157,7 +161,8 @@ Model- or UI-visible texts the core writes, exported so apps and tests can match
 one is a minor change): `INTERRUPTED_TURN`, `INTERRUPTED_CRASH`, `INTERRUPTED_UNKNOWN` (results of
 tool calls that never finished), `DENIED_NEW_INPUT`, `NOT_EXECUTED_NEW_INPUT` (pending calls
 answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
-`TOOL_OUTPUT_TRUNCATED` (truncation marker), `FILE_UNAVAILABLE` (a file of an earlier turn that
+`TOOL_OUTPUT_TRUNCATED` (truncation marker), `TOOL_OUTPUT_PRUNED` (placeholder of a pruned tool
+output), `FILE_UNAVAILABLE` (a file of an earlier turn that
 can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
 `eharness/memory` exports `MEMORY_PROTOCOL`.
 
