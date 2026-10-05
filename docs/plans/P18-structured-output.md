@@ -189,6 +189,10 @@ Normative rules (spec 05 new §3.3 "Structured output"):
   - `TurnResult<M, O = unknown>` and `HarnessRun<M, O = never>` (never keeps `HarnessRun<M>`
     unchanged and lets an untyped run be assigned to a typed one; overloads on all four turn
     operations). Extra fixed text `FINAL_ANSWER_DESCRIPTION` (default tool description).
+  - The forced `toolChoice` of a tool-mode retry is enforced by AI SDK 7: a model that answers
+    without calling the tool fails that step with `ToolChoiceViolationError` (stop `'error'`, not
+    `'output-invalid'`). Real providers honour forced tool choice; eharness does not catch it
+    (AI-SDK-first). Roadmap: map it to a failed attempt if it shows up in practice.
   - `maxRetries` must be a non-negative integer and `mode` `'tool' | 'native'`, else
     `EH_INVALID_INPUT` (`'output-spec'`); `toolName` must match `^[a-zA-Z0-9_-]{1,64}$`.
 
