@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import type { MessageAdapter } from '../agent/session-types.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import type { InboxAdapter, InboxItem, MessageAdapter } from '../agent/session-types.ts'
+import { uuidv7 } from '../messages/ids.ts'
+import { memoryInbox, memoryMessages, memoryState } from '../storage/memory.ts'
+import { inboxAdapterConformance } from '../testing/inbox-adapter.conformance.ts'
 import { messageAdapterConformance } from '../testing/message-adapter.conformance.ts'
 import { stateAdapterConformance } from '../testing/state-adapter.conformance.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
@@ -13,6 +15,15 @@ describe('memoryMessages() conformance', () => {
 
 describe('memoryState() conformance', () => {
   for (const c of stateAdapterConformance(() => memoryState(), { requireSetIf: true })) {
+    test(c.name, c.run)
+  }
+})
+
+describe('memoryInbox() conformance', () => {
+  for (const c of inboxAdapterConformance(() => memoryInbox(), {
+    requireNotify: true,
+    requirePending: true,
+  })) {
     test(c.name, c.run)
   }
 })
@@ -115,5 +126,32 @@ describe('conformance suites detect broken adapters', () => {
     }
     const cas = stateAdapterConformance(() => broken).find((c) => c.name.includes('stored rev'))
     await expect(cas?.run()).rejects.toThrow()
+  })
+})
+
+describe('inboxAdapterConformance detects broken adapters', () => {
+  test('a non-atomic claim (two claimers get the same item) fails the race case', async () => {
+    const items: InboxItem[] = []
+    const claimed = new Set<string>()
+    const broken: InboxAdapter = {
+      async enqueue(_sessionId, item) {
+        const id = uuidv7()
+        items.push({ ...structuredClone(item), id, attempts: 0 })
+        return id
+      },
+      // reads, waits, then marks: concurrent claimers read the same ready items
+      async claim(_sessionId, _owner, opts) {
+        const ready = items.filter((i) => !claimed.has(i.id)).slice(0, opts?.limit ?? 1_000)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        for (const item of ready) claimed.add(item.id)
+        return structuredClone(ready)
+      },
+      async ack() {},
+      async release(ids) {
+        for (const id of ids) claimed.delete(id)
+      },
+    }
+    const race = inboxAdapterConformance(() => broken).find((c) => c.name.includes('exactly once'))
+    await expect(race?.run()).rejects.toThrow()
   })
 })

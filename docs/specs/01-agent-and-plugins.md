@@ -40,7 +40,9 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   messageKinds?: Record<string, MessageKindDef>                  // spec 03 §5 (app namespace)
   plugins?: HarnessPlugin[]
 
-  storage?: { messages?: MessageAdapter; state?: StateAdapter }  // spec 05; default: memory
+  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }  // spec 05; default: memory, no inbox
+  /** Durable inbox drain and collect debounce (spec 05 §12). */
+  inbox?: { pollMs?: number; claimTtlMs?: number; collect?: CollectOptions }
   compaction?: CompactionConfig | false                          // spec 06
   guard?: { maxContextRatio?: number; reserveTokens?: number }   // spec 06 §6
   /** Extra overflow detection for providers the built-in patterns miss (spec 06 §7). */

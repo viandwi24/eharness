@@ -10,11 +10,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   fileSystemConformance,
+  inboxAdapterConformance,
   messageAdapterConformance,
   stateAdapterConformance,
 } from 'eharness/testing'
 import { kvFileSystem, mapKeyValueStore } from './custom-fs-adapter.ts'
 import { jsonFileMessages, jsonFileState } from './json-file-storage.ts'
+import { bunSqlListener, migrateInbox, postgresInbox } from './postgres-inbox.ts'
 import {
   bunSqlPool,
   migrate,
@@ -114,6 +116,21 @@ describe('examples run offline', () => {
       expect(out).toContain('B: requestAbort → remote')
       expect(out).toContain('A: turn ended → aborted')
       expect(out).toContain('state: activeTurn cleared')
+    },
+    timeout,
+  )
+
+  test(
+    'inbox (steer, collect and abort across instances)',
+    async () => {
+      const out = await run('inbox.ts')
+      expect(out).toContain('B: enqueue steer → remote')
+      expect(out).toContain('A: turn 1 → complete; steer delivered inside the turn: true')
+      expect(out).toContain(
+        'collect: 3 inputs → 1 message: "hi\\n\\none more thing:\\n\\nwhat about discounts?"',
+      )
+      expect(out).toContain('B: requestAbort → remote')
+      expect(out).toContain('A: turn 3 → aborted')
     },
     timeout,
   )
@@ -255,6 +272,14 @@ describe('examples run offline', () => {
     },
     timeout,
   )
+
+  test(
+    'postgres-inbox without DATABASE_URL',
+    async () => {
+      expect(await run('postgres-inbox.ts')).toContain('DATABASE_URL is not set')
+    },
+    timeout,
+  )
 })
 
 describe('json-file-storage conformance', () => {
@@ -299,6 +324,26 @@ describe.skipIf(databaseUrl === '')('postgres-storage (DATABASE_URL)', () => {
     const again = await lock.acquire('s', { signal })
     await again()
   })
+  describe('inbox', () => {
+    let listener: Awaited<ReturnType<typeof bunSqlListener>>
+    beforeAll(async () => {
+      await migrateInbox(db, { schema })
+      listener = await bunSqlListener(databaseUrl)
+    })
+    afterAll(() => listener.close())
+    const cases = inboxAdapterConformance(() => postgresInbox(db, { schema, listener }), {
+      requireNotify: true,
+      requirePending: true,
+      claimTtlMs: 200,
+    })
+    for (const c of cases) test(`inbox: ${c.name}`, c.run)
+  })
+  test('the inbox example script passes', async () => {
+    const out = await run('postgres-inbox.ts', { DATABASE_URL: databaseUrl })
+    expect(out).not.toContain('✗')
+    expect(out).toContain('B: enqueue → remote')
+    expect(out).toContain('A: applied the queued message: true')
+  }, 30_000)
   test('the example script passes', async () => {
     const out = await run('postgres-storage.ts', { DATABASE_URL: databaseUrl })
     expect(out).not.toContain('✗')

@@ -16,6 +16,10 @@ export {
   idGeneratorConformance,
 } from './id-generator.conformance.ts'
 export {
+  type InboxAdapterConformanceOptions,
+  inboxAdapterConformance,
+} from './inbox-adapter.conformance.ts'
+export {
   type MessageAdapterConformanceOptions,
   messageAdapterConformance,
 } from './message-adapter.conformance.ts'

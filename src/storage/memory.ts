@@ -1,5 +1,5 @@
 /**
- * `eharness/storage/memory`: in-memory `MessageAdapter` and `StateAdapter`.
+ * `eharness/storage/memory`: in-memory `MessageAdapter`, `StateAdapter` and `InboxAdapter`.
  *
  * Useful for tests, prototypes and single-process apps that do not need history after a restart.
  * Every read and write deep-copies, so callers can never change stored data by mutating objects.
@@ -8,7 +8,14 @@
  *
  * @see docs/specs/05-session-and-storage.md#4-messageadapter-the-storage-contract
  */
-import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from '../index.ts'
+import {
+  type InboxAdapter,
+  type InboxItem,
+  type MessageAdapter,
+  type SessionStateSnapshot,
+  type StateAdapter,
+  uuidv7,
+} from '../index.ts'
 
 type StoredMessage = Parameters<MessageAdapter['save']>[1][number]
 
@@ -91,6 +98,115 @@ export function memoryState(): StateAdapter {
       if (rev !== expectedRev) return false
       snapshots.set(sessionId, structuredClone(state))
       return true
+    },
+  }
+}
+
+/** Options of {@link memoryInbox}. */
+export interface MemoryInboxOptions {
+  /** Clock used for claim expiry (tests). Default `Date.now`. */
+  now?: () => number
+  /** Claim expiry when `claim()` is called without `claimTtlMs`. Default 120 000. */
+  claimTtlMs?: number
+}
+
+/**
+ * In-memory {@link InboxAdapter} (spec 05 §12): one FIFO per session, atomic claims with expiry,
+ * and `notify` / `subscribe` / `pending` within the process. Several agent instances in one
+ * process (tests, examples) can share it to simulate a multi-instance deployment.
+ *
+ * @example
+ * ```ts
+ * const inbox = memoryInbox()
+ * defineHarnessAgent({ model, storage: { messages, state, inbox } })
+ * ```
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
+  const now = options.now ?? (() => Date.now())
+  type Entry = { sessionId: string; item: InboxItem; claim?: { owner: string; until: number } }
+  const sessions = new Map<string, Map<string, Entry>>()
+  const byId = new Map<string, Entry>()
+  const listeners = new Map<string, Set<() => void>>()
+  const ready = (entry: Entry, at: number) => entry.claim === undefined || entry.claim.until <= at
+
+  return {
+    async enqueue(sessionId, input) {
+      const id = uuidv7()
+      const entry: Entry = { sessionId, item: { ...structuredClone(input), id, attempts: 0 } }
+      let items = sessions.get(sessionId)
+      if (items === undefined) {
+        items = new Map()
+        sessions.set(sessionId, items)
+      }
+      items.set(id, entry)
+      byId.set(id, entry)
+      return id
+    },
+    async claim(sessionId, owner, opts = {}) {
+      const at = now()
+      const limit = opts.limit ?? Number.POSITIVE_INFINITY
+      const ttl = opts.claimTtlMs ?? options.claimTtlMs ?? 120_000
+      const out: InboxItem[] = []
+      const entries = [...(sessions.get(sessionId)?.values() ?? [])].sort((a, b) =>
+        a.item.id < b.item.id ? -1 : a.item.id > b.item.id ? 1 : 0,
+      )
+      for (const entry of entries) {
+        if (out.length >= limit) break
+        if (!ready(entry, at)) continue
+        entry.claim = { owner, until: at + ttl }
+        entry.item.attempts++
+        out.push(structuredClone(entry.item))
+      }
+      return out
+    },
+    async ack(ids) {
+      for (const id of ids) {
+        const entry = byId.get(id)
+        if (entry === undefined) continue
+        byId.delete(id)
+        const items = sessions.get(entry.sessionId)
+        items?.delete(id)
+        if (items?.size === 0) sessions.delete(entry.sessionId)
+      }
+    },
+    async release(ids) {
+      for (const id of ids) {
+        const entry = byId.get(id)
+        if (entry !== undefined) delete entry.claim
+      }
+    },
+    async notify(sessionId) {
+      for (const listener of [...(listeners.get(sessionId) ?? [])]) {
+        queueMicrotask(() => {
+          try {
+            listener()
+          } catch {}
+        })
+      }
+    },
+    subscribe(sessionId, onNotify) {
+      let set = listeners.get(sessionId)
+      if (set === undefined) {
+        set = new Set()
+        listeners.set(sessionId, set)
+      }
+      const own = () => onNotify()
+      set.add(own)
+      return () => {
+        const current = listeners.get(sessionId)
+        current?.delete(own)
+        if (current?.size === 0) listeners.delete(sessionId)
+      }
+    },
+    async pending(opts = {}) {
+      const at = now()
+      const out: string[] = []
+      for (const [sessionId, items] of sessions) {
+        if (out.length >= (opts.limit ?? Number.POSITIVE_INFINITY)) break
+        if ([...items.values()].some((entry) => ready(entry, at))) out.push(sessionId)
+      }
+      return out
     },
   }
 }

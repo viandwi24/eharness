@@ -121,6 +121,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_CONTEXT_THRASH` | the context was above `summarizeAt` again within `compaction.thrash.withinSteps` steps after an automatic compaction; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `lastCompaction` = step index of that compaction, spec 06 §4) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 | `W_ABORT_UNSUPPORTED` | `abort()` / `requestAbort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |
+| `W_INBOX_FAILED` | an `InboxAdapter` call failed (`details: { sessionId, operation }`: `claim`, `ack`, `release`, `notify`, `subscribe`, `drain`, `enqueue` of an abort — then the state request is used — or `input` for a stored input that no longer normalizes, which is dropped); items are redelivered after their claim expires (spec 05 §12) |
 
 ## 3. `describeError`
 
