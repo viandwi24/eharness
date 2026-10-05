@@ -65,6 +65,11 @@ export interface HarnessMessageMeta {
   augmented?: number
   /** Kind messages delivered into a running turn (spec 11 §6.3): the assistant message that carries them. */
   deliveredIn?: string
+  /** User messages made from one inbox item (`session.enqueue()`, spec 05 §12): its id (dedupe). */
+  inboxId?: string
+  /** User messages merged from `collect` inputs (spec 05 §12 rule 6): one entry per input, in
+   *  arrival order (`inboxId` when it came through `enqueue()`, the client's id when it had one). */
+  collected?: Array<{ inboxId?: string; clientId?: string }>
 
   // assistant messages only
   /** Gateway strings as-is ('anthropic/claude-sonnet-4.6'); provider instances as
@@ -138,7 +143,7 @@ export interface DataPartDef<S extends FlexibleSchema = FlexibleSchema> {
 | `data-eh.usage` | yes | `{ inputTokens; outputTokens; totalTokens; steps; costUsd? }` cumulative for the turn (cost: spec 12) | live cost |
 | `data-eh.context` | yes | `ContextStats` (spec 06 §2, absolute token counts), written after each step | context meter |
 | `data-eh.warning` | yes | `{ code: string; message: string }` | non-fatal problems (spec 10) |
-| `data-eh.input` | **no** | `{ source: 'user' \| 'event' \| \`plugin:${string}\`; text: string; files?: FileUIPart[]; clientId?: string }` | input delivered **inside** a running assistant message (steer, next-step events, hook context — spec 11 §6); projected by splitting the message (§6) |
+| `data-eh.input` | **no** | `{ source: 'user' \| 'event' \| \`plugin:${string}\`; text: string; files?: FileUIPart[]; clientId?: string; inboxId?: string }` (`inboxId`: a steer from the durable inbox, spec 05 §12) | input delivered **inside** a running assistant message (steer, next-step events, hook context — spec 11 §6); projected by splitting the message (§6) |
 | `data-eh.compaction` | — | kind payload (§5.3) | compaction marker (kind) |
 | `data-eh.notice` | — | kind payload (§5.3) | error/abort/system notices (kind) |
 | `data-eh.event` | — | kind payload (§5.3) | app-injected events (kind) |
