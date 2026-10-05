@@ -63,7 +63,12 @@ Rules for adapters:
   given, is the stored version. Conditional writes and deletes are atomic compare-and-set.
 - `grep` (optional): lines are split on `\n` with a trailing `\r` removed; `line` is 1-based;
   hits sorted by path then line, at most `maxHits`; `prefix` has the `list` semantics; the
-  pattern's `g`/`y` flags must not make matching stateful.
+  pattern's `g`/`y` flags must not make matching stateful. The tool has already refused patterns
+  with nested quantifiers or backreferences (§3), but that check is syntactic, not a proof: an
+  adapter that pushes `grep` down (a database, a search service) should run a linear-time engine
+  (e.g. RE2) or apply the same limits — at most 512 pattern characters, only the first 10 000
+  characters of each line matched (`memoryFs` does) — so a model's pattern can never freeze the
+  process or the backend.
 - Returned objects are copies (mutating them never changes stored data).
 - Text only in v0 (UTF-8). Binary files are a roadmap item.
 - Conformance: `fileSystemConformance(factory, { requireStat?, requireGrep? })` in
@@ -187,14 +192,21 @@ Exact formats (model-visible, api-stability.md):
   `REJECTED: <path>: extension not allowed (allowed: .md, .pine).`
 - Hidden prefixes: `read_file` answers exactly like a missing file, `list_files` / `grep` skip
   them (a hidden prefix lists `No files under <prefix>.`), mutations are `REJECTED`.
-- `grep`: `pattern` is a JavaScript regular expression without flags, matched per line;
-  `ERROR: invalid pattern: <message>` when it does not compile. One line
+- `grep`: `pattern` is a JavaScript regular expression without flags, matched per line (only
+  the first 10 000 characters of a line are matched; a pattern without regex metacharacters is a
+  plain substring search); `ERROR: invalid pattern: <message>` when it does not compile, and
+  (0.4.0, against catastrophic backtracking) `ERROR: invalid pattern: longer than 512
+  characters`, `ERROR: invalid pattern: backreferences are not supported` and
+  `ERROR: invalid pattern: nested quantifier (catastrophic backtracking)` — a quantified group
+  that itself contains `*`, `+` or `{n,}` (`(a+)+`, `(\w+\s?)*`). One line
   `<path>:<line>: <text>` per hit (text cut to 300 characters + ` …`; a cut line ends with
   ` (match at charOffset=<c>)`, the 0-based character offset of the first match, for
   `read_file`), sorted by path and line,
   at most 50, then `(Stopped at 50 matches; narrow the pattern or the prefix.)` when more exist;
-  none → `No matches.` The adapter's `grep` is used unless a hidden or unlisted prefix lies inside
-  the searched prefix (then list + read, so hidden files never use up the hit budget).
+  none → `No matches.` The adapter's `grep` (when implemented) is always tried first, with a
+  budget of 500 hits; hidden and unlisted hits are filtered out afterwards. When the adapter
+  returned a full budget and fewer than 51 hits remain visible (hidden files used up the
+  budget), the tool falls back to list + read, so hidden files never hide visible hits.
 - Order of checks for mutations: path → policy (`REJECTED`) → existence → read-before-write →
   staleness → operation (`CONFLICT`). Adapter exceptions (I/O failures) are not caught: they
   become ordinary tool errors.
