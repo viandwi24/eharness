@@ -14,7 +14,9 @@ export type SummarizerModel = MockLanguageModelV4 & { readonly calls: GenerateCa
 
 /** Create a summarizer mock. A thrown / rejected entry makes that call fail. */
 export function summarizerModel(
-  summaries: Array<string | Error> | ((call: GenerateCall, index: number) => string),
+  summaries:
+    | Array<string | Error | { text: string; finishReason: 'length' }>
+    | ((call: GenerateCall, index: number) => string),
 ): SummarizerModel {
   const calls: GenerateCall[] = []
   const model = new MockLanguageModelV4({
@@ -28,9 +30,11 @@ export function summarizerModel(
           ? summaries(call, index)
           : (summaries[index] ?? summaries.at(-1) ?? '')
       if (entry instanceof Error) throw entry
+      const text = typeof entry === 'string' ? entry : entry.text
+      const finish = typeof entry === 'string' ? 'stop' : entry.finishReason
       return {
-        content: entry.length === 0 ? [] : [{ type: 'text', text: entry }],
-        finishReason: { unified: 'stop', raw: 'stop' },
+        content: text.length === 0 ? [] : [{ type: 'text', text }],
+        finishReason: { unified: finish, raw: finish },
         usage: {
           inputTokens: { total: 10, noCache: 10, cacheRead: undefined, cacheWrite: undefined },
           outputTokens: { total: 5, text: 5, reasoning: undefined },

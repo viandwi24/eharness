@@ -4,7 +4,7 @@
  *
  * @see docs/specs/06-compaction.md#53-summarize
  */
-import { generateText, type LanguageModel } from 'ai'
+import { generateText, type LanguageModel, type LanguageModelUsage } from 'ai'
 import { summarizerInput } from './prompt.ts'
 import type { CountTokens } from './tokens.ts'
 import { truncateMiddle } from './truncate.ts'
@@ -26,6 +26,25 @@ export interface SummarizeInput {
   window: number
   count: CountTokens
   abortSignal?: AbortSignal
+  /** Called with the usage of every summarizer call, also of a call that then fails (spec 06 §5.3). */
+  onUsage?(usage: LanguageModelUsage): void
+}
+
+/** Result of {@link summarize}. */
+export interface SummarizeResult {
+  summary: string
+  /** Usage of every summarizer call (one per chunk), in call order. */
+  usage: LanguageModelUsage[]
+}
+
+/** A summarizer failure; `reason: 'length'` when the summary was cut by `maxSummaryTokens`. */
+export class SummarizeError extends Error {
+  readonly reason: 'length' | 'empty'
+  constructor(reason: 'length' | 'empty', message: string) {
+    super(message)
+    this.name = 'SummarizeError'
+    this.reason = reason
+  }
 }
 
 /**
@@ -62,10 +81,11 @@ export function chunkEntries(
 }
 
 /**
- * Summarize the transcript. Throws when the model call fails or returns empty text (the caller
- * maps this to `W_COMPACTION_FAILED` / `EH_COMPACTION_FAILED`).
+ * Summarize the transcript. Throws when the model call fails, returns empty text, or stops at
+ * the output limit (`finishReason: 'length'`: a cut summary is a failure, spec 06 §5.5); the
+ * caller maps this to `W_COMPACTION_FAILED` / `EH_COMPACTION_FAILED`.
  */
-export async function summarize(input: SummarizeInput): Promise<string> {
+export async function summarize(input: SummarizeInput): Promise<SummarizeResult> {
   const { count } = input
   const whole = input.entries.join('\n\n')
   const budget = Math.max(
@@ -77,6 +97,7 @@ export async function summarize(input: SummarizeInput): Promise<string> {
       ? [[...input.entries]]
       : chunkEntries(input.entries, budget, count)
   let summary: string | undefined
+  const usage: LanguageModelUsage[] = []
   for (const [index, chunk] of chunks.entries()) {
     const entries = summary === undefined ? chunk : [`PREVIOUS SUMMARY:\n${summary}`, ...chunk]
     const last = index === chunks.length - 1
@@ -87,10 +108,19 @@ export async function summarize(input: SummarizeInput): Promise<string> {
       maxOutputTokens: input.maxSummaryTokens,
       ...(input.abortSignal === undefined ? {} : { abortSignal: input.abortSignal }),
     })
+    usage.push(result.usage)
+    input.onUsage?.(result.usage)
+    if (result.finishReason === 'length') {
+      throw new SummarizeError(
+        'length',
+        `The summary was cut at maxSummaryTokens (${input.maxSummaryTokens}).`,
+      )
+    }
     const text = result.text.trim()
-    if (text.length === 0) throw new Error('The summarizer returned an empty summary.')
+    if (text.length === 0)
+      throw new SummarizeError('empty', 'The summarizer returned an empty summary.')
     summary = text
   }
   if (summary === undefined) throw new Error('Nothing to summarize.')
-  return summary
+  return { summary, usage }
 }

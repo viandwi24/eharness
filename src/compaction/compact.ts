@@ -14,7 +14,7 @@ import { hookFailed } from '../registry/wrap.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { resolveSummarizerPrompt } from './prompt.ts'
 import { KEEP_SHARE, planSplit } from './split.ts'
-import { summarize } from './summarize.ts'
+import { SummarizeError, summarize } from './summarize.ts'
 import {
   buildStats,
   type Calibration,
@@ -190,7 +190,7 @@ export function createSessionCompaction(deps: {
     const summarizer = settings.model ?? config.model
     let summary: string
     try {
-      summary = await summarize({
+      const result = await summarize({
         model: summarizer,
         prompt,
         entries,
@@ -200,14 +200,16 @@ export function createSessionCompaction(deps: {
         count,
         ...(request.signal === undefined ? {} : { abortSignal: request.signal }),
       })
+      summary = result.summary
     } catch (error) {
       if (request.signal?.aborted === true) return { status: 'skipped', reason: 'aborted' }
+      const reason = error instanceof SummarizeError ? error.reason : undefined
       return {
         status: 'failed',
         error: new HarnessError(
           'EH_COMPACTION_FAILED',
           `Compaction failed: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error },
+          { cause: error, ...(reason === undefined ? {} : { details: { reason } }) },
         ),
       }
     }
@@ -314,7 +316,7 @@ export function createSessionCompaction(deps: {
             {
               code: 'W_COMPACTION_FAILED',
               message: `${outcome.error.message} Continuing with the guard.`,
-              details: { trigger: request.trigger },
+              details: { trigger: request.trigger, ...(outcome.error.details ?? {}) },
             },
             request.turnId ?? 'compaction',
           )
