@@ -489,6 +489,18 @@ export function createSessionHandle(args: {
     return { instructions: text.length === 0 ? 0 : compaction.count(text), tools }
   }
 
+  /** `state.core.rewinds` read straight from the adapter (cold reads, spec 05 §2). */
+  async function storedRewinds(): Promise<Array<{ afterId: string | null; rewindId: string }>> {
+    let snapshot: Awaited<ReturnType<StateAdapter['get']>>
+    try {
+      snapshot = await args.state.get(id)
+    } catch (error) {
+      throw storageError('state get', error)
+    }
+    const rewinds = snapshot?.core?.rewinds
+    return Array.isArray(rewinds) ? [...rewinds] : []
+  }
+
   // ─── turns ────────────────────────────────────────────────────────────────────────────────
   let current: RunningTurn | undefined
   /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
@@ -947,23 +959,38 @@ export function createSessionHandle(args: {
     async messages(q = {}) {
       assertOpen()
       touch()
-      let page: HarnessUIMessage[]
-      try {
-        page = (await rt.messages.load({
-          sessionId: id,
-          limit: q.limit ?? 50,
-          ...(q.beforeId === undefined ? {} : { beforeId: q.beforeId }),
-        })) as HarnessUIMessage[]
-      } catch (error) {
-        throw storageError('load', error)
+      const limit = q.limit ?? 50
+      const load = async (beforeId: string | undefined): Promise<HarnessUIMessage[]> => {
+        try {
+          return (await rt.messages.load({
+            sessionId: id,
+            limit,
+            ...(beforeId === undefined ? {} : { beforeId }),
+          })) as HarnessUIMessage[]
+        } catch (error) {
+          throw storageError('load', error)
+        }
       }
-      if (q.includeHidden === true) return page as never
-      const rewinds = [
-        ...(rt.state.loaded ? (rt.state.core().rewinds ?? []) : []),
-        ...rewindsIn(page),
-      ]
-      if (rewinds.length === 0) return page as never
-      return page.filter((m) => !hiddenByRewind(m, rewinds, internals.messages)) as never
+      if (q.includeHidden === true) return (await load(q.beforeId)) as never
+      // rewinds of the state (a read never touches the live state store: no reload, no recovery)
+      const rewinds = rt.state.loaded ? [...(rt.state.core().rewinds ?? [])] : await storedRewinds()
+      // page until `limit` visible messages or the history is exhausted (spec 05 §2)
+      let out: HarnessUIMessage[] = []
+      let beforeId = q.beforeId
+      for (;;) {
+        const page = await load(beforeId)
+        // a rewind hides only older messages: pages are read newest first
+        rewinds.push(...rewindsIn(page))
+        const visible =
+          rewinds.length === 0
+            ? page
+            : page.filter((m) => !hiddenByRewind(m, rewinds, internals.messages))
+        out = [...visible, ...out]
+        const oldest = page[0]
+        if (out.length >= limit || page.length < limit || oldest === undefined) break
+        beforeId = oldest.id
+      }
+      return out.slice(Math.max(0, out.length - limit)) as never
     },
     async stats() {
       assertOpen()

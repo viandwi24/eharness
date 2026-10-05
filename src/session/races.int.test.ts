@@ -342,3 +342,33 @@ describe('item 4: steer at max-steps', () => {
     expect(starts.map((e) => e.queued)).toEqual([false, true])
   })
 })
+
+describe('item 5: messages() paging skips hidden messages', () => {
+  const textOf = (m: { parts: Array<{ type: string; text?: string }> }) =>
+    m.parts.map((p) => (p.type === 'text' ? p.text : '')).join('') || 'R'
+
+  test('a page whose newest messages are hidden still returns `limit` visible ones (hot and cold)', async () => {
+    const messages = spyMessages(defaultMemoryMessages())
+    const state = defaultMemoryState()
+    const model = scriptedModel([{ text: 'A1' }, { text: 'A2' }, { text: 'A2b' }])
+    const env = setup({ model }, { messages, state })
+    const session = env.agent.session('s1')
+    await session.send('Q1').result
+    await session.send('Q2').result
+    const stored = (await messages.load({ sessionId: 's1' })) as Array<{ id: string }>
+    const q2 = stored[2]?.id as string
+    const edited = await session.edit(q2, 'Q2b').result
+    const rewindId = edited.messages[0]?.id as string
+    // ids: Q1 A1 Q2 A2 R Q2b A2b — the two messages right before R are hidden
+    const hot = await session.messages({ beforeId: rewindId, limit: 2 })
+    expect(hot.map(textOf)).toEqual(['Q1', 'A1'])
+    expect((await session.messages({ limit: 4 })).map(textOf)).toEqual(['A1', 'R', 'Q2b', 'A2b'])
+    await env.agent.close()
+    const cold = setup({ model }, { messages, state }).agent.session('s1')
+    expect((await cold.messages({ beforeId: rewindId, limit: 2 })).map(textOf)).toEqual([
+      'Q1',
+      'A1',
+    ])
+    expect((await cold.messages({ limit: 4 })).map(textOf)).toEqual(['A1', 'R', 'Q2b', 'A2b'])
+  })
+})
