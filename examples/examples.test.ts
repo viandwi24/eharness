@@ -232,6 +232,20 @@ describe('examples run offline', () => {
   )
 
   test(
+    'structured-output',
+    async () => {
+      const out = await run('structured-output.ts')
+      expect(out).toContain(
+        'retry: Your final answer is missing or invalid: the `final_answer` tool was not called.',
+      )
+      expect(out).toContain('stored after 2 attempts')
+      expect(out).toContain('complete: bug p1 — Login times out after 30 s (duplicate of #12).')
+      expect(out).toContain('complete: question p3')
+    },
+    timeout,
+  )
+
+  test(
     'memory',
     async () => {
       const out = await run('memory.ts')

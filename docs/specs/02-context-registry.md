@@ -141,7 +141,8 @@ earlier in that order invalidates everything after it. Rules:
 
 1. **Stable tool list.** Order: static tools (plugin order, then declaration order) → skill tools
    (`load_skill`, `read_skill_file`, `search_skills`) → source tools (plugin order, then `list()`
-   order) → `tool_search`. `activeTools` changes and tool-search discoveries change the tool list
+   order) → `tool_search` → the per-turn output tool of `SendOptions.output` in tool mode (0.4.0,
+   spec 05 §3.3; last, so turns without it keep the whole prefix). `activeTools` changes and tool-search discoveries change the tool list
    and therefore bust the whole cache; the core warns `W_CACHE_BUST` once per turn when
    `activeTools` differs from the previous step. Prefer `toolChoice` or `tool.approve` denials for
    per-step restrictions. The core passes this order to AI SDK as `toolOrder` (otherwise AI SDK

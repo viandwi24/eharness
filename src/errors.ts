@@ -157,6 +157,7 @@ export type WarningCode =
   | 'W_CONTEXT_THRASH'
   | 'W_GRANT_IGNORED'
   | 'W_ABORT_UNSUPPORTED'
+  | 'W_OUTPUT_INVALID'
   | 'W_INBOX_FAILED'
 
 /**
