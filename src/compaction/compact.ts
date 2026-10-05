@@ -185,6 +185,7 @@ export function createSessionCompaction(deps: {
       contextOf: rt.contextOf,
       configured: settings.prompt,
       onError: (owner, error) => hookFailed(rt, 'compaction.prompt', owner, error),
+      messages: plan.drop,
     })
     const summarizer = settings.model ?? config.model
     let summary: string

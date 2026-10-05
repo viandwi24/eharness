@@ -39,11 +39,15 @@ Input `{ todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'co
 
 - **Source of truth: the conversation.** The current list is the input of the last `todo_write`
   call on the current branch whose result is not an error, read from the model wire at every
-  `step.prepare`. Regenerate, edit and rewind therefore always see the right list.
+  `step.prepare`. A call denied by approval (`execution-denied`) never ran and counts as a failed
+  write. Regenerate, edit and rewind therefore always see the right list.
 - **UI:** every successful write streams `data-todos.list` `{ todos }` with id `list` (reconciled
   within the message, persisted, `model: 'omit'`). `latestTodos(messages)` returns the last one.
-- **Compaction:** `compaction.prompt` adds the list to the summarizer context; `compaction.after`
-  stores it in plugin state (`carried`). When the wire has no `todo_write` (it was summarized
+- **Compaction:** `compaction.prompt` computes the list from the messages being summarized (its
+  `out.messages`: the last successful `todo_write` part) or, when they have none, from the
+  carried list — never from in-memory state, which is empty on a fresh instance (a restart
+  followed by a compaction keeps the list); it adds the list to the summarizer context, and
+  `compaction.after` stores it in plugin state (`carried`). When the wire has no `todo_write` (it was summarized
   away), the carried list is used. Known limit: rewinding behind a compaction marker to a point
   without any `todo_write` still shows the carried list.
 
