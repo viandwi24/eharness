@@ -55,7 +55,7 @@ import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.t
 import { describeError } from '../stream/describe-error.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
-import { createInbox, type InboxItem } from './interaction/inbox.ts'
+import { createTurnInputQueue, type PendingInput } from './interaction/inbox.ts'
 import {
   type ClientToolAnswer,
   patchForNewInput,
@@ -267,7 +267,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
 
   // ─── interaction state (spec 11) ──────────────────────────────────────────────────────────
   /** Steers and next-step injections waiting for a step boundary. */
-  const inbox = createInbox()
+  const inbox = createTurnInputQueue()
   /** Validated respond() answers. */
   let plan: RespondPlan | undefined
   /** Pending state denied by this turn's new input (`onNewInput: 'deny'`). */
@@ -1719,7 +1719,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         .map((p) => p.text)
         .join('\n\n')
       return inbox.push(
-        (async (): Promise<InboxItem | undefined> => {
+        (async (): Promise<PendingInput | undefined> => {
           const submitted = await inputSubmit(input, 'steer')
           if ('block' in submitted) {
             // a block drops only this input; the running turn continues (spec 11 §6.1)
