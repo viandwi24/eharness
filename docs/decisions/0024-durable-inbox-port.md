@@ -25,11 +25,19 @@ messages (WhatsApp, Telegram) answered once, not once per message.
   `activeTurn` releases what it claimed and stops claiming until that turn is gone. The
   `SessionLock` / `activeTurn` CAS remain the arbiters of who runs a turn; the inbox adds no lock.
 - **At-least-once with dedupe.** Items are acked only after their effect is durable (user message
-  saved at the commit point, steer in a saved snapshot, wake turn committed, abort applied). A
-  claim expires after `claimTtlMs` (default `recovery.staleMs`), so a dead claimer's items are
-  redelivered. Redeliveries are recognised by `metadata.eharness.inboxId` / `collected` on user
-  messages, `inboxId` on `data-eh.input` parts and `state.core.inboxDelivered` (last 100 ids,
-  written with the commit-point state write), and are acked without effect.
+  saved at the commit point, steer in a saved snapshot, wake turn ended and its end-of-turn state
+  write saved, abort applied). A claim expires after `claimTtlMs` (default `recovery.staleMs`), so
+  a dead claimer's items are redelivered; a live holder renews the claims of items it still holds
+  (each claim by the same owner extends them). Redeliveries are recognised in the **stored view**:
+  `metadata.eharness.inboxId` / `collected` on user messages, `inboxId` on `data-eh.input` parts,
+  and — for `wake` items only, which leave no message of their own — `state.core.inboxDelivered`
+  (last 100 ids, written with the wake turn's end-of-turn state write); they are acked without
+  effect. Nothing about an item is written to the state before its effect is saved, so a crash in
+  between can only cause a redelivery, never a loss (0.4.0 final review). A running turn takes a
+  steer once per inbox id (`steer()` is idempotent).
+- **Head of line.** `claim` never returns an item behind an older item of the session that another
+  owner still holds; the holder keeps the items after a started unit claimed until that unit's
+  turn commits or ends, so two live holders cannot start a session's items out of id order.
 - **Explicit API.** `send()` keeps its 0.3 semantics (a session busy in another instance is a run
   error `EH_SESSION_BUSY`). The cross-process path is `session.enqueue(input, { mode, collect })`
   resolving `{ inboxId, target: 'local' | 'remote' }` — no new stop reason, no run for a turn

@@ -147,9 +147,13 @@ const inbox: InboxAdapter = {
 }
 ```
 
-`claim` must give each item to exactly one claimer (`FOR UPDATE SKIP LOCKED` in Postgres), and an
-expired claim makes the item ready again — the core relies on that to redeliver the items of an
-instance that died. Store the item as JSON and return copies. `memoryInbox()` is the reference.
+`claim` must give each item to exactly one claimer, oldest first, and never return an item behind
+an older item of the session that another owner still holds (head of line: the core keeps the
+items after a running unit claimed, so no other instance starts them out of order). A claim by an
+owner that already holds items renews those claims (not returned again, `attempts` unchanged), and
+an expired claim makes the item ready again — the core relies on that to redeliver the items of an
+instance that died. In Postgres, serialize the claims of a session with a transaction-scoped
+advisory lock (`FOR UPDATE SKIP LOCKED` alone lets a second claimer skip past a held row). Store the item as JSON and return copies. `memoryInbox()` is the reference.
 
 ## Tips
 

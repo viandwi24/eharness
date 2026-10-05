@@ -548,10 +548,7 @@ export function createSessionHandle(args: {
     },
     enqueueSteer(submitted, inboxId) {
       // a durable steer goes back to the inbox: drained again in id order (spec 05 §12 rule 7)
-      if (inboxId !== undefined && drain !== undefined) {
-        void drain.release([inboxId])
-        return
-      }
+      if (inboxId !== undefined && drain !== undefined) return drain.release([inboxId])
       enqueue({
         input: submitted.input,
         submitted,
@@ -560,6 +557,7 @@ export function createSessionHandle(args: {
           ? {}
           : { inbox: { ids: [inboxId], meta: { inboxId }, durable: false } }),
       })
+      return undefined
     },
     get inboxDurable() {
       return drain !== undefined
@@ -1007,6 +1005,22 @@ export function createSessionHandle(args: {
     },
     send(input?: SendInput, options: SendOptions = {}) {
       assertOpen()
+      // a steer or a collected input joins another turn: it cannot ask for its own typed answer
+      // (spec 05 §3.3 rule 9); a run error, whether the session is busy or not
+      if (
+        options.output !== undefined &&
+        (options.ifBusy === 'steer' || options.ifBusy === 'collect')
+      ) {
+        return failedRun(
+          'send',
+          () => internals.generateId(),
+          new HarnessError(
+            'EH_INVALID_INPUT',
+            `send(…, { output }) cannot be combined with ifBusy '${options.ifBusy}'.`,
+            { details: { reason: 'output-with-steer-or-collect', ifBusy: options.ifBusy } },
+          ),
+        )
+      }
       if (rt.running) {
         const ifBusy = options.ifBusy ?? 'reject'
         if (ifBusy === 'reject') throw busyError(id)

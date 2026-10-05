@@ -60,7 +60,8 @@ function strip(item: InboxItem): InboxItemInput {
 /**
  * Conformance cases for an {@link InboxAdapter} (spec 05 §12): durability (an enqueued item is
  * claimable once `enqueue` resolved), JSON round trip, FIFO per session, exactly one winner per
- * item under concurrent claims, claim expiry, `release`, `ack`, `limit`, session isolation,
+ * item under concurrent claims, head of line (nothing is claimed behind an item another owner
+ * holds), renewal by the holder, claim expiry, `release`, `ack`, `limit`, session isolation,
  * copies, and — when implemented (or required) — `notify` / `subscribe` and `pending`.
  *
  * @example
@@ -158,7 +159,8 @@ export function inboxAdapterConformance(
           ),
         )
         const rounds = [...results]
-        // claim what is left so every item is accounted for
+        // head of line: the winners hold the oldest items; ack them, then claim what is left
+        await adapter.ack(results.flat().map((i) => i.id))
         for (;;) {
           const more = await adapter.claim(sessionId, 'owner-late')
           if (more.length === 0) break
@@ -170,6 +172,83 @@ export function inboxAdapterConformance(
           `expected ${ids.length} claims, got ${claimed.length}`,
         )
         assertJsonEqual([...claimed].sort(), [...ids].sort(), 'each item claimed exactly once')
+      },
+    },
+    {
+      name: 'head of line: no item is claimed behind an older item another owner holds',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('head')
+        const a = await adapter.enqueue(sessionId, send('a'))
+        const b = await adapter.enqueue(sessionId, send('b'))
+        const c = await adapter.enqueue(sessionId, send('c'))
+        const first = await adapter.claim(sessionId, 'owner-a', { limit: 1 })
+        assertJsonEqual(
+          first.map((i) => i.id),
+          [a],
+          'limit 1 claims the oldest',
+        )
+        assertTrue(
+          (await adapter.claim(sessionId, 'owner-b')).length === 0,
+          'nothing behind an item owner-a holds may be claimed by owner-b',
+        )
+        const own = await adapter.claim(sessionId, 'owner-a')
+        assertJsonEqual(
+          own.map((i) => [i.id, i.attempts]),
+          [
+            [b, 1],
+            [c, 1],
+          ],
+          'the holder claims the rest in id order (its held item is not returned again)',
+        )
+        await adapter.ack([a])
+        assertTrue(
+          (await adapter.claim(sessionId, 'owner-b')).length === 0,
+          'b and c are still held by owner-a',
+        )
+        await adapter.release([b, c])
+        const next = await adapter.claim(sessionId, 'owner-b')
+        assertJsonEqual(
+          next.map((i) => [i.id, i.attempts]),
+          [
+            [b, 2],
+            [c, 2],
+          ],
+          'released items: claimable in id order',
+        )
+        if (adapter.pending !== undefined) {
+          const list = await adapter.pending({ limit: 10_000 })
+          assertTrue(
+            !list.includes(sessionId),
+            'a session whose oldest item is held is not pending',
+          )
+        }
+      },
+    },
+    {
+      name: 'a claim of the same owner renews the claims it holds',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('renew')
+        const id = await adapter.enqueue(sessionId, send('x'))
+        await adapter.claim(sessionId, 'owner-a', { claimTtlMs: ttl * 4 })
+        await sleep(ttl * 3)
+        assertTrue(
+          (await adapter.claim(sessionId, 'owner-a', { claimTtlMs: ttl * 4 })).length === 0,
+          'a held item is not returned again to its owner',
+        )
+        await sleep(ttl * 2) // past the first claim's expiry, within the renewed one
+        assertTrue(
+          (await adapter.claim(sessionId, 'owner-b', { claimTtlMs: ttl })).length === 0,
+          'the renewed claim has not expired',
+        )
+        await sleep(ttl * 3 + 20)
+        const again = await adapter.claim(sessionId, 'owner-b', { claimTtlMs: 60_000 })
+        assertJsonEqual(
+          again.map((i) => [i.id, i.attempts]),
+          [[id, 2]],
+          'renewal does not count as an attempt; the renewed claim expires too',
+        )
       },
     },
     {

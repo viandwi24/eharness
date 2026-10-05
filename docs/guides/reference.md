@@ -201,7 +201,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | `metadata.eharness` | `inboxId`, `collected` | the inbox item a user message came from; the inputs merged by `collect` |
 | `data-eh.input` | `inboxId` | a steer delivered through the inbox |
 | `state.core` | `abortRequest` | cross-process abort request for the active turn (`turnId`, `at`, `reason?`, `by?`) — the one field another instance may write during a turn |
-| `state.core` | `inboxDelivered` | ids of the last 100 inbox items applied (dedupe) |
+| `state.core` | `inboxDelivered` | ids of the last 100 `wake` inbox items applied (dedupe; send items and steers are deduped by their stored `inboxId`) |
 | `ContextStats` | `pruned?: { outputs, chars }` | tool outputs replaced by the prune stage in the current request |
 | assistant message part | `data-eh.output` (`OutputPartData`) | the validated structured answer `{ value, mode, attempts }` (id `output`, never sent to the model); `value` equals `TurnResult.output` |
 | `metadata.eharness` | `output` | `{ ok, attempts }` on every turn with `SendOptions.output` (`ok: false` when no valid answer was stored) |

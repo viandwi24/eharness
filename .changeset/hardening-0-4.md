@@ -18,4 +18,4 @@ Hardening fixes from the 0.3.1 audit (no action needed; behaviour and type chang
 - `todos()`: the list survives a restart followed by a compaction; a `todo_write` denied by approval no longer changes the list.
 - Skills: `name: 007` / `description: 1.0` keep their raw text.
 - New, additive: `toolErrorText` agent option maps thrown tool errors (default `String(error)`, which may carry connection strings or tokens) — identically in the UI, storage and the model wire; `handleChatRequest(session, body, { actor })` passes the actor to `approval.decided`; exports `ChatRequestOptions`, `InputFilesConfig`, `ToolErrorTextFn`, `FILE_UNAVAILABLE`.
-- devDependencies `ai@7.0.127`, `@ai-sdk/mcp@2.0.66`; peer floors unchanged (`ai@^7.0.123`, `@ai-sdk/mcp@^2.0.63`).
+- devDependencies `ai@7.0.127`, `@ai-sdk/mcp@2.0.66` (the peer floors are raised to these versions, see the peer-floor changeset).
