@@ -392,6 +392,69 @@ describe('read_file windows, list_files and grep', () => {
   })
 })
 
+describe('grep: catastrophic patterns (ReDoS)', () => {
+  test('nested quantifiers and backreferences are rejected fast; safe patterns still work', async () => {
+    const line = `${'a'.repeat(40)}!`
+    for (const withGrep of [true, false]) {
+      const inner = memoryFs({ '/a.txt': `${line}\nabab\nfoo bar\n` })
+      const fs: FileSystem = withGrep ? inner : { ...inner, grep: undefined }
+      const { agent } = setup(
+        [
+          {
+            toolCalls: [
+              call('grep', { pattern: '(a+)+$' }),
+              call('grep', { pattern: '(\\w+\\s?)*$' }),
+              call('grep', { pattern: '(a|b)\\1' }),
+              call('grep', { pattern: 'x'.repeat(600) }),
+              call('grep', { pattern: '(ab)+' }),
+              call('grep', { pattern: 'foo|bar' }),
+              call('grep', { pattern: '\\(a+\\)+' }),
+              call('grep', { pattern: 'foo bar' }),
+            ],
+          },
+          { text: 'done' },
+        ],
+        { fs },
+      )
+      const started = performance.now()
+      const result = await agent.session('s').send('go').result
+      expect(performance.now() - started).toBeLessThan(1_000)
+      const out = outputs(result) as string[]
+      expect(out[0]).toBe('ERROR: invalid pattern: nested quantifier (catastrophic backtracking)')
+      expect(out[1]).toBe('ERROR: invalid pattern: nested quantifier (catastrophic backtracking)')
+      expect(out[2]).toBe('ERROR: invalid pattern: backreferences are not supported')
+      expect(out[3]).toBe('ERROR: invalid pattern: longer than 512 characters')
+      expect(out[4]).toBe('/a.txt:2: abab')
+      expect(out[5]).toBe('/a.txt:3: foo bar')
+      expect(out[6]).toBe('No matches.')
+      expect(out[7]).toBe('/a.txt:3: foo bar')
+    }
+  })
+
+  test('a catastrophic pattern returns within 100 ms', async () => {
+    const tools = await import('./tools.ts')
+    const fs = memoryFs({ '/a.txt': `${'a'.repeat(5_000)}!\n` })
+    const env = {
+      fs,
+      lastRead: { get: () => undefined, set() {}, delete() {} } as never,
+      change() {},
+      hidden: [],
+      readonly: [],
+      unlisted: [],
+      allowedExtensions: undefined,
+      isUndeletable: undefined,
+      maxReadChars: 50_000,
+    }
+    const grep = tools.createFileTools(env, ['grep']).grep as unknown as {
+      execute(input: unknown, options: unknown): Promise<string>
+    }
+    const started = performance.now()
+    const out = await grep.execute({ pattern: '(a+)+$' }, { toolCallId: 'c', messages: [] })
+    expect(performance.now() - started).toBeLessThan(100)
+    expect(out).toStartWith('ERROR: invalid pattern:')
+  })
+})
+
 describe('grep fast path', () => {
   function spied(seed: Record<string, string>) {
     const inner = memoryFs(seed)

@@ -12,7 +12,13 @@ import { z } from 'zod/v4'
 import type { LastRead } from './last-read.ts'
 import { dirPrefix, isUnder, isUnderAny, normalizePath } from './paths.ts'
 import { smartReplace } from './smart-replace.ts'
-import { splitLines, statelessPattern } from './text.ts'
+import {
+  GREP_SCAN_CHARS,
+  isLiteralPattern,
+  splitLines,
+  statelessPattern,
+  unsafePatternReason,
+} from './text.ts'
 import type {
   FileChangeData,
   FileEntry,
@@ -31,8 +37,6 @@ export const GREP_MAX_HITS = 50
 export const GREP_FAST_PATH_HITS = 500
 /** Maximum characters of one grep line in the result. */
 export const GREP_LINE_CHARS = 300
-/** Characters of one line a pattern is matched against (longer lines: only their head). */
-export const GREP_SCAN_CHARS = 10_000
 
 /** Everything the tools need, resolved at session open. */
 export interface FileToolsEnv {
@@ -347,6 +351,9 @@ export function createFileTools(
         prefix: z.string().optional().describe('Only search under this directory. Default: /'),
       }),
       execute: async ({ pattern, prefix }): Promise<string> => {
+        // no catastrophic backtracking: the event loop must never freeze on a model's pattern
+        const unsafe = unsafePatternReason(pattern)
+        if (unsafe !== undefined) return `ERROR: invalid pattern: ${unsafe}`
         let regex: RegExp
         try {
           regex = new RegExp(pattern)
@@ -357,7 +364,7 @@ export function createFileTools(
         if (!resolved.ok) return resolved.text
         const root = resolved.path
         if (isUnderAny(root, env.hidden)) return 'No matches.'
-        const hits = await search(root, regex)
+        const hits = await search(root, regex, isLiteralPattern(pattern) ? pattern : undefined)
         if (hits.length === 0) return 'No matches.'
         const matcher = statelessPattern(regex)
         const shown = hits.slice(0, GREP_MAX_HITS).map((hit) => {
@@ -376,7 +383,11 @@ export function createFileTools(
   }
 
   /** Up to GREP_MAX_HITS + 1 visible hits under `root`. */
-  async function search(root: string, regex: RegExp): Promise<GrepHit[]> {
+  async function search(
+    root: string,
+    regex: RegExp,
+    literal: string | undefined,
+  ): Promise<GrepHit[]> {
     const limit = GREP_MAX_HITS + 1
     const visible = (hit: GrepHit): boolean => isUnder(hit.path, root) && listed(hit.path, root)
     // the adapter's fast path with a larger budget; hidden/unlisted hits are filtered out
@@ -387,6 +398,12 @@ export function createFileTools(
       if (raw.length < GREP_FAST_PATH_HITS || hits.length >= limit) return hits.slice(0, limit)
     }
     const line = statelessPattern(regex)
+    // a pattern without metacharacters is a plain substring search; each line is scanned up to
+    // GREP_SCAN_CHARS characters
+    const matches = (text: string): boolean => {
+      const head = text.length > GREP_SCAN_CHARS ? text.slice(0, GREP_SCAN_CHARS) : text
+      return literal === undefined ? line.test(head) : head.includes(literal)
+    }
     const hits: GrepHit[] = []
     const files: FileMeta[] = (await fs.list(dirPrefix(root))).filter(
       (file) => isUnder(file.path, root) && listed(file.path, root),
@@ -396,7 +413,7 @@ export function createFileTools(
       if (entry === null) continue
       const lines = splitLines(entry.content)
       for (let i = 0; i < lines.length; i++) {
-        if (!line.test(lines[i] as string)) continue
+        if (!matches(lines[i] as string)) continue
         hits.push({ path: file.path, line: i + 1, text: lines[i] as string })
         if (hits.length >= limit) return hits
       }
