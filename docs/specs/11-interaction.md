@@ -123,8 +123,9 @@ Every decision is reported to `approval.decided` hooks (spec 01 §5) with an `Ap
   the function again when it re-validates approved calls).
 - **Answers** through `respond()`: `by: 'user'`, with the answer's `reason`, `remember` and
   `actor` — an `ApprovalActor { id: string; name?: string; …JSON }` the application passes to say
-  who answered. The actor is never stored in messages nor sent to the model. Reported after the
-  answers were consumed (the commit point), in answer order.
+  who answered (with `handleChatRequest`: its `options.actor`, §7). The actor is never stored in
+  messages nor sent to the model. Reported after the answers were consumed (the commit point), in
+  answer order.
 - **New input** while pending with `onNewInput: 'deny'`: `by: 'new-input'`, `approved: false`,
   `reason: DENIED_NEW_INPUT`.
 
@@ -369,10 +370,14 @@ export interface ChatRequestBody {
   trigger?: 'submit-message' | 'regenerate-message'
   messageId?: string
 }
+export interface ChatRequestOptions extends SendOptions {
+  /** The request's user: set on every approval answer of the respond() path (approval.decided). */
+  actor?: ApprovalActor
+}
 export function handleChatRequest<M extends UIMessage, Kinds extends Record<string, unknown>>(
   session: HarnessSession<M, Kinds>,
   body: ChatRequestBody,
-  options?: SendOptions,
+  options?: ChatRequestOptions,
 ): HarnessRun<M>
 ```
 
@@ -392,6 +397,8 @@ run and reported as a run error):
 
 `options` are passed to every operation (e.g. `{ ifBusy: 'steer' }` makes a request that arrives
 while a turn runs steer it; `{ ifBusy: 'wait' }` makes `send` and `respond` wait for it).
+`options.actor` (0.4.0, the authenticated user of the request) is set on every approval answer of
+the `respond()` path, so `approval.decided` receives it (§3.3); the client cannot set it.
 
 **Busy sessions.** `handleChatRequest` never throws `EH_SESSION_BUSY` (it still throws
 `EH_SESSION_CLOSED`). When the operation is rejected as busy — `regenerate` / `edit` while a turn

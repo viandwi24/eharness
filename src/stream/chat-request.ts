@@ -5,6 +5,7 @@
  */
 import type { UIMessage } from 'ai'
 import type {
+  ApprovalActor,
   HarnessRun,
   HarnessSession,
   PendingResponse,
@@ -24,6 +25,16 @@ export interface ChatRequestBody {
   messages: UIMessage[]
   trigger?: 'submit-message' | 'regenerate-message'
   messageId?: string
+}
+
+/** Options of {@link handleChatRequest}: `SendOptions` for every operation, plus `actor`. */
+export interface ChatRequestOptions extends SendOptions {
+  /**
+   * Who is answering (the authenticated user of the request): set on every approval answer of the
+   * `respond()` path, so `approval.decided` hooks receive it (spec 11 §3.3). Never sent to the
+   * model; ignored by the other operations.
+   */
+  actor?: ApprovalActor
 }
 
 /**
@@ -97,8 +108,9 @@ export function handleChatRequest<
 >(
   session: HarnessSession<M, Kinds>,
   body: ChatRequestBody,
-  options: SendOptions = {},
+  chatOptions: ChatRequestOptions = {},
 ): HarnessRun<M> {
+  const { actor, ...options } = chatOptions
   const messages: unknown[] = Array.isArray(body?.messages) ? body.messages : []
   const last = messages.at(-1) as UIMessage | undefined
   const messageId = typeof body?.messageId === 'string' ? body.messageId : undefined
@@ -110,7 +122,11 @@ export function handleChatRequest<
     }
     if (last?.role === 'assistant') {
       kind = 'respond'
-      return session.respond(extractResponses(last), {
+      const response = extractResponses(last)
+      if (actor !== undefined) {
+        for (const answer of response.approvals ?? []) answer.actor = structuredClone(actor)
+      }
+      return session.respond(response, {
         ...options,
         [RESPOND_IGNORE_UNKNOWN]: true,
       } as SendOptions)
