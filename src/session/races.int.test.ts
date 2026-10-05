@@ -2,10 +2,11 @@ import { describe, expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
-import type { StateAdapter } from '../agent/session-types.ts'
+import type { SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
+import type { HarnessContext } from '../plugin/types.ts'
 import { handleChatRequest } from '../stream/chat-request.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
 import { collect, spyMessages } from './int-kit.ts'
@@ -405,5 +406,66 @@ describe('item 6: one live handle while a session closes', () => {
     }>
     const notices = stored.filter((m) => m.parts[0]?.type === 'data-eh.notice')
     expect(notices.map((m) => m.parts[0]?.data?.code)).toEqual([])
+  })
+})
+
+describe('item 7: a failed preparation restores only what the turn changed', () => {
+  test('a background ctx.state.set and clearGrants() during preparation survive', async () => {
+    const inner = defaultMemoryState()
+    let failCas = false
+    const state: StateAdapter = {
+      get: (id) => inner.get(id),
+      set: (id, value) => inner.set(id, value),
+      async setIf(id, value, rev) {
+        if (failCas) {
+          failCas = false
+          throw new Error('state backend down')
+        }
+        return (await inner.setIf?.(id, value, rev)) ?? false
+      },
+    }
+    const seed: SessionStateSnapshot = {
+      v: 1,
+      rev: 1,
+      core: { grants: { pay: 'always' } },
+      plugins: {},
+    }
+    await inner.set('s1', seed)
+    let background: HarnessContext | undefined
+    let session: ReturnType<ReturnType<typeof setup>['agent']['session']> | undefined
+    const bg = definePlugin({
+      name: 'bg',
+      setup: () => ({
+        hooks: {
+          'session.start': (ctx) => {
+            background = ctx
+          },
+        },
+      }),
+    })
+    const prep = definePlugin({
+      name: 'prep',
+      setup: () => ({
+        hooks: {
+          'turn.prepare': async (ctx) => {
+            ctx.state.set('fromTurn', true)
+            // foreign changes while the turn prepares
+            background?.state.set('fromBackground', true)
+            await session?.clearGrants()
+            failCas = true
+          },
+        },
+      }),
+    })
+    const model = scriptedModel([{ text: 'ok' }])
+    const env = setup({ model, plugins: [bg, prep] }, { state })
+    session = env.agent.session('s1')
+    const failed = await session.send('one').result
+    expect(failed.stop).toBe('error')
+    await env.agent.close()
+    const stored = await inner.get('s1')
+    expect(stored?.core.grants).toBeUndefined()
+    expect(stored?.plugins.bg?.fromBackground).toBe(true)
+    expect(stored?.plugins.prep?.fromTurn).toBeUndefined()
   })
 })
