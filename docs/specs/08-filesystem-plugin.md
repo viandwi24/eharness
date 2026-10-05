@@ -133,7 +133,7 @@ cleaned up by the core (the application owns retention). `dir` must not be `/`.
 | Tool | Input | Behaviour |
 |---|---|---|
 | `list_files` | `{ prefix? }` | paths + sizes, hidden prefixes excluded |
-| `read_file` | `{ path, offset?, limit? }` | line-numbered text window; records `lastRead[path] = version` |
+| `read_file` | `{ path, offset?, limit?, charOffset? }` | line-numbered text window; records `lastRead[path] = version` |
 | `write_file` | `{ path, content }` | create or overwrite; overwrite requires a prior read with matching version |
 | `edit_file` | `{ path, old_string, new_string, replace_all? }` | smart replace (§4); requires prior read |
 | `delete_file` | `{ path }` | requires prior read; respects `isUndeletable` |
@@ -159,13 +159,19 @@ Exact formats (model-visible, api-stability.md):
   `No files under <prefix>.`
 - `read_file`: `offset` is the 1-based first line (default 1), `limit` the line count (default and
   maximum 2000). Lines are split like `grep` (a final line break does not start a line) and shown
-  `cat -n` style: the number right-aligned to 6 characters, a tab, the text. The window stops
-  before `maxReadChars` output characters (a single longer line is cut, ending in
-  ` … [line truncated]`). When lines remain: a blank line and
-  `(Showing lines <a>-<b> of <n>. Continue with offset=<b+1>.)`. The hint counts toward
+  `cat -n` style: the number right-aligned to 6 characters, a tab, the text. `charOffset` (default
+  0, added in 0.4.0) is a character offset inside the first line of the window: that line is shown
+  from there (line numbers stay the file's lines, which `edit_file` users rely on). The window
+  stops before `maxReadChars` output characters. A single longer line is cut, ending in
+  ` … [line truncated]`, followed by a blank line and
+  `(Line <n> continues; use offset=<n> charOffset=<c>.)`, so every character of a very long line
+  (minified code, an evicted single-line JSON output) is reachable. Otherwise, when lines remain: a
+  blank line and `(Showing lines <a>-<b> of <n>. Continue with offset=<b+1>.)`. The hint counts toward
   `maxReadChars` (the whole result stays within it), so a full window is never cut by the core's
   tool output limit (spec 09 §4). Empty file → `(empty file)`;
-  `offset` past the end → `ERROR: offset <o> is past the end of the file (<n> lines)`; missing →
+  `offset` past the end → `ERROR: offset <o> is past the end of the file (<n> lines)`;
+  `charOffset` at or past the end of a non-empty line →
+  `ERROR: charOffset <c> is past the end of line <o> (<len> characters)`; missing →
   `ERROR: file not found: <path>`. Every successful read records `lastRead[path]`.
 - `write_file` → `Created <path> (<bytes> bytes).` / `Wrote <path> (<bytes> bytes).`
 - `edit_file` → `Edited <path> (1 replacement).` / `(<n> replacements).`; missing file →
@@ -183,7 +189,9 @@ Exact formats (model-visible, api-stability.md):
   them (a hidden prefix lists `No files under <prefix>.`), mutations are `REJECTED`.
 - `grep`: `pattern` is a JavaScript regular expression without flags, matched per line;
   `ERROR: invalid pattern: <message>` when it does not compile. One line
-  `<path>:<line>: <text>` per hit (text cut to 300 characters + ` …`), sorted by path and line,
+  `<path>:<line>: <text>` per hit (text cut to 300 characters + ` …`; a cut line ends with
+  ` (match at charOffset=<c>)`, the 0-based character offset of the first match, for
+  `read_file`), sorted by path and line,
   at most 50, then `(Stopped at 50 matches; narrow the pattern or the prefix.)` when more exist;
   none → `No matches.` The adapter's `grep` is used unless a hidden or unlisted prefix lies inside
   the searched prefix (then list + read, so hidden files never use up the hit budget).

@@ -31,6 +31,8 @@ export const GREP_MAX_HITS = 50
 export const GREP_FAST_PATH_HITS = 500
 /** Maximum characters of one grep line in the result. */
 export const GREP_LINE_CHARS = 300
+/** Characters of one line a pattern is matched against (longer lines: only their head). */
+export const GREP_SCAN_CHARS = 10_000
 
 /** Everything the tools need, resolved at session open. */
 export interface FileToolsEnv {
@@ -77,37 +79,60 @@ export function renderWindow(
   offset: number,
   limit: number,
   maxChars: number,
+  charOffset = 0,
 ): { text: string } | { error: string } {
   const lines = fileLines(content)
   if (lines.length === 0) return { text: '(empty file)' }
   if (offset > lines.length) {
     return { error: `offset ${offset} is past the end of the file (${lines.length} lines)` }
   }
+  const firstLength = (lines[offset - 1] as string).length
+  if (charOffset > 0 && charOffset >= firstLength) {
+    return {
+      error: `charOffset ${charOffset} is past the end of line ${offset} (${firstLength} characters)`,
+    }
+  }
   const hint = (last: number) =>
     `\n\n(Showing lines ${offset}-${last} of ${lines.length}. Continue with offset=${last + 1}.)`
+  const continues = (line: number, next: number) =>
+    `\n\n(Line ${line} continues; use offset=${line} charOffset=${next}.)`
+  const truncated = ' … [line truncated]'
   const fill = (budget: number) => {
     const out: string[] = []
     let used = 0
     let last = offset - 1
+    /** The first line was cut: where it continues. */
+    let cut: number | undefined
     for (let n = offset; n <= Math.min(lines.length, offset + limit - 1); n++) {
-      let line = `${String(n).padStart(6)}\t${lines[n - 1] as string}`
+      const prefix = `${String(n).padStart(6)}\t`
+      const text =
+        n === offset ? (lines[n - 1] as string).slice(charOffset) : (lines[n - 1] as string)
+      let line = prefix + text
       const cost = line.length + 1
       if (used + cost > budget) {
         if (out.length > 0) break
-        // a single line longer than the budget: show its head
-        line = `${line.slice(0, Math.max(0, budget - 40))} … [line truncated]`
+        // a single line longer than the budget: show its head; the rest is reachable with
+        // charOffset (spec 08 §3)
+        const shown = Math.max(1, budget - prefix.length - truncated.length)
+        line = `${prefix}${text.slice(0, shown)}${truncated}`
+        cut = (n === offset ? charOffset : 0) + shown
       }
       out.push(line)
       used += cost
       last = n
+      if (cut !== undefined) break
     }
-    return { text: out.join('\n'), last }
+    return { text: out.join('\n'), last, cut }
   }
   let window = fill(maxChars)
-  if (window.last < lines.length) {
+  if (window.cut !== undefined || window.last < lines.length) {
     // reserve room for the hint (its longest form) and fill again
-    window = fill(Math.max(0, maxChars - hint(lines.length).length))
-    window.text += hint(window.last)
+    const reserve = Math.max(
+      hint(lines.length).length,
+      continues(lines.length, content.length).length,
+    )
+    window = fill(Math.max(0, maxChars - reserve))
+    window.text += window.cut !== undefined ? continues(window.last, window.cut) : hint(window.last)
   }
   return { text: window.text }
 }
@@ -184,7 +209,7 @@ export function createFileTools(
     }),
 
     read_file: tool({
-      description: `Read a text file. Returns numbered lines (at most ${READ_LINE_LIMIT} per call); use offset/limit to page through long files. Read a file before editing, overwriting or deleting it.`,
+      description: `Read a text file. Returns numbered lines (at most ${READ_LINE_LIMIT} per call); use offset/limit to page through long files and charOffset to continue a very long line. Read a file before editing, overwriting or deleting it.`,
       inputSchema: z.object({
         path: pathSchema,
         offset: z.number().int().min(1).optional().describe('First line to read (1-based)'),
@@ -194,8 +219,14 @@ export function createFileTools(
           .min(1)
           .optional()
           .describe(`Number of lines to read (max ${READ_LINE_LIMIT})`),
+        charOffset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Character offset inside the first line (to continue a very long line)'),
       }),
-      execute: async ({ path: input, offset, limit }): Promise<string> => {
+      execute: async ({ path: input, offset, limit, charOffset }): Promise<string> => {
         const resolved = resolvePath(input)
         if (!resolved.ok) return resolved.text
         const path = resolved.path
@@ -207,6 +238,7 @@ export function createFileTools(
           offset ?? 1,
           Math.min(limit ?? READ_LINE_LIMIT, READ_LINE_LIMIT),
           env.maxReadChars,
+          charOffset ?? 0,
         )
         if ('error' in window) return `ERROR: ${window.error}`
         lastRead.set(path, entry.version)
@@ -327,10 +359,13 @@ export function createFileTools(
         if (isUnderAny(root, env.hidden)) return 'No matches.'
         const hits = await search(root, regex)
         if (hits.length === 0) return 'No matches.'
+        const matcher = statelessPattern(regex)
         const shown = hits.slice(0, GREP_MAX_HITS).map((hit) => {
-          const text =
-            hit.text.length > GREP_LINE_CHARS ? `${hit.text.slice(0, GREP_LINE_CHARS)} …` : hit.text
-          return `${hit.path}:${hit.line}: ${text}`
+          if (hit.text.length <= GREP_LINE_CHARS) return `${hit.path}:${hit.line}: ${hit.text}`
+          // a cut line names where the match is, so read_file can reach it (charOffset)
+          const at = matcher.exec(hit.text.slice(0, GREP_SCAN_CHARS))?.index
+          const where = at === undefined ? '' : ` (match at charOffset=${at})`
+          return `${hit.path}:${hit.line}: ${hit.text.slice(0, GREP_LINE_CHARS)} …${where}`
         })
         if (hits.length > GREP_MAX_HITS) {
           shown.push(`(Stopped at ${GREP_MAX_HITS} matches; narrow the pattern or the prefix.)`)
