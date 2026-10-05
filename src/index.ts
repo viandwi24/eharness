@@ -38,9 +38,11 @@ export type {
   CompactionConfig,
   HarnessAgent,
   HarnessAgentConfig,
+  InputFilesConfig,
   LoopConfig,
   ModelSettings,
   ProgressConfig,
+  ToolErrorTextFn,
   ToolOutputConfig,
 } from './agent/types.ts'
 export {
@@ -64,6 +66,7 @@ export {
 } from './messages/kinds.ts'
 export {
   DENIED_NEW_INPUT,
+  FILE_UNAVAILABLE,
   INTERRUPTED_CRASH,
   INTERRUPTED_TURN,
   INTERRUPTED_UNKNOWN,
@@ -141,7 +144,11 @@ export {
   parseSkillMarkdown,
   validateSkillPath,
 } from './skills/index.ts'
-export { type ChatRequestBody, handleChatRequest } from './stream/chat-request.ts'
+export {
+  type ChatRequestBody,
+  type ChatRequestOptions,
+  handleChatRequest,
+} from './stream/chat-request.ts'
 
 /** Package version of this build. */
 export const version: string = '0.3.1'

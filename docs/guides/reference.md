@@ -27,6 +27,8 @@ specs in [`../specs`](../specs) are the full contracts.
 | `approval` | `{ onNewInput: 'deny' }` | `policy`, `risk`, `secret`, `onNewInput` — [approvals](approvals-and-interaction.md) |
 | `cache` | `{ mode: 'auto' }` | `{ mode?: 'auto' \| 'breakpoints'; ttl?: '5m' \| '1h' }` or `false`; Anthropic models only |
 | `toolOutput` | `{ maxChars: 50_000, strategy: 'truncate' }` | plus `perTool` — [tools and MCP](tools-and-mcp.md#tool-output-limits) |
+| `toolErrorText` | `String(error)` | `(error, { toolName, toolCallId }) => string`: the text of a thrown tool error in UI, storage and wire (hide secrets) — [tools and MCP](tools-and-mcp.md#tools) |
+| `inputFiles` | `{ protocols: ['data:', 'https:'], maxBytes: 20 MB }` | allowed file URL protocols of user input and the decoded `data:` URL cap; others → `EH_INVALID_INPUT` |
 | `callOptions` | none | schema for `SendOptions.options` → `ctx.turn.options` |
 | `repairToolCall` | none | AI SDK `repairToolCall` |
 | `recovery` | `{ staleMs: 120_000 }` | crash recovery of turns whose process died; `false` disables |
@@ -62,17 +64,30 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 | `inject(kind, data, { deliver?, wake? })` | store an event message; deliver it into the running turn or wake the agent |
 | `compact()` | manual compaction (idle only) |
 | `clearGrants()` | forget `remember: 'session'` grants |
-| `messages({ beforeId?, limit?, includeHidden? })` | stored history for UIs |
+| `messages({ beforeId?, limit?, includeHidden? })` | stored history for UIs (pages past hidden messages until `limit` visible ones) |
 | `stats()` | `ContextStats` + `pending` + `activeTurn` |
 | `events()` | long-lived stream of `SessionEvent`s |
+| `idle()` | resolves when no turn runs and nothing is queued |
 | `ready()`, `close()`, `running`, `id` | open now (configuration errors as exceptions), close, state |
 
-`SendOptions`: `ifBusy` (`'reject'` default, `'queue'`, `'steer'`; `send` only), `model`,
+`SendOptions`: `ifBusy` (`'reject'` default; `'queue'`, `'steer'` for `send`; `'wait'` for `send`
+and `respond`: wait for the running turn and the queue, then run), `model`,
 `settings`, `options` (validated by `callOptions`), `maxSteps`, `abortSignal`, `runtime`,
 `toolsContext`. Every turn operation returns a `HarnessRun`: `turnId`, `kind`, `messageId`
 (promise), `stream` (AI SDK UI message stream, single consumer), `result` (never rejects),
-`abort()`, `toResponse()`, `pipeTo(res)`. `handleChatRequest(session, body, options?)` maps a
-`useChat` request (`ChatRequestBody`) to `send` / `respond` / `regenerate` / `edit`.
+`abort()`, `toResponse()`, `pipeTo(res)`. The stream ends only after the turn finalized: a client
+that saw `finish` can send again at once (unless a queued or other turn started meanwhile). `handleChatRequest(session, body, options?)` maps a
+`useChat` request (`ChatRequestBody`) to `send` / `respond` / `regenerate` / `edit`; `options` are
+`SendOptions` plus `actor` (given to `approval.decided` for approval answers). It never throws
+`EH_SESSION_BUSY`: a busy session returns a failed run whose `toResponse()` answers **409**
+`{ error: { code, message } }`.
+
+File tools (`eharness/filesystem`): `read_file` takes `{ path, offset?, limit?, charOffset? }` —
+`charOffset` continues a very long line (the cut line's hint names it); `grep` accepts only a
+conservative safe subset of regular expressions (at most one variable-width quantifier — `*`,
+`+`, `?`, `{n,m}` — in the whole pattern, no quantified groups, no backreferences or lookarounds;
+e.g. `.*foo.*bar` and `(\d+\.)+\d+` are refused), matches the first 2 000 characters of a line, and names `charOffset=<c>` of a match
+beyond the shown 300 characters.
 
 ## Turn results and stop reasons
 
@@ -97,7 +112,10 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 Thrown `HarnessError`s (`isHarnessError(e, code)`) are programmer or configuration errors: boot
 conflicts (`EH_CONFIG_INVALID`, `EH_DUPLICATE_TOOL`, `EH_DUPLICATE_SKILL`,
 `EH_DUPLICATE_DATA_PART`, `EH_SERVICE_CONFLICT`, `EH_SERVICE_MISSING`, `EH_PLUGIN_ORDER`) and
-misuse. Turn operations throw only `EH_SESSION_BUSY` and `EH_SESSION_CLOSED`; everything else is a
+misuse. Duplicates involving a plugin's `session()` contributions are found when the session
+opens (`session.ready()` throws them; otherwise the first turn fails with them), not at boot.
+Out-of-range numeric options (`loop.maxSteps: 0`, `compaction.summarizeAt: 1.2`, negative
+budgets, …) are `EH_CONFIG_INVALID` at `defineHarnessAgent` (0.4.0). Turn operations throw only `EH_SESSION_BUSY` and `EH_SESSION_CLOSED`; everything else is a
 run error in `run.result.error` (`EH_INVALID_INPUT`, `EH_PENDING_RESPONSE`, `EH_INVALID_MESSAGE`,
 `EH_STORAGE`, `EH_CONTEXT_OVERFLOW`, …). `session.compact()` may throw `EH_COMPACTION_FAILED`.
 
@@ -139,7 +157,8 @@ Model- or UI-visible texts the core writes, exported so apps and tests can match
 one is a minor change): `INTERRUPTED_TURN`, `INTERRUPTED_CRASH`, `INTERRUPTED_UNKNOWN` (results of
 tool calls that never finished), `DENIED_NEW_INPUT`, `NOT_EXECUTED_NEW_INPUT` (pending calls
 answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
-`TOOL_OUTPUT_TRUNCATED` (truncation marker). `eharness/todos` exports its own (`TODOS_*`),
+`TOOL_OUTPUT_TRUNCATED` (truncation marker), `FILE_UNAVAILABLE` (a file of an earlier turn that
+can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
 `eharness/memory` exports `MEMORY_PROTOCOL`.
 
 ## Other exports

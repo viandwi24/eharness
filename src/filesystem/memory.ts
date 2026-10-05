@@ -6,7 +6,7 @@
  * @see docs/specs/08-filesystem-plugin.md#6-memoryfs
  */
 import { normalizePath } from './paths.ts'
-import { splitLines, statelessPattern } from './text.ts'
+import { GREP_SCAN_CHARS, splitLines, statelessPattern } from './text.ts'
 import type {
   DeleteResult,
   FileEntry,
@@ -155,7 +155,9 @@ export function memoryFs(seed: Record<string, string> = {}): FileSystem {
         const lines = splitLines(file.content)
         for (let i = 0; i < lines.length; i++) {
           const text = lines[i] as string
-          if (!regex.test(text)) continue
+          // only the head of a very long line is scanned (bounded regex work, spec 08 §3)
+          if (!regex.test(text.length > GREP_SCAN_CHARS ? text.slice(0, GREP_SCAN_CHARS) : text))
+            continue
           hits.push({ path, line: i + 1, text })
           if (hits.length >= maxHits) return hits
         }

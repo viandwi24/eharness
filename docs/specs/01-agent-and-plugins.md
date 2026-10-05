@@ -1,6 +1,6 @@
 # Spec 01 — Agent and plugins
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/agent`, `src/plugin`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/agent`, `src/plugin`.
 
 ## 1. `defineHarnessAgent`
 
@@ -53,6 +53,13 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   cache?: CacheConfig | false
   /** Tool result size limits (spec 09 §4). */
   toolOutput?: ToolOutputConfig
+  /**
+   * File parts of user input (spec 05 §3 step 7): allowed URL protocols (default
+   * ['data:', 'https:']) and the decoded size cap of data: URLs (default 20 MB).
+   */
+  inputFiles?: { protocols?: string[]; maxBytes?: number }
+  /** Text of a thrown tool error in UI, storage and wire (default String(error), spec 10 §1.1). */
+  toolErrorText?: (error: unknown, call: { toolName: string; toolCallId: string }) => string
   /** Typed per-call options accepted by send()/respond()/… (`options`), exposed as ctx.turn.options. */
   callOptions?: FlexibleSchema
   /** Passed to streamText `repairToolCall` (fix malformed tool calls). */
@@ -270,7 +277,11 @@ export interface TurnInfo {
   id: string
   /** What started the turn. */
   kind: 'send' | 'respond' | 'regenerate' | 'edit' | 'wake'
-  /** True for a send() that waited in the queue (ifBusy: 'queue', or a steer that fell back to a turn). */
+  /**
+   * True for a turn that waited in the session queue before it started: send() with ifBusy
+   * 'queue' or 'wait', respond() with ifBusy 'wait', a steer that fell back to a turn, a queued
+   * wake turn (input.submit then runs with via: 'queue').
+   */
   queued: boolean
   /** Undefined for respond/regenerate/wake and for send() without input. */
   input: HarnessUIMessage | undefined
@@ -356,7 +367,9 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'message.beforeSave'?(ctx: HarnessContext<DP>, message: HarnessUIMessage): Awaitable<HarnessUIMessage | void>
 
   /** Contribute context to / replace the summarizer prompt (spec 06 §5). */
-  'compaction.prompt'?(ctx: HarnessContext<DP>, out: { context: string[]; prompt?: string }): Awaitable<void>
+  /** `out.messages`: the messages being summarized (copies, read-only input). */
+  'compaction.prompt'?(ctx: HarnessContext<DP>, out: { context: string[]; prompt?: string
+                                                       readonly messages: readonly HarnessUIMessage[] }): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 
   /** Chainable. Adjust a loaded skill doc (e.g. add an executable path, spec 07 §7). `location` = `SkillSource.locate(name)`, omitted when absent/null. */
@@ -416,9 +429,9 @@ Implementation notes:
   (so the raw last value also appears as a preliminary output).
   Tools without `execute` (client tools), provider-executed tools and `toolSearch()` are not
   wrapped (AI SDK replaces `toolSearch()`'s `execute` anyway).
-- Errors thrown by a tool become tool-error results (`String(error)` is what the model sees); the
-  wrapper re-throws them as `HarnessToolError` so `onError` can send the same text to the UI
-  (spec 04 §2).
+- Errors thrown by a tool become tool-error results (`String(error)` is what the model sees, or
+  the text of `config.toolErrorText`, spec 10 §1.1); the wrapper re-throws them as
+  `HarnessToolError` so `onError` can send the same text to the UI (spec 04 §2).
 
 ## 6. Services
 
@@ -445,8 +458,8 @@ declare module 'eharness' {
 | Check | Error |
 |---|---|
 | Plugin name invalid / reserved / duplicate | `EH_CONFIG_INVALID` |
-| Two static tools with the same name | `EH_DUPLICATE_TOOL` |
-| Two static skills with the same name | `EH_DUPLICATE_SKILL` |
+| Two static tools with the same name (both from config or `setup()`) | `EH_DUPLICATE_TOOL` |
+| Two static skills with the same name (both from config or `setup()`) | `EH_DUPLICATE_SKILL` |
 | Data part or message kind type collision | `EH_DUPLICATE_DATA_PART` |
 | Two providers for one service | `EH_SERVICE_CONFLICT` |
 | Required service has no provider | `EH_SERVICE_MISSING` |
@@ -458,6 +471,12 @@ declare module 'eharness' {
 | Unknown hook name, hook that is not a function, invalid instruction/skill shape | `EH_CONFIG_INVALID` |
 | `setup()` returns a promise or throws (the error is kept in `cause`) | `EH_CONFIG_INVALID` |
 | `model` missing, `contextWindow` not a positive number or function, `mcp` entry not a `ToolSource` | `EH_CONFIG_INVALID` |
+| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` not an integer ≥ 0; `progress.repeats` / `window` / `errorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; a `toolOutput.perTool` value neither `false` nor an integer ≥ 0; `compaction.contextWindow` not positive; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens` not positive; `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
+
+Name conflicts that involve a **session-phase** contribution (`session()` tools or skills that
+collide with static ones or with each other) can only be detected when the session opens: they
+throw `EH_DUPLICATE_TOOL` / `EH_DUPLICATE_SKILL` from `session.ready()` and are a run error of the
+first turn otherwise — not a boot error.
 
 All thrown as `HarnessError` with `code` and a message naming every involved owner (plugin names,
 source ids). Owners are named `the app (agent config)` for the root plugin and `plugin '<name>'`

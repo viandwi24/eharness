@@ -57,6 +57,42 @@ describe('describeError (spec 10 §3)', () => {
       UNEXPECTED_ERROR_TEXT,
     )
   })
+  test('only AI SDK provider errors expose their message; it is redacted and capped', () => {
+    // a plain error with a status: generic text, its message never reaches the client
+    const plain = Object.assign(
+      new Error('GET https://api.example.com/v1/models?key=AIzaSyD-very-secret failed'),
+      { status: 500 },
+    )
+    expect(describeError(plain)).toBe('Provider unavailable: HTTP 500')
+    const leaky = new APICallError({
+      message:
+        'Invalid key sk-proj-abcdefghijklmnop1234 for https://api.example.com/v1/chat?key=secret123, header Bearer eyJhbGciOiJIUzI1NiJ9.payload, trace 0123456789abcdef0123456789abcdef',
+      url: 'https://api.example.com/v1/chat',
+      requestBodyValues: {},
+      statusCode: 401,
+    })
+    const text = describeError(leaky)
+    expect(text).toStartWith('Provider rejected the request: Invalid key ')
+    for (const secret of [
+      'sk-proj',
+      'secret123',
+      'api.example.com',
+      'eyJhbGci',
+      '0123456789abcdef0123',
+    ]) {
+      expect(text).not.toContain(secret)
+    }
+    const long = new APICallError({
+      message: `Bad request: ${'word '.repeat(200)}`,
+      url: 'https://x.test',
+      requestBodyValues: {},
+      statusCode: 400,
+    })
+    expect(describeError(long).length).toBeLessThanOrEqual(
+      'Provider rejected the request: '.length + 300,
+    )
+  })
+
   test('HarnessErrors keep their message; others fall back and are logged', () => {
     expect(describeError(new HarnessError('EH_STORAGE', 'Storage failed.'))).toBe('Storage failed.')
     const logged: unknown[] = []

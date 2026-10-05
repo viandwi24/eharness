@@ -76,12 +76,37 @@ describe('renderWindow', () => {
     expect(renderWindow('a\n\n', 1, 10, 1000)).toEqual({ text: '     1\ta\n     2\t' })
   })
 
-  test('a single line longer than the budget is cut', () => {
+  test('a single line longer than the budget is cut; the hint names its charOffset', () => {
     const window = renderWindow(`${'x'.repeat(500)}\nnext`, 1, 10, 100)
     expect('text' in window && window.text).toBe(
-      `     1\txx … [line truncated]\n\n(Showing lines 1-1 of 2. Continue with offset=2.)`,
+      `     1\t${'x'.repeat(23)} … [line truncated]\n\n(Line 1 continues; use offset=1 charOffset=23.)`,
     )
     expect('text' in window && window.text.length).toBeLessThanOrEqual(100)
+  })
+
+  test('a 200 000-character single line is readable completely with charOffset', () => {
+    const line = Array.from({ length: 20_000 }, (_, i) => String(i % 10).repeat(10)).join('')
+    expect(line.length).toBe(200_000)
+    let charOffset = 0
+    let read = ''
+    for (let page = 0; page < 100; page++) {
+      const window = renderWindow(`${line}\nnext`, 1, 10, 10_000, charOffset)
+      const text = 'text' in window ? window.text : ''
+      expect(text.length).toBeLessThanOrEqual(10_000)
+      const hint = /\(Line 1 continues; use offset=1 charOffset=(\d+)\.\)$/.exec(text)
+      const body = text.slice('     1\t'.length).split('\n')[0] as string
+      if (hint === null) {
+        read += body
+        expect(text.endsWith('\n     2\tnext')).toBe(true)
+        break
+      }
+      read += body.replace(/ … \[line truncated\]$/, '')
+      charOffset = Number(hint[1])
+    }
+    expect(read).toBe(line)
+    expect(renderWindow('abc', 1, 10, 1000, 3)).toEqual({
+      error: 'charOffset 3 is past the end of line 1 (3 characters)',
+    })
   })
 
   test('the continuation hint fits inside maxChars (no cut by the 50k tool output limit)', () => {

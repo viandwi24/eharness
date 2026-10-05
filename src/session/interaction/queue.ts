@@ -5,20 +5,27 @@
  * @see docs/specs/11-interaction.md#62-queue
  */
 import type { UIMessage, UIMessageChunk } from 'ai'
-import type { HarnessRun, SendOptions } from '../../agent/session-types.ts'
+import type { HarnessRun, PendingResponse, SendOptions } from '../../agent/session-types.ts'
 import type { TurnResult } from '../../messages/types.ts'
 import { createRun } from '../../stream/run.ts'
 import type { NormalizedInput } from '../input.ts'
 
 /** A queued `send` turn (or a `wake` turn that could not be delivered into a running turn). */
 export interface QueuedTurn {
-  kind: 'send' | 'wake'
+  kind: 'send' | 'wake' | 'respond'
   turnId: string
   /** Normalized input (`undefined` = no-input send). */
   input: NormalizedInput | undefined
   /** Input that already passed `input.submit` (an undelivered steer). */
   submitted?: { input: NormalizedInput; contexts: string[] }
   options: SendOptions
+  /**
+   * `ifBusy: 'wait'`: kept by `abort()` (only its own `abortSignal` or `close()` drop it); a
+   * waiting `send()` is held while approvals that did not exist at call time are pending.
+   */
+  wait?: { pendingAtCall: string | undefined }
+  /** `respond()` answers of a waiting respond. */
+  respond?: { response: PendingResponse; ignoreUnknown: boolean }
   /** The run handed to the caller (bound to the real run when the turn starts). */
   handle: DeferredRun
 }
@@ -38,7 +45,7 @@ export interface DeferredRun {
  */
 export function createDeferredRun(args: {
   turnId: string
-  kind: 'send' | 'wake'
+  kind: 'send' | 'wake' | 'respond'
   generateId: () => string
   onAbort: () => void
 }): DeferredRun {

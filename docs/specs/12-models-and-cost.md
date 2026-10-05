@@ -1,6 +1,6 @@
 # Spec 12 — Models, cost and budgets
 
-Status: **Draft (0.3)** (shipped in 0.3.0). Modules: `src/models/*`, cost accounting in `src/loop/steps.ts`,
+Status: **Draft (0.3)** (shipped in 0.3.0), updated for 0.4.0. Modules: `src/models/*`, cost accounting in `src/loop/steps.ts`,
 `src/session/turn.ts`.
 
 AI SDK knows a model only as `{ provider, modelId }`: no context window, no prices. The core needs
@@ -69,7 +69,9 @@ tokens) is above `above`; the highest matching tier wins (Gemini / GPT-5.x / lon
 Per step the core prices the usage with the **step model** (models may change per step). A step
 without pricing is *unpriced* (it adds no cost). `ctx.turn.addUsage(usage, options)` adds nested
 usage: `options.costUsd` (known cost, e.g. from a gateway) wins, else `options.model` is priced
-from the catalog, else it is unpriced. `source` may still be passed as a plain string.
+from the catalog, else it is unpriced. `source` may still be passed as a plain string. The
+summarizer calls of compaction are charged the same way (`source: 'compaction'`, priced with the
+summarizer model; a manual `compact()` charges `state.core.usage`, spec 06 §5.3).
 
 The turn's cost appears as `costUsd` in `TurnResult.usage`, `metadata.eharness.usage` (cumulative
 over the turns that wrote the message, like the token counts), `data-eh.usage` (turn so far),
@@ -94,7 +96,10 @@ export interface BudgetConfig {
   the limit by one step.
 - A session budget already used up by earlier turns stops a new turn **before** its first model
   call (`'cost-cap'`, 0 steps).
-- A used-up budget suppresses `turn.beforeEnd` continuations and the wrap-up step.
+- A used-up budget suppresses `turn.beforeEnd` continuations and the wrap-up step, and skips
+  compaction before its summarizer runs (`W_BUDGET` with `details.compaction: true`, spec 06
+  §5.3). A compaction that uses up the budget stops the turn with `'cost-cap'` before the next
+  model call.
 - `W_BUDGET` once per turn and budget when spending reaches `warnAt × limit`
   (`details: { scope: 'turn' | 'session', limitUsd, spentUsd, exceeded: false }`) and when it is
   used up (`exceeded: true`).

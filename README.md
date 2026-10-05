@@ -74,7 +74,8 @@ import { handleChatRequest } from 'eharness'
 
 export async function POST(req: Request) {
   const body = await req.json() // useChat's { id, messages, trigger, messageId }
-  // send, approval answers, regenerate and edit — one AI SDK UI message stream
+  // send, approval answers, regenerate and edit — one AI SDK UI message stream;
+  // a busy session answers 409 { error: { code: 'EH_SESSION_BUSY' } } (or pass { ifBusy: 'wait' })
   return handleChatRequest(agent.session(body.id), body).toResponse()
 }
 ```

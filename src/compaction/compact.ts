@@ -4,7 +4,7 @@
  *
  * @see docs/specs/06-compaction.md
  */
-import type { LanguageModel, UIMessageChunk } from 'ai'
+import type { LanguageModel, LanguageModelUsage, UIMessageChunk } from 'ai'
 import type { CompactionConfig } from '../agent/types.ts'
 import { HarnessError, isHarnessError } from '../errors.ts'
 import { describeModel } from '../internal/model.ts'
@@ -14,7 +14,7 @@ import { hookFailed } from '../registry/wrap.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { resolveSummarizerPrompt } from './prompt.ts'
 import { KEEP_SHARE, planSplit } from './split.ts'
-import { summarize } from './summarize.ts'
+import { SummarizeError, summarize } from './summarize.ts'
 import {
   buildStats,
   type Calibration,
@@ -53,6 +53,20 @@ export interface CompactRequest {
   /** Turn stream writer (status + transient `data-eh.compaction`); absent for manual. */
   write?: ((chunk: UIMessageChunk) => void) | undefined
   signal?: AbortSignal | undefined
+  /**
+   * Charged with the usage of every summarizer call, also of a call that then fails (the turn's
+   * usage for automatic compaction, `state.core.usage` for manual, spec 06 §5.3).
+   */
+  onUsage?: ((usage: LanguageModelUsage, model: LanguageModel) => void) | undefined
+  /** The USD budget that is used up, if any: the compaction is skipped before summarizing. */
+  overBudget?: (() => BudgetOverrun | undefined) | undefined
+}
+
+/** A used-up USD budget (spec 12 §4). */
+export interface BudgetOverrun {
+  scope: 'turn' | 'session'
+  limitUsd: number
+  spentUsd: number
 }
 
 /** Outcome of one compaction. */
@@ -60,7 +74,14 @@ export type CompactOutcome =
   | { status: 'compacted'; marker: HarnessUIMessage; payload: CompactionPayload }
   | {
       status: 'skipped'
-      reason: 'running' | 'disabled' | 'nothing-to-drop' | 'no-gain' | 'aborted' | 'failed-earlier'
+      reason:
+        | 'running'
+        | 'disabled'
+        | 'nothing-to-drop'
+        | 'no-gain'
+        | 'aborted'
+        | 'failed-earlier'
+        | 'budget'
     }
   | { status: 'failed'; error: HarnessError }
 
@@ -172,6 +193,19 @@ export function createSessionCompaction(deps: {
     if (calibration.apply(maxSummaryTokens) + plan.keptTokens + fixed >= limit.summarizeAt) {
       return { status: 'skipped', reason: 'no-gain' }
     }
+    // a used-up budget: no summarizer call (the guard keeps the request within the window)
+    const overrun = request.overBudget?.()
+    if (overrun !== undefined) {
+      rt.warn(
+        {
+          code: 'W_BUDGET',
+          message: `The ${overrun.scope} budget of $${overrun.limitUsd} is used up ($${overrun.spentUsd.toFixed(4)}); compaction is skipped.`,
+          details: { ...overrun, exceeded: true, compaction: true },
+        },
+        `${request.turnId ?? 'manual'}:compaction-budget`,
+      )
+      return { status: 'skipped', reason: 'budget' }
+    }
 
     request.write?.({ type: 'data-eh.status', data: { state: 'compacting' }, transient: true })
     const entries = renderTranscriptEntries({
@@ -185,11 +219,12 @@ export function createSessionCompaction(deps: {
       contextOf: rt.contextOf,
       configured: settings.prompt,
       onError: (owner, error) => hookFailed(rt, 'compaction.prompt', owner, error),
+      messages: plan.drop,
     })
     const summarizer = settings.model ?? config.model
     let summary: string
     try {
-      summary = await summarize({
+      const result = await summarize({
         model: summarizer,
         prompt,
         entries,
@@ -198,15 +233,18 @@ export function createSessionCompaction(deps: {
         window: settings.contextWindow ?? window(summarizer),
         count,
         ...(request.signal === undefined ? {} : { abortSignal: request.signal }),
+        onUsage: (usage) => request.onUsage?.(usage, summarizer),
       })
+      summary = result.summary
     } catch (error) {
       if (request.signal?.aborted === true) return { status: 'skipped', reason: 'aborted' }
+      const reason = error instanceof SummarizeError ? error.reason : undefined
       return {
         status: 'failed',
         error: new HarnessError(
           'EH_COMPACTION_FAILED',
           `Compaction failed: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error },
+          { cause: error, ...(reason === undefined ? {} : { details: { reason } }) },
         ),
       }
     }
@@ -313,7 +351,7 @@ export function createSessionCompaction(deps: {
             {
               code: 'W_COMPACTION_FAILED',
               message: `${outcome.error.message} Continuing with the guard.`,
-              details: { trigger: request.trigger },
+              details: { trigger: request.trigger, ...(outcome.error.details ?? {}) },
             },
             request.turnId ?? 'compaction',
           )

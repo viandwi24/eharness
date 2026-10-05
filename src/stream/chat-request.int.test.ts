@@ -14,6 +14,8 @@ import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessSession, SendOptions } from '../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
+import { definePlugin } from '../plugin/define-plugin.ts'
+import type { ApprovalDecision } from '../plugin/types.ts'
 import { spyMessages, spyState } from '../session/int-kit.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
 import { type ChatRequestBody, extractResponses, handleChatRequest } from './chat-request.ts'
@@ -333,5 +335,61 @@ describe('scenario 22: handleChatRequest with a real useChat client', () => {
       messages: [],
     })
     expect((await run.result).error?.code).toBe('EH_INVALID_INPUT')
+  })
+})
+
+describe('handleChatRequest options', () => {
+  test('actor is passed to every approval answer of the respond path (approval.decided)', async () => {
+    const log: string[] = []
+    const decisions: ApprovalDecision[] = []
+    const audit = definePlugin({
+      name: 'audit',
+      setup: () => ({
+        hooks: { 'approval.decided': (_ctx, e) => void decisions.push(structuredClone(e)) },
+      }),
+    })
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'pay', input: { amount: 5 } },
+          { toolName: 'pay', input: { amount: 6 } },
+        ],
+      },
+      { text: 'Paid.' },
+    ])
+    const agent = defineHarnessAgent({
+      model,
+      contextWindow: 100_000,
+      storage: { messages: spyMessages(), state: spyState() },
+      logger: silent,
+      plugins: [audit],
+      tools: { pay: payTool(log) },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1') as HarnessSession<UIMessage>
+    const first = await session.send('pay').result
+    const pending = first.pending
+    if (pending === undefined) throw new Error('expected pending')
+    const stored = first.messages.find((m) => m.id === first.messageId) as UIMessage
+    const answered = {
+      ...stored,
+      parts: stored.parts.map((p) => {
+        const part = p as { type: string; approval?: { id: string } }
+        return part.approval === undefined
+          ? p
+          : {
+              ...p,
+              state: 'approval-responded',
+              approval: { id: part.approval.id, approved: true },
+            }
+      }),
+    } as UIMessage
+    const actor = { id: 'user-7', name: 'Ada' }
+    const run = handleChatRequest(session, { messages: [answered] }, { actor })
+    expect((await run.result).stop).toBe('complete')
+    const user = decisions.filter((d) => d.by === 'user')
+    expect(user).toHaveLength(2)
+    for (const d of user) expect(d.actor).toEqual(actor)
+    expect(log).toEqual(['pay:5', 'pay:6'])
   })
 })

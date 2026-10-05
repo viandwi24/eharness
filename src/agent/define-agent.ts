@@ -83,7 +83,95 @@ function validateConfig(config: HarnessAgentConfig): void {
       invalid('defineHarnessAgent: `mcp` must be an array of tool sources (e.g. mcpServer(...)).')
     }
   }
+  validateNumbers(config)
   validatePartMaps('the app (agent config)', config.dataParts, config.messageKinds)
+}
+
+type NumberRule =
+  | 'positive-int'
+  | 'non-negative-int'
+  | 'non-negative-int-or-infinity'
+  | 'positive'
+  | 'non-negative'
+  | 'ratio-open'
+  | 'ratio-half-open'
+
+const RULE_TEXT: Record<NumberRule, string> = {
+  'positive-int': 'a positive integer',
+  'non-negative-int': 'an integer ≥ 0',
+  'non-negative-int-or-infinity': 'an integer ≥ 0 (or Infinity)',
+  positive: 'a positive number',
+  'non-negative': 'a number ≥ 0',
+  'ratio-open': 'a number between 0 and 1 (exclusive)',
+  'ratio-half-open': 'a number in (0, 1]',
+}
+
+function checkNumber(path: string, value: unknown, rule: NumberRule): void {
+  if (value === undefined) return
+  const n = value as number
+  const ok =
+    typeof value === 'number' &&
+    !Number.isNaN(n) &&
+    (rule === 'positive-int'
+      ? Number.isInteger(n) && n > 0
+      : rule === 'non-negative-int'
+        ? Number.isInteger(n) && n >= 0
+        : rule === 'non-negative-int-or-infinity'
+          ? n === Number.POSITIVE_INFINITY || (Number.isInteger(n) && n >= 0)
+          : rule === 'positive'
+            ? Number.isFinite(n) && n > 0
+            : rule === 'non-negative'
+              ? Number.isFinite(n) && n >= 0
+              : rule === 'ratio-open'
+                ? n > 0 && n < 1
+                : n > 0 && n <= 1)
+  if (!ok) {
+    invalid(`defineHarnessAgent: \`${path}\` must be ${RULE_TEXT[rule]} (got ${String(value)}).`, {
+      option: path,
+    })
+  }
+}
+
+/** Numeric options that would silently misbehave (e.g. `maxSteps: 0`) are boot errors (spec 01 §7). */
+function validateNumbers(config: HarnessAgentConfig): void {
+  const loop = config.loop
+  checkNumber('loop.maxSteps', loop?.maxSteps, 'positive-int')
+  checkNumber('loop.maxContinues', loop?.maxContinues, 'non-negative-int-or-infinity')
+  checkNumber('loop.maxIdleContinues', loop?.maxIdleContinues, 'non-negative-int')
+  checkNumber('loop.maxTurnOutputTokens', loop?.maxTurnOutputTokens, 'positive')
+  checkNumber('loop.turnTimeoutMs', loop?.turnTimeoutMs, 'non-negative')
+  const progress = loop?.progress === false ? undefined : loop?.progress
+  checkNumber('loop.progress.repeats', progress?.repeats, 'positive-int')
+  checkNumber('loop.progress.window', progress?.window, 'positive-int')
+  checkNumber('loop.progress.errorStreak', progress?.errorStreak, 'positive-int')
+  checkNumber('loop.progress.nudges', progress?.nudges, 'non-negative-int')
+  const compaction = config.compaction === false ? undefined : config.compaction
+  checkNumber('compaction.summarizeAt', compaction?.summarizeAt, 'ratio-open')
+  checkNumber('compaction.keepLast', compaction?.keepLast, 'non-negative-int')
+  checkNumber('compaction.maxSummaryTokens', compaction?.maxSummaryTokens, 'positive-int')
+  checkNumber('compaction.contextWindow', compaction?.contextWindow, 'positive')
+  checkNumber('guard.maxContextRatio', config.guard?.maxContextRatio, 'ratio-half-open')
+  checkNumber('guard.reserveTokens', config.guard?.reserveTokens, 'non-negative')
+  checkNumber('sessionIdleMs', config.sessionIdleMs, 'non-negative')
+  checkNumber('budget.maxTurnUsd', config.budget?.maxTurnUsd, 'positive')
+  checkNumber('budget.maxSessionUsd', config.budget?.maxSessionUsd, 'positive')
+  checkNumber('budget.warnAt', config.budget?.warnAt, 'ratio-half-open')
+  checkNumber('inputFiles.maxBytes', config.inputFiles?.maxBytes, 'positive-int')
+  const protocols = config.inputFiles?.protocols
+  if (
+    protocols !== undefined &&
+    (!Array.isArray(protocols) ||
+      !protocols.every((p) => typeof p === 'string' && /^[a-z][a-z0-9+.-]*:$/.test(p)))
+  ) {
+    invalid(
+      "defineHarnessAgent: `inputFiles.protocols` must be lowercase protocols with the colon, e.g. ['data:', 'https:'].",
+      { option: 'inputFiles.protocols' },
+    )
+  }
+  checkNumber('toolOutput.maxChars', config.toolOutput?.maxChars, 'positive-int')
+  for (const [name, value] of Object.entries(config.toolOutput?.perTool ?? {})) {
+    if (value !== false) checkNumber(`toolOutput.perTool.${name}`, value, 'non-negative-int')
+  }
 }
 
 function orderPlugins(config: HarnessAgentConfig): AnyPlugin[] {

@@ -1,6 +1,6 @@
 # Spec 07 — Skills
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/skills`; filesystem source in `src/filesystem`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/skills`; filesystem source in `src/filesystem`.
 
 A skill is a reusable instruction bundle the **model** chooses to open when relevant (progressive
 disclosure). Format follows the Agent Skills convention (`SKILL.md` + optional files) and AI SDK
@@ -242,8 +242,9 @@ Adds `fsSkillSource(fs, { root })`:
   scalars, flow lists or block scalars, blank lines, `#` comments (full line, or after whitespace
   in plain values). Rejected: `+` chomping and indentation indicators, multi-line plain/quoted
   scalars, anchors/aliases/tags, flow maps, deeper nesting, tabs in indentation, duplicate keys,
-  the keys `__proto__`/`constructor`/`prototype`, several documents. A numeric
-  `name`/`description` is read as text.
+  the keys `__proto__`/`constructor`/`prototype`, several documents. `name` and `description`
+  are always text: a plain value that looks like a number or a boolean keeps its raw text
+  (`name: 007` → `'007'`, `description: 1.0` → `'1.0'`).
 - Warnings: a source reports `W_INVALID_SKILL` itself through `ctx.warn` (spec 01 §4) and skips
   the skill. `fsSkillSource` warns once per file version (`details: { source, path }`), so
   `refresh: 'turn'` does not repeat the warning every turn.

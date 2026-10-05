@@ -33,8 +33,9 @@ function ids(count: number): string[] {
 const idsOf = (messages: readonly { id: string }[]): string[] => messages.map((m) => m.id)
 
 /**
- * Conformance cases for a {@link MessageAdapter} (spec 05 §4): ordering by id, upsert, `fromId`
- * (inclusive), `beforeId` (exclusive) + `limit`, `{ limit }`, `{}`, empty sessions, session
+ * Conformance cases for a {@link MessageAdapter} (spec 05 §4): ordering by id, upsert (a whole
+ * replacement, never a merge), `fromId` (inclusive, also between stored ids), `beforeId`
+ * (exclusive, with and without `limit`), `{ limit }`, `{}`, empty sessions, session
  * isolation, JSON round-trip with unknown keys and data parts, copies on load, `lastId`.
  *
  * `factory` is called once per case; each case uses its own random session ids, so a factory
@@ -80,6 +81,64 @@ export function messageAdapterConformance(
         const loaded = await adapter.load({ sessionId })
         assertJsonEqual(idsOf(loaded), [a, b], 'ids after upsert')
         assertJsonEqual(loaded[0], replaced, 'replaced message')
+      },
+    },
+    {
+      name: 'save replaces the whole message (dropped keys stay dropped)',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('replace')
+        const [a] = ids(1) as [string]
+        const first = {
+          ...message(a, 'first'),
+          role: 'assistant',
+          metadata: {
+            eharness: { v: 1, createdAt: 1, pending: { messageId: a } },
+            app: { rating: 5 },
+          },
+          parts: [
+            { type: 'text', text: 'first' },
+            { type: 'data-x', id: 'x', data: { n: 1 } },
+          ],
+          extra: { dropped: true },
+        } as unknown as HarnessUIMessage
+        await adapter.save(sessionId, [first])
+        // the core drops keys on purpose (e.g. `pending` resolved, a part removed): no merge
+        const second = message(a, 'second', {
+          role: 'assistant',
+          metadata: { eharness: { v: 1, createdAt: 1, stop: 'complete' } },
+        })
+        await adapter.save(sessionId, [second])
+        assertJsonEqual(await adapter.load({ sessionId }), [second], 'replaced message')
+      },
+    },
+    {
+      name: '{ fromId } between stored ids starts at the next newer one',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('from-between')
+        const list = ids(5)
+        // list[2] is never stored: fromId need not exist (e.g. a deleted boundary)
+        await adapter.save(
+          sessionId,
+          list.filter((_, i) => i !== 2).map((id, i) => message(id, `m${i}`)),
+        )
+        const loaded = await adapter.load({ sessionId, fromId: list[2] as string })
+        assertJsonEqual(idsOf(loaded), list.slice(3), 'load({ fromId }) without an exact match')
+      },
+    },
+    {
+      name: '{ beforeId } without limit returns every older message',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('before-all')
+        const list = ids(5)
+        await adapter.save(
+          sessionId,
+          list.map((id, i) => message(id, `m${i}`)),
+        )
+        const loaded = await adapter.load({ sessionId, beforeId: list[3] as string })
+        assertJsonEqual(idsOf(loaded), list.slice(0, 3), 'load({ beforeId })')
       },
     },
     {

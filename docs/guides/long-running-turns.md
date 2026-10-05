@@ -27,7 +27,7 @@ const agent = defineHarnessAgent({
     maxIdleContinues: 3, // default — see "Keeping a turn going"
     maxContinues: undefined, // default none — absolute cap on continuations
     maxTurnOutputTokens: undefined, // default none — output-token cap → 'cost-cap'
-    turnTimeoutMs: 30 * 60_000, // default none — wall clock → 'timeout'
+    turnTimeoutMs: 30 * 60_000, // example: 30 min (default none) — wall clock → 'timeout'
   },
 })
 ```

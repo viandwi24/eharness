@@ -1,6 +1,6 @@
 # Spec 10 — Errors, warnings, stop reasons
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/errors.ts`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/errors.ts`.
 
 ## 1. Errors (thrown)
 
@@ -54,7 +54,11 @@ the next step (warning only). A failed final save sets `stop: 'error'` / `EH_STO
 
 ```ts
 /** Wraps an error thrown by a tool's execute. Copies `name` and `message`, keeps the original in `cause`. */
-export class HarnessToolError extends Error { readonly toolName: string; readonly toolCallId: string }
+export class HarnessToolError extends Error {
+  readonly toolName: string; readonly toolCallId: string
+  /** The `config.toolErrorText` text, when set; `toString()` returns it. */
+  readonly text: string | undefined
+}
 ```
 
 Created by the core's execute wrapper (spec 01 §5) and re-thrown to AI SDK, which turns it into a
@@ -62,10 +66,19 @@ tool-error result. Because `name` and `message` are copied, `String(error)` — 
 sees — is identical to the original, and the UI stream uses the same text (spec 04 §2). It never
 reaches the caller of `send()`.
 
+**`config.toolErrorText`** (0.4.0): `(error, { toolName, toolCallId }) => string` maps a thrown
+error to its text; `String(error)` of the `HarnessToolError` is then the mapped text, so the UI
+stream, the stored part and the model wire stay identical. Default: `String(error)` of the
+original — which may carry secrets (connection strings, tokens) to clients and the model. A mapper
+that throws or returns a non-string yields `Error: the tool failed.` (never the original text).
+Errors of invalid / unknown tool calls (`AI_InvalidToolInputError`, `AI_NoSuchToolError`) are not
+mapped (they carry only the model's own input).
+
 ## 2. Warnings (non-fatal)
 
 Delivered to `config.onWarning` (every occurrence; the **default** handler deduplicates per
-code + key), as transient `data-eh.warning` during a turn, and as session `data` events otherwise.
+code + key, remembering the 1 000 most recently used keys so per-turn keys cannot grow it
+forever), as transient `data-eh.warning` during a turn, and as session `data` events otherwise.
 With `config.strict: true`, misuse warnings (`W_TRANSIENT_OVERRIDE`, `W_UNKNOWN_DATA_PART`,
 `W_WRITE_OUTSIDE_TURN`) throw `EH_CONFIG_INVALID` instead.
 
@@ -113,10 +126,15 @@ Maps any error to a user-safe message for `error` chunks and `eh.notice`:
   overflow detection, spec 06 §7: `APICallError`, `StreamProviderError`, duck-typed
   `statusCode` / `status`); the first error in that order with a status decides, so a
   `RetryError` whose last attempt has no status (e.g. a network error) but an earlier attempt was
-  a 429 / 5xx reads `Rate limited:` / `Provider unavailable:`; prefers the provider's own message
-  for API errors (status 4xx) with
-  prefixes `Provider rejected the request:` (400/401/402/403/404/422), `Rate limited:` (429),
+  a 429 / 5xx reads `Rate limited:` / `Provider unavailable:`; prefixes
+  `Provider rejected the request:` (400/401/402/403/404/422), `Rate limited:` (429),
   `Provider unavailable:` (5xx);
+- the provider's own message follows the prefix only for AI SDK `APICallError` /
+  `StreamProviderError` (checked with `isInstance`), with URLs, query strings and key-like tokens
+  (`sk-…`, `Bearer …`, long hex/base64 runs) redacted as `[redacted]` and the text capped at 300
+  characters (0.4.0). Any other error with a status (a plain `Error` with `status`, fetch or
+  gateway wrappers) reads `HTTP <status>` after the prefix — its message may carry URLs with keys
+  or connection strings. The redaction patterns are not public API; only the behaviour is;
 - never includes headers, API keys, request bodies or stack traces;
 - falls back to `Unexpected error (see server logs)`; the full error goes to `ctx.log.error`.
 
@@ -177,3 +195,4 @@ UIs and tests). Changing one is a minor change (it changes what models see).
 | `PROGRESS_NUDGE` | `You are not making progress: {what}. Do not repeat it. Try a different approach, or stop and explain what blocks you.` | progress guard reminder (spec 05 §3.2) |
 | `MAX_STEPS_WRAP_UP` | `The step limit of this turn is reached and tools are disabled. Summarize what you did, what is left, and how to continue.` | wrap-up step reminder (spec 05 §3.1) |
 | `TOOL_OUTPUT_TRUNCATED` | `…[truncated {n} chars]…` | output limits (spec 09 §4) |
+| `FILE_UNAVAILABLE` | `[file unavailable: {mediaType} {filename}]` | a file of an earlier turn whose URL cannot be downloaded (spec 05 §3 step 7) |

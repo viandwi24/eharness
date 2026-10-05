@@ -109,7 +109,7 @@ export interface TurnInfo {
   id: string
   /** What started the turn. */
   kind: TurnKind
-  /** True for a `send()` that waited in the queue. */
+  /** True for a turn that waited in the session queue (`ifBusy: 'queue' | 'wait'`, a steer that fell back to a turn, a queued wake). */
   queued: boolean
   /** Undefined for respond/regenerate/wake and for `send()` without input. */
   input: HarnessUIMessage | undefined
@@ -350,7 +350,12 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   /** Contribute context to / replace the summarizer prompt. */
   'compaction.prompt'?(
     ctx: HarnessContext<DP>,
-    out: { context: string[]; prompt?: string },
+    out: {
+      context: string[]
+      prompt?: string
+      /** The messages being summarized (copies, id order; read-only input). */
+      readonly messages: readonly HarnessUIMessage[]
+    },
   ): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 

@@ -28,7 +28,11 @@ const agent = defineHarnessAgent({
         inputSchema: z.object({ question: z.string() }),
         async *execute({ question }, { toolCallId, abortSignal }) {
           const turn = ctx.turn
-          if (turn === undefined) throw new Error('research runs only inside a turn')
+          if (turn === undefined) {
+            // expected failure: return an error string the model can read, never throw
+            yield 'ERROR: research runs only inside a turn.'
+            return
+          }
           const child = researcher.session(`${ctx.session.id}:research:${toolCallId}`, {
             // recorded as ctx.session.parent in the child; depth > 8 is rejected
             parent: {

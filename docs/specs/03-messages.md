@@ -1,6 +1,6 @@
 # Spec 03 — Messages
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/messages`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/messages`.
 
 This is the most important contract in eharness: it defines what is **stored**, what is
 **streamed**, and what the **model sees**.
@@ -349,7 +349,9 @@ Validation runs on cold loads only (spec 05 §6), never on hot-path turns.
   checks 10k ids in a tight loop).
 - **Per-session floor:** a new id must sort after the newest id the session knows (cache or last
   load). If it does not (clock skew between instances, clock going backwards), the core bumps the
-  UUIDv7 timestamp field to floor + 1 ms. Implemented as `nextId(floor?: string)` in `ids.ts`.
+  UUIDv7 timestamp field to floor + 1 ms — only then: an id that already sorts after the floor
+  (e.g. many ids in one millisecond, each the next one's floor) keeps the clock's timestamp, so
+  timestamps never drift ahead of the clock. Implemented as `nextId(floor?: string)` in `ids.ts`.
   The bump applies to that one id only; it does not move the generator's clock, so a skewed floor
   of one session never shifts the ids of other sessions (the session passes its newest id as the
   floor on every call).

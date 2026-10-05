@@ -613,6 +613,45 @@ describe('scenario 20: approval combination and grants', () => {
     expect(JSON.stringify(model.prompts[1])).toContain('policy exploded')
   })
 
+  test('an unknown status from a hook or a policy is denied (fail closed)', async () => {
+    const log: string[] = []
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'pay', input: { amount: 1 } },
+          { toolName: 'refund', input: { amount: 2 } },
+        ],
+      },
+      { text: 'done' },
+    ])
+    const refund = tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async () => {
+        log.push('refund')
+        return 'refunded'
+      },
+    })
+    const typo = definePlugin({
+      name: 'typo',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) => (e.toolName === 'pay' ? ('deny' as never) : undefined),
+        },
+      }),
+    })
+    const { agent } = setup({
+      model,
+      plugins: [typo],
+      tools: { pay: payTool(log), refund },
+      approval: { policy: { pay: 'approved', refund: { type: 'nope' } as never } },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(log).toEqual([])
+    const message = result.messages.find((m) => m.id === result.messageId)
+    expect(toolPart(message, 'pay')?.state).toBe('output-denied')
+    expect(toolPart(message, 'refund')?.state).toBe('output-denied')
+  })
+
   test("remember: 'session' grants apply after step 0, only upgrade user-approval, survive reload", async () => {
     const log: string[] = []
     const messages = spyMessages()

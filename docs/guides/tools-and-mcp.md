@@ -66,7 +66,24 @@ const agent = defineHarnessAgent({
 
 - Return **error strings** for expected failures (`ERROR: …`); the model reads them and corrects
   itself. A thrown error becomes a tool error result with the same text (`HarnessToolError`).
-- Static names must be unique (`EH_DUPLICATE_TOOL` at boot). A source that returns a name that is
+- **A thrown error's text reaches the client and the model verbatim** (`String(error)`: UI stream,
+  stored message and model wire). Driver and HTTP errors often carry secrets — connection strings
+  (`postgres://user:password@…`), signed URLs, tokens. Map them with `toolErrorText`:
+
+  ```ts
+  defineHarnessAgent({
+    model,
+    toolErrorText: (error, { toolName }) => {
+      console.error(`tool ${toolName} failed`, error) // keep the details in your logs
+      return `Error: ${toolName} failed; try again later.`
+    },
+  })
+  ```
+
+  The mapped text is used everywhere (UI, storage and wire stay identical). If the mapper throws
+  or returns no string, the text is `Error: the tool failed.`
+- Static names must be unique (`EH_DUPLICATE_TOOL`: at boot for config / `setup()` tools, at
+  session open for a plugin's `session()` tools). A source that returns a name that is
   already taken is skipped with `W_SHADOWED`; a failing `list()` contributes nothing for that turn
   (`W_TOOL_SOURCE_FAILED`) and is retried next turn.
 - The tool set is fixed for a turn and keeps a stable order (static, skill tools, sources,

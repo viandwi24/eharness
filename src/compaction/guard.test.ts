@@ -13,6 +13,20 @@ describe('truncateMiddle', () => {
     expect(out).toBe(`${'a'.repeat(70)}…[truncated 100 chars]…${'b'.repeat(30)}`)
     expect(truncateMiddle('abcdef', 0)).toBe('…[truncated 6 chars]…')
   })
+
+  test('never splits a surrogate pair at either cut point', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    const emoji = '😀'.repeat(100)
+    for (let max = 1; max < 60; max++) {
+      const out = truncateMiddle(emoji, max)
+      expect({ max, lone: lone.test(out) }).toEqual({ max, lone: false })
+    }
+    // the removed count is still exact
+    const text = `a${'😀'.repeat(10)}`
+    const out = truncateMiddle(text, 10)
+    const removed = Number(/truncated (\d+) chars/.exec(out)?.[1])
+    expect(out.replace(/…\[truncated \d+ chars\]…/, '').length + removed).toBe(text.length)
+  })
 })
 
 describe('overflow detection', () => {
@@ -248,5 +262,31 @@ describe('hard cap', () => {
     expect(output.truncated).toBe(true)
     expect(output.originalChars).toBe(9_000 + '{"rows":""}'.length)
     expect(output.preview.length).toBeLessThan(MIN_TRUNCATED_OUTPUT_CHARS + 40)
+  })
+
+  test('an escape-heavy limited preview shrinks by its serialized size (no false overflow)', () => {
+    const preview = '"\\'.repeat(2_000)
+    const output = { truncated: true, preview, originalChars: 90_000 }
+    const current: ModelMessage[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'q', input: {} }],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'q',
+            output: { type: 'json', value: output },
+          },
+        ],
+      },
+    ]
+    const limit = measure(current) - 500
+    const r = applyHardCap({ head: [], turns: [], current, fixedTokens: 0, limit, measure })
+    expect(r.over).toBe(false)
+    expect(r.truncatedOutputs).toBe(1)
   })
 })

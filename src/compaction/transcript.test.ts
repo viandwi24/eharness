@@ -127,7 +127,7 @@ describe('transcript (spec 06 §5.3)', () => {
 describe('summarize', () => {
   test('one call: instructions, transcript and hook context, maxOutputTokens', async () => {
     const model = summarizerModel(['  the brief  '])
-    const summary = await summarize({
+    const { summary } = await summarize({
       model,
       prompt: 'PROMPT',
       entries: ['USER: a', 'ASSISTANT: b'],
@@ -149,7 +149,7 @@ describe('summarize', () => {
   test('rolling chunks above 60% of the summarizer window; the running summary is fed forward', async () => {
     const model = summarizerModel((_call, i) => `summary ${i}`)
     const entries = Array.from({ length: 6 }, (_, i) => `USER: ${String(i).repeat(400)}`)
-    const summary = await summarize({
+    const { summary } = await summarize({
       model,
       prompt: 'P',
       entries,

@@ -57,7 +57,8 @@ Suites: `messageAdapterConformance`, `stateAdapterConformance`, `fileSystemConfo
 `skillSourceConformance`, `idGeneratorConformance`.
 
 Minimum cases for `messageAdapterConformance`: ordering by id for out-of-order saves; upsert
-replaces; `fromId` inclusive; `beforeId` exclusive + limit returns newest; `{ limit }`; empty
+replaces (dropped keys stay dropped, never a merge); `fromId` inclusive and between stored ids;
+`beforeId` exclusive + limit returns newest; `beforeId` without limit; `{ limit }`; empty
 session; session isolation; JSON round-trip with unknown keys and data parts; returned arrays are
 copies; `lastId` (if implemented).
 

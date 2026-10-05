@@ -457,6 +457,42 @@ describe('scenario 31: tool errors', () => {
     expect(JSON.stringify(model.prompts[1])).toContain('TypeError: no network')
     expect(result.stop).toBe('complete')
   })
+
+  test('toolErrorText maps thrown errors identically in the UI, storage and the model wire', async () => {
+    const leaks = tool({
+      inputSchema: z.object({}),
+      execute: async (): Promise<string> => {
+        throw new Error('connect failed: postgres://user:pw@db.internal:5432/app')
+      },
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'leaks', input: {} }] },
+      { text: 'Sorry.' },
+    ])
+    const seen: Array<{ toolName: string; toolCallId: string }> = []
+    const { agent } = makeAgent({
+      model,
+      tools: { leaks },
+      toolErrorText: (error, e) => {
+        seen.push(e)
+        return `Error: ${e.toolName} failed (${error instanceof Error ? 'Error' : 'unknown'})`
+      },
+    })
+    const run = agent.session('s1').send('Go')
+    const chunks = await collect(run.stream)
+    const result = await run.result
+    const mapped = 'Error: leaks failed (Error)'
+    const ui = chunks.find((c) => c.type === 'tool-output-error') as { errorText: string }
+    expect(ui.errorText).toBe(mapped)
+    const assistant = result.messages.find((m) => m.id === result.messageId)
+    const part = assistant?.parts.find((p) => p.type === 'tool-leaks') as { errorText: string }
+    expect(part.errorText).toBe(mapped)
+    const wire = JSON.stringify(model.prompts[1])
+    expect(wire).toContain(mapped)
+    expect(wire).not.toContain('postgres://')
+    expect(JSON.stringify(chunks)).not.toContain('postgres://')
+    expect(seen).toEqual([{ toolName: 'leaks', toolCallId: 'call-0-0' }])
+  })
 })
 
 describe('scenario 36: chunk cloning', () => {

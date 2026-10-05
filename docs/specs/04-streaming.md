@@ -1,6 +1,6 @@
 # Spec 04 — Streaming
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/stream`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/stream`.
 
 ## 1. One protocol
 
@@ -32,6 +32,12 @@ message-metadata { eharness: { model, usage, stop, steps, durationMs, pending? }
 finish                                  ← normal end
 abort { reason }                        ← instead of `finish` when aborted (user abort, turn timeout)
 ```
+
+The transient `data-eh.status { state: 'tool' }` chunk is written by the core's execute wrapper
+when a tool starts; with recent AI SDK versions (observed with 7.0.127) a tool can start before its step's
+`start-step` chunk reaches the stream, so the status may precede `start-step` (transient: it never
+changes the message). `finish` / `abort` reach `run.stream` only after the turn's end sequence
+completed (spec 05 §3 step 17).
 
 Turn kinds (spec 01 `TurnInfo.kind`) differ only at the start:
 

@@ -34,3 +34,9 @@ export const MAX_STEPS_WRAP_UP: string =
 
 /** Marker inserted into truncated tool outputs; `{n}` is the number of removed characters. */
 export const TOOL_OUTPUT_TRUNCATED: string = '…[truncated {n} chars]…'
+
+/**
+ * Replaces a file of an earlier turn whose URL could not be downloaded (e.g. an expired link), so
+ * later turns still run (`{mediaType}`, `{filename}`; spec 05 §3, spec 10 §5).
+ */
+export const FILE_UNAVAILABLE: string = '[file unavailable: {mediaType} {filename}]'
