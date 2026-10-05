@@ -16,7 +16,11 @@ import {
   type StateAdapter,
 } from '../index.ts'
 import { memoryMessages, memoryState } from '../storage/memory.ts'
-import { type ScriptedStepInput, scriptedModel } from '../testing/scripted-model.ts'
+import {
+  type ScriptedStep,
+  type ScriptedStepInput,
+  scriptedModel,
+} from '../testing/scripted-model.ts'
 import { classifyToolResult } from './classify.ts'
 import { memoryFs } from './memory.ts'
 import { filesystem } from './plugin.ts'
@@ -713,6 +717,72 @@ describe('services, state and resolver', () => {
       'No matches.',
       `${OUT}:2: line 2`,
     ])
+  })
+
+  test('an evicted single-line JSON output is readable completely (charOffset paging)', async () => {
+    const OUT = `/.eharness/tool-outputs/call_1-${(await contentVersion('call/1')).slice(0, 8)}.txt`
+    const big = JSON.stringify({
+      rows: Array.from({ length: 6_000 }, (_, i) => ({ id: i, name: `row-${i}` })),
+    })
+    expect(big.includes('\n')).toBe(false)
+    const produce = tool({ inputSchema: z.object({}), execute: async () => big })
+    /** Follow the read_file continuation hints until the line is complete. */
+    const next = (options: { prompt: unknown }): ScriptedStep => {
+      const results: string[] = []
+      for (const message of options.prompt as Array<{ role: string; content: unknown }>) {
+        if (message.role !== 'tool' || !Array.isArray(message.content)) continue
+        for (const part of message.content as Array<{ toolName?: string; output?: unknown }>) {
+          const value = (part.output as { value?: unknown } | undefined)?.value
+          if (part.toolName === 'read_file' && typeof value === 'string') results.push(value)
+        }
+      }
+      if (results.length === 0) return { toolCalls: [call('read_file', { path: OUT })] }
+      const hint = /charOffset=(\d+)\.\)$/.exec(results.at(-1) ?? '')
+      if (hint === null) return { text: 'done' }
+      return {
+        toolCalls: [call('read_file', { path: OUT, offset: 1, charOffset: Number(hint[1]) })],
+      }
+    }
+    const steps: ScriptedStepInput[] = [
+      { toolCalls: [{ toolName: 'produce', input: {}, toolCallId: 'call/1' }] },
+      ...Array.from({ length: 30 }, () => next),
+    ]
+    const { agent } = setup(
+      steps,
+      { fs: memoryFs(), maxReadChars: 20_000 },
+      {
+        tools: { produce },
+        toolOutput: { perTool: { produce: 2_000 }, strategy: 'evict' },
+        contextWindow: 1_000_000,
+      },
+    )
+    const result = await agent.session('s').send('go').result
+    expect(result.stop).toBe('complete')
+    const segments = toolOutputs(assistant(result))
+      .filter(([name]) => name === 'read_file')
+      .map(([, output]) =>
+        (
+          (output as string).slice('     1\t'.length).split('\n\n(Line 1 continues')[0] ?? ''
+        ).replace(/ … \[line truncated\]$/, ''),
+      )
+    expect(segments.length).toBeGreaterThan(5)
+    expect(segments.join('')).toBe(big)
+  })
+
+  test('grep: a hit beyond the shown 300 characters names its charOffset', async () => {
+    const line = `${'x'.repeat(1_000)}NEEDLE${'y'.repeat(100)}`
+    const { agent } = setup(
+      [
+        { toolCalls: [call('grep', { pattern: 'NEEDLE' })] },
+        { toolCalls: [call('read_file', { path: '/a.txt', offset: 1, charOffset: 1_000 })] },
+        { text: 'done' },
+      ],
+      { fs: memoryFs({ '/a.txt': `${line}\n` }) },
+    )
+    const result = await agent.session('s').send('go').result
+    const [grep, read] = outputs(result) as string[]
+    expect(grep).toBe(`/a.txt:1: ${'x'.repeat(300)} … (match at charOffset=1000)`)
+    expect(read).toBe(`     1\tNEEDLE${'y'.repeat(100)}`)
   })
 
   test('toolOutputs: false provides only fs; a custom dir is honoured', async () => {
