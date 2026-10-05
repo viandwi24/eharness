@@ -268,7 +268,10 @@ and instructions — the owner's namespace while its hook runs) are reverted to 
 kept. When the commit-point state write itself fails, the core fields it changed (`activeTurn`,
 `pending`, `grants`, `rewinds`) are put back, so a later write (close, idle eviction) never
 publishes a turn that did not commit; on a CAS conflict the in-memory state is discarded and
-reloaded from the adapter (the other instance's state wins, nothing of ours overwrites it).
+reloaded from the adapter (the other instance's state wins, nothing of ours overwrites it). This
+also discards this instance's unwritten state changes made before the conflict — background
+`ctx.state` sets, state set by a previous turn's `turn.end` hooks that was not written yet — the
+normal outcome for the losing writer.
 
 **Later failure (`committed === true`):** the end path runs with `stop: 'error'`, saves the
 (possibly empty) assistant message, and additionally saves an `eh.notice` kind (level `error`,

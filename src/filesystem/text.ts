@@ -9,73 +9,73 @@ export function splitLines(content: string): string[] {
 export const GREP_MAX_PATTERN = 512
 /**
  * Characters of one line a pattern is matched against (the rest of a longer line is ignored):
- * keeps the worst case of an accepted pattern (one quantifier, quadratic) at a few ms per line.
+ * keeps the worst case of an accepted pattern (one variable quantifier, quadratic) at a few ms
+ * per line.
  */
 export const GREP_SCAN_CHARS = 2_000
-/** A `{n,m}` range with a larger upper bound counts as unbounded. */
-const LARGE_RANGE = 100
 
 /** True when `pattern` has no regular expression metacharacters (a literal search). */
 export function isLiteralPattern(pattern: string): boolean {
   return !/[\\^$.|?*+()[\]{}]/.test(pattern)
 }
 
-type Quantifier = { length: number; repeats: boolean; unbounded: boolean }
+/** The quantifier at `at`: its length and whether its width varies (`*`, `+`, `?`, `{n,m}` m > n). */
+function quantifierAt(source: string, at: number): { length: number; variable: boolean } {
+  const c = source[at]
+  let length = 0
+  let variable = false
+  if (c === '*' || c === '+' || c === '?') {
+    length = 1
+    variable = true
+  } else if (c === '{') {
+    const m = /^\{(\d+)(,(\d*))?\}/.exec(source.slice(at))
+    if (m === null) return { length: 0, variable: false }
+    length = m[0].length
+    variable = m[2] !== undefined && (m[3] === '' || Number(m[3]) > Number(m[1]))
+  } else {
+    return { length: 0, variable: false }
+  }
+  // a lazy suffix (`*?`, `{1,3}?`) belongs to the quantifier
+  if (source[at + length] === '?') length++
+  return { length, variable }
+}
+
+/** The refusal text's rule, for the model (spec 08 §3). */
+export const GREP_PATTERN_RULE =
+  'grep accepts only a safe subset of regular expressions: at most one variable-width quantifier (*, +, ?, {n,m}) in the whole pattern, no quantified groups, no backreferences or lookarounds. Search for a plain literal, or split the search into simpler ones.'
 
 /**
  * Why `source` is refused as a `grep` pattern (spec 08 §3), or `undefined` when it is accepted.
- * A **conservative safe subset** of JavaScript regular expressions, not a proof of linear time:
+ * The rule (a conservative safe subset, so any accepted pattern is at worst quadratic in the
+ * scanned {@link GREP_SCAN_CHARS} characters):
  *
  * - at most {@link GREP_MAX_PATTERN} characters;
- * - no backreferences, no lookaround assertions;
- * - at most **one** unbounded quantifier (`*`, `+`, `{n,}`, `{n,m}` with m > 100) in the whole
- *   pattern (`\w*\w*x`, `.*foo.*bar` are refused);
- * - no repeated group that contains a repeating quantifier (`(a+)+`, `(\d+\.)+\d+`) or an
- *   alternation (`(a|a)*b`, `(foo|bar)+`).
+ * - at most **one** variable-width quantifier in total: `*`, `+`, `?`, lazy variants, `{n,}`
+ *   and `{n,m}` with m > n (a fixed `{n}` on a single atom is fine);
+ * - no quantified group: `(…)` / `(?:…)` followed by any quantifier, even a fixed `{n}`;
+ * - no backreferences, no lookaround assertions (alternation is allowed — groups cannot repeat).
  *
- * With one quantifier a match attempt is at worst quadratic in the line length, which
- * {@link GREP_SCAN_CHARS} bounds. Adapters that push `grep` down should run a linear-time engine
- * (RE2) or apply the same limits.
+ * Adapters that push `grep` down should run a linear-time engine (RE2) or apply the same rule.
  */
 export function unsafePatternReason(source: string): string | undefined {
   if (source.length > GREP_MAX_PATTERN) return `longer than ${GREP_MAX_PATTERN} characters`
-  /** Open groups: does their content repeat / contain an alternation? */
-  const groups: Array<{ repeats: boolean; alternation: boolean }> = []
-  /** The group that just closed (a quantifier may follow it). */
-  let closed: { repeats: boolean; alternation: boolean } | undefined
-  let unbounded = 0
-  const quantifier = (at: number): Quantifier => {
-    const c = source[at]
-    if (c === '*' || c === '+') return { length: 1, repeats: true, unbounded: true }
-    if (c === '?') return { length: 1, repeats: false, unbounded: false }
-    if (c !== '{') return { length: 0, repeats: false, unbounded: false }
-    const m = /^\{(\d+)(,(\d*))?\}/.exec(source.slice(at))
-    if (m === null) return { length: 0, repeats: false, unbounded: false }
-    const max =
-      m[2] === undefined ? Number(m[1]) : m[3] === '' ? Number.POSITIVE_INFINITY : Number(m[3])
-    return { length: m[0].length, repeats: max > 1, unbounded: max > LARGE_RANGE }
-  }
+  let variable = 0
+  /** The previous atom was a group (a quantifier may not follow it). */
+  let afterGroup = false
   for (let i = 0; i < source.length; i++) {
     const c = source[i]
-    const q = quantifier(i)
+    const q = quantifierAt(source, i)
     if (q.length > 0) {
-      if (q.repeats && closed !== undefined) {
-        if (closed.repeats) return 'a repeated group contains a repeating quantifier'
-        if (closed.alternation) return 'a repeated group contains an alternation'
+      if (afterGroup) return 'a quantified group'
+      if (q.variable) {
+        variable++
+        if (variable > 1) return 'more than one variable-width quantifier'
       }
-      if (q.unbounded) {
-        unbounded++
-        if (unbounded > 1) return 'more than one unbounded quantifier'
-      }
-      const top = groups.at(-1)
-      if (q.repeats && top !== undefined) top.repeats = true
-      closed = undefined
       i += q.length - 1
-      // a lazy suffix (`*?`) belongs to the quantifier
-      if (q.repeats && source[i + 1] === '?') i++
+      afterGroup = false
       continue
     }
-    closed = undefined
+    afterGroup = false
     if (c === '\\') {
       const next = source[i + 1] ?? ''
       if (/[1-9]/.test(next) || (next === 'k' && source[i + 2] === '<')) {
@@ -95,24 +95,12 @@ export function unsafePatternReason(source: string): string | undefined {
     }
     if (c === '(') {
       if (/^\(\?(=|!|<=|<!)/.test(source.slice(i))) return 'lookaround assertions are not supported'
-      groups.push({ repeats: false, alternation: false })
+      // skip a group prefix (`?:`, `?<name>`): its `?` is not a quantifier
+      const prefix = /^\(\?(:|<[A-Za-z_$][\w$]*>)/.exec(source.slice(i))
+      if (prefix !== null) i += prefix[0].length - 1
       continue
     }
-    if (c === ')') {
-      const group = groups.pop()
-      if (group === undefined) continue
-      const parent = groups.at(-1)
-      if (parent !== undefined) {
-        parent.repeats ||= group.repeats
-        parent.alternation ||= group.alternation
-      }
-      closed = group
-      continue
-    }
-    if (c === '|') {
-      const top = groups.at(-1)
-      if (top !== undefined) top.alternation = true
-    }
+    if (c === ')') afterGroup = true
   }
   return undefined
 }

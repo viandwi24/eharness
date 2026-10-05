@@ -13,6 +13,7 @@ import type { LastRead } from './last-read.ts'
 import { dirPrefix, isUnder, isUnderAny, normalizePath } from './paths.ts'
 import { smartReplace } from './smart-replace.ts'
 import {
+  GREP_PATTERN_RULE,
   GREP_SCAN_CHARS,
   isLiteralPattern,
   splitLines,
@@ -354,7 +355,7 @@ export function createFileTools(
         // no catastrophic backtracking: the event loop must never freeze on a model's pattern
         const unsafe = unsafePatternReason(pattern)
         if (unsafe !== undefined) {
-          return `ERROR: invalid pattern: ${unsafe}. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`
+          return `ERROR: invalid pattern: ${unsafe}. ${GREP_PATTERN_RULE}`
         }
         let regex: RegExp
         try {

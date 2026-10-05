@@ -64,7 +64,7 @@ Rules for adapters:
 - `grep` (optional): lines are split on `\n` with a trailing `\r` removed; `line` is 1-based;
   hits sorted by path then line, at most `maxHits`; `prefix` has the `list` semantics; the
   pattern's `g`/`y` flags must not make matching stateful. The tool only passes patterns of its
-  conservative safe subset (§3), a syntactic guard, not a guarantee: an adapter that pushes `grep`
+  conservative safe subset (§3: at most one variable-width quantifier, no quantified groups), a syntactic guard, not a guarantee: an adapter that pushes `grep`
   down (a database, a search service) should run a linear-time engine (e.g. RE2) or apply the
   same limits — at most 512 pattern characters, only the first 2 000 characters of each line
   matched (`memoryFs` does) — so a model's pattern cannot freeze the process or the backend.
@@ -194,18 +194,21 @@ Exact formats (model-visible, api-stability.md):
 - `grep`: `pattern` is a JavaScript regular expression without flags, matched per line (only
   the first 2 000 characters of a line are matched; a pattern without regex metacharacters is a
   plain substring search); `ERROR: invalid pattern: <message>` when it does not compile.
-  **Safe subset (0.4.0):** a conservative guard against slow backtracking — not a guarantee of
-  linear time — refuses patterns longer than 512 characters, backreferences, lookarounds, more
-  than one unbounded quantifier (`*`, `+`, `{n,}`, `{n,m}` with m > 100: `\w*\w*x`,
-  `.*foo.*bar`), and repeated groups that contain a repeating quantifier or an alternation
-  (`(a+)+`, `(\d+\.)+\d+`, `(a|a)*b`, `(foo|bar)+`). The answer is
-  `ERROR: invalid pattern: <reason>. grep accepts a conservative safe subset of regular
-  expressions; use a simpler pattern or a plain literal.` with reason `longer than 512
-  characters`, `backreferences are not supported`, `lookaround assertions are not supported`,
-  `more than one unbounded quantifier`, `a repeated group contains a repeating quantifier` or
-  `a repeated group contains an alternation`. Search for one part at a time, or for a literal,
-  instead. With one quantifier a match is at worst quadratic in the scanned 2 000 characters (a
-  few ms per line). One line
+  **Safe subset (0.4.0)** — a conservative guard against slow backtracking, so an accepted
+  pattern is at worst quadratic in the 2 000 scanned characters (a few ms per line). The rule,
+  exactly: at most 512 characters; **at most one variable-width quantifier in the whole pattern**,
+  counting `*`, `+`, `?`, their lazy variants, `{n,}` and `{n,m}` with m > n (a fixed `{n}` on a
+  single atom is fine); **no quantified group** — `(…)` or `(?:…)` followed by any quantifier,
+  even a fixed `{n}`; no backreferences; no lookarounds. Alternation is allowed (outside
+  quantified groups, which do not exist). So `foo|bar`, `import .* from`, `^\s*export`,
+  `[A-Z][a-z]+Error`, `a.{0,90}b` work, while `.*foo.*bar`, `\w+\d{0,99}x`,
+  `(\d+\.)+\d+`, `(ab){3}` are refused with
+  `ERROR: invalid pattern: <reason>. grep accepts only a safe subset of regular expressions: at
+  most one variable-width quantifier (*, +, ?, {n,m}) in the whole pattern, no quantified groups,
+  no backreferences or lookarounds. Search for a plain literal, or split the search into simpler
+  ones.` — reason `longer than 512 characters`, `more than one variable-width quantifier`,
+  `a quantified group`, `backreferences are not supported` or
+  `lookaround assertions are not supported`. One line
   `<path>:<line>: <text>` per hit (text cut to 300 characters + ` …`; a cut line ends with
   ` (match at charOffset=<c>)`, the 0-based character offset of the first match, for
   `read_file`), sorted by path and line,
