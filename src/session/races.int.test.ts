@@ -445,6 +445,38 @@ describe('item 6: one live handle while a session closes', () => {
   })
 })
 
+describe('item 5: messages() paging progress guard', () => {
+  test('an adapter that ignores beforeId cannot make messages() loop forever', async () => {
+    const inner = defaultMemoryMessages()
+    let loads = 0
+    const broken = spyMessages({
+      async load(q) {
+        loads++
+        // ignores beforeId: always the newest page
+        return inner.load({
+          sessionId: q.sessionId,
+          ...(q.limit === undefined ? {} : { limit: q.limit }),
+        })
+      },
+      save: (id, m) => inner.save(id, m),
+    })
+    const model = scriptedModel([{ text: 'A1' }, { text: 'A2' }, { text: 'A2b' }])
+    const { agent } = setup({ model }, { messages: broken })
+    const session = agent.session('s1')
+    await session.send('Q1').result
+    await session.send('Q2').result
+    const stored = (await inner.load({ sessionId: 's1' })) as Array<{ id: string }>
+    await session.edit(stored[2]?.id as string, 'Q2b').result
+    loads = 0
+    // the newest page is mostly hidden: the loop asks for older pages, which never come
+    const page = await session.messages({ limit: 6 })
+    expect(loads).toBeLessThanOrEqual(3)
+    const ids = page.map((m) => m.id)
+    expect(new Set(ids).size).toBe(ids.length)
+    expect([...ids].sort()).toEqual(ids)
+  })
+})
+
 describe('item 6: agent.close() and closing handles', () => {
   test('agent.close() awaits a previous handle that is still closing', async () => {
     let closed = false

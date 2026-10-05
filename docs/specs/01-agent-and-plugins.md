@@ -277,7 +277,11 @@ export interface TurnInfo {
   id: string
   /** What started the turn. */
   kind: 'send' | 'respond' | 'regenerate' | 'edit' | 'wake'
-  /** True for a send() that waited in the queue (ifBusy: 'queue', or a steer that fell back to a turn). */
+  /**
+   * True for a turn that waited in the session queue before it started: send() with ifBusy
+   * 'queue' or 'wait', respond() with ifBusy 'wait', a steer that fell back to a turn, a queued
+   * wake turn (input.submit then runs with via: 'queue').
+   */
   queued: boolean
   /** Undefined for respond/regenerate/wake and for send() without input. */
   input: HarnessUIMessage | undefined
@@ -467,7 +471,7 @@ declare module 'eharness' {
 | Unknown hook name, hook that is not a function, invalid instruction/skill shape | `EH_CONFIG_INVALID` |
 | `setup()` returns a promise or throws (the error is kept in `cause`) | `EH_CONFIG_INVALID` |
 | `model` missing, `contextWindow` not a positive number or function, `mcp` entry not a `ToolSource` | `EH_CONFIG_INVALID` |
-| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` not an integer ≥ 0; `progress.repeats` / `window` / `errorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens` not positive; `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
+| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` not an integer ≥ 0; `progress.repeats` / `window` / `errorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; a `toolOutput.perTool` value neither `false` nor an integer ≥ 0; `compaction.contextWindow` not positive; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens` not positive; `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
 
 Name conflicts that involve a **session-phase** contribution (`session()` tools or skills that
 collide with static ones or with each other) can only be detected when the session opens: they

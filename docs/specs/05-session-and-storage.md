@@ -252,7 +252,7 @@ written in this order:
     emit `turn-end`; `turn.end` hooks; release lock; clear running flag; resolve `run.result`;
     start the next queued turn, if any; **then** write the held-back `finish` / `abort` and close
     `run.stream`. So the end of the stream implies the turn is persisted and the session is free:
-    a client that saw `finish` can `send()` immediately (no `EH_SESSION_BUSY`). Every step catches its own errors (a failing final save
+    a client that saw `finish` can `send()` immediately (no `EH_SESSION_BUSY` caused by **that** turn; a queued or waiting turn that started meanwhile, or another client's turn, can still make the session busy). Every step catches its own errors (a failing final save
     sets `stop: 'error'` / `EH_STORAGE` in `run.result`, spec 10 §1); the lock is always released
     and the running flag always cleared. `turn-end` and `turn.end` belong to committed turns only
     (symmetric with `turn-start` / `turn.start`); an early failure, an early abort or a block

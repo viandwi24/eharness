@@ -1009,7 +1009,10 @@ export function createSessionHandle(args: {
       let out: HarnessUIMessage[] = []
       let beforeId = q.beforeId
       for (;;) {
-        const page = await load(beforeId)
+        const requested = beforeId
+        const raw = await load(requested)
+        // progress guard: never trust an adapter to honour beforeId (no duplicates, no endless loop)
+        const page = requested === undefined ? raw : raw.filter((m) => m.id < requested)
         // a rewind hides only older messages: pages are read newest first
         rewinds.push(...rewindsIn(page))
         const visible =
@@ -1018,7 +1021,8 @@ export function createSessionHandle(args: {
             : page.filter((m) => !hiddenByRewind(m, rewinds, internals.messages))
         out = [...visible, ...out]
         const oldest = page[0]
-        if (out.length >= limit || page.length < limit || oldest === undefined) break
+        if (out.length >= limit || raw.length < limit || oldest === undefined) break
+        if (page.length < raw.length) break // the adapter ignored beforeId: stop here
         beforeId = oldest.id
       }
       return out.slice(Math.max(0, out.length - limit)) as never
