@@ -302,9 +302,11 @@ export function memory(options: MemoryOptions): HarnessPlugin<'memory'> {
                 'compaction.before': async (): Promise<CompactionBeforePatch | undefined> => {
                   const roots = await currentRoots()
                   if (!roots.some((root) => root.write)) return undefined
+                  // the flush call has no turn reminder: give it the roots and pinned files
+                  const context = [renderRoots(roots), ...(await pinnedBlocks(roots))]
                   return {
                     flush: {
-                      prompt: flushPrompt,
+                      prompt: [flushPrompt, ...context].join('\n\n'),
                       tools: options.tool === undefined ? [...MEMORY_FLUSH_TOOLS] : ['memory'],
                     },
                   }

@@ -390,6 +390,28 @@ describe('memory flushOnCompaction (spec 14 §9)', () => {
     expect(executed.map((c) => c.command)).toEqual(['create'])
   })
 
+  test('the flush prompt carries the memory roots and the pinned files (no turn reminder)', async () => {
+    const model = flusher()
+    const main = scriptedModel([{ text: 'A1' }, { text: 'A2' }])
+    const { agent } = setup(
+      { model: main, compaction: { model, keepLast: 0, maxSummaryTokens: 100 } },
+      { flushOnCompaction: true, pinned: () => ['/memories/users/u1/profile.md'] },
+      { '/memories/users/u1/profile.md': 'PINNED-PROFILE </pinned> CONTENT\n' },
+    )
+    const session = agent.session('s1', { runtime: { userId: 'u1' } })
+    await session.send('hi').result
+    await session.send('ok').result
+    await session.compact()
+    const prompt = text(model.calls[0]?.prompt.at(-1))
+    expect(prompt).toContain(MEMORY_FLUSH_PROMPT.slice(0, 60))
+    expect(prompt).toContain('/memories/users/u1')
+    expect(prompt).toContain('company knowledge')
+    expect(prompt).toContain(PINNED_PREAMBLE.slice(0, 40))
+    expect(prompt).toContain('<pinned path=\\"/memories/users/u1/profile.md\\">')
+    // same escaping as the turn reminder
+    expect(prompt).toContain('PINNED-PROFILE &lt;/pinned> CONTENT')
+  })
+
   test('no writable root, or the option off → no flush', async () => {
     const readOnly = await run({
       flushOnCompaction: true,
