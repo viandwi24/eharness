@@ -75,8 +75,10 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 | `idle()` | resolves when no turn runs and nothing is queued (nor a `collect` burst or inbox drain pending) |
 | `ready()`, `close()`, `running`, `id` | open now (configuration errors as exceptions), close, state |
 
-`SendOptions`: `ifBusy` (`'reject'` default; `'queue'`, `'steer'` for `send`; `'wait'` for `send`
-and `respond`: wait for the running turn and the queue, then run), `model`,
+`SendOptions`: `ifBusy` (`'reject'` default; `'queue'`, `'steer'` for `send`; `'collect'` for
+`send`: merge a burst into one queued turn, debounced by `collect: { quietMs: 1_500, maxWaitMs:
+10_000, maxItems: 20 }`; `'wait'` for `send` and `respond`: wait for the running turn and the
+queue, then run), `collect`, `model`,
 `settings`, `options` (validated by `callOptions`), `maxSteps`, `abortSignal`, `runtime`,
 `toolsContext`. Every turn operation returns a `HarnessRun`: `turnId`, `kind`, `messageId`
 (promise), `stream` (AI SDK UI message stream, single consumer), `result` (never rejects),
@@ -86,6 +88,11 @@ that saw `finish` can send again at once (unless a queued or other turn started 
 `SendOptions` plus `actor` (given to `approval.decided` for approval answers). It never throws
 `EH_SESSION_BUSY`: a busy session returns a failed run whose `toResponse()` answers **409**
 `{ error: { code, message } }`.
+
+`SessionEvent`s (`session.events()`): `turn-start`, `turn-end`, `pending`, `input-dropped`,
+`message`, `data`, `status`, and with an inbox (0.4.0) `inbox-enqueued` (`inboxId`, `kind`,
+`mode?`, in the enqueuing process) and `inbox-drained` (`inboxIds`, `turnId?`, in the draining
+process).
 
 File tools (`eharness/filesystem`): `read_file` takes `{ path, offset?, limit?, charOffset? }` —
 `charOffset` continues a very long line (the cut line's hint names it); `grep` accepts only a
@@ -112,6 +119,29 @@ beyond the shown 300 characters.
 | `error` | provider, stream, storage or overflow error (`error.code`, e.g. `EH_CONTEXT_OVERFLOW`) |
 | `aborted`, `timeout`, `blocked`, `interrupted` | abort, time limit, `input.submit` block, crashed process |
 | `plugin:<name>:<reason>` | a `step.end` hook stopped the turn |
+
+## Hooks
+
+Registered by plugins (`definePlugin({ setup: () => ({ hooks }) })`, spec 01 §5), run in plugin
+order (root first); "chainable" hooks receive the previous result.
+
+| Hook | When | May return |
+|---|---|---|
+| `session.start`, `session.close` | live session opened / closed | — |
+| `input.submit` | every user input before it is saved | `{ message }`, `{ block }`, `{ context }` (**stored** as extra text parts) |
+| `turn.prepare` | before the turn's model call setup | `{ model?, settings?, activeTools? }` |
+| `turn.start`, `turn.end` | committed turn started / finished (`TurnResult`) | — |
+| `turn.beforeEnd` | the turn would stop `complete` / `max-steps` / `length` | `{ continue: { reason } }`, `{ extendSteps }` |
+| `step.prepare` | before every model call | `{ model?, settings?, activeTools?, toolChoice?, reminder?, providerOptions?, messages? }` (`reminder`: not stored) |
+| `step.end` | after every step | `{ stop }` (→ `plugin:<name>:<stop>`), `{ context }` (**stored** as `data-eh.input`) |
+| `tool.approve` | before a call runs | an approval status (most restrictive wins) |
+| `approval.decided` | every approval decision (audit) | — |
+| `tool.before`, `tool.after` | around `execute` | `{ input }` / `{ output }` |
+| `message.beforeSave` | before `MessageAdapter.save` | a message (same id/role) |
+| `compaction.before` (0.4.0) | once per compaction, before the summarizer (`messages`, `tokens`, `trigger: 'turn' \| 'auto' \| 'manual' \| 'overflow'`) | `{ flush: { prompt, tools?, maxSteps? = 3, model? } }` — a pre-compaction flush ([compaction](compaction.md#saving-facts-before-summarizing)) |
+| `compaction.prompt` | building the summarizer prompt (`out.messages`) | mutate `out.context` / `out.prompt` |
+| `compaction.after` | a marker was stored (`{ marker }`) | — |
+| `skill.load` | `load_skill` loaded a document (`skill`, `source`, `location?`, `version?`) | `{ skill?, notes? }` |
 
 ## Errors
 
@@ -159,6 +189,19 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | API use | `W_HOOK_FAILED`, `W_DEPRECATED`, `W_SESSION_OPTIONS_IGNORED` |
 | Sessions | `W_ABORT_UNSUPPORTED`, `W_INBOX_FAILED` |
 
+## Persisted additions in 0.4.0
+
+| Where | Field | Meaning |
+|---|---|---|
+| core kind | `eh.flush` (`FlushPayload`) | model-invisible audit record of a pre-compaction flush: `trigger`, `prompt`, `model?`, `steps`, `toolCalls` (`toolName`, `status`), `usage`, `costUsd?`, `error?`; stored before the marker. Also streamed once as a transient `data-eh.flush` part |
+| `metadata.eharness` | `inboxId`, `collected` | the inbox item a user message came from; the inputs merged by `collect` |
+| `data-eh.input` | `inboxId` | a steer delivered through the inbox |
+| `state.core` | `abortRequest` | cross-process abort request for the active turn (`turnId`, `at`, `reason?`, `by?`) — the one field another instance may write during a turn |
+| `state.core` | `inboxDelivered` | ids of the last 100 inbox items applied (dedupe) |
+| `ContextStats` | `pruned?: { outputs, chars }` | tool outputs replaced by the prune stage in the current request |
+| `SkillMeta` / `Skill` / `SkillDoc` | `version?` | from `SKILL.md` frontmatter `version:`; shown by `load_skill`, never in the index |
+| usage `source` | `'compaction'`, `'compaction-flush'` | summarizer and flush usage, charged to the turn and budgets |
+
 ## Fixed texts
 
 Model- or UI-visible texts the core writes, exported so apps and tests can match them (changing
@@ -168,10 +211,20 @@ answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
 `TOOL_OUTPUT_TRUNCATED` (truncation marker), `TOOL_OUTPUT_PRUNED` (placeholder of a pruned tool
 output), `FLUSH_APPROVAL_DENIED` (denial reason of approval-gated calls in a pre-compaction flush), `FILE_UNAVAILABLE` (a file of an earlier turn that
 can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
-`eharness/memory` exports `MEMORY_PROTOCOL` and `MEMORY_FLUSH_PROMPT` (with `MEMORY_FLUSH_TOOLS`).
+`eharness/memory` exports `MEMORY_PROTOCOL`, `PINNED_PREAMBLE` and `MEMORY_FLUSH_PROMPT` (with
+`MEMORY_TOOLS`, `MEMORY_FLUSH_TOOLS`, `DEFAULT_MAX_FILE_CHARS`, `DEFAULT_MAX_PINNED_CHARS` and
+`executeMemoryCommand()` for an app-supplied memory tool).
 
 ## Other exports
 
+- Types (0.4.0): `PruneConfig`, `CompactionBeforeEvent`, `CompactionBeforePatch`, `FlushPayload`,
+  `AbortRequest`, `AbortRequestResult`, `InboxAdapter`, `InboxItem`, `InboxItemInput`,
+  `SerializedInput`, `CollectOptions`, `EnqueueOptions`, `EnqueueResult`, `InputFilesConfig`,
+  `ToolErrorTextFn`, `ChatRequestOptions`.
+- Storage (`eharness/storage/memory`): `memoryMessages()`, `memoryState()`, `memoryInbox()`.
+- Testing (`eharness/testing`): `scriptedModel()`, `messageAdapterConformance()`,
+  `stateAdapterConformance()`, `inboxAdapterConformance()` (0.4.0), `fileSystemConformance()`
+  (`requireMove`), `skillSourceConformance()` (`version`), `idGeneratorConformance()`.
 - Messages: `uuidv7()`, `isUuidV7()`, `createKindMessage()`, `isKindMessage()`,
   `defineMessageKind()`, `defineDataPart()`, types `HarnessUIMessage`, `HarnessMetadata`
   (`metadata.eharness`: `createdAt`, `kind`, `turnId`, `model`, `usage`, `stop`, `steps`,
@@ -188,5 +241,8 @@ can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
 | `eharness/todos` | `todos()` | `enforce` (false), `maxNudges` (3), `remindEvery` (5), `maxItems` (50) | `todo_write` |
 | `eharness/memory` | `memory({ roots })` | `pinned`, `maxPinnedChars` (2_000), `maxFileChars` (20_000), `protocol` (`MEMORY_PROTOCOL`), `tool`, `onWrite`, `flushOnCompaction` (false) | `memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`, `memory_delete`, `memory_rename` (or the app's `memory` tool) |
 
-`FileSystem.move` is optional (atomic rename; `memoryFs` implements it, `fileSystemConformance`
-checks it with `requireMove`).
+`FileSystem.move` is optional (atomic rename → `MoveResult`; `memoryFs` implements it,
+`fileSystemConformance` checks it with `requireMove`).
+
+Patterns that combine these (ephemeral context, episodic memory, background events, heartbeats,
+several instances, security): [production patterns](production-patterns.md).

@@ -10,6 +10,7 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Writing a plugin](writing-a-plugin.md) | `definePlugin`: tools, services, hooks, state, data parts |
 | [Writing a storage adapter](writing-a-storage-adapter.md) | `MessageAdapter`, `StateAdapter`, `SessionLock`, `InboxAdapter`, conformance tests |
 | [Running several instances](multi-instance.md) | lock, `setIf`, `lastId`, the durable inbox (queue, steer, wake, collect, abort across instances), sweeper |
+| [Production patterns](production-patterns.md) | ephemeral context, episodic memory, background events, heartbeats ("silent OK"), skills from a database, and the security checklist |
 | [Rendering data parts](rendering-data-parts.md) | custom UI data: persistent vs transient, kinds, typed rendering |
 | [Skills](skills.md) | static skills, `SKILL.md` folders, custom skill sources |
 | [Filesystem](filesystem.md) | the `filesystem()` plugin: file tools, safety rules, services, custom adapters |

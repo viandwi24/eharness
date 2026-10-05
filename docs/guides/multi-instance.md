@@ -3,7 +3,8 @@
 Behind a load balancer, or on serverless, the request for a session can land on any instance.
 eharness keeps one running turn per session and lets the others cooperate through storage. This
 guide lists what each guarantee needs, from "works" to "exact". Contract: spec 05 §6–§9, §12;
-decisions: ADR-0021 (cross-process abort), ADR-0024 (durable inbox).
+decisions: ADR-0021 (cross-process abort), ADR-0024 (durable inbox). For the patterns around it
+(heartbeats, background jobs, route authorization) see [production patterns](production-patterns.md).
 
 | Need | Provide |
 |---|---|

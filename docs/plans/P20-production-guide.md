@@ -1,6 +1,6 @@
 # P20 — Production-patterns guide, docs and 0.4.0 handoff
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: 0.4 proposal item **U9**, the design-level risks of the 0.3.1 security audit, and the
 "Results" handoff table of the proposal.
@@ -41,75 +41,75 @@ the owning phase or as a follow-up).
 
 ### Production-patterns guide (`docs/guides/production-patterns.md`)
 
-- [ ] **Ephemeral context:** `refresh: 'turn'` instructions and `step.prepare → { reminder }` for
+- [x] **Ephemeral context:** `refresh: 'turn'` instructions and `step.prepare → { reminder }` for
       group context, live data and retrieved memories; explicit warning that `input.submit
       { context }` and `step.end { context }` are **stored** (they become part of history).
-- [ ] **Episodic memory** from `compaction.after({ marker })` (`CompactionPayload.summary`), and
+- [x] **Episodic memory** from `compaction.after({ marker })` (`CompactionPayload.summary`), and
       P15 flush + P17 memory as the "save before summarizing" pattern.
-- [ ] **Background events:** `inject(kind, data, { deliver, wake })` + `messageKinds` (job results,
+- [x] **Background events:** `inject(kind, data, { deliver, wake })` + `messageKinds` (job results,
       agent-to-agent messages, scheduled reminders).
-- [ ] **Multi-instance:** `SessionLock` (Postgres advisory lock example), `StateAdapter.setIf`,
+- [x] **Multi-instance:** `SessionLock` (Postgres advisory lock example), `StateAdapter.setIf`,
       `lastId`, `recovery.staleMs`, cross-process abort (P16), inbox (P19), `ifBusy: 'wait'` /
       `idle()` and the 409 route (P13).
-- [ ] **Scheduling / heartbeat** is the application's job: a job runner calls
+- [x] **Scheduling / heartbeat** is the application's job: a job runner calls
       `inject(…, { wake: true })`; the "silent OK" pattern (the agent answers nothing when there is
       nothing to do, e.g. via a `step.end` stop or a tool that ends the turn).
-- [ ] **Skills from a database** via a custom `SkillSource` with `version` (P14).
-- [ ] **Structured output** for pipeline workers (P18) and **prune** for tool-heavy agents (P14).
-- [ ] Offline example(s) for the patterns that have no example yet (e.g.
+- [x] **Skills from a database** via a custom `SkillSource` with `version` (P14).
+- [x] **Structured output** for pipeline workers (P18) and **prune** for tool-heavy agents (P14). (P18 part: planned shape only, "(see P18)".)
+- [x] Offline example(s) for the patterns that have no example yet (e.g.
       `examples/background-events.ts`), registered in `examples/examples.test.ts`.
 
 ### Security section (in the guide, linked from README "Security")
 
 Design-level risks from the audit — each with the risk, the default, and what the app must do:
 
-- [ ] **Session ownership / authorization:** eharness knows only `sessionId`; the POST and the
+- [x] **Session ownership / authorization:** eharness knows only `sessionId`; the POST and the
       attach **GET** route must check that the caller owns the session before
       `agent.session(id)` / `attach()` (the README GET example gets an ownership check).
-- [ ] **Runtime is shared per live session:** `runtime` passed to `agent.session(id, { runtime })`
+- [x] **Runtime is shared per live session:** `runtime` passed to `agent.session(id, { runtime })`
       is replaced on the cached instance (spec 05 §1); per-request identity belongs in
       `SendOptions.runtime`, and authorization must not rely on the session-level runtime.
-- [ ] **Budgets are per turn / per session, not per user:** a user with many sessions is not
+- [x] **Budgets are per turn / per session, not per user:** a user with many sessions is not
       capped; app-level quotas are needed.
-- [ ] **Path checks are exact-match prefixes:** `readonlyPrefixes` / `hiddenPrefixes` use
+- [x] **Path checks are exact-match prefixes:** `readonlyPrefixes` / `hiddenPrefixes` use
       normalized directory semantics; case-insensitive or symlinked backends must normalize in
       the adapter.
-- [ ] **Shared fs tool outputs:** `toolOutput.strategy: 'evict'` writes to the session's `fs`; if
+- [x] **Shared fs tool outputs:** `toolOutput.strategy: 'evict'` writes to the session's `fs`; if
       the fs resolver returns a shared fs, outputs of one session are readable by another — use a
       per-session/per-user fs or `toolOutputs: false`.
-- [ ] **`hideSkillsRoot: false`** lets the model write skills → a prompt-injection channel into
+- [x] **`hideSkillsRoot: false`** lets the model write skills → a prompt-injection channel into
       future sessions; keep the default (true) unless skills are meant to be agent-authored, and
       then review them.
-- [ ] **Broad session grants:** `remember: 'session'` grants a whole tool for the session; prefer
+- [x] **Broad session grants:** `remember: 'session'` grants a whole tool for the session; prefer
       `'once'` for risky tools; `clearGrants()` on privilege change.
-- [ ] **Default logger sensitivity:** the default logger may print error causes; set `logger` and
+- [x] **Default logger sensitivity:** the default logger may print error causes; set `logger` and
       `toolErrorText` (P13) in production; `describeError` redaction (P13) is defence in depth.
-- [ ] **Provider-fetched URLs:** file parts with URLs are fetched by AI SDK/providers; P13's
+- [x] **Provider-fetched URLs:** file parts with URLs are fetched by AI SDK/providers; P13's
       `inputFiles` policy limits protocols and sizes; SSRF-sensitive deployments should allow only
       `data:` or their own object store.
-- [ ] **Untrusted client input**: recap spec 05 §3 / 11 §8 (what the core already guarantees).
+- [x] **Untrusted client input**: recap spec 05 §3 / 11 §8 (what the core already guarantees).
 
 ### Feature docs and reference
 
-- [ ] README: feature list and quick links for 0.4.0 (prune, flush, memory, structured output,
+- [x] README: feature list and quick links for 0.4.0 (prune, flush, memory, structured output,
       cross-process abort, inbox, `ifBusy: 'wait'`); route examples with busy handling and an
       ownership check; README snippets still match `examples/quick-start.ts`.
-- [ ] `docs/guides/README.md` rows for new guides (`memory.md`, `structured-output.md`,
-      `multi-instance.md`, `production-patterns.md`); cross-links between guides.
-- [ ] `docs/guides/reference.md`: every new option, method, hook, stop reason
+- [x] `docs/guides/README.md` rows for new guides (`memory.md`, `structured-output.md`,
+      `multi-instance.md`, `production-patterns.md`); cross-links between guides. (`structured-output.md` follows P18.)
+- [x] `docs/guides/reference.md`: every new option, method, hook, stop reason
       (`'context-thrash'`, `'output-invalid'`), warning, error/notice code, data part and kind of
-      0.4.0, checked against specs.
-- [ ] `docs/README.md` reading order / module map (memory subpath, spec 14), `docs/architecture.md`
+      0.4.0, checked against specs. (`output-invalid` and other P18 rows follow P18.)
+- [x] `docs/README.md` reading order / module map (memory subpath, spec 14), `docs/architecture.md`
       module map if it lists subpaths.
-- [ ] `docs/engineering/api-stability.md` subpath list includes `/memory` and `/todos`; adapter
+- [x] `docs/engineering/api-stability.md` subpath list includes `/memory` and `/todos`; adapter
       contracts list includes `InboxAdapter`.
 
 ### Roadmap and handoff
 
-- [ ] `docs/plans/roadmap.md`: strike done items (Memory plugin, Prune stage, Output guardrails —
+- [x] `docs/plans/roadmap.md`: strike done items (Memory plugin, Prune stage, Output guardrails —
       schema part, Compaction thrash detection, Cross-process queue / wake) with "Done in 0.4.0";
       keep the out-of-scope items added during planning; update the "Shipped" line.
-- [ ] the 0.4.0 results notes (kept outside the repository) (English): one section per U1–U9 with status,
+- [x] the 0.4.0 results notes (kept outside the repository) (English): one section per U1–U9 with status,
       version (`0.4.0`), final API (signatures), and **differences from the proposal**, at least:
       - U1: flush recorded as model-invisible `eh.flush` audit kind (proposal: no trace); usage
         source `compaction-flush`; approvals auto-denied; `trigger` also `'turn'`.
@@ -133,12 +133,13 @@ Design-level risks from the audit — each with the risk, the default, and what 
 
 ## Acceptance criteria
 
-- [ ] Every public symbol added in 0.4.0 appears in `reference.md` and at least one guide.
-- [ ] Every guide example compiles (`bun run typecheck` covers `examples/`) and every new
+- [x] Every public symbol added in 0.4.0 appears in `reference.md` and at least one guide. (P18 symbols pending its merge.)
+- [x] Every guide example compiles (`bun run typecheck` covers `examples/`) and every new
       example runs offline in `examples.test.ts`.
-- [ ] the 0.4.0 results notes (kept outside the repository) covers U1–U9 and matches the shipped specs.
-- [ ] the maintainer's local proposal notes is neither modified nor committed.
-- [ ] lint, typecheck, test green (docs-only phase: no changeset needed unless `src/` changed).
+- [x] the 0.4.0 results notes (kept outside the repository) covers U1–U9 and matches the shipped specs. (U6 "pending P18 merge".)
+- [ ] the maintainer's local proposal notes is neither modified nor committed. (Not modified by P20; but it
+      **is tracked** on `main` since the P14 merge `a4e300a` — maintainer decision, see Open questions.)
+- [x] lint, typecheck, test green (docs-only phase: no changeset needed unless `src/` changed).
 
 ## Changeset
 
@@ -150,8 +151,38 @@ changeset or an extra `patch` changeset.
 - Should a results-notes folder hold future release handoffs too? Decision: yes, one file per release
   that has an external requester.
 
+Notes from implementing P20:
+
+- **P18-dependent parts left open on purpose:** the `structured-output.md` row in
+  `guides/README.md`, `reference.md` rows for `output` / `'output-invalid'` / `W_OUTPUT_INVALID` /
+  `data-eh.output`, results U6, the README "planned" bullet and the roadmap "Output guardrails"
+  row. The production guide mentions structured output only through the planned shape "(see
+  P18)". Whoever merges P18 updates them (see Requests to other phases).
+- **Doc/code finding:** a `refresh: 'turn'` instruction (and a dynamic tool source) is evaluated
+  at spec 05 §3 step 6, before input normalization (step 7) and `input.submit` (step 8), so
+  `ctx.turn.input` is `undefined` there even for `send(text)`; the TSDoc of `TurnInfo.input`
+  ("Undefined for respond/regenerate/wake and for `send()` without input") does not mention it.
+  Verified with a scripted turn. The guide documents it and uses `step.prepare` for retrieval; no
+  `src/` change in P20 (candidate: a TSDoc/spec 01 §4 note, or evaluate turn instructions after
+  step 8).
+- **the maintainer's local proposal notes is tracked** since the P14 merge (`a4e300a`), although the plans say
+  it is maintainer-only and never committed. P20 did not touch it; the maintainer decides whether
+  to untrack it.
+- `examples/next-route.ts`: per-request identity moved from `agent.session(id, { runtime })` to
+  `handleChatRequest(…, { runtime })`, and the GET route got the ownership-check comment (security
+  section).
+- The results document's signature blocks are fenced as `text` (summaries, not compilable TS);
+  every `ts` block added to the guide and README was typechecked against `src` with a scratch
+  checker.
+
 ## Requests to other phases
 
+- **P18 (on merge):** add `structured-output.md` to `docs/guides/README.md` and the README guides
+  list; `reference.md` rows (`SendOptions.output`, `TurnResult.output`, `'output-invalid'`,
+  `W_OUTPUT_INVALID`, `data-eh.output`, `metadata.eharness.output`); replace the "(see P18)"
+  paragraph in `production-patterns.md` and the README "planned" bullet; fill U6 in
+  the 0.4.0 results notes (kept outside the repository) (summary row + section with final API and differences); strike
+  "Output guardrails" (schema part) in `roadmap.md` and drop "(P18, pending merge)" there.
 - Every phase P13–P19 keeps its "differences from the proposal" up to date in its Open questions
   section; P20 copies them into the results document.
 
