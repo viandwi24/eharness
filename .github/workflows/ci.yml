@@ -86,7 +86,7 @@ jobs:
           cd "$RUNNER_TEMP/smoke"
           npm init -y > /dev/null
           npm pkg set type=module
-          npm install "$RUNNER_TEMP"/eharness-*.tgz ai@^7.0.123 zod@^4 @ai-sdk/mcp@^2.0.63
+          npm install "$RUNNER_TEMP"/eharness-*.tgz ai@^7.0.127 zod@^4 @ai-sdk/mcp@^2.0.66
           node "$GITHUB_WORKSPACE/scripts/smoke.mjs"
 
       - name: eharness/mcp without the optional peer gives a clear error
@@ -95,5 +95,5 @@ jobs:
           cd "$RUNNER_TEMP/smoke-nomcp"
           npm init -y > /dev/null
           npm pkg set type=module
-          npm install "$RUNNER_TEMP"/eharness-*.tgz ai@^7.0.123 zod@^4
+          npm install "$RUNNER_TEMP"/eharness-*.tgz ai@^7.0.127 zod@^4
           node "$GITHUB_WORKSPACE/scripts/smoke.mjs" --no-mcp
