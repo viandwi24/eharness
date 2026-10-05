@@ -317,6 +317,9 @@ persisted); a waiting `respond()` may start while the queue is held by pending a
 is what resolves them); and a waiting `send()` is held only by pending approvals that did not
 exist when it was called — approvals created by a turn it waited for are never denied by it —
 while approvals already pending at call time are handled as by a new `send()` (`onNewInput`).
+The queue stays FIFO: a waiting `send()` starts only from the head, so it never overtakes a
+queued turn ahead of it (if that one is held by pending approvals, the waiting `send()` waits
+too). Only a waiting `respond()` may start from any position while the queue is held.
 `session.idle()` resolves when no turn runs and nothing is queued.
 
 ### 6.3 `inject()` delivery and wake

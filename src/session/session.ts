@@ -570,22 +570,22 @@ export function createSessionHandle(args: {
   /**
    * Start the next queued turn when the session is idle. The queue is held while approvals or
    * client tool calls wait for `respond()`: a queued turn never auto-denies them (spec 11 §6.2).
-   * While held, a waiting `respond()` may start, and a waiting `send()` whose call already saw
-   * that pending state (it then behaves as a new `send()`).
+   * While held, a waiting `respond()` may start (from any position: it resolves what holds the
+   * queue), and a waiting `send()` at the head whose call already saw that pending state (it then
+   * behaves as a new `send()`). Nothing else overtakes: the queue is FIFO.
    */
   function startNext(): void {
     if (rt.closed || rt.running || queue.length === 0) return
     const pending = rt.state.core().pending
+    // FIFO: only the head may start, except a waiting respond() (it resolves what holds the queue)
+    const head = queue[0] as QueuedTurn
     const index =
-      pending === undefined
+      pending === undefined ||
+      (head.kind === 'send' &&
+        head.wait !== undefined &&
+        head.wait.pendingAtCall === pending.messageId)
         ? 0
-        : queue.findIndex(
-            (e) =>
-              e.kind === 'respond' ||
-              (e.kind === 'send' &&
-                e.wait !== undefined &&
-                e.wait.pendingAtCall === pending.messageId),
-          )
+        : queue.findIndex((e) => e.kind === 'respond')
     if (index < 0) return
     const [next] = queue.splice(index, 1)
     if (next === undefined) return
