@@ -62,6 +62,17 @@ describe('UUIDv7', () => {
     expect(generate(id) > id).toBe(true)
   })
 
+  test('a floor from the same generator does not drift the timestamp (1 000 ids in 1 ms)', () => {
+    const generate = createUuidV7Generator({ now: () => 1_000 })
+    let floor: string | undefined
+    for (let i = 0; i < 1_000; i++) {
+      const id = generate(floor)
+      if (floor !== undefined) expect(id > floor).toBe(true)
+      expect(uuidV7Timestamp(id)).toBeLessThanOrEqual(1_001)
+      floor = id
+    }
+  })
+
   test('non-UUIDv7 floors are ignored', () => {
     const generate = createUuidV7Generator({ now: () => 1_000 })
     expect(uuidV7Timestamp(generate('zzz'))).toBe(1_000)

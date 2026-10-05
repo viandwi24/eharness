@@ -60,16 +60,8 @@ export function createUuidV7Generator(options: UuidV7GeneratorOptions = {}): Uui
     return (((bytes[0] ?? 0) << 8) | (bytes[1] ?? 0)) % COUNTER_SEED_LIMIT
   }
 
-  return (floor) => {
+  const generate = (): string => {
     const ms = Math.floor(now())
-    const floorMs = floor === undefined ? undefined : uuidV7Timestamp(floor)
-    if (floorMs !== undefined && floorMs >= Math.max(ms, lastMs)) {
-      // per-call floor bump (spec 03 §8): sorts after the floor, generator state untouched
-      if (floorMs + 1 > MAX_TIMESTAMP) throw new RangeError('UUIDv7 timestamp overflow')
-      const seed = seedCounter()
-      random(bytes)
-      return format(floorMs + 1, seed, bytes)
-    }
     if (ms > lastMs) {
       lastMs = ms
       counter = seedCounter()
@@ -84,6 +76,19 @@ export function createUuidV7Generator(options: UuidV7GeneratorOptions = {}): Uui
     if (lastMs > MAX_TIMESTAMP) throw new RangeError('UUIDv7 timestamp overflow')
     random(bytes)
     return format(lastMs, counter, bytes)
+  }
+
+  return (floor) => {
+    const id = generate()
+    // per-call floor bump (spec 03 §8), only when the id would not sort after the floor (a floor
+    // from this generator never bumps: no drift); generator state untouched
+    if (floor === undefined || id > floor) return id
+    const floorMs = uuidV7Timestamp(floor)
+    if (floorMs === undefined) return id
+    if (floorMs + 1 > MAX_TIMESTAMP) throw new RangeError('UUIDv7 timestamp overflow')
+    const seed = seedCounter()
+    random(bytes)
+    return format(floorMs + 1, seed, bytes)
   }
 }
 
