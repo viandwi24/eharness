@@ -306,7 +306,9 @@ Then, before actually stopping:
   `toolChoice` cannot change it) and the step reminder `MAX_STEPS_WRAP_UP` (spec 10 §5), so the
   model summarizes what it did and what is left instead of stopping mid-action. That step ends the
   turn with `'max-steps'` whatever it answers (`'error'` stays `'error'`); `turn.beforeEnd` does
-  not run for it.
+  not run for it. The wrap-up step **takes no input**: steers and `next-step` injections waiting
+  at its boundary are not delivered into it; when the turn stops they follow the "any other
+  stop" rule (a waiting steer becomes a queued `send` turn, spec 11 §6.1).
 - `step.end` `context` that is still waiting when the turn stops with anything but `'complete'` is
   discarded: it is plugin context, not user input (no queued turn, no `input-dropped` event).
 
