@@ -10,6 +10,7 @@ import { uuidv7 } from './ids.ts'
 import type {
   CompactionPayload,
   EventPayload,
+  FlushPayload,
   HarnessUIMessage,
   NoticePayload,
   ProjectionContext,
@@ -86,6 +87,23 @@ const rewindSchema = z.looseObject({
   reason: z.enum(['regenerate', 'edit', 'revert']),
 })
 
+const flushSchema = z.looseObject({
+  trigger: z.enum(['auto', 'manual', 'turn', 'overflow']),
+  prompt: z.string(),
+  model: z.string().optional(),
+  steps: z.number().int().min(0),
+  toolCalls: z.array(
+    z.looseObject({ toolName: z.string(), status: z.enum(['output', 'error', 'denied']) }),
+  ),
+  usage: z.looseObject({
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    totalTokens: z.number(),
+  }),
+  costUsd: z.number().optional(),
+  error: z.string().optional(),
+})
+
 /**
  * Core message kinds (`eh.*`).
  *
@@ -96,6 +114,7 @@ export const coreMessageKinds: {
   readonly 'eh.notice': MessageKindDef<FlexibleSchema<NoticePayload>>
   readonly 'eh.event': MessageKindDef<FlexibleSchema<EventPayload>>
   readonly 'eh.rewind': MessageKindDef<FlexibleSchema<RewindPayload>>
+  readonly 'eh.flush': MessageKindDef<FlexibleSchema<FlushPayload>>
 } = {
   'eh.compaction': {
     role: 'user',
@@ -110,6 +129,8 @@ export const coreMessageKinds: {
     model: (data) => `<event name="${data.name}">${data.text}</event>`,
   },
   'eh.rewind': { role: 'user', schema: rewindSchema as FlexibleSchema<RewindPayload> },
+  // audit record of a pre-compaction flush: never projected (spec 06 §5.2a)
+  'eh.flush': { role: 'assistant', schema: flushSchema as FlexibleSchema<FlushPayload> },
 }
 
 /** Options of {@link createKindMessage}. */

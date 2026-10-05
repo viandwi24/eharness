@@ -18,12 +18,14 @@ describe('core registry', () => {
       'eh.notice',
       'eh.event',
       'eh.rewind',
+      'eh.flush',
     ])
     expect(registry.kinds().map((k) => k.name)).toEqual([
       'eh.compaction',
       'eh.notice',
       'eh.event',
       'eh.rewind',
+      'eh.flush',
     ])
     expect(registry.dataPart('eh.status')?.def.transient).toBe(true)
     expect(registry.dataPart('data-eh.input')?.def.transient).toBeFalsy()

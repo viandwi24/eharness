@@ -1293,7 +1293,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         ...(op.kind === 'respond' ? { continuing: messageId } : {}),
         inboxed,
         // summarizer usage is turn usage: counted in TurnResult.usage, cost and budgets
-        onUsage: (value, model) => {
+        toolsContext: prep.toolsContext,
+        onUsage: (value, model, source) => {
           if (config.budget !== undefined && costOf(config.models, model, value) === undefined) {
             rt.warn(
               {
@@ -1304,7 +1305,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
               `unpriced:${describeModel(model)}`,
             )
           }
-          info.addUsage(value, { model, source: 'compaction' })
+          info.addUsage(value, { model, source })
         },
         overBudget: () =>
           budgetOverrun(config.budget, usage.costUsd ?? 0, rt.state.core().usage?.costUsd ?? 0),

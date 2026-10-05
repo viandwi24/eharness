@@ -91,8 +91,60 @@ model? }`. Nothing is deleted or rewritten, so your UI can still show the whole 
 marker as a divider), and a cold load needs one query (`load({ fromId })` from the marker). Live
 UIs get `data-eh.status { state: 'compacting' }` while it runs.
 
-Plugins can take part: `compaction.prompt` hooks add context to the summarizer prompt (the todos
-plugin adds the open list) and `compaction.after` hooks see the new marker.
+Plugins can take part: `compaction.before` hooks can request a flush (next section),
+`compaction.prompt` hooks add context to the summarizer prompt (the todos plugin adds the open
+list) and `compaction.after` hooks see the new marker.
+
+## Saving facts before summarizing
+
+A summary is lossy. Right before it is produced, a `compaction.before` hook can give the agent one
+short, internal turn — a **flush** — to write down what must survive, typically into memory
+files. The memory plugin does it for you:
+
+```ts
+memory({ roots, flushOnCompaction: true }) // or { prompt: 'Save open decisions and file names.' }
+```
+
+It offers `memory_view`, `memory_create`, `memory_str_replace` and `memory_insert` (never delete or
+rename) and skips the flush when no root is writable. Any plugin can do the same with its own
+tools:
+
+```ts
+definePlugin({
+  name: 'facts',
+  setup: () => ({
+    tools: { save_fact: tool({ inputSchema: z.object({ fact: z.string() }), execute: saveFact }) },
+    hooks: {
+      'compaction.before': (ctx, e) => ({
+        // e.messages: what will be summarized; e.tokens; e.trigger: 'turn' | 'auto' | 'manual' | 'overflow'
+        flush: { prompt: 'Save every decision of this conversation with save_fact.', tools: ['save_fact'] },
+      }),
+    },
+  }),
+})
+```
+
+What happens:
+
+- The flush runs only when the summary will really be written (after the skip rule, prune and the
+  budget check), once per compaction, before the summarizer. Several plugins' requests merge into
+  one flush (prompts joined, tools unioned, `maxSteps` = max, default 3).
+- It is one `generateText` call over the **current conversation** plus your prompt, with only the
+  listed tools (the turn's tools, so `tool.before`/`tool.after` and output limits apply). Tools
+  that would ask the user for approval are denied automatically (`Not available during memory
+  flush.`, visible in `approval.decided`).
+- It leaves no trace in the conversation: later requests are the same as without a flush. The
+  core stores one model-invisible `eh.flush` message (before the marker) with the trigger, the
+  prompt, the tool names and statuses, usage and cost — no tool inputs or outputs. Render it as a
+  small "memory saved" note, or ignore it.
+- Its usage counts toward the turn (`TurnResult.usage`, cost, budgets; `source:
+  'compaction-flush'`). A used-up budget skips the compaction and the flush.
+- A failing flush is `W_HOOK_FAILED` (`details.phase: 'flush'`); the summary is written anyway. A
+  flush that cannot fit the flush model's window is skipped (`W_COMPACTION_FLUSH_SKIPPED`); after
+  a provider "too long" error it runs only with a `flush.model` that has a larger window.
+- Use a cheaper model with `flush: { model }` (default: `compaction.model`, else the turn's model).
+
+See `examples/compaction-flush.ts` for a runnable, offline version.
 
 ## Watching the context size
 

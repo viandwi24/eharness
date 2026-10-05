@@ -42,6 +42,12 @@ export const TOOL_OUTPUT_TRUNCATED: string = '…[truncated {n} chars]…'
 export const TOOL_OUTPUT_PRUNED: string = '[output of {tool} pruned: {n} chars]'
 
 /**
+ * Denial reason of a tool call that would need approval during a pre-compaction flush (spec 06
+ * §5.2a): such calls are auto-denied.
+ */
+export const FLUSH_APPROVAL_DENIED: string = 'Not available during memory flush.'
+
+/**
  * Replaces a file of an earlier turn whose URL could not be downloaded (e.g. an expired link), so
  * later turns still run (`{mediaType}`, `{filename}`; spec 05 §3, spec 10 §5).
  */

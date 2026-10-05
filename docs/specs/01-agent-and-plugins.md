@@ -366,6 +366,14 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   /** Chainable. Last chance to transform a message before MessageAdapter.save. Must keep id/role. */
   'message.beforeSave'?(ctx: HarnessContext<DP>, message: HarnessUIMessage): Awaitable<HarnessUIMessage | void>
 
+  /**
+   * Chainable (0.4.0). Once per compaction, after the split, the skip rule and the budget check
+   * decided that summarizing will happen, before the summarizer (spec 06 §5.2a). A `flush` gives
+   * the agent one bounded, internal turn to save facts before history is summarized. Patches
+   * merge in plugin order: prompts joined with a blank line, tools unioned (first appearance),
+   * `maxSteps` = max, `model` = last defined. Throw / invalid patch = W_HOOK_FAILED, skipped.
+   */
+  'compaction.before'?(ctx: HarnessContext<DP>, e: CompactionBeforeEvent): Awaitable<CompactionBeforePatch | void>
   /** Contribute context to / replace the summarizer prompt (spec 06 §5). */
   /** `out.messages`: the messages being summarized (copies, read-only input). */
   'compaction.prompt'?(ctx: HarnessContext<DP>, out: { context: string[]; prompt?: string
@@ -376,6 +384,19 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'skill.load'?(ctx: HarnessContext<DP>, e: { skill: SkillDoc; source: string; location?: { service: string; root: string }; version?: string /* skill.version (0.4.0) */ }): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
 }
 
+export interface CompactionBeforeEvent {
+  messages: HarnessUIMessage[]       // copies of the part that will be summarized (`drop`, spec 06 §5.1)
+  tokens: number                     // calibrated estimate of the current context
+  trigger: 'auto' | 'manual' | 'turn' | 'overflow'   // mid-turn, compact(), pre-turn, overflow recovery
+}
+export interface CompactionBeforePatch {
+  flush?: {
+    prompt: string                   // non-empty; sent as a user message after the current wire
+    tools?: string[]                 // final tool names the flush may call; default none
+    maxSteps?: number                // positive integer; default 3
+    model?: LanguageModel            // default compaction.model ?? the turn's model
+  }
+}
 export interface StepPrepareEvent { stepIndex: number; messages: ModelMessage[]; toolNames: string[]; model: LanguageModel }
 export interface StepPreparePatch {
   model?: LanguageModel               // last hook wins
