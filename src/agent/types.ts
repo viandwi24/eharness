@@ -175,6 +175,19 @@ export interface CacheConfig {
 }
 
 /**
+ * File parts of user input (spec 05 §3 step 7). A URL outside `protocols` or a `data:` URL over
+ * `maxBytes` is `EH_INVALID_INPUT`.
+ *
+ * @see docs/specs/05-session-and-storage.md#3-turn-lifecycle-normative-order
+ */
+export interface InputFilesConfig {
+  /** Allowed URL protocols (lowercase, with the colon). Default `['data:', 'https:']`. */
+  protocols?: string[]
+  /** Maximum decoded size of a `data:` URL in bytes. Default 20 MB (20 971 520). */
+  maxBytes?: number
+}
+
+/**
  * Tool result size limits.
  *
  * @see docs/specs/09-tools-and-mcp.md
@@ -255,6 +268,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /** Prompt caching. Default `'auto'` mode. */
   cache?: CacheConfig | false
   toolOutput?: ToolOutputConfig
+  /** File parts of user input: allowed URL protocols and the data URL size cap (spec 05 §3). */
+  inputFiles?: InputFilesConfig
   /** Typed per-call options accepted by `send()`/`respond()`/… (`options`). */
   callOptions?: FlexibleSchema
   /** Passed to `streamText` `repairToolCall`. */

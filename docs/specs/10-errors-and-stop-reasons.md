@@ -178,3 +178,4 @@ UIs and tests). Changing one is a minor change (it changes what models see).
 | `PROGRESS_NUDGE` | `You are not making progress: {what}. Do not repeat it. Try a different approach, or stop and explain what blocks you.` | progress guard reminder (spec 05 §3.2) |
 | `MAX_STEPS_WRAP_UP` | `The step limit of this turn is reached and tools are disabled. Summarize what you did, what is left, and how to continue.` | wrap-up step reminder (spec 05 §3.1) |
 | `TOOL_OUTPUT_TRUNCATED` | `…[truncated {n} chars]…` | output limits (spec 09 §4) |
+| `FILE_UNAVAILABLE` | `[file unavailable: {mediaType} {filename}]` | a file of an earlier turn whose URL cannot be downloaded (spec 05 §3 step 7) |

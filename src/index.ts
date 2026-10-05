@@ -38,6 +38,7 @@ export type {
   CompactionConfig,
   HarnessAgent,
   HarnessAgentConfig,
+  InputFilesConfig,
   LoopConfig,
   ModelSettings,
   ProgressConfig,
@@ -64,6 +65,7 @@ export {
 } from './messages/kinds.ts'
 export {
   DENIED_NEW_INPUT,
+  FILE_UNAVAILABLE,
   INTERRUPTED_CRASH,
   INTERRUPTED_TURN,
   INTERRUPTED_UNKNOWN,

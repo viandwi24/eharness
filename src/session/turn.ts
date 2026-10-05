@@ -711,6 +711,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (normalized === undefined && op.input !== undefined) {
       normalized = normalizeInput(op.input, {
         acceptClientMetadata: rt.options.acceptClientMetadata === true,
+        files: config.inputFiles,
       })
     }
     if (op.kind === 'edit' && normalized === undefined) {
@@ -871,6 +872,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       if ('message' in out) {
         const renormalized = normalizeInput(out.message, {
           acceptClientMetadata: rt.options.acceptClientMetadata === true,
+          files: config.inputFiles,
         })
         current = { ...renormalized }
         if (input.clientId === undefined) delete current.clientId
