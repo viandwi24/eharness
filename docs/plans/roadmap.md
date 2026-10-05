@@ -2,7 +2,11 @@
 
 Shipped: 0.1.0 (first release), 0.2.0 (AI SDK helper refactor, `ai@^7.0.123` peer floor),
 0.3.0 (long-running turns and progress guard, model catalog / cost / USD budgets, risk-based
-approvals with `approval.decided`, `eharness/todos`). Details: `CHANGELOG.md`.
+approvals with `approval.decided`, `eharness/todos`), 0.4.0 (hardening, prune stage, compaction
+thrash stop, skill versions, pre-compaction flush, cross-process abort, `eharness/memory`, durable
+inbox, structured final output (P18, pending merge), production-patterns guide — released by the
+next version PR).
+Details: `CHANGELOG.md`.
 
 ## Open items
 
@@ -21,28 +25,29 @@ before implementation.
 | **Binary files** in `FileSystem` | `readBytes` / `writeBytes`, media types, file parts to the model. |
 | **Cross-process resumable streams** | Turn buffer adapter (Redis etc.) for `attach()` across instances. |
 | **Durable execution** | Suspend/resume a turn across processes (continuation state without secrets), compatible with Workflow DevKit. |
-| **Memory plugin** | Long-term memory tools on top of `FileSystem` (`/memories/`), optional provider-defined memory tools. |
+| ~~Memory plugin~~ | Done in 0.4.0 (`eharness/memory`, spec 14; provider-defined tools are app-supplied via the `tool` option). |
 | **Package split** | Only if an extension needs its own release cadence (ADR-0007). |
 | **Fork** | `session.fork(atMessageId)` → new session id with a copied prefix (needs adapter support or a copy loop). |
-| **Prune stage** | Cheap pre-compaction pruning of old tool outputs (opencode-style) before summarizing. |
-| **Output guardrails** | Validate the final answer (schema, policy) and retry with feedback; builds on `turn.beforeEnd`. |
+| ~~Prune stage~~ | Done in 0.4.0 (`compaction.prune`, spec 06 §5.0, ADR-0019). |
+| **Output guardrails** | Schema part planned for 0.4.0 (P18, structured final output: `send(…, { output: { schema } })`, `'output-invalid'`) — pending merge; struck when it lands. Policy checks of the final answer remain open. |
 | ~~USD budget~~ | Done in 0.3.0 (spec 12). |
 | **Immediate steer** | Interrupt the current model stream for urgent input instead of waiting for the step boundary. |
-| **Cross-process queue / wake** | Queue and wake-up delivery across instances (via the application's job queue contract). |
+| ~~Cross-process queue / wake~~ | Done in 0.4.0 (durable `InboxAdapter`: queue, steer, wake, collect, abort across instances; spec 05 §12, ADR-0024). |
 | **Continuation replay on resume** | `attach()` of a `respond()` continuation replays the stored prefix so `useChat` resume needs no re-fetch. |
 | **Partial approval answers** | `respond()` with a subset of pending approvals. |
 | **Rule-based grants** | `remember` scoped to an input pattern (e.g. `bash: git *`) instead of a whole tool. |
 | **Approval classifier guard** | `tool.approve` plugin with an LLM reviewer on a stripped transcript (user messages + tool calls), timeout and denial circuit breaker that fall back to a human. |
 | **Goal plugin** | Outer loop: re-prompt after a turn until a goal is met (judge model or `update_goal` tool), paused after empty turns and by budgets. |
-| **Compaction thrash detection** | Stop when the context is full again within ~2 steps after a compaction. |
+| ~~Compaction thrash detection~~ | Done in 0.4.0 (`compaction.thrash`, stop `'context-thrash'`). |
 | **Shared task lists** | Todos shared across subagents/sessions (`listId`, owners, dependencies). |
 
-## Planned for 0.4.0
+## 0.4.0
 
 P13–P20 (`docs/plans/README.md`): hardening, prune stage, compaction thrash detection, skill
 versions, pre-compaction flush, cross-process abort, memory plugin, structured final output,
 durable inbox (cross-process queue / steer / wake / collect), production-patterns guide. The rows
-above are struck through by P20 when 0.4.0 ships.
+above that 0.4.0 completes are struck through (P20); "Output guardrails" follows the P18 merge.
+Handoff to the requester: `docs/reviews/0.4.0-results.md`.
 
 ## Found during the 0.4.0 audit (not scheduled)
 

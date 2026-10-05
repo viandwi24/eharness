@@ -94,6 +94,7 @@ A terminal reads the chunks directly (`for await (const chunk of run.stream)`), 
 | `eh.notice` kind | yes | errors, timeouts, recovered turns |
 | `eh.event` kind | yes | `session.inject('eh.event', { name, text })` from your app |
 | `eh.rewind` kind | yes | regenerate/edit marker (hidden from `session.messages()` views by default) |
+| `eh.flush` kind | yes | audit record of a pre-compaction flush (never shown to the model); also streamed once as a transient `data-eh.flush` part ([compaction](compaction.md#saving-facts-before-summarizing)) |
 
 Shipped plugins add their own parts (namespaced `data-<plugin>.<key>`, typed through
 `InferHarnessUIMessage` as soon as the plugin is in `plugins`):

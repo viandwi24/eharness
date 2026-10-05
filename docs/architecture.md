@@ -26,7 +26,7 @@ Status: **Accepted** (v0).
 ┌──────────────▼───────── shipped extensions (same package, subpaths) ──────────────┐
 │ eharness/filesystem         FileSystem contract, filesystem() plugin, file tools │
 │ eharness/filesystem/memory  memoryFs()                                           │
-│ eharness/storage/memory     memoryMessages(), memoryState()                      │
+│ eharness/storage/memory     memoryMessages(), memoryState(), memoryInbox()       │
 │ eharness/mcp                mcpServer() tool source over @ai-sdk/mcp             │
 │ eharness/todos              todos() plugin: todo_write, data-todos.list          │
 │ eharness/memory             memory() plugin: memory files under app roots        │
@@ -51,11 +51,11 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness` | `src/index.ts` | core API and types |
 | `eharness/filesystem` | `src/filesystem/index.ts` | `FileSystem` contract, `filesystem()` plugin, `fsSkillSource()`, helpers |
 | `eharness/filesystem/memory` | `src/filesystem/memory.ts` | `memoryFs()` |
-| `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()` |
+| `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, fixed texts |
-| `eharness/memory` | `src/memory/index.ts` | `memory()` plugin, `executeMemoryCommand()`, `MEMORY_PROTOCOL`, `MEMORY_TOOLS` |
-| `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
+| `eharness/memory` | `src/memory/index.ts` | `memory()` plugin, `executeMemoryCommand()`, `MEMORY_PROTOCOL`, `MEMORY_TOOLS`, `MEMORY_FLUSH_PROMPT`, `MEMORY_FLUSH_TOOLS` |
+| `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
 
 Peer dependencies: `ai@^7.0.123`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
 peer: `@ai-sdk/mcp@^2.0.63`. No runtime dependencies. The `ai` floor is the tested version: the
