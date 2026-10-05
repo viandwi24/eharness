@@ -307,3 +307,38 @@ describe('item 3: the stream ends only after the turn finalized', () => {
     expect((await waited.result).stop).toBe('complete')
   })
 })
+
+describe('item 4: steer at max-steps', () => {
+  test('the wrap-up step takes no input; the steer becomes a queued send turn', async () => {
+    const work = tool({
+      inputSchema: z.object({ n: z.number() }),
+      execute: async ({ n }) => {
+        await sleep(30)
+        return `worked ${n}`
+      },
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'work', input: { n: 1 } }] },
+      { text: 'wrap-up summary' },
+      { text: 'answer to steer' },
+    ])
+    const { agent } = setup({ model, tools: { work }, loop: { maxSteps: 1 } })
+    const session = agent.session('s1')
+    const reader = session.events().getReader()
+    const main = session.send('go')
+    await sleep(10)
+    session.send('STEER', { ifBusy: 'steer' })
+    expect((await main.result).stop).toBe('max-steps')
+    expect(JSON.stringify(model.prompts[1])).not.toContain('STEER')
+    await session.idle()
+    expect(userTexts(model.prompts[2]).at(-1)).toBe('STEER')
+    await session.close()
+    const starts: Array<{ queued: boolean }> = []
+    for (;;) {
+      const next = await reader.read()
+      if (next.done) break
+      if (next.value.type === 'turn-start') starts.push(next.value as { queued: boolean })
+    }
+    expect(starts.map((e) => e.queued)).toEqual([false, true])
+  })
+})

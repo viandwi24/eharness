@@ -472,8 +472,9 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     if (stepIndex === 0 && overBudget() !== undefined) return { stop: 'cost-cap', steps: 0, model }
 
     // step boundary: deliver waiting input as data-eh.input (ADR-0011): steers and next-step
-    // injections first (arrival order), then hook context
-    if (!firstOfContinuation()) {
+    // injections first (arrival order), then hook context. The wrap-up step takes no input:
+    // what waits follows the "any other stop" rule (a queued turn, spec 05 §3.1 / 11 §6.1)
+    if (!firstOfContinuation() && !wrapping) {
       if (inbox !== undefined) external.push(...(await inbox.take()))
       for (const item of external) {
         input.write({ type: 'data-eh.input', data: structuredClone(item.data) })
