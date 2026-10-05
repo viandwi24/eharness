@@ -71,6 +71,26 @@ describe('executeMemoryCommand: view', () => {
     }
   })
 
+  test('the output of a large file is capped at maxFileChars with a view_range hint', async () => {
+    const content = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n')
+    const fs = memoryFs({ '/memories/u1/big.md': content, '/memories/u1/wide.md': 'x'.repeat(500) })
+    const { run } = env(fs, { maxFileChars: 100 })
+    const out = await run({ command: 'view', path: '/memories/u1/big.md' })
+    const [shown, note] = out.split('\n(') as [string, string]
+    expect(shown.length).toBeLessThanOrEqual(100)
+    expect(shown).toStartWith('     1\tline 1\n')
+    const lastShown = shown.split('\n').length
+    expect(note).toBe(
+      `Output truncated at 100 characters; view the rest with view_range [${lastShown + 1}, -1].)`,
+    )
+    expect(await run({ command: 'view', path: '/memories/u1/big.md', view_range: [49, -1] })).toBe(
+      '    49\tline 49\n    50\tline 50',
+    )
+    const wide = await run({ command: 'view', path: '/memories/u1/wide.md' })
+    expect(wide).toStartWith(`     1\t${'x'.repeat(93)} … [line truncated]`)
+    expect(wide).not.toContain('view_range')
+  })
+
   test('an empty file', async () => {
     const { run } = env(memoryFs({ '/memories/u1/e.md': '' }))
     expect(await run({ command: 'view', path: '/memories/u1/e.md' })).toBe('(empty file)')
@@ -199,6 +219,19 @@ describe('executeMemoryCommand: mutations', () => {
     expect(
       await run({ command: 'insert', path: '/memories/u1/a.md', insert_line: 5, insert_text: 'q' }),
     ).toBe('ERROR: invalid insert_line 5: /memories/u1/a.md has 4 lines.')
+  })
+
+  test('insert of an empty text is an error', async () => {
+    const fs = memoryFs({ '/memories/u1/a.md': 'a\n' })
+    expect(
+      await env(fs).run({
+        command: 'insert',
+        path: '/memories/u1/a.md',
+        insert_line: 0,
+        insert_text: '',
+      }),
+    ).toBe('ERROR: insert_text must not be empty.')
+    expect((await fs.read('/memories/u1/a.md'))?.content).toBe('a\n')
   })
 
   test('expected failures are prefixed strings', async () => {
@@ -423,6 +456,48 @@ describe('executeMemoryCommand: mutations', () => {
     )
     expect((await base.list()).map((f) => f.path)).toEqual(['/memories/u1/a.md'])
     expect(events).toEqual([])
+  })
+
+  test('rename fallback: an adapter error on the source delete removes the copy and propagates', async () => {
+    const base = withoutMove(memoryFs({ '/memories/u1/a.md': 'a' }))
+    const fs: FileSystem = {
+      ...base,
+      delete: async (path, opts) => {
+        if (path === '/memories/u1/a.md') throw new Error('disk on fire')
+        return base.delete(path, opts)
+      },
+    }
+    const { run, events } = env(fs)
+    let error: unknown
+    try {
+      await run({ command: 'rename', old_path: '/memories/u1/a.md', new_path: '/memories/u1/b.md' })
+    } catch (e) {
+      error = e
+    }
+    expect(String(error)).toContain('disk on fire')
+    expect((await base.list()).map((f) => f.path)).toEqual(['/memories/u1/a.md'])
+    expect(events).toEqual([])
+  })
+
+  test('rename fallback: the event carries the version of the copy', async () => {
+    const base = withoutMove(memoryFs({ '/memories/u1/a.md': 'a' }))
+    const fs: FileSystem = {
+      ...base,
+      write: async (path, content, opts) => {
+        const result = await base.write(path, content, opts)
+        return result.ok ? { ok: true, version: `copy-${result.version}` } : result
+      },
+    }
+    const { run, events } = env(fs)
+    expect(
+      await run({
+        command: 'rename',
+        old_path: '/memories/u1/a.md',
+        new_path: '/memories/u1/b.md',
+      }),
+    ).toBe('Renamed /memories/u1/a.md to /memories/u1/b.md.')
+    expect(events[0]?.after?.version).toBe(`copy-${await contentVersion('a')}`)
+    expect(events[0]?.before?.version).toBe(await contentVersion('a'))
   })
 
   test('rename with move: a conflicting move is CONFLICT; the target exists is ERROR', async () => {

@@ -14,6 +14,11 @@ export {
   type MemoryRoot,
   type MemoryWriteEvent,
 } from './execute.ts'
-export { DEFAULT_MAX_PINNED_CHARS, type MemoryOptions, memory } from './plugin.ts'
+export {
+  DEFAULT_MAX_PINNED_CHARS,
+  type MemoryOptions,
+  memory,
+  PINNED_PREAMBLE,
+} from './plugin.ts'
 export { MEMORY_PROTOCOL } from './texts.ts'
 export { MEMORY_TOOLS, type MemoryExecutor, type MemoryToolName } from './tools.ts'
