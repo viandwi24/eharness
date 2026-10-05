@@ -36,6 +36,8 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
   const owner = uuidv7()
   let defaults: { messages: MessageAdapter; state: StateAdapter } | undefined
   const sessions = new Map<string, SessionHandle>()
+  /** Closes of handles that were replaced in `sessions` while closing (awaited by `close()`). */
+  const closing = new Set<Promise<void>>()
 
   const storageFor = (options: SessionOptions) => {
     defaults ??= { messages: defaultMemoryMessages(), state: defaultMemoryState() }
@@ -84,6 +86,11 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
       const storage = storageFor(options)
       // a handle that is still closing stays the only writer until its close finished (spec 05 §1)
       const previous = cached?.close()
+      if (previous !== undefined) {
+        closing.add(previous)
+        const forget = () => void closing.delete(previous)
+        previous.then(forget, forget)
+      }
       const handle: SessionHandle = createSessionHandle({
         internals,
         owner,
@@ -104,7 +111,7 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
       await sessions.get(id)?.close()
     },
     async close() {
-      await Promise.all([...sessions.values()].map((handle) => handle.close()))
+      await Promise.all([...[...sessions.values()].map((handle) => handle.close()), ...closing])
     },
   }
   return agent
