@@ -66,6 +66,16 @@ function parsePlain(raw: string): Result<FrontmatterScalar> {
   return { ok: true, value: text }
 }
 
+/** The raw text of the top-level plain scalar `key: value` (comment stripped). */
+function rawPlain(lines: readonly string[], key: string): string | undefined {
+  const prefix = `${key}:`
+  for (const line of lines) {
+    if (!line.startsWith(prefix)) continue
+    return stripComment(line.slice(prefix.length)).trim()
+  }
+  return undefined
+}
+
 /**
  * Parse one quoted string starting at `text[0]`; returns the value and the rest after the
  * closing quote.
@@ -449,15 +459,19 @@ export function parseSkillMarkdown(
   }
   const end = lines.findIndex((line, i) => i > 0 && line.trimEnd() === '---')
   if (end === -1) return { error: "the frontmatter block is not closed with '---'" }
-  const parsed = parseFrontmatter(lines.slice(1, end).join('\n'))
+  const block = lines.slice(1, end)
+  const parsed = parseFrontmatter(block.join('\n'))
   if (!parsed.ok) return { error: `invalid frontmatter: ${parsed.error}` }
   const { name, description, ...rest } = parsed.value
-  const nameValue = typeof name === 'number' ? String(name) : name
+  // `name` / `description` are text: a plain scalar that looks like a number or a boolean keeps
+  // its raw text (`007` stays '007', `1.0` stays '1.0'), spec 07 §8
+  const nameValue =
+    typeof name === 'number' || typeof name === 'boolean' ? rawPlain(block, 'name') : name
   const nameError = skillNameError(nameValue)
   if (nameError !== undefined) return { error: nameError }
   const descriptionValue =
     typeof description === 'number' || typeof description === 'boolean'
-      ? String(description)
+      ? rawPlain(block, 'description')
       : typeof description === 'string'
         ? description.trim()
         : description
