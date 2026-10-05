@@ -14,6 +14,7 @@ describe('core registry', () => {
       'eh.context',
       'eh.warning',
       'eh.input',
+      'eh.output',
       'eh.compaction',
       'eh.notice',
       'eh.event',

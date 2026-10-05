@@ -68,6 +68,10 @@ export interface HarnessSession<
   regenerate(options?: { messageId?: string } & SendOptions): HarnessRun<M>
   /** Replace a user message and answer it (spec 11 §5). */
   edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
+  // 0.4.0: each of the four has a first overload taking SendOptionsWithOutput<S> (§3.3) and
+  // returning HarnessRun<M, InferSchema<S>>, e.g.
+  //   send<S extends FlexibleSchema>(input: SendInput | undefined, options: SendOptionsWithOutput<S>)
+  //     : HarnessRun<M, InferSchema<S>>
   /** Replay + follow the running turn (spec 04 §6). */
   attach(): HarnessRun<M> | undefined
   /**
@@ -150,7 +154,19 @@ export interface SendOptions {
   abortSignal?: AbortSignal
   runtime?: Record<string, unknown>          // merged over session runtime for this turn
   toolsContext?: Record<string, unknown>     // merged over session toolsContext
+  /** 0.4.0: ask the turn for a typed final answer (§3.3). Server-side only; not carried over 'tool-pending'. */
+  output?: OutputSpec
 }
+
+/** 0.4.0 (§3.3). */
+export interface OutputSpec<S extends FlexibleSchema = FlexibleSchema> {
+  schema: S                         // must convert to JSON Schema (zod, jsonSchema(), Standard JSON Schema)
+  mode?: 'tool' | 'native'          // default 'tool'
+  maxRetries?: number               // default 2 (at most 1 + maxRetries answers are checked)
+  toolName?: string                 // tool mode: default 'final_answer'; native: Output.object name
+  description?: string              // tool description / Output.object description
+}
+export type SendOptionsWithOutput<S extends FlexibleSchema> = SendOptions & { output: OutputSpec<S> }
 
 export interface InjectOptions {
   deliver?: 'next-turn' | 'next-step'
@@ -204,7 +220,8 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
    tools' `contextSchema`s (spec 01 §4) → `EH_INVALID_INPUT`. The `toolsContext` check runs right
    after step 6, because the contextSchemas of dynamic tools are known only once the turn's tool
    set is resolved.
-6. Resolve dynamic sources (spec 02 §5) → `TurnRegistry` (locked for the turn).
+6. Resolve dynamic sources (spec 02 §5) → `TurnRegistry` (locked for the turn). Then validate
+   `SendOptions.output` and, in tool mode, append the output tool (§3.3 rules 1–2).
 7. **Normalize input** (unless omitted):
    - `role` must be `user` (else `EH_INVALID_INPUT`);
    - only `text` and `file` parts are accepted; any other part type (tool parts, `data-*`
@@ -315,6 +332,7 @@ Evaluate in this order; the first match decides:
 | 1 | stream `error` part or `finishReason: 'error'` | `'error'` |
 | 2 | `finishReason` `'length'` / `'content-filter'` | `'length'` / `'content-filter'` |
 | 3 | `finishReason` `'stop'` or `'other'` | `'complete'` |
+| 3a | `SendOptions.output` in tool mode (0.4.0, §3.3): `finishReason: 'tool-calls'` and a call of the output tool of this step succeeded (other calls of the step still ran) | `'complete'` |
 | 4 | `finishReason: 'tool-calls'` and some tool call of the step is waiting: approval requested by the user-approval path, or a client tool (no `execute`) without output | `'tool-pending'` |
 | 5 | a `step.end` hook returned `{ stop }` | `plugin:<plugin>:<reason>` |
 | 6 | step count reached the turn's step budget (`maxSteps`, extended by `turn.beforeEnd`) | `'max-steps'` |
@@ -382,6 +400,62 @@ disabled.
 
 Stops decided outside a step: `'aborted'` (user/abort signal), `'timeout'`, `'blocked'`
 (`input.submit`), `'interrupted'` (set on a recovered message, §9). Full list: spec 10 §4.
+
+### 3.3 Structured output (normative, 0.4.0)
+
+`SendOptions.output` asks a turn for a typed final answer (ADR-0023). It applies to the turn it is
+passed to only; `send`, `respond`, `regenerate` and `edit` accept it (typed overloads,
+`HarnessRun<M, InferSchema<S>>`). Without it, a turn is byte-identical to 0.3 (wire and storage).
+
+1. **Validation** (step 6, after the registry is resolved): `asSchema(schema).jsonSchema` must
+   resolve — both modes need a JSON Schema — else a run error `EH_INVALID_INPUT` with
+   `details.reason: 'output-schema'` (e.g. a Standard Schema whose vendor does not implement
+   Standard JSON Schema). Tool mode: `toolName` must match `^[a-zA-Z0-9_-]{1,64}$` and must not
+   collide with a tool of the turn → `'output-tool-name'`. An invalid `mode` or a `maxRetries`
+   that is not a non-negative integer → `'output-spec'`. Nothing is persisted (early failure).
+2. **Tool mode** (default). For this turn only, the core appends the output tool (default
+   `final_answer`; input schema = `schema`; description `description` or
+   `FINAL_ANSWER_DESCRIPTION`; result `FINAL_ANSWER_RECORDED`) **at the end** of the tool order,
+   after `tool_search` (spec 02 §6 rule 1), and adds `OUTPUT_INSTRUCTION` to the turn reminder.
+   The tool is core-owned: no `tool.*` hooks, no output limits, never asks for approval (the
+   approval function answers `'not-applicable'` for it), always active (appended to a
+   `turn.prepare` / `step.prepare` `activeTools` list). Cost: the tool list differs from turns
+   without output, so the cached tool prefix misses once for this turn (and once for the next
+   turn without output); this is an expected per-turn decision, not a `W_CACHE_BUST`. A step whose
+   output tool call succeeded ends the turn `'complete'` (§3.1 rule 3a). Input that fails the
+   schema is answered by AI SDK with a tool error the model reads; the loop continues and the
+   failed call counts as one attempt.
+3. **Native mode.** Every step of the turn except the wrap-up step passes
+   `output: Output.object({ schema, name: toolName, description })` to `streamText` (AI SDK's
+   structured output; `responseFormat` is part of the request and may change the provider cache
+   key for the turn). When a step ends `'complete'`, the core awaits that step's `result.output`:
+   success → the answer; `NoObjectGeneratedError` (unparsable text, schema mismatch) or
+   `NoOutputGeneratedError` → a failed attempt. Providers without structured output: AI SDK
+   decides (a warning or JSON in text); eharness does not emulate it.
+4. **Retries.** `turn.beforeEnd` hooks run first for a `'complete'` stop (their continuation
+   wins). On the final `'complete'` without a valid answer (tool mode: the output tool never
+   succeeded in this turn; native mode: the last step's output failed), the core records a failed
+   attempt and continues like a `turn.beforeEnd` continuation: `data-eh.input { source:
+   'plugin:eh.output', text: OUTPUT_RETRY }` with the error trimmed to 1 000 characters, and in
+   tool mode the retry step gets `toolChoice: { type: 'tool', toolName }`. The retry counts toward
+   `loop.maxContinues` and `loop.maxIdleContinues` (a refusal raises `W_CONTINUE_LIMIT` with
+   `details.owner: 'eh.output'` and ends the turn `'output-invalid'`); when the step budget is used
+   up the turn ends `'max-steps'` (no wrap-up step: the model already answered); when
+   `loop.maxTurnOutputTokens` or a USD budget is exceeded it ends `'cost-cap'`.
+5. **Stop.** When more than `maxRetries` attempts failed, the turn ends with **`'output-invalid'`**
+   and `W_OUTPUT_INVALID` (`details: { attempts, lastError }`). Any other stop (`'max-steps'`,
+   `'error'`, `'aborted'`, `'timeout'`, `'tool-pending'`, `'cost-cap'`, …) keeps its reason, and
+   `output` is `undefined`. The wrap-up step is unchanged (`toolChoice: 'none'`, no output).
+6. **Storage.** A valid answer is written, after the last step, as the persistent part
+   `data-eh.output { value, mode, attempts }` (id `output`, never projected; spec 03 §4.3) into
+   the assistant message; `TurnResult.output` is the same `value` (schema-transformed).
+   `metadata.eharness.output = { ok, attempts }` is set on every committed turn with an output
+   spec (`attempts` = answers checked, including the valid one).
+7. **`respond()`.** The output spec is not serializable and is **not** carried over a
+   `'tool-pending'` stop: `respond(…, { output })` passes it again (spec 11 §4). A turn that ends
+   `'tool-pending'` returns `output: undefined`.
+8. **`handleChatRequest`** never reads `output` from a request body; it is a server-side option
+   (`ChatRequestOptions`).
 
 ## 4. `MessageAdapter` (the storage contract)
 

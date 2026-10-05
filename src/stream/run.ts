@@ -89,7 +89,7 @@ export function createRun<M extends UIMessage>(init: {
     kind: init.kind,
     messageId: init.messageId,
     stream,
-    result: init.result,
+    result: init.result as Promise<TurnResult<M, never>>,
     abort: init.abort,
     toResponse(responseInit) {
       return createUIMessageStreamResponse({

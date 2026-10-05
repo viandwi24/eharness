@@ -17,6 +17,8 @@ describe('core entry', () => {
     expect(Object.keys(core).sort()).toEqual([
       'DENIED_NEW_INPUT',
       'FILE_UNAVAILABLE',
+      'FINAL_ANSWER_DESCRIPTION',
+      'FINAL_ANSWER_RECORDED',
       'FLUSH_APPROVAL_DENIED',
       'HarnessError',
       'HarnessToolError',
@@ -25,6 +27,8 @@ describe('core entry', () => {
       'INTERRUPTED_UNKNOWN',
       'MAX_STEPS_WRAP_UP',
       'NOT_EXECUTED_NEW_INPUT',
+      'OUTPUT_INSTRUCTION',
+      'OUTPUT_RETRY',
       'PROGRESS_NUDGE',
       'TOOL_OUTPUT_PRUNED',
       'TOOL_OUTPUT_TRUNCATED',

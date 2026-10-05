@@ -218,15 +218,19 @@ export type SessionEvent =
 ## 7. `HarnessRun` and responses
 
 ```ts
-export interface HarnessRun<M extends HarnessUIMessage = HarnessUIMessage> {
+export interface HarnessRun<M extends HarnessUIMessage = HarnessUIMessage, O = never> {
   readonly turnId: string
   readonly kind: TurnInfo['kind']
   /** Assistant message id; resolves when `start` is written (spec 05 §3 step 10). */
   readonly messageId: Promise<string>
   /** The UI message stream. Single consumer; use tee() if you need more. */
   readonly stream: ReadableStream<InferUIMessageChunk<M>>
-  /** Resolves after the turn is fully persisted. Never rejects (spec 05 §2, spec 10). */
-  readonly result: Promise<TurnResult<M>>
+  /**
+   * Resolves after the turn is fully persisted. Never rejects (spec 05 §2, spec 10). `O` (0.4.0)
+   * types `result.output` for a turn started with SendOptions.output (spec 05 §3.3); the default
+   * `never` keeps `HarnessRun<M>` unchanged for every other turn.
+   */
+  readonly result: Promise<TurnResult<M, O>>
   abort(reason?: string): void
   /** createUIMessageStreamResponse({ stream }) with UI_MESSAGE_STREAM_HEADERS. */
   toResponse(init?: ResponseInit): Response
