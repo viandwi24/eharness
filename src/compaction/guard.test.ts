@@ -13,6 +13,20 @@ describe('truncateMiddle', () => {
     expect(out).toBe(`${'a'.repeat(70)}…[truncated 100 chars]…${'b'.repeat(30)}`)
     expect(truncateMiddle('abcdef', 0)).toBe('…[truncated 6 chars]…')
   })
+
+  test('never splits a surrogate pair at either cut point', () => {
+    const lone = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+    const emoji = '😀'.repeat(100)
+    for (let max = 1; max < 60; max++) {
+      const out = truncateMiddle(emoji, max)
+      expect({ max, lone: lone.test(out) }).toEqual({ max, lone: false })
+    }
+    // the removed count is still exact
+    const text = `a${'😀'.repeat(10)}`
+    const out = truncateMiddle(text, 10)
+    const removed = Number(/truncated (\d+) chars/.exec(out)?.[1])
+    expect(out.replace(/…\[truncated \d+ chars\]…/, '').length + removed).toBe(text.length)
+  })
 })
 
 describe('overflow detection', () => {
