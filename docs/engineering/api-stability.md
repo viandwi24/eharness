@@ -13,8 +13,8 @@ Everything a user can observe without reading our source:
    `STALE:`), the skills index block, the compaction marker projection.
 5. Error and warning codes, stop reasons.
 6. Hook names and the order in which they run.
-7. Adapter contracts (`MessageAdapter`, `StateAdapter`, `FileSystem`, `SkillSource`, `ToolSource`,
-   `SessionLock`).
+7. Adapter contracts (`MessageAdapter`, `StateAdapter`, `InboxAdapter`, `FileSystem`, `SkillSource`,
+   `ToolSource`, `SessionLock`).
 
 Not public: anything under `src/internal`, exact wording of default prompts (the *structure* is
 public), log messages, performance characteristics.

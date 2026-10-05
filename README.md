@@ -6,9 +6,9 @@
 [![CI](https://github.com/viandwi24/eharness/actions/workflows/ci.yml/badge.svg)](https://github.com/viandwi24/eharness/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/eharness)](https://www.npmjs.com/package/eharness)
 
-**Status: 0.3.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before
-1.0, breaking changes ship only in minor versions (`0.3 → 0.4`) with a migration note in the
-[changelog](CHANGELOG.md), so `^0.3.0` is safe to depend on
+**Status: 0.4.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before
+1.0, breaking changes ship only in minor versions (`0.4 → 0.5`) with a migration note in the
+[changelog](CHANGELOG.md), so `^0.4.0` is safe to depend on
 ([API stability](docs/engineering/api-stability.md)).
 
 ## Install
@@ -73,10 +73,23 @@ runs it offline with a scripted model. Walkthrough: [getting started](docs/guide
 import { handleChatRequest } from 'eharness'
 
 export async function POST(req: Request) {
+  const user = await authenticate(req) // yours: eharness knows only the session id
   const body = await req.json() // useChat's { id, messages, trigger, messageId }
+  if (!(await userOwnsChat(user.id, body.id))) return new Response(null, { status: 404 })
   // send, approval answers, regenerate and edit — one AI SDK UI message stream;
-  // a busy session answers 409 { error: { code: 'EH_SESSION_BUSY' } } (or pass { ifBusy: 'wait' })
-  return handleChatRequest(agent.session(body.id), body).toResponse()
+  // a busy session answers 409 { error: { code: 'EH_SESSION_BUSY' } } (or pass ifBusy: 'wait')
+  return handleChatRequest(agent.session(body.id), body, {
+    runtime: { userId: user.id }, // per-request values go into the turn, not the cached session
+  }).toResponse()
+}
+
+// GET /api/chat/[id]/stream — useChat({ resume: true }) replays the running turn
+export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const user = await authenticate(req)
+  if (!(await userOwnsChat(user.id, id))) return new Response(null, { status: 404 }) // same check
+  const run = agent.session(id).attach()
+  return run ? run.toResponse() : new Response(null, { status: 204 })
 }
 ```
 
@@ -206,6 +219,47 @@ await session.respond({
 With `useChat`, approvals need no server code: `handleChatRequest` calls `respond()`. Guide:
 [approvals and interaction](docs/guides/approvals-and-interaction.md).
 
+### Memory, background work and several instances (0.4)
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+import { filesystem } from 'eharness/filesystem'
+import { memory } from 'eharness/memory'
+
+const agent = defineHarnessAgent({
+  model: 'anthropic/claude-sonnet-4.6',
+  plugins: [
+    filesystem({ fs: (ctx) => filesFor(ctx.session.id), hiddenPrefixes: ['/memories'] }),
+    memory({
+      roots: (ctx) => [{ path: `/memories/${String(ctx.runtime.userId)}/`, write: true }],
+      flushOnCompaction: true, // save facts to memory right before history is summarized
+    }),
+  ],
+  compaction: { prune: {} }, // drop old large tool outputs from the request before summarizing
+  storage: { messages, state, inbox }, // your adapters; the inbox is optional
+})
+
+const session = agent.session('chat-1')
+await session.enqueue('One more thing…', { mode: 'collect' }) // any instance; one turn per burst
+await session.inject('eh.event', { name: 'job', text: 'Export finished.' }, { wake: true })
+await session.requestAbort() // stops the turn even when another instance runs it
+```
+
+- **Memory:** `eharness/memory` gives the agent memory files under roots your app chooses per
+  user, pinned files in every turn, and a pre-compaction **flush** (`compaction.before`) that saves
+  facts before a lossy summary. Guide: [memory](docs/guides/memory.md).
+- **Context:** `compaction.prune` replaces old tool outputs by placeholders in the request only;
+  a turn whose context refills right after a compaction stops with `'context-thrash'`. Guide:
+  [compaction](docs/guides/compaction.md).
+- **Several instances:** a durable `InboxAdapter` queues, steers, wakes and debounces
+  (`collect`) across instances; `requestAbort()` stops a turn anywhere; `ifBusy: 'wait'` and
+  `session.idle()` serialize work in one process. Guide: [several instances](docs/guides/multi-instance.md).
+- **Structured output** for pipeline workers is planned for 0.4 (see
+  [P18](docs/plans/P18-structured-output.md)).
+- **Production patterns:** ephemeral context, episodic memory, background events, heartbeats
+  with a "silent OK", skills from a database, and the security checklist:
+  [production patterns](docs/guides/production-patterns.md).
+
 ## Why
 
 AI SDK gives you `streamText`, tools, `UIMessage` and UI streams. Every serious agent then
@@ -233,10 +287,16 @@ thin and idiomatic:
 - **Interactive and safe:** tool approvals by policy or by tool risk (`read` / `write` /
   `destructive`), an `approval.decided` audit hook and `actor` on answers, client-side tools,
   regenerate/edit, steering while the agent works, background wake-ups, crash recovery.
+- **Built for several instances:** session locks, compare-and-set state, a durable inbox for
+  queue / steer / wake / collect across processes, and a Stop button that reaches the instance
+  running the turn.
+- **Memory that survives compaction:** file-based memory under app-chosen roots, pinned files,
+  and a pre-compaction flush; old tool outputs are pruned before anything is summarized.
 - **Tools that know the chat:** `(ctx) => tool()` gets the session, the turn's input, your runtime
   values, state, services, and a typed writer for custom UI data parts.
-- **Batteries included, optional:** a todos plugin (`eharness/todos`), a filesystem plugin with
-  skills autoload, MCP servers as tool sources, a scripted test model and conformance suites.
+- **Batteries included, optional:** a todos plugin (`eharness/todos`), a memory plugin
+  (`eharness/memory`), a filesystem plugin with skills autoload, MCP servers as tool sources, a
+  scripted test model and conformance suites.
 - **Prompt-cache friendly:** stable instructions and tool order; volatile context goes into
   per-turn and per-step reminders.
 
@@ -247,11 +307,11 @@ thin and idiomatic:
 | `eharness` | `defineHarnessAgent`, `definePlugin`, `defineSkill`, `defineSkillSource`, `defineToolSource`, `defineDataPart`, `defineMessageKind`, `handleChatRequest`, `modelsDevCatalog`, `lookupModel`, `computeCost`, errors, fixed texts, types |
 | `eharness/filesystem` | `FileSystem` contract, `filesystem()` plugin (file tools, skills autoload), helpers |
 | `eharness/filesystem/memory` | `memoryFs()` |
-| `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage) |
+| `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage), `memoryInbox()` |
 | `eharness/mcp` | `mcpServer()` tool source (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `todos()` plugin (`todo_write` tool, `data-todos.list`), `latestTodos()`, `renderTodos()`, `openTodos()` |
-| `eharness/memory` | `memory()` plugin (memory files under app-chosen roots, pinned files), `executeMemoryCommand()` |
-| `eharness/testing` | `scriptedModel()` and conformance suites for your adapters |
+| `eharness/memory` | `memory()` plugin (memory files under app-chosen roots, pinned files, pre-compaction flush), `executeMemoryCommand()` |
+| `eharness/testing` | `scriptedModel()` and conformance suites for your adapters (messages, state, inbox, file system, skill source, ids) |
 
 ## Examples
 
@@ -271,9 +331,13 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`todos.ts`](examples/todos.ts) | the `todos()` plugin with `enforce`, rendering `data-todos.list`, `latestTodos()` |
 | [`compaction-flush.ts`](examples/compaction-flush.ts) | pre-compaction flush: `compaction.before`, memory `flushOnCompaction`, the `eh.flush` audit record |
 | [`memory.ts`](examples/memory.ts) | the `memory()` plugin: per-user root, read-only org root, pinned profile, `onWrite` audit |
+| [`background-events.ts`](examples/background-events.ts) | a job result as a message kind, `inject(…, { wake: true })`, a heartbeat that ends silently |
+| [`inbox.ts`](examples/inbox.ts) | two instances sharing a durable inbox: steer, `collect`, Stop across instances |
+| [`remote-abort.ts`](examples/remote-abort.ts) | `requestAbort()` from another instance through the state (`setIf`) |
 | [`subagent-tool.ts`](examples/subagent-tool.ts) | a tool that runs a child session, streams its progress, reports usage |
 | [`json-file-storage.ts`](examples/json-file-storage.ts) | `MessageAdapter` + `StateAdapter` on JSON files |
 | [`postgres-storage.ts`](examples/postgres-storage.ts) | Postgres adapters + advisory-lock `SessionLock` |
+| [`postgres-inbox.ts`](examples/postgres-inbox.ts) | Postgres `InboxAdapter` (`FOR UPDATE SKIP LOCKED`, `LISTEN`/`NOTIFY`) |
 | [`custom-fs-adapter.ts`](examples/custom-fs-adapter.ts) | a `FileSystem` over a key-value store |
 
 ## Guides
@@ -282,6 +346,8 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 [Instructions, tools and MCP](docs/guides/tools-and-mcp.md) ·
 [Writing a plugin](docs/guides/writing-a-plugin.md) ·
 [Writing a storage adapter](docs/guides/writing-a-storage-adapter.md) ·
+[Running several instances](docs/guides/multi-instance.md) ·
+[Production patterns](docs/guides/production-patterns.md) ·
 [Rendering data parts](docs/guides/rendering-data-parts.md) ·
 [Skills](docs/guides/skills.md) ·
 [Filesystem](docs/guides/filesystem.md) ·
@@ -299,10 +365,19 @@ Reference: [concept](docs/concept.md) · [architecture](docs/architecture.md) ·
 [specs](docs/specs) (the contracts) · [decisions (ADRs)](docs/decisions) ·
 [contributing](CONTRIBUTING.md)
 
+## Security
+
+eharness checks message shapes, approvals and file paths; identity and authorization are yours.
+Check session ownership in every route (including the resume `GET`), pass per-request identity
+in `SendOptions.runtime`, add per-user quotas on top of the per-session budgets, and set
+`toolErrorText` and `logger` before production. The full list of design-level risks, defaults and
+what to do: [production patterns → security](docs/guides/production-patterns.md#security).
+
 ## Compatibility
 
 | eharness | ai | zod | @ai-sdk/mcp (optional) | Runtime |
 |---|---|---|---|---|
+| 0.4.x | ^7.0.123 | ^3.25.76 \|\| ^4.1.8 | ^2.0.63 | Node ≥ 22, Bun |
 | 0.3.x | ^7.0.123 | ^3.25.76 \|\| ^4.1.8 | ^2.0.63 | Node ≥ 22, Bun |
 | 0.2.x | ^7.0.123 | ^3.25.76 \|\| ^4.1.8 | ^2.0.63 | Node ≥ 22, Bun |
 | 0.1.x | ^7 (≥ 7.0.104 needed in practice) | ^3.25.76 \|\| ^4.1.8 | ^2 | Node ≥ 22, Bun |
