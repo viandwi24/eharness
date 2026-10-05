@@ -112,41 +112,41 @@ Rules (spec 06 new §5.2a "Flush"):
 
 ## Checklist
 
-- [ ] ADR-0020 "Pre-compaction flush": why a separate internal call (not a visible turn), why an
+- [x] ADR-0020 "Pre-compaction flush": why a separate internal call (not a visible turn), why an
       audit kind message instead of no trace, why auto-deny approvals, why flush is skipped on
       overflow.
-- [ ] Spec 01 §5 hook + `CompactionBeforePatch`; spec 03 §5.3 core kind `eh.flush` + data part;
+- [x] Spec 01 §5 hook + `CompactionBeforePatch`; spec 03 §5.3 core kind `eh.flush` + data part;
       spec 06 §5.2a; spec 10: `W_COMPACTION_FLUSH_SKIPPED`; spec 12: `source: 'compaction-flush'`.
-- [ ] Tests first (`src/compaction/flush.int.test.ts`, scripted models for agent and flush):
-  - [ ] hook receives exactly the `drop` messages, `tokens`, correct `trigger` for pre-turn,
+- [x] Tests first (`src/compaction/flush.int.test.ts`, scripted models for agent and flush):
+  - [x] hook receives exactly the `drop` messages, `tokens`, correct `trigger` for pre-turn,
         mid-turn, manual;
-  - [ ] patches of two plugins merge (prompt, tools, maxSteps, model);
-  - [ ] a tool outside the whitelist is not offered (not in the flush call's tools); a
+  - [x] patches of two plugins merge (prompt, tools, maxSteps, model);
+  - [x] a tool outside the whitelist is not offered (not in the flush call's tools); a
         whitelisted tool that needs approval is auto-denied and the denial reaches
         `approval.decided`;
-  - [ ] flush error → `W_HOOK_FAILED`, compaction still commits a marker;
-  - [ ] usage of the flush is in `TurnResult.usage` / `costUsd`; budget used up → flush skipped;
-  - [ ] overflow trigger → skipped unless `flush.model` has a larger window;
-  - [ ] nothing from the flush appears in later model wires (golden wire unchanged vs no flush,
+  - [x] flush error → `W_HOOK_FAILED`, compaction still commits a marker;
+  - [x] usage of the flush is in `TurnResult.usage` / `costUsd`; budget used up → flush skipped;
+  - [x] overflow trigger → skipped unless `flush.model` has a larger window;
+  - [x] nothing from the flush appears in later model wires (golden wire unchanged vs no flush,
         except the effects of tool side effects), stored history contains exactly one extra
         `eh.flush` message, ordered before the marker;
-  - [ ] mid-turn flush does not change the running turn's step count or progress window;
-  - [ ] abort during flush aborts the turn cleanly (no marker, dangling calls answered).
-- [ ] Implement `src/compaction/flush.ts` and call sites (pre-turn, mid-turn, overflow, manual).
-- [ ] Guide `compaction.md` section "Saving facts before summarizing" (with P17 memory tools as
+  - [x] mid-turn flush does not change the running turn's step count or progress window;
+  - [x] abort during flush aborts the turn cleanly (no marker, dangling calls answered).
+- [x] Implement `src/compaction/flush.ts` and call sites (pre-turn, mid-turn, overflow, manual).
+- [x] Guide `compaction.md` section "Saving facts before summarizing" (with P17 memory tools as
       the main example, plus a plain custom tool); offline example
       `examples/compaction-flush.ts` in `examples.test.ts`.
-- [ ] `reference.md` rows; changeset; board.
+- [x] `reference.md` rows; changeset; board.
 
 ## Acceptance criteria
 
-- [ ] A flush with a whitelisted `save_fact` tool writes the fact before the summary is produced
+- [x] A flush with a whitelisted `save_fact` tool writes the fact before the summary is produced
       (assert call order with a spy), and the next turn's wire contains only the summary — no
       flush messages.
-- [ ] The stored `eh.flush` record is valid against its schema and omitted from projection.
-- [ ] Budgets and `TurnResult.usage` include flush usage.
-- [ ] No hook → identical behaviour and storage to 0.3 (golden).
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] The stored `eh.flush` record is valid against its schema and omitted from projection.
+- [x] Budgets and `TurnResult.usage` include flush usage.
+- [x] No hook → identical behaviour and storage to 0.3 (golden).
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -160,6 +160,32 @@ Rules (spec 06 new §5.2a "Flush"):
   exhaustive switches over core kinds must add a case).
 
 ## Open questions
+
+Implementation decisions (P15, recorded for review):
+
+- **Transient `data-eh.flush` shape.** The kind `eh.flush` registers `data-eh.flush` as a
+  persistent data part with the `FlushPayload` schema, so a transient part of the same name with
+  a different shape (`{ state, toolCalls }`) would contradict its type. Decision (follows the
+  `data-eh.compaction` precedent): the transient `data-eh.flush` chunk carries the record's
+  payload and is written once when the flush ends; "running" is covered by the existing
+  `data-eh.status { state: 'compacting' }`.
+- **Budget order / `reason: 'budget'`.** The existing compaction budget check (spec 06 §5.3)
+  runs before the flush, so a used-up budget skips the compaction and the hook/flush together;
+  `W_COMPACTION_FLUSH_SKIPPED` therefore only has `reason: 'window'`. After the flush the budget
+  is checked again; a flush that used it up skips the summarizer (`W_BUDGET`, compaction skipped).
+- **Turn abort during the flush.** No `eh.flush` record is stored (and no marker); tool side
+  effects that already happened stay. A flush-only failure stores the record with `error`.
+- **Flush tool status chunks.** Wrapped tools still write the transient
+  `data-eh.status { state: 'tool' }` during a mid-turn flush (no tool call chunks are written).
+- **Memory flush tools** include `memory_view` (read-only, needed to update existing files with
+  `memory_str_replace`); delete/rename are never offered. With the `tool` option the single
+  `memory` tool is offered (commands not filtered).
+- **`FLUSH_APPROVAL_DENIED`** is exported as a fixed text from `eharness` (minor change if
+  reworded).
+- **ADR number.** ADR-0020 (reserved for P15; 0021/0022 already exist).
+- **Pre-existing failure (not P15):** `src/session/turn.int.test.ts` "scenario 1" golden chunk
+  order (`data-eh.status:tool` vs `start-step`) fails on `main` (a4e300a) too in this
+  environment; untouched.
 
 - Proposal said "flush messages are not stored"; decision: store an `eh.flush` audit record
   (metadata only, no inputs/outputs) — the conversation the model sees is still unchanged.

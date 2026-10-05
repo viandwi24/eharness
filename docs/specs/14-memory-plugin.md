@@ -36,6 +36,7 @@ export interface MemoryOptions {
   protocol?: string | false // default MEMORY_PROTOCOL (§5)
   tool?: (execute: MemoryExecutor) => Tool                                // §8
   onWrite?: (event: MemoryWriteEvent, ctx: HarnessContext) => void | Promise<void>   // §7
+  flushOnCompaction?: boolean | { prompt?: string }   // default false (§9, 0.4.0)
 }
 export interface MemoryRoot { path: string; write?: boolean /* default false */; label?: string }
 ```
@@ -222,8 +223,26 @@ With `tool`, the six tools are not registered; the returned tool is registered u
 `memory` and the executor applies the same roots, limits, concurrency and `onWrite` as the six
 tools. eharness never imports a provider package (rule 10).
 
-## 9. Not in 0.4
+## 9. `flushOnCompaction` (0.4.0)
 
-- `flushOnCompaction` (write memory before a compaction) depends on the pre-compaction flush API
-  (P15) and ships with or after it.
+`flushOnCompaction: true | { prompt }` registers a `compaction.before` hook (spec 01 §5) that
+requests a pre-compaction flush (spec 06 §5.2a) so the agent can write memory before history is
+summarized:
+
+```ts
+{ flush: { prompt: options.prompt ?? MEMORY_FLUSH_PROMPT, tools: MEMORY_FLUSH_TOOLS } }
+// MEMORY_FLUSH_TOOLS = ['memory_view', 'memory_create', 'memory_str_replace', 'memory_insert']
+```
+
+- Only view and the non-destructive writes are offered (no `memory_delete` / `memory_rename`);
+  with the `tool` option (§8) the app's single `memory` tool is offered instead (its commands are
+  not filtered).
+- The hook resolves the roots (§3) and requests nothing when no root is writable.
+- `maxSteps` and `model` are the flush defaults (3; `compaction.model ?? the turn's model`);
+  other plugins' flush requests merge with this one (spec 06 §5.2a rule 2).
+- `MEMORY_FLUSH_PROMPT` is a model-visible text (minor change when reworded); a custom `prompt`
+  must be a non-empty string (`EH_CONFIG_INVALID` otherwise).
+
+## 10. Not in 0.4
+
 - Directory delete/rename, semantic search, binary files.

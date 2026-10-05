@@ -269,6 +269,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`budget-and-cost.ts`](examples/budget-and-cost.ts) | `modelsDevCatalog`, `costUsd` per step/turn/session, nested `addUsage`, USD budgets (`'cost-cap'`) |
 | [`risk-approvals.ts`](examples/risk-approvals.ts) | tool risk, `approval.risk`, an inbox from `pending`, `respond()` with `actor`, `approval.decided` audit |
 | [`todos.ts`](examples/todos.ts) | the `todos()` plugin with `enforce`, rendering `data-todos.list`, `latestTodos()` |
+| [`compaction-flush.ts`](examples/compaction-flush.ts) | pre-compaction flush: `compaction.before`, memory `flushOnCompaction`, the `eh.flush` audit record |
 | [`memory.ts`](examples/memory.ts) | the `memory()` plugin: per-user root, read-only org root, pinned profile, `onWrite` audit |
 | [`subagent-tool.ts`](examples/subagent-tool.ts) | a tool that runs a child session, streams its progress, reports usage |
 | [`json-file-storage.ts`](examples/json-file-storage.ts) | `MessageAdapter` + `StateAdapter` on JSON files |

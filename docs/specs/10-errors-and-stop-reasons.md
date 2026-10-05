@@ -103,8 +103,9 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_UNKNOWN_STORED_PART` | stored message contains an unregistered data part type; ignored in memory, kept in storage (never escalated by `strict`) |
 | `W_WRITE_OUTSIDE_TURN` | persistent data part written while idle; dropped |
 | `W_COMPACTION_FAILED` | automatic compaction failed; continuing with the guard |
+| `W_COMPACTION_FLUSH_SKIPPED` | (0.4.0) a requested pre-compaction flush did not run because it cannot fit: `details: { reason: 'window', trigger, window, tokens }` — the flush model's window is too small for the current context, or (overflow recovery) not larger than the turn model's window (spec 06 §5.2a) |
 | `W_CONTEXT_TRUNCATED` | guard dropped/truncated context to fit |
-| `W_HOOK_FAILED` | a hook threw; skipped |
+| `W_HOOK_FAILED` | a hook threw; skipped (`details: { hook, owner }`). A failed pre-compaction flush is reported the same way with `details: { hook: 'compaction.before', owner, phase: 'flush' }`; compaction continues (spec 06 §5.2a) |
 | `W_INVALID_TOOL_NAME` | a tool source returned an invalid tool name; skipped |
 | `W_TRANSIENT_OVERRIDE` | `transient: false` for a transient part; sent as transient |
 | `W_DEPRECATED` | a deprecated API was used (once per API) |

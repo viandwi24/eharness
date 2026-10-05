@@ -144,6 +144,21 @@ describe('examples run offline', () => {
   )
 
   test(
+    'compaction-flush (pre-compaction flush, memory)',
+    async () => {
+      const out = await run('compaction-flush.ts')
+      expect(out).toContain('summary: The user planned the launch')
+      expect(out).toContain('flush (manual, 2 steps): memory_create output, save_fact output')
+      expect(out).toContain('memory file: Launch moved to May 12.')
+      expect(out).toContain('fact log: Budget approved: 40k')
+      expect(out).toContain('stored: user, assistant, user, assistant, eh.flush, eh.compaction')
+      expect(out).toContain('next turn: complete')
+      expect(out).not.toContain('warning')
+    },
+    timeout,
+  )
+
+  test(
     'budget-and-cost',
     async () => {
       const out = await run('budget-and-cost.ts')
