@@ -408,7 +408,7 @@ describe('grep: catastrophic patterns (ReDoS)', () => {
               call('grep', { pattern: 'x'.repeat(600) }),
               call('grep', { pattern: '(ab)+' }),
               call('grep', { pattern: 'foo|bar' }),
-              call('grep', { pattern: '\\(a+\\)+' }),
+              call('grep', { pattern: '\\(a+\\)' }),
               call('grep', { pattern: 'foo bar' }),
             ],
           },
@@ -420,10 +420,18 @@ describe('grep: catastrophic patterns (ReDoS)', () => {
       const result = await agent.session('s').send('go').result
       expect(performance.now() - started).toBeLessThan(1_000)
       const out = outputs(result) as string[]
-      expect(out[0]).toBe('ERROR: invalid pattern: nested quantifier (catastrophic backtracking)')
-      expect(out[1]).toBe('ERROR: invalid pattern: nested quantifier (catastrophic backtracking)')
-      expect(out[2]).toBe('ERROR: invalid pattern: backreferences are not supported')
-      expect(out[3]).toBe('ERROR: invalid pattern: longer than 512 characters')
+      expect(out[0]).toBe(
+        `ERROR: invalid pattern: a repeated group contains a repeating quantifier. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
+      )
+      expect(out[1]).toBe(
+        `ERROR: invalid pattern: a repeated group contains a repeating quantifier. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
+      )
+      expect(out[2]).toBe(
+        `ERROR: invalid pattern: backreferences are not supported. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
+      )
+      expect(out[3]).toBe(
+        `ERROR: invalid pattern: longer than 512 characters. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
+      )
       expect(out[4]).toBe('/a.txt:2: abab')
       expect(out[5]).toBe('/a.txt:3: foo bar')
       expect(out[6]).toBe('No matches.')
