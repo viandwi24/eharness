@@ -118,7 +118,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6) |
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
-| `W_CONTEXT_THRASH` | the context was above `summarizeAt` again within `compaction.thrash.withinSteps` steps after an automatic compaction; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `lastCompaction` = step index of that compaction, spec 06 §4) |
+| `W_CONTEXT_THRASH` | a second automatic compaction within `compaction.thrash.withinSteps` steps of the previous one ran (or was skipped as no-gain) and left the context above `summarizeAt`; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `tokens` = the context after the second compaction, `lastCompaction` = step index of the previous compaction, spec 06 §4) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 | `W_ABORT_UNSUPPORTED` | `abort()` / `requestAbort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |
 | `W_OUTPUT_INVALID` | a turn with `SendOptions.output` found no valid final answer within `maxRetries` retries (or a retry was refused by the continuation bounds); the turn stops with `'output-invalid'` (`details: { attempts, lastError }`, spec 05 §3.3; 0.4.0) |

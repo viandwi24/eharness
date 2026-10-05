@@ -141,15 +141,22 @@ status is written only when the skip rule passed.
 
 An automatic compaction that failed (§5.5) is not retried in the same turn; the guard takes over.
 
-**Thrash (0.4.0).** After a successful automatic compaction (pre-turn = step 0, mid-turn before
-step `s` = step `s`, overflow recovery = the step being retried) the core remembers its step
-index. When the mid-turn check before step `n` finds the context above `summarizeAt` again
-(after prune) and `n − that index ≤ thrash.withinSteps` (default 2), the core does **not** compact
-again: it raises `W_CONTEXT_THRASH` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`)
-and stops the turn with `'context-thrash'` before the next model call. `turn.beforeEnd` does not
+**Thrash (0.4.0).** After a successful mid-turn compaction (before step `s` = step `s`) or
+overflow-recovery compaction (the step being retried) the core remembers its step index. A
+pre-turn compaction does **not** start the thrash window: a turn that compacted at its start and
+then reads one large tool output compacts normally, as in 0.3. When the mid-turn check before
+step `n` finds the context above `summarizeAt` (after prune) and `n − that index ≤
+thrash.withinSteps` (default 2), the core compacts as usual; the check runs **after** that
+compaction: when it ran (or was skipped as `no-gain`, §4 skip rule) and the context is still
+above `summarizeAt` afterwards (the rebuilt wire, or the unchanged one for `no-gain`), the core
+raises `W_CONTEXT_THRASH` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`,
+`tokens` = the context after that compaction) and stops the turn with `'context-thrash'` before
+the next model call. A second compaction that brings the context below `summarizeAt` is not a
+thrash (it restarts the window); other skips (`nothing-to-drop`, budget, failed earlier) leave
+the size to the guard. `turn.beforeEnd` does not
 run; dangling calls are answered as usual; an `eh.notice` (level `warning`, code
-`EH_CONTEXT_THRASH`) is saved (spec 05 §3.1). `thrash: false` restores 0.3 behaviour (compact
-again; the failed-compaction rule above still applies). `thrash.withinSteps` must be a positive
+`EH_CONTEXT_THRASH`) is saved (spec 05 §3.1). `thrash: false` restores 0.3 behaviour (keep
+going after the second compaction; the failed-compaction rule above still applies). `thrash.withinSteps` must be a positive
 integer.
 
 **Manual** `compact()` is exclusive like a turn: it sets the running flag (a `send()` meanwhile
