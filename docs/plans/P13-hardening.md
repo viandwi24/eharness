@@ -300,9 +300,15 @@ Decisions taken while implementing (conservative options):
 - Item 26 — the bump moved the transient `data-eh.status { state: 'tool' }` chunk before the first
   `start-step` of a step (AI SDK 7.0.124–127 internals); deterministic, golden
   `two-step-turn.chunks.json` updated and spec 04 §2 notes it.
-- Changesets: `hardening-0-4.md` (`patch`, fixes and additive options) and
-  `hardening-0-4-model-visible.md` (`minor`: `read_file.charOffset`, the new hints, `grep`
-  refusals, `FILE_UNAVAILABLE`, cut summaries — model-visible per api-stability.md).
+- Changesets: `hardening-0-4.md` (`patch`: fixes and purely additive options) and
+  `hardening-0-4-model-visible.md` (`minor`: every behaviour, type-level and model-visible change).
+- Review round 1 (orchestrator decisions): a failed commit-point state write undoes the core
+  fields commit() changed, a CAS conflict reloads the state (no phantom `activeTurn`, no
+  overwrite of another instance); `grep` uses a conservative safe subset (≤ 1 unbounded
+  quantifier, no quantified groups with quantifiers or alternations, no backreferences /
+  lookarounds) and scans 2 000 characters per line (worst accepted case a few ms per line under
+  bun); `agent.close()` awaits replaced closing handles; waiting sends keep FIFO order (only a
+  waiting `respond()` may pass a held queue); `messages()` paging filters by `beforeId` itself.
 
 ## Requests to other phases
 
