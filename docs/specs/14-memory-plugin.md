@@ -230,9 +230,16 @@ requests a pre-compaction flush (spec 06 §5.2a) so the agent can write memory b
 summarized:
 
 ```ts
-{ flush: { prompt: options.prompt ?? MEMORY_FLUSH_PROMPT, tools: MEMORY_FLUSH_TOOLS } }
+{ flush: { prompt: [options.prompt ?? MEMORY_FLUSH_PROMPT, roots, ...pinned].join('\n\n'),
+           tools: MEMORY_FLUSH_TOOLS } }
 // MEMORY_FLUSH_TOOLS = ['memory_view', 'memory_create', 'memory_str_replace', 'memory_insert']
 ```
+
+- The flush call gets no turn reminder (spec 06 §5.2a rule 3), so the hook appends the same
+  context the reminder carries: the rendered memory roots and, when `pinned` is set, the
+  `PINNED_PREAMBLE` and `<pinned>` blocks — same resolution, escaping and `maxPinnedChars`
+  budget as the reminder (§§3–4). The flush model knows where memory lives and what is already
+  pinned.
 
 - Only view and the non-destructive writes are offered (no `memory_delete` / `memory_rename`);
   with the `tool` option (§8) the app's single `memory` tool is offered instead (its commands are
