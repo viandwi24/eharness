@@ -223,6 +223,23 @@ function toolCallsOf(steps: ReadonlyArray<StepResult<ToolSet>>): FlushPayload['t
   return out
 }
 
+/** Token totals of several usages (only the fields the `eh.flush` record keeps). */
+function sumUsage(usages: readonly LanguageModelUsage[]): {
+  inputTokens: number
+  outputTokens: number
+  totalTokens: number
+} {
+  let inputTokens = 0
+  let outputTokens = 0
+  let totalTokens = 0
+  for (const u of usages) {
+    inputTokens += u.inputTokens ?? 0
+    outputTokens += u.outputTokens ?? 0
+    totalTokens += u.totalTokens ?? (u.inputTokens ?? 0) + (u.outputTokens ?? 0)
+  }
+  return { inputTokens, outputTokens, totalTokens }
+}
+
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
@@ -283,6 +300,8 @@ export async function runFlushStage(input: FlushStageInput): Promise<FlushOutcom
   const onAbort = () => controller.abort(input.signal?.reason)
   if (aborted()) return 'aborted'
   input.signal?.addEventListener('abort', onAbort, { once: true })
+  /** Completed flush steps (paid model calls), also when a later step fails (rule 8, 9). */
+  const done: Array<StepResult<ToolSet>> = []
   try {
     const result = await generateText({
       model,
@@ -301,6 +320,9 @@ export async function runFlushStage(input: FlushStageInput): Promise<FlushOutcom
         : {}),
       stopWhen: isStepCount(merged.maxSteps),
       abortSignal: controller.signal,
+      onStepEnd: (step: StepResult<ToolSet>) => {
+        done.push(step)
+      },
       ...(env.maxOutputTokens === undefined ? {} : { maxOutputTokens: env.maxOutputTokens }),
     } as Parameters<typeof generateText>[0])
     const usage = result.totalUsage
@@ -314,8 +336,15 @@ export async function runFlushStage(input: FlushStageInput): Promise<FlushOutcom
     })
     return 'flushed'
   } catch (error) {
+    // the steps that completed before the error were paid: charge and record them
+    const usages = done.map((step) => step.usage)
+    for (const usage of usages) input.onUsage?.(usage, model, 'compaction-flush')
     if (aborted()) return 'aborted'
-    return failed(input, merged, model, error, { steps: 0, toolCalls: [] })
+    return failed(input, merged, model, error, {
+      steps: done.length,
+      toolCalls: toolCallsOf(done),
+      usages,
+    })
   } finally {
     input.signal?.removeEventListener('abort', onAbort)
   }
@@ -326,7 +355,12 @@ async function failed(
   merged: MergedFlush,
   model: LanguageModel,
   error: unknown,
-  partial: { steps: number; toolCalls: FlushPayload['toolCalls'] },
+  partial: {
+    steps: number
+    toolCalls: FlushPayload['toolCalls']
+    /** Per-step usage of the steps that completed before the error. */
+    usages?: LanguageModelUsage[]
+  },
 ): Promise<FlushOutcome> {
   input.rt.warn(
     {
@@ -336,7 +370,14 @@ async function failed(
     },
     `${input.turnId ?? 'manual'}:compaction.before:flush`,
   )
-  await record(input, merged, model, { ...partial, error: errorText(error) })
+  await record(input, merged, model, {
+    steps: partial.steps,
+    toolCalls: partial.toolCalls,
+    ...(partial.usages === undefined || partial.usages.length === 0
+      ? {}
+      : { usage: partial.usages }),
+    error: errorText(error),
+  })
   return 'failed'
 }
 
@@ -348,13 +389,24 @@ async function record(
   result: {
     steps: number
     toolCalls: FlushPayload['toolCalls']
-    usage?: LanguageModelUsage
+    /** Total usage, or the per-step usages of a failed flush (priced per step). */
+    usage?: LanguageModelUsage | LanguageModelUsage[]
     error?: string
   },
 ): Promise<void> {
   const { rt } = input
-  const usage = result.usage
-  const cost = usage === undefined ? undefined : costOf(rt.agent.config.models, model, usage)
+  const usages =
+    result.usage === undefined ? [] : Array.isArray(result.usage) ? result.usage : [result.usage]
+  const usage = usages.length === 0 ? undefined : sumUsage(usages)
+  let cost: number | undefined
+  for (const u of usages) {
+    const c = costOf(rt.agent.config.models, model, u)
+    if (c === undefined) {
+      cost = undefined
+      break
+    }
+    cost = (cost ?? 0) + c
+  }
   const payload: FlushPayload = {
     trigger: input.event.trigger,
     prompt: merged.prompt,

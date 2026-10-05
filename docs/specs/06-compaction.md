@@ -309,12 +309,15 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    omitted from projection anyway). A failing save is logged and does not fail the compaction.
 8. **Accounting.** The flush's `totalUsage` is charged like summarizer usage (§5.3 item 5) with
    `source: 'compaction-flush'`, priced with the flush model: turn usage (`TurnResult.usage`,
-   `costUsd`, budgets) during a turn, `state.core.usage` for manual. When the flush used up the
+   `costUsd`, budgets) during a turn, `state.core.usage` for manual. A flush that fails or is
+   aborted after some steps completed still charges those steps (usage collected per step, AI SDK
+   `onStepEnd`): paid calls never escape budgets. When the flush used up the
    budget, the summarizer does not run (`W_BUDGET` with `details.compaction: true`, compaction
    skipped).
 9. **Failure.** A flush error (provider error, failing environment) → `W_HOOK_FAILED` with
    `details: { hook: 'compaction.before', owner, phase: 'flush' }`, the `eh.flush` record carries
-   `error`, and compaction continues. A thrown tool error inside the flush is a tool error result
+   `error` plus the `steps`, `toolCalls`, `usage` and `costUsd` of the steps that completed before
+   the error (rule 8), and compaction continues. A thrown tool error inside the flush is a tool error result
    (status `error`), as in a turn. An abort of the **turn** aborts the flush and the compaction:
    no record, no marker (tool side effects that already happened stay).
 10. **Mid-turn.** The flush runs between two steps of the running turn (the step barrier has
@@ -350,7 +353,7 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    is truncated), feeding the running summary into the next chunk as `PREVIOUS SUMMARY:`
    (rolling). The context lines go with the last chunk.
 5. **Usage and budgets** (0.4.0). Every summarizer call is charged — also one that then fails
-   (e.g. a cut summary, §5.5): during a turn (pre-turn, mid-turn and overflow compaction) as
+   (e.g. a cut summary, §5.5), and every completed step of a flush that later fails (§5.2a rule 8): during a turn (pre-turn, mid-turn and overflow compaction) as
    nested turn usage, like `ctx.turn.addUsage(usage, { model: summarizer, source: 'compaction' })`
    — so it appears in `TurnResult.usage` (tokens and `costUsd`), the message's
    `metadata.eharness.usage`, `state.core.usage` and counts toward `budget` (spec 12 §4); a manual
