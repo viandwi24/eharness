@@ -48,6 +48,7 @@ import type {
   TurnResult,
 } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
+import { prepareTurnOutput, type TurnOutput, withOutputTool } from '../output/turn.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
@@ -264,6 +265,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   const created: HarnessUIMessage[] = []
   let createdBeforeAssistant = 0
   const usage: UsageTotals = emptyUsage()
+  /** `SendOptions.output` of this turn (spec 05 §3.3), set at preparation step 6. */
+  let turnOutput: TurnOutput | undefined
 
   // ─── interaction state (spec 11) ──────────────────────────────────────────────────────────
   /** Steers and next-step injections waiting for a step boundary. */
@@ -474,6 +477,18 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     return out as HarnessUsageMeta
   }
 
+  /** The valid final answer of the turn (spec 05 §3.3): only with stop `'complete'`. */
+  function validOutput(): { value: unknown } | undefined {
+    return outcome.stop === 'complete' ? turnOutput?.state.value : undefined
+  }
+
+  /** `metadata.eharness.output` of a turn with `SendOptions.output`. */
+  function outputMeta(): { ok: boolean; attempts: number } | undefined {
+    if (turnOutput === undefined) return undefined
+    const ok = validOutput() !== undefined
+    return { ok, attempts: turnOutput.state.failures + (ok ? 1 : 0) }
+  }
+
   /** Interrupted calls + message-metadata + setOutcome + finish | abort (spec 04 §2). */
   function writeEnd(): void {
     if (!startWritten)
@@ -490,6 +505,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           // a continuation resolved A's pending state: null, not absent (metadata is deep-merged)
           pending: plan === undefined ? outcome.pending : (outcome.pending ?? null),
           error: metaError(outcome.error),
+          output: outputMeta(),
         })
       : withoutUndefined({ stop: outcome.stop, error: metaError(outcome.error) })
     write({ type: 'message-metadata', messageMetadata: { eharness } })
@@ -695,7 +711,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       ...open.toolSources.map((s) => s.owner),
       ...open.instructions.filter((i) => i.kind !== 'static').map((i) => i.owner),
     ]
-    const registry = await asOwner(sourceOwners, () =>
+    const resolved = await asOwner(sourceOwners, () =>
       resolveTurnRegistry({
         open,
         approval: config.approval,
@@ -708,6 +724,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         grants: { current: currentGrants },
       }),
     )
+    // structured output (spec 05 §3.3 rule 1): validate the spec; tool mode appends its tool last
+    turnOutput = await prepareTurnOutput(op.options.output, new Set(Object.keys(resolved.tools)))
+    const registry = withOutputTool(resolved, turnOutput)
     const toolsContext =
       rt.options.toolsContext === undefined && op.options.toolsContext === undefined
         ? undefined
@@ -1351,8 +1370,22 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
             })
           }
         },
+        ...(turnOutput === undefined ? {} : { output: turnOutput }),
       })
       outcome = withoutUndefined({ ...result }) as Outcome
+      const answer = validOutput()
+      if (answer !== undefined && turnOutput !== undefined) {
+        // the audit record of the answer (persistent, never projected; spec 03 §4.3)
+        write({
+          type: 'data-eh.output',
+          id: 'output',
+          data: {
+            value: structuredClone(answer.value),
+            mode: turnOutput.mode,
+            attempts: turnOutput.state.failures + 1,
+          },
+        })
+      }
     } catch (error) {
       outcome = {
         stop: 'error',
@@ -1587,6 +1620,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       steps: outcome.steps,
       durationMs: Date.now() - startedAt,
       error: stop === 'error' ? error : undefined,
+      output: stop === 'complete' ? validOutput()?.value : undefined,
     })
     if (committed) {
       const endId = assistantId ?? created.at(-1)?.id

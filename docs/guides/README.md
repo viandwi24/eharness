@@ -14,6 +14,7 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Filesystem](filesystem.md) | the `filesystem()` plugin: file tools, safety rules, services, custom adapters |
 | [Context and compaction](compaction.md) | summarization, markers, context stats, the guard, overflow recovery |
 | [Approvals and interaction](approvals-and-interaction.md) | tool approval by policy or risk, audit hook, approval inbox, client tools, regenerate/edit, steer, queue, wake |
+| [Structured output](structured-output.md) | typed final answers: `output: { schema }`, tool vs native mode, retries, `'output-invalid'`, storage |
 | [Long-running turns](long-running-turns.md) | step budget, wrap-up, progress guard (`'stuck'`), continuations, stop reasons |
 | [Models and cost](models-and-cost.md) | model catalog, models.dev, `costUsd`, nested usage, USD budgets |
 | [Todos](todos.md) | the `todos()` plugin: checklist tool, rendering, reminders, enforcement |

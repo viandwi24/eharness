@@ -27,3 +27,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0020](0020-pre-compaction-flush.md) | Pre-compaction flush: internal call, audit record, auto-denied approvals (amends 0004) |
 | [0021](0021-cross-process-abort.md) | Cross-process abort through state compare-and-set |
 | [0022](0022-memory-on-filesystem.md) | Memory on FileSystem; provider memory tools are app-supplied |
+| [0023](0023-structured-final-output.md) | Structured final output per turn (tool and native modes) |

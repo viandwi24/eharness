@@ -8,6 +8,7 @@ import { z } from 'zod/v4'
 import type {
   ContextStats,
   InputPartData,
+  OutputPartData,
   ProjectionContext,
   StatusPartData,
   UsagePartData,
@@ -120,6 +121,12 @@ const inputSchema = z.looseObject({
   clientId: z.string().optional(),
 })
 
+const outputSchema = z.looseObject({
+  value: z.unknown(),
+  mode: z.enum(['tool', 'native']),
+  attempts: z.number(),
+})
+
 /**
  * Core data parts (`data-eh.*`) that are not message kinds.
  *
@@ -131,6 +138,7 @@ export const coreDataParts: {
   readonly 'eh.context': DataPartDef<FlexibleSchema<ContextStats>>
   readonly 'eh.warning': DataPartDef<FlexibleSchema<WarningPartData>>
   readonly 'eh.input': DataPartDef<FlexibleSchema<InputPartData>>
+  readonly 'eh.output': DataPartDef<FlexibleSchema<OutputPartData>>
 } = {
   'eh.status': { schema: statusSchema as FlexibleSchema<StatusPartData>, transient: true },
   'eh.usage': { schema: usageSchema as FlexibleSchema<UsagePartData>, transient: true },
@@ -138,4 +146,6 @@ export const coreDataParts: {
   'eh.warning': { schema: warningSchema as FlexibleSchema<WarningPartData>, transient: true },
   // projected by splitting the assistant message (spec 03 §6 step 4), not via `model`
   'eh.input': { schema: inputSchema as unknown as FlexibleSchema<InputPartData> },
+  // the validated final answer of a turn with SendOptions.output (spec 05 §3.3); never projected
+  'eh.output': { schema: outputSchema as unknown as FlexibleSchema<OutputPartData>, model: 'omit' },
 }

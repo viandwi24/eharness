@@ -44,6 +44,11 @@ export type StopReason =
   | 'max-steps'
   /** `loop.maxTurnOutputTokens` exceeded, or a USD `budget` used up (spec 12 §4). */
   | 'cost-cap'
+  /**
+   * `SendOptions.output` (0.4.0): no final answer matched the schema within `maxRetries` retries
+   * (or a retry was refused by the continuation bounds), spec 05 §3.3.
+   */
+  | 'output-invalid'
   /** A `step.end` hook stopped the turn: `plugin:<plugin>:<reason>`. */
   | `plugin:${string}`
 
@@ -135,6 +140,11 @@ export interface HarnessMessageMeta {
   durationMs?: number
   /** Assistant messages: error of a turn that ended with `stop: 'error'`. */
   error?: { code?: string; message: string }
+  /**
+   * Assistant messages of a turn with `SendOptions.output` (0.4.0, spec 05 §3.3): whether a valid
+   * final answer was recorded, and how many answers were checked.
+   */
+  output?: { ok: boolean; attempts: number }
 }
 
 /**
@@ -220,6 +230,19 @@ export interface InputPartData {
   clientId?: string
 }
 
+/**
+ * Data of the persistent `data-eh.output` part (0.4.0): the validated final answer of a turn with
+ * `SendOptions.output` (spec 05 §3.3). Never projected to the model.
+ */
+export interface OutputPartData {
+  /** The validated (schema-transformed) final answer; equals `TurnResult.output`. */
+  value: unknown
+  /** How the answer was produced. */
+  mode: 'tool' | 'native'
+  /** Answers checked, including the valid one (1 = valid at the first try). */
+  attempts: number
+}
+
 /** Payload of the `eh.notice` kind (errors, timeouts, blocked input, recovered turns). */
 export interface NoticePayload {
   level: 'info' | 'warning' | 'error'
@@ -273,6 +296,7 @@ export type HarnessDataTypes = {
   'eh.context': ContextStats
   'eh.warning': WarningPartData
   'eh.input': InputPartData
+  'eh.output': OutputPartData
   'eh.compaction': CompactionPayload
   'eh.notice': NoticePayload
   'eh.event': EventPayload
@@ -320,7 +344,7 @@ export interface ProjectionContext {
  *
  * @see docs/specs/10-errors-and-stop-reasons.md#4-stop-reasons
  */
-export interface TurnResult<M = HarnessUIMessage> {
+export interface TurnResult<M = HarnessUIMessage, O = unknown> {
   turnId: string
   kind: TurnKind
   /** Assistant message written by the turn. Undefined for early failures and blocks without persist. */
@@ -344,4 +368,9 @@ export interface TurnResult<M = HarnessUIMessage> {
   durationMs: number
   /** Set when stop is `error`; `details` of an `EH_*` error (e.g. `{ reason: 'stale' }`, spec 11). */
   error?: { code?: string; message: string; details?: Record<string, unknown> }
+  /**
+   * The validated final answer of a turn started with `SendOptions.output` (0.4.0, spec 05 §3.3);
+   * typed from the schema. Set only when `stop` is `'complete'` and the answer was valid.
+   */
+  output?: O
 }

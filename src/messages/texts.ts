@@ -52,3 +52,27 @@ export const FLUSH_APPROVAL_DENIED: string = 'Not available during memory flush.
  * later turns still run (`{mediaType}`, `{filename}`; spec 05 §3, spec 10 §5).
  */
 export const FILE_UNAVAILABLE: string = '[file unavailable: {mediaType} {filename}]'
+
+/** Default description of the `final_answer` tool (`SendOptions.output`, tool mode, spec 05 §3.3). */
+export const FINAL_ANSWER_DESCRIPTION: string =
+  'Submit the final answer of this turn. Call it once, when you are done; its input is the answer.'
+
+/**
+ * Result of a successful `final_answer` call (`SendOptions.output`, tool mode, spec 05 §3.3).
+ */
+export const FINAL_ANSWER_RECORDED: string = 'Final answer recorded.'
+
+/**
+ * Turn reminder line of a turn with `SendOptions.output` in tool mode (spec 05 §3.3); `{tool}` is
+ * the output tool name (default `final_answer`).
+ */
+export const OUTPUT_INSTRUCTION: string =
+  'When you are done, call the `{tool}` tool once with your final answer. Its input must match the tool schema; the turn ends when the call succeeds.'
+
+/**
+ * Input delivered (`data-eh.input`, source `plugin:eh.output`) when a turn with
+ * `SendOptions.output` ended without a valid final answer (spec 05 §3.3); `{error}` is the
+ * validation error, trimmed to 1 000 characters.
+ */
+export const OUTPUT_RETRY: string =
+  'Your final answer is missing or invalid: {error}\nGive the final answer again; it must match the required schema.'

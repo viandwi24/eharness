@@ -185,6 +185,11 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
 A continuation turn must stream into the existing UI message: starting a fresh UI message fails in
 AI SDK with `No tool invocation found for tool call ID`.
 
+**Structured output (0.4.0).** `SendOptions.output` (spec 05 §3.3) is not part of the pending state
+(a schema is not serializable): a turn that stopped `'tool-pending'` returns `output: undefined`,
+and the continuation asks for a typed answer only when `respond(…, { output })` passes the spec
+again. Its tool mode output tool is then appended for the continuation like for any turn.
+
 ### 4.1 New input while pending
 
 `send()`, `regenerate()` and `edit()` check `state.core.pending` first:

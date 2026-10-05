@@ -33,6 +33,13 @@ import { FILE_UNAVAILABLE, MAX_STEPS_WRAP_UP, PROGRESS_NUDGE } from '../messages
 import type { PendingState, StopReason } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { ModelCatalog } from '../models/types.ts'
+import {
+  checkNative,
+  missingToolError,
+  type OutputCheck,
+  outputRetryText,
+  type TurnOutput,
+} from '../output/turn.ts'
 import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.ts'
 import { riskOf } from '../registry/risk.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
@@ -161,6 +168,8 @@ export interface StepLoopInput {
   inbox?: TurnInbox
   /** Called after an inbox item was written as `data-eh.input` (and appended to the wire). */
   delivered?(item: InboxItem): void
+  /** `SendOptions.output` of the turn (spec 05 §3.3); its `state` records the answer checks. */
+  output?: TurnOutput
 }
 
 /** Outcome of the step loop. */
@@ -454,6 +463,31 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   /** Steers / injections taken from the inbox and not delivered yet. */
   let external: InboxItem[] = []
   const inbox = input.inbox
+  const output = input.output
+  /** The next step must call the output tool (a tool-mode retry, spec 05 §3.3 rule 4). */
+  let forceOutputTool = false
+  /** Record a failed answer; the turn stops `'output-invalid'` once retries are used up. */
+  const failAnswer = (error: string): void => {
+    if (output === undefined) return
+    output.state.failures++
+    output.state.lastError = error
+  }
+  const outputExhausted = (): boolean =>
+    output !== undefined && output.state.failures > output.maxRetries
+  const outputInvalid = (): StopReason => {
+    rt.warn(
+      {
+        code: 'W_OUTPUT_INVALID',
+        message: `No valid final answer after ${output?.state.failures ?? 0} attempt(s); the turn stops with 'output-invalid'.`,
+        details: {
+          attempts: output?.state.failures ?? 0,
+          lastError: output?.state.lastError ?? '',
+        },
+      },
+      info.id,
+    )
+    return 'output-invalid'
+  }
   /** No step reminder, input delivery or moving rewrite before the first call of a continuation. */
   const firstOfContinuation = () => input.continuation === true && stepIndex === 0
 
@@ -579,6 +613,14 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       }
     }
     providerOptions = deepMerge(settings.providerOptions, providerOptions)
+    // the output tool is always active (tool mode); a retry step must call it (spec 05 §3.3)
+    if (output?.tool !== undefined && !wrapping) {
+      if (activeTools !== undefined && !activeTools.includes(output.toolName)) {
+        activeTools = [...activeTools, output.toolName]
+      }
+      if (forceOutputTool) toolChoice = { type: 'tool', toolName: output.toolName }
+    }
+    forceOutputTool = false
     if (wrapping) toolChoice = 'none' // a step.prepare toolChoice cannot re-enable tools
     model = stepModel
     if (input.signal.aborted) return aborted()
@@ -679,6 +721,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         : { repairToolCall: rt.agent.config.repairToolCall }),
       ...(rt.agent.config.telemetry === undefined ? {} : { telemetry: rt.agent.config.telemetry }),
       ...(input.toolsContext === undefined ? {} : { toolsContext: input.toolsContext as never }),
+      // native structured output (AI SDK Output.object); never on the wrap-up step
+      ...(output?.native === undefined || wrapping ? {} : { output: output.native }),
       onError: ({ error }: { error: unknown }) => {
         rawError ??= error
         rt.log.debug('eharness: step error', { error })
@@ -880,6 +924,19 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       outputTokens: total.outputTokens ?? 0,
       maxOutputTokens: input.maxOutputTokens,
     })
+    // tool mode: a successful output tool call ends the turn 'complete' (before rule 4); a failed
+    // one is an attempt (spec 05 §3.3 rules 2 and 5)
+    const answered: OutputCheck | undefined =
+      output?.mode === 'tool' && response !== undefined && !wrapping
+        ? output.inspect(response)
+        : undefined
+    if (answered?.ok === true && output !== undefined) {
+      output.state.value = { value: answered.value }
+      if (finishReason === 'tool-calls' && !sawError) stop = 'complete'
+    } else if (answered?.ok === false) {
+      failAnswer(answered.error)
+      if (stop === undefined && outputExhausted()) stop = outputInvalid()
+    }
     if (stop === undefined && overBudget() !== undefined) stop = 'cost-cap'
     if (wrapping) {
       // the wrap-up step ends the turn whatever it answered (errors stay errors)
@@ -920,6 +977,24 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     if (!wrapped && !spent && (stop === 'complete' || stop === 'max-steps' || stop === 'length')) {
       const decision = await beforeEnd(stop)
       if (decision === 'continue') continue
+    }
+    // structured output: the final 'complete' needs a valid answer, else retry (spec 05 §3.3)
+    if (stop === 'complete' && output !== undefined) {
+      const check: OutputCheck =
+        output.mode === 'native'
+          ? await checkNative(result.output)
+          : output.state.value === undefined
+            ? { ok: false, error: missingToolError(output.toolName) }
+            : { ok: true, value: output.state.value.value }
+      if (check.ok) {
+        output.state.value = { value: check.value }
+      } else {
+        failAnswer(check.error)
+        const next = retryOutput(check.error)
+        if (next === 'continue') continue
+        stop = next
+        wrapped = true // the model already answered: no wrap-up step after a refused retry
+      }
     }
     if (stop === 'max-steps' && input.wrapUp && !wrapped && !spent) {
       // one more step without tools: the model summarizes what is done and what is left
@@ -1007,6 +1082,46 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         }
       }
       return 'stop'
+    }
+
+    /**
+     * Retry a missing / invalid final answer as a core continuation (`plugin:eh.output`), bounded
+     * like `turn.beforeEnd` continuations, the step budget and the budgets.
+     */
+    function retryOutput(error: string): 'continue' | StopReason {
+      if (outputExhausted()) return outputInvalid()
+      if (continues >= input.maxContinues) {
+        rt.warn(
+          {
+            code: 'W_CONTINUE_LIMIT',
+            message: `The output retry would continue more than loop.maxContinues (${input.maxContinues}) times; refused.`,
+            details: { owner: 'eh.output', continues, reason: 'max' },
+          },
+          info.id,
+        )
+        return outputInvalid()
+      }
+      const idle = idleNow()
+      if (idle >= input.maxIdleContinues) {
+        rt.warn(
+          {
+            code: 'W_CONTINUE_LIMIT',
+            message: `The output retry would continue, but the last ${idle} continuations made no progress (loop.maxIdleContinues); refused.`,
+            details: { owner: 'eh.output', continues, idleContinues: idle, reason: 'no-progress' },
+          },
+          info.id,
+        )
+        return outputInvalid()
+      }
+      if (stepIndex >= budget) return 'max-steps'
+      if ((total.outputTokens ?? 0) > input.maxOutputTokens) return 'cost-cap'
+      if (overBudget() !== undefined) return 'cost-cap'
+      idleContinues = idle
+      novelAtContinue = progress.novel
+      continues++
+      waiting.push({ source: 'plugin:eh.output', text: outputRetryText(error) })
+      if (output?.mode === 'tool') forceOutputTool = true
+      return 'continue'
     }
 
     /** Idle continuations in a row, counting the last one when nothing new happened since. */
