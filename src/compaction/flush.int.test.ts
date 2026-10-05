@@ -390,6 +390,37 @@ describe('pre-compaction flush (spec 06 §5.2a)', () => {
     expect(flushData(record).error).toContain('provider down')
   })
 
+  test('flush failing after a paid step: the step is charged and recorded (steps, toolCalls, usage)', async () => {
+    const models = (m: LanguageModel) =>
+      typeof m === 'object' && m.modelId === 'flusher'
+        ? { contextWindow: 100_000, pricing: { input: 1_000, output: 1_000 } }
+        : { contextWindow: 2_000, pricing: { input: 0, output: 0 } }
+    const { agent, messages, h } = setup(fiveTurns(), {
+      flushSteps: [
+        {
+          toolCalls: [{ toolName: 'save_fact', input: { fact: 'F1' } }],
+          usage: { inputTokens: 1_000, outputTokens: 50 },
+        },
+        { throws: new Error('provider down'), streamError: new Error('provider down') },
+      ],
+      config: { models, contextWindow: undefined },
+    })
+    const session = agent.session('s1')
+    await fillTurns(session, 4)
+    const result = await session.send(big('Q5')).result
+    expect(result.stop).toBe('complete')
+    expect(h.facts).toEqual(['F1'])
+    // the paid flush step is in the turn's usage (1 050 tokens at $1 000/M)
+    expect(result.usage.costUsd ?? 0).toBeCloseTo(1.05, 6)
+    const [record] = await flushRecords(messages)
+    const data = flushData(record)
+    expect(data.error).toContain('provider down')
+    expect(data.steps).toBe(1)
+    expect(data.toolCalls).toEqual([{ toolName: 'save_fact', status: 'output' }])
+    expect(data.usage).toMatchObject({ inputTokens: 1_000, outputTokens: 50 })
+    expect(data.costUsd ?? 0).toBeCloseTo(1.05, 6)
+  })
+
   test('a throwing compaction.before hook is W_HOOK_FAILED and skipped; compaction proceeds', async () => {
     const { agent, flusher, messages, warnings } = setup(fiveTurns(), {
       patch: () => {
