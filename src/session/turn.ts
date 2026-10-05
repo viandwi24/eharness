@@ -91,8 +91,9 @@ export interface TurnOperation {
   /** `regenerate()` / `edit()` target (message id or client id). */
   target?: string
   /**
-   * Inbox items this turn applies (`session.enqueue()`, spec 05 §12): acked after the commit
-   * point; `durable` items (an `InboxAdapter`) are also recorded in `state.core.inboxDelivered`.
+   * Inbox items this turn applies (`session.enqueue()`, spec 05 §12): acked once the user
+   * message is saved at the commit point; a `durable` wake turn (an `InboxAdapter`) records its
+   * ids in `state.core.inboxDelivered` with the end-of-turn state write and is acked after it.
    */
   inbox?: { ids: string[]; meta: InboxUnit['meta']; durable: boolean }
 }
@@ -111,7 +112,10 @@ export interface TurnHost {
   /** Called when the turn fully ended (running flag cleared). */
   onTurnEnd(): void
   /** Queue an undelivered steer as a `send` turn (spec 11 §6.1); inbox steers go back to the inbox. */
-  enqueueSteer(submitted: { input: NormalizedInput; contexts: string[] }, inboxId?: string): void
+  enqueueSteer(
+    submitted: { input: NormalizedInput; contexts: string[] },
+    inboxId?: string,
+  ): Promise<void> | undefined
   /** The session has a durable inbox (`storage.inbox`). */
   readonly inboxDurable: boolean
   /** Inbox items whose effect is durable now: ack them (spec 05 §12 rule 5). */
@@ -301,6 +305,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     []
   /** Inbox steers delivered as data-eh.input (acked once a saved snapshot contains them). */
   const deliveredSteers: Array<{ inboxId: string; afterFinish: number; done: boolean }> = []
+  /** Inbox ids of the steers this turn took (`steer()` is idempotent per inbox id). */
+  const steerIds = new Set<string>()
+  /**
+   * A wake turn made from durable inbox items: its ids go to `state.core.inboxDelivered` with
+   * the end-of-turn state write and are acked after it (its effect is the saved reply).
+   */
+  const wakeFromInbox = op.kind === 'wake' && op.inbox?.durable === true
   /** The op's inbox items were acked or released. */
   let inboxSettled = false
   /** Ids of kind messages pushed into the inbox: never projected standalone in this turn. */
@@ -1020,11 +1031,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         needWrite = true
       }
     }
-    // inbox items applied by this turn: dedupe of redeliveries (spec 05 §12 rule 5)
-    if (op.inbox?.durable === true) {
-      recordDelivered(core, op.inbox.ids)
-      needWrite = true
-    }
+    // inbox items of a send turn: dedupe of redeliveries reads `inboxId` / `collected` of the
+    // saved user message; a wake turn records its ids once its effect is saved (onEnd), so
+    // nothing about them is written here (spec 05 §12 rule 5)
     if (rewind !== undefined) {
       const payload = rewind.parts[0] as { data: { afterId: string | null } }
       core.rewinds = [
@@ -1133,8 +1142,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (prep.user !== undefined) created.push(...(await host.persist([prep.user])))
     if (prep.blockNotice !== undefined) created.push(...(await host.persist([prep.blockNotice])))
     createdBeforeAssistant = created.length
-    // the user message (or the wake turn) is durable: the inbox items are applied
-    settleOpInbox('applied')
+    // the user message is durable: the inbox items are applied (a durable wake: at the end)
+    if (!wakeFromInbox) settleOpInbox('applied')
   }
 
   /**
@@ -1288,11 +1297,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     } catch (error) {
       if (!committed) return earlyEnd('error', error)
       // committed but not applied: the items are tried again (dedupe skips a saved user message)
-      if (op.inbox !== undefined && !inboxSettled) {
-        forgetDelivered(rt.state.core(), op.inbox.ids)
-        rt.state.markDirty()
-        settleOpInbox('retry')
-      }
+      if (op.inbox !== undefined && !inboxSettled) settleOpInbox('retry')
       if (!startWritten)
         writeStart(assistantId ?? rt.agent.generateId(), undefined, plan === undefined)
       outcome = { stop: 'error', steps: 0, model: info.model, error: toTurnError(error, log) }
@@ -1424,15 +1429,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         inbox,
         delivered: (item) => {
           if (item.inboxId !== undefined) {
+            // dedupe of a redelivery reads `inboxId` of the saved data-eh.input part (spec 05 §12
+            // rule 5): nothing goes to the state before that snapshot is durable
             deliveredSteers.push({
               inboxId: item.inboxId,
               afterFinish: finishStepsWritten,
               done: false,
             })
-            if (host.inboxDurable) {
-              recordDelivered(rt.state.core(), [item.inboxId])
-              rt.state.markDirty()
-            }
           }
           if (item.event !== undefined) {
             deliveredEvents.push({
@@ -1558,7 +1561,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         // a closing session hands a durable steer to the next holder; otherwise it is dropped
         if (item.inboxId !== undefined) host.inboxNotApplied([item.inboxId], rt.closed)
       } else {
-        host.enqueueSteer({ input: steer.input, contexts: steer.contexts }, item.inboxId)
+        // a durable steer is released before the session's end-of-turn drain runs
+        await host.enqueueSteer({ input: steer.input, contexts: steer.contexts }, item.inboxId)
       }
     }
     if (wake) host.enqueueWake()
@@ -1670,10 +1674,22 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       const cost = (previous.costUsd ?? 0) + (usage.costUsd ?? 0)
       if (previous.costUsd !== undefined || usage.costUsd !== undefined) core.usage.costUsd = cost
       rt.state.markDirty()
+      // a durable wake turn: its ids are written with this state write (dedupe), acked after it
+      const wakeIds = wakeFromInbox && !inboxSettled ? (op.inbox?.ids ?? []) : []
+      if (wakeIds.length > 0) recordDelivered(core, wakeIds)
+      let stateSaved = false
       try {
-        if (!(await rt.state.writeIfDirty())) await lostState()
+        stateSaved = await rt.state.writeIfDirty()
+        if (!stateSaved) await lostState()
       } catch (stateError) {
         rt.log.warn('eharness: end-of-turn state write failed', { error: stateError })
+      }
+      if (wakeIds.length > 0) {
+        if (stateSaved) settleOpInbox('applied')
+        else {
+          forgetDelivered(rt.state.core(), wakeIds)
+          settleOpInbox('retry')
+        }
       }
     }
     rt.state.guard(undefined)
@@ -1849,11 +1865,16 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     abort,
     steer(input, inboxId) {
       if (!inbox.open || ended) return false
+      // idempotent per inbox id: a redelivered steer this turn already holds is not delivered again
+      if (inboxId !== undefined) {
+        if (steerIds.has(inboxId)) return true
+        steerIds.add(inboxId)
+      }
       const text = input.parts
         .filter((p) => p.type === 'text')
         .map((p) => p.text)
         .join('\n\n')
-      return inbox.push(
+      const pushed = inbox.push(
         (async (): Promise<PendingInput | undefined> => {
           const submitted = await inputSubmit(input, 'steer')
           if ('block' in submitted) {
@@ -1884,6 +1905,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           }
         })(),
       )
+      if (!pushed && inboxId !== undefined) steerIds.delete(inboxId)
+      return pushed
     },
     deliverEvent(message, text, wake) {
       if (!inbox.open || ended) return false

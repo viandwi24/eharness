@@ -548,10 +548,7 @@ export function createSessionHandle(args: {
     },
     enqueueSteer(submitted, inboxId) {
       // a durable steer goes back to the inbox: drained again in id order (spec 05 §12 rule 7)
-      if (inboxId !== undefined && drain !== undefined) {
-        void drain.release([inboxId])
-        return
-      }
+      if (inboxId !== undefined && drain !== undefined) return drain.release([inboxId])
       enqueue({
         input: submitted.input,
         submitted,
@@ -560,6 +557,7 @@ export function createSessionHandle(args: {
           ? {}
           : { inbox: { ids: [inboxId], meta: { inboxId }, durable: false } }),
       })
+      return undefined
     },
     get inboxDurable() {
       return drain !== undefined

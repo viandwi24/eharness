@@ -201,7 +201,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | `metadata.eharness` | `inboxId`, `collected` | the inbox item a user message came from; the inputs merged by `collect` |
 | `data-eh.input` | `inboxId` | a steer delivered through the inbox |
 | `state.core` | `abortRequest` | cross-process abort request for the active turn (`turnId`, `at`, `reason?`, `by?`) — the one field another instance may write during a turn |
-| `state.core` | `inboxDelivered` | ids of the last 100 inbox items applied (dedupe) |
+| `state.core` | `inboxDelivered` | ids of the last 100 `wake` inbox items applied (dedupe; send items and steers are deduped by their stored `inboxId`) |
 | `ContextStats` | `pruned?: { outputs, chars }` | tool outputs replaced by the prune stage in the current request |
 | `SkillMeta` / `Skill` / `SkillDoc` | `version?` | from `SKILL.md` frontmatter `version:`; shown by `load_skill`, never in the index |
 | usage `source` | `'compaction'`, `'compaction-flush'` | summarizer and flush usage, charged to the turn and budgets |

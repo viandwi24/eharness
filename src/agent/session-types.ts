@@ -134,7 +134,10 @@ export interface SessionStateSnapshot {
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
     /** A cross-process abort request for the active turn (spec 05 §9.1). */
     abortRequest?: AbortRequest
-    /** Ids of the last 100 inbox items applied to this session (dedupe, spec 05 §12). */
+    /**
+     * Ids of the last 100 `wake` inbox items applied to this session (dedupe, spec 05 §12; send
+     * items and steers are deduped by the `inboxId` of their stored messages).
+     */
     inboxDelivered?: string[]
   }
   plugins: Record<string, Record<string, JSONValue>>
@@ -233,6 +236,10 @@ export interface InboxAdapter {
    * Atomically claim the ready items of a session for `owner`, oldest (lowest id) first, at most
    * `limit`. Claimed items are invisible to other claims until `ack` / `release` or until the
    * claim expires (`claimTtlMs`). Every claim increments `attempts`.
+   *
+   * Head of line: never return an item behind an older item of the session that another owner
+   * still holds. Renewal: items `owner` already holds get their claim extended to
+   * `now + claimTtlMs` (not returned again, `attempts` unchanged).
    */
   claim(
     sessionId: string,
@@ -247,7 +254,7 @@ export interface InboxAdapter {
   notify?(sessionId: string): Promise<void>
   /** Optional: called on `notify` of the session; returns the unsubscribe function. */
   subscribe?(sessionId: string, onNotify: () => void): () => void
-  /** Optional: ids of sessions with ready items (for an application sweeper). */
+  /** Optional: ids of sessions with claimable items (the oldest is not claimed; a sweeper). */
   pending?(opts?: { limit?: number }): Promise<string[]>
 }
 

@@ -1,7 +1,7 @@
 /**
  * Postgres `InboxAdapter` (spec 05 §12): a durable per-session queue of inputs, wake-ups and abort
- * requests, claimed with `SELECT … FOR UPDATE SKIP LOCKED` and announced with `LISTEN` /
- * `NOTIFY` (`pg_notify`).
+ * requests, claimed head-of-line under a per-session advisory lock (`eh_inbox_claim`) and
+ * announced with `LISTEN` / `NOTIFY` (`pg_notify`).
  *
  *   DATABASE_URL=postgres://… bun examples/postgres-inbox.ts
  *
@@ -77,6 +77,43 @@ export async function migrateInbox(db: SqlClient, options: PostgresOptions = {})
     claimed_until  timestamptz
   )`)
   await db.query(`CREATE INDEX IF NOT EXISTS eh_inbox_session_id ON ${table} (session_id, id)`)
+  // One claim per session at a time (a transaction-scoped advisory lock), so the head-of-line
+  // rule holds under concurrent claimers: renew the owner's live claims, then claim the oldest
+  // ready rows that are not behind a row another owner still holds. Each statement of the
+  // function sees the rows committed before it (READ COMMITTED), i.e. after the lock.
+  await db.query(`CREATE OR REPLACE FUNCTION ${claimFunction(options)}(
+      p_session text, p_owner text, p_ttl_ms integer, p_limit integer)
+    RETURNS TABLE (claimed_id text, claimed_item text, claimed_attempts integer)
+    LANGUAGE plpgsql AS $fn$
+    DECLARE
+      v_until timestamptz := clock_timestamp() + p_ttl_ms * interval '1 millisecond';
+      v_head uuid;
+    BEGIN
+      PERFORM pg_advisory_xact_lock(hashtext('eh_inbox:' || p_session));
+      UPDATE ${table} AS r SET claimed_until = v_until
+        WHERE r.session_id = p_session AND r.claimed_by = p_owner
+          AND r.claimed_until > clock_timestamp();
+      SELECT min(h.id) INTO v_head FROM ${table} AS h
+        WHERE h.session_id = p_session AND h.claimed_until > clock_timestamp()
+          AND h.claimed_by IS DISTINCT FROM p_owner;
+      RETURN QUERY
+        UPDATE ${table} AS u SET claimed_by = p_owner, claimed_until = v_until,
+          attempts = u.attempts + 1
+        WHERE u.id IN (
+          SELECT c.id FROM ${table} AS c
+          WHERE c.session_id = p_session
+            AND (c.claimed_until IS NULL OR c.claimed_until <= clock_timestamp())
+            AND (v_head IS NULL OR c.id < v_head)
+          ORDER BY c.id LIMIT p_limit
+        )
+        RETURNING u.id::text, u.item::text, u.attempts;
+    END
+    $fn$`)
+}
+
+/** The claim function of the inbox table (see {@link migrateInbox}). */
+function claimFunction(options: PostgresOptions): string {
+  return `${options.schema ?? 'public'}.eh_inbox_claim`
 }
 
 interface InboxRow {
@@ -91,16 +128,18 @@ function idList(ids: readonly string[]): string {
 }
 
 /**
- * `InboxAdapter` on `eh_inbox`. `claim` locks the oldest ready rows of the session with
- * `FOR UPDATE SKIP LOCKED` (concurrent claimers never block each other and never get the same
- * row) and marks them claimed until `now() + claimTtlMs`; an expired claim makes a row ready
- * again (its owner died). `notify` is `pg_notify`; `subscribe` needs a {@link PgListener}.
+ * `InboxAdapter` on `eh_inbox`. `claim` calls `eh_inbox_claim` (see {@link migrateInbox}): under a
+ * per-session advisory lock it renews the claims the owner holds and marks the oldest ready rows
+ * claimed until `now + claimTtlMs`, never a row behind one another owner holds (head of line);
+ * an expired claim makes a row ready again (its owner died). `notify` is `pg_notify`;
+ * `subscribe` needs a {@link PgListener}.
  */
 export function postgresInbox(
   db: SqlClient,
   options: PostgresOptions & { listener?: PgListener } = {},
 ): InboxAdapter {
   const { table, channel } = inboxTable(options)
+  const claim = claimFunction(options)
   const handlers = new Map<string, Set<() => void>>()
   let listening: Promise<{ unlisten(): Promise<void> } | undefined> | undefined
 
@@ -116,13 +155,8 @@ export function postgresInbox(
     },
     async claim(sessionId, owner, opts = {}) {
       const rows = await db.query<InboxRow>(
-        `UPDATE ${table} SET claimed_by = $2, attempts = attempts + 1,
-           claimed_until = now() + ($3::integer * interval '1 millisecond')
-         WHERE id IN (
-           SELECT id FROM ${table} WHERE session_id = $1 AND ${ready}
-           ORDER BY id LIMIT $4 FOR UPDATE SKIP LOCKED
-         )
-         RETURNING id::text AS id, item::text AS item, attempts`,
+        `SELECT claimed_id AS id, claimed_item AS item, claimed_attempts AS attempts
+         FROM ${claim}($1, $2, $3::integer, $4::integer)`,
         [sessionId, owner, Math.max(1, Math.round(opts.claimTtlMs ?? 120_000)), opts.limit ?? null],
       )
       return rows
@@ -154,8 +188,12 @@ export function postgresInbox(
       await db.query('SELECT pg_notify($1, $2)', [channel, sessionId])
     },
     async pending(opts = {}) {
+      // claimable: the oldest row of the session is ready (head of line)
       const rows = await db.query<{ session_id: string }>(
-        `SELECT DISTINCT session_id FROM ${table} WHERE ${ready} LIMIT $1`,
+        `SELECT session_id FROM (
+           SELECT DISTINCT ON (session_id) session_id, claimed_until FROM ${table}
+           ORDER BY session_id, id
+         ) AS oldest WHERE ${ready} LIMIT $1`,
         [opts.limit ?? null],
       )
       return rows.map((row) => row.session_id)
@@ -213,7 +251,7 @@ if (import.meta.main) {
       await migrate(db, { schema })
       await migrateInbox(db, { schema })
       await runCases(
-        'InboxAdapter conformance (Postgres, SKIP LOCKED + LISTEN/NOTIFY)',
+        'InboxAdapter conformance (Postgres, advisory-lock claim + LISTEN/NOTIFY)',
         inboxAdapterConformance(() => postgresInbox(db, { schema, listener }), {
           requireNotify: true,
           requirePending: true,
