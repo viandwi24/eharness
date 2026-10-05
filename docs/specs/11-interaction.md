@@ -323,6 +323,10 @@ inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, opts?: {
   projection skips kind messages that have `deliveredIn`. A crash between the two saves delivers
   the event twice (at-least-once), never zero times. Without `persistEachStep` the update happens
   after the final save.
+- A `next-step` injection that arrives while the turn is still preparing (before step 0) goes to
+  the turn's inbox like any other: it is delivered once at step 0 as `data-eh.input` and is not
+  also projected as a standalone message of that turn, even when its id sorts before the turn's
+  user message — so the stored order projects exactly like the wire the model saw (ADR-0011).
 - `wake` requires the session to be live in this process. Cross-process wake-ups are done by the
   application calling `agent.session(id).inject(…, { wake: true })` in the right process.
 - The delivered text is the kind's model projection (spec 03 §5.1), text parts joined with a blank

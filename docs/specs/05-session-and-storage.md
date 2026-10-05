@@ -418,6 +418,11 @@ Notes:
   `lastId` alone cannot detect every foreign change; `respond()` therefore re-reads state, and
   exact multi-instance correctness needs a `SessionLock` or a CAS-capable `StateAdapter` (§7–8).
 - Message validation runs only on cold loads.
+- **Single-flight load.** Concurrent operations of a cold session (`stats()`, `inject()`,
+  `send()`, …) share one in-flight load of state and messages; the state is read at most once
+  per load, so in-memory changes made after it (e.g. `ctx.state` in `session.start`, a
+  turn's commit) are never overwritten by a second read. Messages saved while a load is in
+  flight are merged into the loaded view (the load may have read storage before them).
 
 ## 7. State
 
