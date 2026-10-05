@@ -29,6 +29,7 @@ Status: **Accepted** (v0).
 │ eharness/storage/memory     memoryMessages(), memoryState()                      │
 │ eharness/mcp                mcpServer() tool source over @ai-sdk/mcp             │
 │ eharness/todos              todos() plugin: todo_write, data-todos.list          │
+│ eharness/memory             memory() plugin: memory files under app roots        │
 │ eharness/testing            conformance suites + mock helpers                    │
 └──────────────┬─────────────────────────────────────────────────────────────────────┘
                │
@@ -53,6 +54,7 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, fixed texts |
+| `eharness/memory` | `src/memory/index.ts` | `memory()` plugin, `executeMemoryCommand()`, `MEMORY_PROTOCOL`, `MEMORY_TOOLS` |
 | `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
 
 Peer dependencies: `ai@^7.0.123`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional

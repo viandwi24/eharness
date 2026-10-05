@@ -26,6 +26,7 @@ export type {
   FilesystemOptions,
   FileToolName,
   GrepHit,
+  MoveResult,
   ToolOutputStore,
   WriteResult,
 } from './types.ts'

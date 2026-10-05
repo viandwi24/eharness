@@ -249,6 +249,7 @@ thin and idiomatic:
 | `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage) |
 | `eharness/mcp` | `mcpServer()` tool source (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `todos()` plugin (`todo_write` tool, `data-todos.list`), `latestTodos()`, `renderTodos()`, `openTodos()` |
+| `eharness/memory` | `memory()` plugin (memory files under app-chosen roots, pinned files), `executeMemoryCommand()` |
 | `eharness/testing` | `scriptedModel()` and conformance suites for your adapters |
 
 ## Examples
@@ -266,6 +267,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`budget-and-cost.ts`](examples/budget-and-cost.ts) | `modelsDevCatalog`, `costUsd` per step/turn/session, nested `addUsage`, USD budgets (`'cost-cap'`) |
 | [`risk-approvals.ts`](examples/risk-approvals.ts) | tool risk, `approval.risk`, an inbox from `pending`, `respond()` with `actor`, `approval.decided` audit |
 | [`todos.ts`](examples/todos.ts) | the `todos()` plugin with `enforce`, rendering `data-todos.list`, `latestTodos()` |
+| [`memory.ts`](examples/memory.ts) | the `memory()` plugin: per-user root, read-only org root, pinned profile, `onWrite` audit |
 | [`subagent-tool.ts`](examples/subagent-tool.ts) | a tool that runs a child session, streams its progress, reports usage |
 | [`json-file-storage.ts`](examples/json-file-storage.ts) | `MessageAdapter` + `StateAdapter` on JSON files |
 | [`postgres-storage.ts`](examples/postgres-storage.ts) | Postgres adapters + advisory-lock `SessionLock` |
@@ -285,6 +287,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 [Long-running turns](docs/guides/long-running-turns.md) ·
 [Models and cost](docs/guides/models-and-cost.md) ·
 [Todos](docs/guides/todos.md) ·
+[Memory](docs/guides/memory.md) ·
 [Subagents](docs/guides/subagents.md) ·
 [Testing](docs/guides/testing.md) ·
 [Reference](docs/guides/reference.md)
