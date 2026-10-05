@@ -1,6 +1,6 @@
 # P13 — Hardening (0.4.0 bug fixes)
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 ## Goal
 
