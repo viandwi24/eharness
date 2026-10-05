@@ -84,9 +84,9 @@ that saw `finish` can send again at once (unless a queued or other turn started 
 
 File tools (`eharness/filesystem`): `read_file` takes `{ path, offset?, limit?, charOffset? }` —
 `charOffset` continues a very long line (the cut line's hint names it); `grep` accepts only a
-conservative safe subset of regular expressions (one unbounded quantifier at most; no repeated
-groups with quantifiers or alternations, no backreferences or lookarounds — e.g. `(\d+\.)+\d+` is
-refused), matches the first 2 000 characters of a line, and names `charOffset=<c>` of a match
+conservative safe subset of regular expressions (at most one variable-width quantifier — `*`,
+`+`, `?`, `{n,m}` — in the whole pattern, no quantified groups, no backreferences or lookarounds;
+e.g. `.*foo.*bar` and `(\d+\.)+\d+` are refused), matches the first 2 000 characters of a line, and names `charOffset=<c>` of a match
 beyond the shown 300 characters.
 
 ## Turn results and stop reasons

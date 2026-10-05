@@ -309,6 +309,10 @@ Decisions taken while implementing (conservative options):
   lookarounds) and scans 2 000 characters per line (worst accepted case a few ms per line under
   bun); `agent.close()` awaits replaced closing handles; waiting sends keep FIFO order (only a
   waiting `respond()` may pass a held queue); `messages()` paging filters by `beforeId` itself.
+- Review round 2 (definitive grep rule): at most one variable-width quantifier in total (`*`, `+`,
+  `?`, lazy, `{n,}`, `{n,m}` m > n), no quantified group of any kind (even `{n}`), no
+  backreferences / lookarounds; fixed `{n}` on a single atom is fine. A CAS conflict discards the
+  losing instance's unwritten state (spec 05).
 
 ## Requests to other phases
 

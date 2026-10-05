@@ -24,6 +24,7 @@ import {
 import { classifyToolResult } from './classify.ts'
 import { memoryFs } from './memory.ts'
 import { filesystem } from './plugin.ts'
+import { GREP_PATTERN_RULE } from './text.ts'
 import type { FileSystem, FilesystemOptions } from './types.ts'
 import { contentVersion } from './version.ts'
 
@@ -406,7 +407,7 @@ describe('grep: catastrophic patterns (ReDoS)', () => {
               call('grep', { pattern: '(\\w+\\s?)*$' }),
               call('grep', { pattern: '(a|b)\\1' }),
               call('grep', { pattern: 'x'.repeat(600) }),
-              call('grep', { pattern: '(ab)+' }),
+              call('grep', { pattern: 'ab+' }),
               call('grep', { pattern: 'foo|bar' }),
               call('grep', { pattern: '\\(a+\\)' }),
               call('grep', { pattern: 'foo bar' }),
@@ -420,17 +421,15 @@ describe('grep: catastrophic patterns (ReDoS)', () => {
       const result = await agent.session('s').send('go').result
       expect(performance.now() - started).toBeLessThan(1_000)
       const out = outputs(result) as string[]
-      expect(out[0]).toBe(
-        `ERROR: invalid pattern: a repeated group contains a repeating quantifier. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
-      )
+      expect(out[0]).toBe(`ERROR: invalid pattern: a quantified group. ${GREP_PATTERN_RULE}`)
       expect(out[1]).toBe(
-        `ERROR: invalid pattern: a repeated group contains a repeating quantifier. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
+        `ERROR: invalid pattern: more than one variable-width quantifier. ${GREP_PATTERN_RULE}`,
       )
       expect(out[2]).toBe(
-        `ERROR: invalid pattern: backreferences are not supported. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
+        `ERROR: invalid pattern: backreferences are not supported. ${GREP_PATTERN_RULE}`,
       )
       expect(out[3]).toBe(
-        `ERROR: invalid pattern: longer than 512 characters. grep accepts a conservative safe subset of regular expressions; use a simpler pattern or a plain literal.`,
+        `ERROR: invalid pattern: longer than 512 characters. ${GREP_PATTERN_RULE}`,
       )
       expect(out[4]).toBe('/a.txt:2: abab')
       expect(out[5]).toBe('/a.txt:3: foo bar')
