@@ -208,7 +208,10 @@ export function createSessionHandle(args: {
     cacheMessage(message: HarnessUIMessage) {
       if (rt.newestId === undefined || message.id > rt.newestId) rt.newestId = message.id
       const view = rt.view
-      if (view === undefined) return
+      if (view === undefined) {
+        cachedWhileLoading?.push(structuredClone(message))
+        return
+      }
       const copy = structuredClone(message)
       let index = view.length
       while (index > 0 && (view[index - 1] as HarnessUIMessage).id > message.id) index--
@@ -427,7 +430,13 @@ export function createSessionHandle(args: {
   }
 
   // ─── context (cold load / hot cache validation) ───────────────────────────────────────────
+  /** The in-flight cold load: every caller awaits the same one (single flight). */
+  let loading: Promise<void> | undefined
+  /** Messages cached while a load is in flight (the load may have read storage before them). */
+  let cachedWhileLoading: HarnessUIMessage[] | undefined
+
   async function ensureContext(validate = false): Promise<void> {
+    if (loading !== undefined) return loading
     const adapter = rt.messages
     if (validate && rt.view !== undefined && adapter.lastId !== undefined) {
       let last: string | null
@@ -436,14 +445,24 @@ export function createSessionHandle(args: {
       } catch (error) {
         throw storageError('lastId', error)
       }
+      if (loading !== undefined) return loading
       // another writer changed the session: reload state and messages (spec 05 §6)
       if (last !== (rt.storedLastId ?? null)) rt.view = undefined
     }
     if (rt.view !== undefined) return
+    loading = loadView().finally(() => {
+      loading = undefined
+      cachedWhileLoading = undefined
+    })
+    return loading
+  }
+
+  async function loadView(): Promise<void> {
+    cachedWhileLoading = []
     if (!stateFresh) await rt.state.load()
     stateFresh = false
     const loaded = await loadContext({
-      adapter,
+      adapter: rt.messages,
       sessionId: id,
       registry: internals.messages,
       policy: rt.options.onInvalidMessage ?? 'drop',
@@ -453,6 +472,7 @@ export function createSessionHandle(args: {
     for (const warning of loaded.warnings) {
       rt.warn(warning, String(warning.details?.type ?? warning.details?.messageId ?? ''))
     }
+    const late = cachedWhileLoading ?? []
     rt.view = loaded.view
     rt.storedLastId = loaded.newestId
     if (
@@ -460,6 +480,12 @@ export function createSessionHandle(args: {
       (rt.newestId === undefined || loaded.newestId > rt.newestId)
     ) {
       rt.newestId = loaded.newestId
+    }
+    // saved while the load was in flight: never lost from the hot cache
+    for (const message of late) {
+      rt.cacheMessage(message)
+      if (rt.storedLastId === undefined || message.id > rt.storedLastId)
+        rt.storedLastId = message.id
     }
   }
 

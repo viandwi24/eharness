@@ -252,6 +252,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   /** Kind messages delivered as data-eh.input (updated with deliveredIn after a save). */
   const deliveredEvents: Array<{ message: HarnessUIMessage; afterFinish: number; done: boolean }> =
     []
+  /** Ids of kind messages pushed into the inbox: never projected standalone in this turn. */
+  const inboxed = new Set<string>()
   /** Session grants before this respond() recorded new ones (those apply from step 1, §3.1). */
   let grantsBefore: Record<string, 'always' | 'never'> | undefined
   let grantsRecorded = false
@@ -1160,6 +1162,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         pending: null,
         // A' is cached: its approval-responded parts project to the trailing approval message
         ...(op.kind === 'respond' ? { continuing: messageId } : {}),
+        inboxed,
       })
       // pre-turn compaction check (spec 05 §3 step 14, spec 06 §4)
       const built = await compaction.preTurn(await compaction.build())
@@ -1564,6 +1567,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     },
     deliverEvent(message, text, wake) {
       if (!inbox.open || ended) return false
+      inboxed.add(message.id)
       return inbox.push(
         Promise.resolve({
           data: { source: 'event', text },

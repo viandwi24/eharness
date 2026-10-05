@@ -108,6 +108,11 @@ export function createTurnCompaction(args: {
   signal: AbortSignal
   pending?: PendingState | null
   continuing?: string
+  /**
+   * Kind messages routed into the turn's inbox (`next-step` injections): delivered as
+   * `data-eh.input`, never projected as standalone messages of this turn (spec 11 §6.3).
+   */
+  inboxed?: ReadonlySet<string>
 }): TurnCompaction {
   const { engine, rt, registry, info } = args
   const messages = rt.agent.messages
@@ -155,7 +160,12 @@ export function createTurnCompaction(args: {
 
   async function build(delivered: readonly ModelMessage[] = []): Promise<BuiltWire> {
     // injected during the turn (id > A) belong to the next turn (spec 03 §5.4)
-    const view = selected((rt.view ?? []).filter((m) => isBoundary(m) || m.id <= args.assistantId))
+    const inboxed = args.inboxed
+    const view = selected(
+      (rt.view ?? []).filter(
+        (m) => isBoundary(m) || (m.id <= args.assistantId && inboxed?.has(m.id) !== true),
+      ),
+    )
     let boundary: HarnessUIMessage | undefined
     for (const m of view)
       if (isBoundary(m) && (boundary === undefined || m.id > boundary.id)) boundary = m
