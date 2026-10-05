@@ -1,5 +1,149 @@
 # eharness
 
+## 0.4.0
+
+### Minor Changes
+
+- [`189e140`](https://github.com/viandwi24/eharness/commit/189e1400da00c87c1b3fde141a82301a4767c5b4) Thanks [@viandwi24](https://github.com/viandwi24)! - Cross-process abort (spec 05 §9.1, ADR-0021).
+  
+  - New `session.requestAbort(reason?)` → `{ target: 'local' | 'remote' | 'idle' | 'unsupported' }`.
+    `session.abort()` keeps its signature and now also stops a turn running in another instance when
+    no turn of the session runs locally and the `StateAdapter` implements `setIf`. The owning
+    instance stops at its next step boundary or heartbeat tick (a running tool's `abortSignal` fires)
+    with `stop: 'aborted'`, exactly like a local abort.
+  - New persisted field `state.core.abortRequest` (turn-scoped: a late Stop never aborts the next
+    turn); new option `recovery.abortPollMs` (default 2 000 ms, `0` = off); new warning
+    `W_ABORT_UNSUPPORTED`; new types `AbortRequest`, `AbortRequestResult`.
+  - Behaviour: while a turn runs, the owner's state writes (heartbeat, compaction, end of turn) use
+    `setIf` when available and merge a foreign `abortRequest` on conflict; a running turn reads the
+    state at most once per `abortPollMs`.
+  - Type-level: `HarnessSession` gains `requestAbort()` (custom implementations and mocks must add it).
+
+- [`4524d47`](https://github.com/viandwi24/eharness/commit/4524d477dda5b7ba07f22477c406cfc86ce2352a) Thanks [@viandwi24](https://github.com/viandwi24)! - Durable inbox: queue, steer, wake, collect and abort across instances (spec 05 §12, ADR-0024).
+  
+  - New optional port `InboxAdapter` (`storage.inbox`, also `SessionOptions.storage.inbox`) with
+    `enqueue` / `claim` / `ack` / `release` and optional `notify` / `subscribe` / `pending`;
+    `memoryInbox()` in `eharness/storage/memory`; `inboxAdapterConformance` in `eharness/testing`.
+    A Postgres adapter (`FOR UPDATE SKIP LOCKED` + `LISTEN/NOTIFY`) is an example
+    (`examples/postgres-inbox.ts`), not a dependency.
+  - New `session.enqueue(input, { mode: 'queue' | 'steer' | 'collect', collect? })` →
+    `{ inboxId, target: 'local' | 'remote' }`: with an inbox the input is stored durably and
+    applied by the instance holding the session (at-least-once delivery, deduplicated by id);
+    without one it is applied in this process. `send()` keeps its 0.3 semantics.
+  - `ifBusy: 'collect'` with `SendOptions.collect` (`quietMs` 1 500, `maxWaitMs` 10 000,
+    `maxItems` 20): a burst of inputs becomes one user message and one turn (also without an
+    inbox). New config `inbox: { pollMs?, claimTtlMs?, collect? }`.
+  - With an inbox: `requestAbort()` / `abort()` reach a turn running in another instance through
+    an `abort` item (the state request stays the fallback); `inject(…, { wake: true })` while
+    another instance runs the turn hands the wake to it.
+  - New session events `inbox-enqueued` and `inbox-drained`; new warning `W_INBOX_FAILED`;
+    persisted additions `metadata.eharness.inboxId` / `collected`, `data-eh.input` `inboxId`,
+    `state.core.inboxDelivered`. New types `InboxAdapter`, `InboxItem`, `InboxItemInput`,
+    `SerializedInput`, `CollectOptions`, `EnqueueOptions`, `EnqueueResult`.
+  - Type-level: `SendOptions.ifBusy` gains `'collect'`; `SessionEvent` gains two members
+    (exhaustive switches must add cases); `HarnessSession` gains `enqueue()` (custom
+    implementations and mocks must add it).
+
+- [`bf3ee98`](https://github.com/viandwi24/eharness/commit/bf3ee981a34f1871772ab7660bc1684e8e499d3b) Thanks [@viandwi24](https://github.com/viandwi24)! - Behaviour, type-level and model-visible changes of the 0.4.0 hardening — check these when upgrading.
+  
+  **Behaviour**
+  
+  - The turn stream (`run.stream`, `attach()`, `toResponse()`) ends only after the turn is persisted and the session is free: a client that saw `finish` can `send()` without hitting `EH_SESSION_BUSY` from that turn. New `SendOptions.ifBusy: 'wait'` (`send()` and `respond()`: wait for the running turn and the queue, FIFO, honours `abortSignal`) and `session.idle()`.
+  - `handleChatRequest` no longer throws `EH_SESSION_BUSY`: it returns a failed run (`error.code: 'EH_SESSION_BUSY'`) whose `toResponse()` / `pipeTo()` answer **409** with `{ error: { code, message } }`. Routes that caught the exception should handle the 409 (or pass `{ ifBusy: 'wait' }`).
+  - New `inputFiles` agent option: file URLs of user input outside `['data:', 'https:']` (e.g. `http:`) and `data:` URLs over 20 MB are now `EH_INVALID_INPUT`. Opt in with `inputFiles: { protocols: ['data:', 'https:', 'http:'] }`.
+  - Out-of-range numeric options (`loop.maxSteps: 0`, `compaction.summarizeAt` outside (0, 1), negative budgets, …) now throw `EH_CONFIG_INVALID` at `defineHarnessAgent`.
+  - Summarizer usage now counts toward `TurnResult.usage`, `costUsd`, `state.core.usage` and budgets (manual `compact()` charges the session). A used-up budget skips compaction (`W_BUDGET`, `details.compaction: true`); a compaction that uses up the budget stops the turn with `'cost-cap'`.
+  - `messageAdapterConformance` is stricter (an upsert must replace, not merge; `fromId` between stored ids; `beforeId` without `limit`). Third-party adapters may now fail it — they were wrong before.
+  - Chunk order: the transient `data-eh.status { state: 'tool' }` chunk may now arrive before the step's `start-step` (AI SDK ≥ 7.0.124 internals); it never changes the message.
+  
+  **Types**
+  
+  - `HarnessSession` gains `idle()` (custom implementations and mocks must add it); `SendOptions.ifBusy` gains `'wait'` (exhaustive switches must add it); `compaction.prompt` hooks receive the messages being summarized as `out.messages`.
+  
+  **Model-visible**
+  
+  - `read_file` (`eharness/filesystem`) gains the input `charOffset`. A line longer than the window ends with `(Line <n> continues; use offset=<n> charOffset=<c>.)`, so very long lines (minified code, evicted single-line JSON outputs) are fully readable.
+  - `grep` accepts only a conservative safe subset of regular expressions: at most one variable-width quantifier in the whole pattern (`*`, `+`, `?`, lazy variants, `{n,}`, `{n,m}` with m > n; a fixed `{n}` is fine), no quantified groups (`(…)` / `(?:…)` followed by any quantifier), no backreferences or lookarounds, at most 512 characters. `foo|bar`, `import .* from`, `^\s*export`, `a.{0,90}b` work; `.*foo.*bar`, `(\d+\.)+\d+`, `(ab){3}` are refused with `ERROR: invalid pattern: …` (search for a literal, or split into simpler searches). Only the first 2 000 characters of a line are matched; a line cut at 300 characters ends with ` (match at charOffset=<c>)`. Adapters that push `grep` down should apply the same rule or use a linear-time engine (RE2).
+  - A file of an earlier turn whose URL can no longer be downloaded (e.g. an expired link) is replaced on the wire by the new fixed text `FILE_UNAVAILABLE` (`[file unavailable: <mediaType> <filename>]`) and the step is retried, instead of failing every later turn.
+  - A compaction summary cut at `maxSummaryTokens` (`finishReason: 'length'`) is a compaction failure (`W_COMPACTION_FAILED` / `EH_COMPACTION_FAILED`, `details.reason: 'length'`).
+
+- [`7350216`](https://github.com/viandwi24/eharness/commit/73502168db945edef85a421c7b5906279561f605) Thanks [@viandwi24](https://github.com/viandwi24)! - Durable inbox delivery guarantees (spec 05 §12, ADR-0024):
+  
+  - A durable steer that waits for a long step is delivered once: the holder renews the claims of the items it holds, and a running turn takes a steer once per inbox id.
+  - No item is lost when a process dies between a state write and the save of the item's effect: send items and steers are deduped by the `inboxId` of their stored messages only; `state.core.inboxDelivered` now lists `wake` items only, written with the wake turn's end-of-turn state write (a wake is acked after it).
+  - Id order holds with two live holders: the items after a started unit stay claimed until its turn commits or ends.
+  - `InboxAdapter.claim` contract (checked by `inboxAdapterConformance`): head of line — never return an item behind an older item of the session that another owner holds — and renewal — a claim by the owner extends the claims it already holds (not returned again, `attempts` unchanged). `memoryInbox()` implements both and `pending()` lists only sessions whose oldest item is claimable; custom adapters must follow (see `examples/postgres-inbox.ts`).
+
+- [`295dd21`](https://github.com/viandwi24/eharness/commit/295dd21ec45c307a8d80f49045a1eb4de1cb14f3) Thanks [@viandwi24](https://github.com/viandwi24)! - New subpath `eharness/memory`: the `memory()` plugin gives agents file-based long-term memory on
+  the `fs` service — six tools (`memory_view`, `memory_create`, `memory_str_replace`,
+  `memory_insert`, `memory_delete`, `memory_rename`) with the command contract of Anthropic's memory
+  tool, application-chosen roots resolved per turn (read-only or writable), pinned files in the turn
+  reminder (prompt-cache safe), size limits, optimistic concurrency and an `onWrite` audit callback.
+  `executeMemoryCommand()` runs one command directly, and the `tool` option lets the application
+  supply its own (e.g. provider-defined) memory tool. Exports `MEMORY_PROTOCOL`, `PINNED_PREAMBLE` and `MEMORY_TOOLS`.
+  
+  `FileSystem` gains an optional atomic `move(from, to, { ifVersion })` (`MoveResult`); `memoryFs`
+  implements it and `fileSystemConformance` checks it (`requireMove`).
+  
+  Model-visible: six new tool names when the plugin is used.
+
+- [`ecc56aa`](https://github.com/viandwi24/eharness/commit/ecc56aa20618aa5a1911f7a4dc3c773b431f6493) Thanks [@viandwi24](https://github.com/viandwi24)! - `send(input, { output, ifBusy: 'steer' | 'collect' })` is now a run error `EH_INVALID_INPUT` (`details.reason: 'output-with-steer-or-collect'`), whether the session is busy or not, instead of silently ignoring `output` (a steer or a collected input joins another turn; spec 05 §3.3 rule 9).
+
+- [`7335767`](https://github.com/viandwi24/eharness/commit/7335767945e60e7cd225b84db9fa542111c2f76a) Thanks [@viandwi24](https://github.com/viandwi24)! - Raised minimum peer versions: `ai@^7.0.127` (was `^7.0.123`) and the optional `@ai-sdk/mcp@^2.0.66` (was `^2.0.63`) — the locked, tested versions. UI chunk order is public API and older 7.0.x patches order the transient `data-eh.status { state: 'tool' }` chunk differently around `start-step`; upgrade `ai` (and `@ai-sdk/mcp` if you use `eharness/mcp`) together with eharness 0.4.
+
+- [`2360d01`](https://github.com/viandwi24/eharness/commit/2360d01aa49c86f518aa5a534899016330600ddf) Thanks [@viandwi24](https://github.com/viandwi24)! - Pre-compaction flush. New chainable hook `compaction.before` (`CompactionBeforeEvent` → `CompactionBeforePatch`) can request a `flush`: one bounded, internal `generateText` turn over the current conversation with whitelisted tools, run right before the summarizer so the agent can save facts (e.g. into memory files). Calls that would need approval are auto-denied (`FLUSH_APPROVAL_DENIED`, reported to `approval.decided`). The flush leaves no trace in the model's context; a new model-invisible core kind `eh.flush` (`FlushPayload`: trigger, prompt, model, steps, tool names/statuses, usage, cost, error) is stored before the marker and streamed once as a transient `data-eh.flush` part. Its usage is charged to the turn and budgets with `source: 'compaction-flush'`, including the completed steps of a flush that then fails (the `eh.flush` record of a failed flush carries their steps, tool statuses and usage). New warning `W_COMPACTION_FLUSH_SKIPPED` (the flush does not fit the window, or overflow recovery without a larger flush window); a failing flush is `W_HOOK_FAILED` with `details.phase: 'flush'` and compaction continues. `eharness/memory`: new option `memory({ flushOnCompaction: true | { prompt } })` with `MEMORY_FLUSH_PROMPT` and `MEMORY_FLUSH_TOOLS`; the flush prompt also carries the memory roots and pinned files (the flush call has no turn reminder). Type-level: `HarnessHooks` gains `compaction.before`; `HarnessKindTypes` / `HarnessDataTypes` gain `'eh.flush'` (exhaustive switches over core kinds must add a case).
+
+- [`cd4d07c`](https://github.com/viandwi24/eharness/commit/cd4d07cf53a0daf6e255b28b5daa60080e9c1ce5) Thanks [@viandwi24](https://github.com/viandwi24)! - Context pruning, compaction thrash detection and skill versions (0.4.0).
+  
+  - New `compaction.prune` (off by default; `{}` turns it on with `keepTurns: 2`, `minChars: 2_000`): view-only pruning of old tool outputs before summarizing. Tool outputs of completed turns older than `keepTurns` and larger than `minChars` are replaced in the request by `TOOL_OUTPUT_PRUNED` (`[output of <tool> pruned: <n> chars]`) or a pure `replaceWith(part: ToolResultPart)`; `exclude` lists tools never pruned. Stored messages never change, errors and denials are never pruned, tool calls keep their results. The summarizer runs only if the pruned context is still above `summarizeAt`. `ContextStats` gains `pruned?: { outputs, chars }`. New exports: `PruneConfig`, `TOOL_OUTPUT_PRUNED`.
+  - **Behaviour change:** compaction thrash detection, `compaction.thrash` (default on, `{ withinSteps: 2 }`). When a second automatic (mid-turn or overflow-recovery) compaction within 2 model steps of the previous one runs (or is skipped as no-gain) and the context is still above `summarizeAt` afterwards, the turn now stops with the new stop reason `'context-thrash'` (warning `W_CONTEXT_THRASH`, an `eh.notice` with code `EH_CONTEXT_THRASH`) instead of continuing. Compactions at the start of a turn do not count, and a second compaction that gets the context below `summarizeAt` is not a thrash, so ordinary turns behave as in 0.3. Set `thrash: false` for the 0.3 behaviour.
+  - **Type-level:** `StopReason` gains `'context-thrash'`, `HarnessNoticeCode` gains `'EH_CONTEXT_THRASH'`, `WarningCode` gains `'W_CONTEXT_THRASH'`. Exhaustive `switch` statements over `StopReason` must add a case (same note as `'stuck'` in 0.3).
+  - `SkillMeta.version` (also `SkillDoc`, `Skill`): read from `SKILL.md` frontmatter `version:` as a string (`1.0` stays `"1.0"`), validated (1–64 printable characters; an invalid version makes the skill invalid). **Model-visible:** `load_skill` shows a `version:` line right after `description` when the skill has one; nothing changes for skills without it, and the skills index never shows versions. The `skill.load` hook event gains `version`. `skillSourceConformance` checks that `version` survives `list()` and `load()` (opt out with `{ version: false }`).
+  - **Behaviour change (skills):** a `version:` key in `SKILL.md` frontmatter is no longer passed through in `meta.version`; it is read into `SkillMeta.version` (string) instead. Code that read `meta.version` must read `version`.
+  - **Behaviour change (skills):** an invalid `version` (empty, not a scalar, longer than 64 characters or with non-printable characters) now makes the skill invalid, so it is skipped with `W_SKILL_SOURCE_FAILED` and missing from the index (as for an invalid `name` or `description`); before 0.4 any value was accepted as meta.
+  - **Behaviour change (testing):** `skillSourceConformance` checks versions by default — custom skill sources that drop or rename `version` now fail it; opt out with `{ version: false }`.
+
+- [`b80c0b1`](https://github.com/viandwi24/eharness/commit/b80c0b1952c3abbe6f8e65de8d81ebe7cfab4b2b) Thanks [@viandwi24](https://github.com/viandwi24)! - Structured final output (spec 05 §3.3, ADR-0023).
+  
+  - New `SendOptions.output = { schema, mode?: 'tool' | 'native', maxRetries?, toolName?, description? }`
+    (also for `respond`, `regenerate`, `edit`): the turn's final answer is validated against the
+    schema, invalid or missing answers are retried (default 2 retries) and the valid answer is
+    returned as `TurnResult.output`, typed from the schema (zod, `jsonSchema<T>()`, Standard Schema).
+    Tool mode (default) adds a `final_answer` tool for that turn, appended last in the tool order;
+    native mode uses AI SDK `Output.object` on `streamText`. Standard Schemas need JSON Schema
+    support (else `EH_INVALID_INPUT`, `details.reason: 'output-schema'`).
+  - New persisted part `data-eh.output { value, mode, attempts }`, new `metadata.eharness.output
+    { ok, attempts }`, new warning `W_OUTPUT_INVALID`, new fixed texts `FINAL_ANSWER_DESCRIPTION`,
+    `FINAL_ANSWER_RECORDED`, `OUTPUT_INSTRUCTION`, `OUTPUT_RETRY`; new types `OutputSpec`,
+    `SendOptionsWithOutput`, `OutputPartData`. Retries are delivered as `data-eh.input` with source
+    `plugin:eh.output` and count as continuations (`loop.maxContinues` / `maxIdleContinues`).
+  - **Type-level:** `StopReason` gains **`'output-invalid'`** — exhaustive `switch` statements must
+    add a case (as with `'stuck'` in 0.3 and `'context-thrash'` in this release). `HarnessRun` gains a
+    second type parameter `O` (defaulted to `never`, so `HarnessRun<M>` is unchanged) and
+    `TurnResult` a second type parameter `O` (default `unknown`) with the optional field `output`.
+    `HarnessSession` methods gain typed overloads (custom implementations stay assignable).
+  - Turns without `output` are unchanged (same wire, same stored messages).
+
+### Patch Changes
+
+- [`bf3ee98`](https://github.com/viandwi24/eharness/commit/bf3ee981a34f1871772ab7660bc1684e8e499d3b) Thanks [@viandwi24](https://github.com/viandwi24)! - Hardening fixes from the 0.3.1 audit (no action needed; behaviour and type changes are listed in the separate minor changeset).
+  
+  - A cold session loads its state and messages exactly once, even when `stats()`, `inject()` and `send()` race; plugin state set in `session.start` and the user message are never lost.
+  - `inject(…, { deliver: 'next-step' })` during turn preparation is delivered once at step 0 and reloads identically.
+  - A steer that arrives during the last budgeted step is no longer swallowed by the max-steps wrap-up step; it becomes a queued turn.
+  - `messages({ limit })` keeps paging past messages hidden by `regenerate()` / `edit()`, honours rewinds on cold instances, and never loops on an adapter that ignores `beforeId`.
+  - `agent.session(id)` while the previous instance of that id is closing waits for the close (no false `EH_TURN_INTERRUPTED`, one writer); `agent.close()` also waits for such closing instances.
+  - A turn that fails before its commit point reverts only the state its own hooks changed; `clearGrants()` and other plugins' `ctx.state` changes made meanwhile are kept. A failed commit-point state write never leaves a phantom `activeTurn` for a later write; a CAS conflict reloads the other instance's state instead of overwriting it.
+  - Message ids no longer drift ahead of the clock when many ids are generated in one millisecond.
+  - The default warning handler's dedupe set is bounded (1 000 keys).
+  - The guard shrinks JSON-escape-heavy tool outputs instead of failing with `EH_CONTEXT_OVERFLOW`; head + tail truncation never splits an emoji (surrogate pair).
+  - `describeError` passes on the provider's message only for AI SDK `APICallError` / `StreamProviderError`, with URLs, query strings and key-like tokens redacted and the text capped at 300 characters; other errors with a status read `HTTP <status>`.
+  - An unknown status returned by an approval policy or `tool.approve` hook (e.g. a typo) now denies the call (fail closed).
+  - `todos()`: the list survives a restart followed by a compaction; a `todo_write` denied by approval no longer changes the list.
+  - Skills: `name: 007` / `description: 1.0` keep their raw text.
+  - New, additive: `toolErrorText` agent option maps thrown tool errors (default `String(error)`, which may carry connection strings or tokens) — identically in the UI, storage and the model wire; `handleChatRequest(session, body, { actor })` passes the actor to `approval.decided`; exports `ChatRequestOptions`, `InputFilesConfig`, `ToolErrorTextFn`, `FILE_UNAVAILABLE`.
+  - devDependencies `ai@7.0.127`, `@ai-sdk/mcp@2.0.66` (the peer floors are raised to these versions, see the peer-floor changeset).
+
 ## 0.3.1
 
 ### Patch Changes
