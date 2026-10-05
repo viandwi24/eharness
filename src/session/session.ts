@@ -20,6 +20,7 @@ import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
+import { costOf } from '../models/cost.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
 import {
   addContribution,
@@ -42,7 +43,7 @@ import { createDeferredRun, type QueuedTurn } from './interaction/queue.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
 import { createStateStore } from './state.ts'
-import { type RunningTurn, startTurn, type TurnHost } from './turn.ts'
+import { budgetOverrun, type RunningTurn, startTurn, type TurnHost } from './turn.ts'
 
 /** A live session plus the handles the agent needs. */
 export interface SessionHandle {
@@ -935,7 +936,31 @@ export function createSessionHandle(args: {
           beforeTokens: compaction.calibration.apply(
             fixedTokens + (await compaction.viewTokens(view)),
           ),
+          // manual compaction belongs to no turn: its usage goes to the session (spec 06 §5.3)
+          onUsage: (usage, model) => {
+            const current = rt.state.core()
+            const previous = current.usage ?? { inputTokens: 0, outputTokens: 0, turns: 0 }
+            const cost = costOf(config.models, model, usage)
+            current.usage = {
+              ...previous,
+              inputTokens: previous.inputTokens + (usage.inputTokens ?? 0),
+              outputTokens: previous.outputTokens + (usage.outputTokens ?? 0),
+            }
+            if (cost !== undefined) current.usage.costUsd = (previous.costUsd ?? 0) + cost
+            rt.state.markDirty()
+          },
+          overBudget: () =>
+            budgetOverrun(
+              config.budget === undefined ? undefined : { ...config.budget, maxTurnUsd: undefined },
+              0,
+              rt.state.core().usage?.costUsd ?? 0,
+            ),
         })
+        try {
+          await rt.state.writeIfDirty()
+        } catch (error) {
+          log.warn('eharness: state write after compaction failed', { error })
+        }
         if (outcome.status === 'failed') throw outcome.error
         return outcome.status === 'compacted' ? (structuredClone(outcome.marker) as never) : null
       } finally {

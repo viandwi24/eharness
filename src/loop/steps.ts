@@ -492,6 +492,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     // mid-turn compaction (spec 06 §4): rebuild the wire from the compacted view
     if (stepIndex >= 1) {
       const delivered = wire.slice(sinceBarrier)
+      const costBefore = input.usage.costUsd
       const rebuilt = await compaction.midTurn({ wire, stepIndex, delivered })
       if (rebuilt !== undefined) {
         wire.splice(0, wire.length, ...rebuilt.wire)
@@ -499,6 +500,10 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         sinceBarrier = wire.length - delivered.length
       }
       if (input.signal.aborted) return aborted()
+      // the summarizer's usage may have used up a budget: no further model call (spec 12 §4)
+      if (input.usage.costUsd !== costBefore && overBudget() !== undefined) {
+        return { stop: 'cost-cap', steps: stepIndex, model }
+      }
     }
 
     // guard step 1: sanitize (spec 06 §6)
@@ -720,12 +725,17 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         !input.signal.aborted &&
         compaction.isOverflow(rawError)
       ) {
+        const costBefore = input.usage.costUsd
         const decision = await compaction.onOverflow({
           error: rawError,
           raw: capped.raw,
           delivered: wire.slice(sinceBarrier),
         })
         if (input.signal.aborted) return aborted()
+        if (input.usage.costUsd !== costBefore && overBudget() !== undefined) {
+          if (turnState !== undefined) turnState.step = undefined
+          return { stop: 'cost-cap', steps: stepIndex, model }
+        }
         if (decision.retry) {
           if (decision.rebuilt !== undefined) {
             const delivered = wire.slice(sinceBarrier)
