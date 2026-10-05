@@ -220,9 +220,13 @@ const RANK: Record<Normalized['type'], number> = {
 
 function normalizeStatus(status: ToolApprovalStatus | undefined): Normalized {
   if (status === undefined || status === null) return { type: 'not-applicable' }
-  if (typeof status === 'string') return { type: status }
-  const out: Normalized = { type: status.type }
-  if (typeof status.reason === 'string') out.reason = status.reason
+  const type: unknown = typeof status === 'string' ? status : (status as { type?: unknown }).type
+  // an unknown status (a typo, a value from another version) fails closed like a throw
+  if (typeof type !== 'string' || !Object.hasOwn(RANK, type)) {
+    return { type: 'denied', reason: `invalid approval status '${String(type)}'` }
+  }
+  const out: Normalized = { type: type as Normalized['type'] }
+  if (typeof status === 'object' && typeof status.reason === 'string') out.reason = status.reason
   return out
 }
 
@@ -234,8 +238,8 @@ export interface ApprovalGrants {
 
 /**
  * The per-step approval function (spec 11 §3): `approval.policy`, then every `tool.approve` hook,
- * then session grants, combined most-restrictive-wins. A throwing policy or hook counts as
- * `denied` (fail closed). A grant `never` denies; `always` turns `user-approval` into `approved`
+ * then session grants, combined most-restrictive-wins. A throwing policy or hook, or an unknown
+ * status value, counts as `denied` (fail closed). A grant `never` denies; `always` turns `user-approval` into `approved`
  * but never overrides `denied` (then `W_GRANT_IGNORED`, once per tool). `undefined` only when there
  * is neither a policy, a hook nor a grant source; turns always pass a grant source, so every turn
  * gets a function (it returns `not-applicable` when nothing applies).
