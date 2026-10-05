@@ -254,8 +254,10 @@ await session.requestAbort() // stops the turn even when another instance runs i
 - **Several instances:** a durable `InboxAdapter` queues, steers, wakes and debounces
   (`collect`) across instances; `requestAbort()` stops a turn anywhere; `ifBusy: 'wait'` and
   `session.idle()` serialize work in one process. Guide: [several instances](docs/guides/multi-instance.md).
-- **Structured output** for pipeline workers is planned for 0.4 (see
-  [P18](docs/plans/P18-structured-output.md)).
+- **Structured output:** `send(input, { output: { schema } })` validates the final answer against
+  your schema (a `final_answer` tool, or AI SDK `Output.object` with `mode: 'native'`), retries a
+  bounded number of times and returns it typed in `result.output` (stop `'output-invalid'` when
+  no valid answer came). Guide: [structured output](docs/guides/structured-output.md).
 - **Production patterns:** ephemeral context, episodic memory, background events, heartbeats
   with a "silent OK", skills from a database, and the security checklist:
   [production patterns](docs/guides/production-patterns.md).
@@ -354,6 +356,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 [Context and compaction](docs/guides/compaction.md) ·
 [Approvals and interaction](docs/guides/approvals-and-interaction.md) ·
 [Long-running turns](docs/guides/long-running-turns.md) ·
+[Structured output](docs/guides/structured-output.md) ·
 [Models and cost](docs/guides/models-and-cost.md) ·
 [Todos](docs/guides/todos.md) ·
 [Memory](docs/guides/memory.md) ·
