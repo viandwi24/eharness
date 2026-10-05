@@ -480,8 +480,35 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     )
   }
 
+  // ─── plugin state set by this turn before its commit point ───────────────────────────────
+  /** Plugin keys set by this turn's preparation hooks (reverted when it ends before committing). */
+  const touched = new Map<string, { plugin: string; key: string }>()
+  /** Owners whose preparation hook (or tool source / instruction) is running, with a count. */
+  const preparing = new Map<string, number>()
+  const stopObserving = rt.state.observe((plugin, key) => {
+    if (!committed && preparing.has(plugin)) touched.set(`${plugin}\u0000${key}`, { plugin, key })
+  })
+  /**
+   * Run `fn` as preparation work of `owner`: its `ctx.state` changes are discarded if the turn
+   * ends before the commit point; foreign changes (other plugins, core state such as
+   * `clearGrants()`) are kept (spec 05 §3).
+   */
+  async function asOwner<T>(owners: readonly string[], fn: () => Promise<T>): Promise<T> {
+    for (const owner of owners) preparing.set(owner, (preparing.get(owner) ?? 0) + 1)
+    try {
+      return await fn()
+    } finally {
+      for (const owner of owners) {
+        const n = (preparing.get(owner) ?? 1) - 1
+        if (n <= 0) preparing.delete(owner)
+        else preparing.set(owner, n)
+      }
+    }
+  }
+
   function earlyEnd(stop: StopReason, error?: unknown): void {
-    if (!committed && stateCheckpoint !== undefined) rt.state.restore(stateCheckpoint)
+    if (!committed && stateCheckpoint !== undefined)
+      rt.state.revert(stateCheckpoint, [...touched.values()])
     if (!startWritten) writeStart(rt.agent.generateId(), undefined) // throwaway id, never stored
     outcome = { stop, steps: 0, model: info.model }
     if (stop === 'aborted' || stop === 'timeout') {
@@ -631,16 +658,22 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
 
     // 6. resolve dynamic sources → TurnRegistry; then validate toolsContext (5) against the
     //    contextSchemas of the resolved tool set (dynamic tools are known only now)
-    const registry = await resolveTurnRegistry({
-      open,
-      approval: config.approval,
-      toolOutput: config.toolOutput,
-      contextOf: rt.contextOf,
-      warn: rt.warn,
-      status: (tool) =>
-        write({ type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
-      grants: { current: currentGrants },
-    })
+    const sourceOwners = [
+      ...open.toolSources.map((s) => s.owner),
+      ...open.instructions.filter((i) => i.kind !== 'static').map((i) => i.owner),
+    ]
+    const registry = await asOwner(sourceOwners, () =>
+      resolveTurnRegistry({
+        open,
+        approval: config.approval,
+        toolOutput: config.toolOutput,
+        contextOf: rt.contextOf,
+        warn: rt.warn,
+        status: (tool) =>
+          write({ type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
+        grants: { current: currentGrants },
+      }),
+    )
     const toolsContext =
       rt.options.toolsContext === undefined && op.options.toolsContext === undefined
         ? undefined
@@ -715,11 +748,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     let activeTools: string[] | undefined
     for (const hook of open.hooks.list('turn.prepare')) {
       try {
-        const out = await hook.fn(rt.contextOf(hook.owner), {
-          model: info.model,
-          settings: info.settings,
-          options: info.options,
-        })
+        const out = await asOwner([hook.owner], async () =>
+          hook.fn(rt.contextOf(hook.owner), {
+            model: info.model,
+            settings: info.settings,
+            options: info.options,
+          }),
+        )
         if (out === undefined || out === null) continue
         if (out.model !== undefined) info.model = out.model
         if (out.settings !== undefined) info.settings = mergeSettings(info.settings, out.settings)
@@ -800,7 +835,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       })
       let out: Awaited<ReturnType<typeof hook.fn>>
       try {
-        out = await hook.fn(rt.contextOf(hook.owner), { message, via })
+        out = await asOwner([hook.owner], async () =>
+          hook.fn(rt.contextOf(hook.owner), { message, via }),
+        )
       } catch (error) {
         return {
           input: current,
@@ -1462,6 +1499,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     rt.events.emit({ type: 'status', running: false })
     resolveResult(turnResult)
     host.onTurnEnd()
+    stopObserving()
     // the stream ends last: a reader that saw `finish` can start the next turn right away
     closeBuffer()
   }

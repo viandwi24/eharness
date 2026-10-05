@@ -253,7 +253,11 @@ written in this order:
 **Early failure (`committed === false`):** nothing is persisted — no assistant message, no
 `eh.notice`, no state write; `onEnd` skips the final save. The stream is `start` (with a throwaway id that is never stored, if
 step 10 was not reached) → `error` → `message-metadata { stop: 'error' }` → `finish`. This keeps a
-failed lock acquisition from writing into a session another instance owns.
+failed lock acquisition from writing into a session another instance owns. In-memory `ctx.state`
+changes made by the turn's own preparation (`input.submit`, `turn.prepare`, dynamic tool sources
+and instructions — the owner's namespace while its hook runs) are reverted to their value at step
+2; every other change made meanwhile — another plugin's `ctx.state`, `clearGrants()`, … — is
+kept.
 
 **Later failure (`committed === true`):** the end path runs with `stop: 'error'`, saves the
 (possibly empty) assistant message, and additionally saves an `eh.notice` kind (level `error`,

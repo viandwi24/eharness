@@ -38,6 +38,13 @@ export interface StateStore {
   checkpoint(): StateCheckpoint
   /** Discard in-memory changes made after `checkpoint()` (a turn failed before its commit point). */
   restore(checkpoint: StateCheckpoint): void
+  /**
+   * Put the given plugin keys back to their value at `checkpoint` and keep every other change
+   * (a turn failed before its commit point: only what its own hooks set is discarded).
+   */
+  revert(checkpoint: StateCheckpoint, keys: ReadonlyArray<{ plugin: string; key: string }>): void
+  /** Call `listener` for every plugin state `set`; returns the unsubscribe function. */
+  observe(listener: (plugin: string, key: string) => void): () => void
 }
 
 /** Opaque in-memory state capture of {@link StateStore.checkpoint}. */
@@ -67,6 +74,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
   let queue: Promise<unknown> = Promise.resolve()
 
   const pluginViews = new Map<string, PluginState>()
+  const listeners = new Set<(plugin: string, key: string) => void>()
 
   const store: StateStore = {
     get loaded() {
@@ -127,6 +135,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
             else namespace[key] = copy
           }
           version++
+          for (const listener of listeners) listener(name, key)
         },
       }
       pluginViews.set(name, view)
@@ -161,6 +170,23 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
     },
     checkpoint() {
       return { snapshot: structuredClone(snapshot), version }
+    },
+    observe(listener) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    revert(checkpoint, keys) {
+      if (keys.length === 0) return
+      for (const { plugin, key } of keys) {
+        store.plugin(plugin).set(key, checkpoint.snapshot.plugins[plugin]?.[key])
+      }
+      // nothing else changed since the checkpoint: clean again (no spurious state write)
+      const same =
+        JSON.stringify([snapshot.core, snapshot.plugins]) ===
+        JSON.stringify([checkpoint.snapshot.core, checkpoint.snapshot.plugins])
+      if (same && writtenVersion <= checkpoint.version) version = checkpoint.version
     },
     restore(checkpoint) {
       const rev = snapshot.rev
