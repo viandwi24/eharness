@@ -151,6 +151,7 @@ export type WarningCode =
   | 'W_OVERFLOW_RETRY'
   | 'W_GRANT_IGNORED'
   | 'W_ABORT_UNSUPPORTED'
+  | 'W_INBOX_FAILED'
 
 /**
  * A non-fatal problem, delivered to `config.onWarning`, as a transient `data-eh.warning` part
