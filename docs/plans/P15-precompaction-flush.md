@@ -173,6 +173,8 @@ Rules (spec 06 new §5.2a "Flush"):
 
 - P13 item 19 must be done (usage path, `source`).
 - P14: prune decides first; flush runs only when summarizing will happen.
+- From P17 (deferred item): add the memory plugin's `flushOnCompaction` option on top of the new
+  `compaction.before` hook (see spec 14 §9 and docs/guides/memory.md), with a test and a doc update.
 - P17: memory guide shows `compaction.before` returning `{ flush: { prompt, tools:
   ['memory_create', 'memory_str_replace', 'memory_insert'] } }`; consider an option
   `memory({ flushOnCompaction: true | { prompt } })` that registers this hook (P17 decides).
