@@ -8,7 +8,8 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Getting started](getting-started.md) | install, a first agent, run it on Node or Bun, offline testing |
 | [Instructions, tools and MCP](tools-and-mcp.md) | static and dynamic instructions/tools, tool sources, tool search, `mcpServer`, output limits, timeouts, per-turn models |
 | [Writing a plugin](writing-a-plugin.md) | `definePlugin`: tools, services, hooks, state, data parts |
-| [Writing a storage adapter](writing-a-storage-adapter.md) | `MessageAdapter`, `StateAdapter`, `SessionLock`, conformance tests |
+| [Writing a storage adapter](writing-a-storage-adapter.md) | `MessageAdapter`, `StateAdapter`, `SessionLock`, `InboxAdapter`, conformance tests |
+| [Running several instances](multi-instance.md) | lock, `setIf`, `lastId`, the durable inbox (queue, steer, wake, collect, abort across instances), sweeper |
 | [Rendering data parts](rendering-data-parts.md) | custom UI data: persistent vs transient, kinds, typed rendering |
 | [Skills](skills.md) | static skills, `SKILL.md` folders, custom skill sources |
 | [Filesystem](filesystem.md) | the `filesystem()` plugin: file tools, safety rules, services, custom adapters |

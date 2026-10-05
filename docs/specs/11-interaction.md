@@ -17,6 +17,7 @@ saw** (ADR-0011).
 | `regenerate(opts)` | answer the last (or a given) user message again | yes |
 | `edit(messageId, input, opts)` | replace a user message and answer it | yes |
 | `inject(kind, data, opts)` | add a non-model message (event/notice) | only with `wake` |
+| `enqueue(input, opts)` | hand input to the instance holding the session (spec 05 §12) | yes, there (queue / steer / collect) |
 | `abort(reason)` | stop the running turn | — |
 
 `handleChatRequest()` (§7) maps a `useChat` request body onto these operations.
