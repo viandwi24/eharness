@@ -1,6 +1,6 @@
 # P20 — Production-patterns guide, docs and 0.4.0 handoff
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: BTeams proposal item **U9**, the design-level risks of the 0.3.1 security audit, and the
 "Results" handoff table of the proposal.

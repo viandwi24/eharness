@@ -45,9 +45,11 @@ export type ChatMessage = InferHarnessUIMessage<typeof agent>
  */
 export async function POST(req: Request): Promise<Response> {
   const body = await req.json()
-  // Authenticate here and check that the user may access chat `body.id`.
-  const session = agent.session(body.id, { runtime: { userId: 'demo-user' } })
-  return handleChatRequest(session, body, { ifBusy: 'steer' }).toResponse()
+  // Authenticate here and check that the user owns chat `body.id`: eharness knows only the id.
+  // Per-request identity goes into the turn's `runtime` (the cached session is shared by requests).
+  const session = agent.session(body.id)
+  const runtime = { userId: 'demo-user' }
+  return handleChatRequest(session, body, { ifBusy: 'steer', runtime }).toResponse()
 }
 
 /** GET /api/chat/[id]/stream — resume a running turn after a reload (`useChat({ resume: true })`). */
@@ -56,6 +58,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params
+  // Same ownership check as POST: the replay contains the whole running turn.
   const run = agent.session(id).attach()
   return run ? run.toResponse() : new Response(null, { status: 204 })
 }
