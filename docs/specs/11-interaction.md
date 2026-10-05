@@ -240,8 +240,11 @@ edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
 
 ```ts
 export interface SendOptions {
-  /** send() only. When a turn is running: 'reject' (default, EH_SESSION_BUSY thrown), 'queue', or 'steer'. */
-  ifBusy?: 'reject' | 'queue' | 'steer'
+  /**
+   * When a turn is running: 'reject' (default, EH_SESSION_BUSY thrown), 'queue' or 'steer'
+   * (send() only), or 'wait' (send() and respond(), §6.2).
+   */
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
   // … other fields in spec 05 §2
 }
 ```
@@ -304,6 +307,15 @@ nothing: its kind message is stored and reaches the model at the next turn. Queu
 drop the queue (dropped runs resolve with `stop: 'aborted'`, spec 05 §2). The queue is per process
 and lost on restart; cross-instance queuing is the application's job (a `SessionLock` rejection
 is a run error).
+
+**`ifBusy: 'wait'`** (`send()` and `respond()`) joins the same FIFO, with three differences: the
+waiting caller is not dropped by `session.abort()` (it aborts only the running turn and the
+plain queue; `close()` and the caller's own `abortSignal` drop it, `stop: 'aborted'`, nothing
+persisted); a waiting `respond()` may start while the queue is held by pending approvals (that
+is what resolves them); and a waiting `send()` is held only by pending approvals that did not
+exist when it was called — approvals created by a turn it waited for are never denied by it —
+while approvals already pending at call time are handled as by a new `send()` (`onNewInput`).
+`session.idle()` resolves when no turn runs and nothing is queued.
 
 ### 6.3 `inject()` delivery and wake
 
@@ -378,7 +390,15 @@ run and reported as a run error):
 4. otherwise → `send(last, options)` (a body without messages → run error `EH_INVALID_INPUT`).
 
 `options` are passed to every operation (e.g. `{ ifBusy: 'steer' }` makes a request that arrives
-while a turn runs steer it; `respond`/`regenerate`/`edit` still throw `EH_SESSION_BUSY`).
+while a turn runs steer it; `{ ifBusy: 'wait' }` makes `send` and `respond` wait for it).
+
+**Busy sessions.** `handleChatRequest` never throws `EH_SESSION_BUSY` (it still throws
+`EH_SESSION_CLOSED`). When the operation is rejected as busy — `regenerate` / `edit` while a turn
+runs, `send` / `respond` without a waiting `ifBusy` — it returns a failed run (`stop: 'error'`,
+`error.code: 'EH_SESSION_BUSY'`, type `HarnessRun`) whose `toResponse()` / `pipeTo()` answer
+**409** with the JSON body `{ error: { code, message } }` instead of a UI message stream. Since
+the stream of a turn ends only after the turn finalized (spec 05 §3 step 17), a client that waits
+for the end of a response before sending the next request never sees a 409 from its own turn.
 
 Typical route:
 
@@ -386,6 +406,7 @@ Typical route:
 export async function POST(req: Request) {
   const body = await req.json()                      // { id, messages, trigger, messageId }
   const session = agent.session(body.id, { runtime: { userId } })
+  // busy: 409 { error: { code: 'EH_SESSION_BUSY', … } } — or pass { ifBusy: 'wait' } to wait
   return handleChatRequest(session, body).toResponse()
 }
 ```

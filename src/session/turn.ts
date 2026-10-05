@@ -342,7 +342,19 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     emit(chunk)
   }
 
+  /**
+   * The terminal `finish` / `abort` chunk of the turn stream: AI SDK gets it now (its `onEnd` runs
+   * the end sequence), readers of `run.stream` only after the end sequence completed, so the end
+   * of the stream implies the session is free (spec 05 §3 step 17).
+   */
+  let terminal: UIMessageChunk | undefined
+
   function emit(chunk: UIMessageChunk): void {
+    if (chunk.type === 'finish' || chunk.type === 'abort') {
+      terminal ??= chunk
+      writer?.write(chunk)
+      return
+    }
     buffer.push(chunk)
     if (chunk.type === 'finish-step') finishStepsWritten++
     trackToolCall(chunk)
@@ -1450,6 +1462,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     rt.events.emit({ type: 'status', running: false })
     resolveResult(turnResult)
     host.onTurnEnd()
+    // the stream ends last: a reader that saw `finish` can start the next turn right away
+    closeBuffer()
+  }
+
+  function closeBuffer(): void {
+    if (terminal !== undefined) buffer.push(terminal)
+    buffer.close()
   }
 
   // ─── the stream ───────────────────────────────────────────────────────────────────────────
@@ -1510,8 +1529,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       writeEnd()
     } finally {
       turnState.active = false
-      buffer.close()
       finishExecute?.()
+      // no stream was opened (cannot happen: every path writes `start`): never leave readers hanging
+      if (writer === undefined) closeBuffer()
     }
   })()
 

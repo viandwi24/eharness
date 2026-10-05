@@ -11,6 +11,7 @@ import {
   type UIMessageChunk,
 } from 'ai'
 import type { HarnessRun } from '../agent/session-types.ts'
+import type { HarnessError } from '../errors.ts'
 import type { TurnKind, TurnResult } from '../messages/types.ts'
 
 /**
@@ -101,6 +102,71 @@ export function createRun<M extends UIMessage>(init: {
         response,
         stream: stream as ReadableStream<UIMessageChunk>,
       })
+    },
+  }
+}
+
+/**
+ * A run that fails before it starts: a valid stream (`start` → `error` → `message-metadata` →
+ * `finish`) and a resolved `run.result` (`stop: 'error'`). With `status`, `toResponse()` /
+ * `pipeTo()` answer that HTTP status with a JSON body `{ error: { code, message } }` instead of
+ * the stream (e.g. 409 for `EH_SESSION_BUSY` from `handleChatRequest`, spec 11 §7).
+ */
+export function failedRun(
+  kind: TurnKind,
+  generateId: () => string,
+  error: HarnessError,
+  status?: number,
+): HarnessRun<UIMessage> {
+  const buffer = createTurnBuffer()
+  const turnId = generateId()
+  const messageId = generateId()
+  const chunks: UIMessageChunk[] = [
+    { type: 'start', messageId },
+    { type: 'error', errorText: error.message },
+    {
+      type: 'message-metadata',
+      messageMetadata: {
+        eharness: { stop: 'error', error: { code: error.code, message: error.message } },
+      },
+    },
+    { type: 'finish' },
+  ]
+  for (const chunk of chunks) buffer.push(chunk)
+  buffer.close()
+  const result: TurnResult<UIMessage> = {
+    turnId,
+    kind,
+    stop: 'error',
+    messages: [],
+    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+    steps: 0,
+    durationMs: 0,
+    error:
+      error.details === undefined
+        ? { code: error.code, message: error.message }
+        : { code: error.code, message: error.message, details: structuredClone(error.details) },
+  }
+  const run = createRun({
+    turnId,
+    kind,
+    messageId: Promise.resolve(messageId),
+    stream: buffer.reader(),
+    result: Promise.resolve(result),
+    abort: () => {},
+  })
+  if (status === undefined) return run
+  const body = JSON.stringify({ error: { code: error.code, message: error.message } })
+  return {
+    ...run,
+    toResponse(init) {
+      const headers = new Headers(init?.headers)
+      headers.set('content-type', 'application/json')
+      return new Response(body, { ...init, status, headers })
+    },
+    async pipeTo(response) {
+      response.writeHead(status, { 'content-type': 'application/json' })
+      response.end(body)
     },
   }
 }

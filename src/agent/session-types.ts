@@ -158,8 +158,13 @@ export type SendInput = string | { text?: string; files?: FileUIPart[] } | UIMes
  * @see docs/specs/05-session-and-storage.md#2-session-api
  */
 export interface SendOptions {
-  /** Only for `send()`: reject (default), queue or steer while a turn runs. */
-  ifBusy?: 'reject' | 'queue' | 'steer'
+  /**
+   * While a turn runs: reject (default, `EH_SESSION_BUSY`), queue or steer (`send()` only), or
+   * `'wait'` (`send()` and `respond()`): wait for the running turn and the queue ahead, then run.
+   * A waiting `send()` is held while approvals created by a turn it waited for are pending (it
+   * never denies them); `abortSignal` drops it while it waits (`stop: 'aborted'`).
+   */
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
   model?: LanguageModel
   settings?: Partial<ModelSettings>
   /** Validated with `config.callOptions`. */
@@ -298,5 +303,10 @@ export interface HarnessSession<
   /** Current context stats and pending state. */
   stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
   events(): ReadableStream<SessionEvent<M>>
+  /**
+   * Resolves when no turn runs and nothing is queued (also after `close()`). A queue held by
+   * pending approvals keeps it waiting until `respond()` (or `abort()` drops the queue).
+   */
+  idle(): Promise<void>
   close(): Promise<void>
 }

@@ -86,6 +86,11 @@ export interface HarnessSession<
   stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
 
   events(): ReadableStream<SessionEvent>
+  /**
+   * Resolves when no turn runs and nothing is queued (immediately after close()). A queue held
+   * by pending approvals keeps it waiting until respond() (or abort() drops the queue).
+   */
+  idle(): Promise<void>
   close(): Promise<void>
 }
 
@@ -104,10 +109,16 @@ export type SendInput = string | { text?: string; files?: FileUIPart[] } | UIMes
 
 export interface SendOptions {
   /**
-   * Only for send(): when a turn is already running, throw EH_SESSION_BUSY (default), queue, or
-   * steer (spec 11 §6). respond/regenerate/edit always throw EH_SESSION_BUSY while a turn runs.
+   * When a turn is already running: throw EH_SESSION_BUSY (default), queue or steer (send() only,
+   * spec 11 §6), or 'wait' (send() and respond()): wait for the running turn and the queue ahead,
+   * then run (the run is returned at once; its stream starts when the turn starts). A waiting
+   * send() is held while approvals created by a turn it waited for are pending — it never
+   * denies them (spec 11 §4.1) — and runs after respond(); approvals that were already pending
+   * when it was called are handled like a new send(). Its abortSignal drops it while it waits
+   * (stop 'aborted', nothing persisted); session abort() keeps it, close() drops it.
+   * regenerate/edit always throw EH_SESSION_BUSY while a turn runs.
    */
-  ifBusy?: 'reject' | 'queue' | 'steer'
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
   /** Per-turn overrides (precedence: agent config < SendOptions < turn.prepare < step.prepare). */
   model?: LanguageModel
   settings?: Partial<ModelSettings>
@@ -130,7 +141,8 @@ export interface InjectOptions {
 run returned by `inject(…, { wake })`):
 
 - They throw synchronously only `EH_SESSION_BUSY` (in-process running flag, `ifBusy: 'reject'`)
-  and `EH_SESSION_CLOSED`.
+  and `EH_SESSION_CLOSED`. `handleChatRequest` never throws `EH_SESSION_BUSY`: it returns a failed
+  run answering 409 (spec 11 §7).
 - A queued run that is dropped (`abort()`, `close()`) never starts: its stream is `start` (throwaway
   id) → `abort`, and `run.result` resolves with `stop: 'aborted'`; nothing is persisted.
 - Every other failure — lock not acquired, session open failure, invalid input, pending
@@ -216,11 +228,15 @@ written in this order:
 16. **End of `execute`:** answer dangling tool calls (below; also written to the stream as
     `tool-output-error` chunks, so the live UI matches storage); write `message-metadata` (`stop`,
     usage, steps, duration, `pending` — `null` when a continuation resolved it), `setOutcome`,
-    and `finish` / `abort`; return.
+    and `finish` / `abort` to the AI SDK stream; return. Readers of `run.stream` / `attach()`
+    receive everything up to `message-metadata` now; the terminal `finish` / `abort` chunk is held
+    back until step 17 completed.
 17. **End sequence (in `onEnd`):** `message.beforeSave` + final save; set `state.core.pending`
     when `stop: 'tool-pending'`; clear `activeTurn`; persist state if dirty (§7); update cache;
     emit `turn-end`; `turn.end` hooks; release lock; clear running flag; resolve `run.result`;
-    start the next queued turn, if any. Every step catches its own errors (a failing final save
+    start the next queued turn, if any; **then** write the held-back `finish` / `abort` and close
+    `run.stream`. So the end of the stream implies the turn is persisted and the session is free:
+    a client that saw `finish` can `send()` immediately (no `EH_SESSION_BUSY`). Every step catches its own errors (a failing final save
     sets `stop: 'error'` / `EH_STORAGE` in `run.result`, spec 10 §1); the lock is always released
     and the running flag always cleared. `turn-end` and `turn.end` belong to committed turns only
     (symmetric with `turn-start` / `turn.start`); an early failure, an early abort or a block

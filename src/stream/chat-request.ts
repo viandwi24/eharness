@@ -10,8 +10,11 @@ import type {
   PendingResponse,
   SendOptions,
 } from '../agent/session-types.ts'
+import { isHarnessError } from '../errors.ts'
+import { uuidv7 } from '../messages/ids.ts'
 import { isToolPart } from '../messages/tool-parts.ts'
 import { RESPOND_IGNORE_UNKNOWN } from '../session/interaction/pending.ts'
+import { failedRun } from './run.ts'
 
 /**
  * The request body `useChat` sends (`DefaultChatTransport`): `{ id, messages, trigger,
@@ -73,7 +76,10 @@ export function extractResponses(message: UIMessage): PendingResponse {
  * 3. `messageId` set and last message `role: 'user'` → `edit(messageId, last)`;
  * 4. otherwise → `send(last)`.
  *
- * Throws only `EH_SESSION_BUSY` / `EH_SESSION_CLOSED` (like the operations it calls).
+ * Throws only `EH_SESSION_CLOSED`. A busy session (`EH_SESSION_BUSY`) is returned as a failed run
+ * (`stop: 'error'`, `error.code: 'EH_SESSION_BUSY'`) whose `toResponse()` / `pipeTo()` answer
+ * **409** with `{ error: { code, message } }`; pass `{ ifBusy: 'wait' }` to wait instead (send and
+ * respond only).
  *
  * @example
  * ```ts
@@ -96,17 +102,28 @@ export function handleChatRequest<
   const messages: unknown[] = Array.isArray(body?.messages) ? body.messages : []
   const last = messages.at(-1) as UIMessage | undefined
   const messageId = typeof body?.messageId === 'string' ? body.messageId : undefined
-  if (body?.trigger === 'regenerate-message') {
-    return session.regenerate({ ...options, ...(messageId === undefined ? {} : { messageId }) })
+  let kind: 'send' | 'respond' | 'regenerate' | 'edit' = 'send'
+  try {
+    if (body?.trigger === 'regenerate-message') {
+      kind = 'regenerate'
+      return session.regenerate({ ...options, ...(messageId === undefined ? {} : { messageId }) })
+    }
+    if (last?.role === 'assistant') {
+      kind = 'respond'
+      return session.respond(extractResponses(last), {
+        ...options,
+        [RESPOND_IGNORE_UNKNOWN]: true,
+      } as SendOptions)
+    }
+    if (messageId !== undefined && last?.role === 'user') {
+      kind = 'edit'
+      return session.edit(messageId, last, options)
+    }
+    // no message at all: an empty user message, rejected by input normalization as a run error
+    return session.send(last ?? ({ role: 'user', parts: [] } as unknown as UIMessage), options)
+  } catch (error) {
+    // a busy session is an answer, not an exception: 409 with a JSON body (spec 11 §7)
+    if (!isHarnessError(error, 'EH_SESSION_BUSY')) throw error
+    return failedRun(kind, uuidv7, error, 409) as unknown as HarnessRun<M>
   }
-  if (last?.role === 'assistant') {
-    return session.respond(extractResponses(last), {
-      ...options,
-      [RESPOND_IGNORE_UNKNOWN]: true,
-    } as SendOptions)
-  }
-  if (messageId !== undefined && last?.role === 'user')
-    return session.edit(messageId, last, options)
-  // no message at all: an empty user message, rejected by input normalization as a run error
-  return session.send(last ?? ({ role: 'user', parts: [] } as unknown as UIMessage), options)
 }
