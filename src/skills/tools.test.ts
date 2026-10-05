@@ -475,3 +475,52 @@ describe('skill.load event location (spec 07 §7)', () => {
     expect(d.warnings.map((w) => w.code)).toEqual(['W_SKILL_SOURCE_FAILED'])
   })
 })
+
+describe('skill versions (spec 07 §3, §4.3)', () => {
+  test('load_skill shows version right after description; a meta.version is not repeated', () => {
+    expect(formatSkillDoc('pine-v6', doc({ version: '1.0', meta: { license: 'MIT' } }), [])).toBe(
+      [
+        '---',
+        'name: pine-v6',
+        'description: Pine v6.',
+        'version: "1.0"',
+        'license: MIT',
+        '---',
+        '# Pine',
+        '',
+        'Use reference.md.',
+      ].join('\n'),
+    )
+    expect(
+      formatSkillDoc('pine-v6', doc({ version: '2', meta: { version: 'old', a: 1 } }), []),
+    ).toStartWith('---\nname: pine-v6\ndescription: Pine v6.\nversion: "2"\na: 1\n---')
+    // without a version nothing changes (a version in meta stays where it was)
+    expect(formatSkillDoc('pine-v6', doc({ meta: { version: 'm' } }), [])).toStartWith(
+      '---\nname: pine-v6\ndescription: Pine v6.\nversion: m\n---',
+    )
+  })
+
+  test('skill.load event carries the version of the document', async () => {
+    const versions: unknown[] = []
+    const hooks = [
+      {
+        owner: 'app',
+        fn: ((_c, e) => {
+          versions.push(e.version)
+          return e.version === undefined ? undefined : { skill: { ...e.skill, version: '9' } }
+        }) as HarnessHooks['skill.load'],
+      },
+      {
+        owner: 'p',
+        fn: ((_c, e) => void versions.push(e.version)) as HarnessHooks['skill.load'],
+      },
+    ]
+    const d = await deps(
+      [{ source: memory('db', [doc({ version: '1.0' }), doc({ name: 'plain' })]) }],
+      { hooks },
+    )
+    expect(await loadSkillText(d, 'pine-v6')).toContain('version: "9"')
+    await loadSkillText(d, 'plain')
+    expect(versions).toEqual(['1.0', '9', undefined, undefined])
+  })
+})

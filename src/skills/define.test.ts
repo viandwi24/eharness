@@ -1,7 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { isHarnessError } from '../errors.ts'
 import type { Skill, SkillSource } from '../registry/types.ts'
-import { defineSkill, defineSkillSource, skillMetaError, skillNameError } from './define.ts'
+import {
+  defineSkill,
+  defineSkillSource,
+  skillMetaError,
+  skillNameError,
+  skillVersionError,
+} from './define.ts'
 import { staticSkillSource } from './static-source.ts'
 
 const throwsInvalid = (fn: () => unknown, text?: string) => {
@@ -144,5 +150,29 @@ describe('staticSkillSource', () => {
     ;(first[0]?.meta as Record<string, unknown>).license = 'changed'
     const second = (await source.list({} as never)) as Array<{ meta?: Record<string, unknown> }>
     expect(second[0]?.meta).toEqual({ license: 'MIT' })
+  })
+})
+
+describe('skill versions (spec 07 §3)', () => {
+  test('skillVersionError: 1–64 printable characters, no surrounding whitespace', () => {
+    expect(skillVersionError(undefined)).toBeUndefined()
+    expect(skillVersionError('1.0')).toBeUndefined()
+    expect(skillVersionError('2.1.0-beta+3 (LTS)')).toBeUndefined()
+    expect(skillVersionError('v'.repeat(64))).toBeUndefined()
+    for (const bad of [1, '', ' 1.0', '1.0\n', 'a\u0000b', 'v'.repeat(65), null]) {
+      expect(skillVersionError(bad)).toBeString()
+    }
+    expect(skillMetaError({ name: 'a', description: 'd', version: '' })).toBeString()
+    expect(skillMetaError({ name: 'a', description: 'd', version: '3' })).toBeUndefined()
+  })
+
+  test('defineSkill validates the version; the static source serves it', async () => {
+    throwsInvalid(() => defineSkill(skill({ version: ' 1' })), 'version')
+    const versioned = defineSkill(skill({ version: '1.0' }))
+    const source = staticSkillSource('static:app', [versioned, skill({ name: 'plain' })])
+    const listed = await source.list({} as never)
+    expect(listed.map((m) => m.version)).toEqual(['1.0', undefined])
+    expect('version' in (listed[1] ?? {})).toBe(false)
+    expect((await source.load('pine-v6', {} as never))?.version).toBe('1.0')
   })
 })

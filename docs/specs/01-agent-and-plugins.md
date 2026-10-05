@@ -373,7 +373,7 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 
   /** Chainable. Adjust a loaded skill doc (e.g. add an executable path, spec 07 §7). `location` = `SkillSource.locate(name)`, omitted when absent/null. */
-  'skill.load'?(ctx: HarnessContext<DP>, e: { skill: SkillDoc; source: string; location?: { service: string; root: string } }): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
+  'skill.load'?(ctx: HarnessContext<DP>, e: { skill: SkillDoc; source: string; location?: { service: string; root: string }; version?: string /* skill.version (0.4.0) */ }): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
 }
 
 export interface StepPrepareEvent { stepIndex: number; messages: ModelMessage[]; toolNames: string[]; model: LanguageModel }

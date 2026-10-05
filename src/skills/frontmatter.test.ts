@@ -312,3 +312,41 @@ describe('parseSkillMarkdown', () => {
     expect(error(42 as unknown as string)).toContain('text')
   })
 })
+
+describe('parseSkillMarkdown: version (spec 07 §3, §8)', () => {
+  const doc = (front: string) => `---\nname: pine-v6\ndescription: Pine v6.\n${front}\n---\nBody\n`
+  const metaOf = (front: string) => {
+    const parsed = parseSkillMarkdown(doc(front))
+    if ('error' in parsed) throw new Error(parsed.error)
+    return parsed.meta
+  }
+
+  test('read as a string; numeric-looking values keep their text; not part of meta', () => {
+    expect(metaOf('version: 1.0')).toEqual({
+      name: 'pine-v6',
+      description: 'Pine v6.',
+      version: '1.0',
+    })
+    expect(metaOf('version: 2').version).toBe('2')
+    expect(metaOf('version: "2.1.0-beta+3"').version).toBe('2.1.0-beta+3')
+    expect(metaOf('version: 1.10 # comment').version).toBe('1.10')
+    expect(metaOf('version: 2024-10-05\nlicense: MIT')).toEqual({
+      name: 'pine-v6',
+      description: 'Pine v6.',
+      version: '2024-10-05',
+      meta: { license: 'MIT' },
+    })
+  })
+
+  test('absent or null → no version', () => {
+    expect('version' in metaOf('license: MIT')).toBe(false)
+    expect('version' in metaOf('version: null')).toBe(false)
+  })
+
+  test('invalid versions are errors', () => {
+    for (const front of ['version: [1, 2]', `version: ${'1'.repeat(65)}`, 'version: ""']) {
+      const parsed = parseSkillMarkdown(doc(front))
+      expect('error' in parsed).toBe(true)
+    }
+  })
+})
