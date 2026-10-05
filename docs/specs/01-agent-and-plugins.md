@@ -53,6 +53,11 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   cache?: CacheConfig | false
   /** Tool result size limits (spec 09 §4). */
   toolOutput?: ToolOutputConfig
+  /**
+   * File parts of user input (spec 05 §3 step 7): allowed URL protocols (default
+   * ['data:', 'https:']) and the decoded size cap of data: URLs (default 20 MB).
+   */
+  inputFiles?: { protocols?: string[]; maxBytes?: number }
   /** Typed per-call options accepted by send()/respond()/… (`options`), exposed as ctx.turn.options. */
   callOptions?: FlexibleSchema
   /** Passed to streamText `repairToolCall` (fix malformed tool calls). */

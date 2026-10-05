@@ -196,6 +196,14 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
    - `role` must be `user` (else `EH_INVALID_INPUT`);
    - only `text` and `file` parts are accepted; any other part type (tool parts, `data-*`
      including kinds and `data-eh.*`, reasoning) → `EH_INVALID_INPUT`;
+   - file URLs (0.4.0): the protocol must be in `config.inputFiles.protocols` (default
+     `['data:', 'https:']`; `javascript:`, `http:`, `ftp:`, `file:` … → `EH_INVALID_INPUT`), and a
+     `data:` URL must decode to at most `inputFiles.maxBytes` (default 20 MB). Apps that store
+     files behind `http:` URLs (internal object stores) opt in with `protocols`. A file of an
+     **earlier** turn whose URL can no longer be downloaded (an AI SDK `DownloadError` before the
+     model call, e.g. an expired link) does not break later turns: the step's wire replaces that
+     file part with the text `FILE_UNAVAILABLE` (spec 10 §5) and the step is retried (once per
+     failing URL; storage is unchanged). A failing file of the current turn stays a run error;
    - client `metadata.eharness` (including any `kind`) is discarded and rebuilt (`v`,
      `createdAt`, `turnId`); a client id is kept as `metadata.eharness.clientId`; other client
      metadata keys are dropped unless `acceptClientMetadata`.

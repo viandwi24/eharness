@@ -741,6 +741,7 @@ export function createSessionHandle(args: {
               ? undefined
               : normalizeInput(input, {
                   acceptClientMetadata: rt.options.acceptClientMetadata === true,
+                  files: config.inputFiles,
                 })
         } catch (error) {
           return failedRun('send', () => internals.generateId(), asHarnessError(error))

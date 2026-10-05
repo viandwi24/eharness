@@ -7,6 +7,7 @@
  * @see docs/specs/05-session-and-storage.md#31-continue-vs-stop-after-a-step-normative
  */
 import {
+  DownloadError,
   type FinishReason,
   type InferToolOutput,
   InvalidToolInputError,
@@ -28,7 +29,7 @@ import type { TurnCompaction } from '../compaction/turn-context.ts'
 import { HarnessToolError } from '../errors.ts'
 import { describeModel } from '../internal/model.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
-import { MAX_STEPS_WRAP_UP, PROGRESS_NUDGE } from '../messages/texts.ts'
+import { FILE_UNAVAILABLE, MAX_STEPS_WRAP_UP, PROGRESS_NUDGE } from '../messages/texts.ts'
 import type { PendingState, StopReason } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { ModelCatalog } from '../models/types.ts'
@@ -719,6 +720,19 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     const response = await guarded(result.responseMessages)
     if (held !== undefined) {
       const heldText = (held as { errorText?: string }).errorText ?? 'The model call failed.'
+      // a file of an earlier turn could not be downloaded (an expired link): degrade it to a
+      // FILE_UNAVAILABLE text on the wire and retry the step; each retry removes one URL, so this
+      // ends. A file of the current turn stays an error (spec 05 §3).
+      if (
+        !stepStarted &&
+        !stepAborted &&
+        !input.signal.aborted &&
+        DownloadError.isInstance(rawError) &&
+        degradeFile(wire, turnStart, rawError.url)
+      ) {
+        if (turnState !== undefined) turnState.step = undefined
+        continue
+      }
       if (
         !stepStarted &&
         !stepAborted &&
@@ -1002,6 +1016,56 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   function totalUsage(): LanguageModelUsage {
     return totalUsageOf(emptyUsage())
   }
+}
+
+/**
+ * Replace the file parts of earlier turns (wire before `turnStart`) whose URL is `url` with the
+ * `FILE_UNAVAILABLE` text. True when one was replaced.
+ */
+function degradeFile(wire: ModelMessage[], turnStart: number, url: string): boolean {
+  const target = normalizeUrl(url)
+  const matches = (part: { type: string; data?: unknown }): boolean =>
+    part.type === 'file' && fileUrlOf(part.data) === target
+  let replaced = false
+  for (let i = 0; i < Math.min(turnStart, wire.length); i++) {
+    const message = wire[i] as ModelMessage
+    if (message.role !== 'user' || typeof message.content === 'string') continue
+    if (!message.content.some(matches)) continue
+    replaced = true
+    wire[i] = {
+      ...message,
+      content: message.content.map((part) =>
+        part.type === 'file' && matches(part)
+          ? {
+              type: 'text' as const,
+              text: FILE_UNAVAILABLE.replace('{mediaType}', part.mediaType)
+                .replace('{filename}', part.filename ?? '')
+                .replace(' ]', ']'),
+            }
+          : part,
+      ),
+    }
+  }
+  return replaced
+}
+
+function normalizeUrl(url: string): string {
+  try {
+    return new URL(url).href
+  } catch {
+    return url
+  }
+}
+
+/** The URL of a model file part's `data` (bare string / `URL`, or `{ type: 'url', url }`). */
+function fileUrlOf(data: unknown): string | undefined {
+  if (data instanceof URL) return data.href
+  if (typeof data === 'string')
+    return /^[a-z][a-z0-9+.-]*:/i.test(data) ? normalizeUrl(data) : undefined
+  if (typeof data === 'object' && data !== null && (data as { type?: unknown }).type === 'url') {
+    return normalizeUrl(String((data as { url?: unknown }).url))
+  }
+  return undefined
 }
 
 function describeStuck(stuck: StuckReason): string {

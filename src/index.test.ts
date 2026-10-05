@@ -16,6 +16,7 @@ describe('core entry', () => {
   test('runtime exports', () => {
     expect(Object.keys(core).sort()).toEqual([
       'DENIED_NEW_INPUT',
+      'FILE_UNAVAILABLE',
       'HarnessError',
       'HarnessToolError',
       'INTERRUPTED_CRASH',
