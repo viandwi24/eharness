@@ -340,7 +340,8 @@ export interface SendOptions {
    * Ask this turn for a typed final answer (0.4.0): validated against `output.schema`, retried on
    * invalid answers, returned as `TurnResult.output`. Server-side only (`handleChatRequest` never
    * reads it from a request body); not carried over a `'tool-pending'` stop — pass it again to
-   * `respond()`. Spec 05 §3.3.
+   * `respond()`. With `ifBusy: 'steer'` or `'collect'` the run fails with `EH_INVALID_INPUT`
+   * (`details.reason: 'output-with-steer-or-collect'`). Spec 05 §3.3.
    */
   output?: OutputSpec
 }

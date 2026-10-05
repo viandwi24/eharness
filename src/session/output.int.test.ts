@@ -337,6 +337,38 @@ describe('structured output: spec validation', () => {
       .send('go', { output: { schema: ticket, maxRetries: -1 } }).result
     expect(result.error?.details).toEqual({ reason: 'output-spec' })
   })
+
+  test("output with ifBusy 'steer' / 'collect' is a run error, busy or not (rule 9)", async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const wait = tool({ inputSchema: z.object({}), execute: async () => gate.then(() => 'ok') })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'wait', input: {} }] },
+      { text: 'done' },
+    ])
+    const { agent, messages } = setup({ model, tools: { wait } })
+    const session = agent.session('s1')
+    const idle = await session.send('x', { output: { schema: ticket }, ifBusy: 'steer' }).result
+    expect(idle.stop).toBe('error')
+    expect(idle.error).toMatchObject({
+      code: 'EH_INVALID_INPUT',
+      details: { reason: 'output-with-steer-or-collect', ifBusy: 'steer' },
+    })
+    expect(await messages.load({ sessionId: 's1' })).toEqual([])
+    const run = session.send('go')
+    for (const ifBusy of ['steer', 'collect'] as const) {
+      const busy = await session.send('y', { output: { schema: ticket }, ifBusy }).result
+      expect(busy.error).toMatchObject({
+        code: 'EH_INVALID_INPUT',
+        details: { reason: 'output-with-steer-or-collect', ifBusy },
+      })
+    }
+    release()
+    expect((await run.result).stop).toBe('complete')
+    expect(JSON.stringify(model.prompts)).not.toContain('"y"')
+  })
 })
 
 describe('structured output: bounds', () => {
