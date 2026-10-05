@@ -1,6 +1,6 @@
 # Spec 08 — Filesystem plugin
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/filesystem` (`eharness/filesystem`, `eharness/filesystem/memory`).
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/filesystem` (`eharness/filesystem`, `eharness/filesystem/memory`).
 
 The filesystem plugin is the **reference plugin**: it shows how a plugin provides a service, tools,
 skills, state and data parts using only the public API. It ships one adapter (`memoryFs`). Anything

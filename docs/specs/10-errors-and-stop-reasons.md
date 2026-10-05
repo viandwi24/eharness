@@ -1,6 +1,6 @@
 # Spec 10 — Errors, warnings, stop reasons
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/errors.ts`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/errors.ts`.
 
 ## 1. Errors (thrown)
 

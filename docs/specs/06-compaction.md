@@ -1,6 +1,6 @@
 # Spec 06 — Compaction
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/compaction`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/compaction`.
 
 Compaction is **fixed** (ADR-0004): one well-tested algorithm with a few knobs. The extension point
 is storage (spec 05), not the strategy. The output of compaction is **data** — an `eh.compaction`
