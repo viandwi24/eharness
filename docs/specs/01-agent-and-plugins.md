@@ -285,7 +285,8 @@ export interface TurnInfo {
    * wake turn (input.submit then runs with via: 'queue').
    */
   queued: boolean
-  /** Undefined for respond/regenerate/wake and for send() without input. */
+  /** Undefined for respond/regenerate/wake and for send() without input, and while
+   *  refresh: 'turn' instructions and dynamic sources resolve (spec 02 §2). */
   input: HarnessUIMessage | undefined
   /** Validated `callOptions` value of this call. */
   options: unknown

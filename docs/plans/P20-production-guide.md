@@ -1,6 +1,6 @@
 # P20 — Production-patterns guide, docs and 0.4.0 handoff
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: BTeams proposal item **U9**, the design-level risks of the 0.3.1 security audit, and the
 "Results" handoff table of the proposal.
@@ -55,7 +55,7 @@ the owning phase or as a follow-up).
       `inject(…, { wake: true })`; the "silent OK" pattern (the agent answers nothing when there is
       nothing to do, e.g. via a `step.end` stop or a tool that ends the turn).
 - [x] **Skills from a database** via a custom `SkillSource` with `version` (P14).
-- [x] **Structured output** for pipeline workers (P18) and **prune** for tool-heavy agents (P14). (P18 part: planned shape only, "(see P18)".)
+- [x] **Structured output** for pipeline workers (P18) and **prune** for tool-heavy agents (P14). (P18 part updated to the shipped API after the P18 merge.)
 - [x] Offline example(s) for the patterns that have no example yet (e.g.
       `examples/background-events.ts`), registered in `examples/examples.test.ts`.
 
@@ -95,10 +95,10 @@ Design-level risks from the audit — each with the risk, the default, and what 
       cross-process abort, inbox, `ifBusy: 'wait'`); route examples with busy handling and an
       ownership check; README snippets still match `examples/quick-start.ts`.
 - [x] `docs/guides/README.md` rows for new guides (`memory.md`, `structured-output.md`,
-      `multi-instance.md`, `production-patterns.md`); cross-links between guides. (`structured-output.md` follows P18.)
+      `multi-instance.md`, `production-patterns.md`); cross-links between guides. (`structured-output.md` added with P18.)
 - [x] `docs/guides/reference.md`: every new option, method, hook, stop reason
       (`'context-thrash'`, `'output-invalid'`), warning, error/notice code, data part and kind of
-      0.4.0, checked against specs. (`output-invalid` and other P18 rows follow P18.)
+      0.4.0, checked against specs. (P18 rows added after the P18 merge.)
 - [x] `docs/README.md` reading order / module map (memory subpath, spec 14), `docs/architecture.md`
       module map if it lists subpaths.
 - [x] `docs/engineering/api-stability.md` subpath list includes `/memory` and `/todos`; adapter
@@ -133,10 +133,10 @@ Design-level risks from the audit — each with the risk, the default, and what 
 
 ## Acceptance criteria
 
-- [x] Every public symbol added in 0.4.0 appears in `reference.md` and at least one guide. (P18 symbols pending its merge.)
+- [x] Every public symbol added in 0.4.0 appears in `reference.md` and at least one guide. (P18 symbols added after its merge.)
 - [x] Every guide example compiles (`bun run typecheck` covers `examples/`) and every new
       example runs offline in `examples.test.ts`.
-- [x] `docs/reviews/0.4.0-results.md` covers U1–U9 and matches the shipped specs. (U6 "pending P18 merge".)
+- [x] `docs/reviews/0.4.0-results.md` covers U1–U9 and matches the shipped specs. (U6 filled after the P18 merge.)
 - [ ] `docs/eharness-updated.md` is neither modified nor committed. (Not modified by P20; but it
       **is tracked** on `main` since the P14 merge `a4e300a` — maintainer decision, see Open questions.)
 - [x] lint, typecheck, test green (docs-only phase: no changeset needed unless `src/` changed).
@@ -153,18 +153,15 @@ changeset or an extra `patch` changeset.
 
 Notes from implementing P20:
 
-- **P18-dependent parts left open on purpose:** the `structured-output.md` row in
-  `guides/README.md`, `reference.md` rows for `output` / `'output-invalid'` / `W_OUTPUT_INVALID` /
-  `data-eh.output`, results U6, the README "planned" bullet and the roadmap "Output guardrails"
-  row. The production guide mentions structured output only through the planned shape "(see
-  P18)". Whoever merges P18 updates them (see Requests to other phases).
+- **P18-dependent parts** (left open while P18 was unmerged) were closed in the final 0.4.0
+  review: `guides/README.md` row, `reference.md` rows (`data-eh.output`,
+  `metadata.eharness.output`, `OutputSpec`, `SendOptionsWithOutput`), results U6, the README
+  bullet and guides list, the production guide paragraph and the roadmap "Output guardrails" row.
 - **Doc/code finding:** a `refresh: 'turn'` instruction (and a dynamic tool source) is evaluated
   at spec 05 §3 step 6, before input normalization (step 7) and `input.submit` (step 8), so
-  `ctx.turn.input` is `undefined` there even for `send(text)`; the TSDoc of `TurnInfo.input`
-  ("Undefined for respond/regenerate/wake and for `send()` without input") does not mention it.
-  Verified with a scripted turn. The guide documents it and uses `step.prepare` for retrieval; no
-  `src/` change in P20 (candidate: a TSDoc/spec 01 §4 note, or evaluate turn instructions after
-  step 8).
+  `ctx.turn.input` is `undefined` there even for `send(text)`. Verified with a scripted turn. The
+  guide documents it and uses `step.prepare` for retrieval. Closed in the final 0.4.0 review: the
+  TSDoc of `TurnInfo.input`, spec 01 §4 and spec 02 §2 now state it.
 - **`docs/eharness-updated.md` is tracked** since the P14 merge (`a4e300a`), although the plans say
   it is maintainer-only and never committed. P20 did not touch it; the maintainer decides whether
   to untrack it.
@@ -177,12 +174,8 @@ Notes from implementing P20:
 
 ## Requests to other phases
 
-- **P18 (on merge):** add `structured-output.md` to `docs/guides/README.md` and the README guides
-  list; `reference.md` rows (`SendOptions.output`, `TurnResult.output`, `'output-invalid'`,
-  `W_OUTPUT_INVALID`, `data-eh.output`, `metadata.eharness.output`); replace the "(see P18)"
-  paragraph in `production-patterns.md` and the README "planned" bullet; fill U6 in
-  `docs/reviews/0.4.0-results.md` (summary row + section with final API and differences); strike
-  "Output guardrails" (schema part) in `roadmap.md` and drop "(P18, pending merge)" there.
+- ~~**P18 (on merge):** guides list, `reference.md` rows, production guide paragraph, README
+  bullet, results U6, roadmap "Output guardrails".~~ Done in the final 0.4.0 review.
 - Every phase P13–P19 keeps its "differences from the proposal" up to date in its Open questions
   section; P20 copies them into the results document.
 

@@ -28,10 +28,16 @@ tool calls (ADR-0015).
 - **Prune before summarize.** Triggers and the skip rule measure the pruned wire; the summarizer
   runs only when the context is still above `summarizeAt`. The summarizer transcript keeps the
   original (capped) outputs: the summary is where information is condensed.
-- **Thrash stop.** After an automatic compaction, a context above `summarizeAt` again within
-  `compaction.thrash.withinSteps` (default 2) model steps stops the turn with the new stop reason
-  `'context-thrash'` (`W_CONTEXT_THRASH`, an `eh.notice` with code `EH_CONTEXT_THRASH`) instead of
-  compacting again. `thrash: false` restores 0.3 behaviour.
+- **Thrash stop.** When a second automatic (mid-turn or overflow) compaction within
+  `compaction.thrash.withinSteps` (default 2) model steps of the previous one ran (or was skipped
+  as no-gain) and the context is still above `summarizeAt` afterwards, the turn stops with the new
+  stop reason `'context-thrash'` (`W_CONTEXT_THRASH`, an `eh.notice` with code
+  `EH_CONTEXT_THRASH`). The check runs after the compaction, not before it; pre-turn compactions
+  do not start the window, so ordinary turns (compact at turn start, then one large tool output)
+  behave as in 0.3. `thrash: false` restores 0.3 behaviour.
+  *Amended in the 0.4.0 review:* the first version stopped whenever the context was above
+  `summarizeAt` within the window (counting a pre-turn compaction as step 0) before compacting,
+  which stopped ordinary turns that 0.3 completed.
 
 ## Consequences
 

@@ -141,15 +141,22 @@ status is written only when the skip rule passed.
 
 An automatic compaction that failed (§5.5) is not retried in the same turn; the guard takes over.
 
-**Thrash (0.4.0).** After a successful automatic compaction (pre-turn = step 0, mid-turn before
-step `s` = step `s`, overflow recovery = the step being retried) the core remembers its step
-index. When the mid-turn check before step `n` finds the context above `summarizeAt` again
-(after prune) and `n − that index ≤ thrash.withinSteps` (default 2), the core does **not** compact
-again: it raises `W_CONTEXT_THRASH` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`)
-and stops the turn with `'context-thrash'` before the next model call. `turn.beforeEnd` does not
+**Thrash (0.4.0).** After a successful mid-turn compaction (before step `s` = step `s`) or
+overflow-recovery compaction (the step being retried) the core remembers its step index. A
+pre-turn compaction does **not** start the thrash window: a turn that compacted at its start and
+then reads one large tool output compacts normally, as in 0.3. When the mid-turn check before
+step `n` finds the context above `summarizeAt` (after prune) and `n − that index ≤
+thrash.withinSteps` (default 2), the core compacts as usual; the check runs **after** that
+compaction: when it ran (or was skipped as `no-gain`, §4 skip rule) and the context is still
+above `summarizeAt` afterwards (the rebuilt wire, or the unchanged one for `no-gain`), the core
+raises `W_CONTEXT_THRASH` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`,
+`tokens` = the context after that compaction) and stops the turn with `'context-thrash'` before
+the next model call. A second compaction that brings the context below `summarizeAt` is not a
+thrash (it restarts the window); other skips (`nothing-to-drop`, budget, failed earlier) leave
+the size to the guard. `turn.beforeEnd` does not
 run; dangling calls are answered as usual; an `eh.notice` (level `warning`, code
-`EH_CONTEXT_THRASH`) is saved (spec 05 §3.1). `thrash: false` restores 0.3 behaviour (compact
-again; the failed-compaction rule above still applies). `thrash.withinSteps` must be a positive
+`EH_CONTEXT_THRASH`) is saved (spec 05 §3.1). `thrash: false` restores 0.3 behaviour (keep
+going after the second compaction; the failed-compaction rule above still applies). `thrash.withinSteps` must be a positive
 integer.
 
 **Manual** `compact()` is exclusive like a turn: it sets the running flag (a `send()` meanwhile
@@ -309,12 +316,15 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    omitted from projection anyway). A failing save is logged and does not fail the compaction.
 8. **Accounting.** The flush's `totalUsage` is charged like summarizer usage (§5.3 item 5) with
    `source: 'compaction-flush'`, priced with the flush model: turn usage (`TurnResult.usage`,
-   `costUsd`, budgets) during a turn, `state.core.usage` for manual. When the flush used up the
+   `costUsd`, budgets) during a turn, `state.core.usage` for manual. A flush that fails or is
+   aborted after some steps completed still charges those steps (usage collected per step, AI SDK
+   `onStepEnd`): paid calls never escape budgets. When the flush used up the
    budget, the summarizer does not run (`W_BUDGET` with `details.compaction: true`, compaction
    skipped).
 9. **Failure.** A flush error (provider error, failing environment) → `W_HOOK_FAILED` with
    `details: { hook: 'compaction.before', owner, phase: 'flush' }`, the `eh.flush` record carries
-   `error`, and compaction continues. A thrown tool error inside the flush is a tool error result
+   `error` plus the `steps`, `toolCalls`, `usage` and `costUsd` of the steps that completed before
+   the error (rule 8), and compaction continues. A thrown tool error inside the flush is a tool error result
    (status `error`), as in a turn. An abort of the **turn** aborts the flush and the compaction:
    no record, no marker (tool side effects that already happened stay).
 10. **Mid-turn.** The flush runs between two steps of the running turn (the step barrier has
@@ -350,7 +360,7 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    is truncated), feeding the running summary into the next chunk as `PREVIOUS SUMMARY:`
    (rolling). The context lines go with the last chunk.
 5. **Usage and budgets** (0.4.0). Every summarizer call is charged — also one that then fails
-   (e.g. a cut summary, §5.5): during a turn (pre-turn, mid-turn and overflow compaction) as
+   (e.g. a cut summary, §5.5), and every completed step of a flush that later fails (§5.2a rule 8): during a turn (pre-turn, mid-turn and overflow compaction) as
    nested turn usage, like `ctx.turn.addUsage(usage, { model: summarizer, source: 'compaction' })`
    — so it appears in `TurnResult.usage` (tokens and `costUsd`), the message's
    `metadata.eharness.usage`, `state.core.usage` and counts toward `budget` (spec 12 §4); a manual

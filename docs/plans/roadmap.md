@@ -4,7 +4,7 @@ Shipped: 0.1.0 (first release), 0.2.0 (AI SDK helper refactor, `ai@^7.0.123` pee
 0.3.0 (long-running turns and progress guard, model catalog / cost / USD budgets, risk-based
 approvals with `approval.decided`, `eharness/todos`), 0.4.0 (hardening, prune stage, compaction
 thrash stop, skill versions, pre-compaction flush, cross-process abort, `eharness/memory`, durable
-inbox, structured final output (P18, pending merge), production-patterns guide — released by the
+inbox, structured final output, production-patterns guide — released by the
 next version PR).
 Details: `CHANGELOG.md`.
 
@@ -29,7 +29,8 @@ before implementation.
 | **Package split** | Only if an extension needs its own release cadence (ADR-0007). |
 | **Fork** | `session.fork(atMessageId)` → new session id with a copied prefix (needs adapter support or a copy loop). |
 | ~~Prune stage~~ | Done in 0.4.0 (`compaction.prune`, spec 06 §5.0, ADR-0019). |
-| **Output guardrails** | Schema part planned for 0.4.0 (P18, structured final output: `send(…, { output: { schema } })`, `'output-invalid'`) — pending merge; struck when it lands. Policy checks of the final answer remain open. |
+| ~~Output guardrails: schema~~ | Done in 0.4.0 (structured final output: `send(…, { output: { schema } })`, `'output-invalid'`; spec 05 §3.3, ADR-0023). |
+| **Output guardrails: policy checks** | Policy checks of the final answer (content rules, a reviewer model) beyond schema validation. |
 | ~~USD budget~~ | Done in 0.3.0 (spec 12). |
 | **Immediate steer** | Interrupt the current model stream for urgent input instead of waiting for the step boundary. |
 | ~~Cross-process queue / wake~~ | Done in 0.4.0 (durable `InboxAdapter`: queue, steer, wake, collect, abort across instances; spec 05 §12, ADR-0024). |
@@ -46,7 +47,7 @@ before implementation.
 P13–P20 (`docs/plans/README.md`): hardening, prune stage, compaction thrash detection, skill
 versions, pre-compaction flush, cross-process abort, memory plugin, structured final output,
 durable inbox (cross-process queue / steer / wake / collect), production-patterns guide. The rows
-above that 0.4.0 completes are struck through (P20); "Output guardrails" follows the P18 merge.
+above that 0.4.0 completes are struck through (P20).
 Handoff to the requester: `docs/reviews/0.4.0-results.md`.
 
 ## Found during the 0.4.0 audit (not scheduled)

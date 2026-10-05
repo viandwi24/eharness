@@ -111,7 +111,12 @@ export interface TurnInfo {
   kind: TurnKind
   /** True for a turn that waited in the session queue (`ifBusy: 'queue' | 'wait'`, a steer that fell back to a turn, a queued wake). */
   queued: boolean
-  /** Undefined for respond/regenerate/wake and for `send()` without input. */
+  /**
+   * The turn's user message. Undefined for respond/regenerate/wake and for `send()` without
+   * input, and also while the turn's registry resolves — `refresh: 'turn'` instructions and
+   * dynamic tool/skill sources run before the input is normalized and submitted (spec 02 §2);
+   * set from `input.submit` on (`turn.start`, tools, steps).
+   */
   input: HarnessUIMessage | undefined
   /** Validated `callOptions` value of this call. */
   options: unknown

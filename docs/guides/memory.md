@@ -175,7 +175,8 @@ memory({ roots, flushOnCompaction: { prompt: 'Save decisions, open questions and
 ```
 
 The flush may call `memory_view`, `memory_create`, `memory_str_replace` and `memory_insert`
-(`MEMORY_FLUSH_TOOLS`; with the `tool` option, your `memory` tool). It is skipped when no root is
+(`MEMORY_FLUSH_TOOLS`; with the `tool` option, your `memory` tool). The flush call has no turn
+reminder, so the flush prompt also lists the memory roots and the pinned files. It is skipped when no root is
 writable, leaves no trace in the conversation (only a model-invisible `eh.flush` audit message)
 and its usage counts toward the turn and budgets. Details: [compaction](compaction.md#saving-facts-before-summarizing).
 The protocol's "record progress as you go" still matters: a flush is a safety net, not a
