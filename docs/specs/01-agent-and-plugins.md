@@ -454,8 +454,8 @@ declare module 'eharness' {
 | Check | Error |
 |---|---|
 | Plugin name invalid / reserved / duplicate | `EH_CONFIG_INVALID` |
-| Two static tools with the same name | `EH_DUPLICATE_TOOL` |
-| Two static skills with the same name | `EH_DUPLICATE_SKILL` |
+| Two static tools with the same name (both from config or `setup()`) | `EH_DUPLICATE_TOOL` |
+| Two static skills with the same name (both from config or `setup()`) | `EH_DUPLICATE_SKILL` |
 | Data part or message kind type collision | `EH_DUPLICATE_DATA_PART` |
 | Two providers for one service | `EH_SERVICE_CONFLICT` |
 | Required service has no provider | `EH_SERVICE_MISSING` |
@@ -467,6 +467,12 @@ declare module 'eharness' {
 | Unknown hook name, hook that is not a function, invalid instruction/skill shape | `EH_CONFIG_INVALID` |
 | `setup()` returns a promise or throws (the error is kept in `cause`) | `EH_CONFIG_INVALID` |
 | `model` missing, `contextWindow` not a positive number or function, `mcp` entry not a `ToolSource` | `EH_CONFIG_INVALID` |
+| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` not an integer ≥ 0; `progress.repeats` / `window` / `errorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens` not positive; `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
+
+Name conflicts that involve a **session-phase** contribution (`session()` tools or skills that
+collide with static ones or with each other) can only be detected when the session opens: they
+throw `EH_DUPLICATE_TOOL` / `EH_DUPLICATE_SKILL` from `session.ready()` and are a run error of the
+first turn otherwise — not a boot error.
 
 All thrown as `HarnessError` with `code` and a message naming every involved owner (plugin names,
 source ids). Owners are named `the app (agent config)` for the root plugin and `plugin '<name>'`
