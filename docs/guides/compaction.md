@@ -52,7 +52,7 @@ compaction: {
   prune: {
     keepTurns: 2, // default — the newest completed turns keep their outputs (the current turn always does)
     minChars: 2_000, // default — only larger outputs are pruned
-    exclude: ['read_todos'], // tools whose outputs are never pruned
+    exclude: ['read_file'], // tools whose outputs are never pruned
     // replaceWith: (part) => `[${part.toolName} output elided]`, // pure; default TOOL_OUTPUT_PRUNED
   },
 }
@@ -76,12 +76,14 @@ Runnable: [`examples/context-prune.ts`](../../examples/context-prune.ts).
 ## When a turn thrashes
 
 If a turn fills the context again right after a compaction (a step that reads huge outputs),
-compacting again would only burn money. By default, when the context is above `summarizeAt` again
-within 2 model steps after an automatic compaction, the turn stops with `stop: 'context-thrash'`
+compacting again would only burn money. By default, when a second compaction within 2 model
+steps of the previous mid-turn compaction cannot bring the context below `summarizeAt`, the turn
+stops with `stop: 'context-thrash'`
 (warning `W_CONTEXT_THRASH`, and an `eh.notice` with code `EH_CONTEXT_THRASH` is saved so the UI
 can show why). Typical fixes: limit tool outputs (`toolOutput.maxChars`), page large reads, or a
 model with a larger window. `compaction: { thrash: { withinSteps: 3 } }` widens the window;
-`thrash: false` restores 0.3 behaviour (compact again).
+`thrash: false` restores 0.3 behaviour (keep going). A compaction at the start of a turn does not
+count: one large tool output after it compacts normally.
 
 ## What is stored
 

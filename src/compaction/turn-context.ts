@@ -65,8 +65,9 @@ export interface TurnCompaction {
   preTurn(built: BuiltWire): Promise<BuiltWire>
   /**
    * Mid-turn trigger before step ≥ 1; returns the rebuilt wire when a compaction ran, or
-   * `'thrash'` when the context refilled within `thrash.withinSteps` steps after an automatic
-   * compaction (spec 06 §4): the turn stops with `'context-thrash'`.
+   * `'thrash'` when a second automatic compaction within `thrash.withinSteps` steps of the
+   * previous one ran (or was skipped as no-gain) and left the context above `summarizeAt`
+   * (spec 06 §4): the turn stops with `'context-thrash'`.
    */
   midTurn(args: {
     wire: readonly ModelMessage[]
@@ -157,7 +158,7 @@ export function createTurnCompaction(args: {
     config.compaction === false || config.compaction?.thrash === false
       ? undefined
       : (config.compaction?.thrash?.withinSteps ?? DEFAULT_THRASH_WITHIN_STEPS)
-  /** Step index of the last successful automatic compaction of this turn (pre-turn = 0). */
+  /** Step index of the last successful mid-turn or overflow compaction of this turn (not pre-turn). */
   let lastCompactionStep: number | undefined
   /** Step index of the latest mid-turn check (the step an overflow compaction belongs to). */
   let currentStep = 0
@@ -279,8 +280,8 @@ export function createTurnCompaction(args: {
       )
       if (tokens <= engine.limits(info.model).summarizeAt) return built
       const outcome = await compactNow('turn', tokens, built.wire, 'pre-turn')
+      // a pre-turn compaction does not start the thrash window (spec 06 §4)
       if (outcome.status !== 'compacted') return built
-      lastCompactionStep = 0
       return build()
     },
     async midTurn({ wire, stepIndex, delivered }) {
@@ -290,26 +291,40 @@ export function createTurnCompaction(args: {
       const tokens = engine.calibration.apply((await fixed()) + wireTokens(wire, engine.count))
       const summarizeAt = engine.limits(info.model).summarizeAt
       if (tokens <= summarizeAt) return undefined
-      // thrash (spec 06 §4): refilled right after a compaction → stop instead of compacting again
-      if (
+      const outcome = await compactNow('auto', tokens, wire)
+      // thrash (spec 06 §4): a second automatic compaction within the window that ran (or was
+      // skipped as no-gain) and left the context above summarizeAt → stop instead of looping
+      const inWindow =
         thrashWithin !== undefined &&
         lastCompactionStep !== undefined &&
         stepIndex - lastCompactionStep <= thrashWithin
-      ) {
+      let rebuilt: BuiltWire | undefined
+      let after = tokens
+      if (outcome.status === 'compacted') {
+        rebuilt = await build(delivered)
+        if (inWindow) {
+          after = engine.calibration.apply((await fixed()) + wireTokens(rebuilt.wire, engine.count))
+        }
+      }
+      const thrashed =
+        inWindow &&
+        (outcome.status === 'compacted' ||
+          (outcome.status === 'skipped' && outcome.reason === 'no-gain')) &&
+        after > summarizeAt
+      if (thrashed && lastCompactionStep !== undefined) {
         rt.warn(
           {
             code: 'W_CONTEXT_THRASH',
-            message: `The context (~${tokens} tokens) is above summarizeAt (${summarizeAt}) again ${stepIndex - lastCompactionStep} step(s) after a compaction; the turn stops instead of compacting again.`,
-            details: { stepIndex, tokens, summarizeAt, lastCompaction: lastCompactionStep },
+            message: `The context (~${after} tokens) is still above summarizeAt (${summarizeAt}) after a second compaction ${stepIndex - lastCompactionStep} step(s) after the previous one; the turn stops instead of compacting again.`,
+            details: { stepIndex, tokens: after, summarizeAt, lastCompaction: lastCompactionStep },
           },
           `${args.turnId}:thrash`,
         )
         return 'thrash'
       }
-      const outcome = await compactNow('auto', tokens, wire)
-      if (outcome.status !== 'compacted') return undefined
+      if (rebuilt === undefined) return undefined
       lastCompactionStep = stepIndex
-      return build(delivered)
+      return rebuilt
     },
     sanitize(wire, turnStart) {
       const total = segments.reduce((a, b) => a + b, 0)

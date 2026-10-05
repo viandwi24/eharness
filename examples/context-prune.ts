@@ -2,8 +2,8 @@
  * Context pruning and the thrash stop (spec 06 §4, §5.0): the same tool-heavy session with
  * `compaction.prune` off and on. With prune on, old tool outputs are replaced by a short
  * placeholder in the request only, so the summarizer runs later (or never); stored messages stay
- * byte-identical. A turn whose context refills right after a compaction stops with
- * `'context-thrash'` instead of compacting again.
+ * byte-identical. A turn whose context a second compaction within 2 steps cannot bring below
+ * `summarizeAt` stops with `'context-thrash'` instead of looping.
  *
  *   bun examples/context-prune.ts
  */
@@ -67,19 +67,34 @@ const conversation = (list: typeof on.stored) =>
 const same = JSON.stringify(conversation(on.stored)) === JSON.stringify(conversation(off.stored))
 console.log(`stored conversation identical: ${same}`)
 
-// The thrash stop: every step reads a huge log into a small window. After one compaction the
-// context is above summarizeAt again within 2 steps → stop 'context-thrash' (W_CONTEXT_THRASH).
+// The thrash stop: a turn reads dumps into a small window. The first mid-turn compaction makes
+// room; one step later a dump too large to summarize away refills the context, the second
+// compaction cannot get below summarizeAt → stop 'context-thrash' (W_CONTEXT_THRASH).
 const readDump = tool({
   description: 'Read a full memory dump.',
-  inputSchema: z.object({ n: z.number() }),
-  execute: async ({ n }) => `dump ${n}\n${'0123456789abcdef'.repeat(2_000)}`,
+  inputSchema: z.object({ n: z.number(), chars: z.number() }),
+  execute: async ({ n, chars }) => `dump ${n}\n${'0123456789abcdef'.repeat(chars / 16)}`,
 })
-const dump = (n: number) => ({ toolCalls: [{ toolName: 'read_dump', input: { n } }] })
+// scripted steps report realistic input usage, so the token estimate stays calibrated
+const dump = (n: number, chars: number) => (call: { prompt: unknown }) => ({
+  toolCalls: [{ toolName: 'read_dump', input: { n, chars } }],
+  usage: { inputTokens: Math.ceil(JSON.stringify(call.prompt).length / 4), outputTokens: 5 },
+})
 const thrashing = defineHarnessAgent({
-  model: exampleModel([dump(1), dump(2), dump(3), dump(4), dump(5), { text: 'never reached' }]),
-  contextWindow: 12_000,
+  model: exampleModel([
+    dump(1, 4_000),
+    dump(2, 4_000),
+    dump(3, 6_400),
+    dump(4, 4_000),
+    { text: 'never reached' },
+  ]),
+  contextWindow: 2_000,
   tools: { read_dump: readDump },
-  compaction: { model: exampleModel([{ text: 'Summary.' }]), maxSummaryTokens: 100 },
+  compaction: {
+    model: exampleModel([{ text: 'Summary 1.' }, { text: 'Summary 2.' }]),
+    keepLast: 1,
+    maxSummaryTokens: 100,
+  },
   onWarning: (w: HarnessWarning) => {
     if (w.code === 'W_CONTEXT_THRASH') console.log(`warning ${w.code}`)
   },

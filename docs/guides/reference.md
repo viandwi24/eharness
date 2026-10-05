@@ -22,7 +22,7 @@ specs in [`../specs`](../specs) are the full contracts.
 | `inbox` | `{ pollMs: 2_000, claimTtlMs: recovery.staleMs, collect: { quietMs: 1_500, maxWaitMs: 10_000, maxItems: 20 } }` | durable inbox drain (`pollMs: 0` = notifications only) and the `collect` debounce (also without an inbox) — [several instances](multi-instance.md) |
 | `compaction` | `{ summarizeAt: 0.75, keepLast: 4, maxSummaryTokens: 4_000 }` | or `false` — [compaction](compaction.md) |
 | `compaction.prune` | off | `{}` = `{ keepTurns: 2, minChars: 2_000 }`; `exclude`, `replaceWith` — view-only pruning of old tool outputs ([compaction](compaction.md#pruning-old-tool-outputs)) |
-| `compaction.thrash` | `{ withinSteps: 2 }` | or `false` — stop `'context-thrash'` instead of compacting again ([compaction](compaction.md#when-a-turn-thrashes)) |
+| `compaction.thrash` | `{ withinSteps: 2 }` | or `false` — stop `'context-thrash'` when a second compaction within the window cannot get below `summarizeAt` ([compaction](compaction.md#when-a-turn-thrashes)) |
 | `guard` | `{ maxContextRatio: 0.9 }` | `reserveTokens` default: `settings.maxOutputTokens` ?? 8% of the window |
 | `isContextOverflow` | built-in patterns | extra "context too long" detection |
 | `loop` | see below | [long-running turns](long-running-turns.md) |
@@ -203,6 +203,8 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | `state.core` | `abortRequest` | cross-process abort request for the active turn (`turnId`, `at`, `reason?`, `by?`) — the one field another instance may write during a turn |
 | `state.core` | `inboxDelivered` | ids of the last 100 inbox items applied (dedupe) |
 | `ContextStats` | `pruned?: { outputs, chars }` | tool outputs replaced by the prune stage in the current request |
+| assistant message part | `data-eh.output` (`OutputPartData`) | the validated structured answer `{ value, mode, attempts }` (id `output`, never sent to the model); `value` equals `TurnResult.output` |
+| `metadata.eharness` | `output` | `{ ok, attempts }` on every turn with `SendOptions.output` (`ok: false` when no valid answer was stored) |
 | `SkillMeta` / `Skill` / `SkillDoc` | `version?` | from `SKILL.md` frontmatter `version:`; shown by `load_skill`, never in the index |
 | usage `source` | `'compaction'`, `'compaction-flush'` | summarizer and flush usage, charged to the turn and budgets |
 
@@ -225,7 +227,8 @@ can no longer be downloaded), `FINAL_ANSWER_DESCRIPTION`, `FINAL_ANSWER_RECORDED
 - Types (0.4.0): `PruneConfig`, `CompactionBeforeEvent`, `CompactionBeforePatch`, `FlushPayload`,
   `AbortRequest`, `AbortRequestResult`, `InboxAdapter`, `InboxItem`, `InboxItemInput`,
   `SerializedInput`, `CollectOptions`, `EnqueueOptions`, `EnqueueResult`, `InputFilesConfig`,
-  `ToolErrorTextFn`, `ChatRequestOptions`.
+  `ToolErrorTextFn`, `ChatRequestOptions`, `OutputSpec` (the `SendOptions.output` value),
+  `SendOptionsWithOutput` (`SendOptions` with a required `output`, used by the typed overloads).
 - Storage (`eharness/storage/memory`): `memoryMessages()`, `memoryState()`, `memoryInbox()`.
 - Testing (`eharness/testing`): `scriptedModel()`, `messageAdapterConformance()`,
   `stateAdapterConformance()`, `inboxAdapterConformance()` (0.4.0), `fileSystemConformance()`

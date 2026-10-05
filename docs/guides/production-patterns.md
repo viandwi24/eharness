@@ -381,11 +381,18 @@ Contract: spec 07 §3.
 
 ## Pipeline workers and tool-heavy agents
 
-**Structured output (see P18).** An agent used as a pipeline step needs a typed result, not
-free text. The planned 0.4.0 shape is `session.send(input, { output: { schema } })` with
-`TurnResult.output` typed from the schema, a `final_answer` tool (or AI SDK `Output.object` in
-`mode: 'native'`), bounded retries and the stop reason `'output-invalid'`
-([plan P18](../plans/P18-structured-output.md)); its guide is added when it ships.
+**Structured output (0.4.0).** An agent used as a pipeline step needs a typed result, not free
+text. `session.send(input, { output: { schema } })` adds a `final_answer` tool for the turn (or
+passes AI SDK `Output.object` with `mode: 'native'`), sends validation errors back to the model
+up to `maxRetries` times (default 2) and returns the valid answer typed in `result.output`; a turn
+without one stops `'output-invalid'` (`W_OUTPUT_INVALID`):
+
+```ts
+const { stop, output } = await session.send(ticket, { output: { schema: triage } }).result
+if (stop === 'complete') await queue.push(output)
+```
+
+Guide: [structured output](structured-output.md). Contract: spec 05 §3.3, ADR-0023.
 
 **Prune for tool-heavy agents (0.4.0).** Agents that read files, search or call APIs fill their
 context with old tool outputs. Pruning replaces large outputs of older turns by a short
