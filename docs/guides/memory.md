@@ -180,3 +180,6 @@ writable, leaves no trace in the conversation (only a model-invisible `eh.flush`
 and its usage counts toward the turn and budgets. Details: [compaction](compaction.md#saving-facts-before-summarizing).
 The protocol's "record progress as you go" still matters: a flush is a safety net, not a
 replacement.
+
+For episodic memory from compaction summaries, retrieval into a step reminder and the security
+side of shared file systems, see [production patterns](production-patterns.md#episodic-and-long-term-memory).

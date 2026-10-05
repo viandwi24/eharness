@@ -110,6 +110,17 @@ describe('examples run offline', () => {
   )
 
   test(
+    'background-events (inject + wake, silent heartbeat)',
+    async () => {
+      const out = await run('background-events.ts')
+      expect(out).toContain('notify user: Your export is ready')
+      expect(out).toContain('heartbeat: silent OK, nothing sent')
+      expect(out).toContain('stored: jobResult, assistant, eh.event, assistant')
+    },
+    timeout,
+  )
+
+  test(
     'remote-abort (stop a turn running in another instance)',
     async () => {
       const out = await run('remote-abort.ts')

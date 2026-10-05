@@ -28,7 +28,7 @@ Update this table in the same commit that changes a phase's status.
 | P17 | [Memory plugin](P17-memory-plugin.md) | done | P13 (recommended), P15 (for `flushOnCompaction`) | P14, P16, P18 |
 | P18 | [Structured final output](P18-structured-output.md) | todo | P13 (recommended) | P14–P17 |
 | P19 | [Durable inbox port](P19-durable-inbox.md) | done | P13, P16 | — |
-| P20 | [Production-patterns guide, docs, 0.4.0 handoff](P20-production-guide.md) | todo | P13–P19 | — |
+| P20 | [Production-patterns guide, docs, 0.4.0 handoff](P20-production-guide.md) | in progress | P13–P19 | — |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

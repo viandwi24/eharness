@@ -232,7 +232,8 @@ await session.inject('eh.event', { name: 'ci.failed', text: 'CI failed.' }, { wa
 
 Custom kinds (`defineMessageKind`) work the same way. A wake is never lost: if it cannot be
 delivered inline, a turn is queued (and waits for pending approvals). With a durable inbox, a
-wake while the turn runs in another instance is handed to that instance.
+wake while the turn runs in another instance is handed to that instance. Job results, scheduled
+heartbeats and the "silent OK" pattern: [production patterns](production-patterns.md#background-events).
 
 ## Reconnecting
 
