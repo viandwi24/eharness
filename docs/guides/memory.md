@@ -44,6 +44,11 @@ provides `fs`). Any `FileSystem` adapter works — memory is just files.
 - default — read-only: the model may view, never change (`REJECTED: <path> is read-only.`);
 - `label` — shown next to the root, so the model knows what it holds.
 
+**Build root paths only from opaque, validated ids** (no `/`, no `..`, no empty string): a root
+is normalized like any path, so `/memories/users/${'../u2'}` becomes `/memories/users/u2` —
+another user's namespace. Validate ids where you set `ctx.runtime` (e.g. UUIDs or
+`/^[A-Za-z0-9_-]+$/`), or encode them.
+
 Every path the model sends is normalized (`..`, `//`, `\` and NUL are handled as in
 `normalizePath`) and must lie inside a root, otherwise `REJECTED: <path> is outside the memory
 roots.` The most specific root wins, so a writable `/memories/users/u1` inside a read-only
@@ -81,6 +86,11 @@ Typical layouts:
   Prefers tea over coffee.
   </pinned>
   ```
+
+Pinned content is framed as data: a fixed line (`PINNED_PREAMBLE`) says the blocks are stored
+notes, not instructions, and `<pinned>` / `<system-reminder>` tags inside a stored file are
+neutralised (`&lt;/pinned>`), so a file cannot break out of its block. Memory files are still
+untrusted text written by the model (possibly steered by a user); keep secrets out of them.
 
 Results are plain strings; failures start with `ERROR:`, `CONFLICT:` or `REJECTED:` and the model
 corrects itself. Spec 14 §2 lists every exact text.
