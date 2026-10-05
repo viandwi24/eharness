@@ -481,6 +481,11 @@ passed to only; `send`, `respond`, `regenerate` and `edit` accept it (typed over
    `'tool-pending'` returns `output: undefined`.
 8. **`handleChatRequest`** never reads `output` from a request body; it is a server-side option
    (`ChatRequestOptions`).
+9. **Not with steer or collect.** A steer or a collected input joins another turn and cannot ask
+   for its own answer: `send(input, { output, ifBusy: 'steer' | 'collect' })` returns a failed run
+   `EH_INVALID_INPUT` with `details.reason: 'output-with-steer-or-collect'` (whether the session
+   is busy or not; turn operations throw only `EH_SESSION_BUSY` / `EH_SESSION_CLOSED`). Nothing is
+   persisted.
 
 ## 4. `MessageAdapter` (the storage contract)
 
