@@ -37,7 +37,11 @@ when they differ). Cache eviction: `closeSession(id)`, `close()`, or idle evicti
 (`config.sessionIdleMs`, default 30 min) which is skipped while a turn runs, a turn is queued (and
 can start: a queue held by pending approvals, spec 11 §6.2, does not count), or an `events()` reader
 is open. Idle close drops held queued turns like `close()` (`stop: 'aborted'`). After eviction, held references throw `EH_SESSION_CLOSED`; call
-`agent.session(id)` again to get a fresh instance.
+`agent.session(id)` again to get a fresh instance. There is never more than one live writer per
+id in an agent: `agent.session(id)` called while the previous instance is still closing (its
+running turn is aborted and saved, `session.close` hooks run, state is written) returns the new
+instance at once, but it opens — and so runs nothing — only after that close finished (no false
+crash recovery of the turn that was being closed).
 
 ## 2. Session API
 

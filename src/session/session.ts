@@ -95,6 +95,8 @@ export function createSessionHandle(args: {
   state: StateAdapter
   idleMs: number
   onClosed(): void
+  /** The close of the previous live handle of this id: this handle opens only after it. */
+  after?: Promise<void>
 }): SessionHandle {
   const { internals, id } = args
   const config = internals.config
@@ -376,7 +378,10 @@ export function createSessionHandle(args: {
   function ensureOpen(): Promise<OpenSession> {
     if (rt.open !== undefined) return Promise.resolve(rt.open)
     if (opening === undefined) {
-      opening = doOpen().catch((error: unknown) => {
+      const after = args.after
+      // one live handle per id: a handle created while the previous one closes opens after it
+      const start = after === undefined ? doOpen() : after.then(doOpen, doOpen)
+      opening = start.catch((error: unknown) => {
         opening = undefined
         throw error
       })
