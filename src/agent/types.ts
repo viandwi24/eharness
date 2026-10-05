@@ -287,8 +287,13 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   callOptions?: FlexibleSchema
   /** Passed to `streamText` `repairToolCall`. */
   repairToolCall?: ToolCallRepairFunction<ToolSet>
-  /** Crash recovery of turns interrupted by a dead process. Default `{ staleMs: 120_000 }`. */
-  recovery?: { staleMs?: number } | false
+  /**
+   * Crash recovery of turns interrupted by a dead process, and cross-process abort (spec 05 §9).
+   * Default `{ staleMs: 120_000, abortPollMs: 2_000 }`. `abortPollMs`: how often a running turn
+   * reads the state for an abort request of another instance (`0` = never; needs
+   * `StateAdapter.setIf`).
+   */
+  recovery?: { staleMs?: number; abortPollMs?: number } | false
   telemetry?: TelemetryOptions
   /** Throw `EH_CONFIG_INVALID` instead of warning on API misuse. Default false. */
   strict?: boolean

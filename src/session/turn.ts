@@ -65,6 +65,7 @@ import {
 } from './interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
 import { hiddenByRewind } from './load-context.ts'
+import { type AbortPoll, createAbortPoll, DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
 import type { StateCheckpoint } from './state.ts'
 
@@ -105,6 +106,8 @@ export interface TurnHost {
   enqueueSteer(submitted: { input: NormalizedInput; contexts: string[] }): void
   /** Queue a no-input wake turn for an injection that was not delivered (spec 11 §6.3). */
   enqueueWake(): void
+  /** Drop queued turns like `session.abort()` (a cross-process abort, spec 05 §9.1). */
+  dropQueue(): void
 }
 
 /** The running turn as seen by the session (attach, abort, steer, next-step delivery). */
@@ -226,6 +229,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   const recovery = config.recovery !== false
   const staleMs =
     (config.recovery === false ? undefined : config.recovery?.staleMs) ?? DEFAULT_STALE_MS
+  // cross-process abort (spec 05 §9.1): only an adapter with setIf can carry a request
+  const abortPollMs =
+    config.recovery === false || !rt.state.canCas
+      ? 0
+      : (config.recovery?.abortPollMs ?? DEFAULT_ABORT_POLL_MS)
+  let abortPoll: AbortPoll | undefined
 
   const controller = new AbortController()
   let timedOut = false
@@ -551,7 +560,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     return 'aborted'
   }
 
+  /** Heartbeat (spec 05 §9) and abort poll (§9.1): step ends and the heartbeat timer. */
   async function heartbeat(): Promise<void> {
+    await abortPoll?.poll()
     if (!recovery || !committed || assistantId === undefined) return
     if (Date.now() - rt.state.lastWriteAt < staleMs / 4) return
     const active = rt.state.core().activeTurn
@@ -896,14 +907,20 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       pending: structuredClone(core.pending),
       grants: structuredClone(core.grants),
       rewinds: structuredClone(core.rewinds),
+      abortRequest: structuredClone(core.abortRequest),
     }
     const undo = () => {
-      for (const key of ['activeTurn', 'pending', 'grants', 'rewinds'] as const) {
+      for (const key of ['activeTurn', 'pending', 'grants', 'rewinds', 'abortRequest'] as const) {
         if (before[key] === undefined) delete core[key]
         else (core as Record<string, unknown>)[key] = before[key]
       }
     }
     let needWrite = rt.state.dirty
+    // an abort request never names the new turn: it is stale (spec 05 §9.1 rule 6)
+    if (core.abortRequest !== undefined) {
+      delete core.abortRequest
+      needWrite = true
+    }
     if (prep.stale !== undefined) {
       delete core.activeTurn
       needWrite = true
@@ -971,6 +988,20 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
     }
     committed = true
+    if (recovery) {
+      // owner writes keep a foreign abort request (spec 05 §9.1 rule 4); a merged one aborts
+      rt.state.guard(turnId, (request) => abortFromRequest(request.reason))
+      if (abortPollMs > 0) {
+        abortPoll = createAbortPoll({
+          turnId,
+          intervalMs: abortPollMs,
+          peek: () => rt.state.peek(),
+          abort: (request) => abortFromRequest(request.reason),
+          done: () => ended || controller.signal.aborted,
+          onError: (error) => rt.log.warn('eharness: abort poll state read failed', { error }),
+        })
+      }
+    }
     await reportAnswers(prep.open)
 
     // crash recovery of a stale turn (spec 05 §9)
@@ -1220,7 +1251,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       queued: op.queued,
     })
     if (recovery) {
-      heartbeatTimer = setInterval(() => void heartbeat(), Math.max(1, staleMs / 4))
+      const tick = abortPollMs > 0 ? Math.min(staleMs / 4, abortPollMs) : staleMs / 4
+      heartbeatTimer = setInterval(() => void heartbeat(), Math.max(1, tick))
       unref(heartbeatTimer)
     }
 
@@ -1498,6 +1530,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         delete core.activeTurn
         rt.state.markDirty()
       }
+      if (core.abortRequest !== undefined) {
+        delete core.abortRequest // served (or stale): cleared by the end-of-turn write
+        rt.state.markDirty()
+      }
       const previous = core.usage ?? { inputTokens: 0, outputTokens: 0, turns: 0 }
       core.usage = {
         inputTokens: previous.inputTokens + usage.input + usage.nestedInput,
@@ -1508,11 +1544,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       if (previous.costUsd !== undefined || usage.costUsd !== undefined) core.usage.costUsd = cost
       rt.state.markDirty()
       try {
-        await rt.state.writeIfDirty()
+        if (!(await rt.state.writeIfDirty())) await lostState()
       } catch (stateError) {
         rt.log.warn('eharness: end-of-turn state write failed', { error: stateError })
       }
     }
+    rt.state.guard(undefined)
 
     const messages = [
       ...created.slice(0, createdBeforeAssistant),
@@ -1566,6 +1603,29 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     stopObserving()
     // the stream ends last: a reader that saw `finish` can start the next turn right away
     closeBuffer()
+  }
+
+  /**
+   * The guarded end-of-turn write found the stored state owned by another instance (it recovered
+   * this turn as stale): its state wins, ours is reloaded (spec 05 §9.1).
+   */
+  async function lostState(): Promise<void> {
+    rt.log.warn(
+      'eharness: end-of-turn state write skipped: another instance owns the session state',
+    )
+    try {
+      await rt.state.load()
+    } catch {
+      rt.state.discard()
+    }
+    rt.view = undefined
+  }
+
+  /** A matching cross-process abort request (spec 05 §9.1): the normal abort path. */
+  function abortFromRequest(reason: string | undefined): void {
+    if (ended || controller.signal.aborted) return
+    host.dropQueue()
+    controller.abort(reason ?? 'aborted')
   }
 
   function closeBuffer(): void {
