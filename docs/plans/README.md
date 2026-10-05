@@ -21,7 +21,7 @@ Update this table in the same commit that changes a phase's status.
 | P10 | [Model catalog, cost and budgets](P10-models-cost.md) | done | P9 | P11 |
 | P11 | [Approval: risk, decisions, pending details](P11-approval.md) | done | P9 | P10 |
 | P12 | [Todos plugin](P12-todos.md) | done | P9 | — |
-| P13 | [Hardening (audit fixes)](P13-hardening.md) | in progress | P12 | — |
+| P13 | [Hardening (audit fixes)](P13-hardening.md) | done | P12 | — |
 | P14 | [Context pruning, thrash detection, skill versions](P14-prune-thrash-skill-versions.md) | todo | P13 (recommended) | P16, P17, P18 |
 | P15 | [Pre-compaction flush](P15-precompaction-flush.md) | todo | P13, P14 (recommended) | P16, P17, P18 |
 | P16 | [Cross-process abort](P16-cross-process-abort.md) | todo | P13 (recommended) | P14, P15, P17, P18 |
