@@ -409,6 +409,29 @@ describe('item 6: one live handle while a session closes', () => {
   })
 })
 
+describe('item 6: agent.close() and closing handles', () => {
+  test('agent.close() awaits a previous handle that is still closing', async () => {
+    let closed = false
+    const slowClose = definePlugin({
+      name: 'slow',
+      setup: () => ({
+        hooks: {
+          'session.close': async () => {
+            await sleep(30)
+            closed = true
+          },
+        },
+      }),
+    })
+    const { agent } = setup({ model: scriptedModel([{ text: 'a' }]), plugins: [slowClose] })
+    await agent.session('s1').send('x').result
+    void agent.closeSession('s1')
+    agent.session('s1') // replaces the closing handle in the registry
+    await agent.close()
+    expect(closed).toBe(true)
+  })
+})
+
 describe('item 7: a failed preparation restores only what the turn changed', () => {
   test('a background ctx.state.set and clearGrants() during preparation survive', async () => {
     const inner = defaultMemoryState()
