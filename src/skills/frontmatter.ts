@@ -20,7 +20,7 @@
  * @see docs/specs/07-skills.md#8-filesystem-autoload-in-eharnessfilesystem
  */
 import type { SkillMeta } from '../registry/types.ts'
-import { skillDescriptionError, skillNameError } from './define.ts'
+import { skillDescriptionError, skillNameError, skillVersionError } from './define.ts'
 
 /** A scalar value of the subset. */
 export type FrontmatterScalar = string | number | boolean | null
@@ -462,7 +462,7 @@ export function parseSkillMarkdown(
   const block = lines.slice(1, end)
   const parsed = parseFrontmatter(block.join('\n'))
   if (!parsed.ok) return { error: `invalid frontmatter: ${parsed.error}` }
-  const { name, description, ...rest } = parsed.value
+  const { name, description, version, ...rest } = parsed.value
   // `name` / `description` are text: a plain scalar that looks like a number or a boolean keeps
   // its raw text (`007` stays '007', `1.0` stays '1.0'), spec 07 §8
   const nameValue =
@@ -477,7 +477,17 @@ export function parseSkillMarkdown(
         : description
   const descriptionError = skillDescriptionError(descriptionValue)
   if (descriptionError !== undefined) return { error: descriptionError }
+  // `version` is text too: `1.0` stays '1.0' (spec 07 §8)
+  const versionValue =
+    typeof version === 'number' || typeof version === 'boolean'
+      ? rawPlain(block, 'version')
+      : typeof version === 'string'
+        ? version.trim()
+        : version
+  const versionError = skillVersionError(versionValue === null ? undefined : versionValue)
+  if (versionError !== undefined) return { error: versionError }
   const meta: SkillMeta = { name: nameValue as string, description: descriptionValue as string }
+  if (typeof versionValue === 'string') meta.version = versionValue
   if (Object.keys(rest).length > 0) meta.meta = rest
   const body = lines
     .slice(end + 1)

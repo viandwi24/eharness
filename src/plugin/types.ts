@@ -366,7 +366,13 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
    */
   'skill.load'?(
     ctx: HarnessContext<DP>,
-    e: { skill: SkillDoc; source: string; location?: { service: string; root: string } },
+    e: {
+      skill: SkillDoc
+      source: string
+      location?: { service: string; root: string }
+      /** `skill.version` of the document this hook receives, if any (spec 07 §3). */
+      version?: string
+    },
   ): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
 }
 

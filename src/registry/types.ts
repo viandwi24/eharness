@@ -99,6 +99,11 @@ export const RESERVED_TOOL_NAMES: readonly string[] = [
 export interface SkillMeta {
   name: string
   description: string
+  /**
+   * Optional version (1–64 printable characters, e.g. `'2.1.0'`), shown by `load_skill` and passed
+   * to `skill.load` hooks; never shown in the skills index (spec 07 §3).
+   */
+  version?: string
   meta?: Record<string, unknown>
 }
 
@@ -129,6 +134,8 @@ export type SkillFileContent =
 export interface Skill {
   name: string
   description: string
+  /** Optional version (1–64 printable characters), shown by `load_skill` (spec 07 §3). */
+  version?: string
   /** Body of SKILL.md (without frontmatter). */
   content: string
   /** Supporting files, paths relative to the skill root (POSIX, no `..`, no leading `/`). */
