@@ -1469,7 +1469,9 @@ export function createSessionHandle(args: {
           rt,
           adapter: args.inbox,
           staleMs: staleForDrain,
-          claimTtlMs: config.inbox?.claimTtlMs ?? (staleForDrain === false ? DEFAULT_STALE_MS : staleForDrain),
+          claimTtlMs:
+            config.inbox?.claimTtlMs ??
+            (staleForDrain === false ? DEFAULT_STALE_MS : staleForDrain),
           pollMs: config.inbox?.pollMs ?? DEFAULT_INBOX_POLL_MS,
           collect: config.inbox?.collect,
           current: () => {

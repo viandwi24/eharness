@@ -62,10 +62,14 @@ function spyInbox(inner: InboxAdapter = memoryInbox()) {
     subscribe: (sessionId, onNotify) => inner.subscribe?.(sessionId, onNotify) ?? (() => {}),
     pending: (opts) => inner.pending?.(opts) ?? Promise.resolve([]),
   }
+  /** The item is claimed right now (claimed more often than released). */
+  const held = (id: string): boolean =>
+    log.claims.filter((c) => c.ids.includes(id)).length >
+    log.releases.filter((r) => r === id).length
   /** Items enqueued and not acked yet (claimed or not). */
   const left = async (): Promise<number> =>
     log.enqueued.filter((id) => !log.acks.includes(id)).length
-  return { adapter, log, left }
+  return { adapter, log, left, held }
 }
 
 function sharedStorage(inbox = spyInbox()) {
@@ -157,9 +161,8 @@ describe('durable inbox across instances (spec 05 §12)', () => {
     await started
     const enqueued = await b.agent.session('s1').enqueue('also check the logs', { mode: 'steer' })
     expect(enqueued.target).toBe('remote')
-    await until('A claimed the steer', () =>
-      storage.inbox.log.claims.some((c) => c.ids.includes(enqueued.inboxId)),
-    )
+    // held by A's running turn: claimed and not released (B releases what it claims)
+    await until('A holds the steer', () => storage.inbox.held(enqueued.inboxId))
     release()
     const result = await run.result
     expect(result.stop).toBe('complete')
@@ -228,7 +231,7 @@ describe('durable inbox across instances (spec 05 §12)', () => {
     await b.agent.close()
   })
 
-  test("wake from B while A runs: A runs a wake turn after its turn (the event reaches the model)", async () => {
+  test('wake from B while A runs: A runs a wake turn after its turn (the event reaches the model)', async () => {
     const storage = sharedStorage()
     const { gated, started, release } = gateTool()
     const model = scriptedModel([gateCall, { text: 'first done' }, { text: 'woke up' }])
@@ -284,7 +287,9 @@ describe('durable inbox across instances (spec 05 §12)', () => {
     const sessionB = b.agent.session('s1')
     const eventsB = record(sessionB.events())
     expect(await sessionB.requestAbort('user stop')).toEqual({ target: 'remote' })
-    expect(eventsB).toContainEqual(expect.objectContaining({ type: 'inbox-enqueued', kind: 'abort' }))
+    expect(eventsB).toContainEqual(
+      expect.objectContaining({ type: 'inbox-enqueued', kind: 'abort' }),
+    )
     expect((await storage.state.get('s1'))?.core.abortRequest).toBeUndefined()
     const result = await run.result
     expect(result.stop).toBe('aborted')
@@ -352,7 +357,11 @@ describe('durable inbox across instances (spec 05 §12)', () => {
       { text: 'paid' },
       { text: 'next answered' },
     ])
-    const config = { model, tools: { pay }, approval: { policy: { pay: 'user-approval' as const } } }
+    const config = {
+      model,
+      tools: { pay },
+      approval: { policy: { pay: 'user-approval' as const } },
+    }
     const a = instance(storage, config)
     const b = instance(storage, { ...config, inbox: { pollMs: 0 } })
     const sessionA = a.agent.session('s1')
@@ -372,7 +381,9 @@ describe('durable inbox across instances (spec 05 §12)', () => {
     await until('next applied', async () => userTexts(await stored(storage)).includes('next'))
     await sessionA.idle()
     expect(model.prompts.length).toBe(3)
-    const next = (await stored(storage)).find((m) => m.metadata?.eharness?.inboxId === enqueued.inboxId)
+    const next = (await stored(storage)).find(
+      (m) => m.metadata?.eharness?.inboxId === enqueued.inboxId,
+    )
     expect(next?.role).toBe('user')
     await a.agent.close()
     await b.agent.close()
@@ -503,13 +514,12 @@ describe('collect (spec 05 §12 rule 6)', () => {
     expect([steer.target, queued.target]).toEqual(['local', 'local'])
     release()
     await first.result
-    await until('queued turn', async () =>
-      events.filter((e) => e.type === 'turn-end').length >= 2,
-    )
+    await until('queued turn', async () => events.filter((e) => e.type === 'turn-end').length >= 2)
     await session.idle()
     const collected = await session.enqueue('later', { mode: 'collect' })
-    await until('collected turn', async () =>
-      events.filter((e) => e.type === 'turn-end').length >= 3,
+    await until(
+      'collected turn',
+      async () => events.filter((e) => e.type === 'turn-end').length >= 3,
     )
     await session.idle()
     const stored = (await messages.load({ sessionId: 's1' })) as HarnessUIMessage[]

@@ -62,5 +62,7 @@ export function mergeInputs(inputs: readonly NormalizedInput[]): NormalizedInput
   const parts: NormalizedInput['parts'] = []
   if (texts.length > 0) parts.push({ type: 'text', text: texts.join('\n\n') })
   parts.push(...files)
-  return appMetadata === undefined ? { parts } : { parts, appMetadata: structuredClone(appMetadata) }
+  return appMetadata === undefined
+    ? { parts }
+    : { parts, appMetadata: structuredClone(appMetadata) }
 }

@@ -126,7 +126,9 @@ describe('examples run offline', () => {
       const out = await run('inbox.ts')
       expect(out).toContain('B: enqueue steer → remote')
       expect(out).toContain('A: turn 1 → complete; steer delivered inside the turn: true')
-      expect(out).toContain('collect: 3 inputs → 1 message: "hi\n\none more thing:\n\nwhat about discounts?"')
+      expect(out).toContain(
+        'collect: 3 inputs → 1 message: "hi\\n\\none more thing:\\n\\nwhat about discounts?"',
+      )
       expect(out).toContain('B: requestAbort → remote')
       expect(out).toContain('A: turn 3 → aborted')
     },

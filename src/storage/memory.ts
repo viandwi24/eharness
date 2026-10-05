@@ -128,8 +128,7 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
   const sessions = new Map<string, Map<string, Entry>>()
   const byId = new Map<string, Entry>()
   const listeners = new Map<string, Set<() => void>>()
-  const ready = (entry: Entry, at: number) =>
-    entry.claim === undefined || entry.claim.until <= at
+  const ready = (entry: Entry, at: number) => entry.claim === undefined || entry.claim.until <= at
 
   return {
     async enqueue(sessionId, input) {

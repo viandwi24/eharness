@@ -34,7 +34,12 @@ const FIXTURES: InboxItemInput[] = [
     input: {
       parts: [
         { type: 'text', text: 'see file' },
-        { type: 'file', mediaType: 'image/png', url: 'https://example.com/a.png', filename: 'a.png' },
+        {
+          type: 'file',
+          mediaType: 'image/png',
+          url: 'https://example.com/a.png',
+          filename: 'a.png',
+        },
       ],
       clientId: 'client-1',
       appMetadata: { tenant: 't1', flags: [1, 'two', null, true] },
@@ -232,7 +237,11 @@ export function inboxAdapterConformance(
         if (claimed?.kind === 'send') claimed.input.parts.length = 0
         await adapter.release([id])
         const [again] = await adapter.claim(sessionId, 'owner-a')
-        assertJsonEqual(again === undefined ? null : strip(again), send('original'), 'after release')
+        assertJsonEqual(
+          again === undefined ? null : strip(again),
+          send('original'),
+          'after release',
+        )
       },
     },
     {
@@ -240,7 +249,10 @@ export function inboxAdapterConformance(
       run: async () => {
         const adapter = await factory()
         if (adapter.notify === undefined || adapter.subscribe === undefined) {
-          assertTrue(options.requireNotify !== true, 'notify/subscribe required but not implemented')
+          assertTrue(
+            options.requireNotify !== true,
+            'notify/subscribe required but not implemented',
+          )
           return
         }
         const sessionId = uniqueSessionId('notify')
