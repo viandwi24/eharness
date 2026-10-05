@@ -1,11 +1,14 @@
 import { describe, expect, test } from 'bun:test'
+import { tool } from 'ai'
+import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { StateAdapter } from '../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
+import { handleChatRequest } from '../stream/chat-request.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
-import { spyMessages } from './int-kit.ts'
+import { collect, spyMessages } from './int-kit.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
@@ -166,5 +169,141 @@ describe('item 2: inject(next-step) during turn preparation', () => {
     const hot = await run(false)
     const cold = await run(true)
     expect(cold).toEqual(hot)
+  })
+})
+
+describe('item 3: the stream ends only after the turn finalized', () => {
+  test('after the stream ended, send() succeeds immediately', async () => {
+    const turnEnd: string[] = []
+    const probe = definePlugin({
+      name: 'probe',
+      setup: () => ({
+        hooks: {
+          'turn.end': async () => {
+            await sleep(10)
+            turnEnd.push('end')
+          },
+        },
+      }),
+    })
+    const model = scriptedModel([{ text: 'A1' }, { text: 'A2' }])
+    const { agent } = setup({ model, plugins: [probe] })
+    const session = agent.session('s1')
+    const chunks = await collect(session.send('one').stream)
+    expect(chunks.at(-1)).toEqual({ type: 'finish' })
+    expect(turnEnd).toEqual(['end'])
+    expect(session.running).toBe(false)
+    const second = session.send('two')
+    expect((await second.result).stop).toBe('complete')
+  })
+
+  test('handleChatRequest never throws EH_SESSION_BUSY: a failed run answering 409', async () => {
+    const model = scriptedModel([{ text: 'A1', delayMs: 10 }])
+    const { agent } = setup({ model })
+    const session = agent.session('s1')
+    const first = session.send('one')
+    const body = {
+      messages: [
+        { id: 'u2', role: 'user' as const, parts: [{ type: 'text' as const, text: 'two' }] },
+      ],
+    }
+    const run = handleChatRequest(session, body)
+    const result = await run.result
+    expect(result.stop).toBe('error')
+    expect(result.error?.code).toBe('EH_SESSION_BUSY')
+    const response = run.toResponse()
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error: { code: 'EH_SESSION_BUSY', message: expect.any(String) },
+    })
+    await first.result
+  })
+
+  test("ifBusy: 'wait' runs send() after the running turn; session.idle()", async () => {
+    const model = scriptedModel([{ text: 'A1', delayMs: 5 }, { text: 'A2' }])
+    const { agent } = setup({ model })
+    const session = agent.session('s1')
+    const first = session.send('one')
+    const second = session.send('two', { ifBusy: 'wait' })
+    const [a, b] = await Promise.all([first.result, second.result])
+    expect(a.stop).toBe('complete')
+    expect(b.stop).toBe('complete')
+    expect(userTexts(model.prompts[1])).toEqual(['one', 'two'])
+    await session.idle()
+    expect(session.running).toBe(false)
+  })
+
+  test("ifBusy: 'wait' honours abortSignal while waiting", async () => {
+    const model = scriptedModel([{ text: 'A1', delayMs: 5 }])
+    const { agent, messages } = setup({ model })
+    const session = agent.session('s1')
+    const first = session.send('one')
+    const controller = new AbortController()
+    const second = session.send('two', { ifBusy: 'wait', abortSignal: controller.signal })
+    controller.abort()
+    expect((await second.result).stop).toBe('aborted')
+    await first.result
+    await session.idle()
+    const stored = await messages.load({ sessionId: 's1' })
+    expect(stored.length).toBe(2)
+  })
+
+  test("respond({ ifBusy: 'wait' }) waits for the running turn, then answers", async () => {
+    const pay = tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async ({ amount }) => `paid ${amount}`,
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] },
+      { text: 'ok', delayMs: 5 },
+      { text: 'after' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { pay },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('pay').result
+    const approvalId = first.pending?.approvals[0]?.approvalId as string
+    const running = session.respond({ approvals: [{ id: approvalId, approved: true }] })
+    // a second, identical answer waits; the pending state is gone by then: a run error
+    const waited = session.respond(
+      { approvals: [{ id: approvalId, approved: true }] },
+      { ifBusy: 'wait' },
+    )
+    expect((await running.result).stop).toBe('complete')
+    const late = await waited.result
+    expect(late.stop).toBe('error')
+    expect(late.error?.code).toBe('EH_INVALID_INPUT')
+  })
+
+  test('a waiting send() never denies approvals created by the turn it waited for', async () => {
+    const pay = tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async ({ amount }) => `paid ${amount}`,
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'pay', input: { amount: 5 } }], delayMs: 5 },
+      { text: 'paid' },
+      { text: 'next' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { pay },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = session.send('pay')
+    const waited = session.send('next', { ifBusy: 'wait' })
+    const pending = (await first.result).pending
+    expect(pending).toBeDefined()
+    await sleep(10)
+    expect((await session.stats()).pending).toEqual(pending ?? null)
+    const approvalId = pending?.approvals[0]?.approvalId as string
+    expect(
+      (await session.respond({ approvals: [{ id: approvalId, approved: true }] }).result).stop,
+    ).toBe('complete')
+    expect((await waited.result).stop).toBe('complete')
   })
 })

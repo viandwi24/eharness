@@ -4,7 +4,7 @@
  *
  * @see docs/specs/05-session-and-storage.md#2-session-api
  */
-import { asSchema, type Tool, type UIMessage, type UIMessageChunk } from 'ai'
+import { asSchema, type Tool, type UIMessage } from 'ai'
 import type { AgentInternals } from '../agent/internals.ts'
 import type {
   HarnessRun,
@@ -19,7 +19,7 @@ import { toolTokens } from '../compaction/tokens.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import type { HarnessUIMessage, TurnKind, TurnResult } from '../messages/types.ts'
+import type { HarnessUIMessage } from '../messages/types.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
 import {
   addContribution,
@@ -31,7 +31,7 @@ import {
 import type { ToolInput, ToolSource } from '../registry/types.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import { buildSessionSkills } from '../skills/registry.ts'
-import { createRun, createTurnBuffer } from '../stream/run.ts'
+import { createRun, failedRun } from '../stream/run.ts'
 import { createContext, defaultLogger, pendingServices } from './context.ts'
 import { createEventHub } from './events.ts'
 import { createHookRunner } from './hooks.ts'
@@ -74,51 +74,6 @@ function asHarnessError(error: unknown): HarnessError {
       cause: error,
     },
   )
-}
-
-/** A run that fails before it starts (valid stream: start → error → message-metadata → finish). */
-function failedRun(
-  kind: TurnKind,
-  generateId: () => string,
-  error: HarnessError,
-): HarnessRun<UIMessage> {
-  const buffer = createTurnBuffer()
-  const turnId = generateId()
-  const messageId = generateId()
-  const chunks: UIMessageChunk[] = [
-    { type: 'start', messageId },
-    { type: 'error', errorText: error.message },
-    {
-      type: 'message-metadata',
-      messageMetadata: {
-        eharness: { stop: 'error', error: { code: error.code, message: error.message } },
-      },
-    },
-    { type: 'finish' },
-  ]
-  for (const chunk of chunks) buffer.push(chunk)
-  buffer.close()
-  const result: TurnResult<UIMessage> = {
-    turnId,
-    kind,
-    stop: 'error',
-    messages: [],
-    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-    steps: 0,
-    durationMs: 0,
-    error:
-      error.details === undefined
-        ? { code: error.code, message: error.message }
-        : { code: error.code, message: error.message, details: structuredClone(error.details) },
-  }
-  return createRun({
-    turnId,
-    kind,
-    messageId: Promise.resolve(messageId),
-    stream: buffer.reader(),
-    result: Promise.resolve(result),
-    abort: () => {},
-  })
 }
 
 function unref(timer: unknown): void {
@@ -548,6 +503,7 @@ export function createSessionHandle(args: {
       current = undefined
       startNext()
       touch()
+      checkIdle()
     },
     enqueueSteer(submitted) {
       enqueue({ input: submitted.input, submitted, options: {} })
@@ -558,10 +514,20 @@ export function createSessionHandle(args: {
   }
 
   function enqueue(
-    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options'> & { kind?: QueuedTurn['kind'] },
+    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options' | 'wait' | 'respond'> & {
+      kind?: QueuedTurn['kind']
+    },
   ): HarnessRun<UIMessage> {
     const turnId = internals.generateId()
     const kind = item.kind ?? 'send'
+    const remove = () => {
+      const index = queue.indexOf(entry)
+      if (index < 0) return false
+      queue.splice(index, 1)
+      entry.handle.drop()
+      checkIdle()
+      return true
+    }
     const entry: QueuedTurn = {
       ...item,
       kind,
@@ -570,14 +536,14 @@ export function createSessionHandle(args: {
         turnId,
         kind,
         generateId: () => internals.generateId(),
-        onAbort: () => {
-          const index = queue.indexOf(entry)
-          if (index >= 0) queue.splice(index, 1)
-          entry.handle.drop()
-        },
+        onAbort: () => void remove(),
       }),
     }
     queue.push(entry)
+    // a waiting operation is dropped by its own abortSignal while it waits (spec 05 §2)
+    const signal = item.wait === undefined ? undefined : item.options.abortSignal
+    if (signal?.aborted === true) remove()
+    else signal?.addEventListener('abort', () => void remove(), { once: true })
     // the session may have gone idle meanwhile (e.g. a steer that arrived as its turn ended)
     queueMicrotask(startNext)
     return entry.handle.run
@@ -586,11 +552,24 @@ export function createSessionHandle(args: {
   /**
    * Start the next queued turn when the session is idle. The queue is held while approvals or
    * client tool calls wait for `respond()`: a queued turn never auto-denies them (spec 11 §6.2).
+   * While held, a waiting `respond()` may start, and a waiting `send()` whose call already saw
+   * that pending state (it then behaves as a new `send()`).
    */
   function startNext(): void {
     if (rt.closed || rt.running || queue.length === 0) return
-    if (rt.state.core().pending !== undefined) return
-    const next = queue.shift()
+    const pending = rt.state.core().pending
+    const index =
+      pending === undefined
+        ? 0
+        : queue.findIndex(
+            (e) =>
+              e.kind === 'respond' ||
+              (e.kind === 'send' &&
+                e.wait !== undefined &&
+                e.wait.pendingAtCall === pending.messageId),
+          )
+    if (index < 0) return
+    const [next] = queue.splice(index, 1)
     if (next === undefined) return
     rt.running = true
     touch()
@@ -599,12 +578,23 @@ export function createSessionHandle(args: {
       input: undefined,
       ...(next.input === undefined ? {} : { normalized: next.input }),
       ...(next.submitted === undefined ? {} : { submitted: next.submitted }),
+      ...(next.respond === undefined ? {} : { respond: next.respond }),
       options: next.options,
       queued: true,
       turnId: next.turnId,
       via: 'queue',
     })
     next.handle.bind(current.run)
+  }
+
+  // ─── idle ─────────────────────────────────────────────────────────────────────────────────
+  const idleWaiters: Array<() => void> = []
+  function isIdle(): boolean {
+    return rt.closed || (!rt.running && queue.length === 0)
+  }
+  function checkIdle(): void {
+    if (!isIdle()) return
+    for (const resolve of idleWaiters.splice(0)) resolve()
   }
 
   /** The kind's projection for inline delivery; a throwing projection is not delivered inline. */
@@ -624,8 +614,14 @@ export function createSessionHandle(args: {
     }
   }
 
-  function dropQueue(): void {
-    for (const entry of queue.splice(0)) entry.handle.drop()
+  /** Drop queued turns; `abort()` keeps `ifBusy: 'wait'` callers (only `close()` drops them). */
+  function dropQueue(all: boolean): void {
+    for (const entry of [...queue]) {
+      if (!all && entry.wait !== undefined) continue
+      queue.splice(queue.indexOf(entry), 1)
+      entry.handle.drop()
+    }
+    checkIdle()
   }
 
   /** A turn operation that starts now (the caller checked the running flag). */
@@ -661,7 +657,7 @@ export function createSessionHandle(args: {
     if (closing !== undefined) return closing
     rt.closed = true
     if (idleTimer !== undefined) clearTimeout(idleTimer)
-    dropQueue()
+    dropQueue(true)
     closing = (async () => {
       const running = current
       if (running !== undefined) {
@@ -698,6 +694,7 @@ export function createSessionHandle(args: {
         }
       }
       events.close()
+      checkIdle()
       args.onClosed()
     })()
     return closing
@@ -730,6 +727,13 @@ export function createSessionHandle(args: {
         } catch (error) {
           return failedRun('send', () => internals.generateId(), asHarnessError(error))
         }
+        if (ifBusy === 'wait') {
+          return enqueue({
+            input: normalized,
+            options,
+            wait: { pendingAtCall: rt.state.core().pending?.messageId },
+          })
+        }
         if (ifBusy === 'steer' && current !== undefined) {
           const running = session.attach() as HarnessRun<UIMessage>
           // a turn that stopped taking input: the steer becomes a queued turn (spec 11 §6.1)
@@ -744,11 +748,21 @@ export function createSessionHandle(args: {
     },
     respond(response, options = {}) {
       assertOpen()
-      if (rt.running) throw busyError(id)
       const ignoreUnknown =
         (options as SendOptions & { [RESPOND_IGNORE_UNKNOWN]?: boolean })[
           RESPOND_IGNORE_UNKNOWN
         ] === true
+      if (rt.running) {
+        if (options.ifBusy !== 'wait') throw busyError(id)
+        touch()
+        return enqueue({
+          kind: 'respond',
+          input: undefined,
+          options,
+          wait: { pendingAtCall: undefined },
+          respond: { response, ignoreUnknown },
+        })
+      }
       return begin({
         kind: 'respond',
         input: undefined,
@@ -789,7 +803,7 @@ export function createSessionHandle(args: {
     },
     abort(reason) {
       assertOpen()
-      dropQueue()
+      dropQueue(false)
       current?.abort(reason)
     },
     async inject(kind, data, options = {}) {
@@ -918,6 +932,7 @@ export function createSessionHandle(args: {
         rt.running = false
         startNext()
         touch()
+        checkIdle()
       }
     },
     async clearGrants() {
@@ -970,6 +985,12 @@ export function createSessionHandle(args: {
       assertOpen()
       touch()
       return events.stream() as never
+    },
+    idle() {
+      if (isIdle()) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        idleWaiters.push(resolve)
+      })
     },
     close,
   }
