@@ -409,7 +409,8 @@ runs, `send` / `respond` without a waiting `ifBusy` — it returns a failed run 
 `error.code: 'EH_SESSION_BUSY'`, type `HarnessRun`) whose `toResponse()` / `pipeTo()` answer
 **409** with the JSON body `{ error: { code, message } }` instead of a UI message stream. Since
 the stream of a turn ends only after the turn finalized (spec 05 §3 step 17), a client that waits
-for the end of a response before sending the next request never sees a 409 from its own turn.
+for the end of a response before sending the next request never sees a 409 from its own turn
+(a queued, waiting or wake turn that started after it, or another tab's request, still can).
 
 Typical route:
 

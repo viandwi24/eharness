@@ -76,7 +76,7 @@ and `respond`: wait for the running turn and the queue, then run), `model`,
 `toolsContext`. Every turn operation returns a `HarnessRun`: `turnId`, `kind`, `messageId`
 (promise), `stream` (AI SDK UI message stream, single consumer), `result` (never rejects),
 `abort()`, `toResponse()`, `pipeTo(res)`. The stream ends only after the turn finalized: a client
-that saw `finish` can send again at once. `handleChatRequest(session, body, options?)` maps a
+that saw `finish` can send again at once (unless a queued or other turn started meanwhile). `handleChatRequest(session, body, options?)` maps a
 `useChat` request (`ChatRequestBody`) to `send` / `respond` / `regenerate` / `edit`; `options` are
 `SendOptions` plus `actor` (given to `approval.decided` for approval answers). It never throws
 `EH_SESSION_BUSY`: a busy session returns a failed run whose `toResponse()` answers **409**
