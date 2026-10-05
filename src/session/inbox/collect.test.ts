@@ -31,7 +31,12 @@ describe('collect', () => {
     expect(
       mergeInputs([
         { parts: [{ type: 'text', text: 'a' }, file], clientId: 'c1', appMetadata: { k: 1 } },
-        { parts: [{ type: 'text', text: 'b1' }, { type: 'text', text: 'b2' }] },
+        {
+          parts: [
+            { type: 'text', text: 'b1' },
+            { type: 'text', text: 'b2' },
+          ],
+        },
         { parts: [file], appMetadata: { k: 2, j: true } },
       ]),
     ).toEqual({
@@ -44,7 +49,12 @@ describe('collect', () => {
 describe('dedupe', () => {
   test('inboxIdsIn reads user metadata and data-eh.input parts', () => {
     const ids = inboxIdsIn([
-      { id: '1', role: 'user', parts: [], metadata: { eharness: { v: 1, createdAt: 0, inboxId: 'a' } } },
+      {
+        id: '1',
+        role: 'user',
+        parts: [],
+        metadata: { eharness: { v: 1, createdAt: 0, inboxId: 'a' } },
+      },
       {
         id: '2',
         role: 'user',
@@ -62,7 +72,10 @@ describe('dedupe', () => {
 
   test('recordDelivered keeps the newest 100 ids; forgetDelivered removes', () => {
     const core: { inboxDelivered?: string[] } = {}
-    recordDelivered(core, Array.from({ length: 120 }, (_, i) => `id${i}`))
+    recordDelivered(
+      core,
+      Array.from({ length: 120 }, (_, i) => `id${i}`),
+    )
     expect(core.inboxDelivered?.length).toBe(100)
     expect(core.inboxDelivered?.[0]).toBe('id20')
     recordDelivered(core, ['id20'])

@@ -832,24 +832,26 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const recoveryNoticeId = stale === undefined ? undefined : rt.nextId()
     let user: HarnessUIMessage | undefined
     if (normalized !== undefined) {
-      user = withInboxMeta(buildUserMessage(
-        contexts.length === 0
-          ? normalized
-          : {
-              ...normalized,
-              parts: [
-                ...normalized.parts,
-                ...contexts.map((text) => ({ type: 'text' as const, text })),
-              ],
-            },
-        {
-          id: rt.nextId(),
-          turnId,
-          createdAt: startedAt,
-          parentId: newest,
-          augmented: contexts.length,
-        },
-      ))
+      user = withInboxMeta(
+        buildUserMessage(
+          contexts.length === 0
+            ? normalized
+            : {
+                ...normalized,
+                parts: [
+                  ...normalized.parts,
+                  ...contexts.map((text) => ({ type: 'text' as const, text })),
+                ],
+              },
+          {
+            id: rt.nextId(),
+            turnId,
+            createdAt: startedAt,
+            parentId: newest,
+            augmented: contexts.length,
+          },
+        ),
+      )
       info.input = user
     }
     if (plan !== undefined) {

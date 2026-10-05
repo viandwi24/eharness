@@ -76,9 +76,7 @@ export async function migrateInbox(db: SqlClient, options: PostgresOptions = {})
     claimed_by     text,
     claimed_until  timestamptz
   )`)
-  await db.query(
-    `CREATE INDEX IF NOT EXISTS eh_inbox_session_id ON ${table} (session_id, id)`,
-  )
+  await db.query(`CREATE INDEX IF NOT EXISTS eh_inbox_session_id ON ${table} (session_id, id)`)
 }
 
 interface InboxRow {
@@ -128,7 +126,13 @@ export function postgresInbox(
         [sessionId, owner, Math.max(1, Math.round(opts.claimTtlMs ?? 120_000)), opts.limit ?? null],
       )
       return rows
-        .map((row): InboxItem => ({ ...JSON.parse(row.item), id: row.id, attempts: Number(row.attempts) }))
+        .map(
+          (row): InboxItem => ({
+            ...JSON.parse(row.item),
+            id: row.id,
+            attempts: Number(row.attempts),
+          }),
+        )
         .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     },
     async ack(ids) {
@@ -182,7 +186,9 @@ export function postgresInbox(
 }
 
 /** `PgListener` over Bun's built-in Postgres client (`sql.listen`, Bun only). */
-export async function bunSqlListener(url: string): Promise<PgListener & { close(): Promise<void> }> {
+export async function bunSqlListener(
+  url: string,
+): Promise<PgListener & { close(): Promise<void> }> {
   const { SQL } = await import('bun')
   const sql = new SQL(url)
   return {
