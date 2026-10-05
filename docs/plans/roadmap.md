@@ -36,3 +36,29 @@ before implementation.
 | **Goal plugin** | Outer loop: re-prompt after a turn until a goal is met (judge model or `update_goal` tool), paused after empty turns and by budgets. |
 | **Compaction thrash detection** | Stop when the context is full again within ~2 steps after a compaction. |
 | **Shared task lists** | Todos shared across subagents/sessions (`listId`, owners, dependencies). |
+
+## Planned for 0.4.0
+
+P13–P20 (`docs/plans/README.md`): hardening, prune stage, compaction thrash detection, skill
+versions, pre-compaction flush, cross-process abort, memory plugin, structured final output,
+durable inbox (cross-process queue / steer / wake / collect), production-patterns guide. The rows
+above are struck through by P20 when 0.4.0 ships.
+
+## Found during the 0.4.0 audit (not scheduled)
+
+The audit also re-confirmed three open rows above as the next most requested: **Subagents
+plugin**, **AI SDK `Agent` interface adapter** (`asAgent()`) and **HarnessAgent adapter**.
+
+| Item | Notes |
+|---|---|
+| **Delta persistence** | `persistEachStep` rewrites the whole assistant message every step (write amplification on long turns). Options: optional `MessageAdapter.appendParts(sessionId, messageId, parts)` or batched step saves; must keep upsert-by-id semantics as the fallback. |
+| **Projection cache** | Every step re-projects the whole view (quadratic over a long session). Cache the model projection per message id + revision; invalidate on upsert. |
+| **Turn-level tracing** | OpenTelemetry spans per turn / step / tool / compaction around AI SDK's own telemetry (`telemetry` is only passed through today). |
+| **Typed `runtime` / `callOptions`** | Infer `ctx.runtime` and `ctx.turn.options` types from the agent config instead of `Record<string, unknown>` / `unknown`. |
+| **Plugin tools in `InferHarnessUIMessage`** | Tool parts of plugin-contributed tools are not in the inferred UI message type yet. |
+| **`TurnBufferAdapter`** | Cross-instance `attach()` (same as "Cross-process resumable streams"; listed here because the inbox makes it the next gap). |
+| **`maxSummaryTokens` scaling** | Default 4 000 regardless of window; scale with the summarizer window (e.g. 2–5 %) with a cap. |
+| **Budget pre-flight estimate** | Estimate the next step's cost before calling the model and stop early instead of overshooting by one step. |
+| **Session-cached instruction runtime leak warning** | A session-refresh instruction that reads `ctx.runtime` caches the first request's runtime for the whole session; warn (or document loudly) when such an instruction reads per-request runtime. |
+| **Pruning inside the current turn** | P14 prunes completed turns only; very long single turns could prune old steps by token distance (cache cost per step). |
+| **Forced final output on wrap-up** | P18 leaves the `max-steps` wrap-up tool-less; optionally force `final_answer` there. |
