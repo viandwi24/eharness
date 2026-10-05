@@ -41,6 +41,11 @@ turn before the commit point (a run error; instructions are never silently dropp
 really change every turn (time, live counters); everything else should be `'session'` so the
 system prompt stays byte-identical for the whole session (prompt cache, §6).
 
+Dynamic instructions and dynamic sources (tool sources §3.2, skill sources) resolve **before** the
+turn's input is normalized and submitted (`input.submit`): during that phase `ctx.turn.input` is
+`undefined` even for a `send()` with input. A `refresh: 'turn'` text must not depend on the
+current user message; input-dependent context belongs in a `step.prepare` `reminder`, which sees it.
+
 ## 3. Tools
 
 ### 3.1 Static tools
