@@ -95,6 +95,22 @@ describe('createWarningEmitter', () => {
     }
   })
 
+  test('the dedupe set is bounded (10 000 per-turn keys keep at most 1 000)', () => {
+    const spy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const emit = createWarningEmitter({})
+      for (let i = 0; i < 10_000; i++) emit(warning, `turn-${i}`)
+      expect(spy).toHaveBeenCalledTimes(10_000)
+      // a recent key is still deduplicated, the oldest one was evicted
+      emit(warning, 'turn-9999')
+      expect(spy).toHaveBeenCalledTimes(10_000)
+      emit(warning, 'turn-0')
+      expect(spy).toHaveBeenCalledTimes(10_001)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('strict turns misuse warnings into EH_CONFIG_INVALID', () => {
     const emit = createWarningEmitter({ strict: true, onWarning: () => {} })
     expect(() => emit({ code: 'W_UNKNOWN_DATA_PART', message: 'nope' })).toThrow(HarnessError)

@@ -65,7 +65,8 @@ reaches the caller of `send()`.
 ## 2. Warnings (non-fatal)
 
 Delivered to `config.onWarning` (every occurrence; the **default** handler deduplicates per
-code + key), as transient `data-eh.warning` during a turn, and as session `data` events otherwise.
+code + key, remembering the 1 000 most recently used keys so per-turn keys cannot grow it
+forever), as transient `data-eh.warning` during a turn, and as session `data` events otherwise.
 With `config.strict: true`, misuse warnings (`W_TRANSIENT_OVERRIDE`, `W_UNKNOWN_DATA_PART`,
 `W_WRITE_OUTSIDE_TURN`) throw `EH_CONFIG_INVALID` instead.
 
