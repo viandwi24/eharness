@@ -1,6 +1,7 @@
 # Build board
 
-Goal of this board: ship **eharness 0.1.0** — the skeleton described in `docs/specs/*`.
+Goal of this board: ship **eharness 0.1.0** — the skeleton described in `docs/specs/*` — and the
+releases after it (P9–P12: 0.3.0; P13–P20: 0.4.0).
 
 Status legend: `todo` · `in progress` · `blocked` · `review` · `done`.
 Update this table in the same commit that changes a phase's status.
@@ -20,6 +21,21 @@ Update this table in the same commit that changes a phase's status.
 | P10 | [Model catalog, cost and budgets](P10-models-cost.md) | done | P9 | P11 |
 | P11 | [Approval: risk, decisions, pending details](P11-approval.md) | done | P9 | P10 |
 | P12 | [Todos plugin](P12-todos.md) | done | P9 | — |
+| P13 | [Hardening (audit fixes)](P13-hardening.md) | todo | P12 | — |
+| P14 | [Context pruning, thrash detection, skill versions](P14-prune-thrash-skill-versions.md) | todo | P13 (recommended) | P16, P17, P18 |
+| P15 | [Pre-compaction flush](P15-precompaction-flush.md) | todo | P13, P14 (recommended) | P16, P17, P18 |
+| P16 | [Cross-process abort](P16-cross-process-abort.md) | todo | P13 (recommended) | P14, P15, P17, P18 |
+| P17 | [Memory plugin](P17-memory-plugin.md) | todo | P13 (recommended), P15 (for `flushOnCompaction`) | P14, P16, P18 |
+| P18 | [Structured final output](P18-structured-output.md) | todo | P13 (recommended) | P14–P17 |
+| P19 | [Durable inbox port](P19-durable-inbox.md) | todo | P13, P16 | — |
+| P20 | [Production-patterns guide, docs, 0.4.0 handoff](P20-production-guide.md) | todo | P13–P19 | — |
+
+**P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
+branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next
+version PR releases them as one 0.4.0. "Can run in parallel" means the phases do not depend on
+each other; on a single branch they are still committed one after another (rebase before every
+commit). Source of P14–P20: the 0.4 proposal (maintainer-only, not committed) — items U1–U9 are
+mapped in each phase file; results go to the 0.4.0 results notes (kept outside the repository) (P20).
 
 After 0.1.0: [roadmap.md](roadmap.md).
 
