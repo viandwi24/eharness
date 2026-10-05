@@ -249,4 +249,30 @@ describe('hard cap', () => {
     expect(output.originalChars).toBe(9_000 + '{"rows":""}'.length)
     expect(output.preview.length).toBeLessThan(MIN_TRUNCATED_OUTPUT_CHARS + 40)
   })
+
+  test('an escape-heavy limited preview shrinks by its serialized size (no false overflow)', () => {
+    const preview = '"\\'.repeat(2_000)
+    const output = { truncated: true, preview, originalChars: 90_000 }
+    const current: ModelMessage[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'tool-call', toolCallId: 'c1', toolName: 'q', input: {} }],
+      },
+      {
+        role: 'tool',
+        content: [
+          {
+            type: 'tool-result',
+            toolCallId: 'c1',
+            toolName: 'q',
+            output: { type: 'json', value: output },
+          },
+        ],
+      },
+    ]
+    const limit = measure(current) - 500
+    const r = applyHardCap({ head: [], turns: [], current, fixedTokens: 0, limit, measure })
+    expect(r.over).toBe(false)
+    expect(r.truncatedOutputs).toBe(1)
+  })
 })
