@@ -1,6 +1,6 @@
 # P14 — Context pruning, thrash detection, skill versions
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: BTeams proposal items **U2** (prune stage), **U8** (compaction thrash detection) and
 **U7** (skill versions).
@@ -120,46 +120,46 @@ Normative rules (spec 06 new §5.0 "Prune"):
 
 ## Checklist
 
-- [ ] ADR-0019 "Prune stage and thrash stop" (`Proposed` → `Accepted` on merge): amends ADR-0004
+- [x] ADR-0019 "Prune stage and thrash stop" (`Proposed` → `Accepted` on merge): amends ADR-0004
       — compaction stays one fixed algorithm; prune is a **setting** of it, not a strategy. Mark
       ADR-0004 "Amended by ADR-0019".
-- [ ] Spec 06: §1 config, new §5.0 Prune, §2 `ContextStats.pruned`, §4 order note + thrash rule,
+- [x] Spec 06: §1 config, new §5.0 Prune, §2 `ContextStats.pruned`, §4 order note + thrash rule,
       §8 "never" list (prune never touches storage); spec 10: stop reason, `W_CONTEXT_THRASH`,
       `EH_CONTEXT_THRASH` notice code, `TOOL_OUTPUT_PRUNED` text; spec 03 §6 projection step;
       spec 07 version.
-- [ ] Tests first (`src/compaction/prune.test.ts`):
-  - [ ] deterministic: same view projected twice → identical wire; independent of wall clock;
-  - [ ] cache-stable: within a turn of 10 steps the wire prefix up to the current turn is
+- [x] Tests first (`src/compaction/prune.test.ts`):
+  - [x] deterministic: same view projected twice → identical wire; independent of wall clock;
+  - [x] cache-stable: within a turn of 10 steps the wire prefix up to the current turn is
         byte-identical across steps; across turns only the newly aged turn changes;
-  - [ ] `exclude`, `minChars`, `keepTurns` honoured; errors/denied never pruned; current turn
+  - [x] `exclude`, `minChars`, `keepTurns` honoured; errors/denied never pruned; current turn
         never pruned;
-  - [ ] pairs intact: every `tool-call` keeps its `tool-result` (sanitize finds nothing to fix);
-  - [ ] storage untouched (adapter spy sees no extra save);
-  - [ ] summarize not triggered when prune alone brings the context under `summarizeAt`;
+  - [x] pairs intact: every `tool-call` keeps its `tool-result` (sanitize finds nothing to fix);
+  - [x] storage untouched (adapter spy sees no extra save);
+  - [x] summarize not triggered when prune alone brings the context under `summarizeAt`;
         triggered when it does not;
-  - [ ] `replaceWith` receives the AI SDK `ToolResultPart` and its text is used;
-  - [ ] `prune` undefined → wire identical to 0.3 golden.
-- [ ] Implement `src/compaction/prune.ts` + projection hook point + estimate integration.
-- [ ] Thrash tests (`compaction.int.test.ts`): context refills within 2 steps → `'context-thrash'`,
+  - [x] `replaceWith` receives the AI SDK `ToolResultPart` and its text is used;
+  - [x] `prune` undefined → wire identical to 0.3 golden.
+- [x] Implement `src/compaction/prune.ts` + projection hook point + estimate integration.
+- [x] Thrash tests (`compaction.int.test.ts`): context refills within 2 steps → `'context-thrash'`,
       `W_CONTEXT_THRASH`, notice saved, no second summarizer call; refill after 3 steps → normal
       second compaction; `thrash: false` → second compaction.
-- [ ] Implement thrash detection in the loop (stop rule placed with the mid-turn trigger).
-- [ ] Skill version tests (frontmatter, `load_skill` golden, hook event, conformance fixture);
+- [x] Implement thrash detection in the loop (stop rule placed with the mid-turn trigger).
+- [x] Skill version tests (frontmatter, `load_skill` golden, hook event, conformance fixture);
       implement.
-- [ ] Guides: `compaction.md` (prune section, cache trade-off, thrash), `skills.md` (version);
+- [x] Guides: `compaction.md` (prune section, cache trade-off, thrash), `skills.md` (version);
       offline example `examples/context-prune.ts` (scripted model, large tool outputs) added to
       `examples/examples.test.ts`.
-- [ ] `reference.md` rows (prune options, stop reason, warning).
-- [ ] Changeset; board updated.
+- [x] `reference.md` rows (prune options, stop reason, warning).
+- [x] Changeset; board updated.
 
 ## Acceptance criteria
 
-- [ ] With `prune: {}` a 20-turn tool-heavy scripted session reaches the summarizer later (or
+- [x] With `prune: {}` a 20-turn tool-heavy scripted session reaches the summarizer later (or
       never) compared with `prune` off, and the stored messages are byte-identical in both runs.
-- [ ] No tool call/result pair is ever split by prune (property test over random views).
-- [ ] A thrashing turn stops with `'context-thrash'` after at most one compaction.
-- [ ] `load_skill` shows `version:` when present; nothing changes for skills without it.
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] No tool call/result pair is ever split by prune (property test over random views).
+- [x] A thrashing turn stops with `'context-thrash'` after at most one compaction.
+- [x] `load_skill` shows `version:` when present; nothing changes for skills without it.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -188,6 +188,26 @@ Normative rules (spec 06 new §5.0 "Prune"):
 - Thrash default on is a behaviour change in a minor (allowed in 0.x); conservative alternative is
   default off. Decision: on, because repeated compaction in one turn burns money without progress
   (same reasoning as the progress guard, ADR-0015). Changeset calls it out.
+
+- **Implementation notes (P14).** (a) The prune hook point is the turn wire builder
+  (`src/compaction/turn-context.ts` `build()`, per completed-turn segment), not `project()`:
+  `project()` also feeds token estimates and the summarizer transcript, which must stay unpruned;
+  spec 03 §6 documents the step. `src/messages/project.ts` is unchanged. (b) Unit tests live in
+  `src/compaction/prune.test.ts`, turn-level ones (cache stability, storage, summarize trigger,
+  0.3 golden `prune-off.prompts.json`, stats) in `src/compaction/prune.int.test.ts`.
+  (c) Provider-executed tool results (inside assistant messages) are never pruned — their format
+  is provider-specific (conservative). (d) A throwing / non-string `replaceWith` falls back to the
+  default placeholder silently (it must be pure; no warning to avoid noise every turn).
+  (e) `ContextStats.pruned.chars` = characters saved (original − placeholder).
+  (f) `W_CONTEXT_THRASH.details.lastCompaction` = the step index of that compaction (pre-turn = 0).
+  (g) The thrash check runs at the mid-turn trigger, after input of the step boundary was
+  delivered (same place as the budget `cost-cap` stop after a compaction); that input is stored but
+  never seen by the model — acceptable, same as `cost-cap`. (h) The notice is saved in
+  `src/session/turn.ts` (`onEnd`, next to the error/timeout notice) — a 10-line edit outside the
+  owned folders. (i) An invalid frontmatter `version` makes the skill invalid
+  (`W_INVALID_SKILL` / `EH_CONFIG_INVALID`) instead of silently moving it to `meta`; before 0.4 a
+  `version` key landed in `meta` (shown by `load_skill` in the same place, now quoted when it looks
+  like a number). `skillSourceConformance` checks `version` by default (opt out `{ version: false }`).
 
 ## Requests to other phases
 

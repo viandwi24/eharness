@@ -40,6 +40,7 @@ export function isHarnessError(e: unknown, code?: HarnessErrorCode): e is Harnes
 | `EH_TURN_INTERRUPTED` | a turn was recovered after its process died (spec 05 §9) |
 | `EH_INPUT_BLOCKED` | `input.submit` blocked the input with `persist: true` (spec 05 §3) |
 | `EH_TURN_TIMEOUT` | the turn hit `loop.turnTimeoutMs` |
+| `EH_CONTEXT_THRASH` | the turn stopped with `'context-thrash'` (level `warning`, spec 06 §4) |
 
 "Run error" = reported through the turn stream and `run.result` (`stop: 'error'`,
 `error.code`), never thrown (spec 05 §2). `ready()` rethrows session-open errors for callers who
@@ -116,6 +117,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6) |
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
+| `W_CONTEXT_THRASH` | the context was above `summarizeAt` again within `compaction.thrash.withinSteps` steps after an automatic compaction; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `lastCompaction` = step index of that compaction, spec 06 §4) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 | `W_ABORT_UNSUPPORTED` | `abort()` / `requestAbort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |
 
@@ -152,6 +154,7 @@ export type StopReason =
   | 'timeout'         // loop.turnTimeoutMs, or an AI SDK step timeout (settings.timeout)
   | 'blocked'         // an input.submit hook blocked the input (spec 05 §3)
   | 'stuck'           // the progress guard found the turn repeating or failing; a reminder did not help (spec 05 §3.2)
+  | 'context-thrash'  // the context filled up again right after a compaction (spec 06 §4; 0.4.0)
   | 'interrupted'     // the process died mid-turn; set by crash recovery (spec 05 §9)
   | 'max-steps'       // step budget reached (loop.maxSteps / SendOptions.maxSteps, + extendSteps)
   | 'cost-cap'        // loop.maxTurnOutputTokens or a budget exceeded
@@ -196,4 +199,5 @@ UIs and tests). Changing one is a minor change (it changes what models see).
 | `PROGRESS_NUDGE` | `You are not making progress: {what}. Do not repeat it. Try a different approach, or stop and explain what blocks you.` | progress guard reminder (spec 05 §3.2) |
 | `MAX_STEPS_WRAP_UP` | `The step limit of this turn is reached and tools are disabled. Summarize what you did, what is left, and how to continue.` | wrap-up step reminder (spec 05 §3.1) |
 | `TOOL_OUTPUT_TRUNCATED` | `…[truncated {n} chars]…` | output limits (spec 09 §4) |
+| `TOOL_OUTPUT_PRUNED` | `[output of {tool} pruned: {n} chars]` | prune stage placeholder (`{n}` = characters of the original output; spec 06 §5.0) |
 | `FILE_UNAVAILABLE` | `[file unavailable: {mediaType} {filename}]` | a file of an earlier turn whose URL cannot be downloaded (spec 05 §3 step 7) |

@@ -36,6 +36,12 @@ export const MAX_STEPS_WRAP_UP: string =
 export const TOOL_OUTPUT_TRUNCATED: string = '…[truncated {n} chars]…'
 
 /**
+ * Placeholder of a pruned tool output (spec 06 §5.0): `{tool}` is the tool name, `{n}` the
+ * number of characters of the original output.
+ */
+export const TOOL_OUTPUT_PRUNED: string = '[output of {tool} pruned: {n} chars]'
+
+/**
  * Replaces a file of an earlier turn whose URL could not be downloaded (e.g. an expired link), so
  * later turns still run (`{mediaType}`, `{filename}`; spec 05 §3, spec 10 §5).
  */

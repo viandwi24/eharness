@@ -933,6 +933,97 @@ describe('triggers and windows', () => {
   })
 })
 
+describe('compaction thrash (spec 06 §4)', () => {
+  const fetchTool = tool({
+    description: 'Fetch a document',
+    inputSchema: z.object({ n: z.number(), size: z.number() }),
+    execute: async ({ n, size }) => `F${n} ${'z'.repeat(size)}`,
+  })
+  /** ~1 000 tokens per big output, ~50 per small one. */
+  const fetch = (n: number, size: 'big' | 'small') =>
+    callTool('fetch', { n, size: size === 'big' ? 4_000 : 200 })
+
+  test('context refills within 2 steps → context-thrash, W_CONTEXT_THRASH, notice saved, one summarizer call', async () => {
+    const { agent, model, summarizer, messages, warnings } = setup(
+      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'big'), fetch(3, 'big'), answer('done')],
+      { tools: { fetch: fetchTool } },
+    )
+    const result = await agent.session('s1').send('Go').result
+    expect(result.stop).toBe('context-thrash')
+    expect(result.steps).toBe(3)
+    expect(summarizer.calls).toHaveLength(1)
+    expect(model.prompts).toHaveLength(3) // no model call after the thrash
+    const thrash = warnings.filter((w) => w.code === 'W_CONTEXT_THRASH')
+    expect(thrash).toHaveLength(1)
+    expect(thrash[0]?.details).toMatchObject({ stepIndex: 3, lastCompaction: 2 })
+    expect(thrash[0]?.details?.tokens as number).toBeGreaterThan(
+      thrash[0]?.details?.summarizeAt as number,
+    )
+    const stored = await all(messages)
+    const notice = stored.find((m) => isKindMessage(m, 'eh.notice'))
+    expect(notice?.parts[0]).toMatchObject({
+      data: { level: 'warning', code: 'EH_CONTEXT_THRASH' },
+    })
+    const assistant = stored.find((m) => m.id === result.messageId)
+    expect(assistant?.metadata?.eharness?.stop).toBe('context-thrash')
+  })
+
+  test('turn.beforeEnd does not run for context-thrash', async () => {
+    const calls: string[] = []
+    const probe = definePlugin({
+      name: 'probe',
+      setup: () => ({
+        hooks: {
+          'turn.beforeEnd': (_ctx, e) => {
+            calls.push(e.stop)
+            return { continue: { reason: 'keep going' } }
+          },
+        },
+      }),
+    })
+    const { agent } = setup(
+      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'big'), fetch(3, 'big'), answer('done')],
+      { tools: { fetch: fetchTool }, plugins: [probe] },
+    )
+    const result = await agent.session('s1').send('Go').result
+    expect(result.stop).toBe('context-thrash')
+    expect(calls).toHaveLength(0)
+  })
+
+  test('refill after 3 steps → a normal second compaction', async () => {
+    const { agent, summarizer, warnings } = setup(
+      [
+        fetch(0, 'big'),
+        fetch(1, 'big'),
+        fetch(2, 'small'),
+        fetch(3, 'small'),
+        fetch(4, 'big'),
+        answer('done'),
+      ],
+      { tools: { fetch: fetchTool } },
+    )
+    const result = await agent.session('s1').send('Go').result
+    expect(result.stop).toBe('complete')
+    expect(summarizer.calls).toHaveLength(2)
+    expect(warnings.filter((w) => w.code === 'W_CONTEXT_THRASH')).toHaveLength(0)
+  })
+
+  test('thrash: false → compacts again (0.3 behaviour)', async () => {
+    const summarizer = summarizerModel((_call, i) => `SUMMARY-${i + 1}`)
+    const { agent, warnings } = setup(
+      [fetch(0, 'big'), fetch(1, 'big'), fetch(2, 'big'), fetch(3, 'big'), answer('done')],
+      {
+        tools: { fetch: fetchTool },
+        compaction: { model: summarizer, keepLast: 1, maxSummaryTokens: 100, thrash: false },
+      },
+    )
+    const result = await agent.session('s1').send('Go').result
+    expect(result.stop).toBe('complete')
+    expect(summarizer.calls.length).toBeGreaterThanOrEqual(2)
+    expect(warnings.filter((w) => w.code === 'W_CONTEXT_THRASH')).toHaveLength(0)
+  })
+})
+
 describe('acceptance', () => {
   test('30 turns in a small window: compacts at the ratio, never over the hard limit, full history kept', async () => {
     const steps = Array.from({ length: 30 }, (_, i) => answer(`A${i + 1}`))

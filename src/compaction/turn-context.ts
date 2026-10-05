@@ -18,11 +18,15 @@ import type { SessionRuntime } from '../session/runtime.ts'
 import type { BudgetOverrun, CompactOutcome, SessionCompaction } from './compact.ts'
 import { applyHardCap } from './guard.ts'
 import { isContextOverflow, reportedTokenCount } from './overflow.ts'
+import { type PruneStats, pruneTurns, resolvePrune } from './prune.ts'
 import { toolSetTokens, wireTokens } from './tokens.ts'
 import { groupTurns, isBoundaryMessage, partialOf, stepStarts, trimToPartial } from './turns.ts'
 
 /** Factor applied to `maxContextRatio` by the tighter guard of overflow recovery (spec 06 §7). */
 export const TIGHTER_GUARD_FACTOR = 0.8
+
+/** Default `compaction.thrash.withinSteps` (spec 06 §4). */
+export const DEFAULT_THRASH_WITHIN_STEPS = 2
 
 /** A turn wire and the index where the current turn starts. */
 export interface BuiltWire {
@@ -58,12 +62,16 @@ export interface TurnCompaction {
   build(delivered?: readonly ModelMessage[]): Promise<BuiltWire>
   /** Pre-turn trigger (spec 06 §4): compacts and rebuilds when over `summarizeAt`. */
   preTurn(built: BuiltWire): Promise<BuiltWire>
-  /** Mid-turn trigger before step ≥ 1; returns the rebuilt wire when a compaction ran. */
+  /**
+   * Mid-turn trigger before step ≥ 1; returns the rebuilt wire when a compaction ran, or
+   * `'thrash'` when the context refilled within `thrash.withinSteps` steps after an automatic
+   * compaction (spec 06 §4): the turn stops with `'context-thrash'`.
+   */
   midTurn(args: {
     wire: readonly ModelMessage[]
     stepIndex: number
     delivered: readonly ModelMessage[]
-  }): Promise<BuiltWire | undefined>
+  }): Promise<BuiltWire | 'thrash' | undefined>
   /** Guard step 1: sanitize, keeping the turn segments. */
   sanitize(wire: readonly ModelMessage[], turnStart: number): SanitizedWire
   /** Guard step 2: the hard cap for the step's model. */
@@ -122,6 +130,9 @@ export function createTurnCompaction(args: {
   const messages = rt.agent.messages
   const config = rt.agent.config
   const select = config.compaction === false ? undefined : config.compaction?.select
+  const prune = resolvePrune(config.compaction)
+  /** What the prune stage replaced in the last built wire (`undefined` when prune is off). */
+  let pruned: PruneStats | undefined
   const isBoundary = (m: HarnessUIMessage) => isBoundaryMessage(m, messages)
   const instructionsText = [registry.block1, registry.block2, registry.turnReminder]
     .filter((t): t is string => t !== undefined)
@@ -136,6 +147,15 @@ export function createTurnCompaction(args: {
   let truncationWarned = false
   /** A failed automatic compaction is not retried in the same turn (the guard takes over). */
   let failed = false
+  /** Thrash detection window (spec 06 §4); `undefined` = off (`thrash: false`). */
+  const thrashWithin =
+    config.compaction === false || config.compaction?.thrash === false
+      ? undefined
+      : (config.compaction?.thrash?.withinSteps ?? DEFAULT_THRASH_WITHIN_STEPS)
+  /** Step index of the last successful automatic compaction of this turn (pre-turn = 0). */
+  let lastCompactionStep: number | undefined
+  /** Step index of the latest mid-turn check (the step an overflow compaction belongs to). */
+  let currentStep = 0
 
   const projectOptions = {
     registry: messages,
@@ -178,9 +198,15 @@ export function createTurnCompaction(args: {
     const prior = body.filter((m) => m.id < args.currentStartId)
     const current = body.filter((m) => m.id >= args.currentStartId)
     const head = boundary === undefined ? [] : await project([boundary], projectOptions)
-    const turns: ModelMessage[][] = []
+    let turns: ModelMessage[][] = []
     for (const range of groupTurns(prior)) {
       turns.push(await project(prior.slice(range.start, range.end), projectOptions))
+    }
+    // prune stage (spec 06 §5.0): completed turns only, view-only, deterministic
+    if (prune !== undefined) {
+      const result = pruneTurns(turns, prune)
+      turns = result.turns
+      pruned = result.stats
     }
     const currentWire = await project(current, projectOptions)
     segments = [head.length, ...turns.map((t) => t.length)]
@@ -227,15 +253,37 @@ export function createTurnCompaction(args: {
       )
       if (tokens <= engine.limits(info.model).summarizeAt) return built
       const outcome = await compactNow('turn', tokens, 'pre-turn')
-      return outcome.status === 'compacted' ? build() : built
+      if (outcome.status !== 'compacted') return built
+      lastCompactionStep = 0
+      return build()
     },
     async midTurn({ wire, stepIndex, delivered }) {
       if (!engine.enabled || stepIndex < 1 || midTurnStep === stepIndex) return undefined
       midTurnStep = stepIndex
+      currentStep = stepIndex
       const tokens = engine.calibration.apply((await fixed()) + wireTokens(wire, engine.count))
-      if (tokens <= engine.limits(info.model).summarizeAt) return undefined
+      const summarizeAt = engine.limits(info.model).summarizeAt
+      if (tokens <= summarizeAt) return undefined
+      // thrash (spec 06 §4): refilled right after a compaction → stop instead of compacting again
+      if (
+        thrashWithin !== undefined &&
+        lastCompactionStep !== undefined &&
+        stepIndex - lastCompactionStep <= thrashWithin
+      ) {
+        rt.warn(
+          {
+            code: 'W_CONTEXT_THRASH',
+            message: `The context (~${tokens} tokens) is above summarizeAt (${summarizeAt}) again ${stepIndex - lastCompactionStep} step(s) after a compaction; the turn stops instead of compacting again.`,
+            details: { stepIndex, tokens, summarizeAt, lastCompaction: lastCompactionStep },
+          },
+          `${args.turnId}:thrash`,
+        )
+        return 'thrash'
+      }
       const outcome = await compactNow('auto', tokens)
-      return outcome.status === 'compacted' ? build(delivered) : undefined
+      if (outcome.status !== 'compacted') return undefined
+      lastCompactionStep = stepIndex
+      return build(delivered)
     },
     sanitize(wire, turnStart) {
       const total = segments.reduce((a, b) => a + b, 0)
@@ -308,7 +356,7 @@ export function createTurnCompaction(args: {
           tools: (await fixed()) - instructionsRaw,
           messages: wireTokens(wire, engine.count),
         },
-        { maxOutputTokens },
+        { maxOutputTokens, pruned },
       )
     },
     isOverflow: (error) => isContextOverflow(error, config.isContextOverflow),
@@ -326,8 +374,10 @@ export function createTurnCompaction(args: {
             `${args.turnId}:compact`,
           )
           const outcome = await compactNow('auto', engine.calibration.apply(raw))
-          if (outcome.status === 'compacted')
+          if (outcome.status === 'compacted') {
+            lastCompactionStep = currentStep
             return { retry: true, rebuilt: await build(delivered) }
+          }
         }
       }
       if (!tightened) {

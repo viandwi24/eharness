@@ -19,6 +19,8 @@ export function defineSkill(skill: Skill): Skill
 export interface Skill {
   name: string
   description: string
+  /** Optional version, 1–64 printable characters (0.4.0). Shown by load_skill, not in the index. */
+  version?: string
   /** Body of SKILL.md (without frontmatter). */
   content: string
   /** Supporting files, paths relative to the skill root (POSIX, no '..', no leading '/'). */
@@ -31,7 +33,7 @@ export interface Skill {
 A static skill is internally wrapped in an in-memory `SkillSource` (one per owner, id
 `static:<owner>`; manifest sorted by path with UTF-8 byte sizes). There is no separate code path.
 
-`defineSkill` validates the name and description (§1), a string `content`, an object `meta` and
+`defineSkill` validates the name and description (§1), the optional `version`, a string `content`, an object `meta` and
 every file path (§5, already normalized, no duplicates) and throws `EH_CONFIG_INVALID`. Skills and
 sources passed without `defineSkill` / `defineSkillSource` get the same checks at boot / session
 open, with the owner named in the error.
@@ -58,7 +60,7 @@ export interface SkillSource {
   refresh?: 'session' | 'turn'
 }
 
-export interface SkillMeta { name: string; description: string; meta?: Record<string, unknown> }
+export interface SkillMeta { name: string; description: string; version?: string; meta?: Record<string, unknown> }
 export interface SkillDoc extends SkillMeta {
   content: string
   manifest: Array<{ path: string; size?: number }>
@@ -66,9 +68,17 @@ export interface SkillDoc extends SkillMeta {
 export type SkillFileContent = { type: 'text'; text: string } | { type: 'binary'; mediaType: string; data: Uint8Array }
 ```
 
+**Versions (0.4.0).** `SkillMeta.version` (and therefore `SkillDoc.version`, `Skill.version`) is an
+optional string of 1–64 characters without control characters and without surrounding
+whitespace; an invalid version makes the metadata invalid (`W_INVALID_SKILL` for listed skills,
+`EH_CONFIG_INVALID` for `defineSkill`). It is shown by `load_skill` (§4.3) and passed to
+`skill.load` hooks as `e.version` (spec 01 §5), so applications with versioned skills can audit
+which version a turn used. The skills index (§4.1) and `search_skills` results never show it:
+the index stays cache-stable when only versions change.
+
 Contract tests: `skillSourceConformance(factory, options?)` in `eharness/testing`. The factory
 receives the fixture skills (`SKILL_SOURCE_FIXTURE`: nested files, non-ASCII text, one extra
-frontmatter field) and returns a source serving exactly them. It checks `id`/`refresh`, metadata-only
+frontmatter field, one `version` (0.4.0; opt out with `{ version: false }`)) and returns a source serving exactly them. It checks `id`/`refresh`, metadata-only
 `list()` whose items pass §1, `load()` bodies (compared trimmed) and manifests (valid relative
 paths, no `SKILL.md`, UTF-8 sizes when given), exact `readFile()` text, `null` for unknown
 skills/paths, `SKILL.md`, other skills' files and directories, copies on read, and well-formed `search()` / `locate()` results when
@@ -148,8 +158,10 @@ enters history as tool results, never the system prompt (prompt-cache rule, spec
 
 Exact formats (model-visible, api-stability.md):
 
-- `load_skill`: `---`, the frontmatter summary (`name`, `description`, then `meta` keys in order,
-  serialized with the §8 subset), `---`, the body (trimmed); then, separated by blank lines,
+- `load_skill`: `---`, the frontmatter summary (`name`, `description`, `version` when the doc
+  has one (0.4.0; e.g. `version: "1.0"` — quoted when it would read as a number), then `meta`
+  keys in order — a `meta.version` is skipped when the doc has a `version` — serialized with the
+  §8 subset), `---`, the body (trimmed); then, separated by blank lines,
   `Files:` with one `- <path>` line per manifest entry (sorted, deduplicated, invalid paths
   dropped, ` (<size> bytes)` when the size is known; omitted without files), then each
   non-empty `skill.load` note.
@@ -244,7 +256,9 @@ Adds `fsSkillSource(fs, { root })`:
   scalars, anchors/aliases/tags, flow maps, deeper nesting, tabs in indentation, duplicate keys,
   the keys `__proto__`/`constructor`/`prototype`, several documents. `name` and `description`
   are always text: a plain value that looks like a number or a boolean keeps its raw text
-  (`name: 007` → `'007'`, `description: 1.0` → `'1.0'`).
+  (`name: 007` → `'007'`, `description: 1.0` → `'1.0'`). The same holds for `version` (0.4.0:
+  `version: 1.0` → `'1.0'`), which is read into `SkillMeta.version` (not `meta`); `version: null`
+  or an empty value means no version.
 - Warnings: a source reports `W_INVALID_SKILL` itself through `ctx.warn` (spec 01 §4) and skips
   the skill. `fsSkillSource` warns once per file version (`details: { source, path }`), so
   `refresh: 'turn'` does not repeat the warning every turn.

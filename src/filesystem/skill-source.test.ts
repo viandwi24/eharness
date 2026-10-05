@@ -8,6 +8,7 @@ import type { FileSystem } from './types.ts'
 /** `SKILL.md` text of a skill (frontmatter values as JSON strings, a valid YAML subset). */
 function skillMarkdown(skill: Skill): string {
   const lines = [`name: ${skill.name}`, `description: ${JSON.stringify(skill.description)}`]
+  if (skill.version !== undefined) lines.push(`version: ${skill.version}`)
   for (const [key, value] of Object.entries(skill.meta ?? {})) {
     lines.push(`${key}: ${JSON.stringify(value)}`)
   }

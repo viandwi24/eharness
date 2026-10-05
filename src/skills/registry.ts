@@ -183,6 +183,7 @@ export async function resolveTurnSkills(args: {
         }
         const meta = item as SkillMeta
         const copy: SkillMeta = { name: meta.name, description: meta.description }
+        if (meta.version !== undefined) copy.version = meta.version
         if (meta.meta !== undefined) copy.meta = meta.meta
         listed.push(copy)
       }
