@@ -157,6 +157,11 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('budget.maxSessionUsd', config.budget?.maxSessionUsd, 'positive')
   checkNumber('budget.warnAt', config.budget?.warnAt, 'ratio-half-open')
   checkNumber('inputFiles.maxBytes', config.inputFiles?.maxBytes, 'positive-int')
+  checkNumber('inbox.pollMs', config.inbox?.pollMs, 'non-negative')
+  checkNumber('inbox.claimTtlMs', config.inbox?.claimTtlMs, 'positive')
+  checkNumber('inbox.collect.quietMs', config.inbox?.collect?.quietMs, 'non-negative')
+  checkNumber('inbox.collect.maxWaitMs', config.inbox?.collect?.maxWaitMs, 'non-negative')
+  checkNumber('inbox.collect.maxItems', config.inbox?.collect?.maxItems, 'positive-int')
   const protocols = config.inputFiles?.protocols
   if (
     protocols !== undefined &&

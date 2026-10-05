@@ -45,6 +45,7 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
       messages:
         options.storage?.messages ?? internals.config.storage?.messages ?? defaults.messages,
       state: options.storage?.state ?? internals.config.storage?.state ?? defaults.state,
+      inbox: options.storage?.inbox ?? internals.config.storage?.inbox,
     }
   }
 
@@ -61,6 +62,8 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
             options.storage.messages !== current.storage?.messages) ||
           (options.storage?.state !== undefined &&
             options.storage.state !== current.storage?.state) ||
+          (options.storage?.inbox !== undefined &&
+            options.storage.inbox !== current.storage?.inbox) ||
           (options.lock !== undefined && options.lock !== current.lock) ||
           (options.onInvalidMessage !== undefined &&
             options.onInvalidMessage !== current.onInvalidMessage) ||
@@ -98,6 +101,7 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
         options: { ...options },
         messages: storage.messages,
         state: storage.state,
+        ...(storage.inbox === undefined ? {} : { inbox: storage.inbox }),
         idleMs: internals.config.sessionIdleMs ?? DEFAULT_SESSION_IDLE_MS,
         onClosed: () => {
           if (sessions.get(id) === handle) sessions.delete(id)

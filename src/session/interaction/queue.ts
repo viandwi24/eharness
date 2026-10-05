@@ -9,6 +9,7 @@ import type { HarnessRun, PendingResponse, SendOptions } from '../../agent/sessi
 import type { TurnResult } from '../../messages/types.ts'
 import { createRun } from '../../stream/run.ts'
 import type { NormalizedInput } from '../input.ts'
+import type { TurnOperation } from '../turn.ts'
 
 /** A queued `send` turn (or a `wake` turn that could not be delivered into a running turn). */
 export interface QueuedTurn {
@@ -28,6 +29,10 @@ export interface QueuedTurn {
   respond?: { response: PendingResponse; ignoreUnknown: boolean }
   /** The run handed to the caller (bound to the real run when the turn starts). */
   handle: DeferredRun
+  /** More callers of the same turn (merged `collect` sends): each gets its own stream reader. */
+  extraHandles?: DeferredRun[]
+  /** Inbox items applied by this turn (`session.enqueue()`, collected inputs). */
+  inbox?: TurnOperation['inbox']
 }
 
 /** A `HarnessRun` whose turn has not started yet. */
