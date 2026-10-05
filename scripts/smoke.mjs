@@ -71,6 +71,14 @@ const entries = {
     'renderTodos',
     'todos',
   ],
+  'eharness/memory': [
+    'DEFAULT_MAX_FILE_CHARS',
+    'DEFAULT_MAX_PINNED_CHARS',
+    'MEMORY_PROTOCOL',
+    'MEMORY_TOOLS',
+    'executeMemoryCommand',
+    'memory',
+  ],
   'eharness/testing': [
     'SKILL_SOURCE_FIXTURE',
     'fileSystemConformance',
@@ -174,6 +182,46 @@ assert.equal(fsResult.stop, 'complete')
 assert.equal((await fs.read('/notes.md')).content, 'hello node\n')
 assert.equal(classifyToolResult('STALE: x'), 'stale')
 await fsAgent.close()
+
+// eharness/memory under Node: one scripted turn creates a memory file inside the user's root
+const { memory, executeMemoryCommand } = await load('eharness/memory')
+const memFs = memoryFs({ '/memories/org/policy.md': 'Be kind.\n' })
+const memAgent = core.defineHarnessAgent({
+  model: scriptedModel([
+    {
+      toolCalls: [
+        {
+          toolName: 'memory_create',
+          input: { path: '/memories/u1/notes.md', file_text: 'likes tea\n' },
+        },
+      ],
+    },
+    { text: 'Noted.' },
+  ]),
+  contextWindow: 100_000,
+  plugins: [
+    filesystem({ fs: memFs, hiddenPrefixes: ['/memories'] }),
+    memory({
+      roots: (ctx) => [
+        { path: `/memories/${ctx.runtime.userId}`, write: true },
+        { path: '/memories/org' },
+      ],
+    }),
+  ],
+})
+const memResult = await memAgent
+  .session('smoke-memory', { runtime: { userId: 'u1' } })
+  .send('Remember').result
+assert.equal(memResult.stop, 'complete')
+assert.equal((await memFs.read('/memories/u1/notes.md')).content, 'likes tea\n')
+assert.equal(
+  await executeMemoryCommand(
+    { command: 'delete', path: '/memories/org/policy.md' },
+    { fs: memFs, roots: [{ path: '/memories/org' }] },
+  ),
+  'REJECTED: /memories/org/policy.md is read-only.',
+)
+await memAgent.close()
 
 // eharness/mcp: an in-process MCP server behind a custom transport (no network)
 const { mcpServer } = await load('eharness/mcp')
@@ -289,5 +337,5 @@ await approvalAgent.close()
 
 await rm(shim)
 console.log(
-  `smoke: ok (${Object.keys(entries).length} entry points, four scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
+  `smoke: ok (${Object.keys(entries).length} entry points, five scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
 )
