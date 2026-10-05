@@ -16,9 +16,10 @@ export {
 } from './execute.ts'
 export {
   DEFAULT_MAX_PINNED_CHARS,
+  MEMORY_FLUSH_TOOLS,
   type MemoryOptions,
   memory,
   PINNED_PREAMBLE,
 } from './plugin.ts'
-export { MEMORY_PROTOCOL } from './texts.ts'
+export { MEMORY_FLUSH_PROMPT, MEMORY_PROTOCOL } from './texts.ts'
 export { MEMORY_TOOLS, type MemoryExecutor, type MemoryToolName } from './tools.ts'

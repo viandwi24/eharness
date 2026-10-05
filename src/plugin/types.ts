@@ -347,6 +347,16 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
     message: HarnessUIMessage,
   ): Awaitable<HarnessUIMessage | void>
 
+  /**
+   * Chainable (0.4.0). Runs once per compaction after the split and skip rule decided that
+   * summarizing will happen, before the summarizer (spec 06 §5.2a). Return a `flush` to give the
+   * agent one bounded, internal turn to save facts (e.g. into memory files) before history is
+   * summarized. Patches of several plugins merge (prompts joined, tools unioned).
+   */
+  'compaction.before'?(
+    ctx: HarnessContext<DP>,
+    e: CompactionBeforeEvent,
+  ): Awaitable<CompactionBeforePatch | void>
   /** Contribute context to / replace the summarizer prompt. */
   'compaction.prompt'?(
     ctx: HarnessContext<DP>,
@@ -376,7 +386,39 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   ): Awaitable<{ skill?: SkillDoc; notes?: string[] } | void>
 }
 
-/** Name of a hook. */
+/**
+ * Event of the `compaction.before` hook (spec 06 §5.2a).
+ *
+ * @see docs/specs/01-agent-and-plugins.md#5-hooks
+ */
+export interface CompactionBeforeEvent {
+  /** The part that will be summarized (`drop`, spec 06 §5.1): copies of view messages, not the kept tail. */
+  messages: HarnessUIMessage[]
+  /** Calibrated estimate of the current context in tokens. */
+  tokens: number
+  /** `'turn'` = pre-turn, `'auto'` = mid-turn, `'manual'` = `compact()`, `'overflow'` = overflow recovery. */
+  trigger: 'auto' | 'manual' | 'turn' | 'overflow'
+}
+
+/**
+ * Result of the `compaction.before` hook (spec 06 §5.2a).
+ *
+ * @see docs/specs/01-agent-and-plugins.md#5-hooks
+ */
+export interface CompactionBeforePatch {
+  /** Run a flush turn before summarizing. */
+  flush?: {
+    /** Instruction for the flush, sent as a user message after the current conversation. */
+    prompt: string
+    /** Final tool names the flush may call. Default: none (text-only). Client tools are never offered. */
+    tools?: string[]
+    /** Model calls of the flush. Default 3. */
+    maxSteps?: number
+    /** Default: `compaction.model`, else the turn's model. */
+    model?: LanguageModel
+  }
+}
+
 /**
  * One approval decision (spec 11 §3.3).
  */
@@ -401,6 +443,7 @@ export interface ApprovalDecision {
   remember?: 'once' | 'session'
 }
 
+/** Name of a hook. */
 export type HookName = keyof HarnessHooks
 
 /**

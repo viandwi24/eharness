@@ -150,7 +150,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | Area | Codes |
 |---|---|
 | Loop and cost | `W_LOOP_STUCK`, `W_CONTINUE_LIMIT`, `W_BUDGET`, `W_MODEL_UNPRICED` |
-| Context | `W_DEFAULT_CONTEXT_WINDOW`, `W_COMPACTION_FAILED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CONTEXT_THRASH`, `W_CACHE_BUST` |
+| Context | `W_DEFAULT_CONTEXT_WINDOW`, `W_COMPACTION_FAILED`, `W_COMPACTION_FLUSH_SKIPPED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CONTEXT_THRASH`, `W_CACHE_BUST` |
 | Tools and sources | `W_SHADOWED`, `W_TOOL_SOURCE_FAILED`, `W_INVALID_TOOL_NAME`, `W_MCP_DRIFT`, `W_TOOL_OUTPUT_LIMITED`, `W_GRANT_IGNORED` |
 | Skills | `W_INVALID_SKILL`, `W_SKILL_SOURCE_FAILED` |
 | Messages and parts | `W_INVALID_MESSAGE`, `W_UNKNOWN_DATA_PART`, `W_UNKNOWN_STORED_PART`, `W_WRITE_OUTSIDE_TURN`, `W_TRANSIENT_OVERRIDE` |
@@ -164,9 +164,9 @@ one is a minor change): `INTERRUPTED_TURN`, `INTERRUPTED_CRASH`, `INTERRUPTED_UN
 tool calls that never finished), `DENIED_NEW_INPUT`, `NOT_EXECUTED_NEW_INPUT` (pending calls
 answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
 `TOOL_OUTPUT_TRUNCATED` (truncation marker), `TOOL_OUTPUT_PRUNED` (placeholder of a pruned tool
-output), `FILE_UNAVAILABLE` (a file of an earlier turn that
+output), `FLUSH_APPROVAL_DENIED` (denial reason of approval-gated calls in a pre-compaction flush), `FILE_UNAVAILABLE` (a file of an earlier turn that
 can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
-`eharness/memory` exports `MEMORY_PROTOCOL`.
+`eharness/memory` exports `MEMORY_PROTOCOL` and `MEMORY_FLUSH_PROMPT` (with `MEMORY_FLUSH_TOOLS`).
 
 ## Other exports
 
@@ -184,7 +184,7 @@ can no longer be downloaded). `eharness/todos` exports its own (`TODOS_*`),
 |---|---|---|---|
 | `eharness/filesystem` | `filesystem({ fs, … })` | spec 08 §2 | `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`, `grep` |
 | `eharness/todos` | `todos()` | `enforce` (false), `maxNudges` (3), `remindEvery` (5), `maxItems` (50) | `todo_write` |
-| `eharness/memory` | `memory({ roots })` | `pinned`, `maxPinnedChars` (2_000), `maxFileChars` (20_000), `protocol` (`MEMORY_PROTOCOL`), `tool`, `onWrite` | `memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`, `memory_delete`, `memory_rename` (or the app's `memory` tool) |
+| `eharness/memory` | `memory({ roots })` | `pinned`, `maxPinnedChars` (2_000), `maxFileChars` (20_000), `protocol` (`MEMORY_PROTOCOL`), `tool`, `onWrite`, `flushOnCompaction` (false) | `memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`, `memory_delete`, `memory_rename` (or the app's `memory` tool) |
 
 `FileSystem.move` is optional (atomic rename; `memoryFs` implements it, `fileSystemConformance`
 checks it with `requireMove`).

@@ -20,6 +20,7 @@ const load = (await import(pathToFileURL(shim).href)).default
 const entries = {
   eharness: [
     'DENIED_NEW_INPUT',
+    'FLUSH_APPROVAL_DENIED',
     'HarnessError',
     'HarnessToolError',
     'INTERRUPTED_CRASH',
@@ -74,6 +75,8 @@ const entries = {
   'eharness/memory': [
     'DEFAULT_MAX_FILE_CHARS',
     'DEFAULT_MAX_PINNED_CHARS',
+    'MEMORY_FLUSH_PROMPT',
+    'MEMORY_FLUSH_TOOLS',
     'MEMORY_PROTOCOL',
     'MEMORY_TOOLS',
     'PINNED_PREAMBLE',

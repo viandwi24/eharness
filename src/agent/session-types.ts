@@ -16,6 +16,7 @@ import type {
   CompactionPayload,
   ContextStats,
   EventPayload,
+  FlushPayload,
   HarnessUIMessage,
   NoticePayload,
   PendingState,
@@ -36,6 +37,7 @@ export type HarnessKindTypes = {
   'eh.notice': NoticePayload
   'eh.event': EventPayload
   'eh.rewind': RewindPayload
+  'eh.flush': FlushPayload
 }
 
 /** Kind names of a kind payload map (e.g. `AgentKindTypes<C>`). */

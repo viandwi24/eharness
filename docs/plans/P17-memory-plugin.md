@@ -150,8 +150,8 @@ export interface MemoryWriteEvent {
       offline example `examples/memory.ts` with `memoryFs` in `examples.test.ts`.
 - [x] `reference.md` (shipped plugins table); README entry point / example / guide rows;
       changeset `.changeset/memory-plugin.md` (minor); board.
-- [ ] `flushOnCompaction` — blocked on P15 (`compaction.before` does not exist yet; registering an
-      unknown hook is a boot error).
+- [x] `flushOnCompaction` — shipped by P15 on top of `compaction.before` (spec 14 §9,
+      `MEMORY_FLUSH_PROMPT`, `MEMORY_FLUSH_TOOLS`; tests in `src/memory/plugin.int.test.ts`).
 
 ## Acceptance criteria
 

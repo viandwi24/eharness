@@ -16,6 +16,12 @@ export const MEMORY_PROTOCOL: string = `You have a persistent memory: files that
 - Keep memory files small, focused and organized: update or remove outdated entries instead of appending duplicates, and use descriptive file names.
 - Read-only roots hold shared knowledge you can consult but not change. Never store secrets or credentials in memory.`
 
+/**
+ * Default prompt of the pre-compaction flush (`flushOnCompaction`, spec 14 §9): sent as an
+ * internal user message right before older history is summarized.
+ */
+export const MEMORY_FLUSH_PROMPT: string = `The older part of this conversation is about to be summarized, and details not saved now may be lost. Before that happens, write to memory what is worth keeping beyond this conversation: decisions, facts, preferences and the current state of the work that are not yet in memory. Update existing files instead of duplicating entries. If nothing needs saving, reply that nothing needs saving. Do not continue the task itself.`
+
 /** `REJECTED:` for a path outside every root. */
 export const outsideText = (path: string): string =>
   `REJECTED: ${path} is outside the memory roots.`

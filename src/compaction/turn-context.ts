@@ -16,6 +16,7 @@ import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import type { BudgetOverrun, CompactOutcome, SessionCompaction } from './compact.ts'
+import type { FlushEnv } from './flush.ts'
 import { applyHardCap } from './guard.ts'
 import { isContextOverflow, reportedTokenCount } from './overflow.ts'
 import { type PruneStats, pruneTurns, resolvePrune } from './prune.ts'
@@ -99,6 +100,8 @@ export interface TurnCompaction {
     error: unknown
     raw: number
     delivered: readonly ModelMessage[]
+    /** The wire of the rejected request (for a pre-compaction flush, spec 06 §5.2a). */
+    wire?: readonly ModelMessage[]
   }): Promise<OverflowDecision>
 }
 
@@ -121,8 +124,10 @@ export function createTurnCompaction(args: {
    * `data-eh.input`, never projected as standalone messages of this turn (spec 11 §6.3).
    */
   inboxed?: ReadonlySet<string>
-  /** Charge summarizer usage to the turn (spec 06 §5.3). */
-  onUsage?: (usage: LanguageModelUsage, model: LanguageModel) => void
+  /** Charge summarizer and flush usage to the turn (spec 06 §5.2a, §5.3). */
+  onUsage?: (usage: LanguageModelUsage, model: LanguageModel, source: string) => void
+  /** `toolsContext` of the turn (passed to the tools of a pre-compaction flush). */
+  toolsContext?: Record<string, unknown> | undefined
   /** The used-up USD budget, if any: compaction is skipped (spec 12 §4). */
   overBudget?: () => BudgetOverrun | undefined
 }): TurnCompaction {
@@ -219,10 +224,29 @@ export function createTurnCompaction(args: {
     return message !== undefined && stepStarts(message).length > 0
   }
 
+  /** The flush environment over `wire` (spec 06 §5.2a): stable prefix, sanitized wire, turn tools. */
+  function flushEnv(wire: readonly ModelMessage[]): () => Promise<FlushEnv> {
+    return async () => {
+      const instructions = [registry.block1, registry.block2]
+        .filter((t): t is string => t !== undefined)
+        .join('\n\n')
+      return {
+        instructions: instructions.length === 0 ? undefined : instructions,
+        wire: sanitizeModelMessages(wire),
+        registry,
+        toolsContext: args.toolsContext,
+        model: info.model,
+        maxOutputTokens: info.settings.maxOutputTokens,
+      }
+    }
+  }
+
   async function compactNow(
     trigger: 'turn' | 'auto',
     beforeTokens: number,
+    wire: readonly ModelMessage[],
     forceMode?: 'pre-turn' | 'mid-turn',
+    overflow?: boolean,
   ): Promise<CompactOutcome> {
     const mode = forceMode ?? (hasCompletedStep() ? 'mid-turn' : 'pre-turn')
     if (failed) return { status: 'skipped', reason: 'failed-earlier' }
@@ -239,6 +263,8 @@ export function createTurnCompaction(args: {
       signal: args.signal,
       onUsage: args.onUsage,
       overBudget: args.overBudget,
+      flushEnv: flushEnv(wire),
+      ...(overflow === true ? { overflow: true } : {}),
     })
     if (outcome.status === 'failed') failed = true
     return outcome
@@ -252,7 +278,7 @@ export function createTurnCompaction(args: {
         (await fixed()) + wireTokens(built.wire, engine.count),
       )
       if (tokens <= engine.limits(info.model).summarizeAt) return built
-      const outcome = await compactNow('turn', tokens, 'pre-turn')
+      const outcome = await compactNow('turn', tokens, built.wire, 'pre-turn')
       if (outcome.status !== 'compacted') return built
       lastCompactionStep = 0
       return build()
@@ -280,7 +306,7 @@ export function createTurnCompaction(args: {
         )
         return 'thrash'
       }
-      const outcome = await compactNow('auto', tokens)
+      const outcome = await compactNow('auto', tokens, wire)
       if (outcome.status !== 'compacted') return undefined
       lastCompactionStep = stepIndex
       return build(delivered)
@@ -360,7 +386,7 @@ export function createTurnCompaction(args: {
       )
     },
     isOverflow: (error) => isContextOverflow(error, config.isContextOverflow),
-    async onOverflow({ error, raw, delivered }) {
+    async onOverflow({ error, raw, delivered, wire }) {
       engine.calibration.overflow(raw, reportedTokenCount(error))
       if (!overflowCompacted) {
         overflowCompacted = true
@@ -373,7 +399,13 @@ export function createTurnCompaction(args: {
             },
             `${args.turnId}:compact`,
           )
-          const outcome = await compactNow('auto', engine.calibration.apply(raw))
+          const outcome = await compactNow(
+            'auto',
+            engine.calibration.apply(raw),
+            wire ?? [],
+            undefined,
+            true,
+          )
           if (outcome.status === 'compacted') {
             lastCompactionStep = currentStep
             return { retry: true, rebuilt: await build(delivered) }

@@ -71,7 +71,9 @@ without pricing is *unpriced* (it adds no cost). `ctx.turn.addUsage(usage, optio
 usage: `options.costUsd` (known cost, e.g. from a gateway) wins, else `options.model` is priced
 from the catalog, else it is unpriced. `source` may still be passed as a plain string. The
 summarizer calls of compaction are charged the same way (`source: 'compaction'`, priced with the
-summarizer model; a manual `compact()` charges `state.core.usage`, spec 06 §5.3).
+summarizer model; a manual `compact()` charges `state.core.usage`, spec 06 §5.3), and so is a
+pre-compaction flush (`source: 'compaction-flush'`, priced with the flush model, spec 06 §5.2a;
+0.4.0).
 
 The turn's cost appears as `costUsd` in `TurnResult.usage`, `metadata.eharness.usage` (cumulative
 over the turns that wrote the message, like the token counts), `data-eh.usage` (turn so far),

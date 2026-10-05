@@ -747,6 +747,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
           error: rawError,
           raw: capped.raw,
           delivered: wire.slice(sinceBarrier),
+          wire: capped.messages,
         })
         if (input.signal.aborted) return aborted()
         if (input.usage.costUsd !== costBefore && overBudget() !== undefined) {

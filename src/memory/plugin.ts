@@ -10,6 +10,7 @@
  */
 import type { Tool } from 'ai'
 import {
+  type CompactionBeforePatch,
   definePlugin,
   type HarnessContext,
   HarnessError,
@@ -27,8 +28,19 @@ import {
   resolveMemoryRoots,
 } from './execute.ts'
 import { dirPrefix, isUnder, normalizeMemoryPath } from './paths.ts'
-import { MEMORY_PROTOCOL } from './texts.ts'
+import { MEMORY_FLUSH_PROMPT, MEMORY_PROTOCOL } from './texts.ts'
 import { createMemoryTools, type MemoryExecutor } from './tools.ts'
+
+/**
+ * Tools offered to the pre-compaction flush (`flushOnCompaction`): view and the non-destructive
+ * writes. With the `tool` option, the app's single `memory` tool is offered instead.
+ */
+export const MEMORY_FLUSH_TOOLS: readonly [
+  'memory_view',
+  'memory_create',
+  'memory_str_replace',
+  'memory_insert',
+] = ['memory_view', 'memory_create', 'memory_str_replace', 'memory_insert']
 
 /** Default `maxPinnedChars` (total over all pinned files). */
 export const DEFAULT_MAX_PINNED_CHARS = 2_000
@@ -56,6 +68,13 @@ export interface MemoryOptions {
   tool?: (execute: MemoryExecutor) => Tool
   /** Audit / provenance callback after every successful write. Errors → `W_HOOK_FAILED`. */
   onWrite?: (event: MemoryWriteEvent, ctx: HarnessContext) => void | Promise<void>
+  /**
+   * Save to memory before a compaction summarizes history (0.4.0): registers a
+   * `compaction.before` hook that requests a pre-compaction flush with the memory write tools
+   * (spec 14 §9, spec 06 §5.2a). Skipped when no root is writable. `prompt` replaces
+   * {@link MEMORY_FLUSH_PROMPT}. Default false.
+   */
+  flushOnCompaction?: boolean | { prompt?: string }
 }
 
 function invalid(message: string): never {
@@ -174,6 +193,23 @@ export function memory(options: MemoryOptions): HarnessPlugin<'memory'> {
     0,
   )
   const maxFileChars = limit(options.maxFileChars, DEFAULT_MAX_FILE_CHARS, 'maxFileChars', 1)
+  const flushOption = options.flushOnCompaction
+  if (
+    flushOption !== undefined &&
+    typeof flushOption !== 'boolean' &&
+    (typeof flushOption !== 'object' ||
+      flushOption === null ||
+      (flushOption.prompt !== undefined &&
+        (typeof flushOption.prompt !== 'string' || flushOption.prompt.trim() === '')))
+  ) {
+    invalid('`flushOnCompaction` must be a boolean or { prompt?: non-empty string }.')
+  }
+  const flushPrompt =
+    flushOption === undefined || flushOption === false
+      ? undefined
+      : flushOption === true
+        ? MEMORY_FLUSH_PROMPT
+        : (flushOption.prompt ?? MEMORY_FLUSH_PROMPT)
 
   return definePlugin({
     name: 'memory',
@@ -258,6 +294,23 @@ export function memory(options: MemoryOptions): HarnessPlugin<'memory'> {
           options.tool === undefined
             ? createMemoryTools(execute)
             : { memory: options.tool(execute) },
+        ...(flushPrompt === undefined
+          ? {}
+          : {
+              hooks: {
+                // pre-compaction flush (spec 14 §9): only when memory can be written
+                'compaction.before': async (): Promise<CompactionBeforePatch | undefined> => {
+                  const roots = await currentRoots()
+                  if (!roots.some((root) => root.write)) return undefined
+                  return {
+                    flush: {
+                      prompt: flushPrompt,
+                      tools: options.tool === undefined ? [...MEMORY_FLUSH_TOOLS] : ['memory'],
+                    },
+                  }
+                },
+              },
+            }),
       }
     },
   })
