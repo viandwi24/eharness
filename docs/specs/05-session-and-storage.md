@@ -265,7 +265,10 @@ failed lock acquisition from writing into a session another instance owns. In-me
 changes made by the turn's own preparation (`input.submit`, `turn.prepare`, dynamic tool sources
 and instructions — the owner's namespace while its hook runs) are reverted to their value at step
 2; every other change made meanwhile — another plugin's `ctx.state`, `clearGrants()`, … — is
-kept.
+kept. When the commit-point state write itself fails, the core fields it changed (`activeTurn`,
+`pending`, `grants`, `rewinds`) are put back, so a later write (close, idle eviction) never
+publishes a turn that did not commit; on a CAS conflict the in-memory state is discarded and
+reloaded from the adapter (the other instance's state wins, nothing of ours overwrites it).
 
 **Later failure (`committed === true`):** the end path runs with `stop: 'error'`, saves the
 (possibly empty) assistant message, and additionally saves an `eh.notice` kind (level `error`,

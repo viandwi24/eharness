@@ -468,4 +468,43 @@ describe('item 7: a failed preparation restores only what the turn changed', () 
     expect(stored?.plugins.bg?.fromBackground).toBe(true)
     expect(stored?.plugins.prep?.fromTurn).toBeUndefined()
   })
+
+  for (const mode of ['throw', 'conflict'] as const) {
+    test(`a failed commit write (${mode}) never publishes the uncommitted turn later`, async () => {
+      const inner = defaultMemoryState()
+      let fail = false
+      const state: StateAdapter = {
+        get: (id) => inner.get(id),
+        set: (id, value) => inner.set(id, value),
+        async setIf(id, value, rev) {
+          if (fail) {
+            fail = false
+            if (mode === 'throw') throw new Error('state backend down')
+            // another instance wrote meanwhile
+            await inner.set(id, {
+              v: 1,
+              rev: 99,
+              core: { grants: { other: 'always' } },
+              plugins: { x: { by: 'other' } },
+            })
+            return false
+          }
+          return (await inner.setIf?.(id, value, rev)) ?? false
+        },
+      }
+      const { agent } = setup({ model: scriptedModel([{ text: 'A0' }, { text: 'A1' }]) }, { state })
+      const session = agent.session('s1')
+      await session.send('one').result
+      fail = true
+      const failed = await session.send('two').result
+      expect(failed.stop).toBe('error')
+      await agent.close()
+      const stored = await inner.get('s1')
+      expect(stored?.core.activeTurn).toBeUndefined()
+      if (mode === 'conflict') {
+        expect(stored?.plugins.x?.by).toBe('other')
+        expect(stored?.core.grants).toEqual({ other: 'always' })
+      }
+    })
+  }
 })
