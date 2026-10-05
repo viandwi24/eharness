@@ -1,6 +1,6 @@
 # P19 — Durable inbox port
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: BTeams proposal item **U3** (roadmap item "Cross-process queue / wake") plus the inbox
 path of **U4** (cross-process abort, state path done in P16).
