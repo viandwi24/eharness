@@ -108,6 +108,17 @@ describe('examples run offline', () => {
   )
 
   test(
+    'remote-abort (stop a turn running in another instance)',
+    async () => {
+      const out = await run('remote-abort.ts')
+      expect(out).toContain('B: requestAbort → remote')
+      expect(out).toContain('A: turn ended → aborted')
+      expect(out).toContain('state: activeTurn cleared')
+    },
+    timeout,
+  )
+
+  test(
     'long-running (progress guard, wrap-up)',
     async () => {
       const out = await run('long-running.ts')

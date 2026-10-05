@@ -140,6 +140,35 @@ const checks = definePlugin({
   `session.events()` reports `turn-start` / `turn-end` / `status` for "agent is working" UIs.
 - `run.abort()` / `session.abort()` stop it; partial output is saved with `stop: 'aborted'`.
 
+## Stopping a turn from another instance
+
+Behind a load balancer the Stop request often reaches a different server than the one running the
+turn. `session.abort()` handles that too: when no turn of the session runs in this process, it
+writes an abort request into the session state, and the owning instance stops the turn at its next
+step boundary — or mid-tool, through the tool's `abortSignal` — with `stop: 'aborted'`, exactly
+like a local abort (partial output saved, queue dropped, waiting steers reported as
+`input-dropped`). Use `requestAbort()` to know where the abort went:
+
+```ts
+const { target } = await agent.session(chatId).requestAbort('user pressed stop')
+// 'local'       — the turn ran in this process and was aborted
+// 'remote'      — the turn runs in another instance; it stops within `abortPollMs`
+// 'idle'        — no turn runs anywhere (nothing written)
+// 'unsupported' — the StateAdapter has no setIf, or recovery: false (W_ABORT_UNSUPPORTED)
+```
+
+Requirements and cost:
+
+- The `StateAdapter` must implement `setIf` atomically (compare-and-set on `rev`), see
+  [writing a storage adapter](writing-a-storage-adapter.md). Without it nothing is written: a
+  blind write would overwrite the owner's state.
+- The owner reads the state at most once per `recovery.abortPollMs` (default 2 000 ms) while a
+  turn runs; turns shorter than that read nothing. `abortPollMs: 0` turns the poll off (a request
+  is then only noticed when an owner write conflicts with it).
+- The request names the turn, so a late Stop never stops the next turn.
+
+Runnable: [`examples/remote-abort.ts`](../../examples/remote-abort.ts).
+
 ## Budgets for unattended runs
 
 Nothing limits spending by default. For agents that run without a person watching, combine:

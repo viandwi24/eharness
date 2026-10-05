@@ -31,7 +31,7 @@ specs in [`../specs`](../specs) are the full contracts.
 | `inputFiles` | `{ protocols: ['data:', 'https:'], maxBytes: 20 MB }` | allowed file URL protocols of user input and the decoded `data:` URL cap; others → `EH_INVALID_INPUT` |
 | `callOptions` | none | schema for `SendOptions.options` → `ctx.turn.options` |
 | `repairToolCall` | none | AI SDK `repairToolCall` |
-| `recovery` | `{ staleMs: 120_000 }` | crash recovery of turns whose process died; `false` disables |
+| `recovery` | `{ staleMs: 120_000, abortPollMs: 2_000 }` | crash recovery of turns whose process died, and the poll for aborts requested by another instance (`abortPollMs: 0` = off); `false` disables both |
 | `telemetry` | none | AI SDK telemetry options |
 | `strict` | `false` | misuse warnings throw `EH_CONFIG_INVALID` |
 | `logger` | debug/info off, warn/error to console | `ctx.log` |
@@ -60,7 +60,8 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 | `respond({ approvals, toolOutputs }, options?)` | answer pending approvals / client tools and continue the same message |
 | `regenerate({ messageId?, … })`, `edit(messageId, input, options?)` | answer again / replace a user message |
 | `attach()` | replay and follow the running turn (`undefined` when idle) |
-| `abort(reason?)` | abort the running turn and drop queued turns |
+| `abort(reason?)` | abort the running turn and drop queued turns; without a local turn, request the abort of a turn running in another instance |
+| `requestAbort(reason?)` | awaitable abort → `{ target: 'local' \| 'remote' \| 'idle' \| 'unsupported' }` ([long-running turns](long-running-turns.md#stopping-a-turn-from-another-instance)) |
 | `inject(kind, data, { deliver?, wake? })` | store an event message; deliver it into the running turn or wake the agent |
 | `compact()` | manual compaction (idle only) |
 | `clearGrants()` | forget `remember: 'session'` grants |
@@ -150,6 +151,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | Skills | `W_INVALID_SKILL`, `W_SKILL_SOURCE_FAILED` |
 | Messages and parts | `W_INVALID_MESSAGE`, `W_UNKNOWN_DATA_PART`, `W_UNKNOWN_STORED_PART`, `W_WRITE_OUTSIDE_TURN`, `W_TRANSIENT_OVERRIDE` |
 | API use | `W_HOOK_FAILED`, `W_DEPRECATED`, `W_SESSION_OPTIONS_IGNORED` |
+| Sessions | `W_ABORT_UNSUPPORTED` |
 
 ## Fixed texts
 
