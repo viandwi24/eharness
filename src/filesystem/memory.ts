@@ -13,6 +13,7 @@ import type {
   FileMeta,
   FileSystem,
   GrepHit,
+  MoveResult,
   WriteResult,
 } from './types.ts'
 import { byteLength, contentVersion } from './version.ts'
@@ -28,9 +29,9 @@ const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
 
 /**
  * In-memory {@link FileSystem}: a `Map` of normalized paths to text, versions via
- * `contentVersion` (SHA-1 of the content). Implements `stat` and `grep`. Not persistent; used by
- * tests, examples and demos. Conditional writes are atomic (compare-and-set without awaiting in
- * between).
+ * `contentVersion` (SHA-1 of the content). Implements `stat`, `grep` and `move`. Not persistent;
+ * used by tests, examples and demos. Conditional writes and moves are atomic (compare-and-set
+ * without awaiting in between).
  *
  * Seed keys are normalized (`'src/a.md'` → `'/src/a.md'`); methods expect normalized paths like
  * every adapter (the plugin normalizes before calling).
@@ -128,6 +129,20 @@ export function memoryFs(seed: Record<string, string> = {}): FileSystem {
       await ready
       const file = files.get(path)
       return file === undefined ? null : meta(path, file)
+    },
+
+    async move(from, to, opts = {}): Promise<MoveResult> {
+      await ready
+      // compare-and-set without awaiting in between: atomic for concurrent callers
+      const current = files.get(from)
+      if (current === undefined) return { ok: false, reason: 'missing' }
+      if (opts.ifVersion !== undefined && current.version !== opts.ifVersion) {
+        return { ok: false, reason: 'conflict', currentVersion: current.version }
+      }
+      if (files.has(to)) return { ok: false, reason: 'exists' }
+      files.delete(from)
+      files.set(to, { ...current, updatedAt: Date.now() })
+      return { ok: true }
     },
 
     async grep(pattern, opts = {}): Promise<GrepHit[]> {

@@ -39,6 +39,13 @@ export interface FileSystemUnderTest {
     pattern: RegExp,
     opts?: { prefix?: string; maxHits?: number },
   ): Promise<Array<{ path: string; line: number; text: string }>>
+  move?(
+    from: string,
+    to: string,
+    opts?: { ifVersion?: string },
+  ): Promise<
+    { ok: true } | { ok: false; reason: 'missing' | 'exists' | 'conflict'; currentVersion?: string }
+  >
 }
 
 /** Options of {@link fileSystemConformance}. */
@@ -47,6 +54,8 @@ export interface FileSystemConformanceOptions {
   requireStat?: boolean
   /** Require the optional `grep`. Default false: the case runs only when the adapter has it. */
   requireGrep?: boolean
+  /** Require the optional `move`. Default false: the case runs only when the adapter has it. */
+  requireMove?: boolean
 }
 
 const encoder = new TextEncoder()
@@ -71,7 +80,7 @@ function metaOf(meta: MetaUnderTest): { path: string; version: string; size: num
  * UTF-8 sizes, versions that change iff the content changes, `ifVersion` semantics (`null` =
  * create only, string = compare-and-set, concurrent writers), `DeleteResult` reasons, `list`
  * (recursive, sorted, prefix, metadata only), copies on read, and `stat` / `grep` when
- * implemented.
+ * implemented, and `move` when implemented.
  *
  * `factory` is called once per case and must return an **empty** file system (e.g. a fresh
  * namespace in a shared database). Paths used are normalized absolute POSIX paths.
@@ -389,6 +398,71 @@ export function fileSystemConformance(
           'grep with maxHits',
         )
         assertJsonEqual(await fs.grep(/absent/), [], 'grep without matches')
+      },
+    },
+    {
+      name: 'move renames atomically and reports missing, exists and conflict',
+      run: async () => {
+        const fs = await factory()
+        if (fs.move === undefined) {
+          assertTrue(!options.requireMove, 'move is required but not implemented')
+          return
+        }
+        const missing = await fs.move('/nope.md', '/b.md')
+        assertTrue(
+          !missing.ok && missing.reason === 'missing',
+          `expected 'missing', got ${JSON.stringify(missing)}`,
+        )
+        const v1 = await written(fs, '/a.md', 'ø one')
+        const moved = await fs.move('/a.md', '/dir/b.md')
+        assertTrue(moved.ok, `move failed: ${JSON.stringify(moved)}`)
+        assertTrue((await fs.read('/a.md')) === null, 'the source must be gone after a move')
+        const entry = await fs.read('/dir/b.md')
+        assertJsonEqual(
+          { content: entry?.content, version: entry?.version, size: entry?.size },
+          { content: 'ø one', version: v1, size: utf8('ø one') },
+          'the target keeps content, version and size',
+        )
+        assertJsonEqual(
+          (await fs.list()).map((m) => m.path),
+          ['/dir/b.md'],
+          'list after a move',
+        )
+
+        await written(fs, '/c.md', 'c')
+        const exists = await fs.move('/c.md', '/dir/b.md')
+        assertTrue(
+          !exists.ok && exists.reason === 'exists',
+          `moving onto an existing file must fail with 'exists', got ${JSON.stringify(exists)}`,
+        )
+        assertTrue(
+          (await contentOf(fs, '/c.md')) === 'c' && (await contentOf(fs, '/dir/b.md')) === 'ø one',
+          'a rejected move must change nothing',
+        )
+
+        const v2 = await written(fs, '/c.md', 'c2')
+        const conflict = await fs.move('/c.md', '/d.md', { ifVersion: v1 })
+        assertTrue(
+          !conflict.ok && conflict.reason === 'conflict',
+          `a stale ifVersion must fail with 'conflict', got ${JSON.stringify(conflict)}`,
+        )
+        if (!conflict.ok && conflict.currentVersion !== undefined) {
+          assertTrue(conflict.currentVersion === v2, 'currentVersion must be the stored version')
+        }
+        assertTrue(
+          (await fs.read('/d.md')) === null,
+          'a conflicting move must not create the target',
+        )
+        const ok = await fs.move('/c.md', '/d.md', { ifVersion: v2 })
+        assertTrue(ok.ok, `matching ifVersion must move: ${JSON.stringify(ok)}`)
+        assertTrue((await contentOf(fs, '/d.md')) === 'c2', 'moved content')
+
+        const move = fs.move.bind(fs)
+        const races = await Promise.all(['/e.md', '/f.md', '/g.md'].map((to) => move('/d.md', to)))
+        assertTrue(
+          races.filter((r) => r.ok).length === 1,
+          `concurrent moves of one file: expected one winner, got ${JSON.stringify(races)}`,
+        )
       },
     },
   ]
