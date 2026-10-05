@@ -64,7 +64,7 @@ const entries = {
     'normalizePath',
   ],
   'eharness/filesystem/memory': ['memoryFs'],
-  'eharness/storage/memory': ['memoryMessages', 'memoryState'],
+  'eharness/storage/memory': ['memoryInbox', 'memoryMessages', 'memoryState'],
   'eharness/mcp': ['MCP_AUTO_DEFER_THRESHOLD', 'clearMcpPins', 'mcpServer'],
   'eharness/todos': [
     'TODOS_CONTINUE',
@@ -91,6 +91,7 @@ const entries = {
     'SKILL_SOURCE_FIXTURE',
     'fileSystemConformance',
     'idGeneratorConformance',
+    'inboxAdapterConformance',
     'messageAdapterConformance',
     'scriptedModel',
     'skillSourceConformance',

@@ -47,8 +47,10 @@ import type {
   ToolsInput,
 } from '../registry/types.ts'
 import type {
+  CollectOptions,
   HarnessKindTypes,
   HarnessSession,
+  InboxAdapter,
   MessageAdapter,
   SessionOptions,
   StateAdapter,
@@ -295,8 +297,15 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   messageKinds?: KindMap
   plugins?: readonly HarnessPlugin<string, DataPartMap, KindMap>[]
 
-  /** Default: memory adapters. */
-  storage?: { messages?: MessageAdapter; state?: StateAdapter }
+  /** Default: memory adapters; no inbox (spec 05 §12). */
+  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }
+  /**
+   * Durable inbox behaviour (spec 05 §12): `pollMs` (default 2 000; `0` = no polling) is how often
+   * a live session claims inbox items when no notification arrived, `claimTtlMs` (default
+   * `recovery.staleMs`) how long a claim hides an item, `collect` the default debounce of
+   * `collect` inputs (also used without an inbox).
+   */
+  inbox?: { pollMs?: number; claimTtlMs?: number; collect?: CollectOptions }
   compaction?: CompactionConfig | false
   guard?: { maxContextRatio?: number; reserveTokens?: number }
   /** Extra overflow detection for providers the built-in patterns miss. */

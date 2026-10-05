@@ -12,6 +12,7 @@ import type {
   JSONValue,
   LanguageModel,
   pipeUIMessageStreamToResponse,
+  TextUIPart,
   UIMessage,
 } from 'ai'
 import type {
@@ -133,6 +134,8 @@ export interface SessionStateSnapshot {
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
     /** A cross-process abort request for the active turn (spec 05 §9.1). */
     abortRequest?: AbortRequest
+    /** Ids of the last 100 inbox items applied to this session (dedupe, spec 05 §12). */
+    inboxDelivered?: string[]
   }
   plugins: Record<string, Record<string, JSONValue>>
 }
@@ -164,12 +167,124 @@ export interface SessionLock {
 }
 
 /**
+ * User input in the serialized (JSON) form an inbox stores: normalized `text` / `file` parts, the
+ * client's message id and, with `acceptClientMetadata`, app metadata keys.
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface SerializedInput {
+  parts: Array<TextUIPart | FileUIPart>
+  clientId?: string
+  appMetadata?: Record<string, JSONValue>
+}
+
+/**
+ * Debounce of `collect` inputs: they are merged into one user message after `quietMs` without a
+ * new item, `maxWaitMs` after the first one, or once `maxItems` are waiting.
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface CollectOptions {
+  /** Default 1 500. */
+  quietMs?: number
+  /** Default 10 000. */
+  maxWaitMs?: number
+  /** Default 20. */
+  maxItems?: number
+}
+
+/**
+ * What an {@link InboxAdapter} stores: an input for the session (`send`), a wake-up for a kind
+ * message another instance already saved (`wake`), or an abort request (`abort`). `at` is the
+ * enqueue time (epoch ms).
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export type InboxItemInput =
+  | {
+      kind: 'send'
+      mode: 'queue' | 'steer' | 'collect'
+      input: SerializedInput
+      collect?: CollectOptions
+      at: number
+    }
+  | { kind: 'wake'; messageId: string; at: number }
+  | { kind: 'abort'; turnId?: string; reason?: string; at: number }
+
+/**
+ * A stored inbox item: the input plus its id (time-sortable, assigned by the adapter) and the
+ * number of times it was claimed.
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export type InboxItem = InboxItemInput & { id: string; attempts: number }
+
+/**
+ * Optional durable inbox of a multi-instance deployment: inputs, wake-ups and abort requests for a
+ * session, drained by whichever instance holds the session (spec 05 §12). eharness ships only
+ * `memoryInbox()` (`eharness/storage/memory`) and `inboxAdapterConformance` (`eharness/testing`).
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface InboxAdapter {
+  /** Store an item; durable before the promise resolves. Returns its id (time-sortable). */
+  enqueue(sessionId: string, item: InboxItemInput): Promise<string>
+  /**
+   * Atomically claim the ready items of a session for `owner`, oldest (lowest id) first, at most
+   * `limit`. Claimed items are invisible to other claims until `ack` / `release` or until the
+   * claim expires (`claimTtlMs`). Every claim increments `attempts`.
+   */
+  claim(
+    sessionId: string,
+    owner: string,
+    opts?: { limit?: number; claimTtlMs?: number },
+  ): Promise<InboxItem[]>
+  /** Remove items (their effect is durable). Unknown ids are ignored. */
+  ack(ids: string[]): Promise<void>
+  /** Make claimed items ready again. Unknown ids are ignored. */
+  release(ids: string[]): Promise<void>
+  /** Optional: wake the instances subscribed to the session (LISTEN/NOTIFY, pub/sub). */
+  notify?(sessionId: string): Promise<void>
+  /** Optional: called on `notify` of the session; returns the unsubscribe function. */
+  subscribe?(sessionId: string, onNotify: () => void): () => void
+  /** Optional: ids of sessions with ready items (for an application sweeper). */
+  pending?(opts?: { limit?: number }): Promise<string[]>
+}
+
+/**
+ * Options of `session.enqueue()`.
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface EnqueueOptions {
+  /**
+   * `'queue'` (default): a turn of its own after the running one. `'steer'`: delivered into the
+   * running turn at its next step boundary (a queued turn when none runs). `'collect'`: merged
+   * with other `collect` inputs into one user message (debounced, {@link CollectOptions}).
+   */
+  mode?: 'queue' | 'steer' | 'collect'
+  collect?: CollectOptions
+}
+
+/**
+ * Result of `session.enqueue()`: the item id (`metadata.eharness.inboxId` / `collected` of the
+ * user message it becomes) and where it will be applied — in this process (`'local'`) or by the
+ * instance whose turn is running (`'remote'`, best effort: the holder is decided when it drains).
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface EnqueueResult {
+  inboxId: string
+  target: 'local' | 'remote'
+}
+
+/**
  * Options of `agent.session(id, options)`.
  *
  * @see docs/specs/05-session-and-storage.md#1-session-options
  */
 export interface SessionOptions {
-  storage?: { messages?: MessageAdapter; state?: StateAdapter }
+  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }
   runtime?: Record<string, unknown>
   /** AI SDK `toolsContext`: map keyed by final tool name. */
   toolsContext?: Record<string, unknown>
@@ -199,9 +314,12 @@ export interface SendOptions {
    * While a turn runs: reject (default, `EH_SESSION_BUSY`), queue or steer (`send()` only), or
    * `'wait'` (`send()` and `respond()`): wait for the running turn and the queue ahead, then run.
    * A waiting `send()` is held while approvals created by a turn it waited for are pending (it
-   * never denies them); `abortSignal` drops it while it waits (`stop: 'aborted'`).
+   * never denies them); `abortSignal` drops it while it waits (`stop: 'aborted'`). `'collect'`
+   * (`send()` only): merged with other collected inputs into one queued turn (`collect`).
    */
-  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait' | 'collect'
+  /** Debounce of `ifBusy: 'collect'` (defaults: `config.inbox.collect`, then 1 500 / 10 000 / 20). */
+  collect?: CollectOptions
   model?: LanguageModel
   settings?: Partial<ModelSettings>
   /** Validated with `config.callOptions`. */
@@ -288,6 +406,13 @@ export type SessionEvent<M extends UIMessage = HarnessUIMessage> =
   | { type: 'message'; message: M }
   | { type: 'data'; chunk: DataChunkOf<M> }
   | { type: 'status'; running: boolean }
+  | {
+      type: 'inbox-enqueued'
+      inboxId: string
+      kind: InboxItem['kind']
+      mode?: 'queue' | 'steer' | 'collect'
+    }
+  | { type: 'inbox-drained'; inboxIds: string[]; turnId?: string }
 
 /**
  * A running (or finished) turn.
@@ -375,6 +500,15 @@ export interface HarnessSession<
    * @see docs/specs/05-session-and-storage.md#91-cross-process-abort
    */
   requestAbort(reason?: string): Promise<AbortRequestResult>
+  /**
+   * Hand an input to whichever instance holds the session: with `storage.inbox` it is stored
+   * durably first and applied by the instance running (or next running) the session; without
+   * one it is applied in this process. `mode`: `'queue'` (default), `'steer'` or `'collect'`.
+   * Rejects with `EH_INVALID_INPUT` (input), `EH_STORAGE` (inbox) or `EH_SESSION_CLOSED`.
+   *
+   * @see docs/specs/05-session-and-storage.md#12-inbox
+   */
+  enqueue(input: SendInput, options?: EnqueueOptions): Promise<EnqueueResult>
   /** Save a kind message; optionally deliver it into the running turn or wake the agent. */
   inject<K extends KindName<Kinds>>(
     kind: K,

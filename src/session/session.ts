@@ -7,8 +7,12 @@
 import { asSchema, type Tool, type UIMessage } from 'ai'
 import type { AgentInternals } from '../agent/internals.ts'
 import type {
+  AbortRequestResult,
+  CollectOptions,
+  EnqueueResult,
   HarnessRun,
   HarnessSession,
+  InboxAdapter,
   MessageAdapter,
   PendingResponse,
   SendInput,
@@ -39,10 +43,19 @@ import { createRun, failedRun } from '../stream/run.ts'
 import { createContext, defaultLogger, pendingServices } from './context.ts'
 import { createEventHub } from './events.ts'
 import { createHookRunner } from './hooks.ts'
+import { collectDue, mergeInputs, resolveCollect } from './inbox/collect.ts'
+import {
+  createInboxDrain,
+  DEFAULT_INBOX_POLL_MS,
+  type InboxDrain,
+  type InboxUnit,
+  liveForeignTurn,
+} from './inbox/driver.ts'
+import { toSerialized } from './inbox/serialize.ts'
 import { type NormalizedInput, normalizeInput } from './input.ts'
 import { kindText } from './interaction/inbox.ts'
 import { RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
-import { createDeferredRun, type QueuedTurn } from './interaction/queue.ts'
+import { createDeferredRun, type DeferredRun, type QueuedTurn } from './interaction/queue.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import { DEFAULT_STALE_MS, requestRemoteAbort } from './remote-abort.ts'
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
@@ -98,6 +111,8 @@ export function createSessionHandle(args: {
   options: SessionOptions
   messages: MessageAdapter
   state: StateAdapter
+  /** Optional durable inbox (spec 05 §12). */
+  inbox?: InboxAdapter
   idleMs: number
   onClosed(): void
   /** The close of the previous live handle of this id: this handle opens only after it. */
@@ -512,6 +527,8 @@ export function createSessionHandle(args: {
   }
 
   // ─── turns ────────────────────────────────────────────────────────────────────────────────
+  /** The drain of the durable inbox (`storage.inbox`), created at the end of this function. */
+  let drain: InboxDrain | undefined
   let current: RunningTurn | undefined
   /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
   const queue: QueuedTurn[] = []
@@ -524,11 +541,36 @@ export function createSessionHandle(args: {
     onTurnEnd() {
       current = undefined
       startNext()
+      checkCollect()
+      drain?.drain()
       touch()
       checkIdle()
     },
-    enqueueSteer(submitted) {
-      enqueue({ input: submitted.input, submitted, options: {} })
+    enqueueSteer(submitted, inboxId) {
+      // a durable steer goes back to the inbox: drained again in id order (spec 05 §12 rule 7)
+      if (inboxId !== undefined && drain !== undefined) {
+        void drain.release([inboxId])
+        return
+      }
+      enqueue({
+        input: submitted.input,
+        submitted,
+        options: {},
+        ...(inboxId === undefined
+          ? {}
+          : { inbox: { ids: [inboxId], meta: { inboxId }, durable: false } }),
+      })
+    },
+    get inboxDurable() {
+      return drain !== undefined
+    },
+    inboxApplied(ids, turnId) {
+      if (drain !== undefined) void drain.ack(ids, turnId)
+      else events.emit({ type: 'inbox-drained', inboxIds: [...ids], turnId })
+    },
+    inboxNotApplied(ids, retry) {
+      if (drain === undefined) return
+      void (retry ? drain.release(ids) : drain.ack(ids))
     },
     dropQueue: () => dropQueue(false),
     enqueueWake() {
@@ -537,7 +579,7 @@ export function createSessionHandle(args: {
   }
 
   function enqueue(
-    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options' | 'wait' | 'respond'> & {
+    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options' | 'wait' | 'respond' | 'inbox'> & {
       kind?: QueuedTurn['kind']
     },
   ): HarnessRun<UIMessage> {
@@ -602,18 +644,154 @@ export function createSessionHandle(args: {
       ...(next.input === undefined ? {} : { normalized: next.input }),
       ...(next.submitted === undefined ? {} : { submitted: next.submitted }),
       ...(next.respond === undefined ? {} : { respond: next.respond }),
+      ...(next.inbox === undefined ? {} : { inbox: next.inbox }),
       options: next.options,
       queued: true,
       turnId: next.turnId,
       via: 'queue',
     })
     next.handle.bind(current.run)
+    for (const extra of next.extraHandles ?? []) extra.bind(attachRun(current))
+  }
+
+  /** A new reader of a running turn (replay + follow), like `attach()`. */
+  function attachRun(running: RunningTurn): HarnessRun<UIMessage> {
+    return createRun({
+      turnId: running.run.turnId,
+      kind: running.run.kind,
+      messageId: running.run.messageId,
+      stream: running.buffer.reader(),
+      result: running.run.result,
+      abort: running.abort,
+    })
+  }
+
+  // ─── collect (in-process debounce, spec 05 §12 rule 6) ─────────────────────────────────────
+  type CollectEntry = {
+    input: NormalizedInput
+    inboxId?: string
+    at: number
+    handle?: DeferredRun
+  }
+  /** The open burst of `collect` inputs of this process (no inbox, or `send(…, 'collect')`). */
+  let collecting:
+    | {
+        turnId: string
+        options: Required<CollectOptions>
+        entries: CollectEntry[]
+        timer?: ReturnType<typeof setTimeout>
+      }
+    | undefined
+
+  /** Add an input to the burst; returns the run of `send()` callers. */
+  function collectInput(
+    input: NormalizedInput,
+    options: CollectOptions | undefined,
+    inboxId: string | undefined,
+    withRun: boolean,
+  ): HarnessRun<UIMessage> | undefined {
+    if (collecting === undefined) {
+      collecting = {
+        turnId: internals.generateId(),
+        options: resolveCollect(config.inbox?.collect, options),
+        entries: [],
+      }
+    }
+    const group = collecting
+    const entry: CollectEntry = {
+      input,
+      at: Date.now(),
+      ...(inboxId === undefined ? {} : { inboxId }),
+    }
+    if (withRun) {
+      entry.handle = createDeferredRun({
+        turnId: group.turnId,
+        kind: 'send',
+        generateId: () => internals.generateId(),
+        onAbort: () => {
+          // before the flush the input leaves the burst; after it, only this reader is dropped
+          const index = group.entries.indexOf(entry)
+          if (collecting === group && index >= 0) group.entries.splice(index, 1)
+          entry.handle?.drop()
+          if (collecting === group && group.entries.length === 0) clearCollect()
+          checkIdle()
+        },
+      })
+    }
+    group.entries.push(entry)
+    checkCollect()
+    return entry.handle?.run
+  }
+
+  /** Flush the burst when it is due (into the queue: it runs after the current turn), else wait. */
+  function checkCollect(): void {
+    const group = collecting
+    if (group === undefined || rt.closed) return
+    if (group.timer !== undefined) clearTimeout(group.timer)
+    group.timer = undefined
+    const first = group.entries[0]
+    if (first === undefined) return
+    const due = collectDue(
+      {
+        firstAt: first.at,
+        lastAt: (group.entries.at(-1) as CollectEntry).at,
+        count: group.entries.length,
+      },
+      group.options,
+      Date.now(),
+    )
+    if (!due.due) {
+      group.timer = setTimeout(checkCollect, Math.max(0, due.at - Date.now()) + 1)
+      unref(group.timer)
+      return
+    }
+    collecting = undefined
+    const handles = group.entries.flatMap((e) => (e.handle === undefined ? [] : [e.handle]))
+    const collected = group.entries.map((e) => {
+      const out: { inboxId?: string; clientId?: string } = {}
+      if (e.inboxId !== undefined) out.inboxId = e.inboxId
+      if (e.input.clientId !== undefined) out.clientId = e.input.clientId
+      return out
+    })
+    const head =
+      handles[0] ??
+      createDeferredRun({
+        turnId: group.turnId,
+        kind: 'send',
+        generateId: () => internals.generateId(),
+        onAbort: () => {},
+      })
+    queue.push({
+      kind: 'send',
+      turnId: group.turnId,
+      input: mergeInputs(group.entries.map((e) => e.input)),
+      options: {},
+      handle: head,
+      extraHandles: handles.slice(1),
+      inbox: {
+        ids: group.entries.flatMap((e) => (e.inboxId === undefined ? [] : [e.inboxId])),
+        meta: { collected },
+        durable: false,
+      },
+    })
+    startNext()
+    checkIdle()
+  }
+
+  function clearCollect(): void {
+    const group = collecting
+    collecting = undefined
+    if (group?.timer !== undefined) clearTimeout(group.timer)
+    for (const entry of group?.entries ?? []) entry.handle?.drop()
   }
 
   // ─── idle ─────────────────────────────────────────────────────────────────────────────────
   const idleWaiters: Array<() => void> = []
   function isIdle(): boolean {
-    return rt.closed || (!rt.running && queue.length === 0)
+    return (
+      rt.closed ||
+      (!rt.running && queue.length === 0 && collecting === undefined && drain?.busy !== true)
+    )
   }
   function checkIdle(): void {
     if (!isIdle()) return
@@ -637,8 +815,75 @@ export function createSessionHandle(args: {
     }
   }
 
-  /** Request the abort of a turn running in another instance (spec 05 §9.1). */
-  function remoteAbort(reason: string | undefined) {
+  /** Request the abort of a turn running in another instance (spec 05 §9.1, §12 rule 4). */
+  async function remoteAbort(reason: string | undefined): Promise<AbortRequestResult> {
+    const inbox = args.inbox
+    const staleMs =
+      config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
+    if (inbox !== undefined && staleMs !== false) {
+      let stored: Awaited<ReturnType<StateAdapter['get']>>
+      try {
+        stored = await args.state.get(id)
+      } catch (error) {
+        throw new HarnessError('EH_STORAGE', 'State storage failed (abort request).', {
+          cause: error,
+        })
+      }
+      const active = liveForeignTurn(stored, rt.owner, staleMs)
+      if (active === undefined) return { target: 'idle' }
+      try {
+        const inboxId = await inbox.enqueue(id, {
+          kind: 'abort',
+          turnId: active.turnId,
+          at: Date.now(),
+          ...(reason === undefined ? {} : { reason }),
+        })
+        events.emit({ type: 'inbox-enqueued', inboxId, kind: 'abort' })
+        await notify()
+        return { target: 'remote' }
+      } catch (error) {
+        // the state path stays the fallback (ADR-0021)
+        inboxWarning('enqueue', error)
+      }
+    }
+    return stateAbort(reason)
+  }
+
+  function inboxWarning(operation: string, error: unknown): void {
+    rt.warn(
+      {
+        code: 'W_INBOX_FAILED',
+        message: `Inbox ${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
+        details: { sessionId: id, operation },
+      },
+      `inbox:${operation}`,
+    )
+  }
+
+  /** Wake the instances subscribed to this session (best effort). */
+  async function notify(): Promise<void> {
+    try {
+      await args.inbox?.notify?.(id)
+    } catch (error) {
+      inboxWarning('notify', error)
+    }
+  }
+
+  /** A turn of this session running in another instance, read from the stored state. */
+  async function foreignTurn(): Promise<string | undefined> {
+    const staleMs =
+      config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
+    if (staleMs === false) return undefined
+    let stored: Awaited<ReturnType<StateAdapter['get']>>
+    try {
+      stored = await args.state.get(id)
+    } catch {
+      return undefined // the drain decides (it releases what a busy session cannot take)
+    }
+    return liveForeignTurn(stored, rt.owner, staleMs)?.turnId
+  }
+
+  function stateAbort(reason: string | undefined) {
     return requestRemoteAbort(
       {
         sessionId: id,
@@ -655,13 +900,19 @@ export function createSessionHandle(args: {
     )
   }
 
-  /** Drop queued turns; `abort()` keeps `ifBusy: 'wait'` callers (only `close()` drops them). */
+  /**
+   * Drop queued turns; `abort()` keeps `ifBusy: 'wait'` callers (only `close()` drops them).
+   * Durable inbox items are never dropped: they go back to the inbox (spec 05 §12).
+   */
   function dropQueue(all: boolean): void {
     for (const entry of [...queue]) {
       if (!all && entry.wait !== undefined) continue
       queue.splice(queue.indexOf(entry), 1)
       entry.handle.drop()
+      for (const extra of entry.extraHandles ?? []) extra.drop()
+      if (entry.inbox?.durable === true) void drain?.release(entry.inbox.ids)
     }
+    clearCollect()
     checkIdle()
   }
 
@@ -685,7 +936,9 @@ export function createSessionHandle(args: {
     idleTimer = setTimeout(() => {
       idleTimer = undefined
       // a queue held by pending approvals does not keep the session alive: idle close drops it
-      const queued = queue.length > 0 && rt.state.core().pending === undefined
+      const queued =
+        (queue.length > 0 || collecting !== undefined || drain?.busy === true) &&
+        rt.state.core().pending === undefined
       if (rt.running || queued || events.readers > 0) touch()
       else void close()
     }, args.idleMs)
@@ -698,6 +951,7 @@ export function createSessionHandle(args: {
     if (closing !== undefined) return closing
     rt.closed = true
     if (idleTimer !== undefined) clearTimeout(idleTimer)
+    drain?.close()
     dropQueue(true)
     closing = (async () => {
       const running = current
@@ -776,6 +1030,9 @@ export function createSessionHandle(args: {
             wait: { pendingAtCall: rt.state.core().pending?.messageId },
           })
         }
+        if (ifBusy === 'collect' && normalized !== undefined) {
+          return collectInput(normalized, options.collect, undefined, true) as HarnessRun<UIMessage>
+        }
         if (ifBusy === 'steer' && current !== undefined) {
           const running = session.attach() as HarnessRun<UIMessage>
           // a turn that stopped taking input: the steer becomes a queued turn (spec 11 §6.1)
@@ -848,7 +1105,7 @@ export function createSessionHandle(args: {
       dropQueue(false)
       if (current !== undefined) return current.abort(reason)
       // no turn here: maybe one runs in another instance (spec 05 §9.1)
-      remoteAbort(reason).catch((error) =>
+      remoteAbort(reason).catch((error: unknown) =>
         log.warn('eharness: cross-process abort request failed', { error }),
       )
     },
@@ -903,6 +1160,26 @@ export function createSessionHandle(args: {
         if (text !== undefined && current.deliverEvent(out, text, wake)) return result
       }
       if (!wake || rt.closed) return result
+      // a turn of this session runs in another instance: hand the wake to it (spec 05 §12)
+      if (current === undefined && !rt.running && args.inbox !== undefined && drain !== undefined) {
+        const foreign = await foreignTurn()
+        if (foreign !== undefined) {
+          try {
+            const inboxId = await args.inbox.enqueue(id, {
+              kind: 'wake',
+              messageId: out.id,
+              at: Date.now(),
+            })
+            events.emit({ type: 'inbox-enqueued', inboxId, kind: 'wake' })
+            drain.foreign(foreign)
+            await notify()
+            return result
+          } catch (error) {
+            inboxWarning('enqueue', error)
+          }
+        }
+      }
+      if (rt.closed) return result
       // wake an idle session now; otherwise (a turn is ending, compact() runs, or approvals wait
       // for an answer) a no-input wake turn is queued and runs when the session is free
       if (!rt.running && rt.state.core().pending === undefined) {
@@ -1011,9 +1288,56 @@ export function createSessionHandle(args: {
         }
         rt.running = false
         startNext()
+        checkCollect()
+        drain?.drain()
         touch()
         checkIdle()
       }
+    },
+    async enqueue(input, options = {}) {
+      assertOpen()
+      const mode = options.mode ?? 'queue'
+      if (mode !== 'queue' && mode !== 'steer' && mode !== 'collect') {
+        throw new HarnessError('EH_INVALID_INPUT', `Unknown enqueue mode '${String(mode)}'.`, {
+          details: { mode },
+        })
+      }
+      touch()
+      const normalized = normalizeInput(input, {
+        acceptClientMetadata: rt.options.acceptClientMetadata === true,
+        files: config.inputFiles,
+      })
+      const inbox = args.inbox
+      if (inbox === undefined || drain === undefined) {
+        const inboxId = internals.generateId()
+        events.emit({ type: 'inbox-enqueued', inboxId, kind: 'send', mode })
+        enqueueLocal(normalized, mode, inboxId, options.collect)
+        return { inboxId, target: 'local' }
+      }
+      let inboxId: string
+      try {
+        inboxId = await inbox.enqueue(id, {
+          kind: 'send',
+          mode,
+          input: toSerialized(normalized),
+          at: Date.now(),
+          ...(options.collect === undefined ? {} : { collect: { ...options.collect } }),
+        })
+      } catch (error) {
+        throw new HarnessError('EH_STORAGE', 'Inbox storage failed (enqueue).', { cause: error })
+      }
+      events.emit({ type: 'inbox-enqueued', inboxId, kind: 'send', mode })
+      let target: EnqueueResult['target'] = 'local'
+      if (current === undefined && !rt.running) {
+        const foreign = await foreignTurn()
+        if (foreign !== undefined) {
+          target = 'remote'
+          drain.foreign(foreign)
+        }
+      }
+      if (target === 'remote') await notify()
+      else drain.drain()
+      return { inboxId, target }
     },
     async clearGrants() {
       assertOpen()
@@ -1095,6 +1419,90 @@ export function createSessionHandle(args: {
     },
     close,
   }
+  // ─── durable inbox (spec 05 §12) ──────────────────────────────────────────────────────────
+  function enqueueLocal(
+    normalized: NormalizedInput,
+    mode: 'queue' | 'steer' | 'collect',
+    inboxId: string,
+    collect: CollectOptions | undefined,
+  ): void {
+    if (mode === 'collect') {
+      collectInput(normalized, collect, inboxId, false)
+      return
+    }
+    const inbox = { ids: [inboxId], meta: { inboxId }, durable: false }
+    if (mode === 'steer' && current !== undefined && current.steer(normalized, inboxId)) return
+    if (!rt.running && queue.length === 0) {
+      begin({ kind: 'send', input: undefined, normalized, options: {}, queued: false, inbox })
+      return
+    }
+    enqueue({ input: normalized, options: {}, inbox })
+  }
+
+  /** Start a unit of inbox items now (the drain checked that the session is free). */
+  function startUnit(unit: InboxUnit): boolean {
+    if (rt.closed || rt.running || queue.length > 0) return false
+    const turnId = internals.generateId()
+    const entry: QueuedTurn = {
+      kind: unit.kind,
+      turnId,
+      input: unit.input,
+      options: {},
+      handle: createDeferredRun({
+        turnId,
+        kind: unit.kind,
+        generateId: () => internals.generateId(),
+        onAbort: () => {},
+      }),
+      inbox: { ids: unit.ids, meta: unit.meta, durable: true },
+    }
+    queue.push(entry)
+    startNext()
+    const index = queue.indexOf(entry)
+    if (index < 0) return true
+    // held (pending approvals): back to the inbox
+    queue.splice(index, 1)
+    entry.handle.drop()
+    return false
+  }
+
+  const staleForDrain =
+    config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
+  drain =
+    args.inbox === undefined
+      ? undefined
+      : createInboxDrain({
+          rt,
+          adapter: args.inbox,
+          staleMs: staleForDrain,
+          claimTtlMs:
+            config.inbox?.claimTtlMs ??
+            (staleForDrain === false ? DEFAULT_STALE_MS : staleForDrain),
+          pollMs: config.inbox?.pollMs ?? DEFAULT_INBOX_POLL_MS,
+          collect: config.inbox?.collect,
+          current: () => {
+            const running = current
+            if (running === undefined) return undefined
+            return {
+              turnId: running.run.turnId,
+              steer: (input, inboxId) => running.steer(input, inboxId),
+            }
+          },
+          free: () => !rt.closed && !rt.running && queue.length === 0,
+          prepare: async () => {
+            await ensureOpen()
+            await ensureContext(true)
+          },
+          invalidate: () => {
+            if (current === undefined && loading === undefined) rt.view = undefined
+          },
+          start: startUnit,
+          abort: (reason) => {
+            dropQueue(false)
+            current?.abort(reason ?? 'aborted')
+          },
+          settled: () => checkIdle(),
+        })
   touch()
   return { session, rt, close }
 }

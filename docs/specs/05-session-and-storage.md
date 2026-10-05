@@ -9,8 +9,8 @@ application.
 
 ```ts
 export interface SessionOptions {
-  /** Override agent-level storage for this session. */
-  storage?: { messages?: MessageAdapter; state?: StateAdapter }
+  /** Override agent-level storage for this session (`inbox`: optional durable inbox, §12). */
+  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }
   /** Developer runtime context, exposed as ctx.runtime (tenantId, userId, feature flags…). */
   runtime?: Record<string, unknown>
   /** AI SDK toolsContext: map keyed by final tool name (spec 01 §4). */
@@ -35,8 +35,8 @@ export interface SessionOptions {
 cached session are merged (`runtime` replaced, others ignored with `W_SESSION_OPTIONS_IGNORED`
 when they differ). Cache eviction: `closeSession(id)`, `close()`, or idle eviction
 (`config.sessionIdleMs`, default 30 min) which is skipped while a turn runs, a turn is queued (and
-can start: a queue held by pending approvals, spec 11 §6.2, does not count), or an `events()` reader
-is open. Idle close drops held queued turns like `close()` (`stop: 'aborted'`). After eviction, held references throw `EH_SESSION_CLOSED`; call
+can start: a queue held by pending approvals, spec 11 §6.2, does not count), a `collect` burst or
+an inbox drain is pending (§12), or an `events()` reader is open. Idle close drops held queued turns like `close()` (`stop: 'aborted'`). After eviction, held references throw `EH_SESSION_CLOSED`; call
 `agent.session(id)` again to get a fresh instance. There is never more than one live writer per
 id in an agent: `agent.session(id)` called while the previous instance is still closing (its
 running turn is aborted and saved, `session.close` hooks run, state is written) returns the new
@@ -90,6 +90,14 @@ export interface HarnessSession<
    */
   requestAbort(reason?: string): Promise<{ target: 'local' | 'remote' | 'idle' | 'unsupported' }>
 
+  /**
+   * Hand an input to whichever instance holds the session (0.4.0, §12): with `storage.inbox` it
+   * is stored durably first and applied by the instance running (or next running) the session;
+   * without one it is applied in this process. Resolves `{ inboxId, target }`. Rejects with
+   * EH_INVALID_INPUT, EH_STORAGE (inbox enqueue failed) or EH_SESSION_CLOSED.
+   */
+  enqueue(input: SendInput, options?: EnqueueOptions): Promise<EnqueueResult>
+
   /** Save a kind message; optionally deliver it into the running turn or wake the agent (spec 11 §6.3). */
   inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, options?: InjectOptions)
     : Promise<{ message: M; run?: HarnessRun<M> }>
@@ -142,8 +150,14 @@ export interface SendOptions {
    * when it was called are handled like a new send(). Its abortSignal drops it while it waits
    * (stop 'aborted', nothing persisted); session abort() keeps it, close() drops it.
    * regenerate/edit always throw EH_SESSION_BUSY while a turn runs.
+   * 'collect' (send() only, 0.4.0): the input joins the process's `collect` burst (§12 rule 6);
+   * every collected send() returns a run of the same merged queued turn (same turnId).
+   * ifBusy applies to a turn running in this process only: a turn running in another instance
+   * is a run error EH_SESSION_BUSY as in 0.3 (cross-process queuing is session.enqueue(), §12).
    */
-  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait' | 'collect'
+  /** Debounce of ifBusy 'collect' (defaults: config.inbox.collect, then 1 500 / 10 000 / 20). */
+  collect?: CollectOptions
   /** Per-turn overrides (precedence: agent config < SendOptions < turn.prepare < step.prepare). */
   model?: LanguageModel
   settings?: Partial<ModelSettings>
@@ -171,6 +185,17 @@ export type SendOptionsWithOutput<S extends FlexibleSchema> = SendOptions & { ou
 export interface InjectOptions {
   deliver?: 'next-turn' | 'next-step'
   wake?: boolean
+}
+
+export interface EnqueueOptions {
+  /** 'queue' (default) | 'steer' | 'collect' (§12). */
+  mode?: 'queue' | 'steer' | 'collect'
+  collect?: CollectOptions
+}
+export interface EnqueueResult {
+  inboxId: string
+  /** 'local': applied by this process; 'remote': a turn runs in another instance (best effort). */
+  target: 'local' | 'remote'
 }
 ```
 
@@ -599,6 +624,8 @@ export interface SessionStateSnapshot {
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
     /** Cross-process abort request for the active turn (§9.1); written by another instance. */
     abortRequest?: { turnId: string; at: number; reason?: string; by?: string }
+    /** Ids of the last 100 inbox items applied to this session (§12 rule 5, dedupe). */
+    inboxDelivered?: string[]
   }
   plugins: Record<string, Record<string, JSONValue>>    // plugins[<plugin name>][key]
 }
@@ -705,7 +732,9 @@ recovery?: {
 
 A Stop request that reaches any instance stops the turn running in another instance, ending it
 exactly like a local abort. It needs only a `StateAdapter` with `setIf` (ADR-0021); no lock, no
-inbox (P19 adds an inbox path with lower latency; this one stays the fallback).
+inbox. With `storage.inbox` (§12 rule 4) the request goes through the inbox instead (an `abort`
+item for the live foreign turn, lower latency with `subscribe`); this state path stays the
+fallback when there is no inbox or its enqueue fails.
 
 1. **Request.** `requestAbort(reason)`: if a turn of this session runs in this process → local
    abort, `'local'`. Otherwise read the state: no **live foreign** `activeTurn` (absent, owned by
@@ -791,9 +820,144 @@ parameter a second time.
 |---|---|
 | Hot turn | 0 reads (+ ≤ 1 state read per `abortPollMs` for turns longer than that, §9.1); 1 upsert (user) + 1 upsert per step (assistant) + 1 final upsert; 2 state writes (commit point, end) + heartbeats for turns longer than `staleMs / 4` |
 | Hot turn, `recovery: false` | as above with ≤ 1 state write |
+| Live session with an inbox (§12) | 1 `claim` per `inbox.pollMs` (default 2 000; plus one per notification); 1 state read when a claim returned items; 1 `ack` per applied unit |
 | Cold turn | 1 state read + 1 range query (with pointer) |
 | UI history page | 1 range query |
 
 Write amplification: `persistEachStep` rewrites the whole assistant message per step. Mitigations:
 tool output limits (spec 09 §4) and plugin transforms (`tool.after` / `message.beforeSave`);
 adapters may store per-step rows internally without changing the contract.
+
+## 12. Inbox (0.4.0)
+
+An optional durable inbox lets a multi-instance deployment queue, steer, wake, collect (debounce)
+and abort **across processes** (ADR-0024). Without `storage.inbox` nothing changes: the queue is
+the in-memory FIFO of spec 11 §6.2.
+
+```ts
+export interface InboxAdapter {
+  /** Durable before resolving. Returns the item id (time-sortable). */
+  enqueue(sessionId: string, item: InboxItemInput): Promise<string>
+  /** Atomically claim ready items of a session for `owner`, oldest first (at most `limit`).
+   *  Claimed items are invisible to other claims until ack/release or until the claim expires
+   *  (`claimTtlMs`). Every claim increments `attempts`. */
+  claim(sessionId: string, owner: string, opts?: { limit?: number; claimTtlMs?: number }): Promise<InboxItem[]>
+  ack(ids: string[]): Promise<void>                     // unknown ids are ignored
+  release(ids: string[]): Promise<void>                 // unknown ids are ignored
+  /** Optional wake-up of the instances subscribed to the session (LISTEN/NOTIFY, pub/sub). */
+  notify?(sessionId: string): Promise<void>
+  /** Optional subscription; without it the holder only polls (`inbox.pollMs`). */
+  subscribe?(sessionId: string, onNotify: () => void): () => void
+  /** Optional: sessions with ready items (for an application sweeper). */
+  pending?(opts?: { limit?: number }): Promise<string[]>
+}
+
+export type InboxItemInput =
+  | { kind: 'send'; mode: 'queue' | 'steer' | 'collect'; input: SerializedInput; collect?: CollectOptions; at: number }
+  | { kind: 'wake'; messageId: string; at: number }     // inject(…, { wake }) from another process
+  | { kind: 'abort'; turnId?: string; reason?: string; at: number }
+export type InboxItem = InboxItemInput & { id: string; attempts: number }
+export interface SerializedInput {            // a normalized input (§3 step 7) as JSON
+  parts: Array<TextUIPart | FileUIPart>
+  clientId?: string
+  appMetadata?: Record<string, JSONValue>     // only with acceptClientMetadata
+}
+export interface CollectOptions { quietMs?: number; maxWaitMs?: number; maxItems?: number }
+
+// config
+storage?: { messages?; state?; inbox?: InboxAdapter }
+inbox?: {
+  pollMs?: number        // default 2_000; 0 = no polling (notifications and turn ends only)
+  claimTtlMs?: number    // default recovery.staleMs (120_000)
+  collect?: CollectOptions   // default { quietMs: 1_500, maxWaitMs: 10_000, maxItems: 20 }; also used without an inbox
+}
+```
+
+`eharness/storage/memory` ships `memoryInbox()`; `eharness/testing` ships
+`inboxAdapterConformance(factory, { requireNotify?, requirePending?, claimTtlMs? })` (durability,
+JSON round trip, FIFO per session, exactly one winner per item under concurrent claims, claim
+expiry, `release`, `ack`, `limit`, session isolation, copies, `notify`/`subscribe`, `pending`).
+A Postgres adapter (`SELECT … FOR UPDATE SKIP LOCKED`, `LISTEN`/`NOTIFY`) is
+`examples/postgres-inbox.ts`.
+
+Normative rules:
+
+1. **Without an inbox** behaviour and storage are those of 0.3. `session.enqueue()` then applies
+   the input in this process (`target: 'local'`, `inboxId` a generated id): `'queue'` → a turn
+   now (idle) or a queued turn; `'steer'` → a steer of the running turn (else like `'queue'`);
+   `'collect'` → the process's collect burst (rule 6).
+2. **Enqueue.** With an inbox, `enqueue()` normalizes the input (§3 step 7, `EH_INVALID_INPUT`),
+   stores it (`EH_STORAGE` on failure), emits `inbox-enqueued`, then: if no turn of the session
+   runs here, reads the state — a live foreign `activeTurn` (§9) → `target: 'remote'` and
+   `notify()`; otherwise `target: 'local'` and this instance drains at once. `send()` keeps its
+   0.3 semantics (rule 2 of ADR-0024); `handleChatRequest` gets no new mode — a route that wants
+   cross-process queuing calls `enqueue()` itself on the 409 busy run.
+3. **Drain.** Every live session with an inbox subscribes (when the adapter can) and polls every
+   `pollMs`; it also drains when one of its turns (or `compact()`) ends, and once when it is
+   created (an application sweeper only needs `agent.session(id)` for each id of `pending()`).
+   A drain claims the ready items (`claimTtlMs`) and applies them in id order:
+   - **a turn runs here:** `abort` items for that turn (or without `turnId`) abort it (rule 4);
+     `steer` items are delivered at its next step boundary as
+     `data-eh.input { source: 'user', …, inboxId }` (spec 11 §6.1, `input.submit` with
+     `via: 'steer'`); every other item is released (it waits for the turn end);
+   - **no turn runs here and nothing is queued here:** the stored state is read; a live foreign
+     `activeTurn` → everything is released and this instance stops claiming until a state read
+     shows that turn gone. Otherwise the context is validated (§6), `abort` items are acked
+     (their turn ended), and the **first unit** starts as a queued turn (`queued: true`,
+     `via: 'queue'`): one `queue`/`steer` item (a send turn), consecutive `wake` items (one wake
+     turn), or a due `collect` burst (one merged send turn). Everything after the unit is
+     released and drained when that turn ends.
+   - otherwise (a turn is starting, `compact()` runs, local turns are queued) everything is
+     released.
+   The lock / `activeTurn` CAS still decide who runs a turn: a unit whose turn fails before its
+   commit point with `EH_SESSION_BUSY` or `EH_STORAGE`, or that is dropped by `close()`, is
+   released; a unit that ends before its commit point for any other reason (input blocked
+   without `persist`, invalid input, aborted by its caller) is acked (dropped).
+4. **Abort** (U4, inbox path). `requestAbort()` / `abort()` with an inbox and no local turn read
+   the state: no live foreign `activeTurn` → `'idle'`; otherwise an `abort` item for that
+   `turnId` is enqueued and `notify()` called → `'remote'` (no state write). If the enqueue
+   fails (`W_INBOX_FAILED`) the state request of §9.1 is the fallback. The holder applies a
+   matching abort at its next drain (notify / poll, also during a long tool call); an item for
+   another turn id is acked without effect (a late Stop never aborts the next turn). Abort items
+   are never held (rule 8).
+5. **At-least-once with dedupe.** Items are acked only after their effect is durable: a queued
+   send (or a collect burst) after its user message is saved at the commit point; a steer after
+   the snapshot containing its `data-eh.input` is saved (`persistEachStep`, else the final
+   save); a wake after its turn committed; an abort once applied. The commit-point state write of
+   a turn made from inbox items appends their ids to `state.core.inboxDelivered` (newest 100), a
+   delivered steer is appended in memory and written with the next state write. A redelivered
+   item (expired claim of a dead or slow claimer, lost ack) whose id is found in
+   `metadata.eharness.inboxId` / `collected` of a stored user message, in `inboxId` of a stored
+   `data-eh.input` part, or in `state.core.inboxDelivered` is acked without effect. A turn that
+   fails after its commit-point write but before its user message is saved removes its ids from
+   `inboxDelivered` again and releases them.
+6. **Collect.** `collect` inputs are merged into **one** user message once `quietMs` passed
+   without a new one, `maxWaitMs` passed since the first, or `maxItems` are waiting (the first
+   `maxItems` are taken; the rest is the next burst): the text parts of each input joined with a
+   blank line, the inputs joined with a blank line in arrival order, then all file parts in
+   order; `metadata.eharness.collected: Array<{ inboxId?, clientId? }>`, one entry per input.
+   `input.submit` runs once on the merged message (`via: 'queue'`). A burst waits for the
+   running turn to end (collect items are not steers). With an inbox the burst is a run of
+   consecutive `collect` items, timed by their `at`; it is claimed only when due (a drain that
+   finds it early releases it and drains again when it becomes due), so one claimer gets all of
+   it. The debounce of the burst is the first item's `collect`, over `config.inbox.collect`.
+   Without an inbox (and for `send(…, { ifBusy: 'collect' })`) the burst lives in the process;
+   it is dropped by `abort()` and `close()` like queued turns.
+7. **Ordering.** Per session, items are applied in id order. A steer that misses the running turn
+   (the turn stopped taking input, or it ends with a stop other than `tool-pending` / `aborted` /
+   `timeout`) goes back to the inbox and becomes a queued send at the next idle drain, in its
+   original id order (its `input.submit` hooks run again, `via: 'queue'`); with `tool-pending`,
+   `aborted` or `timeout` it is reported as `input-dropped` and acked, except when the session is
+   closing (released for the next holder).
+8. **Pending approvals hold the inbox** like the in-memory queue (spec 11 §6.2): while
+   `state.core.pending` is set no unit starts (items are released); abort items are still
+   drained. The turn of `respond()` drains when it ends.
+9. **Events.** `{ type: 'inbox-enqueued'; inboxId; kind; mode? }` in the enqueuing process;
+   `{ type: 'inbox-drained'; inboxIds; turnId? }` in the process that applied (acked) the items
+   (`turnId` of the turn that applied them).
+10. **`abort()` and `close()` never drop durable items:** inbox items claimed for a queued turn go
+    back to the inbox (released); only in-memory queued turns are dropped.
+
+The poll interval is the latency without `subscribe` and the safety net for lost notifications
+with it; the core never claims from a session that is not live in its process. `wake` items are
+written by `inject(…, { wake: true })` when a live foreign turn runs (spec 11 §6.3).

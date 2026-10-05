@@ -1,6 +1,6 @@
 /**
- * The input inbox of a running turn (internal): steers and `next-step` injections waiting for
- * the next step boundary, in arrival order.
+ * The input queue of a running turn (internal): steers and `next-step` injections waiting for
+ * the next step boundary, in arrival order. (Not the durable `InboxAdapter` port, spec 05 §12.)
  *
  * @see docs/specs/11-interaction.md#61-steer
  * @see docs/specs/11-interaction.md#63-inject-delivery-and-wake
@@ -12,7 +12,7 @@ import type { HarnessUIMessage, InputPartData } from '../../messages/types.ts'
 import type { NormalizedInput } from '../input.ts'
 
 /** One input ready for delivery at a step boundary. */
-export interface InboxItem {
+export interface PendingInput {
   /** The persistent `data-eh.input` part data written into the running assistant message. */
   data: InputPartData
   /** A steer: the submitted input (for the queued fallback) and the text of the original input. */
@@ -21,30 +21,32 @@ export interface InboxItem {
   event?: HarnessUIMessage
   /** The injection asked for `wake`: if it is not delivered, a wake turn is queued. */
   wake?: boolean
+  /** A steer claimed from the durable inbox: acked once its `data-eh.input` is saved. */
+  inboxId?: string
 }
 
-/** The inbox of one running turn. */
-export interface TurnInbox {
+/** The input queue of one running turn. */
+export interface TurnInputQueue {
   /** False once the turn stopped taking input (its step loop ended). */
   readonly open: boolean
   /** True when something was pushed and not taken yet. */
   readonly waiting: boolean
   /** Add an entry (resolves `undefined` when the input was dropped). False when closed. */
-  push(entry: Promise<InboxItem | undefined>): boolean
+  push(entry: Promise<PendingInput | undefined>): boolean
   /** Take every waiting entry, in order (awaits in-flight `input.submit` hooks). */
-  take(): Promise<InboxItem[]>
+  take(): Promise<PendingInput[]>
   /** Put taken items back at the front (the loop stopped before delivering them). */
-  unshift(items: readonly InboxItem[]): void
+  unshift(items: readonly PendingInput[]): void
   /** Stop taking input and return everything that was not delivered. */
-  close(): Promise<InboxItem[]>
+  close(): Promise<PendingInput[]>
 }
 
-/** Create an empty, open inbox. */
-export function createInbox(): TurnInbox {
-  let entries: Array<Promise<InboxItem | undefined>> = []
+/** Create an empty, open input queue. */
+export function createTurnInputQueue(): TurnInputQueue {
+  let entries: Array<Promise<PendingInput | undefined>> = []
   let open = true
-  const take = async (): Promise<InboxItem[]> => {
-    const out: InboxItem[] = []
+  const take = async (): Promise<PendingInput[]> => {
+    const out: PendingInput[] = []
     while (entries.length > 0) {
       const taken = entries
       entries = []
