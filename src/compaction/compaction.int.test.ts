@@ -569,6 +569,25 @@ describe('manual compaction', () => {
     expect(isHarnessError(error, 'EH_COMPACTION_FAILED')).toBe(true)
     expect(await markers(failing.messages)).toHaveLength(0)
 
+    // a summary cut at maxSummaryTokens is a failure too (spec 06 §5.5)
+    const cut = setup([answer('A1'), answer('A2')], {
+      compaction: {
+        model: summarizerModel([{ text: 'half a summ', finishReason: 'length' }]),
+        keepLast: 0,
+        maxSummaryTokens: 100,
+      },
+    })
+    await fillTurns(cut.agent.session('s1'), 1)
+    let cutError: unknown
+    try {
+      await cut.agent.session('s1').compact()
+    } catch (e) {
+      cutError = e
+    }
+    expect(isHarnessError(cutError, 'EH_COMPACTION_FAILED')).toBe(true)
+    expect((cutError as { details?: unknown }).details).toEqual({ reason: 'length' })
+    expect(await markers(cut.messages)).toHaveLength(0)
+
     const disabled = setup([answer('A1')], { compaction: false })
     await fillTurns(disabled.agent.session('s1'), 1)
     expect(await disabled.agent.session('s1').compact()).toBeNull()

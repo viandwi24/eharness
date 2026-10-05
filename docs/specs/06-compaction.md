@@ -236,8 +236,11 @@ a previous pointer.
 
 ### 5.5 Failure
 
-Summarizer error or empty output → warning `W_COMPACTION_FAILED`, no marker, continue with the
-guard. Manual `compact()` rejects with `EH_COMPACTION_FAILED`.
+Summarizer error, empty output, or a summary cut by the output limit (`finishReason: 'length'`
+on any chunk: a truncated brief would silently lose the end of the work state, so it is not
+used — no retry) → warning `W_COMPACTION_FAILED` (`details: { trigger, reason? }`, `reason:
+'length' | 'empty'`), no marker, continue with the guard. Manual `compact()` rejects with
+`EH_COMPACTION_FAILED` (same `details.reason`). Raise `maxSummaryTokens` when this happens.
 
 ## 6. Guard (always on, not configurable away)
 
