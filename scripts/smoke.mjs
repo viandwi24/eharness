@@ -76,6 +76,7 @@ const entries = {
     'DEFAULT_MAX_PINNED_CHARS',
     'MEMORY_PROTOCOL',
     'MEMORY_TOOLS',
+    'PINNED_PREAMBLE',
     'executeMemoryCommand',
     'memory',
   ],

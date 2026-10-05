@@ -8,7 +8,7 @@ the `fs` service — six tools (`memory_view`, `memory_create`, `memory_str_repl
 tool, application-chosen roots resolved per turn (read-only or writable), pinned files in the turn
 reminder (prompt-cache safe), size limits, optimistic concurrency and an `onWrite` audit callback.
 `executeMemoryCommand()` runs one command directly, and the `tool` option lets the application
-supply its own (e.g. provider-defined) memory tool. Exports `MEMORY_PROTOCOL` and `MEMORY_TOOLS`.
+supply its own (e.g. provider-defined) memory tool. Exports `MEMORY_PROTOCOL`, `PINNED_PREAMBLE` and `MEMORY_TOOLS`.
 
 `FileSystem` gains an optional atomic `move(from, to, { ifVersion })` (`MoveResult`); `memoryFs`
 implements it and `fileSystemConformance` checks it (`requireMove`).

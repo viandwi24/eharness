@@ -328,7 +328,26 @@ export async function executeMemoryCommand(
       end = to === -1 ? lines.length : Math.min(to, lines.length)
     }
     const out: string[] = []
-    for (let n = start; n <= end; n++) out.push(`${String(n).padStart(6)}\t${lines[n - 1]}`)
+    let used = 0
+    for (let n = start; n <= end; n++) {
+      const line = `${String(n).padStart(6)}\t${lines[n - 1]}`
+      if (used + line.length + 1 > maxFileChars) {
+        // cap the output at maxFileChars (files written outside the plugin may be larger)
+        let next = n
+        if (out.length === 0) {
+          out.push(`${line.slice(0, maxFileChars)} … [line truncated]`)
+          next = n + 1
+        }
+        if (next <= lines.length) {
+          out.push(
+            `(Output truncated at ${maxFileChars} characters; view the rest with view_range [${next}, -1].)`,
+          )
+        }
+        return out.join('\n')
+      }
+      out.push(line)
+      used += line.length + 1
+    }
     return out.join('\n')
   }
 
@@ -368,6 +387,7 @@ export async function executeMemoryCommand(
       next = file.content.replace(command.old_str, () => command.new_str)
       done = `Edited ${path}.`
     } else {
+      if (command.insert_text === '') return 'ERROR: insert_text must not be empty.'
       const lines = fileLines(file.content)
       const at = command.insert_line
       if (at > lines.length) {
@@ -426,6 +446,7 @@ export async function executeMemoryCommand(
   const exists = `ERROR: ${to.path} already exists.`
   if (from.path === to.path || (await fs.read(to.path)) !== null) return exists
   if (await isDirectory(to.path)) return `ERROR: ${to.path} is a directory.`
+  let afterVersion = file.version
   if (fs.move !== undefined) {
     const moved = await fs.move(from.path, to.path, { ifVersion: file.version })
     if (!moved.ok) {
@@ -435,18 +456,34 @@ export async function executeMemoryCommand(
   } else {
     const copy = await fs.write(to.path, file.content, { ifVersion: null })
     if (!copy.ok) return copy.reason === 'exists' ? exists : conflictText(to.path)
-    const removed = await fs.delete(from.path, { ifVersion: file.version })
-    if (!removed.ok) {
-      // best effort: remove the copy again so nothing is duplicated
+    // best effort: remove the copy again so nothing is duplicated
+    const removeCopy = async (): Promise<void> => {
       try {
         await fs.delete(to.path, { ifVersion: copy.version })
       } catch {
-        // the source failure is what the model needs to know about
+        // the source failure is what matters
       }
+    }
+    let removed: Awaited<ReturnType<MemoryFileSystem['delete']>>
+    try {
+      removed = await fs.delete(from.path, { ifVersion: file.version })
+    } catch (error) {
+      // an adapter failure stays a tool error (rule 6), but leaves no copy behind
+      await removeCopy()
+      throw error
+    }
+    if (!removed.ok) {
+      await removeCopy()
       return conflictText(from.path)
     }
+    afterVersion = copy.version
   }
-  const same = meta(file.version, file.content)
-  await written({ op: 'rename', path: from.path, to: to.path, before: same, after: same })
+  await written({
+    op: 'rename',
+    path: from.path,
+    to: to.path,
+    before: meta(file.version, file.content),
+    after: meta(afterVersion, file.content),
+  })
   return `Renamed ${from.path} to ${to.path}.`
 }
