@@ -1,6 +1,6 @@
 # Spec 07 — Skills
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/skills`; filesystem source in `src/filesystem`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/skills`; filesystem source in `src/filesystem`.
 
 A skill is a reusable instruction bundle the **model** chooses to open when relevant (progressive
 disclosure). Format follows the Agent Skills convention (`SKILL.md` + optional files) and AI SDK

@@ -1,6 +1,6 @@
 # Spec 05 — Session and storage
 
-Status: **Accepted (reviewed for 0.1.0)**. Modules: `src/session`, `src/storage` (memory adapters).
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Modules: `src/session`, `src/storage` (memory adapters).
 
 eharness knows only `sessionId: string`. Chat lists, titles, owners and permissions belong to the
 application.

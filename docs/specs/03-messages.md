@@ -1,6 +1,6 @@
 # Spec 03 — Messages
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/messages`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/messages`.
 
 This is the most important contract in eharness: it defines what is **stored**, what is
 **streamed**, and what the **model sees**.
