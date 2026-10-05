@@ -12,7 +12,14 @@ import { z } from 'zod/v4'
 import type { LastRead } from './last-read.ts'
 import { dirPrefix, isUnder, isUnderAny, normalizePath } from './paths.ts'
 import { smartReplace } from './smart-replace.ts'
-import { splitLines, statelessPattern } from './text.ts'
+import {
+  GREP_PATTERN_RULE,
+  GREP_SCAN_CHARS,
+  isLiteralPattern,
+  splitLines,
+  statelessPattern,
+  unsafePatternReason,
+} from './text.ts'
 import type {
   FileChangeData,
   FileEntry,
@@ -77,37 +84,60 @@ export function renderWindow(
   offset: number,
   limit: number,
   maxChars: number,
+  charOffset = 0,
 ): { text: string } | { error: string } {
   const lines = fileLines(content)
   if (lines.length === 0) return { text: '(empty file)' }
   if (offset > lines.length) {
     return { error: `offset ${offset} is past the end of the file (${lines.length} lines)` }
   }
+  const firstLength = (lines[offset - 1] as string).length
+  if (charOffset > 0 && charOffset >= firstLength) {
+    return {
+      error: `charOffset ${charOffset} is past the end of line ${offset} (${firstLength} characters)`,
+    }
+  }
   const hint = (last: number) =>
     `\n\n(Showing lines ${offset}-${last} of ${lines.length}. Continue with offset=${last + 1}.)`
+  const continues = (line: number, next: number) =>
+    `\n\n(Line ${line} continues; use offset=${line} charOffset=${next}.)`
+  const truncated = ' … [line truncated]'
   const fill = (budget: number) => {
     const out: string[] = []
     let used = 0
     let last = offset - 1
+    /** The first line was cut: where it continues. */
+    let cut: number | undefined
     for (let n = offset; n <= Math.min(lines.length, offset + limit - 1); n++) {
-      let line = `${String(n).padStart(6)}\t${lines[n - 1] as string}`
+      const prefix = `${String(n).padStart(6)}\t`
+      const text =
+        n === offset ? (lines[n - 1] as string).slice(charOffset) : (lines[n - 1] as string)
+      let line = prefix + text
       const cost = line.length + 1
       if (used + cost > budget) {
         if (out.length > 0) break
-        // a single line longer than the budget: show its head
-        line = `${line.slice(0, Math.max(0, budget - 40))} … [line truncated]`
+        // a single line longer than the budget: show its head; the rest is reachable with
+        // charOffset (spec 08 §3)
+        const shown = Math.max(1, budget - prefix.length - truncated.length)
+        line = `${prefix}${text.slice(0, shown)}${truncated}`
+        cut = (n === offset ? charOffset : 0) + shown
       }
       out.push(line)
       used += cost
       last = n
+      if (cut !== undefined) break
     }
-    return { text: out.join('\n'), last }
+    return { text: out.join('\n'), last, cut }
   }
   let window = fill(maxChars)
-  if (window.last < lines.length) {
+  if (window.cut !== undefined || window.last < lines.length) {
     // reserve room for the hint (its longest form) and fill again
-    window = fill(Math.max(0, maxChars - hint(lines.length).length))
-    window.text += hint(window.last)
+    const reserve = Math.max(
+      hint(lines.length).length,
+      continues(lines.length, content.length).length,
+    )
+    window = fill(Math.max(0, maxChars - reserve))
+    window.text += window.cut !== undefined ? continues(window.last, window.cut) : hint(window.last)
   }
   return { text: window.text }
 }
@@ -184,7 +214,7 @@ export function createFileTools(
     }),
 
     read_file: tool({
-      description: `Read a text file. Returns numbered lines (at most ${READ_LINE_LIMIT} per call); use offset/limit to page through long files. Read a file before editing, overwriting or deleting it.`,
+      description: `Read a text file. Returns numbered lines (at most ${READ_LINE_LIMIT} per call); use offset/limit to page through long files and charOffset to continue a very long line. Read a file before editing, overwriting or deleting it.`,
       inputSchema: z.object({
         path: pathSchema,
         offset: z.number().int().min(1).optional().describe('First line to read (1-based)'),
@@ -194,8 +224,14 @@ export function createFileTools(
           .min(1)
           .optional()
           .describe(`Number of lines to read (max ${READ_LINE_LIMIT})`),
+        charOffset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Character offset inside the first line (to continue a very long line)'),
       }),
-      execute: async ({ path: input, offset, limit }): Promise<string> => {
+      execute: async ({ path: input, offset, limit, charOffset }): Promise<string> => {
         const resolved = resolvePath(input)
         if (!resolved.ok) return resolved.text
         const path = resolved.path
@@ -207,6 +243,7 @@ export function createFileTools(
           offset ?? 1,
           Math.min(limit ?? READ_LINE_LIMIT, READ_LINE_LIMIT),
           env.maxReadChars,
+          charOffset ?? 0,
         )
         if ('error' in window) return `ERROR: ${window.error}`
         lastRead.set(path, entry.version)
@@ -315,6 +352,11 @@ export function createFileTools(
         prefix: z.string().optional().describe('Only search under this directory. Default: /'),
       }),
       execute: async ({ pattern, prefix }): Promise<string> => {
+        // no catastrophic backtracking: the event loop must never freeze on a model's pattern
+        const unsafe = unsafePatternReason(pattern)
+        if (unsafe !== undefined) {
+          return `ERROR: invalid pattern: ${unsafe}. ${GREP_PATTERN_RULE}`
+        }
         let regex: RegExp
         try {
           regex = new RegExp(pattern)
@@ -325,12 +367,15 @@ export function createFileTools(
         if (!resolved.ok) return resolved.text
         const root = resolved.path
         if (isUnderAny(root, env.hidden)) return 'No matches.'
-        const hits = await search(root, regex)
+        const hits = await search(root, regex, isLiteralPattern(pattern) ? pattern : undefined)
         if (hits.length === 0) return 'No matches.'
+        const matcher = statelessPattern(regex)
         const shown = hits.slice(0, GREP_MAX_HITS).map((hit) => {
-          const text =
-            hit.text.length > GREP_LINE_CHARS ? `${hit.text.slice(0, GREP_LINE_CHARS)} …` : hit.text
-          return `${hit.path}:${hit.line}: ${text}`
+          if (hit.text.length <= GREP_LINE_CHARS) return `${hit.path}:${hit.line}: ${hit.text}`
+          // a cut line names where the match is, so read_file can reach it (charOffset)
+          const at = matcher.exec(hit.text.slice(0, GREP_SCAN_CHARS))?.index
+          const where = at === undefined ? '' : ` (match at charOffset=${at})`
+          return `${hit.path}:${hit.line}: ${hit.text.slice(0, GREP_LINE_CHARS)} …${where}`
         })
         if (hits.length > GREP_MAX_HITS) {
           shown.push(`(Stopped at ${GREP_MAX_HITS} matches; narrow the pattern or the prefix.)`)
@@ -341,7 +386,11 @@ export function createFileTools(
   }
 
   /** Up to GREP_MAX_HITS + 1 visible hits under `root`. */
-  async function search(root: string, regex: RegExp): Promise<GrepHit[]> {
+  async function search(
+    root: string,
+    regex: RegExp,
+    literal: string | undefined,
+  ): Promise<GrepHit[]> {
     const limit = GREP_MAX_HITS + 1
     const visible = (hit: GrepHit): boolean => isUnder(hit.path, root) && listed(hit.path, root)
     // the adapter's fast path with a larger budget; hidden/unlisted hits are filtered out
@@ -352,6 +401,12 @@ export function createFileTools(
       if (raw.length < GREP_FAST_PATH_HITS || hits.length >= limit) return hits.slice(0, limit)
     }
     const line = statelessPattern(regex)
+    // a pattern without metacharacters is a plain substring search; each line is scanned up to
+    // GREP_SCAN_CHARS characters
+    const matches = (text: string): boolean => {
+      const head = text.length > GREP_SCAN_CHARS ? text.slice(0, GREP_SCAN_CHARS) : text
+      return literal === undefined ? line.test(head) : head.includes(literal)
+    }
     const hits: GrepHit[] = []
     const files: FileMeta[] = (await fs.list(dirPrefix(root))).filter(
       (file) => isUnder(file.path, root) && listed(file.path, root),
@@ -361,7 +416,7 @@ export function createFileTools(
       if (entry === null) continue
       const lines = splitLines(entry.content)
       for (let i = 0; i < lines.length; i++) {
-        if (!line.test(lines[i] as string)) continue
+        if (!matches(lines[i] as string)) continue
         hits.push({ path: file.path, line: i + 1, text: lines[i] as string })
         if (hits.length >= limit) return hits
       }

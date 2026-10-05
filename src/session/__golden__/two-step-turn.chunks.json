@@ -20,15 +20,15 @@
     "transient": true
   },
   {
-    "type": "start-step"
-  },
-  {
     "type": "data-eh.status",
     "data": {
       "state": "tool",
       "tool": "weather"
     },
     "transient": true
+  },
+  {
+    "type": "start-step"
   },
   {
     "type": "tool-input-available",

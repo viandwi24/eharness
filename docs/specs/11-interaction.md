@@ -1,6 +1,6 @@
 # Spec 11 — Interaction: approvals, client tools, regenerate/edit, steering, wake
 
-Status: **Accepted (reviewed for 0.1.0)**. Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
 
 This spec covers everything a user (or a UI) does to a session besides "send a new message":
 answering tool approvals, returning client-side tool results, regenerating or editing, talking to
@@ -83,8 +83,9 @@ Per step the core builds **one** `GenericToolApprovalFunction` and passes it as 
 4. session grants (§3.1).
 
 Results are normalized to `{ type, reason? }` and combined **most restrictive wins**:
-`denied` > `user-approval` > `approved` > `not-applicable`. A hook that throws counts as
-`denied` (fail closed). The approval function sees the input **after** `tool.before` refinement
+`denied` > `user-approval` > `approved` > `not-applicable`. A hook or policy that throws, or
+that returns an unknown status (e.g. a typo such as `'deny'`), counts as `denied` (fail closed,
+reason `invalid approval status '<value>'`). The approval function sees the input **after** `tool.before` refinement
 (AI SDK runs `experimental_refineToolInput` before approval).
 
 ### 3.1 Grants
@@ -122,8 +123,9 @@ Every decision is reported to `approval.decided` hooks (spec 01 §5) with an `Ap
   the function again when it re-validates approved calls).
 - **Answers** through `respond()`: `by: 'user'`, with the answer's `reason`, `remember` and
   `actor` — an `ApprovalActor { id: string; name?: string; …JSON }` the application passes to say
-  who answered. The actor is never stored in messages nor sent to the model. Reported after the
-  answers were consumed (the commit point), in answer order.
+  who answered (with `handleChatRequest`: its `options.actor`, §7). The actor is never stored in
+  messages nor sent to the model. Reported after the answers were consumed (the commit point), in
+  answer order.
 - **New input** while pending with `onNewInput: 'deny'`: `by: 'new-input'`, `approved: false`,
   `reason: DENIED_NEW_INPUT`.
 
@@ -240,8 +242,11 @@ edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
 
 ```ts
 export interface SendOptions {
-  /** send() only. When a turn is running: 'reject' (default, EH_SESSION_BUSY thrown), 'queue', or 'steer'. */
-  ifBusy?: 'reject' | 'queue' | 'steer'
+  /**
+   * When a turn is running: 'reject' (default, EH_SESSION_BUSY thrown), 'queue' or 'steer'
+   * (send() only), or 'wait' (send() and respond(), §6.2).
+   */
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
   // … other fields in spec 05 §2
 }
 ```
@@ -305,6 +310,18 @@ drop the queue (dropped runs resolve with `stop: 'aborted'`, spec 05 §2). The q
 and lost on restart; cross-instance queuing is the application's job (a `SessionLock` rejection
 is a run error).
 
+**`ifBusy: 'wait'`** (`send()` and `respond()`) joins the same FIFO, with three differences: the
+waiting caller is not dropped by `session.abort()` (it aborts only the running turn and the
+plain queue; `close()` and the caller's own `abortSignal` drop it, `stop: 'aborted'`, nothing
+persisted); a waiting `respond()` may start while the queue is held by pending approvals (that
+is what resolves them); and a waiting `send()` is held only by pending approvals that did not
+exist when it was called — approvals created by a turn it waited for are never denied by it —
+while approvals already pending at call time are handled as by a new `send()` (`onNewInput`).
+The queue stays FIFO: a waiting `send()` starts only from the head, so it never overtakes a
+queued turn ahead of it (if that one is held by pending approvals, the waiting `send()` waits
+too). Only a waiting `respond()` may start from any position while the queue is held.
+`session.idle()` resolves when no turn runs and nothing is queued.
+
 ### 6.3 `inject()` delivery and wake
 
 ```ts
@@ -323,6 +340,10 @@ inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, opts?: {
   projection skips kind messages that have `deliveredIn`. A crash between the two saves delivers
   the event twice (at-least-once), never zero times. Without `persistEachStep` the update happens
   after the final save.
+- A `next-step` injection that arrives while the turn is still preparing (before step 0) goes to
+  the turn's inbox like any other: it is delivered once at step 0 as `data-eh.input` and is not
+  also projected as a standalone message of that turn, even when its id sorts before the turn's
+  user message — so the stored order projects exactly like the wire the model saw (ADR-0011).
 - `wake` requires the session to be live in this process. Cross-process wake-ups are done by the
   application calling `agent.session(id).inject(…, { wake: true })` in the right process.
 - The delivered text is the kind's model projection (spec 03 §5.1), text parts joined with a blank
@@ -352,10 +373,14 @@ export interface ChatRequestBody {
   trigger?: 'submit-message' | 'regenerate-message'
   messageId?: string
 }
+export interface ChatRequestOptions extends SendOptions {
+  /** The request's user: set on every approval answer of the respond() path (approval.decided). */
+  actor?: ApprovalActor
+}
 export function handleChatRequest<M extends UIMessage, Kinds extends Record<string, unknown>>(
   session: HarnessSession<M, Kinds>,
   body: ChatRequestBody,
-  options?: SendOptions,
+  options?: ChatRequestOptions,
 ): HarnessRun<M>
 ```
 
@@ -374,7 +399,18 @@ run and reported as a run error):
 4. otherwise → `send(last, options)` (a body without messages → run error `EH_INVALID_INPUT`).
 
 `options` are passed to every operation (e.g. `{ ifBusy: 'steer' }` makes a request that arrives
-while a turn runs steer it; `respond`/`regenerate`/`edit` still throw `EH_SESSION_BUSY`).
+while a turn runs steer it; `{ ifBusy: 'wait' }` makes `send` and `respond` wait for it).
+`options.actor` (0.4.0, the authenticated user of the request) is set on every approval answer of
+the `respond()` path, so `approval.decided` receives it (§3.3); the client cannot set it.
+
+**Busy sessions.** `handleChatRequest` never throws `EH_SESSION_BUSY` (it still throws
+`EH_SESSION_CLOSED`). When the operation is rejected as busy — `regenerate` / `edit` while a turn
+runs, `send` / `respond` without a waiting `ifBusy` — it returns a failed run (`stop: 'error'`,
+`error.code: 'EH_SESSION_BUSY'`, type `HarnessRun`) whose `toResponse()` / `pipeTo()` answer
+**409** with the JSON body `{ error: { code, message } }` instead of a UI message stream. Since
+the stream of a turn ends only after the turn finalized (spec 05 §3 step 17), a client that waits
+for the end of a response before sending the next request never sees a 409 from its own turn
+(a queued, waiting or wake turn that started after it, or another tab's request, still can).
 
 Typical route:
 
@@ -382,6 +418,7 @@ Typical route:
 export async function POST(req: Request) {
   const body = await req.json()                      // { id, messages, trigger, messageId }
   const session = agent.session(body.id, { runtime: { userId } })
+  // busy: 409 { error: { code: 'EH_SESSION_BUSY', … } } — or pass { ifBusy: 'wait' } to wait
   return handleChatRequest(session, body).toResponse()
 }
 ```

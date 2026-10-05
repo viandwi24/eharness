@@ -52,13 +52,13 @@
     }
   },
   "devDependencies": {
-    "@ai-sdk/mcp": "^2.0.63",
+    "@ai-sdk/mcp": "^2.0.66",
     "@arethetypeswrong/cli": "^0.18.5",
     "@biomejs/biome": "^2.5.14",
     "@changesets/changelog-github": "^1.0.1",
     "@changesets/cli": "^3.0.3",
     "@types/bun": "1.4.2",
-    "ai": "^7.0.123",
+    "ai": "^7.0.127",
     "publint": "^0.3.24",
     "tsdown": "^0.23.0",
     "typescript": "^7.0.2",

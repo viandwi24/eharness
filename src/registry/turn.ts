@@ -10,7 +10,7 @@
  * @see docs/specs/02-context-registry.md#8-registry-api-internal-but-tested
  */
 import type { GenericToolApprovalFunction, Tool, ToolInputRefinement, ToolSet } from 'ai'
-import type { ApprovalConfig, ToolOutputConfig } from '../agent/types.ts'
+import type { ApprovalConfig, ToolErrorTextFn, ToolOutputConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
@@ -81,6 +81,8 @@ export async function resolveTurnRegistry(args: {
   approval: ApprovalConfig | undefined
   /** `config.toolOutput` (spec 09 §4). */
   toolOutput?: ToolOutputConfig | undefined
+  /** `config.toolErrorText` (spec 10 §1.1). */
+  toolErrorText?: ToolErrorTextFn | undefined
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
   status: (toolName: string) => void
@@ -114,6 +116,7 @@ export async function resolveTurnRegistry(args: {
     contextOf,
     warn: args.warn,
     status: args.status,
+    ...(args.toolErrorText === undefined ? {} : { toolErrorText: args.toolErrorText }),
     limits: {
       config: args.toolOutput,
       // looked up by name without throwing: absent when no plugin provides it (spec 09 §4)

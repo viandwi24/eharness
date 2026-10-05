@@ -16,12 +16,15 @@ import type {
   ToolInputRefinement,
   ToolSet,
 } from 'ai'
-import type { ApprovalConfig } from '../agent/types.ts'
+import type { ApprovalConfig, ToolErrorTextFn } from '../agent/types.ts'
 import { HarnessToolError, type HarnessWarning } from '../errors.ts'
 import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
 import { riskOf } from './risk.ts'
+
+/** The text of a thrown tool error when `toolErrorText` throws or returns a non-string. */
+const TOOL_ERROR_FALLBACK = 'Error: the tool failed.'
 
 /** Dependencies of the wrappers. */
 export interface ToolWrapDeps {
@@ -32,6 +35,8 @@ export interface ToolWrapDeps {
   status(toolName: string): void
   /** Tool output limits (spec 09 §4); omitted = no limits (unit tests). */
   limits?: Omit<OutputLimitDeps, 'warn'>
+  /** `config.toolErrorText`: the text a thrown error becomes (spec 10 §1.1). */
+  toolErrorText?: ToolErrorTextFn
 }
 
 /** Report a failing hook (`W_HOOK_FAILED`). */
@@ -87,10 +92,20 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
     input: unknown,
     options: ToolExecutionOptions<unknown>,
   ) => unknown
-  const toToolError = (error: unknown, toolCallId: string) =>
-    error instanceof HarnessToolError
-      ? error
-      : new HarnessToolError(error, { toolName: name, toolCallId })
+  const toToolError = (error: unknown, toolCallId: string) => {
+    if (error instanceof HarnessToolError) return error
+    const map = deps.toolErrorText
+    if (map === undefined) return new HarnessToolError(error, { toolName: name, toolCallId })
+    let text: string
+    try {
+      const mapped: unknown = map(error, { toolName: name, toolCallId })
+      text = typeof mapped === 'string' ? mapped : TOOL_ERROR_FALLBACK
+    } catch {
+      // a failing mapper must not leak the original text either
+      text = TOOL_ERROR_FALLBACK
+    }
+    return new HarnessToolError(error, { toolName: name, toolCallId, text })
+  }
 
   const limits = deps.limits
   const finish = (input: unknown, output: unknown, toolCallId: string) =>
@@ -220,9 +235,13 @@ const RANK: Record<Normalized['type'], number> = {
 
 function normalizeStatus(status: ToolApprovalStatus | undefined): Normalized {
   if (status === undefined || status === null) return { type: 'not-applicable' }
-  if (typeof status === 'string') return { type: status }
-  const out: Normalized = { type: status.type }
-  if (typeof status.reason === 'string') out.reason = status.reason
+  const type: unknown = typeof status === 'string' ? status : (status as { type?: unknown }).type
+  // an unknown status (a typo, a value from another version) fails closed like a throw
+  if (typeof type !== 'string' || !Object.hasOwn(RANK, type)) {
+    return { type: 'denied', reason: `invalid approval status '${String(type)}'` }
+  }
+  const out: Normalized = { type: type as Normalized['type'] }
+  if (typeof status === 'object' && typeof status.reason === 'string') out.reason = status.reason
   return out
 }
 
@@ -234,8 +253,8 @@ export interface ApprovalGrants {
 
 /**
  * The per-step approval function (spec 11 §3): `approval.policy`, then every `tool.approve` hook,
- * then session grants, combined most-restrictive-wins. A throwing policy or hook counts as
- * `denied` (fail closed). A grant `never` denies; `always` turns `user-approval` into `approved`
+ * then session grants, combined most-restrictive-wins. A throwing policy or hook, or an unknown
+ * status value, counts as `denied` (fail closed). A grant `never` denies; `always` turns `user-approval` into `approved`
  * but never overrides `denied` (then `W_GRANT_IGNORED`, once per tool). `undefined` only when there
  * is neither a policy, a hook nor a grant source; turns always pass a grant source, so every turn
  * gets a function (it returns `not-applicable` when nothing applies).

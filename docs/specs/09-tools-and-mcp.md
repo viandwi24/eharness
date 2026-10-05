@@ -1,6 +1,6 @@
 # Spec 09 — Tools and MCP
 
-Status: **Accepted (reviewed for 0.1.0)**. Modules: `src/registry/tools.ts`, `src/mcp` (`eharness/mcp`).
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Modules: `src/registry/tools.ts`, `src/mcp` (`eharness/mcp`).
 
 ## 1. Tools are AI SDK tools
 
@@ -141,7 +141,8 @@ toolOutput?: {
 - Order: `execute` → `tool.after` hooks → limit. Preliminary outputs (§5) are not limited; only
   the final one.
 - **`truncate`:** strings keep the first 70% and the last 30% of the budget around a marker
-  `TOOL_OUTPUT_TRUNCATED` (spec 10 §5). Structured outputs are serialized
+  `TOOL_OUTPUT_TRUNCATED` (spec 10 §5); a cut point never splits a UTF-16 surrogate pair (it
+  moves by one character instead). Structured outputs are serialized
   first; if the result is still over budget the output becomes
   `{ truncated: true, preview: <truncated JSON string>, originalChars: N }`. The preview is sized so
   that its kept characters plus the JSON escaping they need (it is a string inside a JSON value)

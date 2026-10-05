@@ -7,7 +7,7 @@
  * @see docs/specs/06-compaction.md#6-guard-always-on-not-configurable-away
  * @see docs/specs/06-compaction.md#7-overflow-recovery
  */
-import type { LanguageModel, ModelMessage, Tool, UIMessageChunk } from 'ai'
+import type { LanguageModel, LanguageModelUsage, ModelMessage, Tool, UIMessageChunk } from 'ai'
 import { project } from '../messages/project.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import type { ContextStats, HarnessUIMessage, PendingState } from '../messages/types.ts'
@@ -15,7 +15,7 @@ import type { TurnInfo } from '../plugin/types.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
-import type { CompactOutcome, SessionCompaction } from './compact.ts'
+import type { BudgetOverrun, CompactOutcome, SessionCompaction } from './compact.ts'
 import { applyHardCap } from './guard.ts'
 import { isContextOverflow, reportedTokenCount } from './overflow.ts'
 import { toolSetTokens, wireTokens } from './tokens.ts'
@@ -108,6 +108,15 @@ export function createTurnCompaction(args: {
   signal: AbortSignal
   pending?: PendingState | null
   continuing?: string
+  /**
+   * Kind messages routed into the turn's inbox (`next-step` injections): delivered as
+   * `data-eh.input`, never projected as standalone messages of this turn (spec 11 §6.3).
+   */
+  inboxed?: ReadonlySet<string>
+  /** Charge summarizer usage to the turn (spec 06 §5.3). */
+  onUsage?: (usage: LanguageModelUsage, model: LanguageModel) => void
+  /** The used-up USD budget, if any: compaction is skipped (spec 12 §4). */
+  overBudget?: () => BudgetOverrun | undefined
 }): TurnCompaction {
   const { engine, rt, registry, info } = args
   const messages = rt.agent.messages
@@ -155,7 +164,12 @@ export function createTurnCompaction(args: {
 
   async function build(delivered: readonly ModelMessage[] = []): Promise<BuiltWire> {
     // injected during the turn (id > A) belong to the next turn (spec 03 §5.4)
-    const view = selected((rt.view ?? []).filter((m) => isBoundary(m) || m.id <= args.assistantId))
+    const inboxed = args.inboxed
+    const view = selected(
+      (rt.view ?? []).filter(
+        (m) => isBoundary(m) || (m.id <= args.assistantId && inboxed?.has(m.id) !== true),
+      ),
+    )
     let boundary: HarnessUIMessage | undefined
     for (const m of view)
       if (isBoundary(m) && (boundary === undefined || m.id > boundary.id)) boundary = m
@@ -197,6 +211,8 @@ export function createTurnCompaction(args: {
       beforeTokens,
       write: args.write,
       signal: args.signal,
+      onUsage: args.onUsage,
+      overBudget: args.overBudget,
     })
     if (outcome.status === 'failed') failed = true
     return outcome

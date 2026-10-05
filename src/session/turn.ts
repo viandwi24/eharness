@@ -21,7 +21,8 @@ import type {
   SendInput,
   SendOptions,
 } from '../agent/session-types.ts'
-import type { SessionCompaction } from '../compaction/compact.ts'
+import type { BudgetConfig } from '../agent/types.ts'
+import type { BudgetOverrun, SessionCompaction } from '../compaction/compact.ts'
 import { createTurnCompaction } from '../compaction/turn-context.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, isHarnessError } from '../errors.ts'
@@ -180,6 +181,27 @@ function seedDiscovered(view: readonly HarnessUIMessage[]): Set<string> {
   return out
 }
 
+/**
+ * The used-up USD budget (spent ≥ limit), turn first (spec 12 §4); `undefined` when none is.
+ * `sessionCost` is the cost of the session's earlier turns.
+ */
+export function budgetOverrun(
+  budget: BudgetConfig | undefined,
+  turnCost: number,
+  sessionCost: number,
+): BudgetOverrun | undefined {
+  if (budget === undefined) return undefined
+  const checks: Array<['turn' | 'session', number | undefined, number]> = [
+    ['turn', budget.maxTurnUsd, turnCost],
+    ['session', budget.maxSessionUsd, sessionCost + turnCost],
+  ]
+  for (const [scope, limitUsd, spentUsd] of checks) {
+    if (limitUsd === undefined || !(limitUsd >= 0)) continue
+    if (spentUsd >= limitUsd) return { scope, limitUsd, spentUsd }
+  }
+  return undefined
+}
+
 /** Validate a value against a schema; returns the (possibly transformed) value. */
 async function validateWith(schema: unknown, value: unknown, what: string): Promise<unknown> {
   const validate = asSchema(schema as Parameters<typeof asSchema>[0]).validate
@@ -252,6 +274,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   /** Kind messages delivered as data-eh.input (updated with deliveredIn after a save). */
   const deliveredEvents: Array<{ message: HarnessUIMessage; afterFinish: number; done: boolean }> =
     []
+  /** Ids of kind messages pushed into the inbox: never projected standalone in this turn. */
+  const inboxed = new Set<string>()
   /** Session grants before this respond() recorded new ones (those apply from step 1, §3.1). */
   let grantsBefore: Record<string, 'always' | 'never'> | undefined
   let grantsRecorded = false
@@ -340,7 +364,19 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     emit(chunk)
   }
 
+  /**
+   * The terminal `finish` / `abort` chunk of the turn stream: AI SDK gets it now (its `onEnd` runs
+   * the end sequence), readers of `run.stream` only after the end sequence completed, so the end
+   * of the stream implies the session is free (spec 05 §3 step 17).
+   */
+  let terminal: UIMessageChunk | undefined
+
   function emit(chunk: UIMessageChunk): void {
+    if (chunk.type === 'finish' || chunk.type === 'abort') {
+      terminal ??= chunk
+      writer?.write(chunk)
+      return
+    }
     buffer.push(chunk)
     if (chunk.type === 'finish-step') finishStepsWritten++
     trackToolCall(chunk)
@@ -466,8 +502,35 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     )
   }
 
+  // ─── plugin state set by this turn before its commit point ───────────────────────────────
+  /** Plugin keys set by this turn's preparation hooks (reverted when it ends before committing). */
+  const touched = new Map<string, { plugin: string; key: string }>()
+  /** Owners whose preparation hook (or tool source / instruction) is running, with a count. */
+  const preparing = new Map<string, number>()
+  const stopObserving = rt.state.observe((plugin, key) => {
+    if (!committed && preparing.has(plugin)) touched.set(`${plugin}\u0000${key}`, { plugin, key })
+  })
+  /**
+   * Run `fn` as preparation work of `owner`: its `ctx.state` changes are discarded if the turn
+   * ends before the commit point; foreign changes (other plugins, core state such as
+   * `clearGrants()`) are kept (spec 05 §3).
+   */
+  async function asOwner<T>(owners: readonly string[], fn: () => Promise<T>): Promise<T> {
+    for (const owner of owners) preparing.set(owner, (preparing.get(owner) ?? 0) + 1)
+    try {
+      return await fn()
+    } finally {
+      for (const owner of owners) {
+        const n = (preparing.get(owner) ?? 1) - 1
+        if (n <= 0) preparing.delete(owner)
+        else preparing.set(owner, n)
+      }
+    }
+  }
+
   function earlyEnd(stop: StopReason, error?: unknown): void {
-    if (!committed && stateCheckpoint !== undefined) rt.state.restore(stateCheckpoint)
+    if (!committed && stateCheckpoint !== undefined)
+      rt.state.revert(stateCheckpoint, [...touched.values()])
     if (!startWritten) writeStart(rt.agent.generateId(), undefined) // throwaway id, never stored
     outcome = { stop, steps: 0, model: info.model }
     if (stop === 'aborted' || stop === 'timeout') {
@@ -617,16 +680,23 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
 
     // 6. resolve dynamic sources → TurnRegistry; then validate toolsContext (5) against the
     //    contextSchemas of the resolved tool set (dynamic tools are known only now)
-    const registry = await resolveTurnRegistry({
-      open,
-      approval: config.approval,
-      toolOutput: config.toolOutput,
-      contextOf: rt.contextOf,
-      warn: rt.warn,
-      status: (tool) =>
-        write({ type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
-      grants: { current: currentGrants },
-    })
+    const sourceOwners = [
+      ...open.toolSources.map((s) => s.owner),
+      ...open.instructions.filter((i) => i.kind !== 'static').map((i) => i.owner),
+    ]
+    const registry = await asOwner(sourceOwners, () =>
+      resolveTurnRegistry({
+        open,
+        approval: config.approval,
+        toolOutput: config.toolOutput,
+        toolErrorText: config.toolErrorText,
+        contextOf: rt.contextOf,
+        warn: rt.warn,
+        status: (tool) =>
+          write({ type: 'data-eh.status', data: { state: 'tool', tool }, transient: true }),
+        grants: { current: currentGrants },
+      }),
+    )
     const toolsContext =
       rt.options.toolsContext === undefined && op.options.toolsContext === undefined
         ? undefined
@@ -642,6 +712,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (normalized === undefined && op.input !== undefined) {
       normalized = normalizeInput(op.input, {
         acceptClientMetadata: rt.options.acceptClientMetadata === true,
+        files: config.inputFiles,
       })
     }
     if (op.kind === 'edit' && normalized === undefined) {
@@ -701,11 +772,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     let activeTools: string[] | undefined
     for (const hook of open.hooks.list('turn.prepare')) {
       try {
-        const out = await hook.fn(rt.contextOf(hook.owner), {
-          model: info.model,
-          settings: info.settings,
-          options: info.options,
-        })
+        const out = await asOwner([hook.owner], async () =>
+          hook.fn(rt.contextOf(hook.owner), {
+            model: info.model,
+            settings: info.settings,
+            options: info.options,
+          }),
+        )
         if (out === undefined || out === null) continue
         if (out.model !== undefined) info.model = out.model
         if (out.settings !== undefined) info.settings = mergeSettings(info.settings, out.settings)
@@ -786,7 +859,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       })
       let out: Awaited<ReturnType<typeof hook.fn>>
       try {
-        out = await hook.fn(rt.contextOf(hook.owner), { message, via })
+        out = await asOwner([hook.owner], async () =>
+          hook.fn(rt.contextOf(hook.owner), { message, via }),
+        )
       } catch (error) {
         return {
           input: current,
@@ -798,6 +873,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       if ('message' in out) {
         const renormalized = normalizeInput(out.message, {
           acceptClientMetadata: rt.options.acceptClientMetadata === true,
+          files: config.inputFiles,
         })
         current = { ...renormalized }
         if (input.clientId === undefined) delete current.clientId
@@ -813,6 +889,20 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   // ─── commit point (spec 05 §3 steps 11–12) ────────────────────────────────────────────────
   async function commit(prep: Extract<Prepared, { kind: 'turn' }>): Promise<void> {
     const core = rt.state.core()
+    // the core fields this commit changes, as they were: put back if its write fails, so a later
+    // writeIfDirty (close, idle eviction) never publishes a turn that did not commit
+    const before = {
+      activeTurn: structuredClone(core.activeTurn),
+      pending: structuredClone(core.pending),
+      grants: structuredClone(core.grants),
+      rewinds: structuredClone(core.rewinds),
+    }
+    const undo = () => {
+      for (const key of ['activeTurn', 'pending', 'grants', 'rewinds'] as const) {
+        if (before[key] === undefined) delete core[key]
+        else (core as Record<string, unknown>)[key] = before[key]
+      }
+    }
     let needWrite = rt.state.dirty
     if (prep.stale !== undefined) {
       delete core.activeTurn
@@ -860,10 +950,19 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       try {
         ok = await rt.state.write({ cas: true })
       } catch (error) {
+        undo()
         rt.view = undefined // force a reload of state and messages at the next operation
         throw error
       }
       if (!ok) {
+        // another instance owns the stored state now: drop ours (never overwrite theirs later)
+        undo()
+        stateCheckpoint = undefined // the reloaded state is not ours to revert
+        try {
+          await rt.state.load()
+        } catch {
+          rt.state.discard()
+        }
         rt.view = undefined
         throw new HarnessError(
           'EH_SESSION_BUSY',
@@ -1160,6 +1259,23 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         pending: null,
         // A' is cached: its approval-responded parts project to the trailing approval message
         ...(op.kind === 'respond' ? { continuing: messageId } : {}),
+        inboxed,
+        // summarizer usage is turn usage: counted in TurnResult.usage, cost and budgets
+        onUsage: (value, model) => {
+          if (config.budget !== undefined && costOf(config.models, model, value) === undefined) {
+            rt.warn(
+              {
+                code: 'W_MODEL_UNPRICED',
+                message: `No pricing for model '${describeModel(model)}' in \`models\`; its usage does not count toward the budget.`,
+                details: { model: describeModel(model) },
+              },
+              `unpriced:${describeModel(model)}`,
+            )
+          }
+          info.addUsage(value, { model, source: 'compaction' })
+        },
+        overBudget: () =>
+          budgetOverrun(config.budget, usage.costUsd ?? 0, rt.state.core().usage?.costUsd ?? 0),
       })
       // pre-turn compaction check (spec 05 §3 step 14, spec 06 §4)
       const built = await compaction.preTurn(await compaction.build())
@@ -1447,6 +1563,14 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     rt.events.emit({ type: 'status', running: false })
     resolveResult(turnResult)
     host.onTurnEnd()
+    stopObserving()
+    // the stream ends last: a reader that saw `finish` can start the next turn right away
+    closeBuffer()
+  }
+
+  function closeBuffer(): void {
+    if (terminal !== undefined) buffer.push(terminal)
+    buffer.close()
   }
 
   // ─── the stream ───────────────────────────────────────────────────────────────────────────
@@ -1507,8 +1631,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       writeEnd()
     } finally {
       turnState.active = false
-      buffer.close()
       finishExecute?.()
+      // no stream was opened (cannot happen: every path writes `start`): never leave readers hanging
+      if (writer === undefined) closeBuffer()
     }
   })()
 
@@ -1564,6 +1689,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     },
     deliverEvent(message, text, wake) {
       if (!inbox.open || ended) return false
+      inboxed.add(message.id)
       return inbox.push(
         Promise.resolve({
           data: { source: 'event', text },

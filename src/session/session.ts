@@ -4,7 +4,7 @@
  *
  * @see docs/specs/05-session-and-storage.md#2-session-api
  */
-import { asSchema, type Tool, type UIMessage, type UIMessageChunk } from 'ai'
+import { asSchema, type Tool, type UIMessage } from 'ai'
 import type { AgentInternals } from '../agent/internals.ts'
 import type {
   HarnessRun,
@@ -19,7 +19,8 @@ import { toolTokens } from '../compaction/tokens.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import type { HarnessUIMessage, TurnKind, TurnResult } from '../messages/types.ts'
+import type { HarnessUIMessage } from '../messages/types.ts'
+import { costOf } from '../models/cost.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
 import {
   addContribution,
@@ -31,7 +32,7 @@ import {
 import type { ToolInput, ToolSource } from '../registry/types.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import { buildSessionSkills } from '../skills/registry.ts'
-import { createRun, createTurnBuffer } from '../stream/run.ts'
+import { createRun, failedRun } from '../stream/run.ts'
 import { createContext, defaultLogger, pendingServices } from './context.ts'
 import { createEventHub } from './events.ts'
 import { createHookRunner } from './hooks.ts'
@@ -42,7 +43,7 @@ import { createDeferredRun, type QueuedTurn } from './interaction/queue.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
 import { createStateStore } from './state.ts'
-import { type RunningTurn, startTurn, type TurnHost } from './turn.ts'
+import { budgetOverrun, type RunningTurn, startTurn, type TurnHost } from './turn.ts'
 
 /** A live session plus the handles the agent needs. */
 export interface SessionHandle {
@@ -76,51 +77,6 @@ function asHarnessError(error: unknown): HarnessError {
   )
 }
 
-/** A run that fails before it starts (valid stream: start → error → message-metadata → finish). */
-function failedRun(
-  kind: TurnKind,
-  generateId: () => string,
-  error: HarnessError,
-): HarnessRun<UIMessage> {
-  const buffer = createTurnBuffer()
-  const turnId = generateId()
-  const messageId = generateId()
-  const chunks: UIMessageChunk[] = [
-    { type: 'start', messageId },
-    { type: 'error', errorText: error.message },
-    {
-      type: 'message-metadata',
-      messageMetadata: {
-        eharness: { stop: 'error', error: { code: error.code, message: error.message } },
-      },
-    },
-    { type: 'finish' },
-  ]
-  for (const chunk of chunks) buffer.push(chunk)
-  buffer.close()
-  const result: TurnResult<UIMessage> = {
-    turnId,
-    kind,
-    stop: 'error',
-    messages: [],
-    usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-    steps: 0,
-    durationMs: 0,
-    error:
-      error.details === undefined
-        ? { code: error.code, message: error.message }
-        : { code: error.code, message: error.message, details: structuredClone(error.details) },
-  }
-  return createRun({
-    turnId,
-    kind,
-    messageId: Promise.resolve(messageId),
-    stream: buffer.reader(),
-    result: Promise.resolve(result),
-    abort: () => {},
-  })
-}
-
 function unref(timer: unknown): void {
   ;(timer as { unref?: () => void } | undefined)?.unref?.()
 }
@@ -140,6 +96,8 @@ export function createSessionHandle(args: {
   state: StateAdapter
   idleMs: number
   onClosed(): void
+  /** The close of the previous live handle of this id: this handle opens only after it. */
+  after?: Promise<void>
 }): SessionHandle {
   const { internals, id } = args
   const config = internals.config
@@ -208,7 +166,10 @@ export function createSessionHandle(args: {
     cacheMessage(message: HarnessUIMessage) {
       if (rt.newestId === undefined || message.id > rt.newestId) rt.newestId = message.id
       const view = rt.view
-      if (view === undefined) return
+      if (view === undefined) {
+        cachedWhileLoading?.push(structuredClone(message))
+        return
+      }
       const copy = structuredClone(message)
       let index = view.length
       while (index > 0 && (view[index - 1] as HarnessUIMessage).id > message.id) index--
@@ -418,7 +379,10 @@ export function createSessionHandle(args: {
   function ensureOpen(): Promise<OpenSession> {
     if (rt.open !== undefined) return Promise.resolve(rt.open)
     if (opening === undefined) {
-      opening = doOpen().catch((error: unknown) => {
+      const after = args.after
+      // one live handle per id: a handle created while the previous one closes opens after it
+      const start = after === undefined ? doOpen() : after.then(doOpen, doOpen)
+      opening = start.catch((error: unknown) => {
         opening = undefined
         throw error
       })
@@ -427,7 +391,13 @@ export function createSessionHandle(args: {
   }
 
   // ─── context (cold load / hot cache validation) ───────────────────────────────────────────
+  /** The in-flight cold load: every caller awaits the same one (single flight). */
+  let loading: Promise<void> | undefined
+  /** Messages cached while a load is in flight (the load may have read storage before them). */
+  let cachedWhileLoading: HarnessUIMessage[] | undefined
+
   async function ensureContext(validate = false): Promise<void> {
+    if (loading !== undefined) return loading
     const adapter = rt.messages
     if (validate && rt.view !== undefined && adapter.lastId !== undefined) {
       let last: string | null
@@ -436,14 +406,24 @@ export function createSessionHandle(args: {
       } catch (error) {
         throw storageError('lastId', error)
       }
+      if (loading !== undefined) return loading
       // another writer changed the session: reload state and messages (spec 05 §6)
       if (last !== (rt.storedLastId ?? null)) rt.view = undefined
     }
     if (rt.view !== undefined) return
+    loading = loadView().finally(() => {
+      loading = undefined
+      cachedWhileLoading = undefined
+    })
+    return loading
+  }
+
+  async function loadView(): Promise<void> {
+    cachedWhileLoading = []
     if (!stateFresh) await rt.state.load()
     stateFresh = false
     const loaded = await loadContext({
-      adapter,
+      adapter: rt.messages,
       sessionId: id,
       registry: internals.messages,
       policy: rt.options.onInvalidMessage ?? 'drop',
@@ -453,6 +433,7 @@ export function createSessionHandle(args: {
     for (const warning of loaded.warnings) {
       rt.warn(warning, String(warning.details?.type ?? warning.details?.messageId ?? ''))
     }
+    const late = cachedWhileLoading ?? []
     rt.view = loaded.view
     rt.storedLastId = loaded.newestId
     if (
@@ -460,6 +441,12 @@ export function createSessionHandle(args: {
       (rt.newestId === undefined || loaded.newestId > rt.newestId)
     ) {
       rt.newestId = loaded.newestId
+    }
+    // saved while the load was in flight: never lost from the hot cache
+    for (const message of late) {
+      rt.cacheMessage(message)
+      if (rt.storedLastId === undefined || message.id > rt.storedLastId)
+        rt.storedLastId = message.id
     }
   }
 
@@ -508,6 +495,18 @@ export function createSessionHandle(args: {
     return { instructions: text.length === 0 ? 0 : compaction.count(text), tools }
   }
 
+  /** `state.core.rewinds` read straight from the adapter (cold reads, spec 05 §2). */
+  async function storedRewinds(): Promise<Array<{ afterId: string | null; rewindId: string }>> {
+    let snapshot: Awaited<ReturnType<StateAdapter['get']>>
+    try {
+      snapshot = await args.state.get(id)
+    } catch (error) {
+      throw storageError('state get', error)
+    }
+    const rewinds = snapshot?.core?.rewinds
+    return Array.isArray(rewinds) ? [...rewinds] : []
+  }
+
   // ─── turns ────────────────────────────────────────────────────────────────────────────────
   let current: RunningTurn | undefined
   /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
@@ -522,6 +521,7 @@ export function createSessionHandle(args: {
       current = undefined
       startNext()
       touch()
+      checkIdle()
     },
     enqueueSteer(submitted) {
       enqueue({ input: submitted.input, submitted, options: {} })
@@ -532,10 +532,20 @@ export function createSessionHandle(args: {
   }
 
   function enqueue(
-    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options'> & { kind?: QueuedTurn['kind'] },
+    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options' | 'wait' | 'respond'> & {
+      kind?: QueuedTurn['kind']
+    },
   ): HarnessRun<UIMessage> {
     const turnId = internals.generateId()
     const kind = item.kind ?? 'send'
+    const remove = () => {
+      const index = queue.indexOf(entry)
+      if (index < 0) return false
+      queue.splice(index, 1)
+      entry.handle.drop()
+      checkIdle()
+      return true
+    }
     const entry: QueuedTurn = {
       ...item,
       kind,
@@ -544,14 +554,14 @@ export function createSessionHandle(args: {
         turnId,
         kind,
         generateId: () => internals.generateId(),
-        onAbort: () => {
-          const index = queue.indexOf(entry)
-          if (index >= 0) queue.splice(index, 1)
-          entry.handle.drop()
-        },
+        onAbort: () => void remove(),
       }),
     }
     queue.push(entry)
+    // a waiting operation is dropped by its own abortSignal while it waits (spec 05 §2)
+    const signal = item.wait === undefined ? undefined : item.options.abortSignal
+    if (signal?.aborted === true) remove()
+    else signal?.addEventListener('abort', () => void remove(), { once: true })
     // the session may have gone idle meanwhile (e.g. a steer that arrived as its turn ended)
     queueMicrotask(startNext)
     return entry.handle.run
@@ -560,11 +570,24 @@ export function createSessionHandle(args: {
   /**
    * Start the next queued turn when the session is idle. The queue is held while approvals or
    * client tool calls wait for `respond()`: a queued turn never auto-denies them (spec 11 §6.2).
+   * While held, a waiting `respond()` may start (from any position: it resolves what holds the
+   * queue), and a waiting `send()` at the head whose call already saw that pending state (it then
+   * behaves as a new `send()`). Nothing else overtakes: the queue is FIFO.
    */
   function startNext(): void {
     if (rt.closed || rt.running || queue.length === 0) return
-    if (rt.state.core().pending !== undefined) return
-    const next = queue.shift()
+    const pending = rt.state.core().pending
+    // FIFO: only the head may start, except a waiting respond() (it resolves what holds the queue)
+    const head = queue[0] as QueuedTurn
+    const index =
+      pending === undefined ||
+      (head.kind === 'send' &&
+        head.wait !== undefined &&
+        head.wait.pendingAtCall === pending.messageId)
+        ? 0
+        : queue.findIndex((e) => e.kind === 'respond')
+    if (index < 0) return
+    const [next] = queue.splice(index, 1)
     if (next === undefined) return
     rt.running = true
     touch()
@@ -573,12 +596,23 @@ export function createSessionHandle(args: {
       input: undefined,
       ...(next.input === undefined ? {} : { normalized: next.input }),
       ...(next.submitted === undefined ? {} : { submitted: next.submitted }),
+      ...(next.respond === undefined ? {} : { respond: next.respond }),
       options: next.options,
       queued: true,
       turnId: next.turnId,
       via: 'queue',
     })
     next.handle.bind(current.run)
+  }
+
+  // ─── idle ─────────────────────────────────────────────────────────────────────────────────
+  const idleWaiters: Array<() => void> = []
+  function isIdle(): boolean {
+    return rt.closed || (!rt.running && queue.length === 0)
+  }
+  function checkIdle(): void {
+    if (!isIdle()) return
+    for (const resolve of idleWaiters.splice(0)) resolve()
   }
 
   /** The kind's projection for inline delivery; a throwing projection is not delivered inline. */
@@ -598,8 +632,14 @@ export function createSessionHandle(args: {
     }
   }
 
-  function dropQueue(): void {
-    for (const entry of queue.splice(0)) entry.handle.drop()
+  /** Drop queued turns; `abort()` keeps `ifBusy: 'wait'` callers (only `close()` drops them). */
+  function dropQueue(all: boolean): void {
+    for (const entry of [...queue]) {
+      if (!all && entry.wait !== undefined) continue
+      queue.splice(queue.indexOf(entry), 1)
+      entry.handle.drop()
+    }
+    checkIdle()
   }
 
   /** A turn operation that starts now (the caller checked the running flag). */
@@ -635,7 +675,7 @@ export function createSessionHandle(args: {
     if (closing !== undefined) return closing
     rt.closed = true
     if (idleTimer !== undefined) clearTimeout(idleTimer)
-    dropQueue()
+    dropQueue(true)
     closing = (async () => {
       const running = current
       if (running !== undefined) {
@@ -672,6 +712,7 @@ export function createSessionHandle(args: {
         }
       }
       events.close()
+      checkIdle()
       args.onClosed()
     })()
     return closing
@@ -700,9 +741,17 @@ export function createSessionHandle(args: {
               ? undefined
               : normalizeInput(input, {
                   acceptClientMetadata: rt.options.acceptClientMetadata === true,
+                  files: config.inputFiles,
                 })
         } catch (error) {
           return failedRun('send', () => internals.generateId(), asHarnessError(error))
+        }
+        if (ifBusy === 'wait') {
+          return enqueue({
+            input: normalized,
+            options,
+            wait: { pendingAtCall: rt.state.core().pending?.messageId },
+          })
         }
         if (ifBusy === 'steer' && current !== undefined) {
           const running = session.attach() as HarnessRun<UIMessage>
@@ -718,11 +767,21 @@ export function createSessionHandle(args: {
     },
     respond(response, options = {}) {
       assertOpen()
-      if (rt.running) throw busyError(id)
       const ignoreUnknown =
         (options as SendOptions & { [RESPOND_IGNORE_UNKNOWN]?: boolean })[
           RESPOND_IGNORE_UNKNOWN
         ] === true
+      if (rt.running) {
+        if (options.ifBusy !== 'wait') throw busyError(id)
+        touch()
+        return enqueue({
+          kind: 'respond',
+          input: undefined,
+          options,
+          wait: { pendingAtCall: undefined },
+          respond: { response, ignoreUnknown },
+        })
+      }
       return begin({
         kind: 'respond',
         input: undefined,
@@ -763,7 +822,7 @@ export function createSessionHandle(args: {
     },
     abort(reason) {
       assertOpen()
-      dropQueue()
+      dropQueue(false)
       current?.abort(reason)
     },
     async inject(kind, data, options = {}) {
@@ -878,7 +937,31 @@ export function createSessionHandle(args: {
           beforeTokens: compaction.calibration.apply(
             fixedTokens + (await compaction.viewTokens(view)),
           ),
+          // manual compaction belongs to no turn: its usage goes to the session (spec 06 §5.3)
+          onUsage: (usage, model) => {
+            const current = rt.state.core()
+            const previous = current.usage ?? { inputTokens: 0, outputTokens: 0, turns: 0 }
+            const cost = costOf(config.models, model, usage)
+            current.usage = {
+              ...previous,
+              inputTokens: previous.inputTokens + (usage.inputTokens ?? 0),
+              outputTokens: previous.outputTokens + (usage.outputTokens ?? 0),
+            }
+            if (cost !== undefined) current.usage.costUsd = (previous.costUsd ?? 0) + cost
+            rt.state.markDirty()
+          },
+          overBudget: () =>
+            budgetOverrun(
+              config.budget === undefined ? undefined : { ...config.budget, maxTurnUsd: undefined },
+              0,
+              rt.state.core().usage?.costUsd ?? 0,
+            ),
         })
+        try {
+          await rt.state.writeIfDirty()
+        } catch (error) {
+          log.warn('eharness: state write after compaction failed', { error })
+        }
         if (outcome.status === 'failed') throw outcome.error
         return outcome.status === 'compacted' ? (structuredClone(outcome.marker) as never) : null
       } finally {
@@ -892,6 +975,7 @@ export function createSessionHandle(args: {
         rt.running = false
         startNext()
         touch()
+        checkIdle()
       }
     },
     async clearGrants() {
@@ -906,23 +990,42 @@ export function createSessionHandle(args: {
     async messages(q = {}) {
       assertOpen()
       touch()
-      let page: HarnessUIMessage[]
-      try {
-        page = (await rt.messages.load({
-          sessionId: id,
-          limit: q.limit ?? 50,
-          ...(q.beforeId === undefined ? {} : { beforeId: q.beforeId }),
-        })) as HarnessUIMessage[]
-      } catch (error) {
-        throw storageError('load', error)
+      const limit = q.limit ?? 50
+      const load = async (beforeId: string | undefined): Promise<HarnessUIMessage[]> => {
+        try {
+          return (await rt.messages.load({
+            sessionId: id,
+            limit,
+            ...(beforeId === undefined ? {} : { beforeId }),
+          })) as HarnessUIMessage[]
+        } catch (error) {
+          throw storageError('load', error)
+        }
       }
-      if (q.includeHidden === true) return page as never
-      const rewinds = [
-        ...(rt.state.loaded ? (rt.state.core().rewinds ?? []) : []),
-        ...rewindsIn(page),
-      ]
-      if (rewinds.length === 0) return page as never
-      return page.filter((m) => !hiddenByRewind(m, rewinds, internals.messages)) as never
+      if (q.includeHidden === true) return (await load(q.beforeId)) as never
+      // rewinds of the state (a read never touches the live state store: no reload, no recovery)
+      const rewinds = rt.state.loaded ? [...(rt.state.core().rewinds ?? [])] : await storedRewinds()
+      // page until `limit` visible messages or the history is exhausted (spec 05 §2)
+      let out: HarnessUIMessage[] = []
+      let beforeId = q.beforeId
+      for (;;) {
+        const requested = beforeId
+        const raw = await load(requested)
+        // progress guard: never trust an adapter to honour beforeId (no duplicates, no endless loop)
+        const page = requested === undefined ? raw : raw.filter((m) => m.id < requested)
+        // a rewind hides only older messages: pages are read newest first
+        rewinds.push(...rewindsIn(page))
+        const visible =
+          rewinds.length === 0
+            ? page
+            : page.filter((m) => !hiddenByRewind(m, rewinds, internals.messages))
+        out = [...visible, ...out]
+        const oldest = page[0]
+        if (out.length >= limit || raw.length < limit || oldest === undefined) break
+        if (page.length < raw.length) break // the adapter ignored beforeId: stop here
+        beforeId = oldest.id
+      }
+      return out.slice(Math.max(0, out.length - limit)) as never
     },
     async stats() {
       assertOpen()
@@ -944,6 +1047,12 @@ export function createSessionHandle(args: {
       assertOpen()
       touch()
       return events.stream() as never
+    },
+    idle() {
+      if (isIdle()) return Promise.resolve()
+      return new Promise<void>((resolve) => {
+        idleWaiters.push(resolve)
+      })
     },
     close,
   }

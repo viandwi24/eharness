@@ -47,7 +47,11 @@ const agent = defineHarnessAgent({
         // An async generator streams preliminary results; the last value is the final output.
         async *execute({ question }, { toolCallId, abortSignal }) {
           const turn = ctx.turn
-          if (turn === undefined) throw new Error('research runs only inside a turn')
+          if (turn === undefined) {
+            // expected failure: an error string the model can read, never a throw
+            yield { status: 'failed', text: 'ERROR: research runs only inside a turn.' }
+            return
+          }
           const child = researcher.session(`${ctx.session.id}:research:${toolCallId}`, {
             parent: {
               sessionId: ctx.session.id,

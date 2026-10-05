@@ -1,6 +1,6 @@
 # Spec 05 — Session and storage
 
-Status: **Accepted (reviewed for 0.1.0)**. Modules: `src/session`, `src/storage` (memory adapters).
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Modules: `src/session`, `src/storage` (memory adapters).
 
 eharness knows only `sessionId: string`. Chat lists, titles, owners and permissions belong to the
 application.
@@ -37,7 +37,11 @@ when they differ). Cache eviction: `closeSession(id)`, `close()`, or idle evicti
 (`config.sessionIdleMs`, default 30 min) which is skipped while a turn runs, a turn is queued (and
 can start: a queue held by pending approvals, spec 11 §6.2, does not count), or an `events()` reader
 is open. Idle close drops held queued turns like `close()` (`stop: 'aborted'`). After eviction, held references throw `EH_SESSION_CLOSED`; call
-`agent.session(id)` again to get a fresh instance.
+`agent.session(id)` again to get a fresh instance. There is never more than one live writer per
+id in an agent: `agent.session(id)` called while the previous instance is still closing (its
+running turn is aborted and saved, `session.close` hooks run, state is written) returns the new
+instance at once, but it opens — and so runs nothing — only after that close finished (no false
+crash recovery of the turn that was being closed).
 
 ## 2. Session API
 
@@ -79,13 +83,22 @@ export interface HarnessSession<
 
   /**
    * Read history for UIs: newest `limit` (default 50) before `beforeId`, chronological. Never
-   * compacted. Messages hidden by rewinds (spec 11 §5) are excluded unless `includeHidden`.
+   * compacted. Messages hidden by rewinds (spec 11 §5) are excluded unless `includeHidden`;
+   * the core keeps paging back until `limit` visible messages are found or the history is
+   * exhausted, so a page never comes back short because of hidden messages. Hot and cold
+   * sessions answer the same (a cold read takes the rewinds from the stored state without
+   * loading it into the session: no recovery, spec 05 §9).
    */
   messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
   /** Current context stats (spec 06 §2) and pending state (spec 11 §2). */
   stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
 
   events(): ReadableStream<SessionEvent>
+  /**
+   * Resolves when no turn runs and nothing is queued (immediately after close()). A queue held
+   * by pending approvals keeps it waiting until respond() (or abort() drops the queue).
+   */
+  idle(): Promise<void>
   close(): Promise<void>
 }
 
@@ -104,10 +117,16 @@ export type SendInput = string | { text?: string; files?: FileUIPart[] } | UIMes
 
 export interface SendOptions {
   /**
-   * Only for send(): when a turn is already running, throw EH_SESSION_BUSY (default), queue, or
-   * steer (spec 11 §6). respond/regenerate/edit always throw EH_SESSION_BUSY while a turn runs.
+   * When a turn is already running: throw EH_SESSION_BUSY (default), queue or steer (send() only,
+   * spec 11 §6), or 'wait' (send() and respond()): wait for the running turn and the queue ahead,
+   * then run (the run is returned at once; its stream starts when the turn starts). A waiting
+   * send() is held while approvals created by a turn it waited for are pending — it never
+   * denies them (spec 11 §4.1) — and runs after respond(); approvals that were already pending
+   * when it was called are handled like a new send(). Its abortSignal drops it while it waits
+   * (stop 'aborted', nothing persisted); session abort() keeps it, close() drops it.
+   * regenerate/edit always throw EH_SESSION_BUSY while a turn runs.
    */
-  ifBusy?: 'reject' | 'queue' | 'steer'
+  ifBusy?: 'reject' | 'queue' | 'steer' | 'wait'
   /** Per-turn overrides (precedence: agent config < SendOptions < turn.prepare < step.prepare). */
   model?: LanguageModel
   settings?: Partial<ModelSettings>
@@ -130,7 +149,8 @@ export interface InjectOptions {
 run returned by `inject(…, { wake })`):
 
 - They throw synchronously only `EH_SESSION_BUSY` (in-process running flag, `ifBusy: 'reject'`)
-  and `EH_SESSION_CLOSED`.
+  and `EH_SESSION_CLOSED`. `handleChatRequest` never throws `EH_SESSION_BUSY`: it returns a failed
+  run answering 409 (spec 11 §7).
 - A queued run that is dropped (`abort()`, `close()`) never starts: its stream is `start` (throwaway
   id) → `abort`, and `run.result` resolves with `stop: 'aborted'`; nothing is persisted.
 - Every other failure — lock not acquired, session open failure, invalid input, pending
@@ -176,6 +196,14 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
    - `role` must be `user` (else `EH_INVALID_INPUT`);
    - only `text` and `file` parts are accepted; any other part type (tool parts, `data-*`
      including kinds and `data-eh.*`, reasoning) → `EH_INVALID_INPUT`;
+   - file URLs (0.4.0): the protocol must be in `config.inputFiles.protocols` (default
+     `['data:', 'https:']`; `javascript:`, `http:`, `ftp:`, `file:` … → `EH_INVALID_INPUT`), and a
+     `data:` URL must decode to at most `inputFiles.maxBytes` (default 20 MB). Apps that store
+     files behind `http:` URLs (internal object stores) opt in with `protocols`. A file of an
+     **earlier** turn whose URL can no longer be downloaded (an AI SDK `DownloadError` before the
+     model call, e.g. an expired link) does not break later turns: the step's wire replaces that
+     file part with the text `FILE_UNAVAILABLE` (spec 10 §5) and the step is retried (once per
+     failing URL; storage is unchanged). A failing file of the current turn stays a run error;
    - client `metadata.eharness` (including any `kind`) is discarded and rebuilt (`v`,
      `createdAt`, `turnId`); a client id is kept as `metadata.eharness.clientId`; other client
      metadata keys are dropped unless `acceptClientMetadata`.
@@ -216,11 +244,15 @@ written in this order:
 16. **End of `execute`:** answer dangling tool calls (below; also written to the stream as
     `tool-output-error` chunks, so the live UI matches storage); write `message-metadata` (`stop`,
     usage, steps, duration, `pending` — `null` when a continuation resolved it), `setOutcome`,
-    and `finish` / `abort`; return.
+    and `finish` / `abort` to the AI SDK stream; return. Readers of `run.stream` / `attach()`
+    receive everything up to `message-metadata` now; the terminal `finish` / `abort` chunk is held
+    back until step 17 completed.
 17. **End sequence (in `onEnd`):** `message.beforeSave` + final save; set `state.core.pending`
     when `stop: 'tool-pending'`; clear `activeTurn`; persist state if dirty (§7); update cache;
     emit `turn-end`; `turn.end` hooks; release lock; clear running flag; resolve `run.result`;
-    start the next queued turn, if any. Every step catches its own errors (a failing final save
+    start the next queued turn, if any; **then** write the held-back `finish` / `abort` and close
+    `run.stream`. So the end of the stream implies the turn is persisted and the session is free:
+    a client that saw `finish` can `send()` immediately (no `EH_SESSION_BUSY` caused by **that** turn; a queued or waiting turn that started meanwhile, or another client's turn, can still make the session busy). Every step catches its own errors (a failing final save
     sets `stop: 'error'` / `EH_STORAGE` in `run.result`, spec 10 §1); the lock is always released
     and the running flag always cleared. `turn-end` and `turn.end` belong to committed turns only
     (symmetric with `turn-start` / `turn.start`); an early failure, an early abort or a block
@@ -229,7 +261,17 @@ written in this order:
 **Early failure (`committed === false`):** nothing is persisted — no assistant message, no
 `eh.notice`, no state write; `onEnd` skips the final save. The stream is `start` (with a throwaway id that is never stored, if
 step 10 was not reached) → `error` → `message-metadata { stop: 'error' }` → `finish`. This keeps a
-failed lock acquisition from writing into a session another instance owns.
+failed lock acquisition from writing into a session another instance owns. In-memory `ctx.state`
+changes made by the turn's own preparation (`input.submit`, `turn.prepare`, dynamic tool sources
+and instructions — the owner's namespace while its hook runs) are reverted to their value at step
+2; every other change made meanwhile — another plugin's `ctx.state`, `clearGrants()`, … — is
+kept. When the commit-point state write itself fails, the core fields it changed (`activeTurn`,
+`pending`, `grants`, `rewinds`) are put back, so a later write (close, idle eviction) never
+publishes a turn that did not commit; on a CAS conflict the in-memory state is discarded and
+reloaded from the adapter (the other instance's state wins, nothing of ours overwrites it). This
+also discards this instance's unwritten state changes made before the conflict — background
+`ctx.state` sets, state set by a previous turn's `turn.end` hooks that was not written yet — the
+normal outcome for the losing writer.
 
 **Later failure (`committed === true`):** the end path runs with `stop: 'error'`, saves the
 (possibly empty) assistant message, and additionally saves an `eh.notice` kind (level `error`,
@@ -290,7 +332,9 @@ Then, before actually stopping:
   `toolChoice` cannot change it) and the step reminder `MAX_STEPS_WRAP_UP` (spec 10 §5), so the
   model summarizes what it did and what is left instead of stopping mid-action. That step ends the
   turn with `'max-steps'` whatever it answers (`'error'` stays `'error'`); `turn.beforeEnd` does
-  not run for it.
+  not run for it. The wrap-up step **takes no input**: steers and `next-step` injections waiting
+  at its boundary are not delivered into it; when the turn stops they follow the "any other
+  stop" rule (a waiting steer becomes a queued `send` turn, spec 11 §6.1).
 - `step.end` `context` that is still waiting when the turn stops with anything but `'complete'` is
   discarded: it is plugin context, not user input (no queued turn, no `input-dropped` event).
 
@@ -329,8 +373,10 @@ Stops decided outside a step: `'aborted'` (user/abort signal), `'timeout'`, `'bl
 export interface MessageAdapter<M extends UIMessage = UIMessage> {
   /**
    * Chronological (ascending id) messages of a session.
-   * - { fromId }            → all messages with id >= fromId (inclusive), no limit
+   * - { fromId }            → all messages with id >= fromId (inclusive), no limit; fromId
+   *                           need not be a stored id (compare ids, never look up an index)
    * - { beforeId, limit }   → the `limit` newest messages with id < beforeId
+   * - { beforeId }          → all messages with id < beforeId
    * - { limit }             → the `limit` newest messages
    * - {}                    → all messages (small sessions / tests only)
    * Passing both fromId and beforeId is invalid.
@@ -346,11 +392,18 @@ export interface MessageAdapter<M extends UIMessage = UIMessage> {
 Requirements (checked by `messageAdapterConformance()` in `eharness/testing`):
 
 1. Ordering by id string (UUIDv7) — no reliance on insertion order or clocks.
-2. `save` is an upsert: same id → replace `parts`, `metadata`, `role`.
-3. Round-trips JSON **deep-equal** (no dropped unknown keys, `parts` order preserved; object key
+2. `save` is an upsert: same id → **replace** the whole message (`parts`, `metadata`, `role`,
+   any other key). Never merge: keys missing from the new version (a resolved `pending`, a
+   removed part) must be gone after the save.
+3. `fromId` is compared, not looked up: a `fromId` between two stored ids starts at the next
+   newer message; `beforeId` without `limit` returns every older message.
+4. Round-trips JSON **deep-equal** (no dropped unknown keys, `parts` order preserved; object key
    order may change, e.g. Postgres `jsonb`).
-4. `load` returns copies (mutating the result must not change stored data).
-5. Sessions are isolated.
+5. `load` returns copies (mutating the result must not change stored data).
+6. Sessions are isolated.
+
+Since 0.4.0 the suite checks 2 and 3 explicitly; adapters that merged on save or looked `fromId`
+up by index passed earlier versions of the suite and now fail it (they were wrong).
 
 Stored history is **append-only from the core's point of view**: the core upserts messages it
 owns (the running assistant message, patches of a pending message, recovery patches) but never
@@ -418,6 +471,11 @@ Notes:
   `lastId` alone cannot detect every foreign change; `respond()` therefore re-reads state, and
   exact multi-instance correctness needs a `SessionLock` or a CAS-capable `StateAdapter` (§7–8).
 - Message validation runs only on cold loads.
+- **Single-flight load.** Concurrent operations of a cold session (`stats()`, `inject()`,
+  `send()`, …) share one in-flight load of state and messages; the state is read at most once
+  per load, so in-memory changes made after it (e.g. `ctx.state` in `session.start`, a
+  turn's commit) are never overwritten by a second read. Messages saved while a load is in
+  flight are merged into the loaded view (the load may have read storage before them).
 
 ## 7. State
 

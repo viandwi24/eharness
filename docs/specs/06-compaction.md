@@ -1,6 +1,6 @@
 # Spec 06 — Compaction
 
-Status: **Accepted (reviewed for 0.1.0)**. Module: `src/compaction`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/compaction`.
 
 Compaction is **fixed** (ADR-0004): one well-tested algorithm with a few knobs. The extension point
 is storage (spec 05), not the strategy. The output of compaction is **data** — an `eh.compaction`
@@ -197,6 +197,8 @@ transcript and the guard handles the wire.
    Truncation uses the head + tail helper of spec 09 §4.
 2. Hooks `compaction.prompt` add `context` lines (e.g. files in progress) or replace the prompt
    (`out.prompt` starts as `config.prompt`; the default prompt applies when it is empty).
+   `out.messages` holds copies of the messages being summarized (read-only input, e.g. to carry
+   state that lives in them across the compaction).
 3. `generateText({ model, instructions: prompt, prompt: transcript + context, maxOutputTokens: maxSummaryTokens })`;
    the prompt wraps the transcript in `<transcript>…</transcript>` and lists the context lines
    after it. The summarizer window is `config.contextWindow` of `CompactionConfig`, else the agent
@@ -205,6 +207,18 @@ transcript and the guard handles the wire.
    (each at most 60% of the window minus `maxSummaryTokens` and the prompt; a single larger entry
    is truncated), feeding the running summary into the next chunk as `PREVIOUS SUMMARY:`
    (rolling). The context lines go with the last chunk.
+5. **Usage and budgets** (0.4.0). Every summarizer call is charged — also one that then fails
+   (e.g. a cut summary, §5.5): during a turn (pre-turn, mid-turn and overflow compaction) as
+   nested turn usage, like `ctx.turn.addUsage(usage, { model: summarizer, source: 'compaction' })`
+   — so it appears in `TurnResult.usage` (tokens and `costUsd`), the message's
+   `metadata.eharness.usage`, `state.core.usage` and counts toward `budget` (spec 12 §4); a manual
+   `compact()` adds it to `state.core.usage` directly (tokens and `costUsd`; `turns` unchanged).
+   Budgets are checked **before** summarizing: when the turn or session budget is used up, the
+   compaction is skipped (`W_BUDGET` with `details.compaction: true`; the guard keeps the request
+   within the window; a manual `compact()` resolves `null`, only the session budget applies to
+   it). When a turn's compaction itself uses up the budget, the turn stops with `'cost-cap'`
+   before its next model call. With a budget configured, an unpriced summarizer raises
+   `W_MODEL_UNPRICED`.
 
 Default prompt (outline; exact text lives in `src/compaction/prompt.ts`): produce a continuation
 brief — goal and constraints from the user, decisions made, current state of the work, open
@@ -234,8 +248,11 @@ a previous pointer.
 
 ### 5.5 Failure
 
-Summarizer error or empty output → warning `W_COMPACTION_FAILED`, no marker, continue with the
-guard. Manual `compact()` rejects with `EH_COMPACTION_FAILED`.
+Summarizer error, empty output, or a summary cut by the output limit (`finishReason: 'length'`
+on any chunk: a truncated brief would silently lose the end of the work state, so it is not
+used — no retry) → warning `W_COMPACTION_FAILED` (`details: { trigger, reason? }`, `reason:
+'length' | 'empty'`), no marker, continue with the guard. Manual `compact()` rejects with
+`EH_COMPACTION_FAILED` (same `details.reason`). Raise `maxSummaryTokens` when this happens.
 
 ## 6. Guard (always on, not configurable away)
 
@@ -265,7 +282,9 @@ A `step.prepare` `messages` rewrite is treated as the current turn (no droppable
    2. when only the current turn remains, truncate the largest tool outputs in the wire copy (not
       in storage) with the `TOOL_OUTPUT_TRUNCATED` helper (spec 09 §4): the largest output above
       1_000 characters is halved (head + tail; JSON outputs become
-      `{ truncated: true, preview, originalChars }`) until the request fits;
+      `{ truncated: true, preview, originalChars }`) until the request fits. JSON outputs are
+      measured **serialized** (escapes count): the preview keeps as many characters as fit the
+      halved size once serialized, so an escape-heavy preview (`"`, `\`) still shrinks;
    3. if still over → end the turn with `stop: 'error'`, error code `EH_CONTEXT_OVERFLOW`.
 
 The guard only changes the wire, never stored messages. Truncation uses the same head + tail
