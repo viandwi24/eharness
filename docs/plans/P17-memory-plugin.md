@@ -1,6 +1,6 @@
 # P17 — Memory plugin (`eharness/memory`)
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: BTeams proposal item **U5** (roadmap item "Memory plugin").
 
