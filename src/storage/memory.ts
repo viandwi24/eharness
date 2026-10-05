@@ -111,8 +111,8 @@ export interface MemoryInboxOptions {
 }
 
 /**
- * In-memory {@link InboxAdapter} (spec 05 §12): one FIFO per session, atomic claims with expiry,
- * and `notify` / `subscribe` / `pending` within the process. Several agent instances in one
+ * In-memory {@link InboxAdapter} (spec 05 §12): one FIFO per session, atomic head-of-line claims
+ * with expiry and renewal, and `notify` / `subscribe` / `pending` within the process. Several agent instances in one
  * process (tests, examples) can share it to simulate a multi-instance deployment.
  *
  * @example
@@ -152,8 +152,14 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
         a.item.id < b.item.id ? -1 : a.item.id > b.item.id ? 1 : 0,
       )
       for (const entry of entries) {
-        if (out.length >= limit) break
-        if (!ready(entry, at)) continue
+        const claim = entry.claim
+        if (claim !== undefined && !ready(entry, at)) {
+          // head of line: nothing behind an item another owner still holds
+          if (claim.owner !== owner) break
+          claim.until = at + ttl // renewal: the owner still holds it (not returned again)
+          continue
+        }
+        if (out.length >= limit) continue
         entry.claim = { owner, until: at + ttl }
         entry.item.attempts++
         out.push(structuredClone(entry.item))
@@ -204,7 +210,12 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
       const out: string[] = []
       for (const [sessionId, items] of sessions) {
         if (out.length >= (opts.limit ?? Number.POSITIVE_INFINITY)) break
-        if ([...items.values()].some((entry) => ready(entry, at))) out.push(sessionId)
+        // claimable: the oldest item is ready (nothing is claimed behind a held item)
+        let oldest: Entry | undefined
+        for (const entry of items.values()) {
+          if (oldest === undefined || entry.item.id < oldest.item.id) oldest = entry
+        }
+        if (oldest !== undefined && ready(oldest, at)) out.push(sessionId)
       }
       return out
     },

@@ -183,7 +183,10 @@ describe('durable inbox across instances (spec 05 §12)', () => {
       inboxIds: [enqueued.inboxId],
       turnId: run.turnId,
     })
-    expect((await storage.state.get('s1'))?.core.inboxDelivered).toContain(enqueued.inboxId)
+    // dedupe reads data-eh.input.inboxId of the saved snapshot; the state never lists a steer
+    expect((await storage.state.get('s1'))?.core.inboxDelivered ?? []).not.toContain(
+      enqueued.inboxId,
+    )
     await a.agent.close()
     await b.agent.close()
   })
