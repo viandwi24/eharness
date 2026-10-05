@@ -117,6 +117,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6) |
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
+| `W_ABORT_UNSUPPORTED` | `abort()` / `requestAbort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |
 
 ## 3. `describeError`
 
@@ -147,7 +148,7 @@ export type StopReason =
   | 'length'          // provider finishReason 'length'
   | 'content-filter'  // provider finishReason 'content-filter'
   | 'error'           // provider/stream/storage/overflow error (see metadata.eharness.error); tool errors do NOT end the turn
-  | 'aborted'         // run.abort() / session.abort() / abortSignal
+  | 'aborted'         // run.abort() / session.abort() / requestAbort() (also from another instance, spec 05 §9.1) / abortSignal
   | 'timeout'         // loop.turnTimeoutMs, or an AI SDK step timeout (settings.timeout)
   | 'blocked'         // an input.submit hook blocked the input (spec 05 §3)
   | 'stuck'           // the progress guard found the turn repeating or failing; a reminder did not help (spec 05 §3.2)

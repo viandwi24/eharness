@@ -82,6 +82,34 @@ export interface ActiveTurn {
 }
 
 /**
+ * A request, written by another instance, to abort the turn `turnId` (cross-process abort). The
+ * only `state.core` field a foreign instance may write while a turn runs.
+ *
+ * @see docs/specs/05-session-and-storage.md#91-cross-process-abort
+ */
+export interface AbortRequest {
+  /** The turn to abort; an owner ignores (and clears) a request for any other turn. */
+  turnId: string
+  /** Epoch ms of the request. */
+  at: number
+  /** Abort reason (the terminal `abort` chunk's `reason`). */
+  reason?: string
+  /** Instance id of the requester. */
+  by?: string
+}
+
+/**
+ * Where `session.requestAbort()` sent the abort: a turn of this process (`'local'`), a turn running
+ * in another instance (`'remote'`), nowhere because no turn runs (`'idle'`), or nowhere because the
+ * storage cannot carry the request (`'unsupported'`: no `StateAdapter.setIf`, or `recovery: false`).
+ *
+ * @see docs/specs/05-session-and-storage.md#91-cross-process-abort
+ */
+export interface AbortRequestResult {
+  target: 'local' | 'remote' | 'idle' | 'unsupported'
+}
+
+/**
  * Persisted session state.
  *
  * @see docs/specs/05-session-and-storage.md#7-state
@@ -98,6 +126,8 @@ export interface SessionStateSnapshot {
     pending?: PendingState
     grants?: Record<string, 'always' | 'never'>
     rewinds?: Array<{ afterId: string | null; rewindId: string }>
+    /** A cross-process abort request for the active turn (spec 05 §9.1). */
+    abortRequest?: AbortRequest
   }
   plugins: Record<string, Record<string, JSONValue>>
 }
@@ -288,8 +318,21 @@ export interface HarnessSession<
   edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
   /** Replay + follow the running turn. */
   attach(): HarnessRun<M> | undefined
-  /** Abort the running turn. Queued turns are dropped. */
+  /**
+   * Abort the running turn. Queued turns are dropped. When no turn of this session runs in this
+   * process, it requests the abort of a turn running in another instance (fire-and-forget form of
+   * {@link HarnessSession.requestAbort}; failures are logged).
+   */
   abort(reason?: string): void
+  /**
+   * Awaitable abort that tells where the abort went: a local turn, a turn running in another
+   * instance (stopped at its next step boundary or heartbeat, `stop: 'aborted'`), `'idle'` or
+   * `'unsupported'` (`W_ABORT_UNSUPPORTED`). Queued turns are dropped like `abort()`. Rejects with
+   * `EH_STORAGE` when the state cannot be read, `EH_SESSION_CLOSED` after `close()`.
+   *
+   * @see docs/specs/05-session-and-storage.md#91-cross-process-abort
+   */
+  requestAbort(reason?: string): Promise<AbortRequestResult>
   /** Save a kind message; optionally deliver it into the running turn or wake the agent. */
   inject<K extends KindName<Kinds>>(
     kind: K,

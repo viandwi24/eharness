@@ -1,6 +1,6 @@
 # P16 — Cross-process abort
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: BTeams proposal item **U4** (state-based part; the inbox-based path is added by P19).
 
@@ -78,35 +78,35 @@ Rules (spec 05 new §9.1 "Cross-process abort"):
 
 ## Checklist
 
-- [ ] ADR-0021 "Cross-process abort through state CAS" (why state not a new port, why turn-scoped,
+- [x] ADR-0021 "Cross-process abort through state CAS" (why state not a new port, why turn-scoped,
       why polling with a cap, why `setIf` is required).
-- [ ] Specs: 05 §2 (`requestAbort`, `abort()` note), §6 (poll exception), §7 (`abortRequest`,
+- [x] Specs: 05 §2 (`requestAbort`, `abort()` note), §6 (poll exception), §7 (`abortRequest`,
       owner CAS writes), new §9.1; 10 (`W_ABORT_UNSUPPORTED`); 11 §6 (remote abort drops the
       remote queue); `stateAdapterConformance` note that `setIf` enables remote abort.
-- [ ] Tests first (`src/session/remote-abort.int.test.ts`: two agent instances sharing
+- [x] Tests first (`src/session/remote-abort.int.test.ts`: two agent instances sharing
       `memoryState()` / `memoryMessages()`, scripted slow model):
-  - [ ] instance B `requestAbort()` while A runs → `'remote'`; A stops at the next boundary with
+  - [x] instance B `requestAbort()` while A runs → `'remote'`; A stops at the next boundary with
         `'aborted'`, partial saved, `activeTurn` cleared, request cleared;
-  - [ ] abort during a long tool (heartbeat poll) → tool's `abortSignal` fires;
-  - [ ] a request for an older turn id does not abort the next turn;
-  - [ ] A's heartbeat write racing B's request keeps the request (CAS merge);
-  - [ ] adapter without `setIf` → `'unsupported'` + warning, nothing written;
-  - [ ] idle session → `'idle'`; local turn → `'local'`;
-  - [ ] `abortPollMs: 0` → no polling reads (adapter spy);
-  - [ ] hot turn I/O budget: at most one extra state read per `abortPollMs`.
-- [ ] Implement; wire the poll into the step boundary and heartbeat timer.
-- [ ] Guide: `long-running-turns.md` "Stopping a turn from another instance"; offline example
+  - [x] abort during a long tool (heartbeat poll) → tool's `abortSignal` fires;
+  - [x] a request for an older turn id does not abort the next turn;
+  - [x] A's heartbeat write racing B's request keeps the request (CAS merge);
+  - [x] adapter without `setIf` → `'unsupported'` + warning, nothing written;
+  - [x] idle session → `'idle'`; local turn → `'local'`;
+  - [x] `abortPollMs: 0` → no polling reads (adapter spy);
+  - [x] hot turn I/O budget: at most one extra state read per `abortPollMs`.
+- [x] Implement; wire the poll into the step boundary and heartbeat timer.
+- [x] Guide: `long-running-turns.md` "Stopping a turn from another instance"; offline example
       `examples/remote-abort.ts` (two agents, shared memory storage) in `examples.test.ts`.
-- [ ] `reference.md`; changeset; board.
+- [x] `reference.md`; changeset; board.
 
 ## Acceptance criteria
 
-- [ ] Remote abort latency ≤ `abortPollMs` + one step boundary (or heartbeat tick during tools).
-- [ ] No lost update of `abortRequest`, `pending`, `grants` under concurrent writes (stress test
+- [x] Remote abort latency ≤ `abortPollMs` + one step boundary (or heartbeat tick during tools).
+- [x] No lost update of `abortRequest`, `pending`, `grants` under concurrent writes (stress test
       with randomized delays).
-- [ ] Without `requestAbort` use, state I/O of a hot turn is unchanged except the bounded poll
+- [x] Without `requestAbort` use, state I/O of a hot turn is unchanged except the bounded poll
       reads (documented in spec 05 §11).
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -129,6 +129,18 @@ Rules (spec 05 new §9.1 "Cross-process abort"):
   being fixed; documented cost.
 - Should a remote abort also drop the **remote** process's queued turns? Decision: yes, same as
   local abort (spec 11 §6.2).
+- (implementer) `requestAbort()` after 3 conflicting retries: rejects with `EH_SESSION_BUSY`
+  (conservative: no blind write, caller can retry). A retry that finds a *different* active turn
+  returns `'idle'` (the targeted turn ended; never re-target).
+- (implementer) Without `setIf` the requester still reads the state first, so an idle session
+  answers `'idle'` without a warning; `'unsupported'` + `W_ABORT_UNSUPPORTED` only when a live
+  foreign turn exists. `recovery: false` → `'unsupported'` without a read.
+- (implementer) The first poll happens `abortPollMs` after the commit point (turns shorter than
+  that read nothing). A guarded owner write that finds the stored `activeTurn` no longer ours
+  (recovered as stale by another instance) is skipped; at the end of the turn the owner reloads
+  the stored state (theirs wins). Guarded write conflicts retry at most 5 times.
+- (implementer) A request found by the merge of a conflicting owner write aborts at once (no
+  wait for the poll); with `abortPollMs: 0` this is the only remote-abort path.
 
 ## Requests to other phases
 
