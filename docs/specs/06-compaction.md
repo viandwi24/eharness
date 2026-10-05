@@ -267,7 +267,9 @@ A `step.prepare` `messages` rewrite is treated as the current turn (no droppable
    2. when only the current turn remains, truncate the largest tool outputs in the wire copy (not
       in storage) with the `TOOL_OUTPUT_TRUNCATED` helper (spec 09 §4): the largest output above
       1_000 characters is halved (head + tail; JSON outputs become
-      `{ truncated: true, preview, originalChars }`) until the request fits;
+      `{ truncated: true, preview, originalChars }`) until the request fits. JSON outputs are
+      measured **serialized** (escapes count): the preview keeps as many characters as fit the
+      halved size once serialized, so an escape-heavy preview (`"`, `\`) still shrinks;
    3. if still over → end the turn with `stop: 'error'`, error code `EH_CONTEXT_OVERFLOW`.
 
 The guard only changes the wire, never stored messages. Truncation uses the same head + tail

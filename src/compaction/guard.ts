@@ -85,21 +85,32 @@ function truncateOutput(output: ToolOutput, maxChars: number): ToolOutput {
         preview?: unknown
         originalChars?: unknown
       } | null
+      // the preview is measured serialized (escapes count), like spec 09 §4 sizes it
       if (value?.truncated === true && typeof value.preview === 'string') {
-        return {
-          ...output,
-          value: { ...(output.value as object), preview: truncateMiddle(value.preview, maxChars) },
-        } as ToolOutput
+        const preview = value.preview
+        return fitSerialized(
+          (keep) =>
+            ({
+              ...output,
+              value: { ...(output.value as object), preview: truncateMiddle(preview, keep) },
+            }) as ToolOutput,
+          preview.length,
+          maxChars,
+        )
       }
       const text = JSON.stringify(output.value) ?? ''
-      return {
-        ...output,
-        value: {
-          truncated: true,
-          preview: truncateMiddle(text, maxChars),
-          originalChars: text.length,
-        },
-      }
+      return fitSerialized(
+        (keep) => ({
+          ...output,
+          value: {
+            truncated: true,
+            preview: truncateMiddle(text, keep),
+            originalChars: text.length,
+          },
+        }),
+        text.length,
+        maxChars,
+      )
     }
     case 'content': {
       if (!Array.isArray(output.value)) return output
@@ -125,6 +136,31 @@ function truncateOutput(output: ToolOutput, maxChars: number): ToolOutput {
       output satisfies never
       return output
   }
+}
+
+/**
+ * The output built by `build(keep)` with the largest `keep` (raw preview characters, at most
+ * `rawMax`) whose measured size is within `maxChars`; `build(0)` when none is.
+ */
+function fitSerialized(
+  build: (keep: number) => ToolOutput,
+  rawMax: number,
+  maxChars: number,
+): ToolOutput {
+  let best = build(0)
+  let low = 1
+  let high = Math.min(rawMax, maxChars)
+  while (low <= high) {
+    const keep = Math.floor((low + high) / 2)
+    const candidate = build(keep)
+    if (outputChars(candidate) <= maxChars) {
+      best = candidate
+      low = keep + 1
+    } else {
+      high = keep - 1
+    }
+  }
+  return best
 }
 
 /** Locations of the tool results of a message list. */
