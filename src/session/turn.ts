@@ -21,7 +21,8 @@ import type {
   SendInput,
   SendOptions,
 } from '../agent/session-types.ts'
-import type { SessionCompaction } from '../compaction/compact.ts'
+import type { BudgetConfig } from '../agent/types.ts'
+import type { BudgetOverrun, SessionCompaction } from '../compaction/compact.ts'
 import { createTurnCompaction } from '../compaction/turn-context.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, isHarnessError } from '../errors.ts'
@@ -178,6 +179,27 @@ function seedDiscovered(view: readonly HarnessUIMessage[]): Set<string> {
     }
   }
   return out
+}
+
+/**
+ * The used-up USD budget (spent ≥ limit), turn first (spec 12 §4); `undefined` when none is.
+ * `sessionCost` is the cost of the session's earlier turns.
+ */
+export function budgetOverrun(
+  budget: BudgetConfig | undefined,
+  turnCost: number,
+  sessionCost: number,
+): BudgetOverrun | undefined {
+  if (budget === undefined) return undefined
+  const checks: Array<['turn' | 'session', number | undefined, number]> = [
+    ['turn', budget.maxTurnUsd, turnCost],
+    ['session', budget.maxSessionUsd, sessionCost + turnCost],
+  ]
+  for (const [scope, limitUsd, spentUsd] of checks) {
+    if (limitUsd === undefined || !(limitUsd >= 0)) continue
+    if (spentUsd >= limitUsd) return { scope, limitUsd, spentUsd }
+  }
+  return undefined
 }
 
 /** Validate a value against a schema; returns the (possibly transformed) value. */
@@ -1212,6 +1234,22 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         // A' is cached: its approval-responded parts project to the trailing approval message
         ...(op.kind === 'respond' ? { continuing: messageId } : {}),
         inboxed,
+        // summarizer usage is turn usage: counted in TurnResult.usage, cost and budgets
+        onUsage: (value, model) => {
+          if (config.budget !== undefined && costOf(config.models, model, value) === undefined) {
+            rt.warn(
+              {
+                code: 'W_MODEL_UNPRICED',
+                message: `No pricing for model '${describeModel(model)}' in \`models\`; its usage does not count toward the budget.`,
+                details: { model: describeModel(model) },
+              },
+              `unpriced:${describeModel(model)}`,
+            )
+          }
+          info.addUsage(value, { model, source: 'compaction' })
+        },
+        overBudget: () =>
+          budgetOverrun(config.budget, usage.costUsd ?? 0, rt.state.core().usage?.costUsd ?? 0),
       })
       // pre-turn compaction check (spec 05 §3 step 14, spec 06 §4)
       const built = await compaction.preTurn(await compaction.build())

@@ -207,6 +207,18 @@ transcript and the guard handles the wire.
    (each at most 60% of the window minus `maxSummaryTokens` and the prompt; a single larger entry
    is truncated), feeding the running summary into the next chunk as `PREVIOUS SUMMARY:`
    (rolling). The context lines go with the last chunk.
+5. **Usage and budgets** (0.4.0). Every summarizer call is charged — also one that then fails
+   (e.g. a cut summary, §5.5): during a turn (pre-turn, mid-turn and overflow compaction) as
+   nested turn usage, like `ctx.turn.addUsage(usage, { model: summarizer, source: 'compaction' })`
+   — so it appears in `TurnResult.usage` (tokens and `costUsd`), the message's
+   `metadata.eharness.usage`, `state.core.usage` and counts toward `budget` (spec 12 §4); a manual
+   `compact()` adds it to `state.core.usage` directly (tokens and `costUsd`; `turns` unchanged).
+   Budgets are checked **before** summarizing: when the turn or session budget is used up, the
+   compaction is skipped (`W_BUDGET` with `details.compaction: true`; the guard keeps the request
+   within the window; a manual `compact()` resolves `null`, only the session budget applies to
+   it). When a turn's compaction itself uses up the budget, the turn stops with `'cost-cap'`
+   before its next model call. With a budget configured, an unpriced summarizer raises
+   `W_MODEL_UNPRICED`.
 
 Default prompt (outline; exact text lives in `src/compaction/prompt.ts`): produce a continuation
 brief — goal and constraints from the user, decisions made, current state of the work, open

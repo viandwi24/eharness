@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { APICallError, type ModelMessage, tool } from 'ai'
+import { APICallError, type LanguageModel, type ModelMessage, tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
@@ -591,6 +591,66 @@ describe('manual compaction', () => {
     const disabled = setup([answer('A1')], { compaction: false })
     await fillTurns(disabled.agent.session('s1'), 1)
     expect(await disabled.agent.session('s1').compact()).toBeNull()
+  })
+})
+
+describe('summarizer usage and budgets (spec 06 §5.3, spec 12)', () => {
+  // the summarizer reports 10 input + 5 output tokens per call: $0.015 at $1 per 1k tokens
+  const models = (m: LanguageModel) =>
+    typeof m === 'object' && m.modelId === 'summarizer'
+      ? { pricing: { input: 1_000, output: 1_000 } }
+      : { pricing: { input: 0, output: 0 } }
+
+  test('automatic compaction usage counts toward the turn usage, cost and budget', async () => {
+    const steps = Array.from({ length: 5 }, (_, i) => answer(`A${i + 1}`))
+    const { agent, state } = setup(steps, { models, budget: { maxTurnUsd: 0.01 } })
+    const session = agent.session('s1')
+    await fillTurns(session, 4)
+    const result = await session.send(big('Q5')).result
+    expect(result.usage.costUsd).toBeCloseTo(0.015, 10)
+    expect(result.usage.inputTokens).toBeGreaterThanOrEqual(10)
+    // the compaction alone used up the turn budget: no model call
+    expect(result.stop).toBe('cost-cap')
+    expect(result.steps).toBe(0)
+    expect((await state.get('s1'))?.core.usage?.costUsd).toBeCloseTo(0.015, 10)
+  })
+
+  test('a used-up budget skips compaction before the summarizer runs (W_BUDGET)', async () => {
+    const steps = Array.from({ length: 5 }, (_, i) => answer(`A${i + 1}`))
+    const { agent, summarizer, warnings, messages } = setup(steps, {
+      models: () => ({ pricing: { input: 1_000_000, output: 0 } }),
+      budget: { maxSessionUsd: 0.5 },
+    })
+    const session = agent.session('s1')
+    await session.send(big('Q1')).result
+    // the first turn used up the session budget: the second stops before its model call
+    expect((await session.send(big('Q2')).result).stop).toBe('cost-cap')
+    const before = summarizer.calls.length
+    await expect(session.compact()).resolves.toBeNull()
+    expect(summarizer.calls.length).toBe(before)
+    expect(await markers(messages)).toHaveLength(0)
+    expect(warnings.some((w) => w.code === 'W_BUDGET' && w.details?.compaction === true)).toBe(true)
+  })
+
+  test('manual compact() usage is added to state.core.usage', async () => {
+    const steps = Array.from({ length: 2 }, (_, i) => answer(`A${i + 1}`))
+    const { agent, state } = setup(steps, {
+      models,
+      compaction: {
+        model: summarizerModel(['SUMMARY']),
+        keepLast: 0,
+        maxSummaryTokens: 100,
+      },
+    })
+    const session = agent.session('s1')
+    await fillTurns(session, 1)
+    const before = (await state.get('s1'))?.core.usage
+    expect(await session.compact()).not.toBeNull()
+    const after = (await state.get('s1'))?.core.usage
+    expect(after?.costUsd).toBeCloseTo((before?.costUsd ?? 0) + 0.015, 10)
+    expect(after?.inputTokens).toBe((before?.inputTokens ?? 0) + 10)
+    expect(after?.outputTokens).toBe((before?.outputTokens ?? 0) + 5)
+    expect(after?.turns).toBe(before?.turns)
   })
 })
 
