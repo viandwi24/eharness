@@ -9,6 +9,8 @@ export interface SkillSourceConformanceOptions {
   context?: HarnessContext
   /** Check that extra frontmatter (`meta.license`) survives `load()`. Default true. */
   meta?: boolean
+  /** Check that `version` survives `list()` and `load()` (0.4.0). Default true. */
+  version?: boolean
 }
 
 /**
@@ -19,6 +21,7 @@ export const SKILL_SOURCE_FIXTURE: readonly Skill[] = [
   {
     name: 'pine-v6',
     description: 'Pine Script v6 syntax and pitfalls. Use when writing Pine.',
+    version: '1.0',
     content: '# Pine v6\n\nRead reference.md before answering.\n',
     meta: { license: 'MIT' },
     files: [
@@ -79,6 +82,7 @@ const byName = <T extends { name: string }>(list: readonly T[]): T[] =>
  * Checks: a non-empty `id` and a valid `refresh`; `list()` returns metadata only (names and
  * descriptions of the fixture, each valid per spec 07 §1); `load()` returns the body and a manifest of every supporting file
  * (relative, valid paths, never `SKILL.md`, sizes in UTF-8 bytes when given) or `null`;
+ * `version` (when the fixture has one) survives `list()` and `load()`;
  * `readFile()` returns the exact text or `null` (unknown skill, unknown path, `SKILL.md`, a file
  * of another skill); results are copies; `search()` and `locate()`, when implemented, return well-formed
  * values. Bodies are compared with surrounding whitespace trimmed.
@@ -171,6 +175,21 @@ export function skillSourceConformance(
         const source = await make()
         const doc = await load(source, pine.name)
         assertJsonEqual(doc.meta?.license, 'MIT', 'load().meta.license')
+      },
+    },
+    {
+      name: 'list and load carry the skill version (a skill without one has none)',
+      run: async () => {
+        if (options.version === false) return
+        const source = await make()
+        const listed = byName(await source.list(ctx))
+        assertJsonEqual(
+          listed.map((m) => m.version ?? null),
+          byName(SKILL_SOURCE_FIXTURE).map((s) => s.version ?? null),
+          'list() versions',
+        )
+        assertJsonEqual((await load(source, pine.name)).version, pine.version, 'load().version')
+        assertJsonEqual((await load(source, plain.name)).version ?? null, null, 'no version')
       },
     },
     {

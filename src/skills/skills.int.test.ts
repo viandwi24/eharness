@@ -127,6 +127,27 @@ const skillCalls: ScriptedStepInput[] = [
   { text: 'done' },
 ]
 
+describe('skill versions (spec 07 §3, §4.3)', () => {
+  test('load_skill shows the version (golden); the skills index does not', async () => {
+    const unlimited = { skillsIndexLimit: Number.POSITIVE_INFINITY }
+    const calls: ScriptedStepInput[] = [
+      { toolCalls: [{ toolName: 'load_skill', input: { name: 'pine-v6' } }] },
+      { text: 'done' },
+    ]
+    const versioned = setup(calls, {
+      ...unlimited,
+      skills: [defineSkill({ ...PINE, version: '1.0' })],
+    })
+    const result = await versioned.agent.session('s').send('go').result
+    const outputs = toolOutputs(result.messages.find((m) => m.id === result.messageId))
+    await expectGolden('skill-version-output', outputs)
+    expect(JSON.stringify(outputs)).toContain('version: \\"1.0\\"')
+    const plain = setup(calls, { ...unlimited, skills: [defineSkill(PINE)] })
+    await plain.agent.session('s').send('go').result
+    expect(systemOf(versioned.model.calls[0])).toEqual(systemOf(plain.model.calls[0]))
+  })
+})
+
 describe('static and dynamic skills are indistinguishable for the model (golden)', () => {
   test('same tool outputs for the same content', async () => {
     // an unlimited index keeps search_skills away, so both tool lists are comparable

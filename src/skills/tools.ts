@@ -64,6 +64,8 @@ function isFileContent(value: unknown): value is SkillFileContent {
  */
 export function formatSkillDoc(name: string, doc: SkillDoc, notes: readonly string[]): string {
   const front: Record<string, unknown> = { name, description: doc.description }
+  const version = typeof doc.version === 'string' ? doc.version : undefined
+  if (version !== undefined) front.version = version
   const meta = doc.meta
   const plainMeta =
     typeof meta === 'object' &&
@@ -71,7 +73,8 @@ export function formatSkillDoc(name: string, doc: SkillDoc, notes: readonly stri
     !Array.isArray(meta) &&
     [Object.prototype, null].includes(Object.getPrototypeOf(meta))
   for (const [key, value] of Object.entries(plainMeta ? meta : {})) {
-    if (key !== 'name' && key !== 'description') front[key] = value
+    if (key !== 'name' && key !== 'description' && !(key === 'version' && version !== undefined))
+      front[key] = value
   }
   const sections = [`---\n${serializeFrontmatter(front)}\n---\n${doc.content.trim()}`.trimEnd()]
   const files = new Map<string, number | undefined>()
@@ -161,6 +164,7 @@ export async function loadSkillText(deps: SkillToolDeps, name: string): Promise<
         skill: current,
         source: entry.source.id,
         ...(location === undefined ? {} : { location }),
+        ...(typeof current.version === 'string' ? { version: current.version } : {}),
       })
       if (out === undefined || out === null) continue
       if (out.skill !== undefined) {

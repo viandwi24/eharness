@@ -16,6 +16,7 @@ const encoder = new TextEncoder()
 
 function metaOf(skill: Skill): SkillMeta {
   const out: SkillMeta = { name: skill.name, description: skill.description }
+  if (skill.version !== undefined) out.version = skill.version
   if (skill.meta !== undefined) out.meta = structuredClone(skill.meta)
   return out
 }

@@ -49,6 +49,7 @@ After every step the first matching rule decides (spec 05 §3.1):
 | `'max-steps'` | the step budget is used up (after the wrap-up step, below) |
 | `'cost-cap'` | `loop.maxTurnOutputTokens` exceeded, or a USD `budget` used up ([models and cost](models-and-cost.md)) |
 | `'stuck'` | the progress guard found the turn stuck and the reminder did not help |
+| `'context-thrash'` | the context filled up again right after a compaction ([compaction](compaction.md#when-a-turn-thrashes)) |
 
 Outside a step: `'aborted'` (`run.abort()`, `session.abort()`, your `abortSignal`), `'timeout'`
 (`loop.turnTimeoutMs` or a per-step `settings.timeout`), `'blocked'` (an `input.submit` hook) and

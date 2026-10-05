@@ -262,6 +262,12 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   //
   7. sanitize: remove tool results without calls and empty messages (spec 06 §6)
 ```
 
+**Prune (turn wire only, 0.4.0).** With `compaction.prune` on, the wire builder of a turn (spec 06
+§6) applies the prune stage (spec 06 §5.0) to the projection of each completed turn except the
+newest `keepTurns`, after step 7: large tool outputs become `{ type: 'text', value:
+TOOL_OUTPUT_PRUNED }`. `project()` itself never prunes (token estimates and the summarizer
+transcript use unpruned projections).
+
 Details (normative for the implementation in `src/messages/project.ts`):
 
 - Only the newest boundary (highest id) of the view is projected, and only its `partial` counts;

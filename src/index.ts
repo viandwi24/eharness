@@ -44,6 +44,7 @@ export type {
   LoopConfig,
   ModelSettings,
   ProgressConfig,
+  PruneConfig,
   ToolErrorTextFn,
   ToolOutputConfig,
 } from './agent/types.ts'
@@ -75,6 +76,7 @@ export {
   MAX_STEPS_WRAP_UP,
   NOT_EXECUTED_NEW_INPUT,
   PROGRESS_NUDGE,
+  TOOL_OUTPUT_PRUNED,
   TOOL_OUTPUT_TRUNCATED,
 } from './messages/texts.ts'
 export type {

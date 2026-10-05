@@ -150,6 +150,11 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('compaction.keepLast', compaction?.keepLast, 'non-negative-int')
   checkNumber('compaction.maxSummaryTokens', compaction?.maxSummaryTokens, 'positive-int')
   checkNumber('compaction.contextWindow', compaction?.contextWindow, 'positive')
+  const prune = compaction?.prune === false ? undefined : compaction?.prune
+  checkNumber('compaction.prune.keepTurns', prune?.keepTurns, 'non-negative-int')
+  checkNumber('compaction.prune.minChars', prune?.minChars, 'non-negative')
+  const thrash = compaction?.thrash === false ? undefined : compaction?.thrash
+  checkNumber('compaction.thrash.withinSteps', thrash?.withinSteps, 'positive-int')
   checkNumber('guard.maxContextRatio', config.guard?.maxContextRatio, 'ratio-half-open')
   checkNumber('guard.reserveTokens', config.guard?.reserveTokens, 'non-negative')
   checkNumber('sessionIdleMs', config.sessionIdleMs, 'non-negative')

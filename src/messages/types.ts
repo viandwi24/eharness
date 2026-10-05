@@ -36,6 +36,8 @@ export type StopReason =
   | 'blocked'
   /** The progress guard found the turn repeating itself or failing, and a nudge did not help (spec 05 §3.2). */
   | 'stuck'
+  /** The context was above `summarizeAt` again within `compaction.thrash.withinSteps` steps after a compaction (spec 06 §4). */
+  | 'context-thrash'
   /** The process died mid-turn; set by crash recovery. */
   | 'interrupted'
   /** Step budget reached. */
@@ -161,6 +163,11 @@ export interface ContextStats {
   /** Absolute tokens. */
   hardLimit: number
   lastCompaction?: { markerId: string; before: number; after: number; at: number }
+  /**
+   * Tool outputs replaced by the prune stage in this request (spec 06 §5.0): `chars` = characters
+   * saved (original − placeholder). Present only when `compaction.prune` is on.
+   */
+  pruned?: { outputs: number; chars: number }
 }
 
 /**

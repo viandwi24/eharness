@@ -39,13 +39,36 @@ export function skillDescriptionError(description: unknown): string | undefined 
   return undefined
 }
 
+/** Maximum version length. */
+export const MAX_SKILL_VERSION_LENGTH = 64
+
+/**
+ * Why `version` is not a valid skill version (1–64 printable characters, no control characters,
+ * no surrounding whitespace), or `undefined` when it is valid or absent.
+ */
+export function skillVersionError(version: unknown): string | undefined {
+  if (version === undefined) return undefined
+  if (typeof version !== 'string') return 'the skill version must be a string'
+  if (version.length === 0 || version.trim() !== version) {
+    return 'the skill version must be non-empty without surrounding whitespace'
+  }
+  if (version.length > MAX_SKILL_VERSION_LENGTH) {
+    return `the skill version is longer than ${MAX_SKILL_VERSION_LENGTH} characters`
+  }
+  if (/\p{C}/u.test(version)) return 'the skill version must contain printable characters only'
+  return undefined
+}
+
 /** Why a value is not valid level-1 metadata, or `undefined` when it is. */
 export function skillMetaError(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return 'skill metadata must be an object { name, description }'
   }
   const meta = value as Partial<SkillMeta>
-  const error = skillNameError(meta.name) ?? skillDescriptionError(meta.description)
+  const error =
+    skillNameError(meta.name) ??
+    skillDescriptionError(meta.description) ??
+    skillVersionError(meta.version)
   if (error !== undefined) return error
   if (
     meta.meta !== undefined &&
@@ -88,6 +111,10 @@ export function defineSkill(skill: Skill): Skill {
   const descriptionError = skillDescriptionError(skill.description)
   if (descriptionError !== undefined) {
     invalid(`defineSkill('${skill.name}'): ${descriptionError}.`, { skill: skill.name })
+  }
+  const versionError = skillVersionError(skill.version)
+  if (versionError !== undefined) {
+    invalid(`defineSkill('${skill.name}'): ${versionError}.`, { skill: skill.name })
   }
   if (typeof skill.content !== 'string') {
     invalid(`defineSkill('${skill.name}'): \`content\` must be a string.`, { skill: skill.name })
