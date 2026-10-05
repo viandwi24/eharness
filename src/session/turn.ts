@@ -54,6 +54,8 @@ import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
 import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.ts'
 import { describeError } from '../stream/describe-error.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
+import { forgetDelivered, recordDelivered } from './inbox/dedupe.ts'
+import type { InboxUnit } from './inbox/driver.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
 import { createTurnInputQueue, type PendingInput } from './interaction/inbox.ts'
 import {
@@ -87,6 +89,11 @@ export interface TurnOperation {
   respond?: { response: PendingResponse; ignoreUnknown: boolean }
   /** `regenerate()` / `edit()` target (message id or client id). */
   target?: string
+  /**
+   * Inbox items this turn applies (`session.enqueue()`, spec 05 §12): acked after the commit
+   * point; `durable` items (an `InboxAdapter`) are also recorded in `state.core.inboxDelivered`.
+   */
+  inbox?: { ids: string[]; meta: InboxUnit['meta']; durable: boolean }
 }
 
 /** What the session provides to a turn. */
@@ -102,8 +109,14 @@ export interface TurnHost {
   compaction: SessionCompaction
   /** Called when the turn fully ended (running flag cleared). */
   onTurnEnd(): void
-  /** Queue an undelivered steer as a `send` turn (spec 11 §6.1). */
-  enqueueSteer(submitted: { input: NormalizedInput; contexts: string[] }): void
+  /** Queue an undelivered steer as a `send` turn (spec 11 §6.1); inbox steers go back to the inbox. */
+  enqueueSteer(submitted: { input: NormalizedInput; contexts: string[] }, inboxId?: string): void
+  /** The session has a durable inbox (`storage.inbox`). */
+  readonly inboxDurable: boolean
+  /** Inbox items whose effect is durable now: ack them (spec 05 §12 rule 5). */
+  inboxApplied(ids: string[], turnId: string): void
+  /** Inbox items this turn did not apply: released (`retry`) or acked as dropped. */
+  inboxNotApplied(ids: string[], retry: boolean): void
   /** Queue a no-input wake turn for an injection that was not delivered (spec 11 §6.3). */
   enqueueWake(): void
   /** Drop queued turns like `session.abort()` (a cross-process abort, spec 05 §9.1). */
@@ -119,7 +132,7 @@ export interface RunningTurn {
    * Steer the running turn: `input.submit` (`via: 'steer'`) now, delivery at the next step
    * boundary (spec 11 §6.1). False when the turn no longer takes input.
    */
-  steer(input: NormalizedInput): boolean
+  steer(input: NormalizedInput, inboxId?: string): boolean
   /**
    * Deliver a saved kind message into the running turn (`next-step`, spec 11 §6.3). With `wake`,
    * an undelivered event queues a wake turn. False when the turn no longer takes input.
@@ -283,6 +296,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   /** Kind messages delivered as data-eh.input (updated with deliveredIn after a save). */
   const deliveredEvents: Array<{ message: HarnessUIMessage; afterFinish: number; done: boolean }> =
     []
+  /** Inbox steers delivered as data-eh.input (acked once a saved snapshot contains them). */
+  const deliveredSteers: Array<{ inboxId: string; afterFinish: number; done: boolean }> = []
+  /** The op's inbox items were acked or released. */
+  let inboxSettled = false
   /** Ids of kind messages pushed into the inbox: never projected standalone in this turn. */
   const inboxed = new Set<string>()
   /** Session grants before this respond() recorded new ones (those apply from step 1, §3.1). */
@@ -750,12 +767,14 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         const floor = target === undefined ? (rt.view?.at(-1)?.id ?? null) : target.afterId
         makeRewind()
         const recoveryNoticeId = stale === undefined ? undefined : rt.nextId()
-        const user = buildUserMessage(submitted.input, {
-          id: rt.nextId(),
-          turnId,
-          createdAt: startedAt,
-          parentId: floor,
-        })
+        const user = withInboxMeta(
+          buildUserMessage(submitted.input, {
+            id: rt.nextId(),
+            turnId,
+            createdAt: startedAt,
+            parentId: floor,
+          }),
+        )
         info.input = user
         const blockNotice = createKindMessage(
           'eh.notice',
@@ -813,7 +832,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const recoveryNoticeId = stale === undefined ? undefined : rt.nextId()
     let user: HarnessUIMessage | undefined
     if (normalized !== undefined) {
-      user = buildUserMessage(
+      user = withInboxMeta(buildUserMessage(
         contexts.length === 0
           ? normalized
           : {
@@ -830,7 +849,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           parentId: newest,
           augmented: contexts.length,
         },
-      )
+      ))
       info.input = user
     }
     if (plan !== undefined) {
@@ -850,6 +869,25 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       toolsContext,
       activeTools,
     }
+  }
+
+  /** `metadata.eharness.inboxId` / `collected` of a user message made from inbox items. */
+  function withInboxMeta(user: HarnessUIMessage): HarnessUIMessage {
+    const meta = op.inbox?.meta
+    const eharness = user.metadata?.eharness
+    if (meta === undefined || eharness === undefined) return user
+    if ('inboxId' in meta) eharness.inboxId = meta.inboxId
+    else eharness.collected = structuredClone(meta.collected)
+    return user
+  }
+
+  /** Settle the op's inbox items once (ack = applied or dropped, release = retry elsewhere). */
+  function settleOpInbox(how: 'applied' | 'retry' | 'dropped'): void {
+    const items = op.inbox
+    if (items === undefined || inboxSettled) return
+    inboxSettled = true
+    if (how === 'applied') host.inboxApplied(items.ids, turnId)
+    else host.inboxNotApplied(items.ids, how === 'retry')
   }
 
   async function inputSubmit(
@@ -908,9 +946,17 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       grants: structuredClone(core.grants),
       rewinds: structuredClone(core.rewinds),
       abortRequest: structuredClone(core.abortRequest),
+      inboxDelivered: structuredClone(core.inboxDelivered),
     }
     const undo = () => {
-      for (const key of ['activeTurn', 'pending', 'grants', 'rewinds', 'abortRequest'] as const) {
+      for (const key of [
+        'activeTurn',
+        'pending',
+        'grants',
+        'rewinds',
+        'abortRequest',
+        'inboxDelivered',
+      ] as const) {
         if (before[key] === undefined) delete core[key]
         else (core as Record<string, unknown>)[key] = before[key]
       }
@@ -952,6 +998,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         grantsRecorded = true
         needWrite = true
       }
+    }
+    // inbox items applied by this turn: dedupe of redeliveries (spec 05 §12 rule 5)
+    if (op.inbox?.durable === true) {
+      recordDelivered(core, op.inbox.ids)
+      needWrite = true
     }
     if (rewind !== undefined) {
       const payload = rewind.parts[0] as { data: { afterId: string | null } }
@@ -1061,6 +1112,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (prep.user !== undefined) created.push(...(await host.persist([prep.user])))
     if (prep.blockNotice !== undefined) created.push(...(await host.persist([prep.blockNotice])))
     createdBeforeAssistant = created.length
+    // the user message (or the wake turn) is durable: the inbox items are applied
+    settleOpInbox('applied')
   }
 
   /**
@@ -1213,6 +1266,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       await commit(prep)
     } catch (error) {
       if (!committed) return earlyEnd('error', error)
+      // committed but not applied: the items are tried again (dedupe skips a saved user message)
+      if (op.inbox !== undefined && !inboxSettled) {
+        forgetDelivered(rt.state.core(), op.inbox.ids)
+        rt.state.markDirty()
+        settleOpInbox('retry')
+      }
       if (!startWritten)
         writeStart(assistantId ?? rt.agent.generateId(), undefined, plan === undefined)
       outcome = { stop: 'error', steps: 0, model: info.model, error: toTurnError(error, log) }
@@ -1342,6 +1401,17 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         continuation: op.kind === 'respond',
         inbox,
         delivered: (item) => {
+          if (item.inboxId !== undefined) {
+            deliveredSteers.push({
+              inboxId: item.inboxId,
+              afterFinish: finishStepsWritten,
+              done: false,
+            })
+            if (host.inboxDurable) {
+              recordDelivered(rt.state.core(), [item.inboxId])
+              rt.state.markDirty()
+            }
+          }
           if (item.event !== undefined) {
             deliveredEvents.push({
               message: item.event,
@@ -1399,6 +1469,14 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
    * snapshot of finish-step `upTo` (spec 11 §6.3: at-least-once, never zero times).
    */
   async function markDelivered(upTo: number): Promise<void> {
+    // inbox steers in the saved snapshot are applied (spec 05 §12 rule 5)
+    const steers: string[] = []
+    for (const entry of deliveredSteers) {
+      if (entry.done || entry.afterFinish >= upTo) continue
+      entry.done = true
+      steers.push(entry.inboxId)
+    }
+    if (steers.length > 0) host.inboxApplied(steers, turnId)
     for (const entry of deliveredEvents) {
       if (entry.done || entry.afterFinish >= upTo || assistantId === undefined) continue
       entry.done = true
@@ -1441,8 +1519,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
             clientId: steer.input.clientId,
           }),
         )
+        // a closing session hands a durable steer to the next holder; otherwise it is dropped
+        if (item.inboxId !== undefined) host.inboxNotApplied([item.inboxId], rt.closed)
       } else {
-        host.enqueueSteer({ input: steer.input, contexts: steer.contexts })
+        host.enqueueSteer({ input: steer.input, contexts: steer.contexts }, item.inboxId)
       }
     }
     if (wake) host.enqueueWake()
@@ -1550,6 +1630,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
     }
     rt.state.guard(undefined)
+    if (op.inbox !== undefined && !inboxSettled) {
+      // not applied: retried elsewhere when another instance had the session (or ours closes)
+      const code = outcome.error?.code
+      const retry =
+        rt.closed || (stop === 'error' && (code === 'EH_SESSION_BUSY' || code === 'EH_STORAGE'))
+      settleOpInbox(retry ? 'retry' : 'dropped')
+    }
 
     const messages = [
       ...created.slice(0, createdBeforeAssistant),
@@ -1712,7 +1799,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     run,
     buffer,
     abort,
-    steer(input) {
+    steer(input, inboxId) {
       if (!inbox.open || ended) return false
       const text = input.parts
         .filter((p) => p.type === 'text')
@@ -1731,6 +1818,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
                 clientId: input.clientId,
               }),
             )
+            if (inboxId !== undefined) host.inboxNotApplied([inboxId], false)
             return undefined
           }
           const texts = submitted.input.parts.filter((p) => p.type === 'text').map((p) => p.text)
@@ -1741,8 +1829,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
               text: [...texts, ...submitted.contexts].join('\n\n'),
               files: files.length === 0 ? undefined : structuredClone(files),
               clientId: input.clientId,
+              inboxId,
             }),
             steer: { input: submitted.input, contexts: submitted.contexts, text },
+            ...(inboxId === undefined ? {} : { inboxId }),
           }
         })(),
       )
