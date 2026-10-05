@@ -139,7 +139,8 @@ Model- or UI-visible texts the core writes, exported so apps and tests can match
 one is a minor change): `INTERRUPTED_TURN`, `INTERRUPTED_CRASH`, `INTERRUPTED_UNKNOWN` (results of
 tool calls that never finished), `DENIED_NEW_INPUT`, `NOT_EXECUTED_NEW_INPUT` (pending calls
 answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
-`TOOL_OUTPUT_TRUNCATED` (truncation marker). `eharness/todos` exports its own (`TODOS_*`).
+`TOOL_OUTPUT_TRUNCATED` (truncation marker). `eharness/todos` exports its own (`TODOS_*`),
+`eharness/memory` exports `MEMORY_PROTOCOL`.
 
 ## Other exports
 
@@ -150,3 +151,14 @@ answered by new input), `PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP` (step reminders),
 - Skills: `defineSkill()`, `defineSkillSource()`, `parseSkillMarkdown()`, `validateSkillPath()`.
 - Models: `modelsDevCatalog()`, `lookupModel()`, `computeCost()`.
 - `version`: the package version of the build.
+
+## Shipped plugins
+
+| Import | Plugin | Options (defaults) | Model-visible |
+|---|---|---|---|
+| `eharness/filesystem` | `filesystem({ fs, … })` | spec 08 §2 | `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`, `grep` |
+| `eharness/todos` | `todos()` | `enforce` (false), `maxNudges` (3), `remindEvery` (5), `maxItems` (50) | `todo_write` |
+| `eharness/memory` | `memory({ roots })` | `pinned`, `maxPinnedChars` (2_000), `maxFileChars` (20_000), `protocol` (`MEMORY_PROTOCOL`), `tool`, `onWrite` | `memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`, `memory_delete`, `memory_rename` (or the app's `memory` tool) |
+
+`FileSystem.move` is optional (atomic rename; `memoryFs` implements it, `fileSystemConformance`
+checks it with `requireMove`).

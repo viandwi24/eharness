@@ -164,6 +164,20 @@ describe('examples run offline', () => {
   )
 
   test(
+    'memory',
+    async () => {
+      const out = await run('memory.ts')
+      expect(out).toContain('tool: /memories/users/u1/ is empty.')
+      expect(out).toContain('tool: Created /memories/users/u1/profile.md.')
+      expect(out).toContain('tool: REJECTED: /memories/org/style.md is read-only.')
+      expect(out).toContain('turn 2: complete')
+      expect(out).toContain('audit: u1 create /memories/users/u1/profile.md (25 bytes)')
+      expect(out).toContain('admin: /memories/users/u1/ (1 file):')
+    },
+    timeout,
+  )
+
+  test(
     'subagent-tool',
     async () => {
       const out = await run('subagent-tool.ts')

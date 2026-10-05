@@ -8,6 +8,7 @@ describe('memoryFs() conformance', () => {
   for (const c of fileSystemConformance(() => memoryFs(), {
     requireStat: true,
     requireGrep: true,
+    requireMove: true,
   })) {
     test(c.name, c.run)
   }
@@ -44,6 +45,17 @@ describe('memoryFs()', () => {
     expect(sticky.lastIndex).toBe(0)
     expect(await fs.grep?.(/x/, { maxHits: 0 })).toEqual([])
     expect((await fs.grep?.(/X/i))?.length).toBe(3)
+  })
+})
+
+describe('memoryFs().move', () => {
+  test('keeps the version, refreshes updatedAt and moving onto itself is "exists"', async () => {
+    const fs = memoryFs({ '/a.md': 'a' })
+    expect(await fs.move?.('/a.md', '/a.md')).toEqual({ ok: false, reason: 'exists' })
+    expect(await fs.move?.('/a.md', '/b.md', { ifVersion: await contentVersion('a') })).toEqual({
+      ok: true,
+    })
+    expect((await fs.read('/b.md'))?.version).toBe(await contentVersion('a'))
   })
 })
 
@@ -88,6 +100,32 @@ describe('fileSystemConformance catches broken adapters', () => {
     }
     expect(await failing(unsorted)).toContain(
       'list is recursive, sorted by path and filtered by prefix',
+    )
+  })
+
+  test('a non-atomic or overwriting move fails', async () => {
+    const overwriting = (): FileSystem => {
+      const fs = memoryFs()
+      return {
+        ...fs,
+        move: async (from, to) => {
+          const entry = await fs.read(from)
+          if (entry === null) return { ok: false, reason: 'missing' }
+          await fs.write(to, entry.content)
+          await fs.delete(from)
+          return { ok: true }
+        },
+      }
+    }
+    expect(await failing(overwriting)).toContain(
+      'move renames atomically and reports missing, exists and conflict',
+    )
+    const noMove = (): FileSystem => {
+      const { move: _move, ...fs } = memoryFs()
+      return fs
+    }
+    expect(await failing(noMove)).not.toContain(
+      'move renames atomically and reports missing, exists and conflict',
     )
   })
 })

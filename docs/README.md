@@ -32,6 +32,7 @@ and the runnable [examples](../examples); the [changelog](../CHANGELOG.md) has m
 | 11 | [interaction](specs/11-interaction.md) | Approvals (policy, risk, `approval.decided`), client tools, `respond`, regenerate/edit/rewind, steering, queue, wake, `handleChatRequest` |
 | 12 | [models-and-cost](specs/12-models-and-cost.md) | Model catalog (`models`, `modelsDevCatalog`, `lookupModel`), pricing, `computeCost`, `costUsd`, USD budgets |
 | 13 | [todos-plugin](specs/13-todos-plugin.md) | `eharness/todos`: `todo_write`, `data-todos.list`, reminders, enforcement |
+| 14 | [memory-plugin](specs/14-memory-plugin.md) | `eharness/memory`: memory commands/tools, roots, pinned reminders, `onWrite`, app-supplied tool |
 
 ## Status vocabulary
 

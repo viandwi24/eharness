@@ -5,7 +5,7 @@
 Everything a user can observe without reading our source:
 
 1. Every symbol exported from `eharness` and its subpaths (`/filesystem`, `/filesystem/memory`,
-   `/storage/memory`, `/mcp`, `/testing`), including types.
+   `/storage/memory`, `/mcp`, `/todos`, `/memory`, `/testing`), including types.
 2. **Persisted formats:** `metadata.eharness`, core data part types and payloads (`eh.*`),
    core message kinds and payloads, `SessionStateSnapshot`, plugin data parts of shipped plugins.
 3. **Stream shape:** order and types of chunks the core writes (spec 04 §2).
