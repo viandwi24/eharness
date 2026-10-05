@@ -13,6 +13,7 @@ import { project } from '../messages/project.ts'
 import type { CompactionPayload, ContextStats, HarnessUIMessage } from '../messages/types.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
+import { type FlushEnv, runFlushStage } from './flush.ts'
 import { resolveSummarizerPrompt } from './prompt.ts'
 import { type PruneStats, pruneMessages, resolvePrune } from './prune.ts'
 import { KEEP_SHARE, planSplit } from './split.ts'
@@ -32,6 +33,11 @@ import {
 } from './tokens.ts'
 import { renderTranscriptEntries } from './transcript.ts'
 import { groupTurns, isBoundaryMessage, partialOf, payloadOf, trimToPartial } from './turns.ts'
+
+/** Read through a function: TypeScript narrows `signal.aborted` across awaits. */
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true
+}
 
 /** Default `compaction.keepLast`. */
 export const DEFAULT_KEEP_LAST = 4
@@ -58,9 +64,14 @@ export interface CompactRequest {
   signal?: AbortSignal | undefined
   /**
    * Charged with the usage of every summarizer call, also of a call that then fails (the turn's
-   * usage for automatic compaction, `state.core.usage` for manual, spec 06 §5.3).
+   * usage for automatic compaction, `state.core.usage` for manual, spec 06 §5.3), and with the
+   * usage of the pre-compaction flush (`source: 'compaction-flush'`, spec 06 §5.2a).
    */
-  onUsage?: ((usage: LanguageModelUsage, model: LanguageModel) => void) | undefined
+  onUsage?: ((usage: LanguageModelUsage, model: LanguageModel, source: string) => void) | undefined
+  /** Overflow recovery (spec 06 §7): the `compaction.before` trigger is `'overflow'`. */
+  overflow?: boolean | undefined
+  /** The environment of a pre-compaction flush (current wire, turn tools), built on demand. */
+  flushEnv?: (() => Promise<FlushEnv>) | undefined
   /** The USD budget that is used up, if any: the compaction is skipped before summarizing. */
   overBudget?: (() => BudgetOverrun | undefined) | undefined
 }
@@ -267,8 +278,9 @@ export function createSessionCompaction(deps: {
       return { status: 'skipped', reason: 'no-gain' }
     }
     // a used-up budget: no summarizer call (the guard keeps the request within the window)
-    const overrun = request.overBudget?.()
-    if (overrun !== undefined) {
+    const overBudget = (): boolean => {
+      const overrun = request.overBudget?.()
+      if (overrun === undefined) return false
       rt.warn(
         {
           code: 'W_BUDGET',
@@ -277,10 +289,38 @@ export function createSessionCompaction(deps: {
         },
         `${request.turnId ?? 'manual'}:compaction-budget`,
       )
-      return { status: 'skipped', reason: 'budget' }
+      return true
     }
+    if (overBudget()) return { status: 'skipped', reason: 'budget' }
 
     request.write?.({ type: 'data-eh.status', data: { state: 'compacting' }, transient: true })
+
+    // pre-compaction flush (spec 06 §5.2a): summarizing will happen; hooks may save facts first
+    const flushed = await runFlushStage({
+      rt,
+      event: {
+        messages: plan.drop,
+        tokens: request.beforeTokens,
+        trigger: request.overflow === true ? 'overflow' : request.trigger,
+      },
+      turnId: request.turnId,
+      defaultModel: settings.model,
+      turnModel: request.model,
+      tokensOf: (text) => calibration.apply(count(text) + 4),
+      window,
+      env: request.flushEnv,
+      write: request.write,
+      signal: request.signal,
+      onUsage: request.onUsage,
+      persist: deps.persist,
+    })
+    if (flushed === 'aborted' || isAborted(request.signal)) {
+      return { status: 'skipped', reason: 'aborted' }
+    }
+    // the flush may have used up the budget: no summarizer call then
+    if ((flushed === 'flushed' || flushed === 'failed') && overBudget()) {
+      return { status: 'skipped', reason: 'budget' }
+    }
     const entries = renderTranscriptEntries({
       previousSummary: plan.previousSummary,
       messages: plan.drop,
@@ -306,11 +346,11 @@ export function createSessionCompaction(deps: {
         window: settings.contextWindow ?? window(summarizer),
         count,
         ...(request.signal === undefined ? {} : { abortSignal: request.signal }),
-        onUsage: (usage) => request.onUsage?.(usage, summarizer),
+        onUsage: (usage) => request.onUsage?.(usage, summarizer, 'compaction'),
       })
       summary = result.summary
     } catch (error) {
-      if (request.signal?.aborted === true) return { status: 'skipped', reason: 'aborted' }
+      if (isAborted(request.signal)) return { status: 'skipped', reason: 'aborted' }
       const reason = error instanceof SummarizeError ? error.reason : undefined
       return {
         status: 'failed',
@@ -321,7 +361,7 @@ export function createSessionCompaction(deps: {
         ),
       }
     }
-    if (request.signal?.aborted === true) return { status: 'skipped', reason: 'aborted' }
+    if (isAborted(request.signal)) return { status: 'skipped', reason: 'aborted' }
 
     const summaryTokens = calibration.apply(
       await messageTokens(
@@ -346,7 +386,7 @@ export function createSessionCompaction(deps: {
     const marker = createKindMessage('eh.compaction', payload, {
       id: rt.nextId(),
       createdAt: Date.now(),
-      parentId: view.at(-1)?.id ?? null,
+      parentId: (rt.view ?? view).at(-1)?.id ?? null,
       ...(request.turnId === undefined ? {} : { turnId: request.turnId }),
     })
 

@@ -241,6 +241,28 @@ export interface RewindPayload {
 }
 
 /**
+ * Payload of the `eh.flush` kind (0.4.0): the model-invisible audit record of a pre-compaction
+ * flush (spec 06 §5.2a). Carries no tool inputs or outputs.
+ */
+export interface FlushPayload {
+  /** The compaction trigger the flush ran for (`'overflow'` = overflow recovery). */
+  trigger: 'auto' | 'manual' | 'turn' | 'overflow'
+  /** The merged flush prompt. */
+  prompt: string
+  /** Model id of the flush call. */
+  model?: string
+  /** Model calls the flush made. */
+  steps: number
+  /** Tool calls of the flush, in call order. */
+  toolCalls: Array<{ toolName: string; status: 'output' | 'error' | 'denied' }>
+  usage: { inputTokens: number; outputTokens: number; totalTokens: number }
+  /** Estimated USD (spec 12); absent when the model is not priced. */
+  costUsd?: number
+  /** Set when the flush failed (compaction continued). */
+  error?: string
+}
+
+/**
  * Data types of the core data parts and kinds (without the `data-` prefix).
  *
  * @see docs/specs/03-messages.md#43-core-data-parts
@@ -255,6 +277,7 @@ export type HarnessDataTypes = {
   'eh.notice': NoticePayload
   'eh.event': EventPayload
   'eh.rewind': RewindPayload
+  'eh.flush': FlushPayload
 }
 
 /**

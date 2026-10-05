@@ -112,7 +112,13 @@ type Kinds = typeof agent extends { '~types': { kinds: infer K } } ? K : never
 type _kindNames = Expect<
   Equal<
     KindName<Kinds>,
-    'eh.compaction' | 'eh.notice' | 'eh.event' | 'eh.rewind' | 'reminder' | 'filesystem.report'
+    | 'eh.compaction'
+    | 'eh.notice'
+    | 'eh.event'
+    | 'eh.rewind'
+    | 'eh.flush'
+    | 'reminder'
+    | 'filesystem.report'
   >
 >
 declare const session: ReturnType<typeof agent.session>

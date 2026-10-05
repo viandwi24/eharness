@@ -12,6 +12,8 @@ import {
 import { memoryMessages, memoryState } from '../storage/memory.ts'
 import { type ScriptedCallOptions, scriptedModel } from '../testing/scripted-model.ts'
 import {
+  MEMORY_FLUSH_PROMPT,
+  MEMORY_FLUSH_TOOLS,
   MEMORY_PROTOCOL,
   MEMORY_TOOLS,
   type MemoryCommand,
@@ -305,6 +307,8 @@ describe('memory plugin', () => {
       { roots: () => [], maxFileChars: 0 },
       { roots: () => [], protocol: 1 },
       { roots: () => [], tool: {} },
+      { roots: () => [], flushOnCompaction: 'yes' },
+      { roots: () => [], flushOnCompaction: { prompt: '' } },
     ]
     for (const options of bad) {
       let thrown: unknown
@@ -315,6 +319,85 @@ describe('memory plugin', () => {
       }
       expect(isHarnessError(thrown, 'EH_CONFIG_INVALID')).toBe(true)
     }
+  })
+})
+
+describe('memory flushOnCompaction (spec 14 §9)', () => {
+  /** One model for the flush and the summary: tool call first, then text; no tools = summary. */
+  function flusher(write: Record<string, unknown> = {}) {
+    let flushed = false
+    const step = (c: ScriptedCallOptions) => {
+      if ((c.tools ?? []).length === 0) return { text: 'SUMMARY' }
+      if (flushed) return { text: 'saved' }
+      flushed = true
+      const name = (c.tools ?? []).some((t) => t.name === 'memory') ? 'memory' : 'memory_create'
+      return call(name, {
+        ...(name === 'memory' ? { command: 'create' } : {}),
+        path: '/memories/users/u1/facts.md',
+        file_text: 'deadline is friday\n',
+        ...write,
+      })
+    }
+    return scriptedModel(
+      Array.from({ length: 6 }, () => step),
+      { modelId: 'flusher' },
+    )
+  }
+
+  async function run(options: Partial<MemoryOptions>, model = flusher()) {
+    const main = scriptedModel([{ text: 'A1' }, { text: 'A2' }])
+    const { agent, fs, warnings } = setup(
+      {
+        model: main,
+        compaction: { model, keepLast: 0, maxSummaryTokens: 100 },
+      },
+      options,
+    )
+    const session = agent.session('s1', { runtime: { userId: 'u1' } })
+    await session.send('the deadline is friday').result
+    await session.send('ok').result
+    const marker = await session.compact()
+    return { model, fs, marker, warnings }
+  }
+
+  test('writes memory before the summary with the memory write tools', async () => {
+    const { model, fs, marker } = await run({ flushOnCompaction: true })
+    expect(marker).not.toBeNull()
+    expect(toolNamesOf(model.calls[0])).toEqual([...MEMORY_FLUSH_TOOLS])
+    expect(text(model.calls[0]?.prompt.at(-1))).toContain(MEMORY_FLUSH_PROMPT.slice(0, 60))
+    expect((await fs.read('/memories/users/u1/facts.md'))?.content).toBe('deadline is friday\n')
+    // flush (2 calls) then the summarizer (no tools)
+    expect(model.calls).toHaveLength(3)
+    expect(toolNamesOf(model.calls[2])).toEqual([])
+  })
+
+  test('custom prompt; the tool option offers the single memory tool', async () => {
+    const executed: MemoryCommand[] = []
+    const { model } = await run({
+      flushOnCompaction: { prompt: 'SAVE NOW' },
+      tool: (execute) =>
+        tool({
+          description: 'memory',
+          inputSchema: z.looseObject({ command: z.string() }),
+          execute: async (input) => {
+            executed.push(input as MemoryCommand)
+            return execute(input as MemoryCommand)
+          },
+        }),
+    })
+    expect(toolNamesOf(model.calls[0])).toEqual(['memory'])
+    expect(text(model.calls[0]?.prompt.at(-1))).toContain('SAVE NOW')
+    expect(executed.map((c) => c.command)).toEqual(['create'])
+  })
+
+  test('no writable root, or the option off → no flush', async () => {
+    const readOnly = await run({
+      flushOnCompaction: true,
+      roots: () => [{ path: '/memories/org' }],
+    })
+    expect(readOnly.model.calls).toHaveLength(1)
+    const off = await run({})
+    expect(off.model.calls).toHaveLength(1)
   })
 })
 

@@ -1,6 +1,6 @@
 # P15 — Pre-compaction flush
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: 0.4 proposal item **U1**.
 
