@@ -38,7 +38,8 @@ cache prefix stays stable.
 
 A skill may carry a `version` (1–64 printable characters) — `defineSkill({ …, version: '2.1.0' })`,
 or `version: 2.1.0` in the `SKILL.md` frontmatter (always read as text: `1.0` stays `"1.0"`).
-`load_skill` shows it right after the description (`version: "2.1.0"`), and `skill.load` hooks
+`load_skill` shows it right after the description (`version: 2.1.0`; a value that would read
+as a number is quoted, `version: "1.0"`), and `skill.load` hooks
 receive it as `e.version`, so you can audit which version a turn used:
 
 ```ts

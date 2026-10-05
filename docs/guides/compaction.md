@@ -52,7 +52,7 @@ compaction: {
   prune: {
     keepTurns: 2, // default — the newest completed turns keep their outputs (the current turn always does)
     minChars: 2_000, // default — only larger outputs are pruned
-    exclude: ['read_todos'], // tools whose outputs are never pruned
+    exclude: ['read_file'], // tools whose outputs are never pruned
     // replaceWith: (part) => `[${part.toolName} output elided]`, // pure; default TOOL_OUTPUT_PRUNED
   },
 }
