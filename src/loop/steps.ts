@@ -495,6 +495,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       const delivered = wire.slice(sinceBarrier)
       const costBefore = input.usage.costUsd
       const rebuilt = await compaction.midTurn({ wire, stepIndex, delivered })
+      // compaction thrash (spec 06 §4): no further model call, no turn.beforeEnd
+      if (rebuilt === 'thrash') return { stop: 'context-thrash', steps: stepIndex, model }
       if (rebuilt !== undefined) {
         wire.splice(0, wire.length, ...rebuilt.wire)
         turnStart = rebuilt.turnStart

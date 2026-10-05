@@ -29,6 +29,8 @@ export interface CompactionConfig {
   select?: (view: HarnessUIMessage[], ctx: HarnessContext) => HarnessUIMessage[]
   /** View-only pruning of old tool outputs (§5.0). Default off; `{}` = on with defaults. (0.4.0) */
   prune?: PruneConfig | false
+  /** Thrash detection (§4). Default { withinSteps: 2 }; false = compact again (0.3). (0.4.0) */
+  thrash?: { withinSteps?: number } | false
 }
 
 export interface PruneConfig {
@@ -138,6 +140,17 @@ budget + kept part + instructions + tools) would not be below `summarizeAt`. The
 status is written only when the skip rule passed.
 
 An automatic compaction that failed (§5.5) is not retried in the same turn; the guard takes over.
+
+**Thrash (0.4.0).** After a successful automatic compaction (pre-turn = step 0, mid-turn before
+step `s` = step `s`, overflow recovery = the step being retried) the core remembers its step
+index. When the mid-turn check before step `n` finds the context above `summarizeAt` again
+(after prune) and `n − that index ≤ thrash.withinSteps` (default 2), the core does **not** compact
+again: it raises `W_CONTEXT_THRASH` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`)
+and stops the turn with `'context-thrash'` before the next model call. `turn.beforeEnd` does not
+run; dangling calls are answered as usual; an `eh.notice` (level `warning`, code
+`EH_CONTEXT_THRASH`) is saved (spec 05 §3.1). `thrash: false` restores 0.3 behaviour (compact
+again; the failed-compaction rule above still applies). `thrash.withinSteps` must be a positive
+integer.
 
 **Manual** `compact()` is exclusive like a turn: it sets the running flag (a `send()` meanwhile
 throws `EH_SESSION_BUSY`), acquires the `SessionLock` when configured, validates the hot cache like

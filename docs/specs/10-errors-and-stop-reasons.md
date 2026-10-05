@@ -40,6 +40,7 @@ export function isHarnessError(e: unknown, code?: HarnessErrorCode): e is Harnes
 | `EH_TURN_INTERRUPTED` | a turn was recovered after its process died (spec 05 §9) |
 | `EH_INPUT_BLOCKED` | `input.submit` blocked the input with `persist: true` (spec 05 §3) |
 | `EH_TURN_TIMEOUT` | the turn hit `loop.turnTimeoutMs` |
+| `EH_CONTEXT_THRASH` | the turn stopped with `'context-thrash'` (level `warning`, spec 06 §4) |
 
 "Run error" = reported through the turn stream and `run.result` (`stop: 'error'`,
 `error.code`), never thrown (spec 05 §2). `ready()` rethrows session-open errors for callers who
@@ -116,6 +117,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6) |
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
+| `W_CONTEXT_THRASH` | the context was above `summarizeAt` again within `compaction.thrash.withinSteps` steps after an automatic compaction; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `lastCompaction` = step index of that compaction, spec 06 §4) |
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 
 ## 3. `describeError`
@@ -151,6 +153,7 @@ export type StopReason =
   | 'timeout'         // loop.turnTimeoutMs, or an AI SDK step timeout (settings.timeout)
   | 'blocked'         // an input.submit hook blocked the input (spec 05 §3)
   | 'stuck'           // the progress guard found the turn repeating or failing; a reminder did not help (spec 05 §3.2)
+  | 'context-thrash'  // the context filled up again right after a compaction (spec 06 §4; 0.4.0)
   | 'interrupted'     // the process died mid-turn; set by crash recovery (spec 05 §9)
   | 'max-steps'       // step budget reached (loop.maxSteps / SendOptions.maxSteps, + extendSteps)
   | 'cost-cap'        // loop.maxTurnOutputTokens or a budget exceeded
