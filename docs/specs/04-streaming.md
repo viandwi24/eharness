@@ -33,6 +33,12 @@ finish                                  ← normal end
 abort { reason }                        ← instead of `finish` when aborted (user abort, turn timeout)
 ```
 
+The transient `data-eh.status { state: 'tool' }` chunk is written by the core's execute wrapper
+when a tool starts; since AI SDK 7.0.124 a tool of the first step can start before that step's
+`start-step` chunk reaches the stream, so the status may precede `start-step` (transient: it never
+changes the message). `finish` / `abort` reach `run.stream` only after the turn's end sequence
+completed (spec 05 §3 step 17).
+
 Turn kinds (spec 01 `TurnInfo.kind`) differ only at the start:
 
 | Kind | Assistant message | Stream start |
