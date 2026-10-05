@@ -18,7 +18,8 @@ specs in [`../specs`](../specs) are the full contracts.
 | `mcp` | none | `mcpServer(…)` sources (same as putting them into `tools`) |
 | `dataParts`, `messageKinds` | none | app parts `data-<key>` and kinds — [rendering data parts](rendering-data-parts.md) |
 | `plugins` | `[]` | `definePlugin(…)` values, in order — [writing a plugin](writing-a-plugin.md) |
-| `storage` | memory adapters | `{ messages?: MessageAdapter; state?: StateAdapter }` — [storage adapters](writing-a-storage-adapter.md) |
+| `storage` | memory adapters | `{ messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }` — [storage adapters](writing-a-storage-adapter.md), [several instances](multi-instance.md) |
+| `inbox` | `{ pollMs: 2_000, claimTtlMs: recovery.staleMs, collect: { quietMs: 1_500, maxWaitMs: 10_000, maxItems: 20 } }` | durable inbox drain (`pollMs: 0` = notifications only) and the `collect` debounce (also without an inbox) — [several instances](multi-instance.md) |
 | `compaction` | `{ summarizeAt: 0.75, keepLast: 4, maxSummaryTokens: 4_000 }` | or `false` — [compaction](compaction.md) |
 | `compaction.prune` | off | `{}` = `{ keepTurns: 2, minChars: 2_000 }`; `exclude`, `replaceWith` — view-only pruning of old tool outputs ([compaction](compaction.md#pruning-old-tool-outputs)) |
 | `compaction.thrash` | `{ withinSteps: 2 }` | or `false` — stop `'context-thrash'` instead of compacting again ([compaction](compaction.md#when-a-turn-thrashes)) |
@@ -64,13 +65,14 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 | `attach()` | replay and follow the running turn (`undefined` when idle) |
 | `abort(reason?)` | abort the running turn and drop queued turns; without a local turn, request the abort of a turn running in another instance |
 | `requestAbort(reason?)` | awaitable abort → `{ target: 'local' \| 'remote' \| 'idle' \| 'unsupported' }` ([long-running turns](long-running-turns.md#stopping-a-turn-from-another-instance)) |
-| `inject(kind, data, { deliver?, wake? })` | store an event message; deliver it into the running turn or wake the agent |
+| `inject(kind, data, { deliver?, wake? })` | store an event message; deliver it into the running turn or wake the agent (with an inbox, also the instance running the turn) |
+| `enqueue(input, { mode?, collect? })` | hand input to whichever instance holds the session → `{ inboxId, target: 'local' \| 'remote' }`; `mode`: `'queue'` (default), `'steer'`, `'collect'` ([several instances](multi-instance.md)) |
 | `compact()` | manual compaction (idle only) |
 | `clearGrants()` | forget `remember: 'session'` grants |
 | `messages({ beforeId?, limit?, includeHidden? })` | stored history for UIs (pages past hidden messages until `limit` visible ones) |
 | `stats()` | `ContextStats` + `pending` + `activeTurn` |
 | `events()` | long-lived stream of `SessionEvent`s |
-| `idle()` | resolves when no turn runs and nothing is queued |
+| `idle()` | resolves when no turn runs and nothing is queued (nor a `collect` burst or inbox drain pending) |
 | `ready()`, `close()`, `running`, `id` | open now (configuration errors as exceptions), close, state |
 
 `SendOptions`: `ifBusy` (`'reject'` default; `'queue'`, `'steer'` for `send`; `'wait'` for `send`
@@ -159,7 +161,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | Skills | `W_INVALID_SKILL`, `W_SKILL_SOURCE_FAILED` |
 | Messages and parts | `W_INVALID_MESSAGE`, `W_UNKNOWN_DATA_PART`, `W_UNKNOWN_STORED_PART`, `W_WRITE_OUTSIDE_TURN`, `W_TRANSIENT_OVERRIDE` |
 | API use | `W_HOOK_FAILED`, `W_DEPRECATED`, `W_SESSION_OPTIONS_IGNORED` |
-| Sessions | `W_ABORT_UNSUPPORTED` |
+| Sessions | `W_ABORT_UNSUPPORTED`, `W_INBOX_FAILED` |
 
 ## Fixed texts
 

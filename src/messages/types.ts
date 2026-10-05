@@ -126,6 +126,10 @@ export interface HarnessMessageMeta {
   augmented?: number
   /** Kind messages delivered into a running turn: the assistant message that carries them. */
   deliveredIn?: string
+  /** User messages: the id of the inbox item it was made from (`session.enqueue()`). */
+  inboxId?: string
+  /** User messages merged from `collect` inputs: one entry per input, in arrival order. */
+  collected?: Array<{ inboxId?: string; clientId?: string }>
   /** Assistant messages: model id used by the turn. */
   model?: string
   /** Assistant messages: token usage (cumulative over all turns that wrote the message). */
@@ -228,6 +232,8 @@ export interface InputPartData {
   text: string
   files?: FileUIPart[]
   clientId?: string
+  /** A steer from the durable inbox: its item id (dedupe on redelivery). */
+  inboxId?: string
 }
 
 /**

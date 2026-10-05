@@ -44,7 +44,7 @@ import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.t
 import { riskOf } from '../registry/risk.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
-import type { InboxItem, TurnInbox } from '../session/interaction/inbox.ts'
+import type { PendingInput, TurnInputQueue } from '../session/interaction/inbox.ts'
 import { inputWireMessage } from '../session/interaction/inbox.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { describeError } from '../stream/describe-error.ts'
@@ -165,9 +165,9 @@ export interface StepLoopInput {
    */
   continuation?: boolean
   /** Steers and `next-step` injections waiting for the next step boundary (spec 11 §6). */
-  inbox?: TurnInbox
+  inbox?: TurnInputQueue
   /** Called after an inbox item was written as `data-eh.input` (and appended to the wire). */
-  delivered?(item: InboxItem): void
+  delivered?(item: PendingInput): void
   /** `SendOptions.output` of the turn (spec 05 §3.3); its `state` records the answer checks. */
   output?: TurnOutput
 }
@@ -461,7 +461,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
   let sinceBarrier = wire.length
 
   /** Steers / injections taken from the inbox and not delivered yet. */
-  let external: InboxItem[] = []
+  let external: PendingInput[] = []
   const inbox = input.inbox
   const output = input.output
   /** The next step must call the output tool (a tool-mode retry, spec 05 §3.3 rule 4). */

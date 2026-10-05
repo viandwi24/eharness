@@ -1,11 +1,12 @@
 # Writing a storage adapter
 
 eharness stores every session as AI SDK `UIMessage`s through a `MessageAdapter`, plus one small
-JSON snapshot per session through a `StateAdapter`. The library ships in-memory versions
-(`eharness/storage/memory`, the default); anything persistent is your code — usually under 100
-lines. Contract: spec 05 §4–§10. Examples:
+JSON snapshot per session through a `StateAdapter`; multi-instance deployments can add a durable
+`InboxAdapter`. The library ships in-memory versions (`eharness/storage/memory`, the default);
+anything persistent is your code — usually under 100 lines. Contract: spec 05 §4–§12. Examples:
 [JSON files](../../examples/json-file-storage.ts) ·
-[Postgres](../../examples/postgres-storage.ts).
+[Postgres](../../examples/postgres-storage.ts) ·
+[Postgres inbox](../../examples/postgres-inbox.ts).
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
@@ -82,13 +83,18 @@ state. It is small and written a few times per turn.
 
 ```ts
 import { describe, test } from 'bun:test' // or vitest / node:test
-import { messageAdapterConformance, stateAdapterConformance } from 'eharness/testing'
+import {
+  inboxAdapterConformance,
+  messageAdapterConformance,
+  stateAdapterConformance,
+} from 'eharness/testing'
 
 describe('my storage', () => {
   for (const c of messageAdapterConformance(() => myMessages(), { requireLastId: true })) {
     test(c.name, c.run)
   }
   for (const c of stateAdapterConformance(() => myState())) test(c.name, c.run)
+  for (const c of inboxAdapterConformance(() => myInbox())) test(c.name, c.run)
 })
 ```
 
@@ -102,6 +108,7 @@ Each case uses random session ids, so the factory may return adapters on one sha
 | Exactly-once approvals across instances | `StateAdapter.setIf`, or a `SessionLock` |
 | Stop a turn running in another instance (`session.abort()` / `requestAbort()`) | `StateAdapter.setIf` (atomic) |
 | At most one running turn per session, exactly | a `SessionLock` (`SessionOptions.lock`) |
+| Queue, steer, wake, collect and abort across instances (`session.enqueue()`) | an `InboxAdapter` (`storage.inbox`) |
 
 ```ts
 import type { SessionLock } from 'eharness'
@@ -120,6 +127,29 @@ The Postgres example implements it with `pg_try_advisory_lock` on a dedicated co
 Without a lock, the core still marks the running turn in the state (`activeTurn` + heartbeat), so
 a second instance fails fast with `EH_SESSION_BUSY` (best effort), and a turn whose process died
 is recovered on the next operation.
+
+## `InboxAdapter`
+
+Optional. A durable per-session queue of inputs, wake-ups and abort requests that the instance
+holding a session drains (spec 05 §12, [Running several instances](multi-instance.md)):
+
+```ts
+import type { InboxAdapter } from 'eharness'
+
+const inbox: InboxAdapter = {
+  async enqueue(sessionId, item) { /* store; return a time-sortable id (uuidv7()) */ },
+  async claim(sessionId, owner, { limit, claimTtlMs } = {}) {
+    /* atomically mark the oldest ready items claimed until now + claimTtlMs, attempts + 1 */
+  },
+  async ack(ids) { /* delete */ },
+  async release(ids) { /* clear the claim */ },
+  // optional: notify(sessionId), subscribe(sessionId, onNotify) → unsubscribe, pending({ limit })
+}
+```
+
+`claim` must give each item to exactly one claimer (`FOR UPDATE SKIP LOCKED` in Postgres), and an
+expired claim makes the item ready again — the core relies on that to redeliver the items of an
+instance that died. Store the item as JSON and return copies. `memoryInbox()` is the reference.
 
 ## Tips
 

@@ -1,6 +1,6 @@
 # P19 — Durable inbox port
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: 0.4 proposal item **U3** (roadmap item "Cross-process queue / wake") plus the inbox
 path of **U4** (cross-process abort, state path done in P16).
@@ -62,30 +62,33 @@ export interface InboxAdapter {
 }
 
 export type InboxItemInput =
-  | { kind: 'send'; mode: 'queue' | 'steer' | 'collect'; input: SerializedInput; clientId?: string; at: number }
+  | { kind: 'send'; mode: 'queue' | 'steer' | 'collect'; input: SerializedInput; collect?: CollectOptions; at: number }  // clientId lives in input
   | { kind: 'wake'; messageId: string; at: number }        // inject(…, { wake }) from another process; the kind message is already saved
   | { kind: 'abort'; turnId?: string; reason?: string; at: number }
 export type InboxItem = InboxItemInput & { id: string; attempts: number }
 
-defineHarnessAgent({ storage: { messages, state, inbox } })   // inbox optional (also SessionOptions.storage)
-send(input, { ifBusy: 'queue' | 'steer' | 'collect' | 'wait' | 'reject', collect?: { quietMs?: number /* 1_500 */; maxWaitMs?: number /* 10_000 */; maxItems?: number /* 20 */ } })
+defineHarnessAgent({ storage: { messages, state, inbox }, inbox: { pollMs?, claimTtlMs?, collect? } })   // inbox optional (also SessionOptions.storage)
+send(input, { ifBusy: 'queue' | 'steer' | 'collect' | 'wait' | 'reject', collect?: { quietMs?: number /* 1_500 */; maxWaitMs?: number /* 10_000 */; maxItems?: number /* 20 */ } })  // in-process only
+session.enqueue(input, { mode?: 'queue' | 'steer' | 'collect', collect? }): Promise<{ inboxId; target: 'local' | 'remote' }>
 ```
 
 Normative rules (spec 05 new §12 "Inbox", spec 11 §6 updates):
 
 1. **Without inbox:** unchanged (in-memory queue; `collect` works in-process with a timer).
-2. **Enqueue path.** With an inbox, `send()` in a process where the session is busy **elsewhere**
-   (live foreign `activeTurn` or lock rejection) and `ifBusy` ∈ `queue | steer | collect` enqueues
-   instead of failing, then calls `notify?`. What the caller gets back for a turn that will run
-   in **another** process is open question 1 (must be decided before coding); every other rule
-   below is independent of it. When this process ends up running the turn, the returned
-   `HarnessRun` behaves exactly as today.
-3. **Drain.** The process holding a session (running a turn, or acquiring it) claims items:
-   at every step boundary (steers → delivered as `data-eh.input`, with `inboxId` in the part
-   data), at turn end (queue/wake → next turns in order; `collect` → merged), and when idle on
-   notify/poll (`pollMs`, default 2 000, only while the session is live here). When nobody holds
-   the session, any process that receives a `send`/`inject(wake)`/notify for it claims first and
-   runs it (lock / `activeTurn` CAS decides).
+2. **Enqueue path** (open question 1 → (c)). `send()` keeps its 0.3 semantics (a turn running
+   elsewhere is a run error `EH_SESSION_BUSY`; `ifBusy` applies to local turns only). The
+   cross-process path is `session.enqueue(input, { mode, collect })`: with an inbox it stores the
+   item, emits `inbox-enqueued`, reads the state and resolves `{ inboxId, target: 'remote' }` +
+   `notify?` when a live foreign `activeTurn` exists, else `target: 'local'` and drains at once.
+   Without an inbox it applies the input in-process (`target: 'local'`).
+3. **Drain.** Every live session with an inbox claims on notify, every `pollMs` (default 2 000)
+   and when its turn (or `compact()`) ends. While a turn runs here: steers are pushed into the
+   turn (delivered at the next step boundary as `data-eh.input` with `inboxId`), matching aborts
+   abort it, everything else is released. When nothing runs or is queued here: a live foreign
+   `activeTurn` → release and stop claiming until it is gone; otherwise the first unit (one
+   queue/steer item, consecutive wakes, or a due collect burst) starts as a queued turn and the
+   rest is released (drained again at its turn end). Claims are held only from claim to the
+   commit point (or step save) of the turn that applies them.
 4. **Abort items** (U4 inbox path): `requestAbort()` (P16) prefers the inbox when configured
    (`enqueue abort` + `notify`), the state path stays the fallback; the holder checks abort items
    at boundaries and on notify, matching `turnId` as in P16.
@@ -111,48 +114,50 @@ Normative rules (spec 05 new §12 "Inbox", spec 11 §6 updates):
 
 ## Checklist
 
-- [ ] Resolve open question 1 (remote-queued run result shape) in this file before coding; update
+- [x] Resolve open question 1 (remote-queued run result shape) in this file before coding; update
       the Design section.
-- [ ] ADR-0024 "Durable inbox port" (port vs app job queue, at-least-once + dedupe, why memory
+- [x] ADR-0024 "Durable inbox port" (port vs app job queue, at-least-once + dedupe, why memory
       adapter + conformance only, collect semantics, relation to `SessionLock`).
-- [ ] Specs: 05 (§1 storage option, §2 `ifBusy: 'collect'`, `collect` options, new §12 Inbox,
+- [x] Specs: 05 (§1 storage option, §2 `ifBusy: 'collect'`, `collect` options, new §12 Inbox,
       §11 I/O table), 11 §6.1–§6.3 (cross-process paths, wake from another process now
       supported with an inbox), 04 §6 events, 03 §3 `inboxId` / `collected`, §4.3 `data-eh.input`
       `inboxId`, 10 (warnings e.g. `W_INBOX_FAILED`), 05 §7 `core.inboxDelivered`.
-- [ ] Rename the internal `InboxItem` / `TurnInbox` in `src/session/interaction/inbox.ts` to
+- [x] Rename the internal `InboxItem` / `TurnInbox` in `src/session/interaction/inbox.ts` to
       `PendingInput` / `TurnInputQueue` (internal, no API change) so public names are free.
-- [ ] Conformance first: `inboxAdapterConformance(factory)` in `eharness/testing` — durability
+- [x] Conformance first: `inboxAdapterConformance(factory)` in `eharness/testing` — durability
       (resolve = visible), FIFO per session, claim exclusivity under concurrent claimers (exactly
       one wins per item), claim expiry, `release` returns items, `ack` removes, session isolation,
       copies, optional `notify`/`subscribe` delivery, `pending()` when present. `memoryInbox()`
       passes it.
-- [ ] Multi-process simulation tests first (`src/session/inbox.int.test.ts`: two agents sharing
+- [x] Multi-process simulation tests first (`src/session/inbox.int.test.ts`: two agents sharing
       `memoryMessages()`, `memoryState()`, `memoryInbox()`, a memory `SessionLock`):
-  - [ ] steer from B reaches A's running turn at the next boundary (stored order = model order);
-  - [ ] queue from B runs as A's next turn; wake from B starts a turn when A is idle;
-  - [ ] collect: three sends within `quietMs` → one turn with one merged user message;
+  - [x] steer from B reaches A's running turn at the next boundary (stored order = model order);
+  - [x] queue from B runs as A's next turn; wake from B starts a turn when A is idle;
+  - [x] collect: three sends within `quietMs` → one turn with one merged user message;
         `maxWaitMs` and `maxItems` flush;
-  - [ ] abort from B via inbox stops A (and via state when the inbox is absent — P16 test reused);
-  - [ ] restart mid-turn (A dies after claim, before ack) → item redelivered after claim expiry
+  - [x] abort from B via inbox stops A (and via state when the inbox is absent — P16 test reused);
+  - [x] restart mid-turn (A dies after claim, before ack) → item redelivered after claim expiry
         and **not** duplicated (dedupe by `inboxId`);
-  - [ ] pending approvals hold queued items; abort not held;
-  - [ ] no inbox → 0.3 behaviour (existing tests unchanged).
-- [ ] Implement drain loop, collect timer, dedupe, events.
-- [ ] Example `examples/postgres-inbox.ts` (table, `SKIP LOCKED` claim, `LISTEN/NOTIFY`
+  - [x] pending approvals hold queued items; abort not held;
+  - [x] no inbox → 0.3 behaviour (existing tests unchanged).
+- [x] Implement drain loop, collect timer, dedupe, events.
+- [x] Example `examples/postgres-inbox.ts` (table, `SKIP LOCKED` claim, `LISTEN/NOTIFY`
       `subscribe`), conformance-tested on the CI Postgres service like `postgres-storage.ts`;
       offline example `examples/inbox.ts` (two agents in one process) in `examples.test.ts`.
-- [ ] Guide `docs/guides/multi-instance.md` (lock, `setIf`, `lastId`, inbox, abort, sweeper with
+- [x] Guide `docs/guides/multi-instance.md` (lock, `setIf`, `lastId`, inbox, abort, sweeper with
       `pending()`); adapter guide section; `reference.md`; changeset; board.
 
 ## Acceptance criteria
 
-- [ ] All four item kinds work across two simulated instances; no item lost across a simulated
+- [x] All four item kinds work across two simulated instances; no item lost across a simulated
       crash; no item applied twice.
 - [ ] `inboxAdapterConformance` passes for `memoryInbox()` and the Postgres example.
-- [ ] Without `storage.inbox`, behaviour and storage are byte-identical to 0.3 goldens.
-- [ ] `check:imports`: `src/testing/inbox-adapter.conformance.ts` imports core only via
+      (`memoryInbox()`: yes. Postgres: wired into `examples.test.ts` under `DATABASE_URL`, not run
+      locally — no database in the agent sandbox; verify on the CI Postgres service.)
+- [x] Without `storage.inbox`, behaviour and storage are byte-identical to 0.3 goldens.
+- [x] `check:imports`: `src/testing/inbox-adapter.conformance.ts` imports core only via
       `src/index.ts`.
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -188,6 +193,28 @@ Normative rules (spec 05 new §12 "Inbox", spec 11 §6 updates):
    avoid it.
 4. `collect` while idle delays the first reply by `quietMs`; that is the intended chat
    behaviour (WhatsApp/Telegram bursts). Decision made.
+
+5. **Decided while implementing (conservative picks, review welcome):**
+   - Durable items are never dropped by `abort()` (released back to the inbox); only in-memory
+     queued turns are dropped. An abort item for another `turnId` is acked without effect, and
+     an abort item does not drop durable queued items ahead of it.
+   - A steer that misses the running turn is **released** (not kept claimed in the in-memory
+     queue): long turns would outlive the claim. It becomes a queued send at the next idle
+     drain, and its `input.submit` hooks run a second time (`via: 'queue'`).
+   - The poll keeps running with `subscribe` (safety net for lost notifications); `pollMs: 0`
+     turns it off. A live session also drains once when it is created (sweeper path:
+     `agent.session(id)` for each id of `pending()`).
+   - `enqueue()` has no `SendOptions` (model, settings, runtime are not serializable); the
+     holder's defaults apply. `target` is a best-effort hint (state read at enqueue time).
+   - Collect across processes: a burst is a run of consecutive `collect` items; its debounce is
+     the first item's `collect` over `config.inbox.collect`; it is claimed only when due (claim,
+     check, release until then).
+   - `inbox-drained` is also emitted without an inbox (local `enqueue()` items) when their turn
+     commits; local `enqueue()` user messages carry `inboxId` too (only `enqueue()` paths;
+     `send()` storage is unchanged).
+   - `postgres-inbox.ts` uses `pg_notify` on one channel per schema with the session id as
+     payload (session ids may exceed the 63-byte channel name limit); `subscribe` needs a
+     `PgListener` (`bunSqlListener()` in the runner, node-postgres wiring in the header comment).
 
 ## Requests to other phases
 

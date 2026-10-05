@@ -213,6 +213,9 @@ export type SessionEvent =
   | { type: 'message'; message: AgentMessage }               // injected kinds, compaction markers
   | { type: 'data'; chunk: Extract<InferUIMessageChunk<AgentMessage>, { type: `data-${string}` }> }
   | { type: 'status'; running: boolean }
+  // durable inbox (0.4.0, spec 05 §12): an item was stored by this process / applied (acked) here
+  | { type: 'inbox-enqueued'; inboxId: string; kind: 'send' | 'wake' | 'abort'; mode?: 'queue' | 'steer' | 'collect' }
+  | { type: 'inbox-drained'; inboxIds: string[]; turnId?: string }
 ```
 
 ## 7. `HarnessRun` and responses

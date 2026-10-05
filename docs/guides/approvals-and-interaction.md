@@ -212,6 +212,10 @@ session.send('Then write docs', { ifBusy: 'queue' }) // runs as its own turn aft
   If the turn stops first with `tool-pending` or `aborted`, the input is not used and an
   `input-dropped` event lets the UI put the text back into the input box.
 - **Queue:** FIFO per session and process; queued turns wait while approvals are pending.
+- **Collect:** `send(text, { ifBusy: 'collect' })` merges a burst of messages into one queued
+  turn (one user message, after `collect.quietMs` without a new one).
+- **Another instance runs the turn:** use `session.enqueue(input, { mode })` with a durable
+  `storage.inbox` ([several instances](multi-instance.md)).
 - In a route: `handleChatRequest(session, body, { ifBusy: 'steer' })`.
 - `session.abort()` stops the running turn (partial output is saved with `stop: 'aborted'`) and
   drops queued turns.
@@ -227,7 +231,8 @@ await session.inject('eh.event', { name: 'ci.failed', text: 'CI failed.' }, { wa
 ```
 
 Custom kinds (`defineMessageKind`) work the same way. A wake is never lost: if it cannot be
-delivered inline, a turn is queued (and waits for pending approvals).
+delivered inline, a turn is queued (and waits for pending approvals). With a durable inbox, a
+wake while the turn runs in another instance is handed to that instance.
 
 ## Reconnecting
 
