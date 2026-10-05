@@ -309,6 +309,42 @@ describe('item 3: the stream ends only after the turn finalized', () => {
   })
 })
 
+describe("item 3: ifBusy 'wait' keeps FIFO order", () => {
+  test('a waiting send never overtakes a queued send held by pending approvals', async () => {
+    const pay = tool({
+      inputSchema: z.object({ amount: z.number() }),
+      execute: async ({ amount }) => `paid ${amount}`,
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] },
+      { text: 'paid' },
+      { text: 'answer Q' },
+      { text: 'answer W' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { pay },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('pay').result
+    const approvalId = first.pending?.approvals[0]?.approvalId as string
+    // a manual compaction keeps the session busy while the approval is pending
+    const compacting = session.compact()
+    const queued = session.send('Q', { ifBusy: 'queue' })
+    const waited = session.send('W', { ifBusy: 'wait' })
+    await compacting
+    await sleep(10)
+    // W saw the pending approval at call time, but Q is ahead of it and held: nothing ran
+    expect(model.calls).toHaveLength(1)
+    await session.respond({ approvals: [{ id: approvalId, approved: true }] }).result
+    expect((await queued.result).stop).toBe('complete')
+    expect((await waited.result).stop).toBe('complete')
+    expect(userTexts(model.prompts[2]).at(-1)).toBe('Q')
+    expect(userTexts(model.prompts[3]).at(-1)).toBe('W')
+  })
+})
+
 describe('item 4: steer at max-steps', () => {
   test('the wrap-up step takes no input; the steer becomes a queued send turn', async () => {
     const work = tool({
