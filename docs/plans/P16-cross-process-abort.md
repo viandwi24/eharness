@@ -1,6 +1,6 @@
 # P16 — Cross-process abort
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
 Source: BTeams proposal item **U4** (state-based part; the inbox-based path is added by P19).
 

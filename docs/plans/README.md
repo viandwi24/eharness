@@ -24,7 +24,7 @@ Update this table in the same commit that changes a phase's status.
 | P13 | [Hardening (audit fixes)](P13-hardening.md) | done | P12 | — |
 | P14 | [Context pruning, thrash detection, skill versions](P14-prune-thrash-skill-versions.md) | todo | P13 (recommended) | P16, P17, P18 |
 | P15 | [Pre-compaction flush](P15-precompaction-flush.md) | todo | P13, P14 (recommended) | P16, P17, P18 |
-| P16 | [Cross-process abort](P16-cross-process-abort.md) | todo | P13 (recommended) | P14, P15, P17, P18 |
+| P16 | [Cross-process abort](P16-cross-process-abort.md) | in progress | P13 (recommended) | P14, P15, P17, P18 |
 | P17 | [Memory plugin](P17-memory-plugin.md) | done | P13 (recommended), P15 (for `flushOnCompaction`) | P14, P16, P18 |
 | P18 | [Structured final output](P18-structured-output.md) | todo | P13 (recommended) | P14–P17 |
 | P19 | [Durable inbox port](P19-durable-inbox.md) | todo | P13, P16 | — |
