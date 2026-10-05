@@ -67,3 +67,4 @@ plugin**, **AI SDK `Agent` interface adapter** (`asAgent()`) and **HarnessAgent 
 | **Session-cached instruction runtime leak warning** | A session-refresh instruction that reads `ctx.runtime` caches the first request's runtime for the whole session; warn (or document loudly) when such an instruction reads per-request runtime. |
 | **Pruning inside the current turn** | P14 prunes completed turns only; very long single turns could prune old steps by token distance (cache cost per step). |
 | **Forced final output on wrap-up** | P18 leaves the `max-steps` wrap-up tool-less; optionally force `final_answer` there. |
+| **Inbox poison-item limit** | `InboxItem.attempts` is counted but not used: an item whose turn keeps failing before its commit point (or whose holder keeps dying) is redelivered forever. Add `inbox.maxAttempts` (ack as dropped + a warning / dead-letter hook) once a spec defines it. |
