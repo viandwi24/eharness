@@ -285,6 +285,47 @@ describe('defineHarnessAgent: boot errors (spec 01 §7)', () => {
     ])
   })
 
+  test('EH_CONFIG_INVALID: numeric options out of range', () => {
+    const bad: Array<[Omit<HarnessAgentConfig, 'model'>, string]> = [
+      [{ loop: { maxSteps: 0 } }, 'loop.maxSteps'],
+      [{ loop: { maxSteps: -3 } }, 'loop.maxSteps'],
+      [{ loop: { maxSteps: 1.5 } }, 'loop.maxSteps'],
+      [{ loop: { maxContinues: -1 } }, 'loop.maxContinues'],
+      [{ loop: { maxIdleContinues: 0.5 } }, 'loop.maxIdleContinues'],
+      [{ loop: { maxTurnOutputTokens: 0 } }, 'loop.maxTurnOutputTokens'],
+      [{ loop: { turnTimeoutMs: -1 } }, 'loop.turnTimeoutMs'],
+      [{ loop: { progress: { repeats: 0 } } }, 'loop.progress.repeats'],
+      [{ loop: { progress: { window: -2 } } }, 'loop.progress.window'],
+      [{ loop: { progress: { errorStreak: 0 } } }, 'loop.progress.errorStreak'],
+      [{ loop: { progress: { nudges: -1 } } }, 'loop.progress.nudges'],
+      [{ compaction: { summarizeAt: 0 } }, 'compaction.summarizeAt'],
+      [{ compaction: { summarizeAt: 1 } }, 'compaction.summarizeAt'],
+      [{ compaction: { keepLast: -1 } }, 'compaction.keepLast'],
+      [{ compaction: { maxSummaryTokens: 0 } }, 'compaction.maxSummaryTokens'],
+      [{ guard: { maxContextRatio: 0 } }, 'guard.maxContextRatio'],
+      [{ guard: { maxContextRatio: 1.2 } }, 'guard.maxContextRatio'],
+      [{ guard: { reserveTokens: -1 } }, 'guard.reserveTokens'],
+      [{ sessionIdleMs: -1 }, 'sessionIdleMs'],
+      [{ budget: { maxTurnUsd: 0 } }, 'budget.maxTurnUsd'],
+      [{ budget: { maxSessionUsd: -5 } }, 'budget.maxSessionUsd'],
+      [{ budget: { warnAt: 0 } }, 'budget.warnAt'],
+      [{ budget: { warnAt: 1.5 } }, 'budget.warnAt'],
+      [{ inputFiles: { maxBytes: 0 } }, 'inputFiles.maxBytes'],
+      [{ toolOutput: { maxChars: -1 } }, 'toolOutput.maxChars'],
+    ]
+    for (const [config, path] of bad) expectBootError(agent(config), 'EH_CONFIG_INVALID', [path])
+    // boundary values that stay valid
+    for (const config of [
+      { loop: { maxSteps: 1, maxContinues: 0, turnTimeoutMs: 0 } },
+      { compaction: { summarizeAt: 0.5, keepLast: 0 } },
+      { guard: { maxContextRatio: 1 } },
+      { sessionIdleMs: 0 },
+      { budget: { warnAt: 1 } },
+    ] as Array<Omit<HarnessAgentConfig, 'model'>>) {
+      expect(agent(config)).not.toThrow()
+    }
+  })
+
   test('EH_CONFIG_INVALID: async or throwing setup', () => {
     const asyncSetup = definePlugin({ name: 'slow', setup: (async () => ({})) as never })
     expectBootError(agent({ plugins: [asyncSetup] }), 'EH_CONFIG_INVALID', [

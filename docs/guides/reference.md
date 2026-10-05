@@ -97,7 +97,10 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 Thrown `HarnessError`s (`isHarnessError(e, code)`) are programmer or configuration errors: boot
 conflicts (`EH_CONFIG_INVALID`, `EH_DUPLICATE_TOOL`, `EH_DUPLICATE_SKILL`,
 `EH_DUPLICATE_DATA_PART`, `EH_SERVICE_CONFLICT`, `EH_SERVICE_MISSING`, `EH_PLUGIN_ORDER`) and
-misuse. Turn operations throw only `EH_SESSION_BUSY` and `EH_SESSION_CLOSED`; everything else is a
+misuse. Duplicates involving a plugin's `session()` contributions are found when the session
+opens (`session.ready()` throws them; otherwise the first turn fails with them), not at boot.
+Out-of-range numeric options (`loop.maxSteps: 0`, `compaction.summarizeAt: 1.2`, negative
+budgets, …) are `EH_CONFIG_INVALID` at `defineHarnessAgent` (0.4.0). Turn operations throw only `EH_SESSION_BUSY` and `EH_SESSION_CLOSED`; everything else is a
 run error in `run.result.error` (`EH_INVALID_INPUT`, `EH_PENDING_RESPONSE`, `EH_INVALID_MESSAGE`,
 `EH_STORAGE`, `EH_CONTEXT_OVERFLOW`, …). `session.compact()` may throw `EH_COMPACTION_FAILED`.
 

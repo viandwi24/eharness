@@ -82,7 +82,8 @@ const agent = defineHarnessAgent({
 
   The mapped text is used everywhere (UI, storage and wire stay identical). If the mapper throws
   or returns no string, the text is `Error: the tool failed.`
-- Static names must be unique (`EH_DUPLICATE_TOOL` at boot). A source that returns a name that is
+- Static names must be unique (`EH_DUPLICATE_TOOL`: at boot for config / `setup()` tools, at
+  session open for a plugin's `session()` tools). A source that returns a name that is
   already taken is skipped with `W_SHADOWED`; a failing `list()` contributes nothing for that turn
   (`W_TOOL_SOURCE_FAILED`) and is retried next turn.
 - The tool set is fixed for a turn and keeps a stable order (static, skill tools, sources,
