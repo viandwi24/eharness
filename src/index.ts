@@ -42,6 +42,7 @@ export type {
   LoopConfig,
   ModelSettings,
   ProgressConfig,
+  ToolErrorTextFn,
   ToolOutputConfig,
 } from './agent/types.ts'
 export {

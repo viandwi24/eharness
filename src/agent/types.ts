@@ -187,6 +187,12 @@ export interface InputFilesConfig {
   maxBytes?: number
 }
 
+/** Maps a thrown tool error to its text (`config.toolErrorText`). */
+export type ToolErrorTextFn = (
+  error: unknown,
+  call: { toolName: string; toolCallId: string },
+) => string
+
 /**
  * Tool result size limits.
  *
@@ -268,6 +274,13 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /** Prompt caching. Default `'auto'` mode. */
   cache?: CacheConfig | false
   toolOutput?: ToolOutputConfig
+  /**
+   * The text a tool's thrown error becomes — in the UI stream, in storage and on the model wire
+   * (identical everywhere). Default `String(error)`, which may carry secrets (connection strings,
+   * tokens) to clients and the model; map them to something safe here. Expected failures should be
+   * returned as `ERROR:` strings instead of thrown (spec 10 §1.1).
+   */
+  toolErrorText?: ToolErrorTextFn
   /** File parts of user input: allowed URL protocols and the data URL size cap (spec 05 §3). */
   inputFiles?: InputFilesConfig
   /** Typed per-call options accepted by `send()`/`respond()`/… (`options`). */

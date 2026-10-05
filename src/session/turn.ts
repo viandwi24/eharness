@@ -689,6 +689,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         open,
         approval: config.approval,
         toolOutput: config.toolOutput,
+        toolErrorText: config.toolErrorText,
         contextOf: rt.contextOf,
         warn: rt.warn,
         status: (tool) =>

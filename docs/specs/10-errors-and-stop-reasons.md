@@ -54,13 +54,25 @@ the next step (warning only). A failed final save sets `stop: 'error'` / `EH_STO
 
 ```ts
 /** Wraps an error thrown by a tool's execute. Copies `name` and `message`, keeps the original in `cause`. */
-export class HarnessToolError extends Error { readonly toolName: string; readonly toolCallId: string }
+export class HarnessToolError extends Error {
+  readonly toolName: string; readonly toolCallId: string
+  /** The `config.toolErrorText` text, when set; `toString()` returns it. */
+  readonly text: string | undefined
+}
 ```
 
 Created by the core's execute wrapper (spec 01 §5) and re-thrown to AI SDK, which turns it into a
 tool-error result. Because `name` and `message` are copied, `String(error)` — the text the model
 sees — is identical to the original, and the UI stream uses the same text (spec 04 §2). It never
 reaches the caller of `send()`.
+
+**`config.toolErrorText`** (0.4.0): `(error, { toolName, toolCallId }) => string` maps a thrown
+error to its text; `String(error)` of the `HarnessToolError` is then the mapped text, so the UI
+stream, the stored part and the model wire stay identical. Default: `String(error)` of the
+original — which may carry secrets (connection strings, tokens) to clients and the model. A mapper
+that throws or returns a non-string yields `Error: the tool failed.` (never the original text).
+Errors of invalid / unknown tool calls (`AI_InvalidToolInputError`, `AI_NoSuchToolError`) are not
+mapped (they carry only the model's own input).
 
 ## 2. Warnings (non-fatal)
 
