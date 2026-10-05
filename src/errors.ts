@@ -31,7 +31,11 @@ export type HarnessErrorCode =
  *
  * @see docs/specs/10-errors-and-stop-reasons.md#1-errors-thrown
  */
-export type HarnessNoticeCode = 'EH_TURN_INTERRUPTED' | 'EH_INPUT_BLOCKED' | 'EH_TURN_TIMEOUT'
+export type HarnessNoticeCode =
+  | 'EH_TURN_INTERRUPTED'
+  | 'EH_INPUT_BLOCKED'
+  | 'EH_TURN_TIMEOUT'
+  | 'EH_CONTEXT_THRASH'
 
 /** Options of the {@link HarnessError} constructor. */
 export interface HarnessErrorOptions {
@@ -149,6 +153,7 @@ export type WarningCode =
   | 'W_TOOL_OUTPUT_LIMITED'
   | 'W_CACHE_BUST'
   | 'W_OVERFLOW_RETRY'
+  | 'W_CONTEXT_THRASH'
   | 'W_GRANT_IGNORED'
 
 /**

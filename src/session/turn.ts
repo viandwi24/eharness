@@ -1465,7 +1465,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           error = toTurnError(saveError, log)
           rt.cacheMessage(final)
         }
-        if (outcome.stop === 'error' || outcome.stop === 'timeout') {
+        if (
+          outcome.stop === 'error' ||
+          outcome.stop === 'timeout' ||
+          outcome.stop === 'context-thrash'
+        ) {
           const notice = createKindMessage(
             'eh.notice',
             outcome.stop === 'timeout'
@@ -1474,11 +1478,18 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
                   code: 'EH_TURN_TIMEOUT',
                   message: 'The turn exceeded its time limit.',
                 }
-              : withoutUndefined({
-                  level: 'error' as const,
-                  code: outcome.error?.code,
-                  message: outcome.error?.message ?? 'The turn failed.',
-                }),
+              : outcome.stop === 'context-thrash'
+                ? {
+                    level: 'warning',
+                    code: 'EH_CONTEXT_THRASH',
+                    message:
+                      'The turn stopped: its context filled up again right after a compaction.',
+                  }
+                : withoutUndefined({
+                    level: 'error' as const,
+                    code: outcome.error?.code,
+                    message: outcome.error?.message ?? 'The turn failed.',
+                  }),
             { id: rt.nextId(), turnId, createdAt: Date.now(), parentId: assistantId },
           )
           try {

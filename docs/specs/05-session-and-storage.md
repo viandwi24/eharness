@@ -309,7 +309,10 @@ Evaluate in this order; the first match decides:
 
 If none matches (`finishReason: 'tool-calls'` and every call has a result — automatic denials and
 tool errors count as results), the loop continues — unless the progress guard (§3.2) found the
-turn stuck and has no reminder left, which stops it with `'stuck'`.
+turn stuck and has no reminder left, which stops it with `'stuck'`. Before the next step the
+mid-turn trigger (spec 06 §4) may stop the turn with `'context-thrash'` (no further model call;
+`turn.beforeEnd` does not run; an `eh.notice` with code `EH_CONTEXT_THRASH`, level `warning`, is
+saved; dangling calls are answered as for every stop).
 
 Then, before actually stopping:
 
