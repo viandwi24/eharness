@@ -23,6 +23,8 @@ export interface FileSystem {
   /** Optional fast paths; the plugin falls back to list+read when absent. */
   stat?(path: string): Promise<FileMeta | null>
   grep?(pattern: RegExp, opts?: { prefix?: string; maxHits?: number }): Promise<GrepHit[]>
+  /** Optional (since 0.4): atomic rename of one file; never overwrites `to`. */
+  move?(from: string, to: string, opts?: { ifVersion?: string }): Promise<MoveResult>
 }
 
 export interface FileMeta { path: string; version: string; size: number; updatedAt?: number }
@@ -32,6 +34,7 @@ export type WriteResult =
   | { ok: false; reason: 'conflict' | 'exists'; currentVersion?: string }
 export type DeleteResult = { ok: true } | { ok: false; reason: 'missing' | 'conflict'; currentVersion?: string }
 export interface GrepHit { path: string; line: number; text: string }
+export type MoveResult = { ok: true } | { ok: false; reason: 'missing' | 'exists' | 'conflict'; currentVersion?: string }
 
 declare module 'eharness' {
   interface HarnessServices { fs: FileSystem; toolOutputs: ToolOutputStore }
@@ -64,13 +67,19 @@ Rules for adapters:
 - `grep` (optional): lines are split on `\n` with a trailing `\r` removed; `line` is 1-based;
   hits sorted by path then line, at most `maxHits`; `prefix` has the `list` semantics; the
   pattern's `g`/`y` flags must not make matching stateful.
+- `move` (optional, since 0.4): `to` gets the content — and therefore the version — of `from` and
+  `from` disappears, as one atomic step. Checks in this order: `from` missing → `'missing'`;
+  `ifVersion` given and not the version of `from` → `'conflict'` (with `currentVersion`); `to`
+  exists (also `to === from`) → `'exists'`. A rejected move changes nothing; of concurrent moves
+  of one file exactly one wins. The file tools do not use it; the memory plugin (spec 14 §6) does
+  and falls back to write + delete when it is absent.
 - Returned objects are copies (mutating them never changes stored data).
 - Text only in v0 (UTF-8). Binary files are a roadmap item.
-- Conformance: `fileSystemConformance(factory, { requireStat?, requireGrep? })` in
+- Conformance: `fileSystemConformance(factory, { requireStat?, requireGrep?, requireMove? })` in
   `eharness/testing`. The factory returns an **empty** file system per case. It checks the rules
   above: round trips (non-ASCII, CRLF, empty file), version iff content, `ifVersion` semantics
   incl. concurrent writers (exactly one wins), `DeleteResult` reasons, `list` order and prefixes,
-  metadata-only listings, copies, and `stat` / `grep` when implemented. `eharness/testing` does
+  metadata-only listings, copies, and `stat` / `grep` / `move` when implemented. `eharness/testing` does
   not import `eharness/filesystem`, so the suite types its parameter with the structural mirror
   `FileSystemUnderTest` (every `FileSystem` is assignable).
 
@@ -236,7 +245,7 @@ Model projection: `omit` (the model already saw the tool result).
 export function memoryFs(seed?: Record<string, string>): FileSystem
 ```
 
-Map-backed, versions via `contentVersion`, implements `stat` and `grep`. Used by tests, examples
+Map-backed, versions via `contentVersion`, implements `stat`, `grep` and `move`. Used by tests, examples
 and as the default for demos. Not persistent. Seed keys are normalized with `normalizePath`
 (invalid key or non-string content → `TypeError`); methods expect normalized paths like every
 adapter. `updatedAt` is set on every write.

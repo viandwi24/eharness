@@ -52,6 +52,16 @@ export type DeleteResult =
   | { ok: false; reason: 'missing' | 'conflict'; currentVersion?: string }
 
 /**
+ * Result of {@link FileSystem.move}. `'missing'`: `from` does not exist; `'exists'`: `to` exists
+ * (a move never overwrites); `'conflict'`: `ifVersion` does not match the version of `from`.
+ *
+ * @see docs/specs/08-filesystem-plugin.md#1-contract
+ */
+export type MoveResult =
+  | { ok: true }
+  | { ok: false; reason: 'missing' | 'exists' | 'conflict'; currentVersion?: string }
+
+/**
  * One grep match.
  *
  * @see docs/specs/08-filesystem-plugin.md#1-contract
@@ -101,6 +111,13 @@ export interface FileSystem {
    * path, then line; at most `maxHits`.
    */
   grep?(pattern: RegExp, opts?: { prefix?: string; maxHits?: number }): Promise<GrepHit[]>
+  /**
+   * Optional atomic rename of one file: `to` gets the content (and therefore the version) of
+   * `from`, and `from` is removed, in one step. Never overwrites `to`. `ifVersion` → only if the
+   * version of `from` matches. Callers fall back to write + delete when absent (the memory plugin
+   * does, spec 14 §6).
+   */
+  move?(from: string, to: string, opts?: { ifVersion?: string }): Promise<MoveResult>
 }
 
 /**
