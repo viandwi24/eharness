@@ -123,6 +123,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_GRANT_IGNORED` | a `remember: 'session'` grant could not apply (e.g. denied by policy) |
 | `W_ABORT_UNSUPPORTED` | `abort()` / `requestAbort()` found a turn running in another instance but cannot reach it: the `StateAdapter` has no `setIf`, or `recovery: false` (spec 05 §9.1) |
 | `W_OUTPUT_INVALID` | a turn with `SendOptions.output` found no valid final answer within `maxRetries` retries (or a retry was refused by the continuation bounds); the turn stops with `'output-invalid'` (`details: { attempts, lastError }`, spec 05 §3.3; 0.4.0) |
+| `W_GUARD_UNAVAILABLE` | the approval guard's judge (`eharness/guard`) failed, timed out or gave no valid verdict; the call needs a person (`user-approval`). Once per turn (`details: { tool, toolCallId, error }`, spec 15 §2 rule 6; 0.5.0) |
 | `W_INBOX_FAILED` | an `InboxAdapter` call failed (`details: { sessionId, operation }`: `claim`, `ack`, `release`, `notify`, `subscribe`, `drain`, `enqueue` of an abort — then the state request is used — or `input` for a stored input that no longer normalizes, which is dropped); items are redelivered after their claim expires (spec 05 §12) |
 
 ## 3. `describeError`
