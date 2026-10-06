@@ -1,6 +1,6 @@
 # P22 — Inbox poison items, retries and dead-letter
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#8** and the 0.4.0 audit row "Inbox poison-item limit"
 (`docs/plans/roadmap.md`). Verdict: GENERIC-core (eharness owns a durable inbox port).
