@@ -103,7 +103,6 @@ export function memoryState(): StateAdapter {
   }
 }
 
-
 /** Options of {@link memoryInbox}. */
 export interface MemoryInboxOptions {
   /** Clock used for claim expiry, backoff delays and `availableAt` (tests). Default `Date.now`. */
@@ -144,7 +143,8 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
     entry.item.availableAt !== undefined && entry.item.availableAt > at
   const delayed = (entry: Entry, at: number) =>
     entry.delayedUntil !== undefined && entry.delayedUntil > at
-  const byIdOrder = (a: Entry, b: Entry) => (a.item.id < b.item.id ? -1 : a.item.id > b.item.id ? 1 : 0)
+  const byIdOrder = (a: Entry, b: Entry) =>
+    a.item.id < b.item.id ? -1 : a.item.id > b.item.id ? 1 : 0
 
   /**
    * The entries a claim of `owner` takes (in id order) and the ones it renews. Dead items and

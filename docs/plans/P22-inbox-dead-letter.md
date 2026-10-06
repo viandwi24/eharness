@@ -119,48 +119,48 @@ the stored-view dedupe before any attempt logic runs.
 
 ## Checklist
 
-- [ ] ADR-0026 "Inbox retries and dead-letter" (amends ADR-0024): attempts at claim, `uncount`
+- [x] ADR-0026 "Inbox retries and dead-letter" (amends ADR-0024): attempts at claim, `uncount`
       deferrals, opt-in limits, dead kept by the adapter, why no core redrive wrapper.
-- [ ] Spec 05 §12: adapter additions (optional members, `release` options), config, rules
+- [x] Spec 05 §12: adapter additions (optional members, `release` options), config, rules
       11–15; spec 04 §6 `inbox-dead`; spec 10 §2 `W_INBOX_DEAD_LETTER`, `W_INBOX_FAILED`
       operations `deadLetter`.
-- [ ] Driver: classify every release as deferral / failed attempt; backoff computation (pure
+- [x] Driver: classify every release as deferral / failed attempt; backoff computation (pure
       function with unit tests: fixed, exponential `delayMs × 2^(attempts-1)`, cap, full jitter
       with an injectable random); dead path; non-retryable classification.
-- [ ] `InboxItemInput.availableAt?` (rule 14): an item with a future `availableAt` is invisible
+- [x] `InboxItemInput.availableAt?` (rule 14): an item with a future `availableAt` is invisible
       and does **not** block older-to-newer ordering of other items (it is a timer, not a queue
       entry). Conformance case under `requireRetry`.
-- [ ] `memoryInbox()`: `availableAt`, `delayMs`, `uncount`, `lastError`, `deadLetter`, `redrive`, `listDead`,
+- [x] `memoryInbox()`: `availableAt`, `delayMs`, `uncount`, `lastError`, `deadLetter`, `redrive`, `listDead`,
       `stats`; head-of-line respects delayed items; abort items bypass.
-- [ ] Conformance (`inboxAdapterConformance(factory, { requireRetry?, requireDeadLetter?,
+- [x] Conformance (`inboxAdapterConformance(factory, { requireRetry?, requireDeadLetter?,
       requireStats? })`): attempts increment at claim and survive expiry; `uncount` restores;
       delayed item invisible until due and blocks later send/wake of its session but not abort;
       `lastError` round trip; dead items never claimed, listed, redriven in id order with
       attempts 0; `stats` counts; JSON round trip. Existing cases unchanged.
-- [ ] Integration (`src/session/inbox.int.test.ts` style, two simulated instances): a send whose
+- [x] Integration (`src/session/inbox.int.test.ts` style, two simulated instances): a send whose
       unit always fails with `EH_STORAGE` goes dead after `maxAttempts` and the next item runs;
       a holder that "dies" after claim N times → dead (counted via expiry); a long foreign turn
       with 20 polls does **not** consume attempts (`uncount`); non-retryable invalid stored input
       → dead at once; without `retry` → 0.4 goldens; `onDeadLetter` failure does not lose the item.
-- [ ] `examples/postgres-inbox.ts`: columns `attempts`, `available_at`, `last_error`,
+- [x] `examples/postgres-inbox.ts`: columns `attempts`, `available_at`, `last_error`,
       `dead_at`, `dead_reason`; `eh_inbox_claim` respects `available_at` and head of line;
       `deadLetter` / `redrive` / `listDead` / `stats`; migration note for 0.4 tables (`ALTER TABLE
       … ADD COLUMN … DEFAULT`); conformance on the CI Postgres service (`DATABASE_URL`).
-- [ ] Guides: multi-instance "Poison items" section (choosing `maxAttempts`, alerting from
+- [x] Guides: multi-instance "Poison items" section (choosing `maxAttempts`, alerting from
       `onDeadLetter`, redrive route, idempotency of side effects — read `idempotent` from P21);
       adapter guide checklist for the new members.
-- [ ] Changeset; board; gate.
+- [x] Changeset; board; gate.
 
 ## Acceptance criteria
 
-- [ ] A poison item stops blocking its session after `maxAttempts`; nothing is lost (dead items
+- [x] A poison item stops blocking its session after `maxAttempts`; nothing is lost (dead items
       are listable and redrivable); nothing is applied twice.
-- [ ] Deferrals never consume attempts with `memoryInbox()` and the Postgres example.
-- [ ] Without `inbox.retry` behaviour and storage are identical to 0.4 (goldens, existing tests).
-- [ ] A 0.4-style adapter (no new members, `release` ignoring options) still passes the 0.4
+- [x] Deferrals never consume attempts with `memoryInbox()` and the Postgres example.
+- [x] Without `inbox.retry` behaviour and storage are identical to 0.4 (goldens, existing tests).
+- [x] A 0.4-style adapter (no new members, `release` ignoring options) still passes the 0.4
       conformance cases and works without `retry`; with `retry` set and no `deadLetter`, dead
       items are acked after reporting (documented).
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -186,6 +186,29 @@ the stored-view dedupe before any attempt logic runs.
    deferral.
 4. Core-level `session.redrive()` / `agent.inbox.*` wrappers? Pick: none in 0.5.0 (adapter
    operations; avoids a second API surface).
+5. **Drain-level failures** (state read / context load in an idle drain) — attempt or deferral?
+   Picked (implementation): a deferral (`uncount`) with the minimum backoff and `lastError`, so a
+   storage outage never dead-letters a healthy backlog; a crash loop is still counted by claim
+   expiry. Errors of the *turn* before its commit point stay counted (rule 11).
+6. **Other errors before the commit point** (neither `EH_STORAGE` / `EH_SESSION_BUSY` nor
+   non-retryable, e.g. a throwing hook): 0.4 acked them silently. Picked: with `retry` they are
+   failed attempts (backoff, then dead after `maxAttempts`) — nothing is dropped silently; without
+   `retry` they are still acked (0.4).
+7. **`close()` after the commit point** (a wake unit whose end-of-turn write did not happen):
+   counted as a failed attempt so the next claimer reloads before dedupe (`attempts > 1`);
+   `close()` before the commit point is a deferral.
+8. **Aborts behind a held item.** Rule 14 lets `abort` items pass a *delayed* item only; behind an
+   item another owner holds nothing is claimable, as in 0.4 (most conservative: an abort claimed
+   by a non-holder would be acked without effect).
+9. **Default backoff type** not fixed by the design: picked `'exponential'`.
+10. **"A renewal could not be kept"** (rule 11 draft): the driver cannot observe a lost claim, so
+    it is not a separate case; an expired claim is counted by the next claim (crash semantics).
+11. **0.4 hot loop.** Without `retry`, a unit that always fails with `EH_STORAGE` is released and
+    claimed again at once (unchanged 0.4 behaviour; with in-memory adapters this starves timers).
+    The integration test simulates I/O latency; the guide recommends `retry` for production.
+12. **Postgres delay column.** The design listed `available_at` only; the example adds
+    `delayed_until` as well, because a backoff delay keeps its place (holds back later
+    `send` / `wake` rows) while an `availableAt` timer holds nothing back.
 
 ## Requests to other phases
 

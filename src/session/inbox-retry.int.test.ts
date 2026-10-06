@@ -91,6 +91,8 @@ function poisonMessages(): MessageAdapter & { failures: number; enabled: boolean
       )
       if (poisoned && out.enabled) {
         out.failures++
+        // real I/O: without a backoff (0.4) the redelivery loop would starve the timers
+        await sleep(1)
         throw new Error('disk full')
       }
       return inner.save(sessionId, messages)
@@ -308,7 +310,9 @@ describe('inbox retries and dead-letter (spec 05 §12 rules 11–15)', () => {
     const queued = await b.agent.session('s1').enqueue('second')
     expect(queued.target).toBe('remote')
     await until('20 claims while the turn runs', () => {
-      return inbox.log.claims.filter((c) => c.items.some(([i]) => i === queued.inboxId)).length >= 20
+      return (
+        inbox.log.claims.filter((c) => c.items.some(([i]) => i === queued.inboxId)).length >= 20
+      )
     })
     expect(inbox.attempts(queued.inboxId)).toBe(1)
     release()
@@ -348,14 +352,14 @@ describe('inbox retries and dead-letter (spec 05 §12 rules 11–15)', () => {
     const poison = await inbox.adapter.enqueue('s1', sendItem('poison'))
     const model = scriptedModel([])
     const a = instance(storage, { model })
-    const sessionA = a.agent.session('s1')
+    a.agent.session('s1') // opening the session starts its drain
     await until('six failed attempts', () => messages.failures >= 6)
     expect(inbox.log.acks).toContain(bad)
     expect(inbox.log.dead).toEqual([])
     expect(inbox.attempts(poison)).toBeGreaterThanOrEqual(6)
     expect(inbox.log.releases.every((r) => r.opts === undefined)).toBe(true)
     expect(a.warnings.some((w) => w.code === 'W_INBOX_DEAD_LETTER')).toBe(false)
-    await sessionA.idle()
+    // never idle: the poison item is redelivered without limit (0.4)
     await a.agent.close()
   })
 
@@ -428,9 +432,7 @@ describe('inbox retries and dead-letter (spec 05 §12 rules 11–15)', () => {
     await until('dead on the second try', () => inbox.log.dead.includes(id))
     await sessionA.idle()
     expect(
-      a.warnings.some(
-        (w) => w.code === 'W_INBOX_FAILED' && w.details?.operation === 'deadLetter',
-      ),
+      a.warnings.some((w) => w.code === 'W_INBOX_FAILED' && w.details?.operation === 'deadLetter'),
     ).toBe(true)
     expect(inbox.log.acks).not.toContain(id)
     expect((await inbox.adapter.listDead?.({ sessionId: 's1' }))?.map((d) => d.id)).toEqual([id])
