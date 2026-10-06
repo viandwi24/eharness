@@ -18,6 +18,7 @@ import type {
 } from '../../agent/session-types.ts'
 import type { ToolOutputConfig } from '../../agent/types.ts'
 import { HarnessError } from '../../errors.ts'
+import { WAIT_TIMED_OUT } from '../../messages/texts.ts'
 import type { PendingExternal, WaitResult } from '../../messages/types.ts'
 import type { ToolOutputSink } from '../../registry/output-limits.ts'
 import { externalOf, type WaitStart } from '../../registry/external.ts'
@@ -27,11 +28,13 @@ import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import {
   applyStart,
   dueExternals,
+  findWaitTool,
   isKnownPending,
   MAX_TIMER_MS,
   nextTimeoutAt,
   timeoutResult,
   unresolvedCount,
+  validateWaitOutput,
 } from './waits.ts'
 
 /** Compare-and-set attempts of one recording before giving up (the state keeps changing). */
@@ -108,29 +111,13 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     return next
   }
 
-  /** Find the tool of a wait: static tools, the source cache, then a fresh source listing. */
-  async function toolOf(open: OpenSession, name: string): Promise<Tool | undefined> {
-    const fixed = open.tools.find((t) => t.name === name)
-    if (fixed !== undefined) return fixed.tool
-    for (const list of open.sourceCache.values()) {
-      const hit = list.find((t) => t.name === name)
-      if (hit !== undefined) return hit.tool
-    }
-    try {
-      const listed = await listSourceTools({
-        sources: open.toolSources,
-        cache: open.sourceCache,
-        taken: new Set(open.tools.map((t) => t.name)),
-        contextOf: rt.contextOf,
-        warn: rt.warn,
-      })
-      return listed.find((t) => t.name === name)?.tool
-    } catch {
-      return undefined
-    }
-  }
+  const toolOf = (open: OpenSession, name: string) => findWaitTool(rt, open, name)
 
-  /** Validate, `tool.after` and limit a result: what is stored is what the model will see. */
+  /**
+   * Validate, `tool.after` and limit a result: what is stored is what the model will see. Note
+   * `tool.after` hooks run here, before the compare-and-set: when another instance records first,
+   * the hooks ran for a result that is discarded (hooks must tolerate that, like a retry).
+   */
   async function prepare(
     entry: PendingExternal,
     source:
@@ -147,21 +134,15 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
       source.kind === 'result'
         ? (source.result as { output: unknown }).output
         : (timeoutResult(entry) as { output: unknown }).output
-    if (source.kind === 'result' && tool?.outputSchema !== undefined) {
-      const validate = asSchema(tool.outputSchema as never).validate
-      if (validate !== undefined) {
-        const checked = await validate(output)
-        if (!checked.success) {
-          throw new HarnessError(
-            'EH_INVALID_INPUT',
-            `The result of wait '${entry.waitId}' does not match the output schema of tool '${entry.toolName}': ${checked.error.message}`,
-            {
-              details: { reason: 'invalid-result', waitId: entry.waitId, tool: entry.toolName },
-              cause: checked.error,
-            },
-          )
-        }
-        output = checked.value
+    if (source.kind === 'result') {
+      output = await validateWaitOutput(tool, entry, output)
+    } else {
+      // a timeout must always resolve the wait: an invalid `onTimeout.output` falls back to the text
+      try {
+        output = await validateWaitOutput(tool, entry, output)
+      } catch (error) {
+        hookFailed(rt, `externalTool.onTimeout(${entry.toolName})`, 'app', error)
+        return { errorText: WAIT_TIMED_OUT, by: 'timeout' }
       }
     }
     await host.ensureContext()
@@ -327,6 +308,10 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
   async function expireOne(waitId: string): Promise<void> {
     await host.ensureOpen()
     if (rt.running) throw busy(rt.id)
+    // a stale item (the timeout was moved later since it was enqueued) must not expire the wait
+    await refresh()
+    const entry = rt.state.core().pending?.externals?.find((e) => e.waitId === waitId)
+    if (entry?.timeoutAt !== undefined && entry.timeoutAt > Date.now()) return
     const outcome = await record(waitId, { kind: 'timeout' })
     if (outcome.status === 'recorded' && outcome.remaining === 0) tryContinue({})
   }

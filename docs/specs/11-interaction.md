@@ -353,8 +353,14 @@ session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending
    `tool.after` and the output limits, and written with a compare-and-set on the state (under
    the session lock when the adapter has no `setIf`). The first result wins; the same wait again
    is `already-resolved` (idempotent, whatever the result); a timeout racing a result is whichever
-   CAS commits first. Callable from any instance; nothing runs in memory before the CAS. A turn
+   CAS commits first. Callable from any instance. `tool.after` hooks run before the CAS (a hook
+   may therefore run for a result another instance recorded first and that is discarded). A turn
    running in this instance → `EH_SESSION_BUSY`. Emits `wait-resolved` (`by: 'result'`).
+   `respond({ externals })` validates its outputs against `outputSchema` the same way, in the
+   plan step (`'invalid-result'`, run error, nothing consumed). An `onTimeout.output` that fails
+   `outputSchema` never blocks the timeout: the wait takes `WAIT_TIMED_OUT` and the core warns
+   `W_HOOK_FAILED`. A `wait-timeout` item whose wait is not due yet (its timeout moved later) is
+   acked without expiring it.
 4. **Continuation.** When the write leaves nothing open (no approval, client tool or wait), the
    same call starts the continuation through the `respond()` path with every recorded result
    (§4 steps 2–5, ADR-0012 unchanged): the **same** assistant message continues; the stored tool

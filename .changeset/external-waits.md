@@ -36,3 +36,6 @@ External waits: park a turn on a result that arrives later, in any instance (spe
   interface must add them).
 - Stored pending state is now written with `v: 2`; sessions that never use `externalTool` are
   otherwise unchanged.
+- `respond({ externals })` outputs are validated against `outputSchema` like `resolveWait()`
+  results; an `onTimeout.output` that fails `outputSchema` falls back to `WAIT_TIMED_OUT` with a
+  `W_HOOK_FAILED` warning; a `wait-timeout` item that is not due yet is ignored.

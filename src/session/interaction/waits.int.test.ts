@@ -461,6 +461,44 @@ describe('external waits: kinds are enforced', () => {
 })
 
 describe('external waits: timeouts', () => {
+  test('respond({ externals }) is validated against outputSchema before anything is consumed', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'build', input: { ref: 'a' } }] },
+      { text: 'done' },
+    ])
+    const session = instance(shared, { model, tools: { build: build() } }).agent.session('s1')
+    await session.send('go').result
+    const bad = await session.respond({
+      externals: [{ waitId: waitFor, output: { ok: 'NOT A BOOL' } }],
+    }).result
+    expect(bad.stop).toBe('error')
+    expect(bad.error?.code).toBe('EH_INVALID_INPUT')
+    expect(bad.error?.details).toMatchObject({ reason: 'invalid-result', waitId: waitFor })
+    expect((await pendingOf(shared))?.externals?.[0]?.result).toBeUndefined()
+    const good = await session.respond({ externals: [{ waitId: waitFor, output: { ok: true } }] })
+      .result
+    expect(good.stop).toBe('complete')
+  })
+
+  test('an onTimeout output that fails outputSchema falls back to WAIT_TIMED_OUT', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'build', input: { ref: 'a' } }] },
+      { text: 'gave up' },
+    ])
+    const tools = { build: build([], { timeoutMs: 60_000, onTimeout: { output: { ok: 'nope' } } }) }
+    const a = instance(shared, { model, tools })
+    const session = a.agent.session('s1')
+    const first = await session.send('go').result
+    const swept = await session.expireWaits(Date.now() + 120_000)
+    expect(swept.expired).toEqual([waitFor])
+    await swept.run?.result
+    const message = (await stored(shared)).find((m) => m.id === first.messageId)
+    expect(toolPart(message, 'build')?.errorText).toBe(WAIT_TIMED_OUT)
+    expect(a.warnings.map((w) => w.code)).toContain('W_HOOK_FAILED')
+  })
+
   test('the live timer of the holding process expires the wait with its onTimeout output', async () => {
     const shared = storage()
     const model = scriptedModel([
