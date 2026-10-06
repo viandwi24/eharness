@@ -1,6 +1,6 @@
 # P29 — Docs, guides and 0.5.0 handoff
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: the 0.5 prior-art analysis (maintainer-only, `docs/tmp/`, not committed) — items #1–#8.
 
