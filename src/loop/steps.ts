@@ -46,6 +46,7 @@ import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import type { PendingInput, TurnInputQueue } from '../session/interaction/inbox.ts'
 import { inputWireMessage } from '../session/interaction/inbox.ts'
+import { parkExternals } from '../session/interaction/waits.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { describeError } from '../stream/describe-error.ts'
 import type { TurnLedger } from './ledger.ts'
@@ -928,27 +929,67 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     }
     if (input.signal.aborted) return aborted()
 
-    const pending =
+    let pending =
       response === undefined || finishReason !== 'tool-calls'
         ? undefined
-        : findPending(input.messageId, response, registry.clientTools, (name) =>
-            toolTraits((registry.tools[name] as { metadata?: unknown } | undefined)?.metadata),
+        : findPending(
+            input.messageId,
+            response,
+            registry.clientTools,
+            (name) =>
+              toolTraits((registry.tools[name] as { metadata?: unknown } | undefined)?.metadata),
+            registry.externals.size === 0 ? undefined : new Set(registry.externals.keys()),
           )
     let stuck: StuckReason | undefined
     if (response !== undefined) {
       const found = progress.observe(response)
       if (found !== undefined && input.progress !== false) stuck = found
     }
-    let stop: StopReason | undefined = decideStop({
-      finishReason,
-      sawError,
-      pending,
-      hookStop,
-      stepCount: stepIndex,
-      budget,
-      outputTokens: total.outputTokens ?? 0,
-      maxOutputTokens: input.maxOutputTokens,
-    })
+    const decide = (): StopReason | undefined =>
+      decideStop({
+        finishReason,
+        sawError,
+        pending,
+        hookStop,
+        stepCount: stepIndex,
+        budget,
+        outputTokens: total.outputTokens ?? 0,
+        maxOutputTokens: input.maxOutputTokens,
+      })
+    let stop: StopReason | undefined = decide()
+    // external waits park only when the turn really stops pending: `start` runs once, in tool-call
+    // order, before the commit of the pending state (spec 11 §4.2 rule 1)
+    if (stop === 'tool-pending' && pending?.externals !== undefined && response !== undefined) {
+      const failed = await parkExternals(pending, response, {
+        externals: registry.externals,
+        contextOf,
+        signal: input.signal,
+        toolErrorText: rt.agent.config.toolErrorText,
+      })
+      if (input.signal.aborted) return aborted()
+      for (const f of failed) {
+        // answered like a tool error: the UI and the stored message get the chunk, the wire the result
+        input.write({ type: 'tool-output-error', toolCallId: f.toolCallId, errorText: f.errorText })
+        wire.push({
+          role: 'tool',
+          content: [
+            {
+              type: 'tool-result',
+              toolCallId: f.toolCallId,
+              toolName: f.toolName,
+              output: { type: 'error-text', value: f.errorText },
+            },
+          ],
+        })
+      }
+      if (
+        pending.approvals.length + pending.clientTools.length + (pending.externals?.length ?? 0) ===
+        0
+      ) {
+        pending = undefined
+        stop = decide()
+      }
+    }
     // tool mode: a successful output tool call ends the turn 'complete' (before rule 4); a failed
     // one is an attempt (spec 05 §3.3 rules 2 and 5)
     const answered: OutputCheck | undefined =

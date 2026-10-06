@@ -57,6 +57,7 @@ import { type NormalizedInput, normalizeInput } from './input.ts'
 import { kindText } from './interaction/inbox.ts'
 import { RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
 import { createDeferredRun, type DeferredRun, type QueuedTurn } from './interaction/queue.ts'
+import { createWaitOps } from './interaction/resolve.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import { DEFAULT_STALE_MS, requestRemoteAbort } from './remote-abort.ts'
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
@@ -533,6 +534,17 @@ export function createSessionHandle(args: {
   let current: RunningTurn | undefined
   /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
   const queue: QueuedTurn[] = []
+  /** External waits (spec 11 §4.2): resolve / expire, durable timer items, the live timer. */
+  const waits = createWaitOps({
+    rt,
+    ensureOpen,
+    ensureContext: () => ensureContext(true),
+    continueRun: (options) => session.respond({}, options),
+    inbox: args.inbox,
+    toolOutput: config.toolOutput,
+    warnInbox: (operation, error) => inboxWarning(operation, error),
+    notify: () => notify(),
+  })
   const host: TurnHost = {
     rt,
     ensureOpen,
@@ -541,6 +553,7 @@ export function createSessionHandle(args: {
     compaction,
     onTurnEnd() {
       current = undefined
+      waits.arm()
       startNext()
       checkCollect()
       drain?.drain()
@@ -572,6 +585,7 @@ export function createSessionHandle(args: {
       void drain.settle(ids, outcome)
     },
     dropQueue: () => dropQueue(false),
+    waitsParked: (pending) => waits.parked(pending),
     enqueueWake() {
       enqueue({ kind: 'wake', input: undefined, options: {} })
     },
@@ -950,6 +964,7 @@ export function createSessionHandle(args: {
     if (closing !== undefined) return closing
     rt.closed = true
     if (idleTimer !== undefined) clearTimeout(idleTimer)
+    waits.dispose()
     drain?.close()
     dropQueue(true)
     closing = (async () => {
@@ -1370,6 +1385,21 @@ export function createSessionHandle(args: {
       else drain.drain()
       return { inboxId, target }
     },
+    async resolveWait(waitId, result, options) {
+      assertOpen()
+      touch()
+      return (await waits.resolveWait(waitId, result, options)) as never
+    },
+    async expireWaits(now) {
+      assertOpen()
+      touch()
+      return (await waits.expireWaits(now)) as never
+    },
+    async pendingWaits() {
+      assertOpen()
+      touch()
+      return waits.pendingWaits()
+    },
     async clearGrants() {
       assertOpen()
       await ensureOpen()
@@ -1530,6 +1560,7 @@ export function createSessionHandle(args: {
             if (current === undefined && loading === undefined) rt.view = undefined
           },
           start: startUnit,
+          expireWait: (waitId) => waits.expireOne(waitId),
           abort: (reason) => {
             dropQueue(false)
             current?.abort(reason ?? 'aborted')

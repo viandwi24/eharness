@@ -10,9 +10,14 @@ import { isToolUIPart } from 'ai'
 import type { ApprovalActor, PendingResponse } from '../../agent/session-types.ts'
 import { HarnessError } from '../../errors.ts'
 import { kindOf } from '../../messages/kinds.ts'
-import { DENIED_NEW_INPUT, NOT_EXECUTED_NEW_INPUT } from '../../messages/texts.ts'
+import {
+  DENIED_NEW_INPUT,
+  NOT_EXECUTED_NEW_INPUT,
+  WAIT_CANCELLED_NEW_INPUT,
+} from '../../messages/texts.ts'
 import type { ToolPartLike } from '../../messages/tool-parts.ts'
-import type { HarnessUIMessage, PendingState } from '../../messages/types.ts'
+import type { HarnessUIMessage, PendingState, WaitResult } from '../../messages/types.ts'
+import { isKnownPending } from './waits.ts'
 
 /**
  * Internal `respond()` option set by `handleChatRequest`: answers that are not pending are
@@ -21,7 +26,7 @@ import type { HarnessUIMessage, PendingState } from '../../messages/types.ts'
 export const RESPOND_IGNORE_UNKNOWN: unique symbol = Symbol.for('eharness.respond.ignoreUnknown')
 
 /** Why `respond()` answers were rejected (`details.reason` of `EH_INVALID_INPUT`). */
-export type RespondRejection = 'unknown-id' | 'incomplete' | 'stale'
+export type RespondRejection = 'unknown-id' | 'incomplete' | 'stale' | 'wrong-kind'
 
 /** One validated approval answer. */
 export interface ApprovalAnswer {
@@ -34,16 +39,32 @@ export interface ApprovalAnswer {
   actor?: ApprovalActor
 }
 
-/** One validated client tool answer. */
+/**
+ * One validated client tool answer. `finished` marks a recorded external result that already
+ * passed `tool.after` and the output limits (`resolveWait()`).
+ */
 export type ClientToolAnswer =
-  | { toolCallId: string; toolName: string; output: unknown }
-  | { toolCallId: string; toolName: string; errorText: string }
+  | { toolCallId: string; toolName: string; output: unknown; finished?: true }
+  | { toolCallId: string; toolName: string; errorText: string; finished?: true }
+
+/** One external wait of the plan: recorded by `resolveWait()` / a timeout, or answered here. */
+export interface ExternalAnswer {
+  waitId: string
+  toolCallId: string
+  toolName: string
+  result: WaitResult
+  /** The result was recorded before this `respond()` (its event was emitted then). */
+  recorded: boolean
+}
 
 /** Validated answers of one `respond()`: every pending item answered exactly once. */
 export interface RespondPlan {
   pending: PendingState
   approvals: ApprovalAnswer[]
+  /** Client outputs, then the external results (as outputs, in pending order). */
   toolOutputs: ClientToolAnswer[]
+  /** The external waits of the plan (events, audit). */
+  externals: ExternalAnswer[]
 }
 
 function reject(reason: RespondRejection, message: string, extra: Record<string, unknown> = {}) {
@@ -75,14 +96,26 @@ export function planRespond(args: {
   if (typeof response !== 'object' || response === null) throw invalidShape('expected an object.')
   const approvals = response.approvals ?? []
   const toolOutputs = response.toolOutputs ?? []
+  const externalAnswers = response.externals ?? []
+  if (!Array.isArray(externalAnswers)) throw invalidShape('`externals` must be an array.')
   if (!Array.isArray(approvals)) throw invalidShape('`approvals` must be an array.')
   if (!Array.isArray(toolOutputs)) throw invalidShape('`toolOutputs` must be an array.')
   if (pending === undefined) {
     throw reject('unknown-id', 'Nothing is waiting for a response in this session.')
   }
+  if (!isKnownPending(pending)) {
+    throw reject(
+      'stale',
+      `The pending state has an unknown version (${String(pending.v)}); it authorizes nothing.`,
+      { version: pending.v },
+    )
+  }
 
   const byApprovalId = new Map(pending.approvals.map((a) => [a.approvalId, a]))
   const byClientCall = new Map(pending.clientTools.map((c) => [c.toolCallId, c]))
+  const externals = pending.externals ?? []
+  const externalByCall = new Map(externals.map((e) => [e.toolCallId, e]))
+  const externalById = new Map(externals.map((e) => [e.waitId, e]))
   const answeredApprovals = new Map<string, ApprovalAnswer>()
   const answeredOutputs = new Map<string, ClientToolAnswer>()
 
@@ -147,6 +180,15 @@ export function planRespond(args: {
     if (!isError && !('output' in o))
       throw invalidShape('a tool output needs `output` or `errorText`.')
     const entry = byClientCall.get(o.toolCallId)
+    if (entry === undefined && externalByCall.has(o.toolCallId)) {
+      // only the server resolves an external wait (spec 11 §4.2 rule 5)
+      if (ignoreUnknown) continue
+      throw reject(
+        'wrong-kind',
+        `Tool call '${o.toolCallId}' is an external wait; resolve it with resolveWait() or respond({ externals }).`,
+        { id: o.toolCallId },
+      )
+    }
     if (entry === undefined || answeredOutputs.has(o.toolCallId)) {
       if (ignoreUnknown) continue
       throw reject(
@@ -169,7 +211,42 @@ export function planRespond(args: {
     )
   }
 
+  const answeredExternals = new Map<string, WaitResult>()
+  for (const answer of externalAnswers as unknown[]) {
+    const x = answer as { waitId?: unknown; errorText?: unknown; output?: unknown }
+    if (typeof x !== 'object' || x === null || typeof x.waitId !== 'string') {
+      throw invalidShape('every external answer needs a string `waitId`.')
+    }
+    const isError = 'errorText' in x
+    if (isError && typeof x.errorText !== 'string')
+      throw invalidShape('`errorText` must be a string.')
+    if (!isError && !('output' in x)) {
+      throw invalidShape('an external answer needs `output` or `errorText`.')
+    }
+    const entry = externalById.get(x.waitId)
+    // a wait whose result was recorded must not be answered again
+    if (entry === undefined || entry.result !== undefined || answeredExternals.has(x.waitId)) {
+      if (ignoreUnknown) continue
+      throw reject(
+        'unknown-id',
+        entry === undefined
+          ? `Wait '${x.waitId}' is not pending.`
+          : `Wait '${x.waitId}' is already resolved or answered twice.`,
+        { id: x.waitId },
+      )
+    }
+    answeredExternals.set(
+      x.waitId,
+      isError
+        ? { errorText: x.errorText as string, by: 'result' }
+        : { output: x.output as never, by: 'result' },
+    )
+  }
+
   const missing = [
+    ...externals
+      .filter((e) => e.result === undefined && !answeredExternals.has(e.waitId))
+      .map((e) => e.waitId),
     ...pending.approvals
       .filter((a) => !answeredApprovals.has(a.approvalId))
       .map((a) => a.approvalId),
@@ -194,10 +271,28 @@ export function planRespond(args: {
       { messageId: pending.messageId },
     )
   }
+  const externalPlan: ExternalAnswer[] = externals.map((e) => ({
+    waitId: e.waitId,
+    toolCallId: e.toolCallId,
+    toolName: e.toolName,
+    result: (e.result ?? answeredExternals.get(e.waitId)) as WaitResult,
+    recorded: e.result !== undefined,
+  }))
+  const externalOutputs: ClientToolAnswer[] = externalPlan.map((e) => {
+    const base = { toolCallId: e.toolCallId, toolName: e.toolName }
+    return 'errorText' in e.result
+      ? {
+          ...base,
+          errorText: e.result.errorText,
+          ...(e.recorded ? { finished: true as const } : {}),
+        }
+      : { ...base, output: e.result.output, ...(e.recorded ? { finished: true as const } : {}) }
+  })
   return {
     pending,
     approvals: [...answeredApprovals.values()],
-    toolOutputs: [...answeredOutputs.values()],
+    toolOutputs: [...answeredOutputs.values(), ...externalOutputs],
+    externals: externalPlan,
   }
 }
 
@@ -279,6 +374,8 @@ export function patchForNewInput(
 ): HarnessUIMessage {
   const approvals = new Set(pending.approvals.map((a) => a.toolCallId))
   const clients = new Set(pending.clientTools.map((c) => c.toolCallId))
+  // a wait whose result was recorded keeps it; an open one is cancelled (spec 11 §4.2 rule 7)
+  const externals = new Map((pending.externals ?? []).map((e) => [e.toolCallId, e]))
   return setPendingNull(
     mapToolParts(structuredClone(message), (part) => {
       if (approvals.has(part.toolCallId) && part.state === 'approval-requested') {
@@ -294,6 +391,16 @@ export function patchForNewInput(
       }
       if (clients.has(part.toolCallId) && part.state === 'input-available') {
         return { ...base(part), state: 'output-error', errorText: NOT_EXECUTED_NEW_INPUT }
+      }
+      const wait = externals.get(part.toolCallId)
+      if (wait !== undefined && part.state === 'input-available') {
+        const result = wait.result
+        if (result === undefined) {
+          return { ...base(part), state: 'output-error', errorText: WAIT_CANCELLED_NEW_INPUT }
+        }
+        return 'errorText' in result
+          ? { ...base(part), state: 'output-error', errorText: result.errorText }
+          : { ...base(part), state: 'output-available', output: result.output }
       }
       return undefined
     }),
