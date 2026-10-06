@@ -36,6 +36,8 @@ export interface OpenSession {
   sourceCache: Map<ToolSource, Array<{ name: string; tool: Tool }>>
   /** Skill sources in registry order (static skills wrapped), `list()` cache, index limit. */
   skills: SessionSkills
+  /** Signature of the request-scoped client tools of the previous turn ('' = none). */
+  requestToolsSignature?: string
   /** Plugin dispose functions and tool source `close()`, in registration order. */
   disposers: Array<{ owner: string; dispose: () => unknown }>
 }

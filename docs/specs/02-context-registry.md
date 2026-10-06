@@ -136,6 +136,9 @@ messages:     projection of the view (spec 03 §6)
 - A `step.prepare` `messages` rewrite replaces the (projected, sanitized) wire of that step; the
   hook sees the wire **without** reminders (`StepPrepareEvent.messages`), and the turn and step
   reminders are inserted into the rewritten wire afterwards, so a rewrite never drops them.
+- **Page context (0.5.0, spec 11 §7.1 rule 6)** is part of the turn reminder: after the turn-refresh
+  instructions of plugins, before the output instruction, framed as untrusted data
+  (`PAGE_CONTEXT_PREAMBLE`, neutralised tags, capped). It is never stored and never in `instructions`.
 - Reminder text format (model-visible): `<system-reminder>\n{text}\n</system-reminder>`; several
   `step.prepare` reminders of one step are joined with a blank line.
 
@@ -146,8 +149,10 @@ earlier in that order invalidates everything after it. Rules:
 
 1. **Stable tool list.** Order: static tools (plugin order, then declaration order) → skill tools
    (`load_skill`, `read_skill_file`, `search_skills`) → source tools (plugin order, then `list()`
-   order) → `tool_search` → the per-turn output tool of `SendOptions.output` in tool mode (0.4.0,
-   spec 05 §3.3; last, so turns without it keep the whole prefix). `activeTools` changes and tool-search discoveries change the tool list
+   order) → `tool_search` → request-scoped client tools of the turn (0.5.0, spec 11 §7.1; sorted by
+   name; a changed declaration set busts the whole prefix and is reported with `W_CACHE_BUST`,
+   `details.reason: 'client-tools'`) → the per-turn output tool of `SendOptions.output` in tool mode
+   (0.4.0, spec 05 §3.3; last, so turns without it keep the whole prefix). `activeTools` changes and tool-search discoveries change the tool list
    and therefore bust the whole cache; the core warns `W_CACHE_BUST` once per turn when
    `activeTools` differs from the previous step. Prefer `toolChoice` or `tool.approve` denials for
    per-step restrictions. The core passes this order to AI SDK as `toolOrder` (otherwise AI SDK

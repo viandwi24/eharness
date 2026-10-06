@@ -19,7 +19,7 @@ import type {
 import type { ToolOutputConfig } from '../../agent/types.ts'
 import { HarnessError } from '../../errors.ts'
 import { WAIT_TIMED_OUT } from '../../messages/texts.ts'
-import type { PendingExternal, WaitResult } from '../../messages/types.ts'
+import type { PendingExternal, PendingState, WaitResult } from '../../messages/types.ts'
 import { externalOf, type WaitStart } from '../../registry/external.ts'
 import type { ToolOutputSink } from '../../registry/output-limits.ts'
 import { finishToolOutput, hookFailed } from '../../registry/wrap.ts'
@@ -27,10 +27,14 @@ import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import {
   applyStart,
   dueExternals,
+  findWait,
   findWaitTool,
+  isClientWait,
   isKnownPending,
   MAX_TIMER_MS,
   nextTimeoutAt,
+  type TimedWait,
+  timedWaits,
   timeoutResult,
   unresolvedCount,
   validateWaitOutput,
@@ -76,7 +80,7 @@ export interface WaitOps {
    * A turn parked and its pending state is stored: run the `start` of its waits, then the durable
    * timer items and the live timer. Never throws.
    */
-  parked(pending: { externals?: PendingExternal[] }): Promise<void>
+  parked(pending: PendingState): Promise<void>
   /** Dispatch the `start` of waits a crashed instance never started (session open). Never throws. */
   redispatch(): Promise<void>
   /** Re-arm the live timer from the cached pending state (after a turn ended). */
@@ -118,7 +122,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
    * the hooks ran for a result that is discarded (hooks must tolerate that, like a retry).
    */
   async function prepare(
-    entry: PendingExternal,
+    entry: TimedWait,
     source:
       | { kind: 'result'; result: { output: unknown } | { errorText: string } }
       | { kind: 'timeout' },
@@ -199,8 +203,12 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
         await refresh()
         const pending = rt.state.core().pending
         if (pending === undefined || !isKnownPending(pending)) return { status: 'not-pending' }
-        const entry = pending.externals?.find((e) => e.waitId === waitId)
+        const entry = findWait(pending, waitId)
         if (entry === undefined) return { status: 'not-pending' }
+        // a client tool call is answered by its client; only its timeout is recorded here
+        if (source.kind === 'result' && isClientWait(pending, waitId)) {
+          return { status: 'not-pending' }
+        }
         if (entry.result !== undefined) return { status: 'already-resolved' }
         prepared ??= await prepare(entry, source)
         entry.result = structuredClone(prepared)
@@ -295,7 +303,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     if (
       after !== undefined &&
       isKnownPending(after) &&
-      (after.externals?.length ?? 0) > 0 &&
+      timedWaits(after).length > 0 &&
       unresolvedCount(after) === 0
     ) {
       const run = tryContinue({})
@@ -423,14 +431,14 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     await serial(() => (holdsLock ? store() : underLock(store)))
   }
 
-  async function parked(_pending: { externals?: PendingExternal[] }): Promise<void> {
+  async function parked(_pending: PendingState): Promise<void> {
     try {
       try {
         await dispatchStarts(true)
       } catch (error) {
         rt.log.warn('eharness: starting external waits failed', { error })
       }
-      await armTimers(rt.state.core().pending?.externals ?? [])
+      await armTimers(rt.state.core().pending)
     } catch (error) {
       rt.log.warn('eharness: arming wait timeouts failed', { error })
     }
@@ -460,16 +468,16 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
         return
       }
       await dispatchStarts(false)
-      await armTimers(rt.state.core().pending?.externals ?? [])
+      await armTimers(rt.state.core().pending)
     } catch (error) {
       rt.log.warn('eharness: starting external waits failed', { error })
     }
   }
 
-  async function armTimers(externals: PendingExternal[]): Promise<void> {
+  async function armTimers(pending: PendingState | undefined): Promise<void> {
     const inbox = host.inbox
     if (inbox !== undefined) {
-      for (const entry of externals) {
+      for (const entry of timedWaits(pending)) {
         if (entry.timeoutAt === undefined || entry.result !== undefined) continue
         try {
           const inboxId = await inbox.enqueue(rt.id, {

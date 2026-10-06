@@ -30,6 +30,12 @@ import type {
   TurnResult,
 } from '../messages/types.ts'
 import type { OutputSpec } from '../output/types.ts'
+import type {
+  ClientToolDeclaration,
+  ClientToolsOptions,
+  PageContextEntry,
+  PageContextOptions,
+} from '../registry/request-tools.ts'
 import type { ModelSettings } from './types.ts'
 
 /**
@@ -416,6 +422,24 @@ export interface SendOptions {
    * (`details.reason: 'output-with-steer-or-collect'`). Spec 05 §3.3.
    */
   output?: OutputSpec
+  /**
+   * Client tools declared for this turn only (0.5.0, spec 11 §7.1): AI SDK tools without
+   * `execute` built from the declarations, answered by the client (`respond()`). Untrusted:
+   * validated all-or-nothing (names, schema size, collisions with server tools; run error
+   * `EH_INVALID_INPUT`, `details.reason: 'client-tools'`), no implied permission (approval rules
+   * apply), appended after the static tools. Re-declare them on `respond()`; not carried over a
+   * `'tool-pending'` stop. `handleChatRequest` reads them from the body only when enabled.
+   */
+  clientTools?: ClientToolDeclaration[]
+  /** Limits and filters of {@link SendOptions.clientTools} (`allow`, `maxTools`, `timeoutMs`, …). */
+  clientToolsOptions?: ClientToolsOptions
+  /**
+   * Page context for this turn only (0.5.0, spec 11 §7.1 rule 6): delivered in the turn reminder,
+   * framed as data (tags neutralised, capped), never stored and never in `instructions`.
+   */
+  pageContext?: PageContextEntry[]
+  /** Limits of {@link SendOptions.pageContext} (`maxChars`, default 4 000). */
+  pageContextOptions?: PageContextOptions
 }
 
 /** {@link SendOptions} with a typed {@link OutputSpec} (the `send()` overload that types `output`). */

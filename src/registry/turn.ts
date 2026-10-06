@@ -18,6 +18,14 @@ import { resolveTurnSkills, type SkillIndexEntry } from '../skills/registry.ts'
 import { createSkillTools } from '../skills/tools.ts'
 import { type ExternalToolMeta, externalOf } from './external.ts'
 import type { ToolOutputSink } from './output-limits.ts'
+import {
+  type BuiltRequestTools,
+  buildRequestTools,
+  type ClientToolsOptions,
+  type PageContextOptions,
+  type RequestToolMeta,
+  renderPageContext,
+} from './request-tools.ts'
 import type { NormalizedInstruction } from './static.ts'
 import { listSourceTools, type TurnToolEntry, withToolSearch } from './tools.ts'
 import {
@@ -48,6 +56,13 @@ export interface TurnRegistry {
   clientTools: ReadonlySet<string>
   /** `externalTool()`s of the turn by name, with their owner (also listed in `clientTools`). */
   externals: ReadonlyMap<string, { owner: string; meta: ExternalToolMeta }>
+  /**
+   * Request-scoped client tools of the turn (spec 11 §7.1) by name, with their timeout; also
+   * listed in `clientTools`. Empty when the request declared none.
+   */
+  requestTools: ReadonlyMap<string, RequestToolMeta>
+  /** Signature of the request tool declarations ('' = none): cache-bust detection per session. */
+  requestToolsSignature: string
   refine: ToolInputRefinement<ToolSet> | undefined
   approval: GenericToolApprovalFunction<ToolSet, never, unknown> | undefined
   /** Tool set for one step: deferred tools in `discovered` become non-deferred copies. */
@@ -91,6 +106,14 @@ export async function resolveTurnRegistry(args: {
   status: (toolName: string) => void
   /** Session approval grants (spec 11 §3.1). */
   grants?: ApprovalGrants
+  /** `SendOptions.clientTools` / `clientToolsOptions` (spec 11 §7.1); untrusted, validated here. */
+  clientTools?: unknown
+  clientToolsOptions?: ClientToolsOptions | undefined
+  /** `SendOptions.pageContext` / `pageContextOptions` (spec 11 §7.1 rule 6). */
+  pageContext?: unknown
+  pageContextOptions?: PageContextOptions | undefined
+  /** Tool names the server keeps for itself this turn (the output tool): never declarable. */
+  reservedNames?: readonly string[]
 }): Promise<TurnRegistry> {
   const { open, contextOf } = args
   const instructions1 = await evaluate(open.instructions, (e) => e.kind === 'static', contextOf)
@@ -108,11 +131,14 @@ export async function resolveTurnRegistry(args: {
     open.sessionBlock === '' ? undefined : open.sessionBlock,
     skills.dynamicText,
   )
-  const turnReminder = await evaluate(
+  const instructionReminder = await evaluate(
     open.instructions,
     (e) => e.kind === 'dynamic' && e.refresh === 'turn',
     contextOf,
   )
+  // page context: data from the client, after the plugins' reminders, never stored (rule 6)
+  const pageContext = renderPageContext(args.pageContext, args.pageContextOptions, args.warn)
+  const turnReminder = appendBlock(instructionReminder, pageContext)
 
   const deps: ToolWrapDeps = {
     hooks: open.hooks,
@@ -149,6 +175,16 @@ export async function resolveTurnRegistry(args: {
     })),
   )
   raw = withToolSearch(raw)
+  // request-scoped client tools come after `tool_search` (last of the static prefix) and before
+  // the output tool, sorted by name (spec 02 §6 rule 1)
+  const requestBuilt: BuiltRequestTools | undefined = buildRequestTools(
+    args.clientTools,
+    new Set([...raw.map((entry) => entry.name), ...(args.reservedNames ?? [])]),
+    args.clientToolsOptions,
+  )
+  if (requestBuilt !== undefined) {
+    for (const { name, tool } of requestBuilt.tools) raw.push({ owner: 'eh', name, tool })
+  }
   for (const entry of raw) {
     if (entry.tool.needsApproval !== undefined) {
       args.warn(
@@ -184,6 +220,8 @@ export async function resolveTurnRegistry(args: {
     toolOrder,
     clientTools,
     externals,
+    requestTools: requestBuilt?.meta ?? new Map(),
+    requestToolsSignature: requestBuilt?.signature ?? '',
     refine: buildRefinement(toolOrder, deps),
     approval: buildApproval(args.approval, deps, args.grants),
     skills: skills.entries,

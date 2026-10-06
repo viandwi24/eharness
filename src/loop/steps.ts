@@ -52,7 +52,7 @@ import { describeError } from '../stream/describe-error.ts'
 import type { TurnLedger } from './ledger.ts'
 import { createProgressTracker, DEFAULT_PROGRESS, type StuckReason } from './progress.ts'
 import { applyCache, deepMerge, layoutMessages, systemBlocks } from './prompt.ts'
-import { decideStop, findPending } from './stop.ts'
+import { decideStop, findPending, waitIdOf } from './stop.ts'
 
 /** Token usage of a turn, including `addUsage()` contributions. */
 export interface UsageTotals {
@@ -940,6 +940,17 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
               toolTraits((registry.tools[name] as { metadata?: unknown } | undefined)?.metadata),
             registry.externals.size === 0 ? undefined : new Set(registry.externals.keys()),
           )
+    // request-scoped client tools with a timeout: the call expires when the client never answers
+    // (spec 11 §7.1 rule 5); it takes part in the wait machinery like an external wait
+    if (pending !== undefined && registry.requestTools.size > 0) {
+      for (const call of pending.clientTools) {
+        const meta = registry.requestTools.get(call.toolName)
+        if (meta?.timeoutMs === undefined) continue
+        call.waitId = waitIdOf(call.toolCallId)
+        call.timeoutAt = Date.now() + meta.timeoutMs
+        call.onTimeout = structuredClone(meta.onTimeout)
+      }
+    }
     let stuck: StuckReason | undefined
     if (response !== undefined) {
       const found = progress.observe(response)

@@ -234,6 +234,9 @@ const { messages, addToolOutput } = useChat<ChatMessage>({
 Server-side: `session.respond({ toolOutputs: [{ toolCallId, output }] })` (or `errorText`). Client
 outputs pass `tool.after` hooks and output limits like server outputs.
 
+The browser can also declare such tools per request, with a page context block and a timeout for a
+closed tab: see [Frontend tools and page context](client-tools.md).
+
 ## New input while something is pending
 
 With `onNewInput: 'deny'` (default) a new `send()` / `regenerate()` / `edit()` first answers the

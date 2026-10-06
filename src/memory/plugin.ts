@@ -11,6 +11,7 @@
 import type { Tool } from 'ai'
 import {
   type CompactionBeforePatch,
+  neutralizeTags as coreNeutralizeTags,
   definePlugin,
   type HarnessContext,
   HarnessError,
@@ -130,7 +131,7 @@ export const PINNED_PREAMBLE: string =
  * @internal exported for tests
  */
 export function neutralizeTags(text: string): string {
-  return text.replace(/<(\s*\/?\s*)(pinned|system-reminder)/gi, '&lt;$1$2')
+  return coreNeutralizeTags(text, ['pinned', 'system-reminder'])
 }
 
 /** Escape a value for a double-quoted attribute. */

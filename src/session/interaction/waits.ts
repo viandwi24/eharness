@@ -8,7 +8,12 @@
  */
 import { asSchema, type Tool } from 'ai'
 import { HarnessError } from '../../errors.ts'
-import type { PendingExternal, PendingState, WaitResult } from '../../messages/types.ts'
+import type {
+  PendingClientTool,
+  PendingExternal,
+  PendingState,
+  WaitResult,
+} from '../../messages/types.ts'
 import type { ExternalToolMeta, WaitStart } from '../../registry/external.ts'
 import { listSourceTools } from '../../registry/tools.ts'
 import type { OpenSession, SessionRuntime } from '../runtime.ts'
@@ -38,22 +43,51 @@ export function pendingCallIds(pending: PendingState): Set<string> {
 export function unresolvedCount(pending: PendingState): number {
   return (
     pending.approvals.length +
-    pending.clientTools.length +
+    pending.clientTools.filter((c) => c.result === undefined).length +
     (pending.externals ?? []).filter((e) => e.result === undefined).length
   )
 }
 
-/** The unresolved externals whose timeout is due at `now`, in tool-call order. */
-export function dueExternals(pending: PendingState, now: number): PendingExternal[] {
-  return (pending.externals ?? []).filter(
+/**
+ * A pending item that can time out: an external wait, or a call of a request-scoped client tool
+ * with a timeout (spec 11 §7.1 rule 5). Both record their timeout result the same way.
+ */
+export type TimedWait =
+  | PendingExternal
+  | (PendingClientTool & Required<Pick<PendingClientTool, 'waitId' | 'onTimeout'>>)
+
+/** True for a client tool call that takes part in the wait machinery (it has a `waitId`). */
+function isTimedClient(c: PendingClientTool): c is TimedWait & PendingClientTool {
+  return c.waitId !== undefined && c.onTimeout !== undefined
+}
+
+/** Every external wait and every timed client tool call of the pending state. */
+export function timedWaits(pending: PendingState | undefined): TimedWait[] {
+  if (pending === undefined) return []
+  return [...(pending.externals ?? []), ...pending.clientTools.filter(isTimedClient)]
+}
+
+/** The wait (external or timed client call) with this id, if any. */
+export function findWait(pending: PendingState, waitId: string): TimedWait | undefined {
+  return timedWaits(pending).find((w) => w.waitId === waitId)
+}
+
+/** True when `waitId` names a client tool call (answered by the client, never `resolveWait()`). */
+export function isClientWait(pending: PendingState, waitId: string): boolean {
+  return pending.clientTools.some((c) => c.waitId === waitId)
+}
+
+/** The unresolved waits whose timeout is due at `now`, in tool-call order. */
+export function dueExternals(pending: PendingState, now: number): TimedWait[] {
+  return timedWaits(pending).filter(
     (e) => e.result === undefined && e.timeoutAt !== undefined && e.timeoutAt <= now,
   )
 }
 
-/** The earliest `timeoutAt` of an unresolved external wait, if any. */
+/** The earliest `timeoutAt` of an unresolved wait, if any. */
 export function nextTimeoutAt(pending: PendingState | undefined): number | undefined {
   let earliest: number | undefined
-  for (const e of pending?.externals ?? []) {
+  for (const e of timedWaits(pending)) {
     if (e.result !== undefined || e.timeoutAt === undefined) continue
     if (earliest === undefined || e.timeoutAt < earliest) earliest = e.timeoutAt
   }
@@ -61,7 +95,7 @@ export function nextTimeoutAt(pending: PendingState | undefined): number | undef
 }
 
 /** The result a timed-out wait takes: its `onTimeout`, marked `by: 'timeout'`. */
-export function timeoutResult(entry: PendingExternal): WaitResult {
+export function timeoutResult(entry: Pick<TimedWait, 'onTimeout'>): WaitResult {
   return 'output' in entry.onTimeout
     ? { output: structuredClone(entry.onTimeout.output), by: 'timeout' }
     : { errorText: entry.onTimeout.errorText, by: 'timeout' }

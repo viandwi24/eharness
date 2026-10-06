@@ -14,21 +14,53 @@ import type {
 import { isHarnessError } from '../errors.ts'
 import { uuidv7 } from '../messages/ids.ts'
 import { isToolPart } from '../messages/tool-parts.ts'
+import type {
+  ClientToolDeclaration,
+  ClientToolsOptions,
+  PageContextEntry,
+  PageContextOptions,
+} from '../registry/request-tools.ts'
 import { RESPOND_IGNORE_UNKNOWN } from '../session/interaction/pending.ts'
 import { failedRun } from './run.ts'
 
 /**
  * The request body `useChat` sends (`DefaultChatTransport`): `{ id, messages, trigger,
- * messageId }`. Only `messages`, `trigger` and `messageId` are read.
+ * messageId }`. Only `messages`, `trigger` and `messageId` are read, plus `clientTools` and
+ * `pageContext` when the matching option of {@link ChatRequestOptions} is enabled (0.5.0; they
+ * reach the server through the transport's `body` / `prepareSendMessagesRequest`). Both are
+ * untrusted input and validated by the session (spec 11 §7.1).
  */
 export interface ChatRequestBody {
   messages: UIMessage[]
   trigger?: 'submit-message' | 'regenerate-message'
   messageId?: string
+  /** Client tools of this request; ignored unless `ChatRequestOptions.clientTools` is enabled. */
+  clientTools?: ClientToolDeclaration[]
+  /** Page context of this request; ignored unless `ChatRequestOptions.pageContext` is enabled. */
+  pageContext?: PageContextEntry[]
 }
 
-/** Options of {@link handleChatRequest}: `SendOptions` for every operation, plus `actor`. */
-export interface ChatRequestOptions extends SendOptions {
+/**
+ * Options of {@link handleChatRequest}: `SendOptions` for every operation, plus `actor`, and the
+ * opt-in for what a request body may add (`clientTools`, `pageContext`).
+ */
+export interface ChatRequestOptions
+  extends Omit<
+    SendOptions,
+    'clientTools' | 'clientToolsOptions' | 'pageContext' | 'pageContextOptions'
+  > {
+  /**
+   * Accept request-declared client tools from `body.clientTools` (0.5.0, spec 11 §7.1). Default
+   * `false`: the field is ignored. `{}` accepts every valid declaration within the default limits;
+   * `allow`, `maxTools`, `maxSchemaBytes` and `timeoutMs` tighten it. Declarations that fail
+   * validation fail the run (`EH_INVALID_INPUT`, `details.reason: 'client-tools'`).
+   */
+  clientTools?: false | ClientToolsOptions
+  /**
+   * Accept page context from `body.pageContext` (0.5.0, spec 11 §7.1 rule 6): framed as data in
+   * the turn reminder. Default `false`: the field is ignored.
+   */
+  pageContext?: false | PageContextOptions
   /**
    * Who is answering (the authenticated user of the request): set on every approval answer of the
    * `respond()` path, so `approval.decided` hooks receive it (spec 11 §3.3). Never sent to the
@@ -110,7 +142,23 @@ export function handleChatRequest<
   body: ChatRequestBody,
   chatOptions: ChatRequestOptions = {},
 ): HarnessRun<M> {
-  const { actor, ...options } = chatOptions
+  const { actor, clientTools, pageContext, ...rest } = chatOptions
+  const options: SendOptions = { ...rest }
+  // opt-in only: an unset option ignores the body field (not an error); an empty field adds nothing
+  const declared: unknown = body?.clientTools
+  if (clientTools !== undefined && clientTools !== false && declared != null) {
+    if (!Array.isArray(declared) || declared.length > 0) {
+      options.clientTools = declared as ClientToolDeclaration[]
+      options.clientToolsOptions = clientTools
+    }
+  }
+  const context: unknown = body?.pageContext
+  if (pageContext !== undefined && pageContext !== false && context != null) {
+    if (!Array.isArray(context) || context.length > 0) {
+      options.pageContext = context as PageContextEntry[]
+      options.pageContextOptions = pageContext
+    }
+  }
   const messages: unknown[] = Array.isArray(body?.messages) ? body.messages : []
   const last = messages.at(-1) as UIMessage | undefined
   const messageId = typeof body?.messageId === 'string' ? body.messageId : undefined
