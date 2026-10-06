@@ -1,6 +1,6 @@
 # P24 — Request-scoped client tools and page context
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#4** (verdict GENERIC-core, transport-agnostic; CopilotKit
 `useFrontendTool` / `useCopilotReadable`, AG-UI `RunAgentInput.tools` / `context`, AI SDK
