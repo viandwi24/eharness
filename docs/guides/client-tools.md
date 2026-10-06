@@ -101,7 +101,8 @@ When the user approves such a call, the approving request does not run a model s
 parks for the client (`stop: 'tool-pending'`, the call in `pending.clientTools`, with `timeoutAt`
 when you set `timeoutMs`). Your frontend runs the tool and answers (`addToolOutput`), the next
 request streams the output into the same message and the model continues. Denying it works as for
-any tool.
+any tool. An `'approved'` status from a policy, risk rule, hook or grant needs no human: the call
+parks for the client right away, without an approval entry.
 
 ## 5. Page context is data
 
