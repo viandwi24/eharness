@@ -46,7 +46,7 @@ import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import type { PendingInput, TurnInputQueue } from '../session/interaction/inbox.ts'
 import { inputWireMessage } from '../session/interaction/inbox.ts'
-import { parkExternals } from '../session/interaction/waits.ts'
+import { armExternals } from '../session/interaction/waits.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { describeError } from '../stream/describe-error.ts'
 import type { TurnLedger } from './ledger.ts'
@@ -929,7 +929,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     }
     if (input.signal.aborted) return aborted()
 
-    let pending =
+    const pending =
       response === undefined || finishReason !== 'tool-calls'
         ? undefined
         : findPending(
@@ -968,38 +968,10 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         maxOutputTokens: input.maxOutputTokens,
       })
     let stop: StopReason | undefined = decide()
-    // external waits park only when the turn really stops pending: `start` runs once, in tool-call
-    // order, before the commit of the pending state (spec 11 §4.2 rule 1)
-    if (stop === 'tool-pending' && pending?.externals !== undefined && response !== undefined) {
-      const failed = await parkExternals(pending, response, {
-        externals: registry.externals,
-        contextOf,
-        signal: input.signal,
-        toolErrorText: rt.agent.config.toolErrorText,
-      })
-      if (input.signal.aborted) return aborted()
-      for (const f of failed) {
-        // answered like a tool error: the UI and the stored message get the chunk, the wire the result
-        input.write({ type: 'tool-output-error', toolCallId: f.toolCallId, errorText: f.errorText })
-        wire.push({
-          role: 'tool',
-          content: [
-            {
-              type: 'tool-result',
-              toolCallId: f.toolCallId,
-              toolName: f.toolName,
-              output: { type: 'error-text', value: f.errorText },
-            },
-          ],
-        })
-      }
-      if (
-        pending.approvals.length + pending.clientTools.length + (pending.externals?.length ?? 0) ===
-        0
-      ) {
-        pending = undefined
-        stop = decide()
-      }
+    // external waits: defaults only; `start` runs after the pending state is committed (spec 11
+    // §4.2 rule 1), so a fast callback can already be recorded
+    if (stop === 'tool-pending' && pending?.externals !== undefined) {
+      armExternals(pending, { externals: registry.externals })
     }
     // tool mode: a successful output tool call ends the turn 'complete' (before rule 4); a failed
     // one is an attempt (spec 05 §3.3 rules 2 and 5)

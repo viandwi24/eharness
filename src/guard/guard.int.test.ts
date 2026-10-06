@@ -88,6 +88,25 @@ const send = (to: string, toolCallId?: string): ScriptedStep => ({
 })
 
 describe('approvalGuard', () => {
+  test('a reused toolCallId with a different call is judged again', async () => {
+    const judge = scriptedModel([verdict('allow'), verdict('deny', 'not this recipient.')])
+    const { agent, sent } = setup({
+      judge,
+      script: [
+        send('ok@acme.com', 'X'),
+        { text: 'done1' },
+        send('evil@x.com', 'X'),
+        { text: 'done2' },
+      ],
+    })
+    const s = agent.session('s')
+    await s.send('mail ok@acme.com').result
+    await s.send('now mail evil').result
+    expect(judge.calls).toHaveLength(2)
+    expect(sent).toEqual(['ok@acme.com'])
+    await agent.close()
+  })
+
   test('deny: the model reads the reason and self-corrects', async () => {
     const judge = scriptedModel([
       verdict('deny', 'the user never mentioned evil@x.com.'),

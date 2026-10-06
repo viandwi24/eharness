@@ -44,9 +44,10 @@ export interface ExternalToolDef<INPUT, OUTPUT> {
   /** Validates results given to `resolveWait()` (`EH_INVALID_INPUT`, `'invalid-result'`). */
   outputSchema?: FlexibleSchema<OUTPUT>
   /**
-   * Starts the outside work once per call, after the step ended and before the pending state is
-   * committed. A throwing `start` answers the call with an error result (the model can
-   * self-correct); the turn does not park for it.
+   * Starts the outside work after the step ended and the pending state was committed, so a fast
+   * callback finds the wait pending. Idempotent by `waitId`: a crash between the commit and
+   * `start` dispatches it again. A throwing `start` is `W_HOOK_FAILED`; the wait stays parked
+   * until a result or its timeout.
    */
   start?: (
     input: INPUT,

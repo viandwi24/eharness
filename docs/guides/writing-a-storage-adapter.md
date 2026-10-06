@@ -142,7 +142,7 @@ const inbox: InboxAdapter = {
     /* atomically mark the oldest ready items claimed until now + claimTtlMs, attempts + 1 */
   },
   async ack(ids) { /* delete */ },
-  async release(ids, { delayMs, uncount, lastError } = {}) {
+  async release(ids, { owner, delayMs, uncount, lastError } = {}) {
     /* clear the claim; uncount → attempts − 1; delayMs → not claimable before now + delayMs */
   },
   // optional: notify(sessionId), subscribe(sessionId, onNotify) → unsubscribe, pending({ limit })
@@ -162,7 +162,8 @@ advisory lock (`FOR UPDATE SKIP LOCKED` alone lets a second claimer skip past a 
 Checklist for the 0.5 members (spec 05 §12 rules 11–15) — needed before an application turns on
 `inbox.retry.maxAttempts`:
 
-- `release(ids, opts)`: only claimed rows; `uncount` undoes the increment of the claim being
+- `release(ids, opts)`: only claimed rows, and with `owner` only rows still claimed by that owner
+  (a stale holder must not free a newer owner's claim; the core always passes it); `uncount` undoes the increment of the claim being
   released (deferrals must not consume attempts); `delayMs` keeps the row in place but
   unclaimable until then, and `send` / `wake` rows behind it wait (`abort` rows do not);
   `lastError` is stored and returned by later claims as `lastError` (omit the field when null).

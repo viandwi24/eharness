@@ -73,7 +73,7 @@ import {
   type RespondPlan,
 } from './interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
-import { pendingCallIds, timedWaits } from './interaction/waits.ts'
+import { pendingCallIds, timedWaits, validateExternalAnswers } from './interaction/waits.ts'
 import { hiddenByRewind } from './load-context.ts'
 import { type AbortPoll, createAbortPoll, DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
@@ -720,6 +720,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         view,
         ignoreUnknown: op.respond?.ignoreUnknown === true,
       })
+      // results of `respond({ externals })` are checked like `resolveWait()` results
+      if (plan.externals.length > 0)
+        await validateExternalAnswers(rt, await host.ensureOpen(), plan)
     } else if (core.pending !== undefined) {
       if (config.approval?.onNewInput === 'reject') {
         throw new HarnessError(
@@ -1770,6 +1773,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       // external waits with a timeout: a durable timer item and the live timer (spec 11 §4.2 rule 6)
       if (stateSaved && parked !== undefined && timedWaits(parked).length > 0) {
         await host.waitsParked(parked)
+        // what `start` returned is stored with the pending state: the result carries it too
+        const settled = rt.state.core().pending
+        if (settled?.messageId === parked.messageId) outcome.pending = structuredClone(settled)
       }
       if (wakeIds.length > 0) {
         if (stateSaved) settleOpInbox('applied')

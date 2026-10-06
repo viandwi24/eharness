@@ -1,22 +1,23 @@
 /**
- * External waits (internal): parking at the tool boundary (`start` of an `externalTool()`),
+ * External waits (internal): parking at the tool boundary (defaults of an `externalTool()`),
  * helpers over the pending state, and timer arithmetic. The session-level operations
  * (`resolveWait`, `expireWaits`, `pendingWaits`) live in `./resolve.ts`.
  *
  * @see docs/specs/11-interaction.md#42-external-waits
  * @see docs/decisions/0027-external-waits-park-at-the-tool-boundary.md
  */
-import type { ModelMessage } from 'ai'
-import type { ToolErrorTextFn } from '../../agent/types.ts'
-import { HarnessToolError } from '../../errors.ts'
+import { asSchema, type Tool } from 'ai'
+import { HarnessError } from '../../errors.ts'
 import type {
   PendingClientTool,
   PendingExternal,
   PendingState,
   WaitResult,
 } from '../../messages/types.ts'
-import type { HarnessContext } from '../../plugin/types.ts'
 import type { ExternalToolMeta, WaitStart } from '../../registry/external.ts'
+import { listSourceTools } from '../../registry/tools.ts'
+import type { OpenSession, SessionRuntime } from '../runtime.ts'
+import type { RespondPlan } from './pending.ts'
 
 /** The pending state version this build writes (spec 11 §2). */
 export const PENDING_VERSION: number = 2
@@ -100,103 +101,115 @@ export function timeoutResult(entry: Pick<TimedWait, 'onTimeout'>): WaitResult {
     : { errorText: entry.onTimeout.errorText, by: 'timeout' }
 }
 
-/** Environment of {@link parkExternals}. */
+/** Environment of {@link armExternals}. */
 export interface ParkEnv {
   /** `externalTool()` definitions of the turn, by tool name. */
   externals: ReadonlyMap<string, { owner: string; meta: ExternalToolMeta }>
-  contextOf(owner: string): HarnessContext
-  signal: AbortSignal
-  /** `config.toolErrorText`: the text a thrown error becomes (spec 10 §1.1). */
-  toolErrorText?: ToolErrorTextFn | undefined
   now?: () => number
 }
 
-/** A call whose `start` threw: answered with this error result instead of parking. */
-export interface FailedStart {
-  toolCallId: string
-  toolName: string
-  errorText: string
-}
-
-/** The text a throwing `start` becomes: like a thrown `execute` error (spec 10 §1.1). */
-function errorTextOf(
-  error: unknown,
-  entry: PendingExternal,
-  map: ToolErrorTextFn | undefined,
-): string {
-  const options = { toolName: entry.toolName, toolCallId: entry.toolCallId }
-  if (map === undefined) return String(new HarnessToolError(error, options))
-  try {
-    const mapped: unknown = map(error, options)
-    return typeof mapped === 'string' ? mapped : 'Error: the tool failed.'
-  } catch {
-    return 'Error: the tool failed.'
-  }
-}
-
-function inputsOf(response: readonly ModelMessage[]): Map<string, unknown> {
-  const inputs = new Map<string, unknown>()
-  for (const message of response) {
-    if (typeof message.content === 'string') continue
-    for (const part of message.content) {
-      if (part.type === 'tool-call' && part.providerExecuted !== true) {
-        inputs.set(part.toolCallId, part.input)
-      }
+/**
+ * Complete the external entries of a pending state that is about to be committed: `timeoutAt` and
+ * `onTimeout` from the tool's defaults, and `started: false` for tools with a `start` (it runs
+ * after the commit, spec 11 §4.2 rule 1) with `parkedAt`. Synchronous: no user code runs before the commit.
+ * Mutates `pending`.
+ */
+export function armExternals(pending: PendingState, env: ParkEnv): void {
+  const now = env.now ?? Date.now
+  for (const entry of pending.externals ?? []) {
+    const def = env.externals.get(entry.toolName)
+    const timeoutMs = def?.meta.timeoutMs
+    if (timeoutMs !== undefined && Number.isFinite(now() + timeoutMs)) {
+      entry.timeoutAt = now() + timeoutMs
+    }
+    if (def?.meta.onTimeout !== undefined) entry.onTimeout = structuredClone(def.meta.onTimeout)
+    if (def?.meta.start !== undefined) {
+      entry.started = false
+      entry.parkedAt = now()
     }
   }
-  return inputs
 }
 
 /**
- * Run `start` of every external call of `pending`, once, in tool-call order (spec 11 §4.2 rule 1),
- * and complete the entries (`correlationId`, `payload`, `timeoutAt`, `onTimeout`). A throwing
- * `start` removes the entry and is reported in the result: the caller answers that call with an
- * error result. Mutates `pending`.
+ * Apply what `start` returned to a dispatched wait: correlation id, payload, timeout overrides.
+ * Mutates `entry`.
  */
-export async function parkExternals(
-  pending: PendingState,
-  response: readonly ModelMessage[],
-  env: ParkEnv,
-): Promise<FailedStart[]> {
-  const entries = pending.externals ?? []
-  if (entries.length === 0) return []
-  const inputs = inputsOf(response)
-  const now = env.now ?? Date.now
-  const kept: PendingExternal[] = []
-  const failed: FailedStart[] = []
-  for (const entry of entries) {
-    const def = env.externals.get(entry.toolName)
-    let started: WaitStart | undefined
-    if (def?.meta.start !== undefined) {
-      try {
-        const out = await def.meta.start(inputs.get(entry.toolCallId), {
-          waitId: entry.waitId,
-          toolCallId: entry.toolCallId,
-          ctx: env.contextOf(def.owner),
-          abortSignal: env.signal,
-        })
-        started = out ?? undefined
-      } catch (error) {
-        failed.push({
-          toolCallId: entry.toolCallId,
-          toolName: entry.toolName,
-          errorText: errorTextOf(error, entry, env.toolErrorText),
-        })
-        continue
-      }
-    }
-    const timeoutMs = started?.timeoutMs ?? def?.meta.timeoutMs
-    const timeoutAt =
-      started?.timeoutAt ?? (timeoutMs === undefined ? undefined : now() + timeoutMs)
-    const onTimeout = started?.onTimeout ?? def?.meta.onTimeout
-    const next: PendingExternal = { ...entry }
-    if (started?.correlationId !== undefined) next.correlationId = started.correlationId
-    if (started?.payload !== undefined) next.payload = structuredClone(started.payload)
-    if (timeoutAt !== undefined && Number.isFinite(timeoutAt)) next.timeoutAt = timeoutAt
-    if (onTimeout !== undefined) next.onTimeout = structuredClone(onTimeout)
-    kept.push(next)
+export function applyStart(entry: PendingExternal, out: WaitStart, now: () => number): void {
+  if (out.correlationId !== undefined) entry.correlationId = out.correlationId
+  if (out.payload !== undefined) entry.payload = structuredClone(out.payload)
+  const timeoutAt =
+    out.timeoutAt ?? (out.timeoutMs === undefined ? undefined : now() + out.timeoutMs)
+  if (timeoutAt !== undefined && Number.isFinite(timeoutAt)) entry.timeoutAt = timeoutAt
+  if (out.onTimeout !== undefined) entry.onTimeout = structuredClone(out.onTimeout)
+}
+
+/** Find the tool of a wait: static tools, the source cache, then a fresh source listing. */
+export async function findWaitTool(
+  rt: SessionRuntime,
+  open: OpenSession,
+  name: string,
+): Promise<Tool | undefined> {
+  const fixed = open.tools.find((t) => t.name === name)
+  if (fixed !== undefined) return fixed.tool
+  for (const list of open.sourceCache.values()) {
+    const hit = list.find((t) => t.name === name)
+    if (hit !== undefined) return hit.tool
   }
-  if (kept.length > 0) pending.externals = kept
-  else delete pending.externals
-  return failed
+  try {
+    const listed = await listSourceTools({
+      sources: open.toolSources,
+      cache: open.sourceCache,
+      taken: new Set(open.tools.map((t) => t.name)),
+      contextOf: rt.contextOf,
+      warn: rt.warn,
+    })
+    return listed.find((t) => t.name === name)?.tool
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Validate an external result against the tool's `outputSchema` (spec 11 §4.2 rule 3). Returns the
+ * validated value; throws `EH_INVALID_INPUT` (`details.reason: 'invalid-result'`).
+ */
+export async function validateWaitOutput(
+  tool: Tool | undefined,
+  entry: { waitId: string; toolName: string },
+  output: unknown,
+): Promise<unknown> {
+  if (tool?.outputSchema === undefined) return output
+  const validate = asSchema(tool.outputSchema as never).validate
+  if (validate === undefined) return output
+  const checked = await validate(output)
+  if (checked.success) return checked.value
+  throw new HarnessError(
+    'EH_INVALID_INPUT',
+    `The result of wait '${entry.waitId}' does not match the output schema of tool '${entry.toolName}': ${checked.error.message}`,
+    {
+      details: { reason: 'invalid-result', waitId: entry.waitId, tool: entry.toolName },
+      cause: checked.error,
+    },
+  )
+}
+
+/**
+ * Validate the external results a `respond({ externals })` brings against the outputSchema of
+ * their tools, before anything is consumed (spec 11 §4.2 rule 3). Results recorded earlier were
+ * validated when they were recorded. Replaces the outputs with the validated values. Throws
+ * `EH_INVALID_INPUT` (`'invalid-result'`).
+ */
+export async function validateExternalAnswers(
+  rt: SessionRuntime,
+  open: OpenSession,
+  plan: RespondPlan,
+): Promise<void> {
+  for (const e of plan.externals) {
+    if (e.recorded || 'errorText' in e.result) continue
+    const tool = await findWaitTool(rt, open, e.toolName)
+    const output = await validateWaitOutput(tool, e, e.result.output)
+    e.result = { ...e.result, output: output as never }
+    const answer = plan.toolOutputs.find((o) => o.toolCallId === e.toolCallId)
+    if (answer !== undefined && 'output' in answer) answer.output = output
+  }
 }

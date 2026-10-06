@@ -26,7 +26,7 @@ openApiTools(spec: object | string /* JSON */, {
   defer?: boolean | 'auto'             // 'auto': deferred above 20 tools
   timeoutMs?: number                   // 30_000
   maxResponseChars?: number            // 50_000
-  schema?: { maxDepth?: number /* 6 */; maxDescriptionChars?: number /* 300 */ }
+  schema?: { maxDepth?: number /* 6 */; maxDescriptionChars?: number /* 300 */; maxSchemaBytes?: number /* 16_384 */ }
   fetch?: typeof fetch
 }): ToolSource
 
@@ -62,11 +62,17 @@ riskFromMethod(method: string): ToolRisk
    `{ description: '(recursive: <ref>)' }` (`'(too deep: …)'` without a ref). 3.0 `nullable`
    becomes a type union and boolean `exclusiveMinimum/Maximum` become numeric; `readOnly`
    properties are dropped from request bodies; unsupported keywords (`discriminator`, `xml`,
-   `example`, …) are dropped. Descriptions are capped to `schema.maxDescriptionChars`.
+   `example`, …) are dropped. Descriptions are capped to `schema.maxDescriptionChars`. The schemas
+   of one tool share a size budget `schema.maxSchemaBytes` (approximate serialized size): refs
+   are resolved once per call, and beyond the budget subschemas become `{ description:
+   '(omitted: the schema is too large)' }` with one `ctx.log.warn` — a spec whose refs fan out
+   cannot blow up the tool list.
 5. **Base URL / SSRF.** Requests go to `baseUrl` + the operation path. The spec's `servers` are
    ignored unless `useSpecServers: true` (then `servers[0]` with variable defaults, when `baseUrl`
    is not given). `baseUrl` must be an absolute `http(s)` URL without credentials. Path parameters
-   are percent-encoded; `.`, `..` and empty values are rejected; the final URL must stay under the
+   are percent-encoded; empty values, values with a `.` / `..` segment (split on `/` and `\`, raw
+   or percent-decoded, e.g. `../x`, `..%2Fx`, `%2e%2e`) and encoded `/` / `\` (`%2f`, `%5c`) are
+   rejected; the final URL must stay under the
    base URL. `redirect: 'manual'`: redirects within the base URL are followed (≤ 5; 301/302/303
    on non-GET/HEAD become GET without body), anything else returns `REDIRECT BLOCKED: …`.
 6. **Auth.** Only `headers(ctx, op)` supplies credentials; its headers override model-supplied

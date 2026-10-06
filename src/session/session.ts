@@ -351,6 +351,9 @@ export function createSessionHandle(args: {
           hookFailed(rt, 'session.start', hook.owner, error)
         }
       }
+      // waits a crashed instance parked but never started (spec 11 §4.2 rule 1); not awaited: a
+      // `start` may call back into this session
+      queueMicrotask(() => void waits.redispatch())
       return open
     } catch (error) {
       rt.open = undefined
@@ -542,6 +545,8 @@ export function createSessionHandle(args: {
     continueRun: (options) => session.respond({}, options),
     inbox: args.inbox,
     toolOutput: config.toolOutput,
+    staleMs:
+      config.recovery === false ? DEFAULT_STALE_MS : (config.recovery?.staleMs ?? DEFAULT_STALE_MS),
     warnInbox: (operation, error) => inboxWarning(operation, error),
     notify: () => notify(),
   })

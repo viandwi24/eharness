@@ -76,6 +76,18 @@ describe('buildTranscript', () => {
     }
   })
 
+  test('skips user messages the core tagged as kind projections', () => {
+    const out = buildTranscript([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'KIND-PROJECTION' }],
+        providerOptions: { eharness: { core: true } },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'real' }] },
+    ] as ModelMessage[])
+    expect(out).toEqual([{ role: 'user', text: 'real' }])
+  })
+
   test('leaves out the call under review and returns copies', () => {
     const out = buildTranscript(wire, 'c2')
     expect(out.map((e) => (e.role === 'tool-call' ? e.toolName : 'user'))).toEqual([

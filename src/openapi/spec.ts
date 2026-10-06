@@ -13,6 +13,14 @@ export type Json = Record<string, unknown>
 export interface SchemaLimits {
   maxDepth: number
   maxDescriptionChars: number
+  /** Approximate serialized size cap of the schemas of one tool; beyond it subschemas are cut. */
+  maxSchemaBytes: number
+}
+
+/** The size budget shared by every schema of one tool (see {@link SchemaLimits.maxSchemaBytes}). */
+export interface SchemaBudget {
+  left: number
+  truncated: boolean
 }
 
 export function invalid(message: string): never {
@@ -132,8 +140,11 @@ export function summarizeSchema(
   schema: unknown,
   limits: SchemaLimits,
   at: string,
-  opts: { request?: boolean } = {},
+  opts: { request?: boolean; budget?: SchemaBudget } = {},
 ): Json {
+  const budget = opts.budget ?? { left: limits.maxSchemaBytes, truncated: false }
+  /** Pointers resolved during this call: a ref used many times is looked up once. */
+  const resolved = new Map<string, unknown>()
   const walk = (node: unknown, depth: number, stack: readonly string[]): Json => {
     if (!isObject(node)) return {}
     if (typeof node.$ref === 'string') {
@@ -141,9 +152,14 @@ export function summarizeSchema(
       if (stack.includes(ref) || depth > limits.maxDepth) {
         return { description: `(recursive: ${ref})` }
       }
-      return walk(resolvePointer(doc, ref, at), depth, [...stack, ref])
+      if (!resolved.has(ref)) resolved.set(ref, resolvePointer(doc, ref, at))
+      return walk(resolved.get(ref), depth, [...stack, ref])
     }
     if (depth > limits.maxDepth) return { description: '(too deep: schema truncated)' }
+    if (budget.left <= 0) {
+      budget.truncated = true
+      return { description: '(omitted: the schema is too large)' }
+    }
     const out: Json = {}
     for (const key of COPY) if (node[key] !== undefined) out[key] = node[key]
     const description = capText(node.description, limits.maxDescriptionChars)
@@ -160,6 +176,7 @@ export function summarizeSchema(
         delete out[bound]
       }
     }
+    budget.left -= JSON.stringify(out).length
     if (node.nullable === true) {
       if (Array.isArray(out.type)) out.type = [...new Set([...out.type, 'null'])]
       else if (typeof out.type === 'string') out.type = [out.type, 'null']
@@ -175,6 +192,7 @@ export function summarizeSchema(
           dropped.add(name)
           continue
         }
+        budget.left -= name.length + 4
         properties[name] = walk(value, depth + 1, stack)
       }
       out.properties = properties

@@ -137,6 +137,15 @@ export interface PendingExternal {
   /** Epoch ms after which the wait takes its `onTimeout` result. */
   timeoutAt?: number
   onTimeout: WaitTimeoutResult
+  /**
+   * Present for a tool with a `start`: `false` from the commit of the pending state until its
+   * `start` was dispatched (spec 11 §4.2 rule 1); `true` afterwards (also when `start` threw).
+   * An entry still `false` after `recovery.staleMs` (`parkedAt`) is dispatched again when a session
+   * opens or `expireWaits()` runs (idempotent by `waitId`).
+   */
+  started?: boolean
+  /** Epoch ms of the commit of the pending state; set with `started: false`. */
+  parkedAt?: number
   /** Recorded by `resolveWait()` / a timeout before the continuation starts. */
   result?: WaitResult
 }

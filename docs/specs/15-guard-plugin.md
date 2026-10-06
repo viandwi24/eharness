@@ -54,7 +54,9 @@ instructions, data parts or services.
    `transcript()`, spec 11 §3.4: user text, user files as `[file: name, mediaType]`, the agent's
    earlier tool calls with inputs) and the call under review (`toolName`, `risk` or `'unknown'`,
    `input`). Never tool outputs, assistant text, reasoning, system instructions, reminders,
-   kind messages or `data-*` parts. The view is built in core, so the plugin cannot widen it.
+   kind projections or `data-*` parts the core wrote. Text an application projects into a user
+   message by itself (e.g. a group history block) is user text to the core and does appear. The
+   view is built in core, so the plugin cannot widen it.
    Transcript and call are JSON-encoded (an entry cannot close a section). Limits: the last
    `maxMessages` entries; every entry and the call input cut to `maxChars` (marker
    `GUARD_TRUNCATED`); oldest entries dropped until the transcript fits `maxChars`.
@@ -63,15 +65,19 @@ instructions, data parts or services.
    event's `risk` (P21 traits; `read` only from trusted app metadata, spec 11 §3.2), `'unknown'`
    when absent. `'unknown'` is not skipped by default (MCP tools without hints are reviewed).
 4. **Cache and determinism.** Plugin state (`plugins.guard`, spec 05 §7) holds, per session:
-   - `calls`: the status returned per `toolCallId` (bounded by `cache.maxEntries`). A call seen
-     before gets the same answer without a model call — AI SDK's re-validation of an approved call
+   - `calls`: the status returned per `toolCallId`, with the tool name and the verdict key
+     (bounded by `cache.maxEntries`). A call seen before (same id, same tool, same key) gets the
+     same answer without a model call — AI SDK's re-validation of an approved call
      in a `respond()` continuation, possibly in another process, therefore never calls the judge
      and never turns a person's approval into a denial (the rule "approval hooks must be
-     deterministic" holds per session);
-   - `verdicts`: judge verdicts keyed by `toolName + ':' + sha256(canonicalJson(input))`
-     (`crypto.subtle`; `input` after `tool.before` refinement), LRU-bounded by
+     deterministic" holds per session). A reused `toolCallId` with a different tool or input is
+     a different call and is judged again;
+   - `verdicts`: judge verdicts keyed by `toolName + ':' + sha256(policy + NUL + judge model id +
+     NUL + canonicalJson(input))` (`crypto.subtle`; `input` after `tool.before` refinement), so a
+     changed policy or judge never reuses an older verdict, LRU-bounded by
      `cache.maxEntries`, optionally expiring after `cache.ttlMs`. The same call (same tool and
-     input) with a new id reuses the verdict.
+     input) with a new id reuses the verdict. A cached `allow` ignores later conversation
+     context; set `cache.ttlMs` when context can change what is acceptable.
    The state is persisted with the turn, so it survives a cold reload. Verdicts are never shared
    across sessions (they could leak decisions between users).
 5. **Circuit breaker.** `denials` (plugin state) counts consecutive `denied` answers (fresh or

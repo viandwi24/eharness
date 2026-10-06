@@ -53,7 +53,7 @@ export function decideStop(facts: StepFacts): StopReason | undefined {
  * Calls of a step that wait for `respond()` (spec 11 §2): approval requested by the
  * user-approval path (no result yet), a call of a client tool (no `execute`) without output, or
  * a call of an external tool (`externalTool()`, spec 11 §4.2: an entry of `externals` that
- * `parkExternals` completes with the outcome of `start`). The state is written as version 2.
+ * `armExternals` completes with the tool defaults; `start` runs after the commit). The state is written as version 2.
  */
 export function findPending(
   messageId: string,

@@ -164,9 +164,22 @@ function groupDataOf(message: HarnessUIMessage): GroupMessageData | undefined {
   return part?.data
 }
 
-function groupMetaOf(message: HarnessUIMessage): { author?: GroupAuthor } | undefined {
+function groupMetaOf(
+  message: HarnessUIMessage,
+): { author?: GroupAuthor; consumed?: unknown } | undefined {
   const meta = (message.metadata as { group?: unknown } | undefined)?.group
-  return typeof meta === 'object' && meta !== null ? (meta as { author?: GroupAuthor }) : undefined
+  return typeof meta === 'object' && meta !== null
+    ? (meta as { author?: GroupAuthor; consumed?: unknown })
+    : undefined
+}
+
+/**
+ * Neutralise a speaker line the sender typed (`[group] Alice: …` at the start of a line), so a
+ * message cannot pose as another speaker: `[group] ` → `[ group] `.
+ * @internal exported for tests
+ */
+export function neutralizeSpeakerLines(text: string): string {
+  return text.replace(/(^|\n)([ \t]*)\[group\] /g, '$1$2[ group] ')
 }
 
 /** Create the group-chat plugin (spec 16). */
@@ -217,23 +230,47 @@ export function groupChat(options: GroupChatOptions): GroupChatPlugin {
     return count
   }
 
-  /** Gated-out messages after the newest real (non-kind) message, oldest first, newest N. */
-  function pending(history: HarnessUIMessage[]): GroupMessageData[] {
-    const out: GroupMessageData[] = []
+  /**
+   * Gated-out messages the model has not seen, oldest first (all of them; the caller limits).
+   * With speaker metadata kept (`acceptClientMetadata`), "seen" = listed in the `consumed` ids of
+   * an answering user message; without it, the gated messages after the newest real message.
+   */
+  function unseen(history: HarnessUIMessage[]): Array<{ id: string; data: GroupMessageData }> {
+    const consumed = new Set<string>()
+    let tracked = false
+    for (const message of history) {
+      if (message.role !== 'user' || isKindMessage(message)) continue
+      const meta = groupMetaOf(message)
+      if (meta === undefined) continue
+      tracked = true
+      if (Array.isArray(meta.consumed)) {
+        for (const id of meta.consumed) if (typeof id === 'string') consumed.add(id)
+      }
+    }
+    const out: Array<{ id: string; data: GroupMessageData }> = []
+    if (tracked) {
+      for (const message of history) {
+        const data = groupDataOf(message)
+        if (data !== undefined && !consumed.has(message.id)) out.push({ id: message.id, data })
+      }
+      return out
+    }
     for (let i = history.length - 1; i >= 0; i--) {
       const message = history[i] as HarnessUIMessage
       const data = groupDataOf(message)
-      if (data !== undefined) out.push(data)
+      if (data !== undefined) out.push({ id: message.id, data })
       else if (!isKindMessage(message)) break
     }
-    out.reverse()
-    return historyLimit === 0 ? [] : out.slice(-historyLimit)
+    return out.reverse()
   }
+
+  /** Ids a routed message already claimed, until its turn ended: one history block per burst. */
+  const claimed = new WeakMap<GroupSession, Set<string>>()
 
   function renderHistory(items: GroupMessageData[]): string {
     const blocks = items.map((d) => {
       const files = (d.files ?? []).map((f) => ` [attached: ${f.filename ?? f.mediaType}]`).join('')
-      return `<group-message author="${escapeAttribute(speaker(d.author))}">${neutralizeTags(d.text)}${files}</group-message>`
+      return `<group-message author="${escapeAttribute(speaker(d.author))}">${neutralizeTags(neutralizeSpeakerLines(d.text))}${files}</group-message>`
     })
     return `${GROUP_HISTORY_PREAMBLE}\n${blocks.join('\n')}`
   }
@@ -278,9 +315,13 @@ export function groupChat(options: GroupChatOptions): GroupChatPlugin {
       return { responded: false, reason: 'loop-limit', messageId: await store(session, m) }
     }
 
-    const missed = pending(history)
+    const taken = claimed.get(session) ?? new Set<string>()
+    const fresh = unseen(history).filter((x) => !taken.has(x.id))
+    const shown = historyLimit === 0 ? [] : fresh.slice(-historyLimit)
+    for (const x of fresh) taken.add(x.id)
+    claimed.set(session, taken)
     const line = `${GROUP_SPEAKER_PREFIX}${speaker(m.author).replace(/\s+/g, ' ')}:`
-    const text = `${missed.length > 0 ? `${renderHistory(missed)}\n\n` : ''}${line} ${m.text}`
+    const text = `${shown.length > 0 ? `${renderHistory(shown.map((x) => x.data))}\n\n` : ''}${line} ${neutralizeSpeakerLines(m.text)}`
     const input: UIMessage = {
       id: m.messageId ?? uuidv7(),
       role: 'user',
@@ -289,11 +330,17 @@ export function groupChat(options: GroupChatOptions): GroupChatPlugin {
           author: m.author,
           ...(m.chatId === undefined ? {} : { chatId: m.chatId }),
           ...(m.messageId === undefined ? {} : { messageId: m.messageId }),
+          consumed: fresh.map((x) => x.id),
         },
       },
       parts: [{ type: 'text', text }, ...(m.files ?? [])],
     }
-    return { responded: true, run: session.send(input, { ifBusy: 'collect', ...sendOptions }) }
+    const run = session.send(input, { ifBusy: 'collect', ...sendOptions })
+    // after the turn ended the stored `consumed` ids decide; a failed turn offers them again
+    void run.result.then(() => {
+      for (const x of fresh) taken.delete(x.id)
+    })
+    return { responded: true, run }
   }
 
   let warned = false
