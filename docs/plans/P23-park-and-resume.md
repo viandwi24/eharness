@@ -1,6 +1,6 @@
 # P23 — Park-and-resume: external waits
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#1** (verdict GENERIC-core; LangGraph `interrupt`, OpenAI Agents
 `RunState` interruptions, Pydantic AI deferred tools, Mastra suspend/resume, Inngest
