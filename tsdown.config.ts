@@ -8,6 +8,7 @@ export default defineConfig({
     'storage/memory': 'src/storage/memory.ts',
     'mcp/index': 'src/mcp/index.ts',
     'todos/index': 'src/todos/index.ts',
+    'guard/index': 'src/guard/index.ts',
     'memory/index': 'src/memory/index.ts',
     'testing/index': 'src/testing/index.ts',
   },
