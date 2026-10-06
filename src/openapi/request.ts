@@ -126,6 +126,27 @@ export function withinBase(base: string, target: string): boolean {
   return t.pathname === prefix || t.pathname.startsWith(`${prefix}/`) || prefix === ''
 }
 
+/**
+ * A path parameter value that could climb out of its segment: a `.` or `..` segment (split on `/`
+ * and `\`, raw or percent-decoded, also repeatedly) or an encoded `/` or `\` (`%2f`, `%5c`).
+ */
+export function unsafePathValue(text: string): boolean {
+  let current = text
+  for (let round = 0; round < 3; round++) {
+    if (/%2f|%5c/i.test(current)) return true
+    if (current.split(/[\\/]/).some((segment) => segment === '.' || segment === '..')) return true
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(current)
+    } catch {
+      return false
+    }
+    if (decoded === current) return false
+    current = decoded
+  }
+  return false
+}
+
 /** Build the request of one call from the model's input (all failures are rejection texts). */
 export function prepareRequest(args: PrepareArgs): Prepared {
   const input = record(args.input) ?? {}
@@ -170,7 +191,7 @@ export function prepareRequest(args: PrepareArgs): Prepared {
   for (const p of args.params.filter((x) => x.in === 'path')) {
     const raw = sections.path[p.name]
     const text = serializeSimple(raw, p.explode)
-    if (text === '.' || text === '..' || text === '') {
+    if (text === '' || unsafePathValue(text)) {
       return { ok: false, error: `REJECTED: invalid value for path parameter '${p.name}'.` }
     }
     path = path.replaceAll(`{${p.name}}`, enc(text))
