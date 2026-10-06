@@ -208,10 +208,16 @@ describe('examples run offline', () => {
       const out = await run('risk-approvals.ts')
       expect(out).toContain('audit: read_record approved by risk in ops-1')
       expect(out).toContain('turn: tool-pending')
+      expect(out).toContain('mcp hints: external')
+      expect(out).toContain('mcp readOnly: unknown')
       expect(out).toContain('inbox: delete_record {"id":"r1"} (risk: destructive)')
+      expect(out).toContain(
+        'inbox: send_email {"to":"team@example.com","text":"r1 was deleted"} (risk: external)',
+      )
       expect(out).toContain('audit: delete_record approved by user u_7 in ops-1')
+      expect(out).toContain('audit: send_email approved by user u_7 in ops-1')
       expect(out).toContain('respond: complete; same message: true')
-      expect(out).toContain('r1 exists: false; audit entries: 2')
+      expect(out).toContain('r1 exists: false; emails: 1; audit entries: 3')
     },
     timeout,
   )

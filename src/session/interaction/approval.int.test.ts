@@ -1157,6 +1157,41 @@ describe('risk, decisions and pending details (spec 11 §3.2–3.3)', () => {
     ])
   })
 
+  test("re-validation of an approved call keeps the tool's risk (unknown: 'denied' does not deny it)", async () => {
+    const log: string[] = []
+    const remove = tool({
+      inputSchema: z.object({ id: z.string() }),
+      metadata: { risk: 'destructive' },
+      execute: async ({ id }) => {
+        log.push(id)
+        return `deleted ${id}`
+      },
+    })
+    const seen: unknown[] = []
+    const spy = definePlugin({
+      name: 'spy',
+      setup: () => ({ hooks: { 'tool.approve': (_ctx, e) => void seen.push(e.risk) } }),
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'remove', input: { id: 'a' } }] },
+      { text: 'done' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { remove },
+      plugins: [spy],
+      approval: { risk: { destructive: 'user-approval', unknown: 'denied' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('go').result
+    const id = first.pending?.approvals[0]?.approvalId ?? ''
+    const second = await session.respond({ approvals: [{ id, approved: true }] }).result
+    expect(second.stop).toBe('complete')
+    expect(log).toEqual(['a'])
+    // asked at the call and again when AI SDK re-validates the approved call
+    expect(seen).toEqual(['destructive', 'destructive'])
+  })
+
   test('a risk status never loosens a hook: approval.risk approved + hook denied → denied', async () => {
     const send = tool({
       inputSchema: z.object({}),

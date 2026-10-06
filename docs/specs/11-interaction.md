@@ -135,7 +135,11 @@ Rules (normative, ADR-0025):
 4. **`idempotent`** comes only from app metadata (`metadata.idempotent: boolean`); `idempotentHint`
    is reported in `hints` only.
 5. **Events carry traits.** `tool.approve` gets `risk?`, `idempotent?`, `hints?`; pending approvals
-   and `ApprovalDecision` (§3.3) carry `risk?` and `idempotent?` (absent = unknown).
+   and `ApprovalDecision` (§3.3) carry `risk?` and `idempotent?` (absent = unknown). Traits come
+   from `toolCall.toolMetadata`, else from the current tool's `metadata` (`options.tools`): AI
+   SDK's re-validation of approved calls passes the stored call without `toolMetadata`, and the
+   traits must not fall back to `unknown` there (0.5.0 fix: before, `approval.risk.unknown:
+   'denied'` denied user-approved calls at re-validation).
 
 `approval.risk` maps a risk to a status; it is one more input of the most-restrictive
 combination, so it can require approval or deny, but never loosen a stricter policy, hook or
