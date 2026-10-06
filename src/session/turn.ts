@@ -673,6 +673,17 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     // 2. load context / validate the hot cache; respond() re-reads the state (freshest pending)
     await host.ensureContext()
     if (op.kind === 'respond' && !rt.state.dirty) await rt.state.load()
+    else if (rt.state.core().pending !== undefined && !rt.state.dirty) {
+      // the cache says "pending": another instance may have resolved it meanwhile (external
+      // waits, spec 11 §4.2) — and patched the pending message, which keeps its id, so the
+      // `lastId` check above cannot see it: reload the state, and the messages when it changed
+      const before = rt.state.core().pending?.messageId
+      await rt.state.load()
+      if (rt.state.core().pending?.messageId !== before) {
+        rt.view = undefined
+        await host.ensureContext()
+      }
+    }
     // hooks of the preparation may change ctx.state: discarded if the turn ends before committing
     stateCheckpoint = rt.state.checkpoint()
 

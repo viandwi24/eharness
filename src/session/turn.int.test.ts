@@ -260,6 +260,7 @@ describe('scenario 14: tool-pending', () => {
     expect(result.stop).toBe('tool-pending')
     expect(result.steps).toBe(1)
     expect(result.pending).toEqual({
+      v: 2,
       messageId: result.messageId as string,
       approvals: [],
       clientTools: [{ toolCallId: 'call-0-0', toolName: 'ask_user' }],

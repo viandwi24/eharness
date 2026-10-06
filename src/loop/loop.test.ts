@@ -71,6 +71,7 @@ describe('findPending', () => {
       },
     ]
     expect(findPending('m', response, new Set(['client']))).toEqual({
+      v: 2,
       messageId: 'm',
       approvals: [{ approvalId: 'ap', toolCallId: 'b', toolName: 'server', input: {} }],
       clientTools: [{ toolCallId: 'c', toolName: 'client' }],
