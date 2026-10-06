@@ -4,7 +4,8 @@
  * @see docs/specs/05-session-and-storage.md#31-continue-vs-stop-after-a-step-normative
  */
 import type { FinishReason, ModelMessage } from 'ai'
-import type { PendingState, StopReason, ToolRisk } from '../messages/types.ts'
+import type { PendingState, StopReason } from '../messages/types.ts'
+import type { ToolTraits } from '../registry/risk.ts'
 
 /** Facts about one finished step. */
 export interface StepFacts {
@@ -50,7 +51,7 @@ export function findPending(
   messageId: string,
   response: readonly ModelMessage[],
   clientTools: ReadonlySet<string>,
-  riskOfTool?: (toolName: string) => ToolRisk | undefined,
+  traitsOfTool?: (toolName: string) => Pick<ToolTraits, 'risk' | 'idempotent'>,
 ): PendingState | undefined {
   const calls = new Map<string, string>()
   const inputs = new Map<string, unknown>()
@@ -74,13 +75,14 @@ export function findPending(
     if (results.has(toolCallId)) continue
     const approvalId = approvals.get(toolCallId)
     if (approvalId !== undefined) {
-      const risk = riskOfTool?.(toolName)
+      const { risk, idempotent } = traitsOfTool?.(toolName) ?? {}
       pending.approvals.push({
         approvalId,
         toolCallId,
         toolName,
         input: inputs.get(toolCallId),
         ...(risk === undefined ? {} : { risk }),
+        ...(idempotent === undefined ? {} : { idempotent }),
       })
     } else if (clientTools.has(toolName)) pending.clientTools.push({ toolCallId, toolName })
   }

@@ -48,6 +48,7 @@ describe('core entry', () => {
       'lookupModel',
       'modelsDevCatalog',
       'parseSkillMarkdown',
+      'toolTraits',
       'uuidv7',
       'validateSkillPath',
       'version',

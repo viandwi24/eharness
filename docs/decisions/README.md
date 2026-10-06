@@ -29,3 +29,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0022](0022-memory-on-filesystem.md) | Memory on FileSystem; provider memory tools are app-supplied |
 | [0023](0023-structured-final-output.md) | Structured final output per turn (tool and native modes) |
 | [0024](0024-durable-inbox-port.md) | Durable inbox port: at-least-once with dedupe, drained by the session holder |
+| [0025](0025-external-risk-and-mcp-annotations.md) | External risk and tighten-only MCP annotation mapping (amends 0017) |

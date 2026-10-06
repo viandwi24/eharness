@@ -7,6 +7,7 @@
 export {
   clearMcpPins,
   MCP_AUTO_DEFER_THRESHOLD,
+  type McpRiskFunction,
   type McpServerOptions,
   type McpTransportConfig,
   type McpTransportInput,

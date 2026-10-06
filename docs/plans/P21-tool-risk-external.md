@@ -1,6 +1,6 @@
 # P21 — Tool risk `'external'`, MCP annotations, approval routing
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art analysis item **#7** (maintainer-only, `docs/tmp/`, not committed). Verdict:
 GENERIC-core for the metadata; the routing is a policy the application injects.
@@ -112,38 +112,38 @@ Normative rules (spec 11 §3.2 rewrite):
 
 ## Checklist
 
-- [ ] ADR-0025 "External risk and tighten-only MCP annotation mapping" (amends ADR-0017): why one
+- [x] ADR-0025 "External risk and tighten-only MCP annotation mapping" (amends ADR-0017): why one
       risk per tool, why hints never loosen, why `idempotent` is app-only, why no spec defaults.
-- [ ] Specs: 11 §3.2 (rules 1–5), §2 / §3.3 (`idempotent?`), 01 §5 (`tool.approve` event
+- [x] Specs: 11 §3.2 (rules 1–5), §2 / §3.3 (`idempotent?`), 01 §5 (`tool.approve` event
       fields), 09 §1 (traits), §3 (annotation bullet rewritten + `risk` option), 03 §3 if the
       pending copy changes, 10 §4-style type-level note for `ToolRisk`.
-- [ ] `ToolRisk` gains `'external'`; `toolTraits()` exported from `src/index.ts` (TSDoc, explicit
+- [x] `ToolRisk` gains `'external'`; `toolTraits()` exported from `src/index.ts` (TSDoc, explicit
       return type); `riskOf()` becomes a thin internal wrapper or is removed.
-- [ ] `buildApproval` passes `idempotent` / `hints` to `tool.approve`; decisions and pending
+- [x] `buildApproval` passes `idempotent` / `hints` to `tool.approve`; decisions and pending
       approvals carry `idempotent` when known.
-- [ ] `mcpServer({ risk })`: constant or function per server tool (before prefixing); invalid
+- [x] `mcpServer({ risk })`: constant or function per server tool (before prefixing); invalid
       values → `EH_CONFIG_INVALID` from `mcpServer()`; function errors → tool keeps derived risk +
       `ctx.log.warn`.
-- [ ] Tests: unit table for `toolTraits` (app risk wins incl. lower than hints, destructive >
+- [x] Tests: unit table for `toolTraits` (app risk wins incl. lower than hints, destructive >
       external, readOnly never lowers, idempotentHint ignored for `idempotent`, invalid risk
       strings ignored); approval int test (`approval.risk.external: 'user-approval'` asks for an
       MCP tool with `openWorldHint: true`; a hook cannot be loosened by risk); MCP int test with
       the test kit server sending each hint; `mcpServer({ risk })` override; pending state carries
       `risk: 'external'`; `.test-d.ts` that `ToolRisk` includes `'external'`.
-- [ ] `examples/risk-approvals.ts`: an `external` tool (send email) routed to `user-approval`.
-- [ ] Guides: approvals guide "Routing by risk" with the two-way mapping table and a policy
+- [x] `examples/risk-approvals.ts`: an `external` tool (send email) routed to `user-approval`.
+- [x] Guides: approvals guide "Routing by risk" with the two-way mapping table and a policy
       example (`external` → ask, `destructive` → deny for non-admins via `actor`/runtime);
       tools-and-mcp guide annotations section.
-- [ ] Changeset; board; gate.
+- [x] Changeset; board; gate.
 
 ## Acceptance criteria
 
-- [ ] An MCP tool with `openWorldHint: true` and no app risk is `'external'`; with
+- [x] An MCP tool with `openWorldHint: true` and no app risk is `'external'`; with
       `readOnlyHint: true` and `destructiveHint: true` it is `'destructive'`; with only
       `readOnlyHint: true` it is `unknown` (never `'read'`).
-- [ ] An app `metadata.risk: 'read'` on an MCP tool with `destructiveHint` gives `'read'`.
-- [ ] Behaviour for tools without hints or risk is byte-identical to 0.4 (goldens unchanged).
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] An app `metadata.risk: 'read'` on an MCP tool with `destructiveHint` gives `'read'`.
+- [x] Behaviour for tools without hints or risk is byte-identical to 0.4 (goldens unchanged).
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -171,6 +171,11 @@ Normative rules (spec 11 §3.2 rewrite):
 3. **`idempotentHint` as `idempotent`?** Pick: no (loosening). Reported in `hints` only.
 4. Should `read` require `readOnlyHint` from a trusted server option (`mcpServer({ trustHints:
    true })`)? Pick: not in 0.5.0 — `mcpServer({ risk })` covers trusted servers explicitly.
+5. (implementation) A `mcpServer({ risk })` function returning an invalid value is treated like a
+   throwing one (derived risk + `ctx.log.warn`), not `EH_CONFIG_INVALID` — it runs at listing
+   time, where throwing would drop the whole source. `riskOf()` stays as an internal one-line
+   wrapper of `toolTraits().risk`. `ToolHints` is exported as a named type for the `hints` shape
+   (structurally `McpToolAnnotations` without `title`; core cannot import `@ai-sdk/mcp` types).
 
 ## Requests to other phases
 
@@ -184,3 +189,12 @@ Normative rules (spec 11 §3.2 rewrite):
 ## Dependencies
 
 None (wave W1, in parallel with P22 — no file overlap besides `src/index.ts` and specs 10/11).
+
+## Notes (implementation)
+
+- Found and fixed while testing: AI SDK's re-validation of approved calls passes the stored call
+  without `toolMetadata`, so traits fell back to `unknown` (with `approval.risk.unknown: 'denied'`
+  a user-approved call was denied). `buildApproval` now falls back to `options.tools[name].metadata`
+  (spec 11 §3.2 rule 5, changeset).
+- Gate (end of phase): lint, typecheck, test (1004 tests, 964 pass, 0 fail), build,
+  check:package, check:imports green.

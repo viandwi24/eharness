@@ -30,6 +30,7 @@ import type {
   TurnKind,
   TurnResult,
 } from '../messages/types.ts'
+import type { ToolHints } from '../registry/risk.ts'
 import type {
   InstructionInput,
   Skill,
@@ -325,8 +326,12 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
       toolCallId: string
       input: unknown
       toolMetadata?: unknown
-      /** Risk of the tool (spec 11 §3.2), when known. */
+      /** Risk of the tool (spec 11 §3.2, `toolTraits`), when known. */
       risk?: ToolRisk
+      /** `metadata.idempotent` of the tool (app-declared only), when known. */
+      idempotent?: boolean
+      /** Raw MCP hints the server sent (untrusted), when any. */
+      hints?: ToolHints
     },
   ): Awaitable<ToolApprovalStatus | void>
   /**
@@ -432,6 +437,8 @@ export interface ApprovalDecision {
   toolCallId: string
   input: unknown
   risk?: ToolRisk
+  /** `metadata.idempotent` of the tool (app-declared only), when known (0.5.0). */
+  idempotent?: boolean
   approved: boolean
   /**
    * Who decided: `'policy'` (`approval.policy`), `'risk'` (`approval.risk`), `'plugin:<name>'`
