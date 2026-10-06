@@ -97,6 +97,12 @@ never runs server code. `approval.policy`, `approval.risk` (`unknown`) and `tool
 apply to it like to any tool: you can deny it, or ask first. Its output returns through the
 request and passes `tool.after` hooks and the output limits like any tool output.
 
+When the user approves such a call, the approving request does not run a model step: the call
+parks for the client (`stop: 'tool-pending'`, the call in `pending.clientTools`, with `timeoutAt`
+when you set `timeoutMs`). Your frontend runs the tool and answers (`addToolOutput`), the next
+request streams the output into the same message and the model continues. Denying it works as for
+any tool.
+
 ## 5. Page context is data
 
 Page context is added to the **turn reminder**: after your plugins' reminders, before the typed
@@ -115,7 +121,7 @@ https://shop.example/orders/7
 
 Non-string values are JSON-stringified. `<page-context>` and `<system-reminder>` tags inside a
 value (any case, any whitespace) are neutralised (`<` becomes `&lt;`), so a value can neither close
-its block nor the reminder nor open a fake one. The values share `maxChars`; a long one keeps its
+its block nor the reminder nor open a fake one. `maxChars` bounds the block: descriptions (escaped) take at most half, the values share the rest; a long value keeps its
 head and tail and `W_PAGE_CONTEXT_LIMITED` is raised. At most 32 entries; a malformed list is
 `EH_INVALID_INPUT` (`'page-context'`). This is framing, not a guarantee: keep secrets out of page
 context and keep dangerous tools behind approval.
