@@ -42,6 +42,25 @@ before implementation.
 | ~~Compaction thrash detection~~ | Done in 0.4.0 (`compaction.thrash`, stop `'context-thrash'`). |
 | **Shared task lists** | Todos shared across subagents/sessions (`listId`, owners, dependencies). |
 
+## Planned for 0.5.0
+
+P21–P29 (`docs/plans/README.md`), from the 0.5 prior-art analysis. The rows below move out of the
+open tables when 0.5.0 ships (P29).
+
+| Item | Phase | Notes |
+|---|---|---|
+| Tool risk `'external'` + MCP annotation mapping + approval routing | P21 | `openWorldHint` → `external`, hints only tighten, app-only `idempotent` trait |
+| **Inbox poison-item limit** (row below) | P22 | attempts at claim, backoff, non-retryable, dead-letter, `redrive`, `stats` |
+| Park-and-resume (external waits) | P23 | `externalTool()`, `resolveWait()`, timeouts via inbox timers; partly covers **Durable execution** |
+| Request-scoped client tools + page context | P24 | opt-in, validated, turn-reminder page context |
+| Cross-session budget ledger | P25 | `BudgetLedger` port (reserve / commit); scopes, periods, prices stay app policy; partly covers **Budget pre-flight estimate** |
+| **Approval classifier guard** (row above) | P26 | `eharness/guard`, tighten-only LLM judge |
+| Group-chat plugin | P27 | `eharness/group`: gating, pending history, anti-loop |
+| OpenAPI → tools | P28 | `eharness/openapi`, JSON only, app-supplied base URL and auth |
+
+Stays app policy (not planned): judge personas and relevance scoring in groups, budget scope
+hierarchies / periods / prices, approval routing rules per organisation.
+
 ## 0.4.0
 
 P13–P20 (`docs/plans/README.md`): hardening, prune stage, compaction thrash detection, skill
