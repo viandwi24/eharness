@@ -14,6 +14,9 @@ approval chain (spec 15, ADR-0030).
   so `respond()` re-validation never calls the judge), a consecutive-denial circuit breaker that
   escalates to a person, fail closed to `user-approval` when the judge errors or times out, and
   judge usage charged to the turn (budgets and the budget ledger see it).
+- The per-call record is reused only when tool name and verdict key match (a reused tool call id
+  with another call is judged again); the verdict key covers the policy text and judge model id;
+  a cached `allow` ignores later conversation context (use `cache.ttlMs`).
 - Exported texts `GUARD_*` and helpers `canonicalJson`, `verdictKey`.
 
 Core:

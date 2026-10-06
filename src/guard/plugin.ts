@@ -64,14 +64,22 @@ export interface ApprovalGuardOptions {
    * person instead. Default 3. `Infinity` disables the breaker.
    */
   maxConsecutiveDenials?: number
-  /** Verdict cache (per session, in plugin state): `maxEntries` (default 200), `ttlMs` (default: no expiry). */
+  /**
+   * Verdict cache (per session, in plugin state): `maxEntries` (default 200), `ttlMs` (default: no
+   * expiry). A cached `allow` ignores later conversation context (it is keyed by tool, input,
+   * policy and judge model only); set a `ttlMs` when context can change what is acceptable.
+   */
   cache?: { maxEntries?: number; ttlMs?: number }
 }
 
 /** `[key, verdict, reason, at]` — one cached judge verdict. */
 type CachedVerdict = [string, GuardVerdict, string, number]
-/** `[toolCallId, status, reason]` — the status this plugin returned for a call. */
-type CallRecord = [string, 'not-applicable' | 'user-approval' | 'denied', string]
+/**
+ * `[toolCallId, status, reason, toolName, key]` — the status this plugin returned for a call. The
+ * record is reused only when the tool name and the verdict key (tool + input hash) match, so a
+ * reused call id with a different call is judged again.
+ */
+type CallRecord = [string, 'not-applicable' | 'user-approval' | 'denied', string, string, string]
 
 /** State keys (`plugins.guard[...]`). */
 const VERDICTS = 'verdicts'
@@ -103,6 +111,12 @@ function isUsage(value: unknown): value is LanguageModelUsage {
     value !== null &&
     ('inputTokens' in value || 'outputTokens' in value)
   )
+}
+
+function modelId(model: LanguageModel): string {
+  if (typeof model === 'string') return model
+  const m = model as { provider?: unknown; modelId?: unknown }
+  return `${String(m.provider ?? '')}/${String(m.modelId ?? '')}`
 }
 
 function errorText(error: unknown): string {
@@ -154,6 +168,8 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
   const ttlMs =
     options.cache?.ttlMs === undefined ? undefined : positive('cache.ttlMs', options.cache.ttlMs, 0)
   const judgeModel = options.model
+  /** Scope of cached verdicts: a changed policy or judge model never reuses an older verdict. */
+  const scope = `${policy}\u0000${modelId(judgeModel)}`
 
   /** Ask the judge. Throws when it is unavailable (error, timeout, unparseable output). */
   async function judge(
@@ -217,9 +233,15 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
         while (list.length > maxEntries) list.shift()
         ctx.state.set(VERDICTS, list as unknown as JSONValue)
       }
-      const record = (toolCallId: string, status: CallRecord[1], reason: string) => {
+      const record = (
+        toolCallId: string,
+        status: CallRecord[1],
+        reason: string,
+        toolName: string,
+        key: string,
+      ) => {
         const list = readCalls().filter((entry) => entry[0] !== toolCallId)
-        list.push([toolCallId, status, reason])
+        list.push([toolCallId, status, reason, toolName, key])
         while (list.length > maxEntries) list.shift()
         ctx.state.set(CALLS, list as unknown as JSONValue)
       }
@@ -235,12 +257,15 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
             const risk = e.risk ?? 'unknown'
             if (skipRisks.has(risk)) return 'not-applicable'
 
-            // 2. the same call again (AI SDK re-validates approved calls): the same answer
-            const previous = readCalls().find((entry) => entry[0] === e.toolCallId)
+            // 2. the same call again (AI SDK re-validates approved calls): the same answer. A
+            //    reused call id with another tool or input is a different call: judged again.
+            const key = await verdictKey(e.toolName, e.input, scope)
+            const previous = readCalls().find(
+              (entry) => entry[0] === e.toolCallId && entry[3] === e.toolName && entry[4] === key,
+            )
             if (previous !== undefined) return answer(previous[1], previous[2])
 
             // 3. verdict: cache, else the judge (unavailable → a person decides)
-            const key = await verdictKey(e.toolName, e.input)
             let verdict: { decision: GuardVerdict; reason: string }
             const hit = cached(key)
             if (hit !== undefined) {
@@ -260,7 +285,7 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
                   })
                 }
                 const reason = fill(GUARD_UNAVAILABLE, { error: text })
-                record(e.toolCallId, 'user-approval', reason)
+                record(e.toolCallId, 'user-approval', reason, e.toolName, key)
                 return answer('user-approval', reason)
               }
               remember(key, verdict.decision, verdict.reason)
@@ -285,7 +310,7 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
               status = 'denied'
               text = fill(GUARD_DENIED, { reason })
             }
-            record(e.toolCallId, status, text)
+            record(e.toolCallId, status, text, e.toolName, key)
             return answer(status, text)
           },
           'approval.decided': (_ctx, decision) => {
