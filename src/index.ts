@@ -158,6 +158,7 @@ export type {
 } from './plugin/types.ts'
 export { type ToolHints, type ToolTraits, toolTraits } from './registry/risk.ts'
 export { defineToolSource } from './registry/tool-source.ts'
+export type { GuardTranscriptEntry } from './registry/transcript.ts'
 export type {
   InstructionFn,
   InstructionInput,

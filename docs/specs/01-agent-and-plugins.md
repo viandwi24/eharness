@@ -360,7 +360,8 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
 
   /** Most restrictive wins (spec 11 §3). Throw = denied. Must be deterministic and side-effect free: AI SDK calls it again for approved calls when a continuation starts. */
   /** `risk`, `idempotent`, `hints`: the tool's traits (spec 11 §3.2, `toolTraits`), present when known. */
-  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown; risk?: ToolRisk; idempotent?: boolean; hints?: ToolHints })
+  /** `transcript()` (0.5.0): restricted view — user messages and earlier tool calls only, never tool outputs or assistant text (spec 11 §3.4). Lazy; fresh copy per call. */
+  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown; risk?: ToolRisk; idempotent?: boolean; hints?: ToolHints; transcript: () => ReadonlyArray<GuardTranscriptEntry> })
     : Awaitable<ToolApprovalStatus | void>
   /** Every automatic approval decision and every respond() answer (spec 11 §3.3). Observational; errors are W_HOOK_FAILED. */
   'approval.decided'?(ctx: HarnessContext<DP>, e: ApprovalDecision): Awaitable<void>

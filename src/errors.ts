@@ -160,6 +160,7 @@ export type WarningCode =
   | 'W_ABORT_UNSUPPORTED'
   | 'W_OUTPUT_INVALID'
   | 'W_INBOX_FAILED'
+  | 'W_GUARD_UNAVAILABLE'
   | 'W_INBOX_DEAD_LETTER'
 
 /**
