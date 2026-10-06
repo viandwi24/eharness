@@ -231,6 +231,8 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
       for (const id of ids) {
         const entry = byId.get(id)
         if (entry === undefined || entry.dead !== undefined || entry.claim === undefined) continue
+        // a stale holder must not release (or uncount) what another owner claimed since
+        if (opts.owner !== undefined && entry.claim.owner !== opts.owner) continue
         delete entry.claim
         if (opts.uncount === true) entry.item.attempts = Math.max(0, entry.item.attempts - 1)
         if (opts.delayMs !== undefined && opts.delayMs > 0) entry.delayedUntil = at + opts.delayMs

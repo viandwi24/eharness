@@ -436,6 +436,26 @@ export function inboxAdapterConformance(
       },
     },
     {
+      name: 'retry: release with owner is a no-op for items another owner claimed since',
+      run: async () => {
+        if (options.requireRetry !== true) return
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('stale-release')
+        const id = await adapter.enqueue(sessionId, send('x'))
+        await adapter.claim(sessionId, 'owner-a', { claimTtlMs: 1 })
+        await new Promise((resolve) => setTimeout(resolve, 15)) // owner-a's claim expired
+        const [taken] = await adapter.claim(sessionId, 'owner-b', { claimTtlMs: 60_000 })
+        assertTrue(taken?.attempts === 2, 'owner-b claims the expired item')
+        // the stale holder defers: it must neither free owner-b's claim nor undo its attempt
+        await adapter.release([id], { owner: 'owner-a', uncount: true })
+        const stolen = await adapter.claim(sessionId, 'owner-c', { claimTtlMs: 60_000 })
+        assertTrue(stolen.length === 0, 'a stale holder must not release the claim of owner-b')
+        await adapter.release([id], { owner: 'owner-b', uncount: true })
+        const [again] = await adapter.claim(sessionId, 'owner-c', { claimTtlMs: 60_000 })
+        assertTrue(again?.attempts === 2, `the owner's release uncounts, got ${again?.attempts}`)
+      },
+    },
+    {
       name: 'retry: a claim that expires keeps its attempt (crash loops are counted)',
       run: async () => {
         if (options.requireRetry !== true) return
