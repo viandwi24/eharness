@@ -1,6 +1,6 @@
 # P24 — Request-scoped client tools and page context
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#4** (verdict GENERIC-core, transport-agnostic; CopilotKit
 `useFrontendTool` / `useCopilotReadable`, AG-UI `RunAgentInput.tools` / `context`, AI SDK
@@ -119,38 +119,40 @@ Normative rules (spec 11 new §7.1, spec 02 §5–§6 updates):
 
 ## Checklist
 
-- [ ] Spike: does `convertToModelMessages` / our projection need the tool definition of a stored
-      client tool call that is no longer in the tool set (rule 5)? Record the answer here.
-- [ ] ADR-0028 "Request-scoped client tools and page context" (untrusted declarations, opt-in,
+- [x] Spike: does `convertToModelMessages` / our projection need the tool definition of a stored
+      client tool call that is no longer in the tool set (rule 5)? **No**: `tools` is only used for
+      `toModelOutput` (`src/messages/project.ts`), so a `respond()` that does not re-declare the tool
+      projects fine and the pending entry stores no declaration. The tool is not offered again.
+- [x] ADR-0028 "Request-scoped client tools and page context" (untrusted declarations, opt-in,
       position in tool order and its cache cost, reminder framing).
-- [ ] Specs: 11 §7 (body fields, options), new §7.1 (rules 1–7), §8 (security bullets); 05 §2
+- [x] Specs: 11 §7 (body fields, options), new §7.1 (rules 1–7), §8 (security bullets); 05 §2
       (`SendOptions.clientTools` / `pageContext`); 02 §5 (page context in the turn reminder), §6
       rule 1 (position of request tools); 09 §6; 10 §2 (`W_PAGE_CONTEXT_LIMITED`), §5 (fixed
       texts `PAGE_CONTEXT_PREAMBLE`, `CLIENT_TOOL_TIMED_OUT`).
-- [ ] Lift the tag-neutralising framing helper into core (shared by memory and page context;
+- [x] Lift the tag-neutralising framing helper into core (shared by memory and page context;
       memory output byte-identical — memory goldens unchanged).
-- [ ] Implement validation, tool building with `jsonSchema()`, order, reminder block, timeout
+- [x] Implement validation, tool building with `jsonSchema()`, order, reminder block, timeout
       wiring to P23.
-- [ ] Tests: collision with a static / MCP / deferred tool → `'client-tools'` error; reserved and
+- [x] Tests: collision with a static / MCP / deferred tool → `'client-tools'` error; reserved and
       invalid names; schema too large / not an object; `allow` filter; body fields ignored when
       not enabled; approval policy denies a client tool; pending + `handleChatRequest` answer
       continues; timeout expiry (fake clock); page context framing and injection attempt
       (`</page-context></system-reminder>` in a value) neutralised; cap + warning; tool order
       golden with request tools; `W_CACHE_BUST` when declarations change between turns and not
       when stable.
-- [ ] `examples/next-route.ts`: enable `clientTools` / `pageContext`; client snippet in the guide
+- [x] `examples/next-route.ts`: enable `clientTools` / `pageContext`; client snippet in the guide
       (`useChat` transport `body`, `onToolCall` + `addToolOutput`).
-- [ ] Guide section "Frontend tools and page context" incl. the cache note; changeset; board;
+- [x] Guide section "Frontend tools and page context" incl. the cache note; changeset; board;
       gate.
 
 ## Acceptance criteria
 
-- [ ] A request-declared tool is callable by the model, answered by the client, and continues the
+- [x] A request-declared tool is callable by the model, answered by the client, and continues the
       same message; it can never replace or shadow a server tool.
-- [ ] Without the options enabled, a body carrying `clientTools` / `pageContext` behaves exactly
+- [x] Without the options enabled, a body carrying `clientTools` / `pageContext` behaves exactly
       as 0.4 (fields ignored).
-- [ ] Page context never appears in storage, never in `instructions`, and cannot close its block.
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] Page context never appears in storage, never in `instructions`, and cannot close its block.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -174,6 +176,25 @@ Normative rules (spec 11 new §7.1, spec 02 §5–§6 updates):
    it in the user message.
 4. **Size defaults** (16 tools, 8 KiB schema, 4 000 chars context). Pick as listed; all
    configurable.
+
+5. **Where the options live (decided in P24).** `SendOptions` carries the data
+   (`clientTools`, `pageContext`) and the limits in separate `clientToolsOptions` /
+   `pageContextOptions` fields; `ChatRequestOptions` omits those four and exposes the opt-in
+   objects `clientTools` / `pageContext` from the design. Conservative: the session validates, so
+   `send()` and `handleChatRequest` share one code path.
+6. **Timeouts reuse the P23 machinery.** Timed client entries carry `waitId` / `result` and are
+   recorded through the same compare-and-set; `resolveWait()` refuses them. A `respond()`
+   continuation without declarations (timeout, `resolveWait()`) neither warns `W_CACHE_BUST` nor
+   resets the signature.
+7. **Invalid `pageContext`** is `EH_INVALID_INPUT` (`'page-context'`) rather than silently
+   dropped (the design listed no reason; conservative, consistent with `clientTools`). Entry
+   count (32) and label length (200) are fixed caps, not options.
+8. **Provider strictness.** A continuation after a timeout may have no tool definitions at all
+   (no static tools, tool not re-declared) while the history holds a call; a provider that rejects
+   that would fail the continuation. Not observed; storing the declaration in the pending entry
+   would be the fix (size-capped by `maxSchemaBytes`).
+9. **`neutralizeTags` is public** (core export) because plugins may import core only through
+   `src/index.ts` (rule 4). Memory and group keep their own wrappers; output unchanged.
 
 ## Requests to other phases
 

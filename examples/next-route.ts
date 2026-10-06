@@ -49,7 +49,15 @@ export async function POST(req: Request): Promise<Response> {
   // Per-request identity goes into the turn's `runtime` (the cached session is shared by requests).
   const session = agent.session(body.id)
   const runtime = { userId: 'demo-user' }
-  return handleChatRequest(session, body, { ifBusy: 'steer', runtime }).toResponse()
+  return handleChatRequest(session, body, {
+    ifBusy: 'steer',
+    runtime,
+    // The browser may declare tools for this request (`body.clientTools`) and describe the page
+    // (`body.pageContext`) — both untrusted, so both are opt-in: validated, size-capped, never able
+    // to shadow a server tool, and still subject to `approval` (spec 11 §7.1). A closed tab times out.
+    clientTools: { allow: ['get_location', 'open_dialog'], timeoutMs: 120_000 },
+    pageContext: { maxChars: 4_000 },
+  }).toResponse()
 }
 
 /** GET /api/chat/[id]/stream — resume a running turn after a reload (`useChat({ resume: true })`). */
@@ -124,6 +132,21 @@ export function describePart(part: ChatMessage['parts'][number]): string | null 
  *     </div>
  *   ))
  * }
+ *
+ * Frontend tools and page context (sent in the request body, stable per page for the prompt cache):
+ *   transport: new DefaultChatTransport({
+ *     api: '/api/chat',
+ *     body: () => ({
+ *       clientTools: [{ name: 'get_location', description: 'Read the browser location.',
+ *                       inputSchema: { type: 'object', properties: {} } }],
+ *       pageContext: [{ description: 'current page', value: location.href }],
+ *     }),
+ *   }),
+ *   sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+ *   onToolCall: async ({ toolCall }) => {
+ *     if (toolCall.toolName === 'get_location')
+ *       addToolOutput({ tool: 'get_location', toolCallId: toolCall.toolCallId, output: await readLocation() })
+ *   },
  *
  * History for a page load comes from the server, never from the client:
  *   const initialMessages = await agent.session(id).messages()   // → useChat({ messages })

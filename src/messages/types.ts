@@ -82,15 +82,11 @@ export interface PendingState {
     idempotent?: boolean
   }>
   /**
-   * Calls of tools without `execute` waiting for a client-provided output. `timeoutAt` /
-   * `onTimeout` (epoch ms, explicit result) are reserved for request-scoped client tools.
+   * Calls of tools without `execute` waiting for a client-provided output. Calls of request-scoped
+   * client tools (0.5.0, spec 11 §7.1) carry a `waitId`, a `timeoutAt` (epoch ms), the explicit
+   * `onTimeout` result and, once the timeout fired, the recorded `result` (the tab was closed).
    */
-  clientTools: Array<{
-    toolCallId: string
-    toolName: string
-    timeoutAt?: number
-    onTimeout?: WaitTimeoutResult
-  }>
+  clientTools: PendingClientTool[]
   /**
    * Format version of the stored pending state: `2` since 0.5.0; absent = 0.3 / 0.4 shape. An
    * unknown version authorizes nothing (spec 11 §2).
@@ -101,6 +97,20 @@ export interface PendingState {
    * outside. Each holds its recorded `result` once `resolveWait()` (or a timeout) recorded it.
    */
   externals?: PendingExternal[]
+}
+
+/** One client tool call of the pending state (spec 11 §2). */
+export interface PendingClientTool {
+  toolCallId: string
+  toolName: string
+  /** `w_<toolCallId>`; set with `timeoutAt` (request-scoped client tools with a timeout). */
+  waitId?: string
+  /** Epoch ms after which the call takes its `onTimeout` result. */
+  timeoutAt?: number
+  /** Result the call takes on timeout (`CLIENT_TOOL_TIMED_OUT` by default). */
+  onTimeout?: WaitTimeoutResult
+  /** The recorded timeout result: the call counts as answered and is not answered again. */
+  result?: WaitResult
 }
 
 /** The explicit result a wait takes when it times out (`WAIT_TIMED_OUT` by default). */

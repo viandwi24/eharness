@@ -12,6 +12,7 @@
 import type { FileUIPart, UIMessage } from 'ai'
 import { z } from 'zod/v4'
 import {
+  neutralizeTags as coreNeutralizeTags,
   defineMessageKind,
   definePlugin,
   type HarnessPlugin,
@@ -141,7 +142,7 @@ const DEFAULT_MAX_BOT_TURNS = { count: 3, windowMs: 60_000 }
  * @internal exported for tests
  */
 export function neutralizeTags(text: string): string {
-  return text.replace(/<(\s*\/?\s*)(group-message|system-reminder)/gi, '&lt;$1$2')
+  return coreNeutralizeTags(text, ['group-message', 'system-reminder'])
 }
 
 function escapeAttribute(value: string): string {

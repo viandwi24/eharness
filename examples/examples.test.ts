@@ -138,6 +138,23 @@ describe('examples run offline', () => {
   )
 
   test(
+    'client-tools (request-declared tools, page context, hijack rejected, timeout)',
+    async () => {
+      const out = await run('client-tools.ts')
+      expect(out).toContain('1. turn 1 → tool-pending; waiting for the browser: get_location')
+      expect(out).toContain('1. browser answered → complete; same message: true')
+      expect(out).toContain('1. answer: You are in Oslo')
+      expect(out).toContain('2. hijack attempt → error (EH_INVALID_INPUT)')
+      expect(out).toContain("'lookup_order'")
+      expect(out).toContain('2. stored messages: 0')
+      expect(out).toContain('3. turn → tool-pending; timeoutAt set: true')
+      expect(out).toContain('→ complete')
+      expect(out).toContain('3. answer: I could not reach your browser')
+    },
+    timeout,
+  )
+
+  test(
     'external-wait (park, resolve from another instance, timeout via the inbox)',
     async () => {
       const out = await run('external-wait.ts')
