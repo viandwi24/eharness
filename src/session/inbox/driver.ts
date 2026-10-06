@@ -267,8 +267,9 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   async function releaseNow(ids: string[], opts?: InboxReleaseOptions): Promise<void> {
     if (ids.length === 0) return
     try {
-      if (retry === undefined) await adapter.release(ids)
-      else await adapter.release(ids, opts ?? { uncount: true })
+      // always with `owner`: a stale holder's release must not touch a newer owner's claim
+      if (retry === undefined) await adapter.release(ids, { owner: rt.owner })
+      else await adapter.release(ids, { ...(opts ?? { uncount: true }), owner: rt.owner })
     } catch (error) {
       warn('release', error) // claimable again once the claim expires
     }
@@ -340,7 +341,13 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     // no dead store: the application's callback is the dead store, so it runs first
     for (const item of dead) {
       if (!(await callback(item))) {
-        await releaseNow([item.id])
+        // a throwing callback must not make the item spin: released with a backoff delay
+        if (retry === undefined) await releaseNow([item.id])
+        else {
+          const delayMs = backoffDelay(Math.max(1, item.attempts), retry.backoff)
+          await releaseNow([item.id], { uncount: true, delayMs })
+          wakeAt(Date.now() + delayMs)
+        }
         continue
       }
       try {

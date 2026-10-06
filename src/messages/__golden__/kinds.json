@@ -28,7 +28,12 @@
         "type": "text",
         "text": "Report: Q3"
       }
-    ]
+    ],
+    "providerOptions": {
+      "eharness": {
+        "core": true
+      }
+    }
   },
   {
     "role": "user",

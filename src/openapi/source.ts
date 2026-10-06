@@ -21,6 +21,7 @@ import {
   isObject,
   type Json,
   loadSpec,
+  type SchemaBudget,
   type SchemaLimits,
   summarizeSchema,
 } from './spec.ts'
@@ -86,7 +87,7 @@ export interface OpenApiToolsOptions {
   /** Characters read from a response before it is cut. Default 50_000. */
   maxResponseChars?: number
   /** Schema summarization limits. */
-  schema?: { maxDepth?: number; maxDescriptionChars?: number }
+  schema?: { maxDepth?: number; maxDescriptionChars?: number; maxSchemaBytes?: number }
   /** Injectable `fetch` (tests, proxies). Default: global `fetch`. */
   fetch?: typeof fetch
 }
@@ -210,6 +211,7 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
   const limits: SchemaLimits = {
     maxDepth: opts.schema?.maxDepth ?? 6,
     maxDescriptionChars: opts.schema?.maxDescriptionChars ?? 300,
+    maxSchemaBytes: opts.schema?.maxSchemaBytes ?? 16_384,
   }
   if (!Number.isInteger(maxTools) || maxTools < 1)
     invalid(`${at}: \`maxTools\` must be a positive integer.`)
@@ -297,6 +299,7 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
     info: OperationInfo,
   ): OpPlan | undefined {
     const label = `${info.method.toUpperCase()} ${info.path}`
+    const budget: SchemaBudget = { left: limits.maxSchemaBytes, truncated: false }
     // path-item parameters, overridden by operation parameters (same name + in)
     const merged = new Map<string, Json>()
     for (const list of [item.parameters, op.parameters]) {
@@ -324,7 +327,10 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
       if (where === 'header' && blockedHeaders.has(name.toLowerCase())) continue // app-supplied
       const content = isObject(p.content) ? Object.values(p.content)[0] : undefined
       const rawSchema = p.schema ?? (isObject(content) ? content.schema : undefined)
-      const schema = summarizeSchema(root, rawSchema, limits, `${at} ${label}`, { request: true })
+      const schema = summarizeSchema(root, rawSchema, limits, `${at} ${label}`, {
+        request: true,
+        budget,
+      })
       const description = capText(p.description, limits.maxDescriptionChars)
       if (schema.description === undefined && description !== undefined)
         schema.description = description
@@ -373,6 +379,7 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
         bodyRequired = isObject(body) && body.required === true
         const schema = summarizeSchema(root, media.schema, limits, `${at} ${label}`, {
           request: true,
+          budget,
         })
         const description = isObject(body)
           ? capText(body.description, limits.maxDescriptionChars)
@@ -388,6 +395,11 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
     const description = [`${label}`, summary, detail !== summary ? detail : undefined]
       .filter((x): x is string => x !== undefined)
       .join('\n')
+    if (budget.truncated) {
+      skipped.push(
+        `${label}: the schema is larger than schema.maxSchemaBytes (${limits.maxSchemaBytes}) and was truncated`,
+      )
+    }
     return {
       info,
       toolName: '',

@@ -25,10 +25,15 @@ generation with the call unanswered; `tool.metadata` is never sent to the model)
   stable), correlation id, payload, `timeoutAt`, an explicit `onTimeout` result and the recorded
   `result`. External calls are not `clientTools`: a browser can never resolve them
   (`handleChatRequest` ignores such answers; `respond({ toolOutputs })` is `'wrong-kind'`).
-- **`start` runs once**, in tool-call order, after the step ended and before the pending state is
-  committed, inside the turn (`ctx.turn` is live). A throwing `start` answers that call with an
-  error result and the model continues. A crash between `start` and the commit is the existing
-  stale-turn recovery: the call is answered `INTERRUPTED_CRASH` and `start` is not run again.
+- **`start` runs after the commit** (amended in 0.5.0 review), in tool-call order, inside the
+  turn (`ctx.turn` is live). Running it before the commit lost fast callbacks: a `resolveWait()`
+  arriving from `start` found nothing pending. The entry carries `started: false` / `parkedAt`
+  until `start` was dispatched; its outcome (correlation id, payload, timeout overrides) is then
+  stored with a CAS. A throwing `start` is `W_HOOK_FAILED` and the wait stays parked until its
+  timeout (it no longer answers the call: the call is already committed as pending). A crash
+  before the commit is the existing stale-turn recovery (`INTERRUPTED_CRASH`); a crash between the
+  commit and `start` leaves `started: false` and the start is dispatched again, idempotently by
+  `waitId`, when a session opens or `expireWaits()` runs after `recovery.staleMs`.
 - **Recording is separate from continuing.** `resolveWait()` validates against `outputSchema`,
   passes the result through `tool.after` and the output limits, and records it in
   `state.core.pending` with a compare-and-set (`setIf`; under the session lock when the adapter

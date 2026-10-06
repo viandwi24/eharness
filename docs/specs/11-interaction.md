@@ -49,6 +49,7 @@ export interface PendingExternal {
   correlationId?: string; payload?: JSONValue         // from `start` (§4.2 rule 1)
   timeoutAt?: number                                  // epoch ms
   onTimeout: { errorText: string } | { output: JSONValue }   // default { errorText: WAIT_TIMED_OUT }
+  started?: boolean; parkedAt?: number                // tools with a `start`: false until dispatched (§4.2 rule 1)
   result?: { output: JSONValue; by: 'result' | 'timeout' } | { errorText: string; by: 'result' | 'timeout' }
 }
 // state.core.pending: PendingState (spec 05 §7) — authoritative, used to validate respond()
@@ -218,14 +219,17 @@ model wire AI SDK passes to the approval function (`options.messages`), oldest f
   `image` parts as `[file: <filename | 'unnamed'>, <mediaType | 'unknown'>]`. Text parts the core
   writes are skipped: they start with `<system-reminder>` (reminders, spec 02 §5), `<data type="`
   (data parts with `model: 'text'`), `<conversation-summary>` or `<event name="`. User messages
-  with string content (kind projections, internal prompts) are skipped.
+  with string content (internal prompts), and every message the core projects from a plugin / app kind (tagged
+  `providerOptions.eharness.core: true`, spec 03 §6; core `eh.*` kinds are covered by the prefixes
+  above), are skipped. A person who types one of
+  the prefixes above hides that text from the judge (it can only reduce what the judge sees).
 - `assistant` messages → one entry per `tool-call` part (`toolName`, a copy of `input`); the call
   under review is left out.
 - Everything else is never included: `system` messages, `tool` messages (outputs), assistant
   text, reasoning, files and approval parts.
 
-Text the app projects itself (a data part or kind whose `model` function returns plain text
-parts, `input.submit` `context`) and input delivered during a turn (`data-eh.input`) are
+Text the app projects into a user message itself (a data part whose `model` function returns text
+parts, e.g. a group history block, spec 16; `input.submit` `context`) and input delivered during a turn (`data-eh.input`) are
 user-role text on the wire and appear as `user` entries. At AI SDK's re-validation of approved
 calls the wire is the continuation's (it ends with the answered calls); judges cache by call id
 (spec 15 §2 rule 4).
@@ -333,12 +337,24 @@ session.expireWaits(now?): Promise<{ expired: string[]; run? }>
 session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending state
 ```
 
-1. **Parking.** At step end an unanswered call of an `externalTool` is pending kind `externals`.
-   Its `start` runs **once**, in tool-call order, after the step ended and before the pending
-   state is committed (inside the turn: `ctx.turn` is live). `waitId` is `w_<toolCallId>` so
-   `start` can be idempotent for the outside system. A throwing `start` answers that call with an
-   error result (the text of a thrown `execute`, spec 10 §1.1: `config.toolErrorText` applies; the model can self-correct); the step continues normally when
-   nothing else is pending. `start` only runs when the turn really stops `'tool-pending'`.
+1. **Parking.** At step end an unanswered call of an `externalTool` is pending kind `externals`;
+   the tool's defaults (`timeoutMs`, `onTimeout`) complete the entry and, for a tool with a
+   `start`, `started: false` and `parkedAt`. The pending state is **committed first**. Only then
+   does `start` run, in tool-call order, inside the turn (`ctx.turn` is live), and only when the
+   turn really stops `'tool-pending'`. Running `start` after the commit means a callback that
+   arrives while (or right after) `start` runs finds the wait pending: in this instance
+   `resolveWait()` is `EH_SESSION_BUSY` (the turn still runs; retry), in another instance it is
+   recorded — `not-pending` right after `start` can no longer happen in-process. `waitId` is
+   `w_<toolCallId>` so `start` can be idempotent for the outside system. What `start` returns
+   (`correlationId`, `payload`, `timeoutMs` / `timeoutAt`, `onTimeout`) is then stored with a
+   compare-and-set and the entry becomes `started: true` (a result another instance recorded
+   meanwhile is kept and nothing is written). A throwing `start` is `W_HOOK_FAILED` (hook
+   `externalTool.start(<tool>)`): the wait stays parked, `started: true`, until its timeout or a
+   `resolveWait()`; the call is not answered. A crash between the commit and `start` leaves
+   `started: false`: when a session opens or `expireWaits()` runs, entries still `false` after
+   `recovery.staleMs` (from `parkedAt`; the parking instance gets that time to dispatch) are
+   dispatched again — at least once, hence idempotent by `waitId`; one instance never runs the
+   same redispatch twice at once. The durable timer items (rule 6) are enqueued after `start`.
 2. **Several waits** of one step are all parked; approvals, client tools and externals may be
    pending together.
 3. **Recording** (`resolveWait`). The wait id must be in `state.core.pending.externals`, else
@@ -347,8 +363,14 @@ session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending
    `tool.after` and the output limits, and written with a compare-and-set on the state (under
    the session lock when the adapter has no `setIf`). The first result wins; the same wait again
    is `already-resolved` (idempotent, whatever the result); a timeout racing a result is whichever
-   CAS commits first. Callable from any instance; nothing runs in memory before the CAS. A turn
+   CAS commits first. Callable from any instance. `tool.after` hooks run before the CAS (a hook
+   may therefore run for a result another instance recorded first and that is discarded). A turn
    running in this instance → `EH_SESSION_BUSY`. Emits `wait-resolved` (`by: 'result'`).
+   `respond({ externals })` validates its outputs against `outputSchema` the same way, in the
+   plan step (`'invalid-result'`, run error, nothing consumed). An `onTimeout.output` that fails
+   `outputSchema` never blocks the timeout: the wait takes `WAIT_TIMED_OUT` and the core warns
+   `W_HOOK_FAILED`. A `wait-timeout` item whose wait is not due yet (its timeout moved later) is
+   acked without expiring it.
 4. **Continuation.** When the write leaves nothing open (no approval, client tool or wait), the
    same call starts the continuation through the `respond()` path with every recorded result
    (§4 steps 2–5, ADR-0012 unchanged): the **same** assistant message continues; the stored tool
@@ -370,8 +392,9 @@ session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending
    recorded (an instance died between recording and continuing).
 7. **New input while waiting** — §4.1.
 8. **Never re-executed.** The parked call is answered, never run again (ADR-0014). A call parked
-   but never stored in `state.core.pending` (a crash between `start` and the commit) is answered
-   `INTERRUPTED_CRASH` by the stale-turn recovery (spec 05 §9) and `start` does not run again. A
+   but never stored in `state.core.pending` (a crash before the commit) is answered
+   `INTERRUPTED_CRASH` by the stale-turn recovery (spec 05 §9). A call committed but never
+   started is parked (rule 1): `start` runs again, the call itself is never re-executed. A
    recorded result whose continuation died before its commit point continues at the next
    operation (rule 4, rule 6c).
 9. **Versioning.** `PendingState.v = 2` is written by 0.5.0; no `v` is the 0.3 / 0.4 shape and

@@ -21,3 +21,6 @@ Cross-session budget ledger (spec 12 §4.1, ADR-0029).
 - **Type-level change:** `W_BUDGET` `details.scope` gains `'ledger'` (code that matches
   `'turn' | 'session'` exhaustively must add it); `WarningCode` gains `W_BUDGET_LEDGER_FAILED`.
   No new stop reason. Without `budget.ledger`, behaviour, warnings and storage are unchanged.
+
+A failed `commit` stays queued and is retried before the next reservation and at turn end; if it
+still fails the spend is charged with `record` instead of being lost.

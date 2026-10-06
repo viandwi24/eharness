@@ -180,16 +180,15 @@ function projectKind(
   if (part?.type !== `data-${kind}`) return undefined
   const result = model(part.data, ctx)
   if (result === null) return undefined
-  if (typeof result === 'string') {
-    if (result.length === 0) return undefined
-    return registered.def.role === 'user'
-      ? { role: 'user', content: result }
-      : { role: 'assistant', content: result }
-  }
-  if (result.length === 0) return undefined
+  if (typeof result === 'string' && result.length === 0) return undefined
+  if (typeof result !== 'string' && result.length === 0) return undefined
+  // Plugin / app kinds are tagged so the restricted transcript (spec 11 §3.4) can tell them from a
+  // person's text. Core `eh.*` kinds stay untagged: their wire is frozen (goldens) and the core's
+  // own text prefixes already identify them.
+  const tag = kind.startsWith('eh.') ? {} : { providerOptions: { eharness: { core: true } } }
   return registered.def.role === 'user'
-    ? { role: 'user', content: result }
-    : { role: 'assistant', content: result }
+    ? { role: 'user', content: result, ...tag }
+    : { role: 'assistant', content: result, ...tag }
 }
 
 function convertDataPart(

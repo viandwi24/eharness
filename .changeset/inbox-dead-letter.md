@@ -29,3 +29,9 @@ those of 0.4.
   items after `onDeadLetter` ran.
 - Type-level: `SessionEvent` gains `inbox-dead` (exhaustive switches must add it); `WarningCode`
   gains `W_INBOX_DEAD_LETTER`; `W_INBOX_FAILED` gains the operation `deadLetter`.
+
+- `InboxReleaseOptions` gains `owner`: the core always passes it, and an adapter releases only items
+  still claimed by that owner (a stale holder can no longer free a newer owner's claim or undo its
+  attempt). `memoryInbox` and the Postgres example honour it; the conformance suite checks it with
+  `requireRetry`. Without `deadLetter`, an item whose `onDeadLetter` threw is released with a
+  backoff delay instead of spinning.

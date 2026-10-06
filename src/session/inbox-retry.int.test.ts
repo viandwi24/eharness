@@ -357,7 +357,8 @@ describe('inbox retries and dead-letter (spec 05 §12 rules 11–15)', () => {
     expect(inbox.log.acks).toContain(bad)
     expect(inbox.log.dead).toEqual([])
     expect(inbox.attempts(poison)).toBeGreaterThanOrEqual(6)
-    expect(inbox.log.releases.every((r) => r.opts === undefined)).toBe(true)
+    // 0.4 behaviour: no retry options, only the owner guard
+    expect(inbox.log.releases.every((r) => Object.keys(r.opts ?? {}).join() === 'owner')).toBe(true)
     expect(a.warnings.some((w) => w.code === 'W_INBOX_DEAD_LETTER')).toBe(false)
     // never idle: the poison item is redelivered without limit (0.4)
     await a.agent.close()
@@ -414,6 +415,9 @@ describe('inbox retries and dead-letter (spec 05 §12 rules 11–15)', () => {
     ])
     expect(a.warnings.filter((w) => w.code === 'W_HOOK_FAILED').length).toBe(2)
     expect(a.warnings.filter((w) => w.code === 'W_INBOX_DEAD_LETTER').length).toBe(1)
+    // the releases after a throwing callback carry a backoff delay (no spinning redelivery)
+    const delayed = inbox.log.releases.filter((r) => (r.opts?.delayMs ?? 0) > 0)
+    expect(delayed.length).toBeGreaterThanOrEqual(2)
     await a.agent.close()
   })
 

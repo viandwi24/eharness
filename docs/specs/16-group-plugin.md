@@ -93,15 +93,25 @@ When a message is answered, the helper builds **one user message**:
 [group] Alice: the message text
 ```
 
-- **Pending** = the `group.message` kinds after the newest non-kind (user or assistant) message of
-  the stored history (newest 200 are scanned). The answering user message ends the window, so each
-  gated message reaches the model **exactly once**, and stored order = model order (ADR-0011).
+- **Pending** = the `group.message` kinds the model has not seen (newest 200 messages scanned),
+  the newest `historyLimit` of them shown. With speaker metadata kept (`acceptClientMetadata`),
+  "seen" means the kind's id is in `metadata.group.consumed` of a stored answering user message
+  (the helper lists every pending id there, also those cut by `historyLimit`); so a gated message
+  stored while a turn runs, or between the routing and the commit of another message, is never
+  lost and reaches the model exactly once. Without client metadata the older rule applies: the
+  `group.message` kinds after the newest non-kind (user or assistant) message. Stored order =
+  model order (ADR-0011).
+- A burst: ids a routed message claimed stay claimed in memory (per session handle) until its turn
+  ended, so messages collected into one queued turn carry **one** history block, not one each. A
+  turn that failed before storing offers its claimed messages again.
+- Text a sender typed is neutralised: a line starting with `[group] ` becomes `[ group] `, so a
+  message cannot pose as another speaker.
 - History text is data: `<group-message` / `<system-reminder` tags in it are neutralised
   (`<` → `&lt;`, as in spec 14 §4) and author names are attribute-escaped. File names appear as
   `[attached: name]`.
 - `GROUP_HISTORY_PREAMBLE` and the `[group] ` speaker-line prefix (`GROUP_SPEAKER_PREFIX`) are
   exported, model-visible fixed texts; changing them is a minor change.
-- Speaker facts go to `metadata.group = { author, chatId?, messageId? }` of the user message. This
+- Speaker facts go to `metadata.group = { author, chatId?, messageId?, consumed? }` of the user message. This
   uses client metadata: the session must be opened with **`acceptClientMetadata: true`** (spec 05
   §1). Without it the metadata is dropped (the visible speaker line remains); with `allowBots`
   enabled the `input.submit` hook then logs one warning, because the anti-loop (§4) cannot see
@@ -123,10 +133,14 @@ helper reads the newest 200 messages per answered message.
 - The helper sends with `ifBusy: 'collect'` unless the caller overrides it (chat bursts merge into
   one queued turn, spec 05 §12 rule 6). Gating happens **before** enqueueing, so an ignored message
   never occupies the queue.
-- History is built at routing time. A burst routed concurrently with a turn that has not stored
-  its user message yet may repeat a gated message once (best effort, no lock).
-- The plugin keeps no state and needs no lock; two instances produce the same decisions from the
-  same storage (apart from the process-local warn-once flag).
+- History is built at routing time from the stored `consumed` ids plus the in-memory claims of
+  §3: concurrent routing neither loses nor repeats a gated message inside one process. Two
+  instances routing the same session at the same moment (no lock) can still repeat one block.
+- The decisions need no lock; two instances produce the same decisions from the same storage
+  (apart from the process-local warn-once flag and claims).
+- `acceptClientMetadata: true` lets a client of the same session forge `metadata.group`
+  (`author.isBot`, `consumed`) on its own messages; route group traffic through your server and do
+  not expose the session to untrusted clients with it enabled.
 
 ## 6. Hook
 
