@@ -33,4 +33,5 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0026](0026-inbox-retries-and-dead-letter.md) | Inbox retries and dead-letter: attempts at claim, uncounted deferrals, opt-in limits (amends 0024) |
 | [0029](0029-cross-session-budget-ledger.md) | Cross-session budget ledger port: reserve / commit, fail closed (amends 0016) |
 | [0030](0030-llm-approval-guard-plugin.md) | LLM approval guard as a plugin: tighten-only, restricted view in core, cached verdicts |
+| [0031](0031-group-chat-helper-outside-the-turn.md) | Group chat: gate in a helper outside the turn, merged bounded history, anti-loop derived from storage |
 | [0032](0032-openapi-tools-outbound-http.md) | OpenAPI tools: outbound HTTP, app-supplied base URL and auth, no remote refs |

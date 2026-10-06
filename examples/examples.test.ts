@@ -307,6 +307,20 @@ describe('examples run offline', () => {
   )
 
   test(
+    'group-chat',
+    async () => {
+      const out = await run('group-chat.ts')
+      expect(out).toContain('Alice: not-mentioned')
+      expect(out).toContain('Alice: answered (complete)')
+      expect(out).toContain('Bob: answered (complete)')
+      expect(out).toContain('HelperBot: answered (complete)')
+      expect(out).toContain('HelperBot: loop-limit')
+      expect(out).toContain('stored: 12 messages, 4 gated-out')
+    },
+    timeout,
+  )
+
+  test(
     'subagent-tool',
     async () => {
       const out = await run('subagent-tool.ts')

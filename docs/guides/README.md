@@ -22,6 +22,7 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Todos](todos.md) | the `todos()` plugin: checklist tool, rendering, reminders, enforcement |
 | [Memory](memory.md) | the `memory()` plugin: per-user memory files, read-only roots, pinned files, audit, provider memory tools |
 | [OpenAPI tools](openapi-tools.md) | `openApiTools()`: curate operations, base URL and auth, risk and approval, limits |
+| [Group chat](group-chat.md) | `groupChat()`: answer only when addressed, history of missed messages, bot-to-bot loop limit |
 | [Subagents](subagents.md) | a tool that runs a child session with live progress, usage and cost |
 | [Testing](testing.md) | `scriptedModel`, asserting on prompts and results, conformance suites |
 | [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |
