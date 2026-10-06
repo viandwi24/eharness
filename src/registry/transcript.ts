@@ -1,8 +1,12 @@
 /**
  * The restricted transcript of the `tool.approve` event (spec 11 §3.4): user messages and tool
  * calls only, built from the model wire AI SDK passes to the approval function. Tool outputs,
- * assistant text, reasoning, system messages, reminders, kind messages and projected data parts
- * never appear, so a prompt injection in a tool result cannot reach a judge reading it.
+ * assistant text, reasoning, system messages, reminders, kind projections and projected data
+ * parts are left out, so a prompt injection in a tool result cannot reach a judge reading it.
+ * Limits: user text is identified by the prefixes the core writes (a person typing one of them
+ * hides that text from the judge only) and kind projections are identified by the core's tag; text
+ * an application projects into a user message by itself (e.g. a group history block, spec 16)
+ * is indistinguishable from a person's text and does appear as user text.
  *
  * @see docs/specs/11-interaction.md#34-restricted-transcript
  * @see docs/specs/15-guard-plugin.md
@@ -40,7 +44,8 @@ function fileLabel(part: { filename?: unknown; mediaType?: unknown }): string {
  *
  * - `user` messages with part arrays: `text` parts (without core-written prefixes) and
  *   `file` / `image` parts as labels, joined by a newline; one entry per message. User messages
- *   with string content are core-written (kind projections, internal prompts) and skipped.
+ *   with string content, and messages the core tagged as kind projections
+ *   (`providerOptions.eharness.core`), are core-written and skipped.
  * - `assistant` messages: only `tool-call` parts (`toolName`, a copy of `input`); the call with
  *   `excludeToolCallId` (the call under review) is left out.
  * - Everything else (`system`, `tool`, assistant text, reasoning, approval parts) is dropped.
@@ -55,6 +60,10 @@ export function buildTranscript(
     if (typeof message !== 'object' || message === null) continue
     if (message.role === 'user') {
       if (!Array.isArray(message.content)) continue
+      // kind projections the core tagged (`providerOptions.eharness.core`) are not a person's text
+      const tag = (message.providerOptions as { eharness?: { core?: unknown } } | undefined)
+        ?.eharness
+      if (tag?.core === true) continue
       const texts: string[] = []
       for (const part of message.content as Array<{ type?: unknown; text?: unknown }>) {
         if (typeof part !== 'object' || part === null) continue

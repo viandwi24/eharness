@@ -180,16 +180,13 @@ function projectKind(
   if (part?.type !== `data-${kind}`) return undefined
   const result = model(part.data, ctx)
   if (result === null) return undefined
-  if (typeof result === 'string') {
-    if (result.length === 0) return undefined
-    return registered.def.role === 'user'
-      ? { role: 'user', content: result }
-      : { role: 'assistant', content: result }
-  }
-  if (result.length === 0) return undefined
+  if (typeof result === 'string' && result.length === 0) return undefined
+  if (typeof result !== 'string' && result.length === 0) return undefined
+  // tagged so the restricted transcript (spec 11 §3.4) can tell core-projected text from a person's
+  const providerOptions = { eharness: { core: true } }
   return registered.def.role === 'user'
-    ? { role: 'user', content: result }
-    : { role: 'assistant', content: result }
+    ? { role: 'user', content: result, providerOptions }
+    : { role: 'assistant', content: result, providerOptions }
 }
 
 function convertDataPart(

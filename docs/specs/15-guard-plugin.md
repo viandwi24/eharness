@@ -54,7 +54,9 @@ instructions, data parts or services.
    `transcript()`, spec 11 §3.4: user text, user files as `[file: name, mediaType]`, the agent's
    earlier tool calls with inputs) and the call under review (`toolName`, `risk` or `'unknown'`,
    `input`). Never tool outputs, assistant text, reasoning, system instructions, reminders,
-   kind messages or `data-*` parts. The view is built in core, so the plugin cannot widen it.
+   kind projections or `data-*` parts the core wrote. Text an application projects into a user
+   message by itself (e.g. a group history block) is user text to the core and does appear. The
+   view is built in core, so the plugin cannot widen it.
    Transcript and call are JSON-encoded (an entry cannot close a section). Limits: the last
    `maxMessages` entries; every entry and the call input cut to `maxChars` (marker
    `GUARD_TRUNCATED`); oldest entries dropped until the transcript fits `maxChars`.

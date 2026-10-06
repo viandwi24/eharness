@@ -211,14 +211,16 @@ model wire AI SDK passes to the approval function (`options.messages`), oldest f
   `image` parts as `[file: <filename | 'unnamed'>, <mediaType | 'unknown'>]`. Text parts the core
   writes are skipped: they start with `<system-reminder>` (reminders, spec 02 §5), `<data type="`
   (data parts with `model: 'text'`), `<conversation-summary>` or `<event name="`. User messages
-  with string content (kind projections, internal prompts) are skipped.
+  with string content (internal prompts), and every message the core projects from a kind (it tags
+  them `providerOptions.eharness.core: true`, spec 03 §6), are skipped. A person who types one of
+  the prefixes above hides that text from the judge (it can only reduce what the judge sees).
 - `assistant` messages → one entry per `tool-call` part (`toolName`, a copy of `input`); the call
   under review is left out.
 - Everything else is never included: `system` messages, `tool` messages (outputs), assistant
   text, reasoning, files and approval parts.
 
-Text the app projects itself (a data part or kind whose `model` function returns plain text
-parts, `input.submit` `context`) and input delivered during a turn (`data-eh.input`) are
+Text the app projects into a user message itself (a data part whose `model` function returns text
+parts, e.g. a group history block, spec 16; `input.submit` `context`) and input delivered during a turn (`data-eh.input`) are
 user-role text on the wire and appear as `user` entries. At AI SDK's re-validation of approved
 calls the wire is the continuation's (it ends with the answered calls); judges cache by call id
 (spec 15 §2 rule 4).

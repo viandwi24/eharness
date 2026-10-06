@@ -19,7 +19,12 @@
   },
   {
     "role": "user",
-    "content": "<event name=\"backtest.finished\">Backtest #42 finished: +12%</event>"
+    "content": "<event name=\"backtest.finished\">Backtest #42 finished: +12%</event>",
+    "providerOptions": {
+      "eharness": {
+        "core": true
+      }
+    }
   },
   {
     "role": "assistant",
@@ -28,7 +33,12 @@
         "type": "text",
         "text": "Report: Q3"
       }
-    ]
+    ],
+    "providerOptions": {
+      "eharness": {
+        "core": true
+      }
+    }
   },
   {
     "role": "user",

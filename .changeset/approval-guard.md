@@ -26,3 +26,7 @@ Core:
 - New warning `W_GUARD_UNAVAILABLE`.
 - **Type-level:** `WarningCode` gains a member; the `tool.approve` event gains a required
   `transcript` field (code that calls hooks by hand must pass it).
+
+- Kind projections are tagged `providerOptions.eharness.core` on the model wire so the restricted
+  transcript excludes all of them (not only string projections); the JSDoc and specs 11/15 state
+  the remaining limits (app-projected text, such as group history blocks, appears as user text).
