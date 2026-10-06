@@ -142,6 +142,8 @@ describe('examples run offline', () => {
       )
       expect(out).toContain('B: requestAbort → remote')
       expect(out).toContain('A: turn 3 → aborted')
+      expect(out).toContain('dead letter: non-retryable (EH_INVALID_INPUT)')
+      expect(out).toContain('stats: {"ready":0,"claimed":0,"delayed":0,"dead":1}')
     },
     timeout,
   )
@@ -359,6 +361,9 @@ describe.skipIf(databaseUrl === '')('postgres-storage (DATABASE_URL)', () => {
     const cases = inboxAdapterConformance(() => postgresInbox(db, { schema, listener }), {
       requireNotify: true,
       requirePending: true,
+      requireRetry: true,
+      requireDeadLetter: true,
+      requireStats: true,
       claimTtlMs: 200,
     })
     for (const c of cases) test(`inbox: ${c.name}`, c.run)
