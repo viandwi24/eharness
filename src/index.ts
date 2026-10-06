@@ -30,6 +30,7 @@ export type {
   KindName,
   MessageAdapter,
   PendingResponse,
+  ResolveWaitResult,
   SendInput,
   SendOptions,
   SendOptionsWithOutput,
@@ -101,6 +102,8 @@ export {
   PROGRESS_NUDGE,
   TOOL_OUTPUT_PRUNED,
   TOOL_OUTPUT_TRUNCATED,
+  WAIT_CANCELLED_NEW_INPUT,
+  WAIT_TIMED_OUT,
 } from './messages/texts.ts'
 export type {
   CompactionPayload,
@@ -116,6 +119,7 @@ export type {
   InputPartData,
   NoticePayload,
   OutputPartData,
+  PendingExternal,
   PendingState,
   ProjectionContext,
   RewindPayload,
@@ -125,6 +129,8 @@ export type {
   TurnKind,
   TurnResult,
   UsagePartData,
+  WaitResult,
+  WaitTimeoutResult,
   WarningPartData,
 } from './messages/types.ts'
 export { lookupModel, modelsDevCatalog } from './models/catalog.ts'
@@ -156,6 +162,12 @@ export type {
   StepPreparePatch,
   TurnInfo,
 } from './plugin/types.ts'
+export {
+  type ExternalToolDef,
+  externalTool,
+  type WaitStart,
+  type WaitStartEvent,
+} from './registry/external.ts'
 export { type ToolHints, type ToolTraits, toolTraits } from './registry/risk.ts'
 export { defineToolSource } from './registry/tool-source.ts'
 export type {
