@@ -4,8 +4,14 @@
  * @see docs/specs/05-session-and-storage.md#31-continue-vs-stop-after-a-step-normative
  */
 import type { FinishReason, ModelMessage } from 'ai'
+import { WAIT_TIMED_OUT } from '../messages/texts.ts'
 import type { PendingState, StopReason } from '../messages/types.ts'
 import type { ToolTraits } from '../registry/risk.ts'
+
+/** The wait id of an external call: stable per tool call (spec 11 §4.2 rule 1). */
+export function waitIdOf(toolCallId: string): string {
+  return `w_${toolCallId}`
+}
 
 /** Facts about one finished step. */
 export interface StepFacts {
@@ -45,13 +51,16 @@ export function decideStop(facts: StepFacts): StopReason | undefined {
 
 /**
  * Calls of a step that wait for `respond()` (spec 11 §2): approval requested by the
- * user-approval path (no result yet), or a call of a client tool (no `execute`) without output.
+ * user-approval path (no result yet), a call of a client tool (no `execute`) without output, or
+ * a call of an external tool (`externalTool()`, spec 11 §4.2: an entry of `externals` that
+ * `parkExternals` completes with the outcome of `start`). The state is written as version 2.
  */
 export function findPending(
   messageId: string,
   response: readonly ModelMessage[],
   clientTools: ReadonlySet<string>,
   traitsOfTool?: (toolName: string) => Pick<ToolTraits, 'risk' | 'idempotent'>,
+  externalTools?: ReadonlySet<string>,
 ): PendingState | undefined {
   const calls = new Map<string, string>()
   const inputs = new Map<string, unknown>()
@@ -70,7 +79,7 @@ export function findPending(
       }
     }
   }
-  const pending: PendingState = { messageId, approvals: [], clientTools: [] }
+  const pending: PendingState = { v: 2, messageId, approvals: [], clientTools: [] }
   for (const [toolCallId, toolName] of calls) {
     if (results.has(toolCallId)) continue
     const approvalId = approvals.get(toolCallId)
@@ -84,7 +93,18 @@ export function findPending(
         ...(risk === undefined ? {} : { risk }),
         ...(idempotent === undefined ? {} : { idempotent }),
       })
+    } else if (externalTools?.has(toolName) === true) {
+      pending.externals ??= []
+      pending.externals.push({
+        waitId: waitIdOf(toolCallId),
+        toolCallId,
+        toolName,
+        onTimeout: { errorText: WAIT_TIMED_OUT },
+      })
     } else if (clientTools.has(toolName)) pending.clientTools.push({ toolCallId, toolName })
   }
-  return pending.approvals.length + pending.clientTools.length > 0 ? pending : undefined
+  return pending.approvals.length + pending.clientTools.length + (pending.externals?.length ?? 0) >
+    0
+    ? pending
+    : undefined
 }

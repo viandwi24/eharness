@@ -16,6 +16,7 @@ import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
 import { resolveTurnSkills, type SkillIndexEntry } from '../skills/registry.ts'
 import { createSkillTools } from '../skills/tools.ts'
+import { type ExternalToolMeta, externalOf } from './external.ts'
 import type { ToolOutputSink } from './output-limits.ts'
 import type { NormalizedInstruction } from './static.ts'
 import { listSourceTools, type TurnToolEntry, withToolSearch } from './tools.ts'
@@ -45,6 +46,8 @@ export interface TurnRegistry {
   toolOrder: string[]
   /** Names of tools without `execute` (client tools, spec 09 §6). */
   clientTools: ReadonlySet<string>
+  /** `externalTool()`s of the turn by name, with their owner (also listed in `clientTools`). */
+  externals: ReadonlyMap<string, { owner: string; meta: ExternalToolMeta }>
   refine: ToolInputRefinement<ToolSet> | undefined
   approval: GenericToolApprovalFunction<ToolSet, never, unknown> | undefined
   /** Tool set for one step: deferred tools in `discovered` become non-deferred copies. */
@@ -161,10 +164,13 @@ export async function resolveTurnRegistry(args: {
   const entries = raw.map((entry) => ({ ...entry, tool: wrapTool(entry.name, entry.tool, deps) }))
   const tools: ToolSet = {}
   const clientTools = new Set<string>()
+  const externals = new Map<string, { owner: string; meta: ExternalToolMeta }>()
   for (const entry of entries) {
     tools[entry.name] = entry.tool
     if (typeof entry.tool.execute !== 'function' && entry.tool.type !== 'provider') {
       clientTools.add(entry.name)
+      const meta = externalOf(entry.tool)
+      if (meta !== undefined) externals.set(entry.name, { owner: entry.owner, meta })
     }
   }
   const toolOrder = entries.map((e) => e.name)
@@ -177,6 +183,7 @@ export async function resolveTurnRegistry(args: {
     tools,
     toolOrder,
     clientTools,
+    externals,
     refine: buildRefinement(toolOrder, deps),
     approval: buildApproval(args.approval, deps, args.grants),
     skills: skills.entries,

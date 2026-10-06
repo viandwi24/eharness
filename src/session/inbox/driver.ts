@@ -29,7 +29,7 @@ import type {
   SessionStateSnapshot,
 } from '../../agent/session-types.ts'
 import type { InboxRetryOptions } from '../../agent/types.ts'
-import type { HarnessWarning } from '../../errors.ts'
+import { HarnessError, type HarnessWarning } from '../../errors.ts'
 import type { NormalizedInput } from '../input.ts'
 import type { SessionRuntime } from '../runtime.ts'
 import { collectDue, mergeInputs, resolveCollect } from './collect.ts'
@@ -99,6 +99,8 @@ export interface DrainHost {
   invalidate(): void
   /** Start a unit now (the caller checked `free()`); false when it could not start. */
   start(unit: InboxUnit): boolean
+  /** Apply a due `wait-timeout` item: record the wait's timeout result (spec 11 §4.2 rule 6). */
+  expireWait(waitId: string): Promise<void>
   /** Abort the running turn (an abort item matched it). */
   abort(reason: string | undefined): void
   /** Called whenever the drain becomes idle (session `idle()` waiters). */
@@ -510,19 +512,35 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     const done: string[] = []
     const rest: InboxItem[] = []
     const dead: InboxItem[] = []
+    const timeouts: Array<Extract<InboxItem, { kind: 'wait-timeout' }>> = []
     for (const item of items) {
       // an abort with no turn here targets a turn that ended (never held by pending approvals);
       // an item the session already applied is a redelivery (dedupe runs before attempt limits)
       if (item.kind === 'abort' || seen.has(item.id)) done.push(item.id)
       else if (overLimit(item)) dead.push(item)
+      else if (item.kind === 'wait-timeout')
+        timeouts.push(item) // like aborts: never held by pending
       else rest.push(item)
     }
     if (dead.length > 0) {
       await ack(done.splice(0))
       await bury(dead, 'max-attempts')
     }
+    // due wait timeouts: recorded with a compare-and-set, idempotent (a wait that is already
+    // resolved or gone just acks); a busy or failing session retries them (spec 05 §12 rule 15)
+    for (const item of timeouts) {
+      try {
+        await host.expireWait(item.waitId)
+        done.push(item.id)
+      } catch (error) {
+        const busy = error instanceof HarnessError && error.code === 'EH_SESSION_BUSY'
+        await settle([item.id], busy ? { how: 'defer' } : { how: 'retry', error })
+      }
+    }
     const approvals =
-      (stored === null ? rt.state.core().pending : stored.core?.pending) !== undefined
+      timeouts.length > 0
+        ? rt.state.core().pending !== undefined
+        : (stored === null ? rt.state.core().pending : stored.core?.pending) !== undefined
     if (rest.length === 0 || approvals || !host.free()) {
       await ack(done)
       await release(rest.map((i) => i.id))

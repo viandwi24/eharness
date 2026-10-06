@@ -3,7 +3,7 @@
  *
  * @see docs/specs/03-messages.md
  */
-import type { FileUIPart, InferUITools, ToolSet, UIMessage } from 'ai'
+import type { FileUIPart, InferUITools, JSONValue, ToolSet, UIMessage } from 'ai'
 
 /**
  * What started a turn.
@@ -81,8 +81,54 @@ export interface PendingState {
     risk?: ToolRisk
     idempotent?: boolean
   }>
-  /** Calls of tools without `execute` waiting for a client-provided output. */
-  clientTools: Array<{ toolCallId: string; toolName: string }>
+  /**
+   * Calls of tools without `execute` waiting for a client-provided output. `timeoutAt` /
+   * `onTimeout` (epoch ms, explicit result) are reserved for request-scoped client tools.
+   */
+  clientTools: Array<{
+    toolCallId: string
+    toolName: string
+    timeoutAt?: number
+    onTimeout?: WaitTimeoutResult
+  }>
+  /**
+   * Format version of the stored pending state: `2` since 0.5.0; absent = 0.3 / 0.4 shape. An
+   * unknown version authorizes nothing (spec 11 §2).
+   */
+  v?: number
+  /**
+   * External waits (0.5.0, spec 11 §4.2): calls of an `externalTool()` whose result comes from
+   * outside. Each holds its recorded `result` once `resolveWait()` (or a timeout) recorded it.
+   */
+  externals?: PendingExternal[]
+}
+
+/** The explicit result a wait takes when it times out (`WAIT_TIMED_OUT` by default). */
+export type WaitTimeoutResult = { errorText: string } | { output: JSONValue }
+
+/**
+ * The recorded result of an external wait: a `resolveWait()` output or error (`by: 'result'`), or
+ * the timeout result (`by: 'timeout'`).
+ */
+export type WaitResult =
+  | { output: JSONValue; by: 'result' | 'timeout' }
+  | { errorText: string; by: 'result' | 'timeout' }
+
+/** One external wait of the pending state (spec 11 §4.2). */
+export interface PendingExternal {
+  /** `w_<toolCallId>`: stable, so `start` is idempotent for the outside system. */
+  waitId: string
+  toolCallId: string
+  toolName: string
+  /** Correlation id the outside work was started with (`WaitStart.correlationId`). */
+  correlationId?: string
+  /** Opaque payload for UIs and sweepers (`WaitStart.payload`). */
+  payload?: JSONValue
+  /** Epoch ms after which the wait takes its `onTimeout` result. */
+  timeoutAt?: number
+  onTimeout: WaitTimeoutResult
+  /** Recorded by `resolveWait()` / a timeout before the continuation starts. */
+  result?: WaitResult
 }
 
 /**
