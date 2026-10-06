@@ -256,6 +256,12 @@ export interface InboxReleaseOptions {
   uncount?: boolean
   /** The error of the failed attempt, returned as `lastError` by later claims. */
   lastError?: string
+  /**
+   * Release only items still claimed by this owner (the owner string of `claim`); items another
+   * owner claimed since (a stale holder after its claim expired) are left alone. The core always
+   * passes it. Omitted: every claimed item of `ids` (the 0.4 behaviour).
+   */
+  owner?: string
 }
 
 /**

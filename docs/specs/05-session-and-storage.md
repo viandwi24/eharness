@@ -890,6 +890,7 @@ export interface InboxAdapter {
   stats?(opts?: { sessionId?: string }): Promise<InboxStats>
 }
 export interface InboxReleaseOptions {
+  owner?: string        // release only items still claimed by this owner (the core always passes it)
   delayMs?: number      // claimable only after now + delayMs (backoff); keeps its place (rule 14)
   uncount?: boolean     // a deferral: undo the attempt increment of the claim being released
   lastError?: string    // returned as `lastError` by later claims
@@ -1026,8 +1027,14 @@ Normative rules:
 10. **`abort()` and `close()` never drop durable items:** inbox items claimed for a queued turn go
     back to the inbox (released); only in-memory queued turns are dropped.
 
+**Release by owner (0.5.0).** Every `release` of the core passes `owner` (the owner string it
+claimed with, also without `inbox.retry`). An adapter releases only items still claimed by that
+owner: a stale holder whose claim expired and was taken over by another owner must neither free
+that owner's claim nor undo its attempt (`uncount`). Without `owner` (other callers) every claimed
+item of `ids` is released as before. The conformance suite checks it with `requireRetry`.
+
 Retries and dead-letter (0.5.0, ADR-0026). Everything below applies only with `inbox.retry`;
-without it releases carry no options and rules 1–10 are the whole contract.
+without it releases carry only `owner` and rules 1–10 are the whole contract.
 
 11. **Attempts at claim.** Every claim increments `attempts` (unchanged); renewals do not. A
     release that is a **deferral** — the core did not try to apply the item: a live foreign

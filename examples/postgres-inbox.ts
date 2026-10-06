@@ -28,8 +28,8 @@
  * Without a listener the adapter has no `subscribe`, and the holder of a session polls
  * (`inbox.pollMs`, default 2 s).
  *
- * Retries and dead-letter (0.5, spec 05 §12 rules 11–15): `release` honours `uncount`, `delayMs`
- * (`delayed_until`) and `lastError` (`last_error`), `availableAt` is stored in `available_at`,
+ * Retries and dead-letter (0.5, spec 05 §12 rules 11–15): `release` honours `owner` (only rows
+ * still claimed by it), `uncount`, `delayMs` (`delayed_until`) and `lastError` (`last_error`), `availableAt` is stored in `available_at`,
  * and dead items stay in the table (`dead_at`, `dead_reason`) for `listDead` / `redrive`.
  * `migrateInbox` upgrades a 0.4 table in place (`ALTER TABLE … ADD COLUMN IF NOT EXISTS`, all
  * nullable, so existing rows are ready items) and recreates `eh_inbox_claim`.
@@ -101,8 +101,10 @@ export async function migrateInbox(db: SqlClient, options: PostgresOptions = {})
   // the function sees the rows committed before it (READ COMMITTED), i.e. after the lock.
   // The 0.4 function returned fewer columns: drop it first (CREATE OR REPLACE cannot change
   // the result type).
-  await db.query(`DROP FUNCTION IF EXISTS ${claimFunction(options)}(text, text, integer, integer)`)
-  await db.query(`CREATE FUNCTION ${claimFunction(options)}(
+  // Both statements go in one parameterless query: the simple query protocol runs them in one
+  // implicit transaction, so a failed CREATE never leaves the table without its claim function.
+  await db.query(`DROP FUNCTION IF EXISTS ${claimFunction(options)}(text, text, integer, integer);
+    CREATE FUNCTION ${claimFunction(options)}(
       p_session text, p_owner text, p_ttl_ms integer, p_limit integer)
     RETURNS TABLE (claimed_id text, claimed_item text, claimed_attempts integer,
       claimed_last_error text)
@@ -242,12 +244,14 @@ export function postgresInbox(
              ELSE delayed_until END,
            last_error = COALESCE($4::text, last_error)
          WHERE id::text = ANY(string_to_array($1, ','))
-           AND dead_at IS NULL AND claimed_by IS NOT NULL`,
+           AND dead_at IS NULL AND claimed_by IS NOT NULL
+           AND ($5::text IS NULL OR claimed_by = $5::text)`,
         [
           idList(ids),
           opts.uncount === true ? 1 : 0,
           Math.max(0, Math.round(opts.delayMs ?? 0)),
           opts.lastError ?? null,
+          opts.owner ?? null,
         ],
       )
     },
