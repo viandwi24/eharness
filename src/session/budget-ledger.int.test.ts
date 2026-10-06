@@ -352,7 +352,37 @@ describe('budget ledger (spec 12 §4.1)', () => {
     )
     const result = await agent.session('s1').send('go').result
     expect(result.stop).toBe('complete')
-    expect(warnings.filter((w) => w.code === 'W_BUDGET_LEDGER_FAILED')).toHaveLength(2) // one per step
+    // failed commits stay queued: retried at the next call and at the end, then charged as records
+    expect(warnings.filter((w) => w.code === 'W_BUDGET_LEDGER_FAILED')).toHaveLength(4)
+    const keys = spy.calls
+      .filter((c) => c.op === 'record')
+      .map((c) => (c.args[0] as { key: string }).key)
+    expect(keys).toHaveLength(2)
+    expect(keys.every((k) => k.includes(':commit:'))).toBe(true)
+  })
+
+  test('a failed commit is retried at the next call; nothing stays reserved', async () => {
+    const spy = spyLedger()
+    let n = 0
+    spy.fail.commit = () => (n++ === 0 ? 'before' : false) // only the first commit fails
+    const { agent } = setup(
+      {
+        model: scriptedModel([
+          { toolCalls: [{ toolName: 'work', input: { n: 1 } }] },
+          { text: 'ok' },
+        ]),
+      },
+      spy.ledger,
+    )
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    const committed = spy.calls.filter((c) => c.op === 'commit').map((c) => c.args[0])
+    expect(committed).toHaveLength(3) // step 0 (failed), its retry, step 1
+    expect(new Set(committed).size).toBe(2)
+    const scope = await spentOn(spy.inner)
+    expect(scope?.reservedUsd).toBe(0)
+    expect(scope?.spentUsd).toBeCloseTo(2 * STEP, 6)
+    expect(spy.calls.some((c) => c.op === 'release')).toBe(false)
   })
 
   test('addUsage (subagent, gateway cost) is recorded once at the next step boundary', async () => {

@@ -185,7 +185,10 @@ export interface BudgetLedger {
    point leaves delivered input in the message like a compaction that uses up a budget (§4).
 2. **After the step** the reservation is committed with the step's actual cost (`costOf` with the
    step model); a step whose usage AI SDK did not report (abort, timeout, provider failure before
-   streaming) commits 0. A reservation still open when the turn ends (a stop between the
+   streaming) commits 0. A failed commit stays queued and is retried (commit is idempotent) before
+   the next reservation and at turn end; a commit still failing at turn end is charged with
+   `record` (`key: ${sessionId}:${turnId}:commit:${reservationId}`, the hold expires on its own).
+   A reservation still open when the turn ends (a stop between the
    reservation and the call's result) is released. Reservations of a dead process expire after
    `reservationTtlMs` (adapter).
 3. **Nested usage** with a known price — `ctx.turn.addUsage` (subagents, gateways, a judge), the
