@@ -31,3 +31,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0024](0024-durable-inbox-port.md) | Durable inbox port: at-least-once with dedupe, drained by the session holder |
 | [0025](0025-external-risk-and-mcp-annotations.md) | External risk and tighten-only MCP annotation mapping (amends 0017) |
 | [0029](0029-cross-session-budget-ledger.md) | Cross-session budget ledger port: reserve / commit, fail closed (amends 0016) |
+| [0030](0030-llm-approval-guard-plugin.md) | LLM approval guard as a plugin: tighten-only, restricted view in core, cached verdicts |

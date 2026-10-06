@@ -81,7 +81,7 @@ Per step the core builds **one** `GenericToolApprovalFunction` and passes it as 
 1. `approval.policy` result (per-tool entry or generic function);
 2. `approval.risk[risk ?? 'unknown']` (§3.2);
 3. every `tool.approve` hook (spec 01 §5), in plugin order (the event carries the traits:
-   `risk`, `idempotent`, `hints`, §3.2);
+   `risk`, `idempotent`, `hints`, §3.2, and the restricted `transcript()`, §3.4);
 4. session grants (§3.1).
 
 Results are normalized to `{ type, reason? }` and combined **most restrictive wins**:
@@ -177,6 +177,37 @@ Hook failures raise `W_HOOK_FAILED` and never change a decision. Together with `
 (`TurnResult.pending`) and session `pending` events, this is enough to build an approval inbox
 across sessions: record requests from `pending`, resolve them with `respond()`, audit from
 `approval.decided`. The core owns no inbox, no endpoint and no audit table.
+
+### 3.4 Restricted transcript (0.5.0)
+
+The `tool.approve` event carries `transcript: () => ReadonlyArray<GuardTranscriptEntry>` — a view
+of the conversation for judges (`eharness/guard`, spec 15) that a prompt injection in a tool
+output cannot reach:
+
+```ts
+export type GuardTranscriptEntry =
+  | { role: 'user'; text: string }
+  | { role: 'tool-call'; toolName: string; input: unknown }
+```
+
+Built lazily (only when called, once per approval call; every call returns a fresh copy) from the
+model wire AI SDK passes to the approval function (`options.messages`), oldest first:
+
+- `user` messages with a part array → one entry: `text` parts joined by a newline, `file` /
+  `image` parts as `[file: <filename | 'unnamed'>, <mediaType | 'unknown'>]`. Text parts the core
+  writes are skipped: they start with `<system-reminder>` (reminders, spec 02 §5), `<data type="`
+  (data parts with `model: 'text'`), `<conversation-summary>` or `<event name="`. User messages
+  with string content (kind projections, internal prompts) are skipped.
+- `assistant` messages → one entry per `tool-call` part (`toolName`, a copy of `input`); the call
+  under review is left out.
+- Everything else is never included: `system` messages, `tool` messages (outputs), assistant
+  text, reasoning, files and approval parts.
+
+Text the app projects itself (a data part or kind whose `model` function returns plain text
+parts, `input.submit` `context`) and input delivered during a turn (`data-eh.input`) are
+user-role text on the wire and appear as `user` entries. At AI SDK's re-validation of approved
+calls the wire is the continuation's (it ends with the answered calls); judges cache by call id
+(spec 15 §2 rule 4).
 
 ## 4. `respond()`
 
