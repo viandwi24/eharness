@@ -375,11 +375,10 @@ Evaluate in this order; the first match decides:
 | 6 | step count reached the turn's step budget (`maxSteps`, extended by `turn.beforeEnd`) | `'max-steps'` |
 | 7 | cumulative output tokens (incl. `addUsage`) > `loop.maxTurnOutputTokens` | `'cost-cap'` |
 
-Rule 4 with external waits (0.5.0): the `start` callbacks of the step's external calls run **after**
-rule 4 matched (so only when the turn really stops `'tool-pending'`), once each, in tool-call
-order, before the pending state is stored at step 17. A call whose `start` threw is answered with
-an error result (`tool-output-error` chunk, a `tool` message on the model wire); when no other
-call is pending the step is re-evaluated with rules 5–7 and the turn continues.
+Rule 4 with external waits (0.5.0): the entries of `externals` take the tool's defaults
+(`timeoutAt`, `onTimeout`, `started: false`) when the turn really stops `'tool-pending'`; the
+`start` callbacks run **after** the pending state is stored at step 17, once each in tool-call
+order (spec 11 §4.2 rule 1). A throwing `start` is `W_HOOK_FAILED`; the wait stays parked.
 
 If none matches (`finishReason: 'tool-calls'` and every call has a result — automatic denials and
 tool errors count as results), the loop continues — unless the progress guard (§3.2) found the

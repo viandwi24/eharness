@@ -6,9 +6,11 @@ External waits: park a turn on a result that arrives later, in any instance (spe
 
 - New `externalTool({ description, inputSchema, outputSchema?, start?, timeoutMs?, onTimeout?, metadata? })`:
   an AI SDK tool without `execute` whose result comes from outside (a webhook, a job, another
-  agent, a person). `start` runs once per call after the step ended and before the pending state is
-  committed (stable `waitId` = `w_<toolCallId>`; a throwing `start` answers the call with an error
-  result). The turn stops `'tool-pending'` and holds nothing.
+  agent, a person). `start` runs after the pending state is committed (stable `waitId` =
+  `w_<toolCallId>`; a fast callback finds the wait pending; a throwing `start` is
+  `W_HOOK_FAILED` and the wait stays parked until its timeout; a start a crash left undispatched,
+  `PendingExternal.started: false`, is dispatched again after `recovery.staleMs` when a session
+  opens or `expireWaits()` runs). The turn stops `'tool-pending'` and holds nothing.
 - New `session.resolveWait(waitId, { output } | { errorText })`: validates against `outputSchema`
   (`EH_INVALID_INPUT`, `details.reason: 'invalid-result'`), applies `tool.after` and the output
   limits, and records the result with a compare-and-set; the first result wins, a replay is

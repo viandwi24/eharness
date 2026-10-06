@@ -33,11 +33,13 @@ const build = externalTool({
 and the turn ends with `stop: 'tool-pending'`; the result carries
 `pending.externals[]` (`waitId`, `correlationId`, `payload`, `timeoutAt`, `onTimeout`).
 
-- **`start` runs once per call**, after the step ended and before the pending state is stored,
-  inside the turn (`ctx.turn` is live). `waitId` is `w_<toolCallId>`: stable, so pass it to the
-  outside system as an idempotency key; a retried or replayed `start` then does not run the work
-  twice. If `start` throws, that call is answered with an error result and the model can
-  self-correct; the turn does not park for it.
+- **`start` runs after the pending state is stored**, once per call in the normal case, inside
+  the turn (`ctx.turn` is live). A webhook that fires immediately therefore finds the wait
+  pending. `waitId` is `w_<toolCallId>`: stable, so pass it to the outside system as an
+  idempotency key; `start` may run again (at least once) when an instance crashed between the
+  commit and `start`, and the redispatch must not run the work twice. If `start` throws, you get
+  `W_HOOK_FAILED`, the wait stays parked and ends by a result or its timeout (set `timeoutMs`).
+  What `start` returns (`correlationId`, `payload`, timeouts) is stored right after it ran.
 - Several waits in one step are all parked, next to approvals and client tools.
 - Static and plugin tools are best: their `outputSchema` is checked when a result is recorded
   from any instance (tool-source tools are listed on demand).
@@ -68,7 +70,9 @@ Rules worth knowing:
   against `outputSchema` (`EH_INVALID_INPUT`, `details.reason: 'invalid-result'`: nothing is
   stored, so the sender can fix and retry), then passes `tool.after` and the output limits.
 - When the last open item is recorded, `resolveWait()` starts the continuation. If a turn runs in
-  this instance it rejects with `EH_SESSION_BUSY` (retry); if a turn starts between the write and
+  this instance it rejects with `EH_SESSION_BUSY` (retry; this also covers a callback that
+  arrives while the parking turn is still running `start` — `'not-pending'` right after `start`
+  does not happen in-process); if a turn starts between the write and
   the continuation the status is `'recorded'` with `remaining: 0` and the next `respond({})`,
   `expireWaits()` or new input continues.
 - **Correlation.** Put your own id into `correlationId` / `payload` in `start`; the webhook maps
@@ -114,9 +118,11 @@ new input fails with `EH_PENDING_RESPONSE` and the waits stay open.
 
 ## 5. Crashes and replays
 
-- The parked call is **answered, never re-executed** (ADR-0014). A process that dies between
-  `start` and the pending-state write leaves a dangling call: the next operation recovers it as
-  `INTERRUPTED_CRASH` and `start` does not run again.
+- The parked call is **answered, never re-executed** (ADR-0014). A process that dies before the
+  pending state is written leaves a dangling call: the next operation recovers it as
+  `INTERRUPTED_CRASH`. A process that dies after the write but before `start` ran leaves the wait
+  with `started: false`: once `recovery.staleMs` passed, the next session open or `expireWaits()`
+  runs `start` again (same `waitId`).
 - Replaying a webhook is safe: the recorded result is final.
 - Stored pending state carries `v: 2`. State written by 0.3 / 0.4 (no `v`) still works with
   `respond()`; an unknown `v` authorizes nothing (`resolveWait` → `'not-pending'`).
