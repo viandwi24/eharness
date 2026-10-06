@@ -10,6 +10,7 @@ export default defineConfig({
     'todos/index': 'src/todos/index.ts',
     'guard/index': 'src/guard/index.ts',
     'openapi/index': 'src/openapi/index.ts',
+    'group/index': 'src/group/index.ts',
     'memory/index': 'src/memory/index.ts',
     'testing/index': 'src/testing/index.ts',
   },

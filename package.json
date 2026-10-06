@@ -68,6 +68,7 @@
     ".": "./dist/index.js",
     "./filesystem": "./dist/filesystem/index.js",
     "./filesystem/memory": "./dist/filesystem/memory.js",
+    "./group": "./dist/group/index.js",
     "./guard": "./dist/guard/index.js",
     "./mcp": "./dist/mcp/index.js",
     "./memory": "./dist/memory/index.js",
