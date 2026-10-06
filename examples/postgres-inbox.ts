@@ -93,9 +93,11 @@ export async function migrateInbox(db: SqlClient, options: PostgresOptions = {})
       UPDATE ${table} AS r SET claimed_until = v_until
         WHERE r.session_id = p_session AND r.claimed_by = p_owner
           AND r.claimed_until > clock_timestamp();
-      SELECT min(h.id) INTO v_head FROM ${table} AS h
+      -- ORDER BY … LIMIT 1, not min(): min(uuid) only exists from Postgres 18
+      SELECT h.id INTO v_head FROM ${table} AS h
         WHERE h.session_id = p_session AND h.claimed_until > clock_timestamp()
-          AND h.claimed_by IS DISTINCT FROM p_owner;
+          AND h.claimed_by IS DISTINCT FROM p_owner
+        ORDER BY h.id LIMIT 1;
       RETURN QUERY
         UPDATE ${table} AS u SET claimed_by = p_owner, claimed_until = v_until,
           attempts = u.attempts + 1
