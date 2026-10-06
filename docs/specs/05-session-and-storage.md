@@ -115,6 +115,13 @@ export interface HarnessSession<
    * loading it into the session: no recovery, spec 05 §9).
    */
   messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
+  /** 0.5.0: record the result of an external wait; continues the message when nothing else is open (spec 11 §4.2). */
+  resolveWait(waitId: string, result: { output: unknown } | { errorText: string },
+              options?: SendOptions & { actor?: ApprovalActor }): Promise<ResolveWaitResult<M>>
+  /** 0.5.0: expire due external waits (spec 11 §4.2 rule 6). */
+  expireWaits(now?: number): Promise<{ expired: string[]; run?: HarnessRun<M> }>
+  /** 0.5.0: the external waits of the stored pending state. */
+  pendingWaits(): Promise<PendingExternal[]>
   /** Current context stats (spec 06 §2) and pending state (spec 11 §2). */
   stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
 
