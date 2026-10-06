@@ -151,6 +151,7 @@ export type WarningCode =
   | 'W_LOOP_STUCK'
   | 'W_BUDGET'
   | 'W_MODEL_UNPRICED'
+  | 'W_BUDGET_LEDGER_FAILED'
   | 'W_TOOL_OUTPUT_LIMITED'
   | 'W_CACHE_BUST'
   | 'W_OVERFLOW_RETRY'

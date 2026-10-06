@@ -29,7 +29,7 @@ export function isHarnessError(e: unknown, code?: HarnessErrorCode): e is Harnes
 | `EH_INVALID_INPUT` | `inject` (thrown); turn operations → **run error** | input, kind payload, `SendOptions.options` or `toolsContext` fails validation; `respond`/`regenerate`/`edit` target problems with `details.reason`: `'unknown-id'`, `'incomplete'`, `'stale'`, `'beyond-compaction'`, `'not-found'` (spec 11) |
 | `EH_PENDING_RESPONSE` | turn operations → **run error** (only with `approval.onNewInput: 'reject'`) | approvals / client tool calls are waiting; call `respond()` first |
 | `EH_INVALID_MESSAGE` | `ready()` / load with `onInvalidMessage: 'throw'`; in `send` → run error | stored message invalid |
-| `EH_STORAGE` | `ready()`, `messages()`, `inject`, `compact` (thrown); in `send` → run error | adapter threw; original error in `cause` |
+| `EH_STORAGE` | `ready()`, `messages()`, `inject`, `compact` (thrown); in `send` → run error | adapter threw; original error in `cause`. A failing `budget.ledger` before a model call (fail closed, spec 12 §4.1 rule 5) is a run error with `details: { operation: 'budget-ledger', call: 'reserve' \| 'scopes' \| 'estimate' }` (0.5.0) |
 | `EH_COMPACTION_FAILED` | `session.compact()` | summarizer failed |
 | `EH_CONTEXT_OVERFLOW` | never thrown; recorded as `metadata.eharness.error.code` of a turn ending with `stop: 'error'` | guard could not fit the context, or the provider still rejected it after the overflow retry (spec 06 §6–7) |
 
@@ -112,7 +112,8 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_SESSION_OPTIONS_IGNORED` | options passed to a cached session differ |
 | `W_DEFAULT_CONTEXT_WINDOW` | `contextWindow` not set (or its function returned `undefined`) for a model; using 128k |
 | `W_CONTINUE_LIMIT` | `turn.beforeEnd` asked to continue but the continuation is refused: `details.reason` `'no-progress'` (`loop.maxIdleContinues`) or `'max'` (`loop.maxContinues`) |
-| `W_BUDGET` | a USD budget reached `warnAt` or is used up (`details: { scope, limitUsd, spentUsd, exceeded }`, spec 12 §4) |
+| `W_BUDGET` | a USD budget reached `warnAt` or is used up (`details: { scope: 'turn' \| 'session' \| 'ledger', limitUsd, spentUsd, exceeded }`, spec 12 §4); for `scope: 'ledger'` (0.5.0) a reservation was refused: `ledgerScope` names the app scope, `spentUsd` is its spent + reserved amount, `exceeded` is always true (spec 12 §4.1) |
+| `W_BUDGET_LEDGER_FAILED` | a `budget.ledger` call failed and the turn went on (0.5.0, spec 12 §4.1 rule 5): `details.operation` is `reserve` / `scopes` / `estimate` (with `onError: 'continue'`; the step runs unreserved) or `commit` / `release` / `record` (always a warning) |
 | `W_MODEL_UNPRICED` | a budget is configured but the step model has no pricing in `models` (`details.model`) |
 | `W_LOOP_STUCK` | the progress guard found the turn stuck and reminded the model (`details: { kind, toolName?, count, stepIndex }`, spec 05 §3.2) |
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
@@ -160,7 +161,7 @@ export type StopReason =
   | 'context-thrash'  // the context filled up again right after a compaction (spec 06 §4; 0.4.0)
   | 'interrupted'     // the process died mid-turn; set by crash recovery (spec 05 §9)
   | 'max-steps'       // step budget reached (loop.maxSteps / SendOptions.maxSteps, + extendSteps)
-  | 'cost-cap'        // loop.maxTurnOutputTokens or a budget exceeded
+  | 'cost-cap'        // loop.maxTurnOutputTokens or a budget exceeded, or a budget.ledger reservation refused (0.5.0)
   | 'output-invalid'  // SendOptions.output: no valid final answer within maxRetries (spec 05 §3.3; 0.4.0)
   | `plugin:${string}` // a step.end hook stopped the turn: 'plugin:<plugin>:<reason>'
 ```

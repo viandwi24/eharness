@@ -370,7 +370,9 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
    within the window; a manual `compact()` resolves `null`, only the session budget applies to
    it). When a turn's compaction itself uses up the budget, the turn stops with `'cost-cap'`
    before its next model call. With a budget configured, an unpriced summarizer raises
-   `W_MODEL_UNPRICED`.
+   `W_MODEL_UNPRICED`. With `budget.ledger` (0.5.0) the priced summarizer and flush usage is
+   recorded on the ledger (`record`, never a reservation): during a turn at the next step boundary
+   or at turn end, for a manual `compact()` after the compaction (spec 12 §4.1 rule 3).
 
 Default prompt (outline; exact text lives in `src/compaction/prompt.ts`): produce a continuation
 brief — goal and constraints from the user, decisions made, current state of the work, open

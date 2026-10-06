@@ -41,6 +41,7 @@ describe('core entry', () => {
       'defineSkill',
       'defineSkillSource',
       'defineToolSource',
+      'estimateStepCostUsd',
       'handleChatRequest',
       'isHarnessError',
       'isKindMessage',

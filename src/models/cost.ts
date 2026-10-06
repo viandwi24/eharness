@@ -55,3 +55,37 @@ export function costOf(
   const pricing = lookupModel(catalog, model)?.pricing
   return pricing === undefined ? undefined : computeCost(usage, pricing)
 }
+
+/** Output tokens assumed by {@link estimateStepCostUsd} when the step sets no `maxOutputTokens`. */
+export const DEFAULT_ESTIMATE_OUTPUT_TOKENS = 4_096
+
+/**
+ * Upper-bound estimate of one model call before it runs (the default reservation of
+ * `budget.ledger`, spec 12 §4.1): `contextTokens` priced as uncached input plus
+ * `maxOutputTokens` (default 4 096) priced as output, with the catalog pricing of `model` (tiers
+ * apply). `undefined` when the model has no pricing.
+ *
+ * @example
+ * ```ts
+ * estimateStepCostUsd({ models, model, contextTokens: 20_000, maxOutputTokens: 1_000 })
+ * ```
+ * @see docs/specs/12-models-and-cost.md#2-pricing
+ */
+export function estimateStepCostUsd(args: {
+  models: ModelCatalog | undefined
+  model: LanguageModel
+  contextTokens: number
+  maxOutputTokens?: number | undefined
+}): number | undefined {
+  return costOf(args.models, args.model, {
+    inputTokens: count(args.contextTokens),
+    inputTokenDetails: {
+      noCacheTokens: count(args.contextTokens),
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+    },
+    outputTokens: count(args.maxOutputTokens ?? DEFAULT_ESTIMATE_OUTPUT_TOKENS),
+    outputTokenDetails: { textTokens: undefined, reasoningTokens: undefined },
+    totalTokens: undefined,
+  })
+}

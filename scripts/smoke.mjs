@@ -43,6 +43,7 @@ const entries = {
     'defineSkill',
     'defineSkillSource',
     'defineToolSource',
+    'estimateStepCostUsd',
     'handleChatRequest',
     'isHarnessError',
     'isKindMessage',
@@ -64,7 +65,7 @@ const entries = {
     'normalizePath',
   ],
   'eharness/filesystem/memory': ['memoryFs'],
-  'eharness/storage/memory': ['memoryInbox', 'memoryMessages', 'memoryState'],
+  'eharness/storage/memory': ['memoryBudgetLedger', 'memoryInbox', 'memoryMessages', 'memoryState'],
   'eharness/mcp': ['MCP_AUTO_DEFER_THRESHOLD', 'clearMcpPins', 'mcpServer'],
   'eharness/todos': [
     'TODOS_CONTINUE',
@@ -89,6 +90,7 @@ const entries = {
   ],
   'eharness/testing': [
     'SKILL_SOURCE_FIXTURE',
+    'budgetLedgerConformance',
     'fileSystemConformance',
     'idGeneratorConformance',
     'inboxAdapterConformance',

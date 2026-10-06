@@ -27,6 +27,7 @@ import { createTurnCompaction } from '../compaction/turn-context.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, isHarnessError } from '../errors.ts'
 import { describeModel } from '../internal/model.ts'
+import { createTurnLedger, DEFAULT_RESERVATION_TTL_MS } from '../loop/ledger.ts'
 import {
   addUsage,
   emptyUsage,
@@ -282,6 +283,22 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   const created: HarnessUIMessage[] = []
   let createdBeforeAssistant = 0
   const usage: UsageTotals = emptyUsage()
+  /** `budget.ledger` of this turn (spec 12 §4.1). */
+  const ledgerConfig = config.budget?.ledger
+  const ledger =
+    ledgerConfig === undefined
+      ? undefined
+      : createTurnLedger({
+          config: ledgerConfig,
+          models: config.models,
+          sessionId: rt.id,
+          turnId,
+          ttlMs:
+            ledgerConfig.reservationTtlMs ??
+            (timeoutMs !== undefined && timeoutMs > 0 ? timeoutMs : DEFAULT_RESERVATION_TTL_MS),
+          ctx: () => rt.contextOf('app'),
+          warn: (warning, key) => rt.warn(warning, key),
+        })
   /** `SendOptions.output` of this turn (spec 05 §3.3), set at preparation step 6. */
   let turnOutput: TurnOutput | undefined
 
@@ -372,6 +389,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
             ? undefined
             : costOf(config.models, options.model, value)
       addUsage(usage, value, true, cost)
+      // priced nested usage reaches the ledger at the next step boundary (spec 12 §4.1 rule 3)
+      if (cost !== undefined && turnState.active) ledger?.nested(cost)
     },
   }
   const turnState: TurnState = {
@@ -1417,6 +1436,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         models: config.models,
         budget: config.budget,
         sessionCostBefore: rt.state.core().usage?.costUsd ?? 0,
+        ledger,
         toolsContext: prep.toolsContext,
         cache: config.cache,
         signal: controller.signal,
@@ -1472,6 +1492,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
       write({ type: 'error', errorText: outcome.error?.message ?? '' })
     }
+    // release an open reservation, record the last nested usage (spec 12 §4.1); never throws
+    await ledger?.end()
     writeEnd()
   }
 

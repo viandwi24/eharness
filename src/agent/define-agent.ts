@@ -84,6 +84,40 @@ function validateConfig(config: HarnessAgentConfig): void {
     }
   }
   validateNumbers(config)
+  const ledger = config.budget?.ledger
+  if (ledger !== undefined) {
+    const adapter = ledger.adapter as unknown as Partial<Record<string, unknown>> | undefined
+    const methods = ['reserve', 'commit', 'release', 'record', 'check']
+    if (
+      typeof adapter !== 'object' ||
+      adapter === null ||
+      !methods.every((m) => typeof adapter[m] === 'function')
+    ) {
+      invalid(
+        'defineHarnessAgent: `budget.ledger.adapter` must be a BudgetLedger (reserve, commit, release, record, check).',
+        { option: 'budget.ledger.adapter' },
+      )
+    }
+    if (typeof ledger.scopes !== 'function') {
+      invalid('defineHarnessAgent: `budget.ledger.scopes` must be a function.', {
+        option: 'budget.ledger.scopes',
+      })
+    }
+    if (ledger.estimate !== undefined && typeof ledger.estimate !== 'function') {
+      invalid('defineHarnessAgent: `budget.ledger.estimate` must be a function.', {
+        option: 'budget.ledger.estimate',
+      })
+    }
+    if (
+      ledger.onError !== undefined &&
+      ledger.onError !== 'stop' &&
+      ledger.onError !== 'continue'
+    ) {
+      invalid("defineHarnessAgent: `budget.ledger.onError` must be 'stop' or 'continue'.", {
+        option: 'budget.ledger.onError',
+      })
+    }
+  }
   validatePartMaps('the app (agent config)', config.dataParts, config.messageKinds)
 }
 
@@ -161,6 +195,7 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('budget.maxTurnUsd', config.budget?.maxTurnUsd, 'positive')
   checkNumber('budget.maxSessionUsd', config.budget?.maxSessionUsd, 'positive')
   checkNumber('budget.warnAt', config.budget?.warnAt, 'ratio-half-open')
+  checkNumber('budget.ledger.reservationTtlMs', config.budget?.ledger?.reservationTtlMs, 'positive')
   checkNumber('inputFiles.maxBytes', config.inputFiles?.maxBytes, 'positive-int')
   checkNumber('inbox.pollMs', config.inbox?.pollMs, 'non-negative')
   checkNumber('inbox.claimTtlMs', config.inbox?.claimTtlMs, 'positive')

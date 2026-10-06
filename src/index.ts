@@ -44,6 +44,11 @@ export type {
   AgentStaticTools,
   ApprovalConfig,
   BudgetConfig,
+  BudgetEstimateEvent,
+  BudgetLedger,
+  BudgetLedgerConfig,
+  BudgetReservation,
+  BudgetScopeStatus,
   CacheConfig,
   CompactionConfig,
   HarnessAgent,
@@ -118,7 +123,7 @@ export type {
   WarningPartData,
 } from './messages/types.ts'
 export { lookupModel, modelsDevCatalog } from './models/catalog.ts'
-export { computeCost } from './models/cost.ts'
+export { computeCost, estimateStepCostUsd } from './models/cost.ts'
 export type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './models/types.ts'
 export type { OutputSpec } from './output/types.ts'
 export { definePlugin } from './plugin/define-plugin.ts'
