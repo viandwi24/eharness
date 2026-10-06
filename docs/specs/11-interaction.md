@@ -42,6 +42,7 @@ export interface PendingExternal {
   correlationId?: string; payload?: JSONValue         // from `start` (§4.2 rule 1)
   timeoutAt?: number                                  // epoch ms
   onTimeout: { errorText: string } | { output: JSONValue }   // default { errorText: WAIT_TIMED_OUT }
+  started?: boolean; parkedAt?: number                // tools with a `start`: false until dispatched (§4.2 rule 1)
   result?: { output: JSONValue; by: 'result' | 'timeout' } | { errorText: string; by: 'result' | 'timeout' }
 }
 // state.core.pending: PendingState (spec 05 §7) — authoritative, used to validate respond()
@@ -326,12 +327,24 @@ session.expireWaits(now?): Promise<{ expired: string[]; run? }>
 session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending state
 ```
 
-1. **Parking.** At step end an unanswered call of an `externalTool` is pending kind `externals`.
-   Its `start` runs **once**, in tool-call order, after the step ended and before the pending
-   state is committed (inside the turn: `ctx.turn` is live). `waitId` is `w_<toolCallId>` so
-   `start` can be idempotent for the outside system. A throwing `start` answers that call with an
-   error result (the text of a thrown `execute`, spec 10 §1.1: `config.toolErrorText` applies; the model can self-correct); the step continues normally when
-   nothing else is pending. `start` only runs when the turn really stops `'tool-pending'`.
+1. **Parking.** At step end an unanswered call of an `externalTool` is pending kind `externals`;
+   the tool's defaults (`timeoutMs`, `onTimeout`) complete the entry and, for a tool with a
+   `start`, `started: false` and `parkedAt`. The pending state is **committed first**. Only then
+   does `start` run, in tool-call order, inside the turn (`ctx.turn` is live), and only when the
+   turn really stops `'tool-pending'`. Running `start` after the commit means a callback that
+   arrives while (or right after) `start` runs finds the wait pending: in this instance
+   `resolveWait()` is `EH_SESSION_BUSY` (the turn still runs; retry), in another instance it is
+   recorded — `not-pending` right after `start` can no longer happen in-process. `waitId` is
+   `w_<toolCallId>` so `start` can be idempotent for the outside system. What `start` returns
+   (`correlationId`, `payload`, `timeoutMs` / `timeoutAt`, `onTimeout`) is then stored with a
+   compare-and-set and the entry becomes `started: true` (a result another instance recorded
+   meanwhile is kept and nothing is written). A throwing `start` is `W_HOOK_FAILED` (hook
+   `externalTool.start(<tool>)`): the wait stays parked, `started: true`, until its timeout or a
+   `resolveWait()`; the call is not answered. A crash between the commit and `start` leaves
+   `started: false`: when a session opens or `expireWaits()` runs, entries still `false` after
+   `recovery.staleMs` (from `parkedAt`; the parking instance gets that time to dispatch) are
+   dispatched again — at least once, hence idempotent by `waitId`; one instance never runs the
+   same redispatch twice at once. The durable timer items (rule 6) are enqueued after `start`.
 2. **Several waits** of one step are all parked; approvals, client tools and externals may be
    pending together.
 3. **Recording** (`resolveWait`). The wait id must be in `state.core.pending.externals`, else
@@ -363,8 +376,9 @@ session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending
    recorded (an instance died between recording and continuing).
 7. **New input while waiting** — §4.1.
 8. **Never re-executed.** The parked call is answered, never run again (ADR-0014). A call parked
-   but never stored in `state.core.pending` (a crash between `start` and the commit) is answered
-   `INTERRUPTED_CRASH` by the stale-turn recovery (spec 05 §9) and `start` does not run again. A
+   but never stored in `state.core.pending` (a crash before the commit) is answered
+   `INTERRUPTED_CRASH` by the stale-turn recovery (spec 05 §9). A call committed but never
+   started is parked (rule 1): `start` runs again, the call itself is never re-executed. A
    recorded result whose continuation died before its commit point continues at the next
    operation (rule 4, rule 6c).
 9. **Versioning.** `PendingState.v = 2` is written by 0.5.0; no `v` is the 0.3 / 0.4 shape and

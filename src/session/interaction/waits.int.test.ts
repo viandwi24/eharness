@@ -118,6 +118,8 @@ describe('external waits: park and resolve', () => {
         correlationId: 'ci-main',
         payload: { ref: 'main' },
         onTimeout: { errorText: WAIT_TIMED_OUT },
+        started: true,
+        parkedAt: expect.any(Number),
       },
     ])
     expect(starts).toEqual([{ waitId: waitFor, input: { ref: 'main' } }])
@@ -603,39 +605,77 @@ describe('external waits: new input, crashes, start errors, versions', () => {
     expect(parts[1]).toMatchObject({ state: 'output-error', errorText: WAIT_CANCELLED_NEW_INPUT })
   })
 
-  test('crash between start and the commit: INTERRUPTED_CRASH, start is not run again', async () => {
+  test('crash between the commit and start: the next instance dispatches start again (same waitId)', async () => {
     const shared = storage()
-    let starts = 0
-    const hang = externalTool({
-      description: 'Starts and never returns',
+    const ids: string[] = []
+    const flaky = externalTool({
+      description: 'The first start never returns',
       inputSchema: z.object({ ref: z.string() }),
-      start: (_input, { abortSignal }) => {
-        starts++
+      start: (_input, { waitId, abortSignal }) => {
+        ids.push(waitId)
+        if (ids.length > 1) return { correlationId: 'second' }
         return new Promise<void>((_resolve, reject) => {
           abortSignal.addEventListener('abort', () => reject(new Error('process died')))
         })
       },
     })
-    const model = scriptedModel([{ toolCalls: [{ toolName: 'hang', input: { ref: 'a' } }] }])
-    const a = instance(shared, { model, tools: { hang } })
+    const model = scriptedModel([{ toolCalls: [{ toolName: 'flaky', input: { ref: 'a' } }] }])
+    const a = instance(shared, { model, tools: { flaky } })
     const run = a.agent.session('s1').send('go')
-    await until('start ran', () => starts === 1)
-    // the process "dies": a second instance finds the unfinished turn (its heartbeat is stale)
+    await until('start ran', () => ids.length === 1)
+    // committed but never started: the "process dies" and another instance opens the session
+    expect((await pendingOf(shared))?.externals?.[0]?.started).toBe(false)
     await sleep(25)
-    const recoveryModel = scriptedModel([{ text: 'recovered' }])
     const b = instance(shared, {
-      model: recoveryModel,
-      tools: { hang },
+      model: scriptedModel([]),
+      tools: { flaky },
       recovery: { staleMs: 10 },
     })
-    const result = await b.agent.session('s1').send('hello again').result
-    expect(result.stop).toBe('complete')
-    const interrupted = (await stored(shared)).find((m) => m.role === 'assistant')
-    expect(toolPart(interrupted, 'hang')?.state).toBe('output-error')
-    expect(toolPart(interrupted, 'hang')?.errorText).toBe(INTERRUPTED_CRASH)
-    expect(starts).toBe(1)
+    const sessionB = b.agent.session('s1')
+    await sessionB.expireWaits() // a sweeper (or any operation that opens the session)
+    await until('second start ran', () => ids.length === 2)
+    expect(ids).toEqual([waitFor, waitFor])
+    await until('outcome stored', async () => (await sessionB.pendingWaits())[0]?.started === true)
+    expect((await sessionB.pendingWaits())[0]?.correlationId).toBe('second')
     run.abort('test cleanup')
     await run.result.catch(() => undefined)
+  })
+
+  test('a callback that arrives from start is recorded: the pending state is committed first', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'build', input: { ref: 'a' } }] },
+      { text: 'done' },
+    ])
+    let early: unknown
+    const other = instance(shared, { model, tools: { build: build() } })
+    const a = instance(shared, {
+      model,
+      tools: {
+        build: build([], {
+          start: async (_i: unknown, e: { waitId: string }) => {
+            try {
+              early = await other.agent
+                .session('s1')
+                .resolveWait(e.waitId, { output: { ok: true } })
+            } catch (error) {
+              early = error
+            }
+          },
+        }),
+      },
+    })
+    const first = await a.agent.session('s1').send('go').result
+    expect(first.stop).toBe('tool-pending')
+    // the other instance found the committed wait: its result was recorded and it continued
+    const outcome = early as { status?: string; run?: { result: Promise<{ stop: string }> } }
+    expect(outcome.status).toBe('continued')
+    const done = (await (outcome.run as NonNullable<typeof outcome.run>).result) as {
+      stop: string
+      error?: unknown
+    }
+    expect(done.error).toBeUndefined()
+    expect(done.stop).toBe('complete')
   })
 
   test('a result recorded by an instance that died before continuing: the next operation continues', async () => {
@@ -664,7 +704,7 @@ describe('external waits: new input, crashes, start errors, versions', () => {
     expect(toolPart(message, 'build')?.output).toEqual({ ok: true })
   })
 
-  test('a throwing start answers the call with an error result and the model continues', async () => {
+  test('a throwing start is W_HOOK_FAILED and the wait stays parked', async () => {
     const shared = storage()
     const broken = externalTool({
       description: 'Cannot start',
@@ -675,48 +715,15 @@ describe('external waits: new input, crashes, start errors, versions', () => {
     })
     const model = scriptedModel([
       { toolCalls: [{ toolName: 'broken', input: { ref: 'a' } }] },
-      { text: 'ci is down, sorry' },
+      { text: 'later' },
     ])
     const a = instance(shared, { model, tools: { broken } })
-    const result = await a.agent.session('s1').send('go').result
-    expect(result.stop).toBe('complete')
-    expect(await pendingOf(shared)).toBeUndefined()
-    const message = (await stored(shared)).find((m) => m.role === 'assistant')
-    expect(toolPart(message, 'broken')?.state).toBe('output-error')
-    expect(toolPart(message, 'broken')?.errorText).toContain('ci is down')
-    expect(JSON.stringify(model.prompts[1])).toContain('ci is down')
-  })
-
-  test('a throwing start next to a healthy wait: only the healthy one parks', async () => {
-    const shared = storage()
-    const broken = externalTool({
-      description: 'Cannot start',
-      inputSchema: z.object({ ref: z.string() }),
-      start: () => {
-        throw new Error('ci is down')
-      },
-    })
-    const model = scriptedModel([
-      {
-        toolCalls: [
-          { toolName: 'broken', input: { ref: 'a' } },
-          { toolName: 'build', input: { ref: 'b' } },
-        ],
-      },
-      { text: 'partial' },
-    ])
-    const a = instance(shared, { model, tools: { broken, build: build() } })
     const first = await a.agent.session('s1').send('go').result
     expect(first.stop).toBe('tool-pending')
-    expect(first.pending?.externals?.map((e) => e.waitId)).toEqual(['w_call-0-1'])
-    const message = (await stored(shared)).find((m) => m.id === first.messageId)
-    expect(toolPart(message, 'broken')?.state).toBe('output-error')
-    const session = instance(shared, { model, tools: { broken, build: build() } }).agent.session(
-      's1',
-    )
-    const done = await session.resolveWait('w_call-0-1', { output: { ok: true } })
-    expect(done.status).toBe('continued')
-    if (done.status === 'continued') expect((await done.run.result).stop).toBe('complete')
+    expect(a.warnings.map((w) => w.code)).toContain('W_HOOK_FAILED')
+    const entry = (await pendingOf(shared))?.externals?.[0]
+    expect(entry?.started).toBe(true)
+    expect(entry?.result).toBeUndefined()
   })
 
   test('0.4 pending state (no v, no externals) is still answered by respond()', async () => {

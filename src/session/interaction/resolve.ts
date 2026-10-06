@@ -20,10 +20,12 @@ import type { ToolOutputConfig } from '../../agent/types.ts'
 import { HarnessError } from '../../errors.ts'
 import type { PendingExternal, WaitResult } from '../../messages/types.ts'
 import type { ToolOutputSink } from '../../registry/output-limits.ts'
+import { externalOf, type WaitStart } from '../../registry/external.ts'
 import { listSourceTools } from '../../registry/tools.ts'
-import { finishToolOutput } from '../../registry/wrap.ts'
+import { finishToolOutput, hookFailed } from '../../registry/wrap.ts'
 import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import {
+  applyStart,
   dueExternals,
   isKnownPending,
   MAX_TIMER_MS,
@@ -51,6 +53,8 @@ export interface WaitOpsHost {
   inbox: InboxAdapter | undefined
   /** `config.toolOutput`. */
   toolOutput: ToolOutputConfig | undefined
+  /** `recovery.staleMs`: how long a never-started wait is left to its own instance. */
+  staleMs: number
   warnInbox(operation: string, error: unknown): void
   notify(): Promise<void>
 }
@@ -66,8 +70,13 @@ export interface WaitOps {
   pendingWaits(): Promise<PendingExternal[]>
   /** Apply a due `wait-timeout` inbox item (the drain acks it afterwards). */
   expireOne(waitId: string): Promise<void>
-  /** A turn parked: durable timer items and the live timer. Never throws. */
+  /**
+   * A turn parked and its pending state is stored: run the `start` of its waits, then the durable
+   * timer items and the live timer. Never throws.
+   */
   parked(pending: { externals?: PendingExternal[] }): Promise<void>
+  /** Dispatch the `start` of waits a crashed instance never started (session open). Never throws. */
+  redispatch(): Promise<void>
   /** Re-arm the live timer from the cached pending state (after a turn ended). */
   arm(): void
   dispose(): void
@@ -91,6 +100,13 @@ function unref(timer: unknown): void {
 export function createWaitOps(host: WaitOpsHost): WaitOps {
   const { rt } = host
   let timer: ReturnType<typeof setTimeout> | undefined
+  /** Operations that change the cached state run one at a time per instance. */
+  let chain: Promise<unknown> = Promise.resolve()
+  function serial<T>(fn: () => Promise<T>): Promise<T> {
+    const next = chain.then(fn, fn)
+    chain = next.catch(() => undefined)
+    return next
+  }
 
   /** Find the tool of a wait: static tools, the source cache, then a fresh source listing. */
   async function toolOf(open: OpenSession, name: string): Promise<Tool | undefined> {
@@ -175,7 +191,14 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
    * Record the result of one wait with a compare-and-set (spec 11 §4.2 rule 3). The first result
    * wins; the same wait again is `already-resolved`; a consumed pending state is `not-pending`.
    */
-  async function record(
+  function record(
+    waitId: string,
+    source: Parameters<typeof prepare>[1],
+  ): Promise<Recorded & { by?: 'result' | 'timeout' }> {
+    return serial(() => recordNow(waitId, source))
+  }
+
+  async function recordNow(
     waitId: string,
     source: Parameters<typeof prepare>[1],
   ): Promise<Recorded & { by?: 'result' | 'timeout' }> {
@@ -278,6 +301,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
   ): Promise<{ expired: string[]; run?: HarnessRun<UIMessage> }> {
     await host.ensureOpen()
     if (rt.running) throw busy(rt.id)
+    await redispatch()
     await refresh()
     const pending = rt.state.core().pending
     if (pending === undefined || !isKnownPending(pending)) return { expired: [] }
@@ -334,29 +358,149 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     unref(timer)
   }
 
-  async function parked(pending: { externals?: PendingExternal[] }): Promise<void> {
+  /** Run `fn` under the session lock when the adapter has no compare-and-set (like `record`). */
+  async function underLock<T>(fn: () => Promise<T>): Promise<T> {
+    const lock = rt.options.lock
+    if (lock === undefined || rt.state.canCas) return fn()
+    const release = await lock.acquire(rt.id, { signal: rt.signal })
     try {
-      const inbox = host.inbox
-      if (inbox !== undefined) {
-        for (const entry of pending.externals ?? []) {
-          if (entry.timeoutAt === undefined || entry.result !== undefined) continue
-          try {
-            const inboxId = await inbox.enqueue(rt.id, {
-              kind: 'wait-timeout',
-              waitId: entry.waitId,
-              at: Date.now(),
-              availableAt: entry.timeoutAt,
-            })
-            rt.events.emit({ type: 'inbox-enqueued', inboxId, kind: 'wait-timeout' })
-          } catch (error) {
-            host.warnInbox('enqueue', error) // the live timer and expireWaits() still apply
-          }
-        }
+      return await fn()
+    } finally {
+      await release().catch((error: unknown) => {
+        rt.log.warn('eharness: releasing the session lock failed', { error })
+      })
+    }
+  }
+
+  /**
+   * Run the `start` of every wait of the stored pending state whose `start` was not dispatched
+   * (spec 11 §4.2 rule 1), in tool-call order, then store what they returned (`started: true`,
+   * correlation id, payload, timeout overrides) with a compare-and-set. A throwing `start` is
+   * `W_HOOK_FAILED`; the wait stays parked until its timeout. A result that another instance
+   * recorded meanwhile is kept.
+   */
+  async function dispatchStarts(holdsLock: boolean): Promise<void> {
+    const todo = (rt.state.core().pending?.externals ?? []).filter(
+      (e) => e.started === false && e.result === undefined,
+    )
+    if (todo.length === 0) return
+    const open = await host.ensureOpen()
+    await host.ensureContext()
+    const message = rt.view?.find((m) => m.id === rt.state.core().pending?.messageId)
+    const outs = new Map<string, WaitStart>()
+    for (const entry of todo) {
+      const fixed = open.tools.find((t) => t.name === entry.toolName)
+      const meta = externalOf(fixed?.tool ?? (await toolOf(open, entry.toolName)))
+      if (meta?.start === undefined) {
+        outs.set(entry.waitId, {})
+        continue
       }
-      arm()
+      const owner = fixed?.owner ?? 'app'
+      const part = message?.parts.find(
+        (p) => (p as { toolCallId?: string }).toolCallId === entry.toolCallId,
+      ) as { input?: unknown } | undefined
+      const ctx = rt.contextOf(owner)
+      try {
+        const out = await meta.start(part?.input, {
+          waitId: entry.waitId,
+          toolCallId: entry.toolCallId,
+          ctx,
+          abortSignal: ctx.turn?.abortSignal ?? rt.signal,
+        })
+        outs.set(entry.waitId, out ?? {})
+      } catch (error) {
+        hookFailed(rt, `externalTool.start(${entry.toolName})`, owner, error)
+        outs.set(entry.waitId, {})
+      }
+    }
+    const store = async (): Promise<void> => {
+      for (let attempt = 0; attempt < RECORD_ATTEMPTS; attempt++) {
+        await refresh()
+        const pending = rt.state.core().pending
+        if (pending === undefined || !isKnownPending(pending)) return
+        let changed = false
+        for (const entry of pending.externals ?? []) {
+          const out = outs.get(entry.waitId)
+          // a recorded result means the work ran: nothing to store, and no write that could
+          // disturb the instance that is already continuing
+          if (out === undefined || entry.started !== false || entry.result !== undefined) continue
+          applyStart(entry, out, Date.now)
+          entry.started = true
+          changed = true
+        }
+        if (!changed) return
+        rt.state.markDirty()
+        if (await rt.state.write({ cas: true })) return
+        rt.state.discard()
+        await rt.state.load()
+      }
+      rt.log.warn('eharness: storing the outcome of external start failed (state kept changing)')
+    }
+    await serial(() => (holdsLock ? store() : underLock(store)))
+  }
+
+  async function parked(_pending: { externals?: PendingExternal[] }): Promise<void> {
+    try {
+      try {
+        await dispatchStarts(true)
+      } catch (error) {
+        rt.log.warn('eharness: starting external waits failed', { error })
+      }
+      await armTimers(rt.state.core().pending?.externals ?? [])
     } catch (error) {
       rt.log.warn('eharness: arming wait timeouts failed', { error })
     }
+  }
+
+  /** The redispatch in flight: an instance never starts the same wait twice at once. */
+  let redispatching: Promise<void> | undefined
+  function redispatch(): Promise<void> {
+    redispatching ??= redispatchNow().finally(() => {
+      redispatching = undefined
+    })
+    return redispatching
+  }
+
+  async function redispatchNow(): Promise<void> {
+    try {
+      if (rt.closed || rt.running) return
+      await refresh()
+      const pending = rt.state.core().pending
+      if (pending === undefined || !isKnownPending(pending)) return
+      const due = Date.now() - host.staleMs
+      if (
+        !(pending.externals ?? []).some(
+          (e) => e.started === false && e.result === undefined && (e.parkedAt ?? 0) <= due,
+        )
+      ) {
+        return
+      }
+      await dispatchStarts(false)
+      await armTimers(rt.state.core().pending?.externals ?? [])
+    } catch (error) {
+      rt.log.warn('eharness: starting external waits failed', { error })
+    }
+  }
+
+  async function armTimers(externals: PendingExternal[]): Promise<void> {
+    const inbox = host.inbox
+    if (inbox !== undefined) {
+      for (const entry of externals) {
+        if (entry.timeoutAt === undefined || entry.result !== undefined) continue
+        try {
+          const inboxId = await inbox.enqueue(rt.id, {
+            kind: 'wait-timeout',
+            waitId: entry.waitId,
+            at: Date.now(),
+            availableAt: entry.timeoutAt,
+          })
+          rt.events.emit({ type: 'inbox-enqueued', inboxId, kind: 'wait-timeout' })
+        } catch (error) {
+          host.warnInbox('enqueue', error) // the live timer and expireWaits() still apply
+        }
+      }
+    }
+    arm()
   }
 
   return {
@@ -365,6 +509,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     pendingWaits,
     expireOne,
     parked,
+    redispatch,
     arm,
     dispose() {
       if (timer !== undefined) clearTimeout(timer)

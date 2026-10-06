@@ -1732,7 +1732,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         rt.log.warn('eharness: end-of-turn state write failed', { error: stateError })
       }
       // external waits with a timeout: a durable timer item and the live timer (spec 11 §4.2 rule 6)
-      if (stateSaved && parked?.externals !== undefined) await host.waitsParked(parked)
+      if (stateSaved && parked?.externals !== undefined) {
+        await host.waitsParked(parked)
+        // what `start` returned is stored with the pending state: the result carries it too
+        const settled = rt.state.core().pending
+        if (settled?.messageId === parked.messageId) outcome.pending = structuredClone(settled)
+      }
       if (wakeIds.length > 0) {
         if (stateSaved) settleOpInbox('applied')
         else {
