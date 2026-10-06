@@ -18,16 +18,20 @@ import type {
 } from '../../agent/session-types.ts'
 import type { ToolOutputConfig } from '../../agent/types.ts'
 import { HarnessError } from '../../errors.ts'
-import type { PendingExternal, WaitResult } from '../../messages/types.ts'
+import type { PendingExternal, PendingState, WaitResult } from '../../messages/types.ts'
 import type { ToolOutputSink } from '../../registry/output-limits.ts'
 import { listSourceTools } from '../../registry/tools.ts'
 import { finishToolOutput } from '../../registry/wrap.ts'
 import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import {
   dueExternals,
+  findWait,
+  isClientWait,
   isKnownPending,
   MAX_TIMER_MS,
   nextTimeoutAt,
+  type TimedWait,
+  timedWaits,
   timeoutResult,
   unresolvedCount,
 } from './waits.ts'
@@ -67,7 +71,7 @@ export interface WaitOps {
   /** Apply a due `wait-timeout` inbox item (the drain acks it afterwards). */
   expireOne(waitId: string): Promise<void>
   /** A turn parked: durable timer items and the live timer. Never throws. */
-  parked(pending: { externals?: PendingExternal[] }): Promise<void>
+  parked(pending: PendingState): Promise<void>
   /** Re-arm the live timer from the cached pending state (after a turn ended). */
   arm(): void
   dispose(): void
@@ -116,7 +120,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
 
   /** Validate, `tool.after` and limit a result: what is stored is what the model will see. */
   async function prepare(
-    entry: PendingExternal,
+    entry: TimedWait,
     source:
       | { kind: 'result'; result: { output: unknown } | { errorText: string } }
       | { kind: 'timeout' },
@@ -196,8 +200,12 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
         await refresh()
         const pending = rt.state.core().pending
         if (pending === undefined || !isKnownPending(pending)) return { status: 'not-pending' }
-        const entry = pending.externals?.find((e) => e.waitId === waitId)
+        const entry = findWait(pending, waitId)
         if (entry === undefined) return { status: 'not-pending' }
+        // a client tool call is answered by its client; only its timeout is recorded here
+        if (source.kind === 'result' && isClientWait(pending, waitId)) {
+          return { status: 'not-pending' }
+        }
         if (entry.result !== undefined) return { status: 'already-resolved' }
         prepared ??= await prepare(entry, source)
         entry.result = structuredClone(prepared)
@@ -291,7 +299,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     if (
       after !== undefined &&
       isKnownPending(after) &&
-      (after.externals?.length ?? 0) > 0 &&
+      timedWaits(after).length > 0 &&
       unresolvedCount(after) === 0
     ) {
       const run = tryContinue({})
@@ -334,11 +342,11 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     unref(timer)
   }
 
-  async function parked(pending: { externals?: PendingExternal[] }): Promise<void> {
+  async function parked(pending: PendingState): Promise<void> {
     try {
       const inbox = host.inbox
       if (inbox !== undefined) {
-        for (const entry of pending.externals ?? []) {
+        for (const entry of timedWaits(pending)) {
           if (entry.timeoutAt === undefined || entry.result !== undefined) continue
           try {
             const inboxId = await inbox.enqueue(rt.id, {
