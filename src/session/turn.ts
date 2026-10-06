@@ -68,7 +68,7 @@ import {
   type RespondPlan,
 } from './interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
-import { pendingCallIds } from './interaction/waits.ts'
+import { pendingCallIds, validateExternalAnswers } from './interaction/waits.ts'
 import { hiddenByRewind } from './load-context.ts'
 import { type AbortPoll, createAbortPoll, DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
@@ -715,6 +715,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         view,
         ignoreUnknown: op.respond?.ignoreUnknown === true,
       })
+      // results of `respond({ externals })` are checked like `resolveWait()` results
+      if (plan.externals.length > 0)
+        await validateExternalAnswers(rt, await host.ensureOpen(), plan)
     } else if (core.pending !== undefined) {
       if (config.approval?.onNewInput === 'reject') {
         throw new HarnessError(

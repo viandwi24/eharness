@@ -6,8 +6,13 @@
  * @see docs/specs/11-interaction.md#42-external-waits
  * @see docs/decisions/0027-external-waits-park-at-the-tool-boundary.md
  */
+import { asSchema, type Tool } from 'ai'
+import { HarnessError } from '../../errors.ts'
 import type { PendingExternal, PendingState, WaitResult } from '../../messages/types.ts'
 import type { ExternalToolMeta, WaitStart } from '../../registry/external.ts'
+import { listSourceTools } from '../../registry/tools.ts'
+import type { OpenSession, SessionRuntime } from '../runtime.ts'
+import type { RespondPlan } from './pending.ts'
 
 /** The pending state version this build writes (spec 11 §2). */
 export const PENDING_VERSION: number = 2
@@ -102,4 +107,75 @@ export function applyStart(entry: PendingExternal, out: WaitStart, now: () => nu
     out.timeoutAt ?? (out.timeoutMs === undefined ? undefined : now() + out.timeoutMs)
   if (timeoutAt !== undefined && Number.isFinite(timeoutAt)) entry.timeoutAt = timeoutAt
   if (out.onTimeout !== undefined) entry.onTimeout = structuredClone(out.onTimeout)
+}
+
+/** Find the tool of a wait: static tools, the source cache, then a fresh source listing. */
+export async function findWaitTool(
+  rt: SessionRuntime,
+  open: OpenSession,
+  name: string,
+): Promise<Tool | undefined> {
+  const fixed = open.tools.find((t) => t.name === name)
+  if (fixed !== undefined) return fixed.tool
+  for (const list of open.sourceCache.values()) {
+    const hit = list.find((t) => t.name === name)
+    if (hit !== undefined) return hit.tool
+  }
+  try {
+    const listed = await listSourceTools({
+      sources: open.toolSources,
+      cache: open.sourceCache,
+      taken: new Set(open.tools.map((t) => t.name)),
+      contextOf: rt.contextOf,
+      warn: rt.warn,
+    })
+    return listed.find((t) => t.name === name)?.tool
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Validate an external result against the tool's `outputSchema` (spec 11 §4.2 rule 3). Returns the
+ * validated value; throws `EH_INVALID_INPUT` (`details.reason: 'invalid-result'`).
+ */
+export async function validateWaitOutput(
+  tool: Tool | undefined,
+  entry: { waitId: string; toolName: string },
+  output: unknown,
+): Promise<unknown> {
+  if (tool?.outputSchema === undefined) return output
+  const validate = asSchema(tool.outputSchema as never).validate
+  if (validate === undefined) return output
+  const checked = await validate(output)
+  if (checked.success) return checked.value
+  throw new HarnessError(
+    'EH_INVALID_INPUT',
+    `The result of wait '${entry.waitId}' does not match the output schema of tool '${entry.toolName}': ${checked.error.message}`,
+    {
+      details: { reason: 'invalid-result', waitId: entry.waitId, tool: entry.toolName },
+      cause: checked.error,
+    },
+  )
+}
+
+/**
+ * Validate the external results a `respond({ externals })` brings against the outputSchema of
+ * their tools, before anything is consumed (spec 11 §4.2 rule 3). Results recorded earlier were
+ * validated when they were recorded. Replaces the outputs with the validated values. Throws
+ * `EH_INVALID_INPUT` (`'invalid-result'`).
+ */
+export async function validateExternalAnswers(
+  rt: SessionRuntime,
+  open: OpenSession,
+  plan: RespondPlan,
+): Promise<void> {
+  for (const e of plan.externals) {
+    if (e.recorded || 'errorText' in e.result) continue
+    const tool = await findWaitTool(rt, open, e.toolName)
+    const output = await validateWaitOutput(tool, e, e.result.output)
+    e.result = { ...e.result, output: output as never }
+    const answer = plan.toolOutputs.find((o) => o.toolCallId === e.toolCallId)
+    if (answer !== undefined && 'output' in answer) answer.output = output
+  }
 }
