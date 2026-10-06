@@ -26,7 +26,7 @@ export function isHarnessError(e: unknown, code?: HarnessErrorCode): e is Harnes
 | `EH_PLUGIN_ORDER` | boot | requirer ordered before provider |
 | `EH_SESSION_BUSY` | `send`/`respond`/`regenerate`/`edit` (sync, in-process flag, `ifBusy: 'reject'`), `compact`; lock rejection or a live foreign `activeTurn` → **run error** | a turn is running (here or elsewhere) |
 | `EH_SESSION_CLOSED` | any session method | session was closed or evicted |
-| `EH_INVALID_INPUT` | `inject` (thrown); turn operations → **run error** | input, kind payload, `SendOptions.options` or `toolsContext` fails validation; `respond`/`regenerate`/`edit` target problems with `details.reason`: `'unknown-id'`, `'incomplete'`, `'stale'`, `'beyond-compaction'`, `'not-found'` (spec 11) |
+| `EH_INVALID_INPUT` | `inject` (thrown); turn operations → **run error** | input, kind payload, `SendOptions.options` or `toolsContext` fails validation; `respond`/`regenerate`/`edit` target problems with `details.reason`: `'unknown-id'`, `'incomplete'`, `'stale'`, `'beyond-compaction'`, `'not-found'` (spec 11); 0.5.0: `'wrong-kind'` (a client output for an external wait) and `'invalid-result'` (a `resolveWait()` output fails the tool's `outputSchema`; also thrown by `resolveWait()`) |
 | `EH_PENDING_RESPONSE` | turn operations → **run error** (only with `approval.onNewInput: 'reject'`) | approvals / client tool calls are waiting; call `respond()` first |
 | `EH_INVALID_MESSAGE` | `ready()` / load with `onInvalidMessage: 'throw'`; in `send` → run error | stored message invalid |
 | `EH_STORAGE` | `ready()`, `messages()`, `inject`, `compact` (thrown); in `send` → run error | adapter threw; original error in `cause`. A failing `budget.ledger` before a model call (fail closed, spec 12 §4.1 rule 5) is a run error with `details: { operation: 'budget-ledger', call: 'reserve' \| 'scopes' \| 'estimate' }` (0.5.0) |
@@ -152,7 +152,7 @@ Maps any error to a user-safe message for `error` chunks and `eh.notice`:
 ```ts
 export type StopReason =
   | 'complete'        // model answered without tool calls (finishReason 'stop' or 'other')
-  | 'tool-pending'    // waiting for respond(): approval request or client-side tool (spec 11 §2)
+  | 'tool-pending'    // waiting for respond() / resolveWait(): approval request, client-side tool or external wait (spec 11 §2, §4.2)
   | 'length'          // provider finishReason 'length'
   | 'content-filter'  // provider finishReason 'content-filter'
   | 'error'           // provider/stream/storage/overflow error (see metadata.eharness.error); tool errors do NOT end the turn
@@ -211,6 +211,8 @@ UIs and tests). Changing one is a minor change (it changes what models see).
 | `INTERRUPTED_UNKNOWN` | `Interrupted: no result was recorded for this tool call; it may or may not have taken effect.` | projection and guard (spec 03 §6, spec 06 §6) |
 | `DENIED_NEW_INPUT` | `The user sent a new message instead of answering.` | approval denial reason, `onNewInput: 'deny'` (spec 11 §4.1) |
 | `NOT_EXECUTED_NEW_INPUT` | `Not executed: the user sent a new message.` | client tool error, `onNewInput: 'deny'` |
+| `WAIT_TIMED_OUT` | `The external wait timed out before a result arrived.` | default `onTimeout` of an external wait (0.5.0, spec 11 §4.2) |
+| `WAIT_CANCELLED_NEW_INPUT` | `Cancelled: the user sent a new message while this tool was waiting for an external result.` | open external wait, `onNewInput: 'deny'` (0.5.0, spec 11 §4.1) |
 | `PROGRESS_NUDGE` | `You are not making progress: {what}. Do not repeat it. Try a different approach, or stop and explain what blocks you.` | progress guard reminder (spec 05 §3.2) |
 | `MAX_STEPS_WRAP_UP` | `The step limit of this turn is reached and tools are disabled. Summarize what you did, what is left, and how to continue.` | wrap-up step reminder (spec 05 §3.1) |
 | `TOOL_OUTPUT_TRUNCATED` | `…[truncated {n} chars]…` | output limits (spec 09 §4) |

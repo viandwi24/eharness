@@ -68,6 +68,7 @@ import {
   type RespondPlan,
 } from './interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
+import { pendingCallIds } from './interaction/waits.ts'
 import { hiddenByRewind } from './load-context.ts'
 import { type AbortPoll, createAbortPoll, DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
@@ -127,6 +128,11 @@ export interface TurnHost {
   enqueueWake(): void
   /** Drop queued turns like `session.abort()` (a cross-process abort, spec 05 §9.1). */
   dropQueue(): void
+  /**
+   * The turn parked on external waits and its pending state is stored: enqueue the durable
+   * `wait-timeout` items and arm the live timer (spec 11 §4.2 rule 6). Never throws.
+   */
+  waitsParked(pending: PendingState): Promise<void>
 }
 
 /** The running turn as seen by the session (attach, abort, steer, next-step delivery). */
@@ -467,13 +473,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (!committed) return
     const pending = outcome.stop === 'tool-pending' ? outcome.pending : undefined
     for (const toolCallId of [...openCalls]) {
-      if (
-        pending !== undefined &&
-        (pending.approvals.some((a) => a.toolCallId === toolCallId) ||
-          pending.clientTools.some((c) => c.toolCallId === toolCallId))
-      ) {
-        continue
-      }
+      if (pending !== undefined && pendingCallIds(pending).has(toolCallId)) continue
       interrupted.add(toolCallId)
       write({ type: 'tool-output-error', toolCallId, errorText: INTERRUPTED_TURN })
     }
@@ -673,6 +673,17 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     // 2. load context / validate the hot cache; respond() re-reads the state (freshest pending)
     await host.ensureContext()
     if (op.kind === 'respond' && !rt.state.dirty) await rt.state.load()
+    else if (rt.state.core().pending !== undefined && !rt.state.dirty) {
+      // the cache says "pending": another instance may have resolved it meanwhile (external
+      // waits, spec 11 §4.2) — and patched the pending message, which keeps its id, so the
+      // `lastId` check above cannot see it: reload the state, and the messages when it changed
+      const before = rt.state.core().pending?.messageId
+      await rt.state.load()
+      if (rt.state.core().pending?.messageId !== before) {
+        rt.view = undefined
+        await host.ensureContext()
+      }
+    }
     // hooks of the preparation may change ctx.state: discarded if the turn ends before committing
     stateCheckpoint = rt.state.checkpoint()
 
@@ -1143,12 +1154,23 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
     await healOrphanPending()
     // the pending message: patched for the continuation (respond) or denied (new input)
-    if (plan !== undefined) await continuePending(prep.open, plan)
+    if (plan !== undefined) {
+      await continuePending(prep.open, plan)
+      // results answered here (not recorded before) resolve their waits now
+      for (const e of plan.externals) {
+        if (!e.recorded) rt.events.emit({ type: 'wait-resolved', waitId: e.waitId, by: 'result' })
+      }
+    }
     if (denyPending !== undefined) {
       const pending = denyPending
       const message = rt.view?.find((m) => m.id === pending.messageId)
       if (message !== undefined) await host.persist([patchForNewInput(message, pending)])
       rt.events.emit({ type: 'pending', pending: null })
+      for (const e of pending.externals ?? []) {
+        if (e.result === undefined) {
+          rt.events.emit({ type: 'wait-resolved', waitId: e.waitId, by: 'cancel' })
+        }
+      }
     }
     if (rewind !== undefined) {
       created.push(...(await host.persist([rewind])))
@@ -1275,7 +1297,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
     clientOutputs = []
     for (const answer of answers.toolOutputs) {
-      if ('errorText' in answer) {
+      // errors and recorded external results (already through tool.after / limits) are final
+      if ('errorText' in answer || answer.finished === true) {
         clientOutputs.push(answer)
         continue
       }
@@ -1619,10 +1642,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         final.id = assistantId
         const pending = outcome.pending
         final = answerDanglingToolParts(final, INTERRUPTED_TURN, (part) =>
-          pending === undefined
-            ? false
-            : pending.approvals.some((a) => a.toolCallId === part.toolCallId) ||
-              pending.clientTools.some((c) => c.toolCallId === part.toolCallId),
+          pending === undefined ? false : pendingCallIds(pending).has(part.toolCallId),
         )
         // chunk-answered parts: same shape as answerDanglingToolParts (input {} fallback, no approval)
         final = {
@@ -1678,10 +1698,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         }
       }
       const core = rt.state.core()
-      if (stop === 'tool-pending' && outcome.pending !== undefined) {
-        core.pending = outcome.pending
+      const parked = stop === 'tool-pending' ? outcome.pending : undefined
+      if (parked !== undefined) {
+        core.pending = parked
         rt.state.markDirty()
-        rt.events.emit({ type: 'pending', pending: outcome.pending })
+        rt.events.emit({ type: 'pending', pending: parked })
       }
       if (core.activeTurn?.turnId === turnId) {
         delete core.activeTurn
@@ -1710,6 +1731,8 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       } catch (stateError) {
         rt.log.warn('eharness: end-of-turn state write failed', { error: stateError })
       }
+      // external waits with a timeout: a durable timer item and the live timer (spec 11 §4.2 rule 6)
+      if (stateSaved && parked?.externals !== undefined) await host.waitsParked(parked)
       if (wakeIds.length > 0) {
         if (stateSaved) settleOpInbox('applied')
         else {

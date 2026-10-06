@@ -22,6 +22,7 @@ import type {
   FlushPayload,
   HarnessUIMessage,
   NoticePayload,
+  PendingExternal,
   PendingState,
   RewindPayload,
   StopReason,
@@ -216,6 +217,7 @@ export type InboxItemInput =
     }
   | { kind: 'wake'; messageId: string; at: number; availableAt?: number }
   | { kind: 'abort'; turnId?: string; reason?: string; at: number; availableAt?: number }
+  | { kind: 'wait-timeout'; waitId: string; at: number; availableAt?: number }
 
 /**
  * A stored inbox item: the input plus its id (time-sortable, assigned by the adapter), the
@@ -452,6 +454,13 @@ export interface PendingResponse {
   toolOutputs?: Array<
     { toolCallId: string; output: unknown } | { toolCallId: string; errorText: string }
   >
+  /**
+   * Results of external waits (`externalTool()`, 0.5.0), answered all at once with the rest. An
+   * external wait whose result `resolveWait()` already recorded is used as recorded and must not
+   * be answered again here. A client output for an external call is `EH_INVALID_INPUT`
+   * (`'wrong-kind'`): only the server resolves waits.
+   */
+  externals?: Array<{ waitId: string; output: unknown } | { waitId: string; errorText: string }>
 }
 
 /** A data chunk of a message type. */
@@ -469,6 +478,7 @@ export type SessionEvent<M extends UIMessage = HarnessUIMessage> =
   | { type: 'turn-start'; turnId: string; messageId: string; kind: TurnKind; queued: boolean }
   | { type: 'turn-end'; turnId: string; messageId: string; stop: StopReason }
   | { type: 'pending'; pending: PendingState | null }
+  | { type: 'wait-resolved'; waitId: string; by: 'result' | 'timeout' | 'cancel' }
   | {
       type: 'input-dropped'
       reason: 'tool-pending' | 'aborted' | 'blocked'
@@ -516,6 +526,19 @@ export interface HarnessRun<M extends UIMessage = HarnessUIMessage, O = never> {
   /** `pipeUIMessageStreamToResponse` for Node's `ServerResponse`. */
   pipeTo(response: Parameters<typeof pipeUIMessageStreamToResponse>[0]['response']): Promise<void>
 }
+
+/**
+ * Outcome of `session.resolveWait()`: `continued` (the continuation turn runs), `recorded`
+ * (stored; `remaining` items still wait), `already-resolved` (a result was recorded before:
+ * idempotent no-op) or `not-pending` (unknown wait, or the pending state was consumed).
+ *
+ * @see docs/specs/11-interaction.md#42-external-waits
+ */
+export type ResolveWaitResult<M extends UIMessage = HarnessUIMessage> =
+  | { status: 'continued'; run: HarnessRun<M> }
+  | { status: 'recorded'; remaining: number }
+  | { status: 'already-resolved' }
+  | { status: 'not-pending' }
 
 /**
  * A live session.
@@ -598,6 +621,27 @@ export interface HarnessSession<
   compact(): Promise<M | null>
   /** Forget session approval grants. */
   clearGrants(): Promise<void>
+  /**
+   * Record the result of an external wait (`externalTool()`, spec 11 §4.2) from any instance:
+   * validated against the tool's `outputSchema`, passed through `tool.after` and the output
+   * limits, written with a compare-and-set. The first result wins. When it leaves nothing
+   * pending, the **same** assistant message continues like a `respond()` continuation.
+   * `actor` is reserved for audit. Rejects with `EH_INVALID_INPUT` (`'invalid-result'`),
+   * `EH_STORAGE`, `EH_SESSION_BUSY` (a turn runs here) or `EH_SESSION_CLOSED`.
+   */
+  resolveWait(
+    waitId: string,
+    result: { output: unknown } | { errorText: string },
+    options?: SendOptions & { actor?: ApprovalActor },
+  ): Promise<ResolveWaitResult<M>>
+  /**
+   * Expire every external wait whose `timeoutAt` is due (default `now` = `Date.now()`): each takes
+   * its `onTimeout` result through the same compare-and-set as `resolveWait()`; a pending state
+   * whose waits are all resolved continues. For cron sweepers without an inbox.
+   */
+  expireWaits(now?: number): Promise<{ expired: string[]; run?: HarnessRun<M> }>
+  /** The external waits of the stored pending state (a read helper for UIs and sweepers). */
+  pendingWaits(): Promise<PendingExternal[]>
   /** Read history for UIs (newest `limit` before `beforeId`, chronological). */
   messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
   /** Current context stats and pending state. */

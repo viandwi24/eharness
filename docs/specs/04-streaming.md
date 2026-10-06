@@ -44,7 +44,7 @@ Turn kinds (spec 01 `TurnInfo.kind`) differ only at the start:
 | Kind | Assistant message | Stream start |
 |---|---|---|
 | `send`, `regenerate`, `edit`, `wake`, `queue` | new | `start` with a new id |
-| `respond` | the pending message A, **continued** | `createUIMessageStream({ originalMessages: [A'] })` where A' is the patched stored A (spec 11 §4); `start { messageId: A.id }` without metadata (A's `createdAt`/`turnId` are kept); the first chunks are `tool-output-available` / `tool-output-error` for client tool answers (written by the core) and `tool-output-available` / `tool-output-denied` for the answered approvals (AI SDK), **before** any `start-step` |
+| `respond` | the pending message A, **continued** | `createUIMessageStream({ originalMessages: [A'] })` where A' is the patched stored A (spec 11 §4); `start { messageId: A.id }` without metadata (A's `createdAt`/`turnId` are kept); the first chunks are `tool-output-available` / `tool-output-error` for client tool answers (written by the core) and `tool-output-available` / `tool-output-denied` for the answered approvals (AI SDK), **before** any `start-step`; recorded external-wait results (spec 11 §4.2) are written like client tool answers |
 
 A continuation must stream into the existing UI message: a fresh message fails in AI SDK with
 `No tool invocation found for tool call ID`. `usage` and `steps` in the final metadata are
@@ -209,15 +209,16 @@ export type SessionEvent =
   | { type: 'turn-start'; turnId: string; messageId: string; kind: TurnInfo['kind']; queued: boolean }
   | { type: 'turn-end'; turnId: string; messageId: string; stop: StopReason }
   | { type: 'pending'; pending: PendingState | null }       // spec 11 §2
+  | { type: 'wait-resolved'; waitId: string; by: 'result' | 'timeout' | 'cancel' }   // 0.5.0, spec 11 §4.2: in the process that recorded / cancelled the wait
   | { type: 'input-dropped'; reason: 'tool-pending' | 'aborted' | 'blocked'; text: string; clientId?: string }  // spec 11 §6.1
   | { type: 'message'; message: AgentMessage }               // injected kinds, compaction markers
   | { type: 'data'; chunk: Extract<InferUIMessageChunk<AgentMessage>, { type: `data-${string}` }> }
   | { type: 'status'; running: boolean }
   // durable inbox (0.4.0, spec 05 §12): an item was stored by this process / applied (acked) here
-  | { type: 'inbox-enqueued'; inboxId: string; kind: 'send' | 'wake' | 'abort'; mode?: 'queue' | 'steer' | 'collect' }
+  | { type: 'inbox-enqueued'; inboxId: string; kind: 'send' | 'wake' | 'abort' | 'wait-timeout'; mode?: 'queue' | 'steer' | 'collect' }
   | { type: 'inbox-drained'; inboxIds: string[]; turnId?: string }
   // 0.5.0, spec 05 §12 rule 12: an item was dead-lettered by this process (after the adapter call)
-  | { type: 'inbox-dead'; inboxId: string; kind: 'send' | 'wake' | 'abort'; reason: string; attempts: number }
+  | { type: 'inbox-dead'; inboxId: string; kind: 'send' | 'wake' | 'abort' | 'wait-timeout'; reason: string; attempts: number }
 ```
 
 ## 7. `HarnessRun` and responses

@@ -76,3 +76,10 @@ export const OUTPUT_INSTRUCTION: string =
  */
 export const OUTPUT_RETRY: string =
   'Your final answer is missing or invalid: {error}\nGive the final answer again; it must match the required schema.'
+
+/** Error result of an external wait that timed out without its own `onTimeout` (spec 11 §4.2). */
+export const WAIT_TIMED_OUT: string = 'The external wait timed out before a result arrived.'
+
+/** Error result of an external wait cancelled because the user sent new input (spec 11 §4.2). */
+export const WAIT_CANCELLED_NEW_INPUT: string =
+  'Cancelled: the user sent a new message while this tool was waiting for an external result.'

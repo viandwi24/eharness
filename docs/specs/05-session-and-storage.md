@@ -115,6 +115,13 @@ export interface HarnessSession<
    * loading it into the session: no recovery, spec 05 §9).
    */
   messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
+  /** 0.5.0: record the result of an external wait; continues the message when nothing else is open (spec 11 §4.2). */
+  resolveWait(waitId: string, result: { output: unknown } | { errorText: string },
+              options?: SendOptions & { actor?: ApprovalActor }): Promise<ResolveWaitResult<M>>
+  /** 0.5.0: expire due external waits (spec 11 §4.2 rule 6). */
+  expireWaits(now?: number): Promise<{ expired: string[]; run?: HarnessRun<M> }>
+  /** 0.5.0: the external waits of the stored pending state. */
+  pendingWaits(): Promise<PendingExternal[]>
   /** Current context stats (spec 06 §2) and pending state (spec 11 §2). */
   stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
 
@@ -234,7 +241,10 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
 2. **Load context** (§5) if the session has no cache; otherwise validate the cache (§6): if the
    adapter has `lastId`, compare before writing anything and on mismatch reload **state and
    messages**. A `respond()` always re-reads the state snapshot here (its answers are checked
-   against the freshest `pending`, §8).
+   against the freshest `pending`, §8). So does any other operation whose cache says "pending"
+   (0.5.0): another instance may have resolved it (spec 11 §4.2) and patched the pending message,
+   which keeps its id, so `lastId` cannot see it; when the stored `pending` differs, the messages
+   are reloaded too.
 3. **Active-turn check** (§9): an `activeTurn` that is not the current turn is either live
    (→ `EH_SESSION_BUSY`) or stale (→ recovered at the commit point).
 4. **Operation checks:** `respond` validates against `state.core.pending` (spec 11 §4);
@@ -303,7 +313,9 @@ written in this order:
     receive everything up to `message-metadata` now; the terminal `finish` / `abort` chunk is held
     back until step 17 completed.
 17. **End sequence (in `onEnd`):** `message.beforeSave` + final save; set `state.core.pending`
-    when `stop: 'tool-pending'`; clear `activeTurn`; persist state if dirty (§7); update cache;
+    when `stop: 'tool-pending'`; clear `activeTurn`; persist state if dirty (§7); then, when
+    that pending state holds external waits with a `timeoutAt`, enqueue their `wait-timeout`
+    inbox items and arm the live timer (spec 11 §4.2 rule 6); update cache;
     emit `turn-end`; `turn.end` hooks; release lock; clear running flag; resolve `run.result`;
     start the next queued turn, if any; **then** write the held-back `finish` / `abort` and close
     `run.stream`. So the end of the stream implies the turn is persisted and the session is free:
@@ -358,10 +370,16 @@ Evaluate in this order; the first match decides:
 | 2 | `finishReason` `'length'` / `'content-filter'` | `'length'` / `'content-filter'` |
 | 3 | `finishReason` `'stop'` or `'other'` | `'complete'` |
 | 3a | `SendOptions.output` in tool mode (0.4.0, §3.3): `finishReason: 'tool-calls'` and a call of the output tool of this step succeeded (other calls of the step still ran) | `'complete'` |
-| 4 | `finishReason: 'tool-calls'` and some tool call of the step is waiting: approval requested by the user-approval path, or a client tool (no `execute`) without output | `'tool-pending'` |
+| 4 | `finishReason: 'tool-calls'` and some tool call of the step is waiting: approval requested by the user-approval path, a client tool (no `execute`) without output, or (0.5.0) a call of an `externalTool()` (spec 11 §4.2) | `'tool-pending'` |
 | 5 | a `step.end` hook returned `{ stop }` | `plugin:<plugin>:<reason>` |
 | 6 | step count reached the turn's step budget (`maxSteps`, extended by `turn.beforeEnd`) | `'max-steps'` |
 | 7 | cumulative output tokens (incl. `addUsage`) > `loop.maxTurnOutputTokens` | `'cost-cap'` |
+
+Rule 4 with external waits (0.5.0): the `start` callbacks of the step's external calls run **after**
+rule 4 matched (so only when the turn really stops `'tool-pending'`), once each, in tool-call
+order, before the pending state is stored at step 17. A call whose `start` threw is answered with
+an error result (`tool-output-error` chunk, a `tool` message on the model wire); when no other
+call is pending the step is re-evaluated with rules 5–7 and the turn continues.
 
 If none matches (`finishReason: 'tool-calls'` and every call has a result — automatic denials and
 tool errors count as results), the loop continues — unless the progress guard (§3.2) found the
@@ -621,7 +639,7 @@ export interface SessionStateSnapshot {
     usage?: { inputTokens: number; outputTokens: number; turns: number; costUsd?: number }   // costUsd: spec 12
     /** The turn currently running somewhere (§9). */
     activeTurn?: ActiveTurn
-    /** Approvals / client tool calls waiting for respond() (spec 11 §2). */
+    /** Approvals / client tool calls / external waits waiting for respond() or resolveWait() (spec 11 §2, §4.2). */
     pending?: PendingState
     /** Session approval grants (spec 11 §3.1). */
     grants?: Record<string, 'always' | 'never'>
@@ -720,6 +738,11 @@ export interface ActiveTurn {
   set `metadata.eharness.stop = 'interrupted'` and save it; save an `eh.notice` (level `warning`,
   code `EH_TURN_INTERRUPTED`); clear `activeTurn`; emit `turn-end` with `stop: 'interrupted'`.
   Then the operation continues normally. Tools that were running are **not** re-executed.
+  An external wait (spec 11 §4.2) whose turn died between `start` and the pending-state write
+  is answered `INTERRUPTED_CRASH` like any dangling call and `start` is not run again; a wait
+  recorded by `resolveWait()` whose continuation died before its commit point stays in
+  `state.core.pending` (results recorded) and continues at the next `respond()`, `expireWaits()`
+  or new input.
 - Reads (`messages()`, `stats()`) never recover; UIs see the unfinished message until the next
   operation. `stats()` reports `activeTurn` so a UI can show "interrupted / resume".
 - `config.recovery: false` disables tracking (one state write less per turn); a crashed turn then
@@ -878,6 +901,7 @@ export type InboxItemInput = (
   | { kind: 'send'; mode: 'queue' | 'steer' | 'collect'; input: SerializedInput; collect?: CollectOptions; at: number }
   | { kind: 'wake'; messageId: string; at: number }     // inject(…, { wake }) from another process
   | { kind: 'abort'; turnId?: string; reason?: string; at: number }
+  | { kind: 'wait-timeout'; waitId: string; at: number }   // 0.5.0: durable timeout of an external wait (rule 16)
 ) & { availableAt?: number }   // 0.5.0: epoch ms; a durable timer (rule 14)
 export type InboxItem = InboxItemInput & { id: string; attempts: number; lastError?: string }
 export type DeadInboxItem = InboxItem & { sessionId: string; deadAt: number; reason: string }
@@ -994,8 +1018,8 @@ Normative rules:
    `aborted` or `timeout` it is reported as `input-dropped` and acked, except when the session is
    closing (released for the next holder).
 8. **Pending approvals hold the inbox** like the in-memory queue (spec 11 §6.2): while
-   `state.core.pending` is set no unit starts (items are released); abort items are still
-   drained. The turn of `respond()` drains when it ends.
+   `state.core.pending` is set no unit starts (items are released); abort items and
+   `wait-timeout` items (rule 16) are still drained. The turn of `respond()` drains when it ends.
 9. **Events.** `{ type: 'inbox-enqueued'; inboxId; kind; mode? }` in the enqueuing process;
    `{ type: 'inbox-drained'; inboxIds; turnId? }` in the process that applied (acked) the items
    (`turnId` of the turn that applied them); `{ type: 'inbox-dead'; inboxId; kind; reason;
@@ -1048,6 +1072,18 @@ without it releases carry no options and rules 1–10 are the whole contract.
     items claimable in their original id order; the core exposes no wrapper (it is an adapter
     operation; `docs/guides/multi-instance.md` shows an admin route). `abort` items are never
     dead-lettered (they are acked when stale, rule 4).
+
+16. **Wait timeouts (0.5.0, ADR-0027).** `{ kind: 'wait-timeout'; waitId; at; availableAt }` is a
+    durable timer for an external wait (spec 11 §4.2 rule 6): the session that parked enqueues one
+    per wait with a `timeoutAt`, with `availableAt: timeoutAt`, after its pending state was
+    stored. Whichever instance drains it once due records the wait's `onTimeout` result with the
+    same compare-and-set as `resolveWait()`, then acks the item: an item whose wait is already
+    resolved or gone (the pending state was consumed) is acked without effect. Like `abort` items
+    it is **not** held by pending approvals. An instance with a turn running defers it
+    (released, attempt undone); a failing record is a failed attempt (rule 11). The item
+    carries no input, so the stored-view dedupe does not apply (recording is idempotent). Adapters
+    store it like any item (the `availableAt` timer is rule 14); `InboxItemInput` gains this kind,
+    so a custom adapter must store unknown members of the union as given.
 
 At-least-once and dedupe (rule 5) are unchanged: a redelivered item already applied is acked by
 the stored-view dedupe before any attempt logic runs. With a 0.4 adapter (no new members,

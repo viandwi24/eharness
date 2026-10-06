@@ -1,6 +1,6 @@
 # P23 — Park-and-resume: external waits
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#1** (verdict GENERIC-core; LangGraph `interrupt`, OpenAI Agents
 `RunState` interruptions, Pydantic AI deferred tools, Mastra suspend/resume, Inngest
@@ -158,52 +158,56 @@ Normative rules (spec 11 new §4.2 "External waits"):
 
 ## Checklist
 
-- [ ] Spike first (record the result in this file): confirm with the scripted model that a tool
+- [x] Spike first (record the result in this file): confirm with the scripted model that a tool
       without `execute` plus a core-side `start` gives the stored parts / chunks we need, and that
       projection of a resolved external part round-trips (ADR-0011). Keep the marker-in-`execute`
       variant rejected unless the spike fails (open question 1).
-- [ ] ADR-0027 "External waits: park at the tool boundary" (amends ADR-0012/0014): snapshot vs
+      **Spike result:** confirmed by `waits.int.test.ts` (no new stream shape): the call stays
+      `input-available` while parked, the continuation streams `tool-output-available` into the
+      same message, and a cold reload projects `user, assistant(call), tool(result), assistant`
+      identical to the warm continuation prompt. The marker variant stays rejected.
+- [x] ADR-0027 "External waits: park at the tool boundary" (amends ADR-0012/0014): snapshot vs
       replay, `externalTool` vs a marker, partial recording, CAS, timeouts via inbox timers,
       versioned pending.
-- [ ] Specs: 11 §2 (shape, `v`), new §4.2 (rules 1–10), §4.1, §7 (kind check), §8; 05 §3 / §3.1
+- [x] Specs: 11 §2 (shape, `v`), new §4.2 (rules 1–10), §4.1, §7 (kind check), §8; 05 §3 / §3.1
       (pending kinds, `start` before the commit point), §7 (`core.pending`), §9 (recovery), §12
       (`wait-timeout` items); 09 §6 (external vs client); 04 §6 (`wait-resolved`); 03 §3; 10 §5
       (`WAIT_TIMED_OUT`, `WAIT_CANCELLED_NEW_INPUT`), §4 note on `'tool-pending'`.
-- [ ] Implement `externalTool()`, wait registry in `src/session/interaction/waits.ts`,
+- [x] Implement `externalTool()`, wait registry in `src/session/interaction/waits.ts`,
       `resolveWait`, `expireWaits`, `pendingWaits`, `respond({ externals })`, timers, inbox
       `wait-timeout` items, events, fixed texts (exported).
-- [ ] Tests (`src/session/interaction/waits.int.test.ts`):
-  - [ ] park → `tool-pending` with `externals`; `resolveWait` from a second simulated instance
+- [x] Tests (`src/session/interaction/waits.int.test.ts`):
+  - [x] park → `tool-pending` with `externals`; `resolveWait` from a second simulated instance
         continues the same message; stored order = model order after cold reload;
-  - [ ] two parallel waits: first `recorded` (`remaining: 1`), second `continued`;
-  - [ ] wait + approval: results recorded, `respond({ approvals })` continues with both;
-  - [ ] duplicate result → `already-resolved`; result after timeout → `already-resolved`;
+  - [x] two parallel waits: first `recorded` (`remaining: 1`), second `continued`;
+  - [x] wait + approval: results recorded, `respond({ approvals })` continues with both;
+  - [x] duplicate result → `already-resolved`; result after timeout → `already-resolved`;
         concurrent result/timeout race with a `setIf` state adapter: exactly one wins;
-  - [ ] invalid result vs `outputSchema` → `EH_INVALID_INPUT` `'invalid-result'`, nothing stored;
-  - [ ] `handleChatRequest` cannot answer an external wait; `respond({ toolOutputs })` → `'wrong-kind'`;
-  - [ ] timeout via live timer, via inbox `wait-timeout` (two instances, holder gone), via
+  - [x] invalid result vs `outputSchema` → `EH_INVALID_INPUT` `'invalid-result'`, nothing stored;
+  - [x] `handleChatRequest` cannot answer an external wait; `respond({ toolOutputs })` → `'wrong-kind'`;
+  - [x] timeout via live timer, via inbox `wait-timeout` (two instances, holder gone), via
         `expireWaits`; `onTimeout` output vs errorText;
-  - [ ] new input with `'deny'` cancels waits; late result → `not-pending`;
-  - [ ] crash between `start` and commit → `INTERRUPTED_CRASH`, `start` not re-run; crash after
+  - [x] new input with `'deny'` cancels waits; late result → `not-pending`;
+  - [x] crash between `start` and commit → `INTERRUPTED_CRASH`, `start` not re-run; crash after
         recording → continuation on next operation;
-  - [ ] throwing `start` → error result, model continues;
-  - [ ] 0.4 pending state (no `v`, no `externals`) still answered by `respond()`; goldens of
+  - [x] throwing `start` → error result, model continues;
+  - [x] 0.4 pending state (no `v`, no `externals`) still answered by `respond()`; goldens of
         approval / client-tool flows unchanged.
-- [ ] `examples/external-wait.ts` (offline: a "build" tool parks, a simulated webhook resolves it;
+- [x] `examples/external-wait.ts` (offline: a "build" tool parks, a simulated webhook resolves it;
       in `examples.test.ts`); guide `docs/guides/external-waits.md` (webhook route, correlation,
       sweeper, timeouts, idempotent `start`).
-- [ ] Changeset; board; gate.
+- [x] Changeset; board; gate.
 
 ## Acceptance criteria
 
-- [ ] A turn parks without holding a process; a result delivered to another instance continues
+- [x] A turn parks without holding a process; a result delivered to another instance continues
       the same assistant message; no tool runs twice; no wait resolves twice.
-- [ ] Every pending item with `timeoutAt` resolves exactly once with its explicit timeout result
+- [x] Every pending item with `timeoutAt` resolves exactly once with its explicit timeout result
       across the three timeout paths.
-- [ ] Clients cannot resolve external waits through `handleChatRequest`.
-- [ ] Sessions that never use `externalTool` are byte-identical to 0.4 except `PendingState.v`
+- [x] Clients cannot resolve external waits through `handleChatRequest`.
+- [x] Sessions that never use `externalTool` are byte-identical to 0.4 except `PendingState.v`
       (documented; goldens updated once in a separate commit with the reason).
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -234,6 +238,19 @@ Normative rules (spec 11 new §4.2 "External waits"):
    waits rely on the inbox item or `expireWaits`. Pick: cap the in-process timer and document.
 5. **`start` without a turn context** (e.g. needs `ctx.turn.addUsage`). Pick: `start` runs inside
    the turn (before its commit point), so `ctx.turn` is live.
+
+6. **`resolveWait()` while a turn runs here.** Pick: `EH_SESSION_BUSY` (like `respond()`); the
+   inbox path defers, the live timer re-arms at turn end. `opts.actor` is accepted but unused.
+7. **Recording vs continuing after a crash.** Pick: a replayed result stays `already-resolved`
+   (pure no-op); a fully recorded pending state is continued by `respond({})`, `expireWaits()`
+   or new input (deny keeps recorded results). No dedicated "resume" API.
+8. **`respond({ externals })` is not validated against `outputSchema`** (it is a trusted server
+   call); `resolveWait()` is. Revisit if the review asks.
+9. **Stale holder cache.** A session whose cache says "pending" now reloads state (and messages,
+   when the pending message changed) at the start of any turn operation, because a continuation
+   from another instance keeps the message id, so the `lastId` check cannot see it.
+10. **`v: 2` on every pending state** (rule 9), so the unit tests that compared pending exactly
+    were updated once (commit `test: pending v:2`); no golden file contained pending state.
 
 ## Requests to other phases
 
