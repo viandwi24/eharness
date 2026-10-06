@@ -1,6 +1,6 @@
 # P21 — Tool risk `'external'`, MCP annotations, approval routing
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art analysis item **#7** (maintainer-only, `docs/tmp/`, not committed). Verdict:
 GENERIC-core for the metadata; the routing is a policy the application injects.
