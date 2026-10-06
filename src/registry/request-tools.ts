@@ -88,6 +88,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+/** Keywords whose value maps names to schemas. */
+const NAME_MAPS: ReadonlySet<string> = new Set([
+  'properties',
+  'patternProperties',
+  '$defs',
+  'definitions',
+  'dependentSchemas',
+])
+
+/** Names a client can never take: they would reach the prototype of a plain record. */
+const PROTOTYPE_NAMES: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype'])
+
+/** `text` cut to at most `max` UTF-16 units without splitting a surrogate pair. */
+function sliceChars(text: string, max: number): string {
+  if (text.length <= max) return text
+  let end = Math.max(0, max)
+  const last = text.charCodeAt(end - 1)
+  if (end > 0 && last >= 0xd800 && last <= 0xdbff) end--
+  return text.slice(0, end)
+}
+
+/** The last `max` UTF-16 units of `text` without starting inside a surrogate pair. */
+function sliceTail(text: string, max: number): string {
+  if (max <= 0) return ''
+  if (text.length <= max) return text
+  let start = text.length - max
+  const first = text.charCodeAt(start)
+  if (first >= 0xdc00 && first <= 0xdfff) start++
+  return text.slice(start)
+}
+
 /** The first `$ref` that is not a pointer into the document, or a reason the walk gave up. */
 function schemaProblem(schema: unknown): string | undefined {
   let nodes = 0
@@ -105,6 +136,17 @@ function schemaProblem(schema: unknown): string | undefined {
     for (const [key, value] of Object.entries(node)) {
       if (key === '$ref' && !(typeof value === 'string' && value.startsWith('#'))) {
         return 'has a `$ref` outside the document'
+      }
+      if (key === '$dynamicRef' || key === '$recursiveRef') {
+        return `has a \`${key}\` (dynamic references are not supported)`
+      }
+      if (NAME_MAPS.has(key) && isRecord(value)) {
+        // the keys of these maps are names (a property may be called `$ref`), not keywords
+        for (const sub of Object.values(value)) {
+          const found = walk(sub, depth + 2)
+          if (found !== undefined) return found
+        }
+        continue
       }
       const found = walk(value, depth + 1)
       if (found !== undefined) return found
@@ -161,6 +203,10 @@ export function buildRequestTools(
       problem(`must match ${String(TOOL_NAME_PATTERN)}`)
       continue
     }
+    if (PROTOTYPE_NAMES.has(name)) {
+      problem('is a reserved name')
+      continue
+    }
     if (RESERVED_TOOL_NAMES.includes(name) || taken.has(name)) {
       problem('collides with a server tool or a reserved name')
       continue
@@ -214,7 +260,7 @@ export function buildRequestTools(
       problem('is not allowed')
       continue
     }
-    const description = (declaration.description ?? '').slice(0, MAX_DESCRIPTION_CHARS)
+    const description = sliceChars(declaration.description ?? '', MAX_DESCRIPTION_CHARS)
     built.push({
       name,
       description,
@@ -252,6 +298,17 @@ function escapeAttribute(value: string): string {
     .replace(/\s+/g, ' ')
 }
 
+/** `escapeAttribute(text)`, cut (before escaping a character, never inside an entity) to `max`. */
+function fitEscaped(text: string, max: number): string {
+  let out = ''
+  for (const char of text) {
+    // whitespace runs collapse to one space: escape the running string, not each character
+    if (escapeAttribute(out + char).length > max) break
+    out += char
+  }
+  return escapeAttribute(out)
+}
+
 /** Share `max` characters among texts: short texts keep everything, the rest share evenly. */
 function shares(lengths: readonly number[], max: number): number[] {
   const order = lengths.map((length, i) => ({ length, i })).sort((a, b) => a.length - b.length)
@@ -270,11 +327,13 @@ function trimMiddle(text: string, max: number): string {
   if (text.length <= max) return text
   const marker = (omitted: number): string => `\n[… ${omitted} characters omitted …]\n`
   let available = max - marker(text.length).length
-  if (available < 20) return text.slice(0, Math.max(0, max))
+  if (available < 20) return sliceChars(text, max)
   available = max - marker(text.length - available).length
   const head = Math.ceil(available / 2)
   const tail = available - head
-  return `${text.slice(0, head)}${marker(text.length - available)}${tail > 0 ? text.slice(-tail) : ''}`
+  const start = sliceChars(text, head)
+  const end = sliceTail(text, tail)
+  return `${start}${marker(text.length - start.length - end.length)}${end}`
 }
 
 /**
@@ -323,20 +382,31 @@ export function renderPageContext(
       text = json
     }
     items.push({
-      description: raw.description.slice(0, MAX_CONTEXT_LABEL_CHARS),
+      description: sliceChars(raw.description, MAX_CONTEXT_LABEL_CHARS),
       text: neutralizeTags(text, ['page-context', 'system-reminder']),
     })
   }
   if (maxChars <= 0) return undefined
+  let limited = 0
+  // the escaped descriptions count toward `maxChars` too (at most half of it): the block is bounded
+  const labels = items.map((item) => escapeAttribute(item.description))
+  const labelShares = shares(
+    labels.map((label) => label.length),
+    Math.floor(maxChars / 2),
+  )
+  const kept = items.map((item, i) => {
+    const label = fitEscaped(item.description, labelShares[i] as number)
+    if (label.length !== (labels[i] as string).length) limited++
+    return label
+  })
   const budget = shares(
     items.map((item) => item.text.length),
-    maxChars,
+    maxChars - kept.reduce((sum, label) => sum + label.length, 0),
   )
-  let limited = 0
   const blocks = items.map((item, i) => {
-    const kept = trimMiddle(item.text, budget[i] as number)
-    if (kept.length !== item.text.length) limited++
-    return `<page-context description="${escapeAttribute(item.description)}">\n${kept.replace(/\n$/, '')}\n</page-context>`
+    const text = trimMiddle(item.text, budget[i] as number)
+    if (text.length !== item.text.length) limited++
+    return `<page-context description="${kept[i]}">\n${text.replace(/\n$/, '')}\n</page-context>`
   })
   if (limited > 0) {
     warn?.(

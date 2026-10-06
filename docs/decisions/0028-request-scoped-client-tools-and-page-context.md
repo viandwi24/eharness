@@ -30,7 +30,9 @@ the provider's prompt cache from the tools onwards (ADR-0013).
   (`client_…`) is added: the frontend handles calls by its own names, and a collision is rejected
   rather than renamed (a rename would silently change what the frontend sees).
 - **No implied permission.** A declaration becomes a tool without `execute` with no `metadata`
-  (risk `unknown`); approval policy, risk routing and `tool.approve` hooks apply unchanged. It never
+  (risk `unknown`); approval policy, risk routing and `tool.approve` hooks apply unchanged. An approved
+  call parks as a client call (the approving `respond()` stops `tool-pending` with it in
+  `clientTools`, without a model step); the server never runs it. It never
   executes server code; its output passes `tool.after` and the output limits.
 - **Fixed position, honest cache cost.** Request tools sit after `tool_search` and before the
   output tool, sorted by name. Any change busts the cached prefix of that request; the core warns

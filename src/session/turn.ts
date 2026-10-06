@@ -37,6 +37,7 @@ import {
   toolSearchNames,
   type UsageTotals,
 } from '../loop/steps.ts'
+import { waitIdOf } from '../loop/stop.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { DENIED_NEW_INPUT, INTERRUPTED_CRASH, INTERRUPTED_TURN } from '../messages/texts.ts'
 import { answerDanglingToolParts } from '../messages/tool-parts.ts'
@@ -318,6 +319,14 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   const inbox = createTurnInputQueue()
   /** Validated respond() answers. */
   let plan: RespondPlan | undefined
+  /**
+   * Approved calls of tools without `execute` (client tools): the continuation does not run a
+   * step; it parks them as client calls (spec 11 §5). Set at the commit point.
+   */
+  let parkedPending: PendingState | undefined
+  /** Tool call ids of `parkedPending` and of approved server calls kept pending beside them. */
+  const parkedCalls = new Set<string>()
+  const deferredCalls = new Set<string>()
   /** Pending state denied by this turn's new input (`onNewInput: 'deny'`). */
   let denyPending: PendingState | undefined
   /** The eh.rewind marker of regenerate/edit (saved at the commit point). */
@@ -1033,6 +1042,50 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     return { input: current, contexts }
   }
 
+  /**
+   * Approved calls of tools without `execute` park as client calls instead of running a step
+   * (spec 11 §5): the new pending state holds them (with the request-scoped timeout fields) and
+   * the approved server calls of the same batch, which keep waiting for it.
+   */
+  function planParking(registry: TurnRegistry): void {
+    if (plan === undefined) return
+    const parked = plan.approvals.filter(
+      (a) =>
+        a.approved && registry.clientTools.has(a.toolName) && !registry.externals.has(a.toolName),
+    )
+    if (parked.length === 0) return
+    const next: PendingState = {
+      v: 2,
+      messageId: plan.pending.messageId,
+      approvals: [],
+      clientTools: [],
+    }
+    for (const answer of parked) {
+      const call: PendingState['clientTools'][number] = {
+        toolCallId: answer.toolCallId,
+        toolName: answer.toolName,
+      }
+      const meta = registry.requestTools.get(answer.toolName)
+      if (meta?.timeoutMs !== undefined) {
+        call.waitId = waitIdOf(answer.toolCallId)
+        call.timeoutAt = Date.now() + meta.timeoutMs
+        call.onTimeout = structuredClone(meta.onTimeout)
+      }
+      next.clientTools.push(call)
+      parkedCalls.add(answer.toolCallId)
+    }
+    // approved calls that would run on the server wait until the client answered (one step runs
+    // after every call is answered); the answers are given again with the client output
+    for (const answer of plan.approvals) {
+      if (!answer.approved || parkedCalls.has(answer.toolCallId)) continue
+      const entry = plan.pending.approvals.find((a) => a.approvalId === answer.approvalId)
+      if (entry === undefined) continue
+      next.approvals.push(structuredClone(entry))
+      deferredCalls.add(answer.toolCallId)
+    }
+    parkedPending = next
+  }
+
   // ─── commit point (spec 05 §3 steps 11–12) ────────────────────────────────────────────────
   async function commit(prep: Extract<Prepared, { kind: 'turn' }>): Promise<void> {
     const core = rt.state.core()
@@ -1083,8 +1136,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       needWrite = true
     }
     // consume (respond) or deny (new input) the pending state in the same write (spec 11 §4, §4.1)
+    if (plan !== undefined) planParking(prep.registry as TurnRegistry)
     if ((plan !== undefined || denyPending !== undefined) && core.pending !== undefined) {
-      delete core.pending
+      // approved client-tool calls park in the same compare-and-set write that consumes the
+      // approvals: exactly once, never executed server-side (spec 11 §5)
+      if (parkedPending !== undefined) core.pending = structuredClone(parkedPending)
+      else delete core.pending
       needWrite = true
     }
     if (plan !== undefined) {
@@ -1274,6 +1331,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const pendingOf = (pending: PendingState | undefined, id: string) =>
       pending?.approvals.find((a) => a.approvalId === id)
     for (const answer of plan?.approvals ?? []) {
+      if (deferredCalls.has(answer.toolCallId)) continue // reported when it is answered for good
       const entry = pendingOf(plan?.pending, answer.approvalId)
       await reportDecision(
         deps,
@@ -1350,7 +1408,12 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       )
       clientOutputs.push({ ...answer, output })
     }
-    const patched = patchForRespond(message, answers.approvals, clientOutputs)
+    const patched = patchForRespond(
+      message,
+      answers.approvals.filter((a) => !deferredCalls.has(a.toolCallId)),
+      clientOutputs,
+      parkedCalls,
+    )
     baseMessage = patched
     original = [patched as UIMessage]
     const [saved] = await host.persist([patched])
@@ -1402,7 +1465,24 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
               },
         )
       }
-      for (const answer of plan.approvals) openCalls.add(answer.toolCallId)
+      for (const answer of plan.approvals) {
+        if (parkedCalls.has(answer.toolCallId) || deferredCalls.has(answer.toolCallId)) continue
+        openCalls.add(answer.toolCallId)
+      }
+      // approved client-tool calls are open for the client again (not answered by the server)
+      for (const toolCallId of parkedCalls) {
+        const part = baseMessage?.parts.find(
+          (p) => (p as { toolCallId?: string }).toolCallId === toolCallId,
+        ) as { type: string; toolName?: string; input?: unknown } | undefined
+        if (part === undefined) continue
+        write({
+          type: 'tool-input-available',
+          toolCallId,
+          toolName: part.toolName ?? part.type.replace(/^tool-/, ''),
+          input: part.input ?? {},
+          ...(part.type === 'dynamic-tool' ? { dynamic: true } : {}),
+        })
+      }
     }
     if (prep.blockNotice !== undefined) {
       outcome = { stop: 'blocked', steps: 0, model: info.model }
@@ -1430,6 +1510,16 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
     }
     const registry = prep.registry as TurnRegistry
+    if (parkedPending !== undefined) {
+      // the approved calls are the client's to run: no model step until it answers (spec 11 §5)
+      outcome = {
+        stop: 'tool-pending',
+        steps: 0,
+        model: info.model,
+        pending: structuredClone(parkedPending),
+      }
+      return writeEnd()
+    }
     try {
       const view = rt.view ?? []
       const messageId = assistantId as string

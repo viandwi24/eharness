@@ -666,3 +666,276 @@ describe('page context', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order)
   })
 })
+
+/** The assistant message `useChat` sends after the user answered an approval. */
+const approvedMessage = (
+  messageId: string,
+  toolName: string,
+  pending: PendingState,
+  approved: boolean,
+) => {
+  const entry = pending.approvals[0] as NonNullable<PendingState['approvals'][number]>
+  return {
+    id: messageId,
+    role: 'assistant',
+    parts: [
+      {
+        type: `tool-${toolName}`,
+        toolCallId: entry.toolCallId,
+        state: 'approval-responded',
+        input: {},
+        approval: { id: entry.approvalId, approved },
+      },
+    ],
+  } as unknown as UIMessage
+}
+
+describe('client tools: an approved call is parked for the client, never run on the server', () => {
+  const approval = { risk: { unknown: 'user-approval' } } as const
+
+  test('request-scoped: approval, then the client output, in the same message', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'wipe', input: {} }] },
+      { text: 'Wiped.' },
+    ])
+    const { session } = instance(shared, { model, approval })
+    const clientTools = [decl('wipe')]
+    const first = await handleChatRequest(
+      session(),
+      { messages: [userMessage('wipe it')], clientTools } as ChatRequestBody,
+      enabled,
+    ).result
+    expect(first.stop).toBe('tool-pending')
+    const second = await handleChatRequest(
+      session(),
+      {
+        messages: [
+          userMessage('wipe it'),
+          approvedMessage(first.messageId as string, 'wipe', first.pending as PendingState, true),
+        ],
+        clientTools,
+      } as ChatRequestBody,
+      enabled,
+    ).result
+    expect(second.stop).toBe('tool-pending')
+    expect(second.messageId).toBe(first.messageId)
+    expect(second.pending?.approvals).toEqual([])
+    expect(second.pending?.clientTools).toEqual([{ toolCallId: 'call-0-0', toolName: 'wipe' }])
+    expect(model.calls).toHaveLength(1) // no model call until the client answered
+    const parked = (await stored(shared)).find((m) => m.id === first.messageId)
+    expect(parked?.parts.find((p) => p.type === 'tool-wipe')).toMatchObject({
+      state: 'input-available',
+    })
+    expect((await shared.state.get('s1'))?.core.pending).toMatchObject({
+      clientTools: [{ toolCallId: 'call-0-0' }],
+    })
+
+    const third = await handleChatRequest(
+      session(),
+      {
+        messages: [
+          userMessage('wipe it'),
+          answered(first.messageId as string, 'wipe', 'call-0-0', 'wiped'),
+        ],
+        clientTools,
+      } as ChatRequestBody,
+      enabled,
+    ).result
+    expect(third.stop).toBe('complete')
+    expect(third.messageId).toBe(first.messageId)
+    const message = (await stored(shared)).find((m) => m.id === first.messageId)
+    expect(message?.parts.find((p) => p.type === 'tool-wipe')).toMatchObject({
+      state: 'output-available',
+      output: 'wiped',
+    })
+    expect(JSON.stringify(model.prompts[1])).toContain('wiped')
+    expect(JSON.stringify(message)).not.toContain('Interrupted')
+  })
+
+  test('server-registered client tool, answered through respond({ toolOutputs })', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'wipe', input: {} }] },
+      { text: 'Wiped.' },
+    ])
+    const { session } = instance(shared, {
+      model,
+      approval,
+      tools: { wipe: tool({ description: 'x', inputSchema: z.object({}) }) } as never,
+    })
+    const first = await session().send(userMessage('wipe it')).result
+    expect(first.stop).toBe('tool-pending')
+    const approvalId = first.pending?.approvals[0]?.approvalId as string
+    const second = await session().respond({ approvals: [{ id: approvalId, approved: true }] })
+      .result
+    expect(second.stop).toBe('tool-pending')
+    expect(second.pending?.clientTools).toEqual([{ toolCallId: 'call-0-0', toolName: 'wipe' }])
+    expect(model.calls).toHaveLength(1)
+    // the approval is consumed: answering it again is rejected, nothing runs twice
+    const again = await session().respond({ approvals: [{ id: approvalId, approved: true }] })
+      .result
+    expect(again.stop).toBe('error')
+    const third = await session().respond({
+      toolOutputs: [{ toolCallId: 'call-0-0', output: 'wiped' }],
+    }).result
+    expect(third.stop).toBe('complete')
+    const message = (await stored(shared)).find((m) => m.id === first.messageId)
+    expect(message?.parts.find((p) => p.type === 'tool-wipe')).toMatchObject({
+      state: 'output-available',
+      output: 'wiped',
+    })
+  })
+
+  test('approval, then the client never answers: the timeout fields apply', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'wipe', input: {} }] },
+      { text: 'Gave up.' },
+    ])
+    const a = instance(shared, { model, approval })
+    const clientTools = [decl('wipe')]
+    const options: ChatRequestOptions = { clientTools: { timeoutMs: 60_000 } }
+    const first = await handleChatRequest(
+      a.session(),
+      { messages: [userMessage('wipe it')], clientTools } as ChatRequestBody,
+      options,
+    ).result
+    const before = Date.now()
+    const second = await handleChatRequest(
+      a.session(),
+      {
+        messages: [
+          userMessage('wipe it'),
+          approvedMessage(first.messageId as string, 'wipe', first.pending as PendingState, true),
+        ],
+        clientTools,
+      } as ChatRequestBody,
+      options,
+    ).result
+    expect(second.stop).toBe('tool-pending')
+    const entry = second.pending?.clientTools[0]
+    expect(entry).toMatchObject({
+      toolCallId: 'call-0-0',
+      waitId: 'w_call-0-0',
+      onTimeout: { errorText: CLIENT_TOOL_TIMED_OUT },
+    })
+    expect(entry?.timeoutAt).toBeGreaterThanOrEqual(before + 60_000)
+    const b = instance(shared, { model, approval })
+    const swept = await b.session().expireWaits(Date.now() + 120_000)
+    expect(swept.expired).toEqual(['w_call-0-0'])
+    expect((await swept.run?.result)?.stop).toBe('complete')
+    const message = (await stored(shared)).find((m) => m.id === first.messageId)
+    expect(message?.parts.find((p) => p.type === 'tool-wipe')).toMatchObject({
+      state: 'output-error',
+      errorText: CLIENT_TOOL_TIMED_OUT,
+    })
+  })
+
+  test('a denied approval is unchanged: output-denied, the turn continues', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'wipe', input: {} }] },
+      { text: 'Not wiping.' },
+    ])
+    const { session } = instance(shared, { model, approval })
+    const clientTools = [decl('wipe')]
+    const first = await handleChatRequest(
+      session(),
+      { messages: [userMessage('wipe it')], clientTools } as ChatRequestBody,
+      enabled,
+    ).result
+    const second = await handleChatRequest(
+      session(),
+      {
+        messages: [
+          userMessage('wipe it'),
+          approvedMessage(first.messageId as string, 'wipe', first.pending as PendingState, false),
+        ],
+        clientTools,
+      } as ChatRequestBody,
+      enabled,
+    ).result
+    expect(second.stop).toBe('complete')
+    const message = (await stored(shared)).find((m) => m.id === first.messageId)
+    expect(message?.parts.find((p) => p.type === 'tool-wipe')).toMatchObject({
+      state: 'output-denied',
+    })
+  })
+})
+
+describe('client tools: approved batch mixing server and client calls', () => {
+  test('the server call waits for the client output; it runs once, after everything is answered', async () => {
+    const shared = storage()
+    let runs = 0
+    const run = tool({
+      description: 'Run',
+      inputSchema: z.object({}),
+      execute: async () => {
+        runs++
+        return 'ran'
+      },
+    })
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'run', input: {} },
+          { toolName: 'wipe', input: {} },
+        ],
+      },
+      { text: 'Both done.' },
+    ])
+    const { session } = instance(shared, {
+      model,
+      tools: { run },
+      approval: { risk: { unknown: 'user-approval' } },
+    })
+    const clientTools = [decl('wipe')]
+    const first = await handleChatRequest(
+      session(),
+      { messages: [userMessage('go')], clientTools } as ChatRequestBody,
+      enabled,
+    ).result
+    expect(first.pending?.approvals).toHaveLength(2)
+    const answers = (first.pending as PendingState).approvals.map((entry) => ({
+      type: `tool-${entry.toolName}`,
+      toolCallId: entry.toolCallId,
+      state: 'approval-responded',
+      input: {},
+      approval: { id: entry.approvalId, approved: true },
+    }))
+    const second = await handleChatRequest(
+      session(),
+      {
+        messages: [
+          userMessage('go'),
+          { id: first.messageId, role: 'assistant', parts: answers } as unknown as UIMessage,
+        ],
+        clientTools,
+      } as ChatRequestBody,
+      enabled,
+    ).result
+    expect(second.stop).toBe('tool-pending')
+    expect(runs).toBe(0)
+    expect(second.pending?.clientTools.map((c) => c.toolName)).toEqual(['wipe'])
+    expect(second.pending?.approvals.map((a) => a.toolName)).toEqual(['run'])
+    // the client answers the tool and sends the approval of the server call again
+    const parts = [
+      answers.find((a) => a.type === 'tool-run'),
+      { ...answers.find((a) => a.type === 'tool-wipe'), state: 'output-available', output: 'w' },
+    ]
+    const third = await handleChatRequest(
+      session(),
+      {
+        messages: [
+          userMessage('go'),
+          { id: first.messageId, role: 'assistant', parts } as unknown as UIMessage,
+        ],
+        clientTools,
+      } as ChatRequestBody,
+      enabled,
+    ).result
+    expect(third.stop).toBe('complete')
+    expect(runs).toBe(1)
+  })
+})

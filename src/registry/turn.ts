@@ -198,7 +198,8 @@ export async function resolveTurnRegistry(args: {
     }
   }
   const entries = raw.map((entry) => ({ ...entry, tool: wrapTool(entry.name, entry.tool, deps) }))
-  const tools: ToolSet = {}
+  // no prototype: a plugin or client tool name can never reach `Object.prototype` (`__proto__`)
+  const tools: ToolSet = Object.create(null) as ToolSet
   const clientTools = new Set<string>()
   const externals = new Map<string, { owner: string; meta: ExternalToolMeta }>()
   for (const entry of entries) {
