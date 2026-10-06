@@ -567,9 +567,9 @@ export function createSessionHandle(args: {
       if (drain !== undefined) void drain.ack(ids, turnId)
       else events.emit({ type: 'inbox-drained', inboxIds: [...ids], turnId })
     },
-    inboxNotApplied(ids, retry) {
+    inboxNotApplied(ids, outcome) {
       if (drain === undefined) return
-      void (retry ? drain.release(ids) : drain.ack(ids))
+      void drain.settle(ids, outcome)
     },
     dropQueue: () => dropQueue(false),
     enqueueWake() {
@@ -1511,6 +1511,8 @@ export function createSessionHandle(args: {
             (staleForDrain === false ? DEFAULT_STALE_MS : staleForDrain),
           pollMs: config.inbox?.pollMs ?? DEFAULT_INBOX_POLL_MS,
           collect: config.inbox?.collect,
+          retry: config.inbox?.retry,
+          onDeadLetter: config.inbox?.onDeadLetter,
           current: () => {
             const running = current
             if (running === undefined) return undefined

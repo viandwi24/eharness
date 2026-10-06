@@ -199,7 +199,9 @@ export interface CollectOptions {
 /**
  * What an {@link InboxAdapter} stores: an input for the session (`send`), a wake-up for a kind
  * message another instance already saved (`wake`), or an abort request (`abort`). `at` is the
- * enqueue time (epoch ms).
+ * enqueue time (epoch ms). `availableAt` (epoch ms, optional) makes the item claimable only from
+ * then on: until then it is invisible and does not hold back the items after it (a durable timer,
+ * not a queue entry; spec 05 §12 rule 14).
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
@@ -210,17 +212,62 @@ export type InboxItemInput =
       input: SerializedInput
       collect?: CollectOptions
       at: number
+      availableAt?: number
     }
-  | { kind: 'wake'; messageId: string; at: number }
-  | { kind: 'abort'; turnId?: string; reason?: string; at: number }
+  | { kind: 'wake'; messageId: string; at: number; availableAt?: number }
+  | { kind: 'abort'; turnId?: string; reason?: string; at: number; availableAt?: number }
 
 /**
- * A stored inbox item: the input plus its id (time-sortable, assigned by the adapter) and the
- * number of times it was claimed.
+ * A stored inbox item: the input plus its id (time-sortable, assigned by the adapter), the
+ * number of counted claims (`attempts`, spec 05 §12 rule 11) and the error of the last failed
+ * attempt (`lastError`, set by `release(…, { lastError })`).
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
-export type InboxItem = InboxItemInput & { id: string; attempts: number }
+export type InboxItem = InboxItemInput & { id: string; attempts: number; lastError?: string }
+
+/**
+ * A dead-lettered inbox item (spec 05 §12 rule 12): kept by the adapter, never claimed, listed by
+ * `listDead()` and made ready again by `redrive()`. `reason` is `'max-attempts'` or
+ * `'non-retryable'`; `deadAt` is epoch ms.
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export type DeadInboxItem = InboxItem & { sessionId: string; deadAt: number; reason: string }
+
+/**
+ * Options of `InboxAdapter.release()` (spec 05 §12 rule 11). An adapter that ignores them keeps
+ * the 0.4 behaviour (ready at once, every claim counted).
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface InboxReleaseOptions {
+  /**
+   * The items become claimable only after `now + delayMs` (retry backoff). A delayed item keeps
+   * its place: `send` / `wake` items behind it are not claimed meanwhile (`abort` items are).
+   */
+  delayMs?: number
+  /**
+   * A deferral, not a failed attempt (the core held the items without trying them): undo the
+   * `attempts` increment of the claim being released.
+   */
+  uncount?: boolean
+  /** The error of the failed attempt, returned as `lastError` by later claims. */
+  lastError?: string
+}
+
+/**
+ * Counts of `InboxAdapter.stats()`: `ready` (due, not claimed, not dead), `claimed` (a live
+ * claim), `delayed` (released with `delayMs` or `availableAt` in the future), `dead`.
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface InboxStats {
+  ready: number
+  claimed: number
+  delayed: number
+  dead: number
+}
 
 /**
  * Optional durable inbox of a multi-instance deployment: inputs, wake-ups and abort requests for a
@@ -248,14 +295,31 @@ export interface InboxAdapter {
   ): Promise<InboxItem[]>
   /** Remove items (their effect is durable). Unknown ids are ignored. */
   ack(ids: string[]): Promise<void>
-  /** Make claimed items ready again. Unknown ids are ignored. */
-  release(ids: string[]): Promise<void>
+  /**
+   * Make claimed items ready again. Unknown ids are ignored. `opts` (optional to honour, spec 05
+   * §12 rule 11): `delayMs` backoff, `uncount` for deferrals, `lastError`.
+   */
+  release(ids: string[], opts?: InboxReleaseOptions): Promise<void>
   /** Optional: wake the instances subscribed to the session (LISTEN/NOTIFY, pub/sub). */
   notify?(sessionId: string): Promise<void>
   /** Optional: called on `notify` of the session; returns the unsubscribe function. */
   subscribe?(sessionId: string, onNotify: () => void): () => void
   /** Optional: ids of sessions with claimable items (the oldest is not claimed; a sweeper). */
   pending?(opts?: { limit?: number }): Promise<string[]>
+  /**
+   * Optional: move items to dead (kept, never claimed, listed by `listDead`). Without it the
+   * core acks dead items after reporting them (spec 05 §12 rule 12). Unknown ids are ignored.
+   */
+  deadLetter?(ids: string[], info: { reason: string; lastError?: string }): Promise<void>
+  /**
+   * Optional: dead items become ready again with `attempts` 0, in their original id order.
+   * Unknown ids and ids that are not dead are ignored.
+   */
+  redrive?(ids: string[]): Promise<void>
+  /** Optional: dead items, oldest (lowest id) first (an admin UI). */
+  listDead?(opts?: { sessionId?: string; limit?: number }): Promise<DeadInboxItem[]>
+  /** Optional: item counts for metrics; without `sessionId` over the whole inbox. */
+  stats?(opts?: { sessionId?: string }): Promise<InboxStats>
 }
 
 /**
@@ -421,6 +485,13 @@ export type SessionEvent<M extends UIMessage = HarnessUIMessage> =
       mode?: 'queue' | 'steer' | 'collect'
     }
   | { type: 'inbox-drained'; inboxIds: string[]; turnId?: string }
+  | {
+      type: 'inbox-dead'
+      inboxId: string
+      kind: InboxItem['kind']
+      reason: string
+      attempts: number
+    }
 
 /**
  * A running (or finished) turn.

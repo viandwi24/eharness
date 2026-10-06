@@ -35,3 +35,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # agent worktrees
 .claude/worktrees/
+
+# maintainer's local notes (not English, never committed)
+docs/tmp/
+docs/eharness-updated.md

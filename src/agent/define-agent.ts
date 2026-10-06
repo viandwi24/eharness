@@ -202,6 +202,13 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('inbox.collect.quietMs', config.inbox?.collect?.quietMs, 'non-negative')
   checkNumber('inbox.collect.maxWaitMs', config.inbox?.collect?.maxWaitMs, 'non-negative')
   checkNumber('inbox.collect.maxItems', config.inbox?.collect?.maxItems, 'positive-int')
+  checkNumber('inbox.retry.maxAttempts', config.inbox?.retry?.maxAttempts, 'positive-int')
+  checkNumber('inbox.retry.backoff.delayMs', config.inbox?.retry?.backoff?.delayMs, 'non-negative')
+  checkNumber(
+    'inbox.retry.backoff.maxDelayMs',
+    config.inbox?.retry?.backoff?.maxDelayMs,
+    'non-negative',
+  )
   const protocols = config.inputFiles?.protocols
   if (
     protocols !== undefined &&

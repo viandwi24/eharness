@@ -30,7 +30,7 @@ Update this table in the same commit that changes a phase's status.
 | P19 | [Durable inbox port](P19-durable-inbox.md) | done | P13, P16 | — |
 | P20 | [Production-patterns guide, docs, 0.4.0 handoff](P20-production-guide.md) | done | P13–P19 | — |
 | P21 | [Tool risk `'external'`, MCP annotations, approval routing](P21-tool-risk-external.md) | done | P20 | P22 (W1) |
-| P22 | [Inbox poison items, retries and dead-letter](P22-inbox-dead-letter.md) | todo | P20 | P21 (W1) |
+| P22 | [Inbox poison items, retries and dead-letter](P22-inbox-dead-letter.md) | done | P20 | P21 (W1) |
 | P23 | [Park-and-resume: external waits](P23-park-and-resume.md) | todo | P22 (P21 recommended) | P25 (W2) |
 | P24 | [Request-scoped client tools and page context](P24-request-client-tools.md) | todo | P23 | P26 (W3) |
 | P25 | [Cross-session `BudgetLedger` port](P25-budget-ledger.md) | done | P20 | P23 (W2) |

@@ -23,9 +23,25 @@ describe('memoryInbox() conformance', () => {
   for (const c of inboxAdapterConformance(() => memoryInbox(), {
     requireNotify: true,
     requirePending: true,
+    requireRetry: true,
+    requireDeadLetter: true,
+    requireStats: true,
   })) {
     test(c.name, c.run)
   }
+})
+
+describe('a 0.4-style inbox adapter (no retry members) still passes the conformance', () => {
+  const legacy = (): InboxAdapter => {
+    const inner = memoryInbox()
+    return {
+      enqueue: (sessionId, item) => inner.enqueue(sessionId, item),
+      claim: (sessionId, owner, opts) => inner.claim(sessionId, owner, opts),
+      ack: (ids) => inner.ack(ids),
+      release: (ids) => inner.release(ids), // ignores the 0.5 options
+    }
+  }
+  for (const c of inboxAdapterConformance(legacy)) test(c.name, c.run)
 })
 
 describe('core default memory adapters conformance', () => {
