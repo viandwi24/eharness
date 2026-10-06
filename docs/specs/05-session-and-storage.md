@@ -241,7 +241,10 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
 2. **Load context** (§5) if the session has no cache; otherwise validate the cache (§6): if the
    adapter has `lastId`, compare before writing anything and on mismatch reload **state and
    messages**. A `respond()` always re-reads the state snapshot here (its answers are checked
-   against the freshest `pending`, §8).
+   against the freshest `pending`, §8). So does any other operation whose cache says "pending"
+   (0.5.0): another instance may have resolved it (spec 11 §4.2) and patched the pending message,
+   which keeps its id, so `lastId` cannot see it; when the stored `pending` differs, the messages
+   are reloaded too.
 3. **Active-turn check** (§9): an `activeTurn` that is not the current turn is either live
    (→ `EH_SESSION_BUSY`) or stale (→ recovered at the commit point).
 4. **Operation checks:** `respond` validates against `state.core.pending` (spec 11 §4);
