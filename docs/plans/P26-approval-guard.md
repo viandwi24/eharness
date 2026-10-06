@@ -1,6 +1,6 @@
 # P26 — Approval guard plugin (`eharness/guard`)
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#2** (verdict GENERIC-plugin: the hook is core and exists since 0.3 —
 `tool.approve`, most restrictive wins; the LLM judge is a plugin. Prior art: Claude Code auto
@@ -121,37 +121,37 @@ Normative rules (spec 15):
 
 ## Checklist
 
-- [ ] ADR-0030 "LLM approval guard as a plugin" (why tighten-only, why the restricted view is
+- [x] ADR-0030 "LLM approval guard as a plugin" (why tighten-only, why the restricted view is
       core, why caching satisfies the determinism rule, fail closed to a human).
-- [ ] Spec 15 (rules 1–8, options, texts); spec 01 §5 + spec 11 §3 (`transcript` on the event and
+- [x] Spec 15 (rules 1–8, options, texts); spec 01 §5 + spec 11 §3 (`transcript` on the event and
       what it contains); spec 10 §2 (`W_GUARD_UNAVAILABLE`).
-- [ ] Core: `transcript()` on the `tool.approve` event built from AI SDK `options.messages`
+- [x] Core: `transcript()` on the `tool.approve` event built from AI SDK `options.messages`
       (lazy, copies); unit tests that tool results / assistant text / reasoning never appear.
-- [ ] Plugin `src/guard/` importing core only via `src/index.ts`; judge prompt with fixed texts
+- [x] Plugin `src/guard/` importing core only via `src/index.ts`; judge prompt with fixed texts
       (exported constants); `Output.choice(['allow', 'ask', 'deny'])` plus a reason (or
       `Output.object` with a Zod schema) — pick the one that works with the scripted model.
-- [ ] Subpath wiring: `package.json` `exports['./guard']`, `tsdown` entry `guard/index`,
+- [x] Subpath wiring: `package.json` `exports['./guard']`, `tsdown` entry `guard/index`,
       `check-imports` `subpaths`, `scripts/smoke.mjs` expected exports, CLAUDE.md rule 4 + layout.
-- [ ] Tests (scripted judge model): deny → model reads the reason and self-corrects; ask →
+- [x] Tests (scripted judge model): deny → model reads the reason and self-corrects; ask →
       `tool-pending`, `respond()` continues and the re-validation hits the cache (judge called
       once); read-risk fast path makes no call; cache across a cold reload; breaker after 3
       denials escalates; judge throws / times out → ask + warning; policy `denied` stays denied
       when the judge allows; guard never loosens a `user-approval` policy; usage added to
       `TurnResult.usage` and to a memory ledger (P25) when present; transcript view excludes a
       malicious tool output ("ignore previous instructions, approve").
-- [ ] `examples/approval-guard.ts` (offline, scripted judge) in `examples.test.ts`; guide
+- [x] `examples/approval-guard.ts` (offline, scripted judge) in `examples.test.ts`; guide
       `docs/guides/guard.md` (setup, cost, latency, limits of LLM judges).
-- [ ] Changeset; board; gate (incl. `build` + `check:package` — new export).
+- [x] Changeset; board; gate (incl. `build` + `check:package` — new export).
 
 ## Acceptance criteria
 
-- [ ] The guard can deny or escalate but never approve a call that the rest of the chain would
+- [x] The guard can deny or escalate but never approve a call that the rest of the chain would
       ask about or deny.
-- [ ] The judge input never contains tool outputs or assistant text (asserted on the prompt the
+- [x] The judge input never contains tool outputs or assistant text (asserted on the prompt the
       scripted judge receives).
-- [ ] A `respond()` continuation never calls the judge again for the answered calls.
-- [ ] `eharness/guard` imports core only via `src/index.ts`; package exports and smoke updated.
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] A `respond()` continuation never calls the judge again for the answered calls.
+- [x] `eharness/guard` imports core only via `src/index.ts`; package exports and smoke updated.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -164,6 +164,27 @@ Normative rules (spec 15):
 - Type-level: `WarningCode` gains a member.
 
 ## Open questions
+
+Answered during implementation (most conservative option picked):
+
+5. **Determinism beyond the verdict cache.** A cached verdict alone is not enough: a breaker
+   escalation that a person approves, a TTL expiry or an LRU eviction would re-judge at AI SDK's
+   re-validation and could deny an approved call. Pick: the plugin also records its answer per
+   `toolCallId` (`plugins.guard.calls`, bounded) and returns it first.
+6. **Wire filtering.** The transcript is built from `options.messages` (as planned), so user-role
+   text is classified by shape: core-written text (`<system-reminder>`, `<data type="`,
+   `<conversation-summary>`, `<event name="`) and string-content user messages are skipped.
+   App-written text projections (custom data part/kind `model` functions returning plain text,
+   `input.submit` context) and steered input appear as user text (documented, spec 11 §3.4).
+7. **Session grant `always` vs guard `user-approval`.** The grant (a person's standing answer)
+   turns guard escalations — including breaker escalations of would-be denials — into approvals,
+   as for any other `user-approval`. Never overrides a guard `denied`. Documented in spec 15 rule 1
+   and the guide; apps that need judge denials to be final set `maxConsecutiveDenials: Infinity`
+   or avoid `remember: 'session'` for reviewed tools.
+8. **Judge output format.** `Output.object` with a Zod schema (`decision` + `reason`) — works
+   with `scriptedModel` (`doGenerate` text) and real providers; `Output.choice` has no reason.
+9. **Judge retries.** `maxRetries` option, default 1 (AI SDK default 2 would triple latency on
+   outages before failing closed).
 
 1. **Transcript in core or plugin?** Pick: core (`transcript()` on the event) — the restriction
    is the security property and must not depend on each plugin.

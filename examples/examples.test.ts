@@ -216,6 +216,19 @@ describe('examples run offline', () => {
   )
 
   test(
+    'approval-guard',
+    async () => {
+      const out = await run('approval-guard.ts')
+      expect(out).toContain('turn 1: complete; outbox: team@acme.com')
+      expect(out).toContain('turn 1 usage incl. judge: 60 in, 30 out')
+      expect(out).toContain('turn 2: tool-pending; pending: send_email {"to":"press@news.example"')
+      expect(out).toContain('respond: complete; outbox: team@acme.com, press@news.example')
+      expect(out).not.toContain('warning:')
+    },
+    timeout,
+  )
+
+  test(
     'risk-approvals',
     async () => {
       const out = await run('risk-approvals.ts')

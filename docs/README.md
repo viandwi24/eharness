@@ -34,6 +34,7 @@ Using eharness (not contributing)? Start with the [README](../README.md), the [g
 | 12 | [models-and-cost](specs/12-models-and-cost.md) | Model catalog (`models`, `modelsDevCatalog`, `lookupModel`), pricing, `computeCost`, `costUsd`, USD budgets |
 | 13 | [todos-plugin](specs/13-todos-plugin.md) | `eharness/todos`: `todo_write`, `data-todos.list`, reminders, enforcement |
 | 14 | [memory-plugin](specs/14-memory-plugin.md) | `eharness/memory`: memory commands/tools, roots, pinned reminders, `onWrite`, app-supplied tool, `flushOnCompaction` |
+| 15 | [guard-plugin](specs/15-guard-plugin.md) | `eharness/guard`: LLM approval judge — tighten-only, restricted transcript, fast path, verdict cache, circuit breaker, fail closed |
 
 ## Status vocabulary
 

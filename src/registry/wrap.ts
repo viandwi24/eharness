@@ -22,6 +22,7 @@ import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
 import { toolTraits } from './risk.ts'
+import { buildTranscript, type GuardTranscriptEntry } from './transcript.ts'
 
 /** The text of a thrown tool error when `toolErrorText` throws or returns a non-string. */
 const TOOL_ERROR_FALLBACK = 'Error: the tool failed.'
@@ -285,6 +286,12 @@ export function buildApproval(
       (toolCall as { toolMetadata?: unknown }).toolMetadata ??
       (options.tools?.[toolCall.toolName] as { metadata?: unknown } | undefined)?.metadata
     const { risk, idempotent, hints } = toolTraits(toolMetadata)
+    // restricted transcript (spec 11 §3.4): built lazily once per call, a fresh copy per read
+    let transcriptMemo: GuardTranscriptEntry[] | undefined
+    const transcript = (): GuardTranscriptEntry[] => {
+      transcriptMemo ??= buildTranscript(options.messages, toolCall.toolCallId)
+      return structuredClone(transcriptMemo)
+    }
     const statuses: Array<{ status: Normalized; by: ApprovalDecision['by'] }> = []
     if (typeof policy === 'function') {
       try {
@@ -325,6 +332,7 @@ export function buildApproval(
           ...(risk === undefined ? {} : { risk }),
           ...(idempotent === undefined ? {} : { idempotent }),
           ...(hints === undefined ? {} : { hints: structuredClone(hints) }),
+          transcript,
         })
         statuses.push({ status: normalizeStatus(status ?? undefined), by: `plugin:${hook.owner}` })
       } catch (error) {
