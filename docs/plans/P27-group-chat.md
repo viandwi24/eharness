@@ -1,6 +1,6 @@
 # P27 — Group-chat plugin (`eharness/group`)
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#5** (verdict GENERIC-plugin, partly: should-respond gating, pending
 history of gated-out messages and bot-to-bot anti-loop are generic — OpenClaw `requireMention` /
