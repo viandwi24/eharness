@@ -32,9 +32,19 @@ function canonical(value: unknown, seen: Set<unknown>): unknown {
   }
 }
 
-/** Cache key of a call: `<toolName>:<sha256 hex of the canonical JSON input>` (`crypto.subtle`). */
-export async function verdictKey(toolName: string, input: unknown): Promise<string> {
-  const bytes = new TextEncoder().encode(canonicalJson(input))
+/**
+ * Cache key of a call: `<toolName>:<sha256 hex of the canonical JSON input>` (`crypto.subtle`).
+ * With `scope` (the policy text and judge model id) the hash covers it too, so a changed policy
+ * or judge never reuses an older verdict.
+ */
+export async function verdictKey(
+  toolName: string,
+  input: unknown,
+  scope?: string,
+): Promise<string> {
+  const bytes = new TextEncoder().encode(
+    scope === undefined ? canonicalJson(input) : `${scope}\u0000${canonicalJson(input)}`,
+  )
   const digest = await crypto.subtle.digest('SHA-256', bytes)
   let hex = ''
   for (const byte of new Uint8Array(digest)) hex += byte.toString(16).padStart(2, '0')
