@@ -203,6 +203,12 @@ ends with `stop: 'tool-pending'` until the application calls `respond({ toolOutp
 (spec 11 §4) — `handleChatRequest` does this for `useChat`'s `addToolOutput`. Client outputs pass
 through `tool.after` and output limits like server outputs.
 
+**Request-scoped client tools (0.5.0).** A request can declare client tools for one turn
+(`SendOptions.clientTools`, `handleChatRequest` option `clientTools`; spec 11 §7.1). They are
+built with `jsonSchema()` as tools without `execute` and no `metadata`, validated against the
+server's own tool names (a client can never shadow a tool), and are subject to the approval
+rules like any tool. Their pending calls may carry `timeoutAt` / `onTimeout`.
+
 **External tools (0.5.0).** `externalTool()` (spec 11 §4.2) is also a tool without `execute`, but
 its result comes from the server side, not from the client: the call is pending kind `externals`
 (not `clientTools`), `start` hands the work to the outside world, and the result arrives through
