@@ -254,8 +254,9 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   //
                  `partial.fromStep`-th `step-start` part (spec 06 §3)
   2. kinds:      kind messages with `metadata.eharness.deliveredIn` → drop (already delivered
                  inline); other kinds → def.model → one message with def.role, or drop. The
-                 projected message carries `providerOptions: { eharness: { core: true } }`
-                 (spec 11 §3.4: judges tell it from a person's text)
+                 projected message of a plugin / app kind carries `providerOptions: { eharness: { core: true } }`
+                 (spec 11 §3.4: judges tell it from a person's text); core `eh.*` kinds stay
+                 untagged (frozen wire; their text prefixes identify them)
   3. interrupted tool calls: every tool part without a result — `input-streaming`,
                  `input-available`, `approval-requested` not in `ctx.pending`, and
                  `approval-responded` unless it belongs to `ctx.continuing` — is projected as

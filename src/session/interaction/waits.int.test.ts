@@ -10,11 +10,7 @@ import { defineHarnessAgent } from '../../agent/define-agent.ts'
 import type { InboxAdapter, SessionEvent } from '../../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../../agent/types.ts'
 import { type HarnessWarning, isHarnessError } from '../../errors.ts'
-import {
-  INTERRUPTED_CRASH,
-  WAIT_CANCELLED_NEW_INPUT,
-  WAIT_TIMED_OUT,
-} from '../../messages/texts.ts'
+import { WAIT_CANCELLED_NEW_INPUT, WAIT_TIMED_OUT } from '../../messages/texts.ts'
 import type { HarnessUIMessage, PendingState } from '../../messages/types.ts'
 import { externalTool } from '../../registry/external.ts'
 import { memoryInbox } from '../../storage/memory.ts'

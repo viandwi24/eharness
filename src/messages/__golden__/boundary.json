@@ -1,12 +1,7 @@
 [
   {
     "role": "user",
-    "content": "<conversation-summary>NEW</conversation-summary>",
-    "providerOptions": {
-      "eharness": {
-        "core": true
-      }
-    }
+    "content": "<conversation-summary>NEW</conversation-summary>"
   },
   {
     "role": "user",

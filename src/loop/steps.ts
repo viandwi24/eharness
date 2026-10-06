@@ -929,7 +929,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     }
     if (input.signal.aborted) return aborted()
 
-    let pending =
+    const pending =
       response === undefined || finishReason !== 'tool-calls'
         ? undefined
         : findPending(
