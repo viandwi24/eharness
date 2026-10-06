@@ -1,7 +1,7 @@
 /**
  * Import rules for `src/` (ADR-0008, ADR-0010, docs/engineering/conventions.md):
  *
- * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory`) import core only through the relative
+ * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard`) import core only through the relative
  *    path to `src/index.ts`, never through other core files or the `eharness` self-reference.
  *    Non-test files never import another subpath; test files of a subpath may (e.g. a filesystem
  *    test running `fileSystemConformance` from `src/testing`), but still never core internals.
@@ -15,7 +15,7 @@ import { Glob } from 'bun'
 
 const root = resolve(import.meta.dir, '..')
 const src = join(root, 'src')
-const subpaths = ['filesystem', 'storage', 'mcp', 'testing', 'todos', 'memory']
+const subpaths = ['filesystem', 'storage', 'mcp', 'testing', 'todos', 'memory', 'guard']
 const coreIndex = join(src, 'index.ts')
 
 const specifierPattern =

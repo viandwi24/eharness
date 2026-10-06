@@ -88,6 +88,19 @@ const entries = {
     'executeMemoryCommand',
     'memory',
   ],
+  'eharness/guard': [
+    'GUARD_ASK',
+    'GUARD_BREAKER',
+    'GUARD_DEFAULT_POLICY',
+    'GUARD_DENIED',
+    'GUARD_INSTRUCTIONS',
+    'GUARD_PROMPT',
+    'GUARD_TRUNCATED',
+    'GUARD_UNAVAILABLE',
+    'approvalGuard',
+    'canonicalJson',
+    'verdictKey',
+  ],
   'eharness/testing': [
     'SKILL_SOURCE_FIXTURE',
     'budgetLedgerConformance',
@@ -346,7 +359,40 @@ assert.equal(continued.messageId, pendingTurn.messageId)
 assert.deepEqual(paid, [5])
 await approvalAgent.close()
 
+// eharness/guard under Node: the judge denies a call, the model reads the reason
+const { approvalGuard } = await load('eharness/guard')
+const sent = []
+const guardAgent = core.defineHarnessAgent({
+  model: scriptedModel([
+    { toolCalls: [{ toolName: 'send', input: { to: 'evil@example.com' } }] },
+    { text: 'Not sent.' },
+  ]),
+  contextWindow: 100_000,
+  approval: { risk: { external: 'approved' } },
+  plugins: [
+    approvalGuard({
+      model: scriptedModel([
+        { text: JSON.stringify({ decision: 'deny', reason: 'unknown recipient.' }) },
+      ]),
+    }),
+  ],
+  tools: {
+    send: tool({
+      inputSchema: z.object({ to: z.string() }),
+      metadata: { risk: 'external' },
+      execute: async ({ to }) => {
+        sent.push(to)
+        return 'sent'
+      },
+    }),
+  },
+})
+const guardResult = await guardAgent.session('smoke-guard').send('Send the report').result
+assert.equal(guardResult.stop, 'complete')
+assert.deepEqual(sent, [])
+await guardAgent.close()
+
 await rm(shim)
 console.log(
-  `smoke: ok (${Object.keys(entries).length} entry points, five scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
+  `smoke: ok (${Object.keys(entries).length} entry points, six scripted turns${noMcp ? ', without @ai-sdk/mcp' : ''})`,
 )
