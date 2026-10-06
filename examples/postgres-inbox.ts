@@ -37,8 +37,8 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { tool } from 'ai'
 import {
-  defineHarnessAgent,
   type DeadInboxItem,
+  defineHarnessAgent,
   type InboxAdapter,
   type InboxItem,
   type InboxItemInput,
@@ -101,9 +101,7 @@ export async function migrateInbox(db: SqlClient, options: PostgresOptions = {})
   // the function sees the rows committed before it (READ COMMITTED), i.e. after the lock.
   // The 0.4 function returned fewer columns: drop it first (CREATE OR REPLACE cannot change
   // the result type).
-  await db.query(
-    `DROP FUNCTION IF EXISTS ${claimFunction(options)}(text, text, integer, integer)`,
-  )
+  await db.query(`DROP FUNCTION IF EXISTS ${claimFunction(options)}(text, text, integer, integer)`)
   await db.query(`CREATE FUNCTION ${claimFunction(options)}(
       p_session text, p_owner text, p_ttl_ms integer, p_limit integer)
     RETURNS TABLE (claimed_id text, claimed_item text, claimed_attempts integer,

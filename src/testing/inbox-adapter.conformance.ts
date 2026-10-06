@@ -1,4 +1,4 @@
-import type { InboxAdapter, InboxItem, InboxItemInput } from '../index.ts'
+import type { DeadInboxItem, InboxAdapter, InboxItem, InboxItemInput } from '../index.ts'
 import { assertJsonEqual, assertTrue, uniqueSessionId } from './assert.ts'
 import type { ConformanceCase } from './types.ts'
 
@@ -66,14 +66,14 @@ const FIXTURES: InboxItemInput[] = [
 ]
 
 function strip(item: InboxItem): InboxItemInput {
-  const {
-    id: _id,
-    attempts: _attempts,
-    lastError: _lastError,
-    ...rest
-  } = item as InboxItem & { sessionId?: string; deadAt?: number; reason?: string }
-  const { sessionId: _s, deadAt: _d, reason: _r, ...input } = rest
-  return input as InboxItemInput
+  const { id: _id, attempts: _attempts, lastError: _lastError, ...rest } = item
+  return rest as InboxItemInput
+}
+
+/** The stored input of a dead item (`reason` is the dead reason, not an abort's `reason`). */
+function stripDead(item: DeadInboxItem): InboxItemInput {
+  const { sessionId: _s, deadAt: _d, reason: _r, ...rest } = item
+  return strip(rest as InboxItem)
 }
 
 const ids = (items: readonly InboxItem[]) => items.map((i) => i.id)
@@ -513,10 +513,7 @@ export function inboxAdapterConformance(
       run: async () => {
         const adapter = await factory()
         if (adapter.deadLetter === undefined) {
-          assertTrue(
-            options.requireDeadLetter !== true,
-            'deadLetter required but not implemented',
-          )
+          assertTrue(options.requireDeadLetter !== true, 'deadLetter required but not implemented')
           return
         }
         assertTrue(
@@ -533,7 +530,10 @@ export function inboxAdapterConformance(
         const c = await adapter.enqueue(sessionId, send('c'))
         const d = await adapter.enqueue(sessionId, send('d'))
         await adapter.claim(sessionId, 'owner-a', { claimTtlMs: ttl })
-        await adapter.deadLetter([c], { reason: 'non-retryable', lastError: 'EH_INVALID_INPUT: bad' })
+        await adapter.deadLetter([c], {
+          reason: 'non-retryable',
+          lastError: 'EH_INVALID_INPUT: bad',
+        })
         await adapter.deadLetter([a, 'unknown-id'], { reason: 'max-attempts' })
         await adapter.release([b, d])
         await sleep(ttl * 2 + 20) // dead items never come back through an expired claim
@@ -543,7 +543,7 @@ export function inboxAdapterConformance(
         const dead = await listDead({ sessionId })
         assertJsonEqual(ids(dead), [a, c], 'listDead: oldest (lowest id) first')
         const [deadA, deadC] = dead
-        assertJsonEqual(deadA === undefined ? null : strip(deadA), fixture, 'dead item JSON')
+        assertJsonEqual(deadA === undefined ? null : stripDead(deadA), fixture, 'dead item JSON')
         assertTrue(
           deadA?.sessionId === sessionId &&
             deadA.reason === 'max-attempts' &&
@@ -599,7 +599,8 @@ export function inboxAdapterConformance(
         const dead = adapter.deadLetter !== undefined
         if (dead) await adapter.deadLetter?.([x], { reason: 'max-attempts' })
         else await adapter.ack([x])
-        if (retry) await adapter.enqueue(sessionId, send('timer', { availableAt: Date.now() + 60_000 }))
+        if (retry)
+          await adapter.enqueue(sessionId, send('timer', { availableAt: Date.now() + 60_000 }))
         assertJsonEqual(
           await adapter.stats({ sessionId }),
           { ready: retry ? 1 : 2, claimed: 1, delayed: retry ? 2 : 0, dead: dead ? 1 : 0 },

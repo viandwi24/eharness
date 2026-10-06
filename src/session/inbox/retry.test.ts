@@ -41,7 +41,10 @@ describe('failure classification', () => {
     const error = new HarnessError('EH_STORAGE', 'boom')
     expect(failureInfo(error)).toEqual({ code: 'EH_STORAGE', message: 'boom' })
     expect(failureText(error)).toBe('EH_STORAGE: boom')
-    expect(failureInfo({ code: 'EH_X', message: 'plain' })).toEqual({ code: 'EH_X', message: 'plain' })
+    expect(failureInfo({ code: 'EH_X', message: 'plain' })).toEqual({
+      code: 'EH_X',
+      message: 'plain',
+    })
     expect(failureText('text')).toBe('text')
   })
 
