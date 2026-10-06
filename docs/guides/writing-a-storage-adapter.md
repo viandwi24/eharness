@@ -142,8 +142,12 @@ const inbox: InboxAdapter = {
     /* atomically mark the oldest ready items claimed until now + claimTtlMs, attempts + 1 */
   },
   async ack(ids) { /* delete */ },
-  async release(ids) { /* clear the claim */ },
+  async release(ids, { delayMs, uncount, lastError } = {}) {
+    /* clear the claim; uncount → attempts − 1; delayMs → not claimable before now + delayMs */
+  },
   // optional: notify(sessionId), subscribe(sessionId, onNotify) → unsubscribe, pending({ limit })
+  // optional (poison items, 0.5): deadLetter(ids, { reason, lastError }), redrive(ids),
+  //   listDead({ sessionId, limit }), stats({ sessionId })
 }
 ```
 
@@ -154,6 +158,23 @@ owner that already holds items renews those claims (not returned again, `attempt
 an expired claim makes the item ready again — the core relies on that to redeliver the items of an
 instance that died. In Postgres, serialize the claims of a session with a transaction-scoped
 advisory lock (`FOR UPDATE SKIP LOCKED` alone lets a second claimer skip past a held row). Store the item as JSON and return copies. `memoryInbox()` is the reference.
+
+Checklist for the 0.5 members (spec 05 §12 rules 11–15) — needed before an application turns on
+`inbox.retry.maxAttempts`:
+
+- `release(ids, opts)`: only claimed rows; `uncount` undoes the increment of the claim being
+  released (deferrals must not consume attempts); `delayMs` keeps the row in place but
+  unclaimable until then, and `send` / `wake` rows behind it wait (`abort` rows do not);
+  `lastError` is stored and returned by later claims as `lastError` (omit the field when null).
+- `availableAt` on an enqueued item: invisible and holding nothing back until due (a timer).
+- An expired claim keeps its attempt (crash loops are counted).
+- `deadLetter` keeps the row (never claimed again, holds nothing back); `listDead` returns
+  `DeadInboxItem`s (`sessionId`, `deadAt` epoch ms, `reason`, `lastError?`) oldest first;
+  `redrive` resets `attempts` to 0 and clears `lastError`; `stats` counts `ready`, `claimed`,
+  `delayed` (backoff or future `availableAt`) and `dead`.
+- Prove it: `inboxAdapterConformance(factory, { requireRetry: true, requireDeadLetter: true,
+  requireStats: true })`. An adapter without `deadLetter` still works with `retry`: dead items are
+  acked after `inbox.onDeadLetter` ran.
 
 ## Tips
 
