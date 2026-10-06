@@ -219,3 +219,8 @@ tools: [
 The model sees `tool_search` and non-deferred tools; after searching, matching tools are callable
 from the next step and stay callable for the rest of the turn (eharness tracks discoveries across
 steps, spec 02 §3.3). Up to five matches are returned per search (AI SDK behaviour).
+
+## 8. OpenAPI tools
+
+`openApiTools()` (`eharness/openapi`) is a tool source that turns an OpenAPI 3.0 / 3.1 JSON document
+into tools, with an app-supplied base URL and auth headers; see [spec 17](17-openapi-plugin.md).
