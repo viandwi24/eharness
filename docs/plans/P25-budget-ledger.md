@@ -1,6 +1,6 @@
 # P25 — Cross-session `BudgetLedger` port
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#3** (verdict split: a small core port + per-run checks are generic;
 scope hierarchy, periods, prices, soft limits and alerts are app policy — LiteLLM, Portkey,
