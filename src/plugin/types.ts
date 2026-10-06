@@ -31,6 +31,7 @@ import type {
   TurnResult,
 } from '../messages/types.ts'
 import type { ToolHints } from '../registry/risk.ts'
+import type { GuardTranscriptEntry } from '../registry/transcript.ts'
 import type {
   InstructionInput,
   Skill,
@@ -332,6 +333,12 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
       idempotent?: boolean
       /** Raw MCP hints the server sent (untrusted), when any. */
       hints?: ToolHints
+      /**
+       * The restricted transcript (spec 11 §3.4, 0.5.0): user messages and the agent's earlier
+       * tool calls only — never tool outputs, assistant text, reasoning, instructions, reminders or
+       * data parts. Built lazily from the step's model wire; every call returns a fresh copy.
+       */
+      transcript: () => ReadonlyArray<GuardTranscriptEntry>
     },
   ): Awaitable<ToolApprovalStatus | void>
   /**
