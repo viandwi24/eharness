@@ -7,10 +7,11 @@
  * @see docs/decisions/0027-external-waits-park-at-the-tool-boundary.md
  */
 import type { ModelMessage } from 'ai'
+import type { ToolErrorTextFn } from '../../agent/types.ts'
+import { HarnessToolError } from '../../errors.ts'
 import type { PendingExternal, PendingState, WaitResult } from '../../messages/types.ts'
 import type { HarnessContext } from '../../plugin/types.ts'
 import type { ExternalToolMeta, WaitStart } from '../../registry/external.ts'
-import { describeError } from '../../stream/describe-error.ts'
 
 /** The pending state version this build writes (spec 11 §2). */
 export const PENDING_VERSION: number = 2
@@ -71,7 +72,8 @@ export interface ParkEnv {
   externals: ReadonlyMap<string, { owner: string; meta: ExternalToolMeta }>
   contextOf(owner: string): HarnessContext
   signal: AbortSignal
-  log(message: string, data?: Record<string, unknown>): void
+  /** `config.toolErrorText`: the text a thrown error becomes (spec 10 §1.1). */
+  toolErrorText?: ToolErrorTextFn | undefined
   now?: () => number
 }
 
@@ -80,6 +82,22 @@ export interface FailedStart {
   toolCallId: string
   toolName: string
   errorText: string
+}
+
+/** The text a throwing `start` becomes: like a thrown `execute` error (spec 10 §1.1). */
+function errorTextOf(
+  error: unknown,
+  entry: PendingExternal,
+  map: ToolErrorTextFn | undefined,
+): string {
+  const options = { toolName: entry.toolName, toolCallId: entry.toolCallId }
+  if (map === undefined) return String(new HarnessToolError(error, options))
+  try {
+    const mapped: unknown = map(error, options)
+    return typeof mapped === 'string' ? mapped : 'Error: the tool failed.'
+  } catch {
+    return 'Error: the tool failed.'
+  }
 }
 
 function inputsOf(response: readonly ModelMessage[]): Map<string, unknown> {
@@ -128,7 +146,7 @@ export async function parkExternals(
         failed.push({
           toolCallId: entry.toolCallId,
           toolName: entry.toolName,
-          errorText: describeError(error, env.log),
+          errorText: errorTextOf(error, entry, env.toolErrorText),
         })
         continue
       }

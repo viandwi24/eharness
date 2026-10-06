@@ -158,6 +158,26 @@ describe('external waits: park and resolve', () => {
     expect(JSON.stringify(cold.slice(0, 3))).toBe(JSON.stringify(warm.slice(0, 3)))
   })
 
+  test('the instance that parked keeps working after another instance resolved the wait', async () => {
+    const shared = storage()
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'build', input: { ref: 'a' } }] },
+      { text: 'passed' },
+      { text: 'you are welcome' },
+    ])
+    const a = instance(shared, { model, tools: { build: build() } })
+    const holder = a.agent.session('s1')
+    await holder.send('go').result
+    const other = instance(shared, { model, tools: { build: build() } }).agent.session('s1')
+    const resolved = await other.resolveWait(waitFor, { output: { ok: true } })
+    if (resolved.status !== 'continued') throw new Error('expected a continuation')
+    await resolved.run.result
+    // the holder's cache still says "pending": it reloads the state and the patched message
+    const next = await holder.send('thanks').result
+    expect(next.stop).toBe('complete')
+    expect(JSON.stringify(model.prompts[2])).toContain('"ok":true')
+  })
+
   test('two parallel waits: the first is recorded, the second continues', async () => {
     const shared = storage()
     const model = scriptedModel([

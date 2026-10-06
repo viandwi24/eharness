@@ -964,7 +964,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         externals: registry.externals,
         contextOf,
         signal: input.signal,
-        log: (message, data) => rt.log.error(message, data),
+        toolErrorText: rt.agent.config.toolErrorText,
       })
       if (input.signal.aborted) return aborted()
       for (const f of failed) {

@@ -297,7 +297,7 @@ session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending
    Its `start` runs **once**, in tool-call order, after the step ended and before the pending
    state is committed (inside the turn: `ctx.turn` is live). `waitId` is `w_<toolCallId>` so
    `start` can be idempotent for the outside system. A throwing `start` answers that call with an
-   error result (`describeError`, the model can self-correct); the step continues normally when
+   error result (the text of a thrown `execute`, spec 10 §1.1: `config.toolErrorText` applies; the model can self-correct); the step continues normally when
    nothing else is pending. `start` only runs when the turn really stops `'tool-pending'`.
 2. **Several waits** of one step are all parked; approvals, client tools and externals may be
    pending together.
