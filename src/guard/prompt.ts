@@ -67,7 +67,8 @@ export function renderTranscript(
   limits: TranscriptLimits,
 ): string {
   const recent = limits.maxMessages <= 0 ? [] : entries.slice(-limits.maxMessages)
-  const perEntry = Math.max(64, Math.floor(limits.maxChars))
+  // leave room for the JSON wrapper so a single long entry still fits once cut
+  const perEntry = Math.max(64, Math.floor(limits.maxChars) - 200)
   const lines = recent.map((entry) =>
     JSON.stringify(
       entry.role === 'user'
