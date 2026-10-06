@@ -31,7 +31,7 @@ Update this table in the same commit that changes a phase's status.
 | P20 | [Production-patterns guide, docs, 0.4.0 handoff](P20-production-guide.md) | done | P13–P19 | — |
 | P21 | [Tool risk `'external'`, MCP annotations, approval routing](P21-tool-risk-external.md) | done | P20 | P22 (W1) |
 | P22 | [Inbox poison items, retries and dead-letter](P22-inbox-dead-letter.md) | done | P20 | P21 (W1) |
-| P23 | [Park-and-resume: external waits](P23-park-and-resume.md) | in progress | P22 (P21 recommended) | P25 (W2) |
+| P23 | [Park-and-resume: external waits](P23-park-and-resume.md) | done | P22 (P21 recommended) | P25 (W2) |
 | P24 | [Request-scoped client tools and page context](P24-request-client-tools.md) | todo | P23 | P26 (W3) |
 | P25 | [Cross-session `BudgetLedger` port](P25-budget-ledger.md) | done | P20 | P23 (W2) |
 | P26 | [Approval guard plugin (`eharness/guard`)](P26-approval-guard.md) | done | P21 (P25 recommended) | P24 (W3) |
