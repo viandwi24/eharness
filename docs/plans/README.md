@@ -35,7 +35,7 @@ Update this table in the same commit that changes a phase's status.
 | P24 | [Request-scoped client tools and page context](P24-request-client-tools.md) | todo | P23 | P26 (W3) |
 | P25 | [Cross-session `BudgetLedger` port](P25-budget-ledger.md) | done | P20 | P23 (W2) |
 | P26 | [Approval guard plugin (`eharness/guard`)](P26-approval-guard.md) | done | P21 (P25 recommended) | P24 (W3) |
-| P27 | [Group-chat plugin (`eharness/group`)](P27-group-chat.md) | todo | P20 | P28 (W4) |
+| P27 | [Group-chat plugin (`eharness/group`)](P27-group-chat.md) | in progress | P20 | P28 (W4) |
 | P28 | [OpenAPI → tools plugin (`eharness/openapi`)](P28-openapi-tools.md) | done | P21 | P27 (W4) |
 | P29 | [Docs, guides, 0.5.0 handoff](P29-docs-handoff-0.5.md) | todo | P21–P28 | — (W5) |
 

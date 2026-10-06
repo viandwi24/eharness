@@ -35,6 +35,7 @@ Using eharness (not contributing)? Start with the [README](../README.md), the [g
 | 13 | [todos-plugin](specs/13-todos-plugin.md) | `eharness/todos`: `todo_write`, `data-todos.list`, reminders, enforcement |
 | 14 | [memory-plugin](specs/14-memory-plugin.md) | `eharness/memory`: memory commands/tools, roots, pinned reminders, `onWrite`, app-supplied tool, `flushOnCompaction` |
 | 15 | [guard-plugin](specs/15-guard-plugin.md) | `eharness/guard`: LLM approval judge — tighten-only, restricted transcript, fast path, verdict cache, circuit breaker, fail closed |
+| 16 | [group-plugin](specs/16-group-plugin.md) | `eharness/group`: should-respond gating, pending history of gated-out messages, speaker metadata, bot-to-bot anti-loop |
 | 17 | [openapi-plugin](specs/17-openapi-plugin.md) | `eharness/openapi`: OpenAPI 3.x → tools — filters, base-URL fence, app-supplied auth, risk from method, `$ref` guard, error strings |
 
 ## Status vocabulary
