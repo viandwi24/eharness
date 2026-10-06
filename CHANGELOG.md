@@ -1,5 +1,229 @@
 # eharness
 
+## 0.5.0
+
+### Minor Changes
+
+- [`4ce60e9`](https://github.com/viandwi24/eharness/commit/4ce60e9f7e8f5eef107d40b5f0e1d0fd86921bc7) Thanks [@viandwi24](https://github.com/viandwi24)! - New subpath `eharness/guard`: `approvalGuard({ model, policy?, … })` — an LLM judge on the
+  approval chain (spec 15, ADR-0030).
+  
+  - **Tighten only:** returns `denied` (with a reason the model reads) or `user-approval`, never
+    `approved`; with most-restrictive-wins it cannot loosen a policy, risk rule, hook or grant.
+  - **Restricted view:** the judge sees the policy, user messages, the agent's earlier tool calls and
+    the call under review — never tool outputs, assistant text, reasoning or instructions.
+  - Read-risk fast path (`skipRisks`, `skipTools`, `onlyTools`), per-session verdict cache in plugin
+    state (keyed by tool + SHA-256 of the canonical input; the answer per tool call id is recorded,
+    so `respond()` re-validation never calls the judge), a consecutive-denial circuit breaker that
+    escalates to a person, fail closed to `user-approval` when the judge errors or times out, and
+    judge usage charged to the turn (budgets and the budget ledger see it).
+  - The per-call record is reused only when tool name and verdict key match (a reused tool call id
+    with another call is judged again); the verdict key covers the policy text and judge model id;
+    a cached `allow` ignores later conversation context (use `cache.ttlMs`).
+  - Exported texts `GUARD_*` and helpers `canonicalJson`, `verdictKey`.
+  
+  Core:
+  
+  - The `tool.approve` event gains `transcript()` (spec 11 §3.4): a lazy, restricted view of the
+    conversation (user messages and tool calls only) for judges; new type `GuardTranscriptEntry`.
+  - New warning `W_GUARD_UNAVAILABLE`.
+  - **Type-level:** `WarningCode` gains a member; the `tool.approve` event gains a required
+    `transcript` field (code that calls hooks by hand must pass it).
+  
+  - Plugin / app kind projections are tagged `providerOptions.eharness.core` on the model wire so the
+    restricted transcript excludes them (not only string projections); the JSDoc and specs 11/15 state
+    the remaining limits (app-projected text, such as group history blocks, appears as user text).
+
+- [`52917d7`](https://github.com/viandwi24/eharness/commit/52917d73418d0003c0211db9815f99866fba5297) Thanks [@viandwi24](https://github.com/viandwi24)! - Cross-session budget ledger (spec 12 §4.1, ADR-0029).
+  
+  - New optional port `BudgetLedger` (`reserve`, `commit`, `release`, `record`, `check`) configured
+    as `budget.ledger: { adapter, scopes, estimate?, reservationTtlMs?, onError? }`. Before every
+    model call (wrap-up step included) the core reserves an estimate on the turn's app-defined
+    scopes, atomically; after the step it commits the actual cost (0 when the provider reported no
+    usage). A refused reservation stops the turn with `'cost-cap'` before the call (`W_BUDGET` with
+    `details.scope: 'ledger'`, `ledgerScope`). Nested usage (`ctx.turn.addUsage`, the compaction
+    summarizer and flush, a manual `compact()`) is recorded with idempotent keys.
+  - Fails closed: a failing ledger before a call ends the turn with `'error'` (`EH_STORAGE`,
+    `details.operation: 'budget-ledger'`); `onError: 'continue'` runs the step unreserved with the
+    new warning `W_BUDGET_LEDGER_FAILED`. Commit / record failures are warnings.
+  - `memoryBudgetLedger({ limits })` in `eharness/storage/memory` (static limits, no periods),
+    `budgetLedgerConformance(factory)` in `eharness/testing`, and the `estimateStepCostUsd()` helper
+    (context tokens × input price + `maxOutputTokens`, default 4 096, × output price). New types
+    `BudgetLedgerConfig`, `BudgetReservation`, `BudgetScopeStatus`, `BudgetEstimateEvent`.
+  - **Type-level change:** `W_BUDGET` `details.scope` gains `'ledger'` (code that matches
+    `'turn' | 'session'` exhaustively must add it); `WarningCode` gains `W_BUDGET_LEDGER_FAILED`.
+    No new stop reason. Without `budget.ledger`, behaviour, warnings and storage are unchanged.
+  
+  A failed `commit` stays queued and is retried before the next reservation and at turn end; if it
+  still fails the spend is charged with `record` instead of being lost.
+
+- [`294f7e6`](https://github.com/viandwi24/eharness/commit/294f7e602e8b39d9e32cb151eb7acb660bd5a5dc) Thanks [@viandwi24](https://github.com/viandwi24)! - External waits: park a turn on a result that arrives later, in any instance (spec 11 §4.2, ADR-0027).
+  
+  - New `externalTool({ description, inputSchema, outputSchema?, start?, timeoutMs?, onTimeout?, metadata? })`:
+    an AI SDK tool without `execute` whose result comes from outside (a webhook, a job, another
+    agent, a person). `start` runs after the pending state is committed (stable `waitId` =
+    `w_<toolCallId>`; a fast callback finds the wait pending; a throwing `start` is
+    `W_HOOK_FAILED` and the wait stays parked until its timeout; a start a crash left undispatched,
+    `PendingExternal.started: false`, is dispatched again after `recovery.staleMs` when a session
+    opens or `expireWaits()` runs). The turn stops `'tool-pending'` and holds nothing.
+  - New `session.resolveWait(waitId, { output } | { errorText })`: validates against `outputSchema`
+    (`EH_INVALID_INPUT`, `details.reason: 'invalid-result'`), applies `tool.after` and the output
+    limits, and records the result with a compare-and-set; the first result wins, a replay is
+    `already-resolved`. When nothing is left open the **same** assistant message continues like a
+    `respond()` continuation. New `session.expireWaits(now?)` (sweepers) and `session.pendingWaits()`;
+    `respond({ externals })` answers waits together with approvals and client tool calls.
+  - Timeouts: `timeoutMs` / `timeoutAt` with an explicit `onTimeout` result (default
+    `WAIT_TIMED_OUT`), applied by a timer in the holding process, by a durable `wait-timeout` inbox
+    item (`availableAt`, any instance) or by `expireWaits()`; all go through the same
+    compare-and-set. New input with `onNewInput: 'deny'` answers open waits with
+    `WAIT_CANCELLED_NEW_INPUT` (results already recorded are kept).
+  - Clients cannot resolve external waits: `handleChatRequest` ignores such answers and
+    `respond({ toolOutputs })` for an external call is `EH_INVALID_INPUT` (`'wrong-kind'`).
+  - **New pending kind / type-level changes:** `PendingState` gains `v` (`2`, written by 0.5; no `v`
+    is the 0.3 / 0.4 shape, an unknown `v` authorizes nothing), the optional `externals` array
+    (`PendingExternal`) and optional `timeoutAt` / `onTimeout` on `clientTools[]`. `InboxItemInput`
+    gains the kind `wait-timeout` and `SessionEvent` gains `wait-resolved` (exhaustive switches must
+    add them; the `inbox-enqueued` / `inbox-dead` events can carry the new kind).
+    `EH_INVALID_INPUT` `details.reason` gains `'wrong-kind'` and `'invalid-result'`. New exports:
+    `externalTool`, `ExternalToolDef`, `WaitStart`, `WaitStartEvent`, `ResolveWaitResult`,
+    `PendingExternal`, `WaitResult`, `WaitTimeoutResult`, `WAIT_TIMED_OUT`,
+    `WAIT_CANCELLED_NEW_INPUT`. `HarnessSession` gains three methods (custom implementations of the
+    interface must add them).
+  - Stored pending state is now written with `v: 2`; sessions that never use `externalTool` are
+    otherwise unchanged.
+  - `respond({ externals })` outputs are validated against `outputSchema` like `resolveWait()`
+    results; an `onTimeout.output` that fails `outputSchema` falls back to `WAIT_TIMED_OUT` with a
+    `W_HOOK_FAILED` warning; a `wait-timeout` item that is not due yet is ignored.
+
+- [`38d027a`](https://github.com/viandwi24/eharness/commit/38d027a3646650290bb8d870b28739b433e8a307) Thanks [@viandwi24](https://github.com/viandwi24)! - New subpath `eharness/group`: `groupChat({ botId, … })` and `routeGroupMessage()` — multi-party
+  chat support (spec 16, ADR-0031).
+  
+  - **Should-respond gating:** `requireMention` (default), `mentionsBot` / `replyToBot` channel
+    facts, `mentionPatterns`, `replyCountsAsMention`, a custom `shouldRespond` hook; bot authors are
+    ignored unless `allowBots`.
+  - **Pending history:** gated-out messages are stored as the `group.message` kind (`model: 'omit'`)
+    and the newest `historyLimit` (default 20) are merged, framed as data, into the next answering
+    user message — exactly once, in order.
+  - **Speaker metadata** in `metadata.group` (needs `acceptClientMetadata: true`) and a visible
+    speaker line; **bot-to-bot anti-loop** (`maxBotTurns` per window) derived from stored history,
+    safe across instances.
+  - Exported texts `GROUP_HISTORY_PREAMBLE`, `GROUP_SPEAKER_PREFIX`. No core change.
+  
+  Review fixes: pending history is tracked with `metadata.group.consumed` ids (a gated message stored
+  while a turn runs is no longer lost; a collected burst carries one history block); typed
+  `[group] ` speaker lines are neutralised; docs note that `acceptClientMetadata: true` lets clients
+  forge `metadata.group`.
+
+- [`b3488dc`](https://github.com/viandwi24/eharness/commit/b3488dcef3cb786669dd4bd03c2928f5a0cbeae1) Thanks [@viandwi24](https://github.com/viandwi24)! - Inbox retries and dead-letter: poison items no longer cycle forever or block their session
+  (spec 05 §12 rules 11–15, ADR-0026). Opt-in: without `inbox.retry` behaviour and storage are
+  those of 0.4.
+  
+  - New config `inbox.retry { maxAttempts?, backoff?: { type?: 'fixed' | 'exponential', delayMs?,
+    maxDelayMs?, jitter? }, nonRetryable? }` (defaults: unlimited attempts, exponential from 1 s
+    capped at 60 s with full jitter, `EH_INVALID_INPUT` non-retryable) and `inbox.onDeadLetter(item)`
+    (a throw is `W_HOOK_FAILED`). Attempts are counted at claim (a crashed holder counts); the core
+    releases deferrals with `uncount` so a long turn of another instance never consumes attempts,
+    and failed attempts with a backoff and `lastError`. An item past `maxAttempts`, or failing with a
+    non-retryable error (including a stored input that no longer validates), is dead-lettered and
+    reported: session event `inbox-dead`, warning `W_INBOX_DEAD_LETTER`.
+  - `InboxAdapter` gains optional `deadLetter`, `redrive`, `listDead`, `stats` and `release(ids,
+    opts?)` options (`delayMs`, `uncount`, `lastError`); `InboxItem.lastError?`; every
+    `InboxItemInput` member gains `availableAt?` (a durable timer: invisible and holding nothing back
+    until due). New types `DeadInboxItem`, `InboxReleaseOptions`, `InboxStats`,
+    `InboxRetryOptions`, `InboxBackoffOptions`. `memoryInbox()` implements all of it;
+    `inboxAdapterConformance` gains `requireRetry`, `requireDeadLetter` and `requireStats`.
+    `examples/postgres-inbox.ts` adds the columns (in-place `ALTER TABLE … ADD COLUMN IF NOT
+    EXISTS` upgrade of a 0.4 table) and recreates `eh_inbox_claim`.
+  - **Breaking for custom `InboxAdapter`s (only when `inbox.retry` is used):** the new members are
+    optional and 0.4 adapters keep compiling and working without `retry`, but `retry.maxAttempts`
+    is only safe with an adapter that honours the `release` options and `availableAt` (pass
+    `inboxAdapterConformance(…, { requireRetry: true })`); an adapter without `deadLetter` acks dead
+    items after `onDeadLetter` ran.
+  - Type-level: `SessionEvent` gains `inbox-dead` (exhaustive switches must add it); `WarningCode`
+    gains `W_INBOX_DEAD_LETTER`; `W_INBOX_FAILED` gains the operation `deadLetter`.
+  
+  - `InboxReleaseOptions` gains `owner`: the core always passes it, and an adapter releases only items
+    still claimed by that owner (a stale holder can no longer free a newer owner's claim or undo its
+    attempt). `memoryInbox` and the Postgres example honour it; the conformance suite checks it with
+    `requireRetry`. Without `deadLetter`, an item whose `onDeadLetter` threw is released with a
+    backoff delay instead of spinning.
+
+- [`ebcd257`](https://github.com/viandwi24/eharness/commit/ebcd2575fd70a906953af11528cb9aa516fce466) Thanks [@viandwi24](https://github.com/viandwi24)! - New subpath `eharness/openapi`: `openApiTools(spec, options)` turns an OpenAPI 3.0/3.1 JSON
+  document into a tool source — include/exclude by method, path, tag and operationId, app-supplied
+  `baseUrl` and `headers` (the spec's `servers` are ignored by default), risk from the HTTP method,
+  local `$ref` resolution with a recursion guard, schema summarization, a tool-count guard and
+  deferral; failures return as error strings. Also `riskFromMethod()` (spec 17, ADR-0032).
+  
+  Review fixes: `schema.maxSchemaBytes` (default 16 384) bounds the serialized schemas of a tool, so
+  fan-out `$ref`s cannot blow up the tool list (cut subschemas are logged once); path parameter
+  values with `.` / `..` segments (also percent-decoded) or encoded `/` / `\` are rejected.
+
+- [`9ff66a8`](https://github.com/viandwi24/eharness/commit/9ff66a8223827363750fbddc381f78e73cb6919c) Thanks [@viandwi24](https://github.com/viandwi24)! - Request-scoped client tools and page context (spec 11 §7.1, ADR-0028): a request can declare
+  client tools and a page context for one turn, both treated as untrusted.
+  
+  - **Opt-in.** `handleChatRequest(session, body, { clientTools, pageContext })` reads
+    `body.clientTools` / `body.pageContext` only when enabled (default off: the fields are ignored,
+    exactly as before). `SendOptions` gains `clientTools`, `clientToolsOptions`, `pageContext` and
+    `pageContextOptions` for server code; the same validation runs.
+  - **Validated, all or nothing:** name pattern, reserved names, collisions with any server tool
+    (static, skill, source, deferred) or the output tool, schema type / byte / depth caps, in-document
+    `$ref` only, `maxTools`, `allow` list or predicate. Failure is a run error (`EH_INVALID_INPUT`,
+    `details.reason: 'client-tools'`) before anything is stored.
+  - **No implied permission:** declarations become AI SDK tools without `execute` (risk `unknown`);
+    approval policy, risk routing and `tool.approve` apply; outputs pass `tool.after` and the output
+    limits.
+  - **Position and cache:** request tools come after `tool_search`, before the output tool, sorted
+    by name; a changed set busts the cached prefix and raises `W_CACHE_BUST`
+    (`details.reason: 'client-tools'`) once per turn.
+  - **Timeout when the tab closes:** with `timeoutMs`, a pending client call gets `waitId`,
+    `timeoutAt` and `onTimeout` and expires through the external wait machinery (live timer, inbox
+    `wait-timeout` item, `expireWaits()`), answered with `CLIENT_TOOL_TIMED_OUT` or your `onTimeout`.
+  - **Page context** is a turn reminder block framed as data (`PAGE_CONTEXT_PREAMBLE`, tags
+    neutralised, capped with `W_PAGE_CONTEXT_LIMITED`); never stored, never in `instructions`.
+  - New exports: types `ClientToolDeclaration`, `ClientToolsOptions`, `PageContextEntry`,
+    `PageContextOptions`, `PendingClientTool`; the helper `neutralizeTags(text, tags)` (shared by
+    memory, group and page context; their output is unchanged); texts `PAGE_CONTEXT_PREAMBLE`,
+    `CLIENT_TOOL_TIMED_OUT`.
+  - **Type-level:** `ChatRequestBody` gains optional `clientTools` / `pageContext`;
+    `ChatRequestOptions` extends `Omit<SendOptions, …>` for the four new fields and redefines
+    `clientTools` / `pageContext` as opt-in objects; `PendingState.clientTools` entries gain optional
+    `waitId` / `result`; `EH_INVALID_INPUT` `details.reason` gains `'client-tools'`, `'page-context'`
+    and `'request-context-with-steer-or-collect'`; `WarningCode` gains `W_PAGE_CONTEXT_LIMITED`.
+
+- [`a70b6b1`](https://github.com/viandwi24/eharness/commit/a70b6b1f300b43154626b827283ea6771bf92ee3) Thanks [@viandwi24](https://github.com/viandwi24)! - Tool risk `'external'`, tighten-only MCP annotations and tool traits (spec 11 §3.2, ADR-0025).
+  
+  - `ToolRisk` gains `'external'` (an effect outside the system: email, third-party post, payment).
+    An MCP tool whose server sends `openWorldHint: true` and no app risk is `'external'`;
+    `destructiveHint: true` still wins as `'destructive'`; `readOnlyHint` never lowers a risk and no
+    MCP spec defaults are applied. Route it with `approval.risk: { external: 'user-approval' }`.
+  - New `toolTraits(metadata)` export (`ToolTraits`, `ToolHints` types): `{ risk?, idempotent?,
+    hints? }`. `idempotent` comes only from app metadata (`tool({ metadata: { idempotent: true } })`);
+    `idempotentHint` is reported in `hints` only.
+  - The `tool.approve` event gains `idempotent?` and `hints?`; `ApprovalDecision` and
+    `PendingState.approvals[]` gain `idempotent?`.
+  - `mcpServer({ risk })` (`eharness/mcp`, type `McpRiskFunction`): a trusted risk for a server's
+    tools, as a constant or a function per server tool; invalid values throw `EH_CONFIG_INVALID`.
+  - **Type-level change:** `ToolRisk` gaining a member breaks exhaustive `switch` statements and
+    `Record<ToolRisk, …>` objects, which must add `external`. Behaviour of tools without the new
+    hints or metadata is unchanged.
+  - Fix: when AI SDK re-validates an approved call (the `respond()` continuation), the approval
+    function now reads the tool's traits from the tool itself (the stored call carries no
+    `toolMetadata`). Before, the risk fell back to `unknown` there, so `approval.risk: { unknown:
+    'denied' }` denied calls a person had just approved.
+
+### Patch Changes
+
+- [`0caa2f4`](https://github.com/viandwi24/eharness/commit/0caa2f432d9411ca76d3d0f51704331b603d8187) Thanks [@viandwi24](https://github.com/viandwi24)! - Fix: an approved call of a tool without `execute` (a request-scoped client tool, or a client tool
+  registered on the server) now parks as a client call instead of ending `complete` with an
+  `Interrupted:` error. The approving `respond()` / `handleChatRequest` stops `'tool-pending'` with
+  the call in `pending.clientTools` (with `waitId` / `timeoutAt` / `onTimeout` when `timeoutMs` is
+  set) and no model step; the client's output streams into the same message. Approved server calls
+  of the same batch wait until the client answered. Denials are unchanged.
+  
+  Request-scoped client tools hardening: `__proto__`, `constructor` and `prototype` are rejected as
+  names and the per-turn tool record has no prototype; escaped page context descriptions count
+  toward `pageContext.maxChars`; a schema property named `$ref` is no longer rejected, `$dynamicRef`
+  and `$recursiveRef` are; descriptions are cut without splitting surrogate pairs.
+
 ## 0.4.0
 
 ### Minor Changes
