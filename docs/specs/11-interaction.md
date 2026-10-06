@@ -13,7 +13,9 @@ saw** (ADR-0011).
 | Operation | Purpose | Starts a turn |
 |---|---|---|
 | `send(input?, opts)` | new user input (or continue from history) | yes (or queue/steer, §6) |
-| `respond(response, opts)` | answer pending approvals / client tool calls | yes — continues the pending assistant message |
+| `respond(response, opts)` | answer pending approvals / client tool calls / external waits | yes — continues the pending assistant message |
+| `resolveWait(waitId, result, opts)` | record the result of an external wait (§4.2), from any instance | yes, when it was the last open item (the same continuation as `respond()`) |
+| `expireWaits(now?)` | expire due external waits (§4.2 rule 6) | yes, when that leaves nothing open |
 | `regenerate(opts)` | answer the last (or a given) user message again | yes |
 | `edit(messageId, input, opts)` | replace a user message and answer it | yes |
 | `inject(kind, data, opts)` | add a non-model message (event/notice) | only with `wake` |
@@ -28,9 +30,19 @@ A turn that ends with `stop: 'tool-pending'` leaves the session **pending**:
 
 ```ts
 export interface PendingState {
+  v?: number                                          // 2 since 0.5.0; absent = 0.3 / 0.4 shape (rule 9 of §4.2)
   messageId: string                                   // the assistant message waiting for answers
   approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk; idempotent?: boolean }>  // input/risk since 0.3, idempotent since 0.5 (§3.2)
-  clientTools: Array<{ toolCallId: string; toolName: string }>
+  clientTools: Array<{ toolCallId: string; toolName: string; timeoutAt?: number; onTimeout?: WaitTimeoutResult }>  // timeout fields reserved for request-scoped client tools (spec 09 §6)
+  externals?: PendingExternal[]                       // 0.5.0, §4.2
+}
+export interface PendingExternal {
+  waitId: string                                      // `w_<toolCallId>`, stable
+  toolCallId: string; toolName: string
+  correlationId?: string; payload?: JSONValue         // from `start` (§4.2 rule 1)
+  timeoutAt?: number                                  // epoch ms
+  onTimeout: { errorText: string } | { output: JSONValue }   // default { errorText: WAIT_TIMED_OUT }
+  result?: { output: JSONValue; by: 'result' | 'timeout' } | { errorText: string; by: 'result' | 'timeout' }
 }
 // state.core.pending: PendingState (spec 05 §7) — authoritative, used to validate respond()
 // metadata.eharness.pending: PendingState | null on the assistant message — copy for UIs;
@@ -39,7 +51,9 @@ export interface PendingState {
 
 `tool-pending` is decided at step end (spec 05 §3.1): a tool part in state `approval-requested`
 whose request is **not** automatic, or a call to a tool without `execute` (client tool) with no
-output. Automatic denials (`output-denied`, `isAutomatic`) are results, not pending.
+output. A call of an `externalTool()` (a tool without `execute`, §4.2) is pending kind
+`externals`, not `clientTools`. Automatic denials (`output-denied`, `isAutomatic`) are results,
+not pending.
 
 ## 3. Tool approval
 
@@ -186,6 +200,7 @@ respond(response: PendingResponse, options?: SendOptions): HarnessRun<M>
 export interface PendingResponse {
   approvals?: Array<{ id: string; approved: boolean; reason?: string; remember?: 'once' | 'session'; actor?: ApprovalActor }>
   toolOutputs?: Array<{ toolCallId: string; output: unknown } | { toolCallId: string; errorText: string }>
+  externals?: Array<{ waitId: string; output: unknown } | { waitId: string; errorText: string }>   // 0.5.0, §4.2
 }
 ```
 
@@ -194,7 +209,11 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
 1. Lock, load, validate against `state.core.pending`:
    - every id must belong to the pending set, and **all** pending approvals and client tools must
      be answered in one call (v0 has no partial resolution) → else `EH_INVALID_INPUT`
-     (`details.reason: 'unknown-id' | 'incomplete'`);
+     (`details.reason: 'unknown-id' | 'incomplete'`). External waits (§4.2) are answered by
+     `externals` or were recorded by `resolveWait()` before (a recorded wait is used as recorded
+     and must not be answered again: `'unknown-id'`); an open wait nobody answered is
+     `'incomplete'`; a `toolOutputs` answer for an external call is `'wrong-kind'`; a pending state
+     with an unknown `v` is `'stale'`;
    - the pending message must still be the newest non-kind message of the view (nothing was sent
      after it) → else `EH_INVALID_INPUT` (`'stale'`). Stale answers never authorize anything.
 2. **Consume**: clear `state.core.pending` and persist state before anything else (a replayed
@@ -244,7 +263,85 @@ again. Its tool mode output tool is then appended for the continuation like for 
   set `metadata.eharness.pending = null`, save A, clear pending (all at the commit point, spec 05
   §3 step 11), then continue with the new operation. The model sees the
   denials as tool results followed by the new message.
+  An external wait (§4.2) whose result was already recorded keeps that result; an open one is
+  answered with `WAIT_CANCELLED_NEW_INPUT` and emits `wait-resolved` (`by: 'cancel'`); later
+  results for it are `not-pending`.
 - `'reject'`: run error `EH_PENDING_RESPONSE`, nothing persisted.
+
+### 4.2 External waits
+
+An **external wait** hands a tool call's result to the outside world (a webhook, a job, another
+agent, a person) and parks the turn without holding a process; the result arrives later, in any
+instance. The tool is `externalTool()`: an AI SDK tool **without `execute`** plus a core-side
+`start` (ADR-0027). It stays a plain AI SDK tool; no chunk is rewritten.
+
+```ts
+externalTool({
+  description, inputSchema,
+  outputSchema?,                                   // validates resolveWait() results
+  start?: (input, { waitId, toolCallId, ctx, abortSignal }) => Promise<WaitStart | void> | WaitStart | void,
+  timeoutMs?: number,                              // default per wait; start() may override
+  onTimeout?: { errorText } | { output },          // default { errorText: WAIT_TIMED_OUT }
+  metadata?: { risk?, idempotent? },               // P21 traits
+}): Tool
+interface WaitStart { correlationId?; payload?; timeoutMs?; timeoutAt?; onTimeout? }
+
+session.resolveWait(waitId, { output } | { errorText }, opts?)
+  : Promise<{ status: 'continued'; run } | { status: 'recorded'; remaining: number }
+          | { status: 'already-resolved' } | { status: 'not-pending' }>
+session.expireWaits(now?): Promise<{ expired: string[]; run? }>
+session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending state
+```
+
+1. **Parking.** At step end an unanswered call of an `externalTool` is pending kind `externals`.
+   Its `start` runs **once**, in tool-call order, after the step ended and before the pending
+   state is committed (inside the turn: `ctx.turn` is live). `waitId` is `w_<toolCallId>` so
+   `start` can be idempotent for the outside system. A throwing `start` answers that call with an
+   error result (`describeError`, the model can self-correct); the step continues normally when
+   nothing else is pending. `start` only runs when the turn really stops `'tool-pending'`.
+2. **Several waits** of one step are all parked; approvals, client tools and externals may be
+   pending together.
+3. **Recording** (`resolveWait`). The wait id must be in `state.core.pending.externals`, else
+   `not-pending` (never an error). An `output` is validated against `outputSchema`
+   (`EH_INVALID_INPUT`, `details.reason: 'invalid-result'`, nothing stored), then passed through
+   `tool.after` and the output limits, and written with a compare-and-set on the state (under
+   the session lock when the adapter has no `setIf`). The first result wins; the same wait again
+   is `already-resolved` (idempotent, whatever the result); a timeout racing a result is whichever
+   CAS commits first. Callable from any instance; nothing runs in memory before the CAS. A turn
+   running in this instance → `EH_SESSION_BUSY`. Emits `wait-resolved` (`by: 'result'`).
+4. **Continuation.** When the write leaves nothing open (no approval, client tool or wait), the
+   same call starts the continuation through the `respond()` path with every recorded result
+   (§4 steps 2–5, ADR-0012 unchanged): the **same** assistant message continues; the stored tool
+   parts become `output-available` / `output-error`. While approvals or client tools are still
+   open the results stay recorded and the later `respond()` uses them. If a turn starts here
+   first, the result is only `recorded` (`remaining: 0`) and the next `respond({})`,
+   `expireWaits()` or new input picks it up.
+5. **Kinds are enforced.** `handleChatRequest` / `extractResponses` never answer an external wait
+   (a client output for an external `toolCallId` is ignored like a non-pending answer, so the
+   request is `'incomplete'`), and `respond({ toolOutputs })` for an external call is
+   `EH_INVALID_INPUT` (`'wrong-kind'`). A browser can never resolve a server-side wait.
+6. **Timeouts.** A wait with `timeoutAt` (`start().timeoutAt`, or now + `timeoutMs`) expires with
+   its `onTimeout` result (`by: 'timeout'`) through the same CAS as rule 3: (a) a timer in the
+   live holding process (capped at 2^31-1 ms; re-armed when a turn ends); (b) with an inbox, a
+   `wait-timeout` item enqueued after the pending state was stored, `availableAt: timeoutAt`
+   (spec 05 §12 rule 14), applied by whichever instance drains it — never held by pending (like
+   aborts), acked when the wait is already resolved or gone; (c) `session.expireWaits(now)` for
+   cron sweepers without an inbox, which also continues a pending state whose waits are all
+   recorded (an instance died between recording and continuing).
+7. **New input while waiting** — §4.1.
+8. **Never re-executed.** The parked call is answered, never run again (ADR-0014). A call parked
+   but never stored in `state.core.pending` (a crash between `start` and the commit) is answered
+   `INTERRUPTED_CRASH` by the stale-turn recovery (spec 05 §9) and `start` does not run again. A
+   recorded result whose continuation died before its commit point continues at the next
+   operation (rule 4, rule 6c).
+9. **Versioning.** `PendingState.v = 2` is written by 0.5.0; no `v` is the 0.3 / 0.4 shape and
+   reads as before; an unknown `v` authorizes nothing: `resolveWait()` → `not-pending`,
+   `pendingWaits()` → `[]`, `respond()` → `EH_INVALID_INPUT` (`'stale'`).
+10. **Holds.** Pending, waits included, holds the inbox and the in-memory queue (§6.2, spec 05 §12
+    rule 8).
+
+The core cannot authenticate a webhook: the application verifies the caller (signature,
+correlation id) before calling `resolveWait()`. `opts.actor` is accepted and reserved for audit.
 
 ## 5. Regenerate, edit, rewind
 
@@ -455,7 +552,8 @@ run and reported as a run error):
    `approval.id / approved / reason` of parts in `approval-responded`, and `toolCallId` /
    `output` / `errorText` of tool parts in `output-available` / `output-error`. Inside the run
    the answers are matched against `state.core.pending`; entries that are not pending are ignored,
-   and a pending item without an answer → `EH_INVALID_INPUT` (`'incomplete'`).
+   and a pending item without an answer → `EH_INVALID_INPUT` (`'incomplete'`). External waits are
+   never answered from the request body (§4.2 rule 5).
 3. `body.messageId` is set (useChat sends it when a message is replaced) and the last message has
    `role: 'user'` → `edit(body.messageId, last)`.
 4. otherwise → `send(last, options)` (a body without messages → run error `EH_INVALID_INPUT`).
@@ -500,4 +598,7 @@ prefix is roadmap.
 - Clients can never add tool parts, data parts or kinds (spec 05 §3 input normalization).
 - `approval.secret` adds HMAC signatures (defence in depth when storage is shared or exposed).
 - The reviewer's identity/authorization is the application's job (check it before calling
-  `respond()`).
+  `respond()`). The same holds for `resolveWait()`: verify the webhook before recording its
+  result; the first recorded result wins and cannot be changed.
+- External waits are resolved only server-side (§4.2 rule 5); an unknown pending `v` authorizes
+  nothing.
