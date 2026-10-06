@@ -11,14 +11,19 @@ import {
 } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
-import type { HarnessSession, SendOptions } from '../agent/session-types.ts'
+import type { HarnessSession } from '../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import type { ApprovalDecision } from '../plugin/types.ts'
 import { spyMessages, spyState } from '../session/int-kit.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
-import { type ChatRequestBody, extractResponses, handleChatRequest } from './chat-request.ts'
+import {
+  type ChatRequestBody,
+  type ChatRequestOptions,
+  extractResponses,
+  handleChatRequest,
+} from './chat-request.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
@@ -59,7 +64,7 @@ function setup(config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'm
     ...config,
   })
   const bodies: ChatRequestBody[] = []
-  let routeOptions: SendOptions = {}
+  let routeOptions: ChatRequestOptions = {}
   /** The application route: `handleChatRequest(session, body).toResponse()`. */
   const route = async (request: Request): Promise<Response> => {
     const body = (await request.json()) as ChatRequestBody & { id: string }
@@ -77,7 +82,7 @@ function setup(config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'm
     messages,
     bodies,
     transport,
-    setRouteOptions: (o: SendOptions) => {
+    setRouteOptions: (o: ChatRequestOptions) => {
       routeOptions = o
     },
   }

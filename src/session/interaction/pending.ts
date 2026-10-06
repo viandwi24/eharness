@@ -189,13 +189,16 @@ export function planRespond(args: {
         { id: o.toolCallId },
       )
     }
-    if (entry === undefined || answeredOutputs.has(o.toolCallId)) {
+    // a call whose timeout result was recorded (the client was too late) is answered already
+    if (entry === undefined || entry.result !== undefined || answeredOutputs.has(o.toolCallId)) {
       if (ignoreUnknown) continue
       throw reject(
         'unknown-id',
         entry === undefined
           ? `Tool call '${o.toolCallId}' is not waiting for a client output.`
-          : `Tool call '${o.toolCallId}' is answered twice.`,
+          : entry.result !== undefined
+            ? `Tool call '${o.toolCallId}' already timed out; its result is recorded.`
+            : `Tool call '${o.toolCallId}' is answered twice.`,
         { id: o.toolCallId },
       )
     }
@@ -251,7 +254,7 @@ export function planRespond(args: {
       .filter((a) => !answeredApprovals.has(a.approvalId))
       .map((a) => a.approvalId),
     ...pending.clientTools
-      .filter((c) => !answeredOutputs.has(c.toolCallId))
+      .filter((c) => c.result === undefined && !answeredOutputs.has(c.toolCallId))
       .map((c) => c.toolCallId),
   ]
   if (missing.length > 0) {
@@ -288,10 +291,20 @@ export function planRespond(args: {
         }
       : { ...base, output: e.result.output, ...(e.recorded ? { finished: true as const } : {}) }
   })
+  // client calls that timed out: their recorded result is used as recorded
+  const timedOutClients: ClientToolAnswer[] = pending.clientTools.flatMap((c) => {
+    if (c.result === undefined) return []
+    const base = { toolCallId: c.toolCallId, toolName: c.toolName, finished: true as const }
+    return [
+      'errorText' in c.result
+        ? { ...base, errorText: c.result.errorText }
+        : { ...base, output: c.result.output },
+    ]
+  })
   return {
     pending,
     approvals: [...answeredApprovals.values()],
-    toolOutputs: [...answeredOutputs.values(), ...externalOutputs],
+    toolOutputs: [...answeredOutputs.values(), ...timedOutClients, ...externalOutputs],
     externals: externalPlan,
   }
 }
@@ -373,7 +386,12 @@ export function patchForNewInput(
   pending: PendingState,
 ): HarnessUIMessage {
   const approvals = new Set(pending.approvals.map((a) => a.toolCallId))
-  const clients = new Set(pending.clientTools.map((c) => c.toolCallId))
+  const clients = new Set(
+    pending.clientTools.filter((c) => c.result === undefined).map((c) => c.toolCallId),
+  )
+  const timedOut = new Map(
+    pending.clientTools.flatMap((c) => (c.result === undefined ? [] : [[c.toolCallId, c.result]])),
+  )
   // a wait whose result was recorded keeps it; an open one is cancelled (spec 11 §4.2 rule 7)
   const externals = new Map((pending.externals ?? []).map((e) => [e.toolCallId, e]))
   return setPendingNull(
@@ -391,6 +409,12 @@ export function patchForNewInput(
       }
       if (clients.has(part.toolCallId) && part.state === 'input-available') {
         return { ...base(part), state: 'output-error', errorText: NOT_EXECUTED_NEW_INPUT }
+      }
+      const recorded = timedOut.get(part.toolCallId)
+      if (recorded !== undefined && part.state === 'input-available') {
+        return 'errorText' in recorded
+          ? { ...base(part), state: 'output-error', errorText: recorded.errorText }
+          : { ...base(part), state: 'output-available', output: recorded.output }
       }
       const wait = externals.get(part.toolCallId)
       if (wait !== undefined && part.state === 'input-available') {
