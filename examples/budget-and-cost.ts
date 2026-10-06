@@ -1,7 +1,8 @@
 /**
  * Model catalog, cost and USD budgets: prices come from a models.dev excerpt, every turn records
  * its estimated cost, a tool reports a nested model call with `ctx.turn.addUsage`, and budgets
- * stop turns with `'cost-cap'`.
+ * stop turns with `'cost-cap'`. The second part shares one budget ledger between two agent
+ * instances: a per-user limit that spans sessions (spec 12 §4.1).
  *
  *   bun examples/budget-and-cost.ts
  *
@@ -9,7 +10,7 @@
  */
 import { generateText, tool } from 'ai'
 import { defineHarnessAgent, definePlugin, modelsDevCatalog } from 'eharness'
-import { memoryState } from 'eharness/storage/memory'
+import { memoryBudgetLedger, memoryState } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
@@ -118,3 +119,45 @@ console.log(`session total: ${usd((await state.get('research'))?.core.usage?.cos
 console.log(`context window from the catalog: ${(await session.stats()).window}`)
 
 await agent.close()
+
+// --- budgets across sessions -------------------------------------------------------------------
+// Two agent instances (think: two servers) share one ledger. The user's limit spans every session:
+// each model call first reserves an estimate on `user:<id>`, then commits its actual cost.
+console.log('\nbudget ledger: user ada, $0.30 across sessions')
+const ledger = memoryBudgetLedger({ limits: { 'user:ada': 0.3 } }) // in production: a database
+const worker = () =>
+  exampleModel(
+    Array.from({ length: 5 }, (_, i) => ({
+      toolCalls: [search(`topic ${i}`)],
+      ...usage(20_000, 1_000),
+    })),
+    { provider: 'anthropic.messages', modelId: 'claude-sonnet-4.6' },
+  )
+const instance = () =>
+  defineHarnessAgent({
+    model: worker(),
+    models,
+    tools: {
+      search: tool({ inputSchema: z.object({ query: z.string() }), execute: async () => 'ok' }),
+    },
+    onWarning: (w) => console.log(`  warning ${w.code}: ${w.message}`),
+    budget: {
+      ledger: {
+        adapter: ledger,
+        scopes: (ctx) => [`user:${String(ctx.runtime.userId)}`],
+        // a flat estimate per call; the default prices the context + maxOutputTokens
+        estimate: () => 0.08,
+      },
+    },
+  })
+const [serverA, serverB] = [instance(), instance()]
+const first = await serverA.session('ada-chat-1', { runtime: { userId: 'ada' } }).send('Research')
+  .result
+console.log(`  server A: ${first.stop} after ${first.steps} steps, ${usd(first.usage.costUsd)}`)
+const second = await serverB.session('ada-chat-2', { runtime: { userId: 'ada' } }).send('More')
+  .result
+console.log(`  server B: ${second.stop} after ${second.steps} steps`) // refused before its first call
+const [ada] = (await ledger.check(['user:ada'])).scopes
+console.log(`  ledger: spent ${usd(ada?.spentUsd)} of $0.30, reserved ${usd(ada?.reservedUsd)}`)
+await serverA.close()
+await serverB.close()

@@ -51,6 +51,8 @@ export type CappedWire =
       turnStart: number
       /** Uncalibrated estimate of the request (instructions, tools, reminder, messages). */
       raw: number
+      /** Calibrated estimate of the request (budget ledger reservations, spec 12 §4.1). */
+      tokens: number
     }
   | { overflow: string }
 
@@ -380,10 +382,12 @@ export function createTurnCompaction(args: {
           overflow: `The context (~${result.tokens} tokens) exceeds the hard limit of ${limits.hardLimit} tokens.`,
         }
       }
+      const raw = fixedPart + wireTokens(result.messages, engine.count)
       return {
         messages: result.messages,
         turnStart: result.turnStart,
-        raw: fixedPart + wireTokens(result.messages, engine.count),
+        raw,
+        tokens: engine.calibration.apply(raw),
       }
     },
     observe(raw, inputTokens) {

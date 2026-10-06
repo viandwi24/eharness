@@ -33,7 +33,7 @@ Update this table in the same commit that changes a phase's status.
 | P22 | [Inbox poison items, retries and dead-letter](P22-inbox-dead-letter.md) | todo | P20 | P21 (W1) |
 | P23 | [Park-and-resume: external waits](P23-park-and-resume.md) | todo | P22 (P21 recommended) | P25 (W2) |
 | P24 | [Request-scoped client tools and page context](P24-request-client-tools.md) | todo | P23 | P26 (W3) |
-| P25 | [Cross-session `BudgetLedger` port](P25-budget-ledger.md) | todo | P20 | P23 (W2) |
+| P25 | [Cross-session `BudgetLedger` port](P25-budget-ledger.md) | in progress | P20 | P23 (W2) |
 | P26 | [Approval guard plugin (`eharness/guard`)](P26-approval-guard.md) | todo | P21 (P25 recommended) | P24 (W3) |
 | P27 | [Group-chat plugin (`eharness/group`)](P27-group-chat.md) | todo | P20 | P28 (W4) |
 | P28 | [OpenAPI → tools plugin (`eharness/openapi`)](P28-openapi-tools.md) | todo | P21 | P27 (W4) |
