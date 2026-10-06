@@ -25,6 +25,7 @@ import { manualFlushEnv } from '../compaction/flush.ts'
 import { toolTokens } from '../compaction/tokens.ts'
 import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
+import { recordOutsideTurn } from '../loop/ledger.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
@@ -1247,6 +1248,8 @@ export function createSessionHandle(args: {
         const pending = core.pending
         const fixed = await staticTokens(open)
         const fixedTokens = fixed.instructions + fixed.tools
+        /** Priced summarizer / flush calls, recorded on `budget.ledger` afterwards (spec 12 §4.1). */
+        const ledgerCosts: number[] = []
         const outcome = await compaction.compact({
           mode: 'manual',
           trigger: 'manual',
@@ -1275,6 +1278,7 @@ export function createSessionHandle(args: {
               outputTokens: previous.outputTokens + (usage.outputTokens ?? 0),
             }
             if (cost !== undefined) current.usage.costUsd = (previous.costUsd ?? 0) + cost
+            if (cost !== undefined) ledgerCosts.push(cost)
             rt.state.markDirty()
           },
           flushEnv: () => manualFlushEnv({ rt, open }),
@@ -1289,6 +1293,19 @@ export function createSessionHandle(args: {
           await rt.state.writeIfDirty()
         } catch (error) {
           log.warn('eharness: state write after compaction failed', { error })
+        }
+        const ledger = config.budget?.ledger
+        if (ledger !== undefined && ledgerCosts.length > 0) {
+          const compactId = internals.generateId()
+          for (const [i, amountUsd] of ledgerCosts.entries()) {
+            await recordOutsideTurn({
+              config: ledger,
+              ctx: rt.contextOf('app'),
+              key: `${rt.id}:compact:${compactId}:${i}`,
+              amountUsd,
+              warn: (warning, key) => rt.warn(warning, key),
+            })
+          }
         }
         if (outcome.status === 'failed') throw outcome.error
         return outcome.status === 'compacted' ? (structuredClone(outcome.marker) as never) : null

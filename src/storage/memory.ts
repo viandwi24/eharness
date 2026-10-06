@@ -9,6 +9,7 @@
  * @see docs/specs/05-session-and-storage.md#4-messageadapter-the-storage-contract
  */
 import {
+  type BudgetLedger,
   type InboxAdapter,
   type InboxItem,
   type MessageAdapter,
@@ -218,6 +219,123 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
         if (oldest !== undefined && ready(oldest, at)) out.push(sessionId)
       }
       return out
+    },
+  }
+}
+
+/** Options of {@link memoryBudgetLedger}. */
+export interface MemoryBudgetLedgerOptions {
+  /** Static USD limits per scope; a scope without an entry has no limit. No periods. */
+  limits?: Record<string, number>
+  /** Clock used for reservation expiry (tests). Default `Date.now`. */
+  now?: () => number
+}
+
+/**
+ * In-memory {@link BudgetLedger} (spec 12 §4.1): spent and reserved USD per scope with static
+ * limits and no periods, all-or-nothing reservations with expiry, idempotent commit / release /
+ * record. Several agent instances in one process (tests, examples) can share it to simulate a
+ * multi-instance deployment; a real deployment needs a shared store (see
+ * `examples/postgres-budget-ledger.ts`).
+ *
+ * @example
+ * ```ts
+ * const adapter = memoryBudgetLedger({ limits: { 'user:ada': 5 } })
+ * defineHarnessAgent({ model, models, budget: { ledger: { adapter, scopes: () => ['user:ada'] } } })
+ * ```
+ * @see docs/specs/12-models-and-cost.md#41-budget-ledger-normative
+ */
+export function memoryBudgetLedger(options: MemoryBudgetLedgerOptions = {}): BudgetLedger {
+  const now = options.now ?? (() => Date.now())
+  const limits = new Map(Object.entries(options.limits ?? {}))
+  const spent = new Map<string, number>()
+  type Reservation = {
+    scopes: string[]
+    amountUsd: number
+    until: number
+    key: string
+    state: 'open' | 'committed' | 'released'
+  }
+  const reservations = new Map<string, Reservation>()
+  const openByKey = new Map<string, string>()
+  const recorded = new Set<string>()
+
+  const isOpen = (r: Reservation, at: number) => r.state === 'open' && r.until > at
+  const reservedOn = (scope: string, at: number): number => {
+    let sum = 0
+    for (const r of reservations.values()) {
+      if (isOpen(r, at) && r.scopes.includes(scope)) sum += r.amountUsd
+    }
+    return sum
+  }
+  const charge = (scopes: readonly string[], amountUsd: number) => {
+    for (const scope of new Set(scopes)) spent.set(scope, (spent.get(scope) ?? 0) + amountUsd)
+  }
+  const amount = (value: number) => (Number.isFinite(value) && value > 0 ? value : 0)
+  const close = (id: string, r: Reservation, state: 'committed' | 'released') => {
+    r.state = state
+    if (openByKey.get(r.key) === id) openByKey.delete(r.key)
+  }
+
+  return {
+    async reserve(req) {
+      const at = now()
+      const existing = openByKey.get(req.key)
+      const held = existing === undefined ? undefined : reservations.get(existing)
+      if (existing !== undefined && held !== undefined && isOpen(held, at)) {
+        return { ok: true, reservationId: existing }
+      }
+      const amountUsd = amount(req.amountUsd)
+      const scopes = [...new Set(req.scopes)]
+      for (const scope of scopes) {
+        const limit = limits.get(scope)
+        if (limit === undefined) continue
+        const used = (spent.get(scope) ?? 0) + reservedOn(scope, at)
+        if (used >= limit || used + amountUsd > limit) {
+          return { ok: false, scope, limitUsd: limit, spentUsd: used }
+        }
+      }
+      const reservationId = uuidv7()
+      reservations.set(reservationId, {
+        scopes,
+        amountUsd,
+        until: at + Math.max(0, req.ttlMs),
+        key: req.key,
+        state: 'open',
+      })
+      openByKey.set(req.key, reservationId)
+      return { ok: true, reservationId }
+    },
+    async commit(reservationId, actualUsd) {
+      const r = reservations.get(reservationId)
+      if (r === undefined || r.state !== 'open') return
+      // an expired reservation still charges: the spend happened
+      close(reservationId, r, 'committed')
+      charge(r.scopes, amount(actualUsd))
+    },
+    async release(reservationId) {
+      const r = reservations.get(reservationId)
+      if (r === undefined || r.state !== 'open') return
+      close(reservationId, r, 'released')
+    },
+    async record(req) {
+      if (recorded.has(req.key)) return
+      recorded.add(req.key)
+      charge(req.scopes, amount(req.amountUsd))
+    },
+    async check(scopes) {
+      const at = now()
+      let ok = true
+      const out = [...new Set(scopes)].map((scope) => {
+        const limitUsd = limits.get(scope)
+        const spentUsd = spent.get(scope) ?? 0
+        const reservedUsd = reservedOn(scope, at)
+        if (limitUsd !== undefined && spentUsd + reservedUsd >= limitUsd) ok = false
+        return limitUsd === undefined
+          ? { scope, spentUsd, reservedUsd }
+          : { scope, limitUsd, spentUsd, reservedUsd }
+      })
+      return { ok, scopes: out }
     },
   }
 }

@@ -7,6 +7,10 @@
  */
 
 export {
+  type BudgetLedgerConformanceOptions,
+  budgetLedgerConformance,
+} from './budget-ledger.conformance.ts'
+export {
   type FileSystemConformanceOptions,
   type FileSystemUnderTest,
   fileSystemConformance,

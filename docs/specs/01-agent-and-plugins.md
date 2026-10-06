@@ -29,7 +29,11 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   contextWindow?: number | ((model: LanguageModel) => number | undefined)
   /** Limits and prices of the models in use (spec 12): record keyed by model id, or a function. */
   models?: ModelCatalog
-  /** USD spending limits (spec 12 §4). */
+  /**
+   * USD spending limits (spec 12 §4): `{ maxTurnUsd?, maxSessionUsd?, warnAt?, ledger? }`;
+   * `ledger: { adapter, scopes, estimate?, reservationTtlMs?, onError? }` enforces cross-session
+   * limits with reservations before every model call (spec 12 §4.1; 0.5.0).
+   */
   budget?: BudgetConfig
 
   instructions?: InstructionInput | InstructionInput[]          // spec 02 §2
@@ -496,7 +500,7 @@ declare module 'eharness' {
 | Unknown hook name, hook that is not a function, invalid instruction/skill shape | `EH_CONFIG_INVALID` |
 | `setup()` returns a promise or throws (the error is kept in `cause`) | `EH_CONFIG_INVALID` |
 | `model` missing, `contextWindow` not a positive number or function, `mcp` entry not a `ToolSource` | `EH_CONFIG_INVALID` |
-| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` / `compaction.prune.keepTurns` not an integer ≥ 0; `compaction.thrash.withinSteps` not a positive integer; `compaction.prune.minChars` negative; `progress.repeats` / `window` / `errorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; a `toolOutput.perTool` value neither `false` nor an integer ≥ 0; `compaction.contextWindow` not positive; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens` not positive; `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
+| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` / `compaction.prune.keepTurns` not an integer ≥ 0; `compaction.thrash.withinSteps` not a positive integer; `compaction.prune.minChars` negative; `progress.repeats` / `window` / `errorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; a `toolOutput.perTool` value neither `false` nor an integer ≥ 0; `compaction.contextWindow` not positive; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens`, `budget.ledger.reservationTtlMs` not positive; `budget.ledger.adapter` without the five `BudgetLedger` methods, `budget.ledger.scopes` / `estimate` not functions, `budget.ledger.onError` neither `'stop'` nor `'continue'` (0.5.0); `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
 
 Name conflicts that involve a **session-phase** contribution (`session()` tools or skills that
 collide with static ones or with each other) can only be detected when the session opens: they

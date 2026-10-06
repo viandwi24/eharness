@@ -48,6 +48,7 @@ import type { PendingInput, TurnInputQueue } from '../session/interaction/inbox.
 import { inputWireMessage } from '../session/interaction/inbox.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { describeError } from '../stream/describe-error.ts'
+import type { TurnLedger } from './ledger.ts'
 import { createProgressTracker, DEFAULT_PROGRESS, type StuckReason } from './progress.ts'
 import { applyCache, deepMerge, layoutMessages, systemBlocks } from './prompt.ts'
 import { decideStop, findPending } from './stop.ts'
@@ -145,6 +146,8 @@ export interface StepLoopInput {
   budget?: BudgetConfig | undefined
   /** USD spent by the session's earlier turns (`state.core.usage.costUsd`). */
   sessionCostBefore?: number
+  /** `budget.ledger` of the turn (spec 12 §4.1): reserve before every call, commit after it. */
+  ledger?: TurnLedger | undefined
   toolsContext: Record<string, unknown> | undefined
   cache: CacheConfig | false | undefined
   signal: AbortSignal
@@ -175,7 +178,7 @@ export interface StepLoopInput {
 /** Outcome of the step loop. */
 export interface LoopResult {
   stop: StopReason
-  error?: { code?: string; message: string }
+  error?: { code?: string; message: string; details?: Record<string, unknown> }
   pending?: PendingState
   steps: number
   /** Model of the last step. */
@@ -684,6 +687,24 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         registry.staticCount > 0 ? registry.entries[registry.staticCount - 1]?.name : undefined,
     })
 
+    // budget ledger (spec 12 §4.1): reserve the step's estimate before the call
+    if (input.ledger !== undefined) {
+      const decision = await input.ledger.beforeCall({
+        stepIndex,
+        model: stepModel,
+        contextTokens: capped.tokens,
+        maxOutputTokens: settings.maxOutputTokens,
+      })
+      if (!decision.ok) {
+        if (external.length > 0) input.inbox?.unshift(external)
+        external = []
+        if (decision.stop === 'cost-cap') return { stop: 'cost-cap', steps: stepIndex, model }
+        input.write({ type: 'error', errorText: decision.error.message })
+        return { stop: 'error', error: decision.error, steps: stepIndex, model }
+      }
+      if (input.signal.aborted) return aborted()
+    }
+
     // the step
     const turnState = rt.turn
     if (turnState !== undefined) turnState.step = { index: stepIndex, model: stepModel }
@@ -834,8 +855,10 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     const stepUsage = response === undefined ? undefined : await guarded(result.usage)
     // rejects like responseMessages on abort / early provider failure
     const step = response === undefined ? undefined : await guarded(result.finalStep)
+    let stepCost: number | undefined
     if (stepUsage !== undefined) {
       const cost = costOf(input.models, stepModel, stepUsage)
+      stepCost = cost
       if (cost === undefined && input.budget !== undefined) {
         rt.warn(
           {
@@ -849,6 +872,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       addUsage(input.usage, stepUsage, false, cost)
       compaction.observe(capped.raw, stepUsage.inputTokens)
     }
+    // commit what is known (an aborted or failed step without usage commits 0, spec 12 §4.1)
+    if (input.ledger !== undefined) await input.ledger.afterCall(stepCost ?? 0)
     const total = totalUsageOf(input.usage)
     input.write({
       type: 'data-eh.usage',

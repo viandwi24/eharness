@@ -54,7 +54,15 @@ describe('postgres MessageAdapter', () => {
 ```
 
 Suites: `messageAdapterConformance`, `stateAdapterConformance`, `fileSystemConformance`,
-`skillSourceConformance`, `idGeneratorConformance`.
+`skillSourceConformance`, `idGeneratorConformance`, `inboxAdapterConformance` (0.4.0),
+`budgetLedgerConformance` (0.5.0; the factory receives the case's static limits).
+
+Minimum cases for `budgetLedgerConformance`: unknown scopes have no limit; reserve up to the limit
+and refuse beyond it (refused scope, limit, spent + reserved); a used-up scope refuses a zero
+reservation; all-or-nothing over several scopes; 100 concurrent reservations never exceed a
+limit; commit replaces a reservation (lower and higher); idempotent commit / release, unknown ids
+ignored; reserve idempotent per open key; record once per key (also concurrent); expiry, and a
+late commit of an expired reservation still charges; `check` sums.
 
 Minimum cases for `messageAdapterConformance`: ordering by id for out-of-order saves; upsert
 replaces (dropped keys stay dropped, never a merge); `fromId` inclusive and between stored ids;
