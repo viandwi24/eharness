@@ -101,6 +101,21 @@ export function createTurnLedger(args: {
     }
   }
 
+  /** Commits that failed: retried (commit is idempotent) at the next boundary, then recorded. */
+  const uncommitted: Array<{ id: string; amountUsd: number }> = []
+  const commitQueued = async (): Promise<void> => {
+    while (uncommitted.length > 0) {
+      const item = uncommitted[0] as { id: string; amountUsd: number }
+      try {
+        await adapter.commit(item.id, item.amountUsd)
+      } catch (error) {
+        failed('commit', error, { reservationId: item.id })
+        return
+      }
+      uncommitted.shift()
+    }
+  }
+
   /** Record waiting nested usage; a failed record stays queued (same key) for the next try. */
   const flush = async (list: string[]): Promise<void> => {
     while (waiting.length > 0) {
@@ -121,6 +136,7 @@ export function createTurnLedger(args: {
       if (list === undefined) return { ok: true }
       if (!Array.isArray(list)) return list
       if (list.length === 0) return { ok: true }
+      await commitQueued()
       await flush(list)
       if (open !== undefined && open.stepIndex === stepIndex) return { ok: true }
       const output = maxOutputTokens ?? DEFAULT_ESTIMATE_OUTPUT_TOKENS
@@ -179,11 +195,8 @@ export function createTurnLedger(args: {
       open = undefined
       if (reservation === undefined) return
       const amount = actualUsd !== undefined && Number.isFinite(actualUsd) && actualUsd >= 0
-      try {
-        await adapter.commit(reservation.id, amount ? (actualUsd as number) : 0)
-      } catch (error) {
-        failed('commit', error, { reservationId: reservation.id })
-      }
+      uncommitted.push({ id: reservation.id, amountUsd: amount ? (actualUsd as number) : 0 })
+      await commitQueued()
     },
     nested(costUsd) {
       if (disabled || !(Number.isFinite(costUsd) && costUsd > 0)) return
@@ -198,6 +211,22 @@ export function createTurnLedger(args: {
         } catch (error) {
           failed('release', error, { reservationId: reservation.id })
         }
+      }
+      await commitQueued()
+      if (uncommitted.length > 0 && Array.isArray(scopes)) {
+        // still failing: charge the spend once per reservation (the hold expires on its own)
+        for (const item of uncommitted) {
+          try {
+            await adapter.record({
+              scopes,
+              amountUsd: item.amountUsd,
+              key: `${sessionId}:${turnId}:commit:${item.id}`,
+            })
+          } catch (error) {
+            failed('record', error, { reservationId: item.id })
+          }
+        }
+        uncommitted.length = 0
       }
       if (waiting.length === 0) return
       const list = await resolve()
