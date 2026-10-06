@@ -227,3 +227,75 @@ describe('renderPageContext', () => {
     bad(Array.from({ length: 33 }, () => ({ description: 'a', value: 'b' })))
   })
 })
+
+describe('review fixes', () => {
+  test('prototype names are rejected', () => {
+    for (const name of ['__proto__', 'constructor', 'prototype']) {
+      const out = reasonOf(() => buildRequestTools([decl(name)], none))
+      expect(out.problems[0]).toContain('reserved')
+    }
+  })
+
+  test('a property named $ref is data; dynamic references are rejected', () => {
+    const ok = buildRequestTools(
+      [
+        decl('a', {
+          inputSchema: {
+            type: 'object',
+            properties: { $ref: { type: 'string' } },
+            $defs: { $ref: { type: 'number' } },
+          },
+        }),
+      ],
+      none,
+    )
+    expect(ok?.tools).toHaveLength(1)
+    for (const key of ['$ref', '$dynamicRef', '$recursiveRef']) {
+      reasonOf(() =>
+        buildRequestTools(
+          [
+            decl('b', {
+              inputSchema: {
+                type: 'object',
+                properties: { x: { [key]: 'http://x/y' } },
+              },
+            }),
+          ],
+          none,
+        ),
+      )
+    }
+    reasonOf(() =>
+      buildRequestTools(
+        [decl('c', { inputSchema: { type: 'object', $dynamicRef: '#meta' } })],
+        none,
+      ),
+    )
+  })
+
+  test('descriptions never split a surrogate pair', () => {
+    const emoji = '\u{1F600}'
+    const built = buildRequestTools(
+      [decl('e', { description: `${'a'.repeat(999)}${emoji}` })],
+      none,
+    )
+    const entry = built?.tools[0]?.tool as { description?: string } | undefined
+    const description = entry?.description
+    expect(description).toBe('a'.repeat(999))
+    const text = renderPageContext([{ description: `${'a'.repeat(199)}${emoji}`, value: 'v' }])
+    expect(text).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/)
+  })
+
+  test('escaped descriptions count toward the page context budget', () => {
+    const entries = Array.from({ length: 32 }, (_, i) => ({
+      description: '"&<>'.repeat(50) + i, // escapes to ~1 000 characters each
+      value: 'x'.repeat(100),
+    }))
+    const warnings: HarnessWarning[] = []
+    const text = renderPageContext(entries, { maxChars: 2_000 }, (w) => warnings.push(w)) as string
+    const blocks = text.slice(PAGE_CONTEXT_PREAMBLE.length)
+    // the block is bounded by maxChars plus the fixed framing, not by 32 x 1 000 of labels
+    expect(blocks.length).toBeLessThan(2_000 + 32 * 80)
+    expect(warnings.map((w) => w.code)).toContain('W_PAGE_CONTEXT_LIMITED')
+  })
+})

@@ -279,6 +279,16 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
    `tool-approval-response`s, so the first `streamText` call executes approved tools and emits
    denials (`execution-denied` with the reason) **before** calling the model. From there the
    turn runs normally (steps, stop rules, hooks).
+   **Approved calls of a tool without `execute`** (a client tool: request-scoped or registered on
+   the server) are never run by the server: the approval answer is consumed in the same
+   compare-and-set write that stores a **new pending state** holding them as `clientTools` entries
+   (with the §7.1 `waitId` / `timeoutAt` / `onTimeout` when a timeout is configured), their parts
+   go back to `input-available` (one `tool-input-available` chunk is streamed), and the turn ends
+   `'tool-pending'` **without a model step**. The client runs the tool and answers with
+   `respond({ toolOutputs })` / `handleChatRequest`; the output streams into the same message.
+   Approved calls of tools with `execute` in the same batch stay pending (they run after the
+   client answered; the client sends their approval again with the output, which
+   `handleChatRequest` does by itself). Denied approvals are unchanged (`execution-denied`).
 5. **The first step of a continuation must end with that `tool` message.** AI SDK only collects
    approvals when the last prompt message has role `tool`. Therefore, for step 0 of a `respond`
    turn: no step reminder is appended (spec 02 §5), no `data-eh.input` is delivered (waiting
@@ -653,7 +663,7 @@ export interface ClientToolsOptions {
   timeoutMs?: number         // an unanswered call expires after this (default: never)
   onTimeout?: { errorText: string } | { output: JSONValue }  // default { errorText: CLIENT_TOOL_TIMED_OUT }
 }
-export interface PageContextOptions { maxChars?: number }   // default 4 000, all values together
+export interface PageContextOptions { maxChars?: number }   // default 4 000, descriptions and values together
 // SendOptions (spec 05 §2): clientTools, clientToolsOptions, pageContext, pageContextOptions
 ```
 
@@ -679,7 +689,9 @@ export interface PageContextOptions { maxChars?: number }   // default 4 000, al
 3. **No implied permission.** A declaration becomes an AI SDK tool without `execute`, built with
    `jsonSchema()`, no `metadata` (risk `unknown`, §3.2): `approval.policy`, `approval.risk` and
    `tool.approve` hooks apply to it like to any tool (an app can deny it or ask first; an approved
-   call then parks as a client call). It never runs server code; its output returns through
+   call then parks as a client call: the approving `respond()` ends `'tool-pending'` with the call
+   in `clientTools` — it is never run, nor answered as interrupted, by the server, §4 step 4).
+   It never runs server code; its output returns through
    `respond({ toolOutputs })` and passes `tool.after` and the output limits (spec 09 §6). The
    model-visible text of a declaration (name, description, schema) is the client's; the
    application decides with `allow` which clients may declare what.
@@ -713,8 +725,10 @@ export interface PageContextOptions { maxChars?: number }   // default 4 000, al
    at most 200 characters). Values that are not strings are JSON-stringified; `page-context` and
    `system-reminder` tags (opening or closing, any case/whitespace) are neutralised inside values
    (`<` → `&lt;`, the helper `neutralizeTags` shared with pinned memory files and group messages,
-   spec 14 §4); the values share `maxChars` evenly (short values keep everything) and over-long
-   ones keep head and tail around a marker, with `W_PAGE_CONTEXT_LIMITED`. At most 32 entries. An
+   spec 14 §4); `maxChars` bounds the whole block: the escaped descriptions take at most half of it
+   (shared evenly, cut at a character boundary) and the values share the rest evenly (short
+   values keep everything); over-long values keep head and tail around a marker, with
+   `W_PAGE_CONTEXT_LIMITED`. At most 32 entries. An
    invalid entry list is `EH_INVALID_INPUT` (`details.reason: 'page-context'`).
 7. **Tab closed.** See rule 5: without an answer the call expires at `timeoutAt`. Without
    `timeoutMs` a call waits like any client call until the next request (a new input denies it,

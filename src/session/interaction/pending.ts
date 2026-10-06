@@ -340,6 +340,8 @@ function base(part: ToolPartLike): Record<string, unknown> {
  * `approval-responded` with the approval object **merged** (`signature` and `inputSchemaInput`
  * survive); client tool parts → `output-available` / `output-error` (outputs already passed
  * through `tool.after` and the output limits); `metadata.eharness.pending = null`. The message
+ * `parked` names approved calls of client tools (no `execute`): their parts go back to
+ * `input-available` instead (the client answers them). The message
  * is running again: its `stop` is removed until the continuation ends (so crash recovery sees an
  * unfinished message, spec 05 §9).
  */
@@ -347,6 +349,7 @@ export function patchForRespond(
   message: HarnessUIMessage,
   approvals: readonly ApprovalAnswer[],
   outputs: readonly ClientToolAnswer[],
+  parked: ReadonlySet<string> = new Set(),
 ): HarnessUIMessage {
   const byCall = new Map(approvals.map((a) => [a.toolCallId, a]))
   const outputByCall = new Map(outputs.map((o) => [o.toolCallId, o]))
@@ -354,6 +357,11 @@ export function patchForRespond(
     mapToolParts(structuredClone(message), (part) => {
       const approval = byCall.get(part.toolCallId)
       if (approval !== undefined && part.state === 'approval-requested') {
+        if (parked.has(part.toolCallId)) {
+          // approved call of a tool without `execute`: the client runs it (spec 11 §5)
+          const { approval: _approval, ...rest } = base(part)
+          return { ...rest, state: 'input-available' }
+        }
         const merged: Record<string, unknown> = {
           ...(part.approval ?? { id: approval.approvalId }),
           approved: approval.approved,
