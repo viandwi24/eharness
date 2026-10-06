@@ -14,9 +14,10 @@ Status: **Accepted** (v0).
 │ plugin     definePlugin, setup/session phases, hooks, services                   │
 │ registry   instructions · tools · skills · data parts · message kinds            │
 │ session    send/respond/regenerate/edit/attach/abort/inject/compact, lock, load, │
-│            persist, pending, rewinds, steer/queue, crash recovery                │
+│            persist, pending (approvals, client tools, external waits), rewinds,  │
+│            steer/queue, crash recovery                                           │
 │ loop       manual step loop (1 streamText per step), stop rules, progress guard  │
-│ models     model catalog lookup, models.dev adapter, cost, budgets               │
+│ models     model catalog lookup, models.dev adapter, cost, budgets, ledger       │
 │ stream     createUIMessageStream, namespaced writers, turn buffer                │
 │ messages   HarnessUIMessage, metadata, ids (UUIDv7), projection, validation      │
 │ compaction token accounting, fixed summarize algorithm, guard, sanitize          │
@@ -26,10 +27,14 @@ Status: **Accepted** (v0).
 ┌──────────────▼───────── shipped extensions (same package, subpaths) ──────────────┐
 │ eharness/filesystem         FileSystem contract, filesystem() plugin, file tools │
 │ eharness/filesystem/memory  memoryFs()                                           │
-│ eharness/storage/memory     memoryMessages(), memoryState(), memoryInbox()       │
+│ eharness/storage/memory     memoryMessages(), memoryState(), memoryInbox(),      │
+│                             memoryBudgetLedger()                                 │
 │ eharness/mcp                mcpServer() tool source over @ai-sdk/mcp             │
 │ eharness/todos              todos() plugin: todo_write, data-todos.list          │
 │ eharness/memory             memory() plugin: memory files under app roots        │
+│ eharness/guard              approvalGuard(): LLM judge, tighten-only             │
+│ eharness/group              groupChat(), routeGroupMessage(): multi-party chat   │
+│ eharness/openapi            openApiTools(): OpenAPI 3.x operations as tools      │
 │ eharness/testing            conformance suites + mock helpers                    │
 └──────────────┬─────────────────────────────────────────────────────────────────────┘
                │
@@ -51,11 +56,14 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness` | `src/index.ts` | core API and types |
 | `eharness/filesystem` | `src/filesystem/index.ts` | `FileSystem` contract, `filesystem()` plugin, `fsSkillSource()`, helpers |
 | `eharness/filesystem/memory` | `src/filesystem/memory.ts` | `memoryFs()` |
-| `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()` |
+| `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, fixed texts |
 | `eharness/memory` | `src/memory/index.ts` | `memory()` plugin, `executeMemoryCommand()`, `MEMORY_PROTOCOL`, `MEMORY_TOOLS`, `MEMORY_FLUSH_PROMPT`, `MEMORY_FLUSH_TOOLS` |
-| `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
+| `eharness/guard` | `src/guard/index.ts` | `approvalGuard()`, `canonicalJson()`, `verdictKey()`, `GUARD_*` texts (spec 15) |
+| `eharness/group` | `src/group/index.ts` | `groupChat()`, `routeGroupMessage()`, `GROUP_HISTORY_PREAMBLE`, `GROUP_SPEAKER_PREFIX` (spec 16) |
+| `eharness/openapi` | `src/openapi/index.ts` | `openApiTools()`, `riskFromMethod()`, `OPENAPI_AUTO_DEFER_THRESHOLD` (spec 17) |
+| `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `budgetLedgerConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
 
 Peer dependencies: `ai@^7.0.127`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
 peer: `@ai-sdk/mcp@^2.0.66`. No runtime dependencies. The floors are the locked, tested versions
