@@ -1,12 +1,7 @@
 [
   {
     "role": "user",
-    "content": "<conversation-summary>Steps 0-1 read three files.</conversation-summary>",
-    "providerOptions": {
-      "eharness": {
-        "core": true
-      }
-    }
+    "content": "<conversation-summary>Steps 0-1 read three files.</conversation-summary>"
   },
   {
     "role": "user",

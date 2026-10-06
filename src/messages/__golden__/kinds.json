@@ -19,12 +19,7 @@
   },
   {
     "role": "user",
-    "content": "<event name=\"backtest.finished\">Backtest #42 finished: +12%</event>",
-    "providerOptions": {
-      "eharness": {
-        "core": true
-      }
-    }
+    "content": "<event name=\"backtest.finished\">Backtest #42 finished: +12%</event>"
   },
   {
     "role": "assistant",

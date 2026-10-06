@@ -212,8 +212,9 @@ model wire AI SDK passes to the approval function (`options.messages`), oldest f
   `image` parts as `[file: <filename | 'unnamed'>, <mediaType | 'unknown'>]`. Text parts the core
   writes are skipped: they start with `<system-reminder>` (reminders, spec 02 §5), `<data type="`
   (data parts with `model: 'text'`), `<conversation-summary>` or `<event name="`. User messages
-  with string content (internal prompts), and every message the core projects from a kind (it tags
-  them `providerOptions.eharness.core: true`, spec 03 §6), are skipped. A person who types one of
+  with string content (internal prompts), and every message the core projects from a plugin / app kind (tagged
+  `providerOptions.eharness.core: true`, spec 03 §6; core `eh.*` kinds are covered by the prefixes
+  above), are skipped. A person who types one of
   the prefixes above hides that text from the judge (it can only reduce what the judge sees).
 - `assistant` messages → one entry per `tool-call` part (`toolName`, a copy of `input`); the call
   under review is left out.

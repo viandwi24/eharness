@@ -4,7 +4,7 @@
  * assistant text, reasoning, system messages, reminders, kind projections and projected data
  * parts are left out, so a prompt injection in a tool result cannot reach a judge reading it.
  * Limits: user text is identified by the prefixes the core writes (a person typing one of them
- * hides that text from the judge only) and kind projections are identified by the core's tag; text
+ * hides that text from the judge only) and plugin / app kind projections are identified by the core's tag; text
  * an application projects into a user message by itself (e.g. a group history block, spec 16)
  * is indistinguishable from a person's text and does appear as user text.
  *

@@ -9,7 +9,7 @@
  * @see docs/specs/11-interaction.md#42-external-waits
  * @see docs/decisions/0027-external-waits-park-at-the-tool-boundary.md
  */
-import { asSchema, type Tool, type UIMessage } from 'ai'
+import type { UIMessage } from 'ai'
 import type {
   HarnessRun,
   InboxAdapter,
@@ -20,9 +20,8 @@ import type { ToolOutputConfig } from '../../agent/types.ts'
 import { HarnessError } from '../../errors.ts'
 import { WAIT_TIMED_OUT } from '../../messages/texts.ts'
 import type { PendingExternal, WaitResult } from '../../messages/types.ts'
-import type { ToolOutputSink } from '../../registry/output-limits.ts'
 import { externalOf, type WaitStart } from '../../registry/external.ts'
-import { listSourceTools } from '../../registry/tools.ts'
+import type { ToolOutputSink } from '../../registry/output-limits.ts'
 import { finishToolOutput, hookFailed } from '../../registry/wrap.ts'
 import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import {
