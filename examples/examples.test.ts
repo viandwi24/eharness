@@ -9,6 +9,7 @@ import { readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  budgetLedgerConformance,
   fileSystemConformance,
   inboxAdapterConformance,
   messageAdapterConformance,
@@ -16,6 +17,11 @@ import {
 } from 'eharness/testing'
 import { kvFileSystem, mapKeyValueStore } from './custom-fs-adapter.ts'
 import { jsonFileMessages, jsonFileState } from './json-file-storage.ts'
+import {
+  migrateBudgetLedger,
+  postgresBudgetLedger,
+  setBudgetLimit,
+} from './postgres-budget-ledger.ts'
 import { bunSqlListener, migrateInbox, postgresInbox } from './postgres-inbox.ts'
 import {
   bunSqlPool,
@@ -198,6 +204,11 @@ describe('examples run offline', () => {
       expect(out).toContain('stored on the first answer: $0.3275')
       expect(out).toContain('session total: $0.9575')
       expect(out).toContain('context window from the catalog: 200000')
+      // budget ledger shared by two instances: $0.075 per step, $0.08 reserved per call
+      expect(out).toContain('server A: cost-cap after 3 steps, $0.2250')
+      expect(out).toContain("W_BUDGET: The ledger budget of 'user:ada' ($0.3) cannot take")
+      expect(out).toContain('server B: cost-cap after 0 steps')
+      expect(out).toContain('ledger: spent $0.2250 of $0.30, reserved $0.0000')
     },
     timeout,
   )
@@ -305,6 +316,14 @@ describe('examples run offline', () => {
   )
 
   test(
+    'postgres-budget-ledger without DATABASE_URL',
+    async () => {
+      expect(await run('postgres-budget-ledger.ts')).toContain('DATABASE_URL is not set')
+    },
+    timeout,
+  )
+
+  test(
     'postgres-inbox without DATABASE_URL',
     async () => {
       expect(await run('postgres-inbox.ts')).toContain('DATABASE_URL is not set')
@@ -369,6 +388,24 @@ describe.skipIf(databaseUrl === '')('postgres-storage (DATABASE_URL)', () => {
     })
     for (const c of cases) test(`inbox: ${c.name}`, c.run)
   })
+  describe('budget ledger', () => {
+    beforeAll(() => migrateBudgetLedger(db, { schema }))
+    const cases = budgetLedgerConformance(
+      async (limits) => {
+        for (const [scope, limit] of Object.entries(limits)) {
+          await setBudgetLimit(db, scope, limit, { schema })
+        }
+        return postgresBudgetLedger(db, { schema })
+      },
+      { ttlMs: 200 },
+    )
+    for (const c of cases) test(`budget ledger: ${c.name}`, c.run, 30_000)
+  })
+  test('the budget ledger example script passes', async () => {
+    const out = await run('postgres-budget-ledger.ts', { DATABASE_URL: databaseUrl })
+    expect(out).not.toContain('✗')
+    expect(out).toContain('tenant spent: $0.0200 of $0.02')
+  }, 30_000)
   test('the inbox example script passes', async () => {
     const out = await run('postgres-inbox.ts', { DATABASE_URL: databaseUrl })
     expect(out).not.toContain('✗')
