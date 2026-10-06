@@ -102,7 +102,7 @@ import { z } from 'zod/v4'
 const readRecord = tool({
   description: 'Read a record.',
   inputSchema: z.object({ id: z.string() }),
-  metadata: { risk: 'read' }, // 'read' | 'write' | 'destructive' (type ToolRisk)
+  metadata: { risk: 'read' }, // 'read' | 'write' | 'destructive' | 'external' (type ToolRisk)
   execute: async ({ id }) => `Record ${id}`,
 })
 const deleteRecord = tool({
@@ -120,10 +120,62 @@ defineHarnessAgent({
 })
 ```
 
-MCP tools marked `destructiveHint` by their server count as `'destructive'`; `readOnlyHint` is
-ignored (a server could lie). Risk rules are one more input of the most-restrictive combination:
-they can require approval or deny, but a stricter policy, hook or grant still wins, and a risk rule
-never loosens one. `tool.approve` hooks receive the `risk` too.
+Risk rules are one more input of the most-restrictive combination: they can require approval or
+deny, but a stricter policy, hook or grant still wins, and a risk rule never loosens one.
+
+### Routing by risk
+
+| Risk | Meaning | Set by the app | Derived from MCP hints (untrusted, tighten-only) | MCP hints that describe it |
+|---|---|---|---|---|
+| `read` | no side effects | `metadata: { risk: 'read' }` | never (`readOnlyHint` is ignored) | `readOnlyHint: true` |
+| `write` | changes data inside your system | `metadata: { risk: 'write' }` | never | `readOnlyHint: false, destructiveHint: false, openWorldHint: false` |
+| `destructive` | deletes or overwrites | `metadata: { risk: 'destructive' }` | `destructiveHint: true` (wins over `openWorldHint`) | `destructiveHint: true` |
+| `external` | an effect outside the system: email, third-party post, payment | `metadata: { risk: 'external' }` | `openWorldHint: true` | `openWorldHint: true` (plus `destructiveHint` as needed) |
+| *(none)* | `unknown` in `approval.risk` | — | no hints, or only `readOnlyHint` / `idempotentHint` / `false` hints | — |
+
+Rules: app metadata wins (it is trusted, so it may be lower than the hints); hints only tighten;
+one risk per tool; eharness applies **no MCP spec defaults**, so an MCP tool without annotations is
+`unknown`. For servers you do not control, route `unknown` to a person. For a server you trust,
+set the risk yourself with `mcpServer({ risk })` (a constant or a function per tool, see
+[Tools and MCP](tools-and-mcp.md#mcp-servers-eharnessmcp)).
+
+`toolTraits(metadata)` returns what the core sees: `{ risk?, idempotent?, hints? }`.
+`idempotent` comes only from your metadata (`tool({ metadata: { idempotent: true } })`); MCP's
+`idempotentHint` is reported in `hints` and never used by the core. `tool.approve` hooks receive
+`risk`, `idempotent` and `hints`; pending approvals and `ApprovalDecision` carry `risk` and
+`idempotent`.
+
+A policy that asks for external effects and lets only admins run destructive tools (the role comes
+from your request handler through `runtime`):
+
+```ts
+import { defineHarnessAgent, definePlugin } from 'eharness'
+
+const roles = definePlugin({
+  name: 'roles',
+  setup: () => ({
+    hooks: {
+      // deterministic and side-effect free: AI SDK calls it again for approved calls
+      'tool.approve': (ctx, e) =>
+        e.risk === 'destructive' && ctx.runtime.role !== 'admin' ? 'denied' : undefined,
+    },
+  }),
+})
+
+defineHarnessAgent({
+  model,
+  plugins: [roles],
+  approval: {
+    risk: {
+      read: 'approved',
+      write: 'approved',
+      external: 'user-approval',
+      destructive: 'user-approval', // admins still confirm
+      unknown: 'user-approval', // MCP tools without annotations
+    },
+  },
+})
+```
 
 For approvals outside the chat (a manager approves in a web inbox), keep three pieces in your app:
 

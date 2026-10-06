@@ -279,7 +279,11 @@ export function buildApproval(
   })
   return async (options) => {
     const { toolCall } = options
-    const toolMetadata = (toolCall as { toolMetadata?: unknown }).toolMetadata
+    // AI SDK's re-validation of approved calls (a respond() continuation) passes the stored call,
+    // which has no `toolMetadata`: read it from the tool itself, so traits never fall to `unknown`
+    const toolMetadata =
+      (toolCall as { toolMetadata?: unknown }).toolMetadata ??
+      (options.tools?.[toolCall.toolName] as { metadata?: unknown } | undefined)?.metadata
     const { risk, idempotent, hints } = toolTraits(toolMetadata)
     const statuses: Array<{ status: Normalized; by: ApprovalDecision['by'] }> = []
     if (typeof policy === 'function') {
