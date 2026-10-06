@@ -18,6 +18,7 @@ import {
   spyState,
 } from '../session/int-kit.ts'
 import { defaultMemoryState } from '../session/memory-storage.ts'
+import { memoryBudgetLedger } from '../storage/memory.ts'
 import {
   type ScriptedCallOptions,
   type ScriptedStep,
@@ -651,6 +652,35 @@ describe('summarizer usage and budgets (spec 06 §5.3, spec 12)', () => {
     expect(after?.inputTokens).toBe((before?.inputTokens ?? 0) + 10)
     expect(after?.outputTokens).toBe((before?.outputTokens ?? 0) + 5)
     expect(after?.turns).toBe(before?.turns)
+  })
+
+  test('summarizer usage is recorded on budget.ledger (automatic and manual), once', async () => {
+    const adapter = memoryBudgetLedger()
+    const ledger = { adapter, scopes: () => ['user:ada'] }
+    const steps = Array.from({ length: 6 }, (_, i) => answer(`A${i + 1}`))
+    const { agent } = setup(steps, { models, budget: { ledger } })
+    const session = agent.session('s1')
+    await fillTurns(session, 4)
+    const spent = async () => (await adapter.check(['user:ada'])).scopes[0]?.spentUsd ?? 0
+    const beforeAuto = await spent()
+    const result = await session.send(big('Q5')).result
+    expect(result.stop).toBe('complete')
+    // the main model is free: only the summarizer call ($0.015) is spent
+    expect((await spent()) - beforeAuto).toBeCloseTo(0.015, 10)
+
+    const manual = setup(
+      Array.from({ length: 2 }, (_, i) => answer(`A${i + 1}`)),
+      {
+        models,
+        budget: { ledger },
+        compaction: { model: summarizerModel(['SUMMARY']), keepLast: 0, maxSummaryTokens: 100 },
+      },
+    )
+    const s = manual.agent.session('s2')
+    await s.send(big('Q1')).result
+    const beforeManual = await spent()
+    expect(await s.compact()).not.toBeNull()
+    expect((await spent()) - beforeManual).toBeCloseTo(0.015, 10)
   })
 })
 

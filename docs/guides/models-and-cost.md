@@ -186,5 +186,75 @@ defineHarnessAgent({
   count toward `usage` and `loop.maxTurnOutputTokens`. Fix the catalog key (see `lookupModel`).
 - Token limits stay available as `loop.maxTurnOutputTokens`, which also stops with `'cost-cap'`.
 
-To cap a single user or tenant across sessions, keep your own ledger: add `result.usage.costUsd`
-in a `turn.end` hook and reject `send()` in your route when it is used up.
+These budgets see one session. To cap a user, a tenant or a month across sessions, use a
+[budget ledger](#budgets-across-sessions).
+
+## Budgets across sessions
+
+`budget.ledger` (0.5.0) enforces limits that span sessions and instances — per user, tenant,
+agent, month, whatever your product needs. Before **every** model call the core reserves an
+estimate of the call on your scopes, atomically; after the step it commits the actual cost. A
+refused reservation stops the turn with `'cost-cap'` **before** the call, so N sessions running at
+once cannot overshoot by N steps — only by how far the estimates were off.
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+import { memoryBudgetLedger } from 'eharness/storage/memory'
+
+const ledger = memoryBudgetLedger({ limits: { 'tenant:acme': 50, 'user:ada': 5 } })
+
+defineHarnessAgent({
+  model,
+  models, // prices for the estimates and the actual cost
+  budget: {
+    maxTurnUsd: 2, // the per-turn / per-session budgets still apply; the first cap wins
+    ledger: {
+      adapter: ledger,
+      // resolved once per turn; opaque strings — eharness never parses them
+      scopes: (ctx) => [`tenant:${ctx.runtime.tenantId}`, `user:${ctx.runtime.userId}`],
+    },
+  },
+})
+```
+
+What the core does (spec 12 §4.1):
+
+| When | Ledger call |
+|---|---|
+| before each model call (incl. the wrap-up step) | `reserve({ scopes, amountUsd: estimate, ttlMs, key })` — refused → `'cost-cap'` and `W_BUDGET` with `details.scope: 'ledger'`, `ledgerScope` |
+| after the step | `commit(reservationId, actualUsd)` — 0 when the provider reported no usage (abort, early failure) |
+| a turn that ends between reservation and result | `release(reservationId)` |
+| `ctx.turn.addUsage`, compaction summarizer, flush | `record({ scopes, amountUsd, key })` at the next step boundary and at turn end (also after a manual `compact()`) |
+
+- **Estimate.** The default is `estimateStepCostUsd()`: the request's estimated input tokens at the
+  input price plus `settings.maxOutputTokens` (4 096 when unset) at the output price. Setting
+  `maxOutputTokens` makes reservations tighter; or pass your own:
+  `estimate: ({ model, contextTokens, maxOutputTokens }) => …` (return USD). An unpriced model
+  estimates and costs 0 (`W_MODEL_UNPRICED`), but a used-up scope still refuses the call.
+- **Fail closed.** When the ledger is down, the turn stops with `'error'`
+  (`EH_STORAGE`, `details.operation: 'budget-ledger'`) before the call. `onError: 'continue'`
+  runs the step unreserved with `W_BUDGET_LEDGER_FAILED`. Failures after the step (commit,
+  record) are always warnings.
+- **Expiry.** A reservation of a crashed process stops counting after `reservationTtlMs`
+  (default `loop.turnTimeoutMs`, else 10 minutes).
+- **Pre-turn check.** Not needed — the first reservation is the check. For a UI, call
+  `ledger.check(scopes)` (`{ ok, scopes: [{ scope, limitUsd?, spentUsd, reservedUsd }] }`).
+- **Policy is yours.** Scope hierarchy, periods (monthly, rolling), price lists, soft limits and
+  alerts live in your adapter. `warnAt` does not apply to ledger scopes; raise your own alert
+  inside `reserve` / `commit`.
+
+`memoryBudgetLedger()` keeps static limits in one process — fine for tests and for several agent
+instances in one process. A deployment needs a shared store: `examples/postgres-budget-ledger.ts`
+implements the port with monthly UTC periods (one atomic `UPDATE … WHERE spent + reserved +
+amount <= limit` per scope inside a function) and runs `budgetLedgerConformance` from
+`eharness/testing` — run the same suite against your own adapter:
+
+```ts
+import { test } from 'bun:test'
+import { budgetLedgerConformance } from 'eharness/testing'
+
+for (const c of budgetLedgerConformance((limits) => myLedger({ limits }))) test(c.name, c.run)
+```
+
+A gateway that enforces budgets (LiteLLM, Portkey, OpenRouter) is a fine complement: the ledger
+stops turns cleanly inside the loop; the gateway is the last line of defence.

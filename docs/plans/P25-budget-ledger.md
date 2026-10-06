@@ -1,6 +1,6 @@
 # P25 — Cross-session `BudgetLedger` port
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#3** (verdict split: a small core port + per-run checks are generic;
 scope hierarchy, periods, prices, soft limits and alerts are app policy — LiteLLM, Portkey,
@@ -111,36 +111,39 @@ Normative rules (spec 12 new §4.1):
 
 ## Checklist
 
-- [ ] ADR-0029 "Cross-session budget ledger port" (amends ADR-0016): port vs gateway, reserve /
+- [x] ADR-0029 "Cross-session budget ledger port" (amends ADR-0016): port vs gateway, reserve /
       commit, fail closed by default, what stays app policy.
-- [ ] Spec 12 §4.1 (rules 1–7) + §2 estimate helper; spec 10 §2 (`W_BUDGET` details,
+- [x] Spec 12 §4.1 (rules 1–7) + §2 estimate helper; spec 10 §2 (`W_BUDGET` details,
       `W_BUDGET_LEDGER_FAILED`), §1 (`EH_STORAGE` operation); spec 01 §1 config summary; spec 06
       §5.3 (summarizer usage recorded).
-- [ ] Conformance first-class: `budgetLedgerConformance(factory)` — all-or-nothing reserve over
+- [x] Conformance first-class: `budgetLedgerConformance(factory)` — all-or-nothing reserve over
       several scopes; **concurrent** reserves (100 parallel) never exceed a limit; commit
       replaces the reservation (higher and lower); idempotent commit / release / record;
       reservation expiry; `check` sums; unknown scopes have no limit. `memoryBudgetLedger()`
       passes it.
-- [ ] Implement estimate helper, reserve before calls, commit after steps (incl. abort /
+- [x] Implement estimate helper, reserve before calls, commit after steps (incl. abort /
       provider error / timeout paths), record nested usage, error policy.
-- [ ] Tests: two sessions sharing one ledger scope stop at the limit with at most one estimate of
+- [x] Tests: two sessions sharing one ledger scope stop at the limit with at most one estimate of
       overshoot each; first-call refusal → `'cost-cap'`, 0 steps, nothing persisted beyond the
       0.4 rules; wrap-up step reserves; aborted step commits partial; ledger throwing with
       `'stop'` / `'continue'`; summarizer and `addUsage` recorded once (idempotent keys across a
       retried record); no ledger → 0.4 goldens.
-- [ ] `examples/postgres-budget-ledger.ts` (tables `eh_budget_scope (scope, period_start,
+- [x] `examples/postgres-budget-ledger.ts` (tables `eh_budget_scope (scope, period_start,
       limit_usd, spent_usd, reserved_usd)`, monthly periods in UTC with a note on time zones,
       reservations table with expiry) conformance-tested on the CI Postgres service;
       `examples/budget-and-cost.ts` gains a memory-ledger part (in `examples.test.ts`).
-- [ ] Guide `models-and-cost.md` "Budgets across sessions"; changeset; board; gate.
+      *Not run locally (no Postgres, no Docker): the Postgres cases run only with `DATABASE_URL`
+      (CI service). Reserved amounts are summed from the reservations table instead of a
+      `reserved_usd` column (open question 5).*
+- [x] Guide `models-and-cost.md` "Budgets across sessions"; changeset; board; gate.
 
 ## Acceptance criteria
 
-- [ ] With a shared ledger, total spend over N concurrent sessions never exceeds the limit by more
+- [x] With a shared ledger, total spend over N concurrent sessions never exceeds the limit by more
       than the sum of the in-flight estimates' errors (reservation semantics proven by the
       conformance concurrency case and an int test).
-- [ ] Without `budget.ledger`, behaviour, warnings and storage are identical to 0.4.
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] Without `budget.ledger`, behaviour, warnings and storage are identical to 0.4.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -162,6 +165,25 @@ Normative rules (spec 12 new §4.1):
 3. **Pre-turn check** separate from the first reservation? Pick: no — the first reservation is the
    check (one round trip).
 4. Should the 0.4 `maxSessionUsd` be expressible as a ledger scope? Pick: no change; both exist.
+5. (Implementation) The plan's `eh_budget_scope.reserved_usd` counter needs a sweep to undo expired
+   reservations, and a sweep that decrements several scope rows can deadlock with reservations.
+   Picked: the example sums open, unexpired rows of `eh_budget_reservation` (no counter to repair;
+   an expired reservation stays `open` so a late commit still charges). `eh_budget_scope` keeps
+   `(scope, period_start, limit_usd, spent_usd)`.
+6. (Implementation) Refusal point vs input delivery: the reservation is taken after the step
+   boundary delivered input (the estimate needs the final request), so a refusal at step ≥ 1 can
+   leave delivered `data-eh.input` the model did not see in this turn — the same as the 0.4 rule
+   "a compaction that uses up the budget stops before the next call". Picked: accept, documented
+   in spec 12 §4.1 rule 1 and ADR-0029; the next turn sees the input.
+7. (Implementation) Reserve idempotency: `key` returns the **open** reservation of that key (no
+   second hold); a step retry (overflow recovery, degraded file) keeps its reservation. Commit of an
+   expired reservation still charges (the spend happened). Picked as the conservative reading.
+8. (Implementation) An aborted / timed-out step commits 0: AI SDK reports no usage for it
+   (`result.usage` rejects like `responseMessages`), so "partial" usage is not knowable. Picked:
+   commit 0 (rule 2 "or 0"), documented as an estimate limitation.
+9. (Implementation) A throwing `scopes` / `estimate` is a ledger failure (`onError` applies;
+   `details.call` names it). Empty scopes → no ledger calls for the turn. A manual `compact()`
+   records its summarizer usage too (keys `${sessionId}:compact:${id}:${n}`).
 
 ## Requests to other phases
 
