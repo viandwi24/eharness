@@ -1,6 +1,6 @@
 # P26 — Approval guard plugin (`eharness/guard`)
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#2** (verdict GENERIC-plugin: the hook is core and exists since 0.3 —
 `tool.approve`, most restrictive wins; the LLM judge is a plugin. Prior art: Claude Code auto
