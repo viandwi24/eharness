@@ -1,6 +1,6 @@
 # Spec 09 — Tools and MCP
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Modules: `src/registry/tools.ts`, `src/mcp` (`eharness/mcp`).
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0. Modules: `src/registry/tools.ts`, `src/mcp` (`eharness/mcp`).
 
 ## 1. Tools are AI SDK tools
 
@@ -13,7 +13,8 @@ eharness only:
 - wraps `execute` (`{ ...tool, execute: wrapped }`) to run `tool.after`, apply output limits (§4),
   write `data-eh.status { state: 'tool', tool }` and turn thrown errors into `HarnessToolError`
   (spec 10 §1.1);
-- builds the per-step approval function (spec 11 §3);
+- builds the per-step approval function (spec 11 §3), reading each tool's traits (risk,
+  `idempotent`, MCP hints) from its `metadata` with `toolTraits()` (spec 11 §3.2);
 - adds `tool_search` when deferred tools exist (spec 02 §3.3);
 - adds skill tools (spec 07 §4.3).
 
@@ -66,14 +67,20 @@ export interface McpServerOptions {
   /** createMCPClient `maxRetries`: retries of tools/call requests only (not connect). Default 0. */
   maxRetries?: number
   refresh?: 'session' | 'turn'
+  /** Trusted risk for this server's tools (spec 11 §3.2): written to each tool's metadata.risk.
+   *  A function gets the server tool name (before prefixing) and the annotations as sent;
+   *  undefined keeps the derived (tighten-only) risk. */
+  risk?: ToolRisk | McpRiskFunction
 }
+
+export type McpRiskFunction = (tool: { name: string; annotations?: McpToolAnnotations }) => ToolRisk | undefined
 
 export type McpTransportConfig = Exclude<MCPClientConfig['transport'], MCPTransport>
 export type McpTransportInput = MCPClientConfig['transport']
 export const MCP_AUTO_DEFER_THRESHOLD = 20   // defer: 'auto' defers above this many tools
 ```
 
-Invalid options (name pattern, missing transport, unknown `defer`/`connect`, negative
+Invalid options (name pattern, missing transport, unknown `defer`/`connect`/`risk`, negative
 `maxRetries`, …) throw `EH_CONFIG_INVALID` from `mcpServer()`.
 
 Lifecycle:
@@ -117,8 +124,18 @@ Lifecycle:
   (`ready()`, without connecting the MCP server) and clears through the live state. Pins are
   re-created on the next listing that finds none (for a live `refresh: 'session'` source: the next
   session open).
-- MCP tool annotations (`readOnlyHint`, `destructiveHint`, …) stay in `toolMetadata`; use a
-  `tool.before` hook to deny destructive tools (annotations are untrusted hints).
+- MCP tool annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) stay
+  in the tool's `metadata.annotations` exactly as `@ai-sdk/mcp` copied them (only the hints the
+  server sent). They are untrusted and only tighten the derived risk (spec 11 §3.2):
+  `destructiveHint: true` → `'destructive'`, else `openWorldHint: true` → `'external'`;
+  `readOnlyHint` never yields `'read'`, `idempotentHint` never yields `idempotent`. The raw hints
+  reach `tool.approve` as `hints`.
+- `risk` (0.5.0): a constant, or a function called per server tool at every listing (after
+  allow/deny and drift exclusion, before prefixing and deferral), sets `metadata.risk` — trusted,
+  so it wins over the hints (`mcpServer({ risk: 'read' })` for a trusted read-only server).
+  `undefined` keeps the derived risk; a function that throws or returns an invalid value keeps
+  the derived risk and logs `ctx.log.warn`. Pins (`fingerprintTools`) are computed on the
+  server's tools before `risk` is applied.
 - Connection failures → `W_TOOL_SOURCE_FAILED`, zero tools, retried at the next turn regardless
   of `refresh`.
 

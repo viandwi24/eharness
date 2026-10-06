@@ -146,6 +146,7 @@ export type {
   StepPreparePatch,
   TurnInfo,
 } from './plugin/types.ts'
+export { type ToolHints, type ToolTraits, toolTraits } from './registry/risk.ts'
 export { defineToolSource } from './registry/tool-source.ts'
 export type {
   InstructionFn,

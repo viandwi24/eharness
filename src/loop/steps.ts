@@ -41,7 +41,7 @@ import {
   type TurnOutput,
 } from '../output/turn.ts'
 import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.ts'
-import { riskOf } from '../registry/risk.ts'
+import { toolTraits } from '../registry/risk.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import type { PendingInput, TurnInputQueue } from '../session/interaction/inbox.ts'
@@ -907,7 +907,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       response === undefined || finishReason !== 'tool-calls'
         ? undefined
         : findPending(input.messageId, response, registry.clientTools, (name) =>
-            riskOf((registry.tools[name] as { metadata?: unknown } | undefined)?.metadata),
+            toolTraits((registry.tools[name] as { metadata?: unknown } | undefined)?.metadata),
           )
     let stuck: StuckReason | undefined
     if (response !== undefined) {

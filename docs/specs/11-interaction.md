@@ -1,6 +1,6 @@
 # Spec 11 — Interaction: approvals, client tools, regenerate/edit, steering, wake
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0. Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
 
 This spec covers everything a user (or a UI) does to a session besides "send a new message":
 answering tool approvals, returning client-side tool results, regenerating or editing, talking to
@@ -29,7 +29,7 @@ A turn that ends with `stop: 'tool-pending'` leaves the session **pending**:
 ```ts
 export interface PendingState {
   messageId: string                                   // the assistant message waiting for answers
-  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk }>  // input/risk since 0.3 (§3.2)
+  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk; idempotent?: boolean }>  // input/risk since 0.3, idempotent since 0.5 (§3.2)
   clientTools: Array<{ toolCallId: string; toolName: string }>
 }
 // state.core.pending: PendingState (spec 05 §7) — authoritative, used to validate respond()
@@ -80,7 +80,8 @@ Per step the core builds **one** `GenericToolApprovalFunction` and passes it as 
 
 1. `approval.policy` result (per-tool entry or generic function);
 2. `approval.risk[risk ?? 'unknown']` (§3.2);
-3. every `tool.approve` hook (spec 01 §5), in plugin order (the event carries `risk`);
+3. every `tool.approve` hook (spec 01 §5), in plugin order (the event carries the traits:
+   `risk`, `idempotent`, `hints`, §3.2);
 4. session grants (§3.1).
 
 Results are normalized to `{ type, reason? }` and combined **most restrictive wins**:
@@ -103,20 +104,58 @@ A grant that can never apply (the policy or a hook returns `denied` for that too
 
 ### 3.2 Tool risk
 
-A tool declares its risk in AI SDK's tool metadata: `tool({ …, metadata: { risk: 'read' | 'write' |
-'destructive' } })` (AI SDK surfaces it as `toolCall.toolMetadata`). An MCP tool whose server sets
-`annotations.destructiveHint: true` is `'destructive'`; `readOnlyHint` is **ignored** — annotations
-are untrusted and may never make a tool look safer. A tool without either has no risk (`unknown` in
-`approval.risk`). `approval.risk` maps a risk to a status; it is one more input of the
-most-restrictive combination, so it can require approval or deny, but never loosen a stricter
-policy, hook or grant. Pending approvals carry the tool input (after `tool.before` refinement, as
-the model call recorded it) and the risk, so an inbox can show them from `state.core.pending` or
+```ts
+export type ToolRisk = 'read' | 'write' | 'destructive' | 'external'   // 'external' since 0.5.0
+
+export interface ToolTraits {
+  risk?: ToolRisk
+  /** Only from app metadata (`metadata.idempotent`); absent = unknown. */
+  idempotent?: boolean
+  /** Raw MCP hints as the server sent them (untrusted), for app policies and UIs. */
+  hints?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean }
+}
+export function toolTraits(metadata: unknown): ToolTraits   // pure, never throws
+```
+
+A tool declares its traits in AI SDK's tool metadata: `tool({ …, metadata: { risk?, idempotent? } })`
+(AI SDK surfaces it as `toolCall.toolMetadata`). `'external'` means the call has an effect outside
+the system (sends an email, posts to a third party, pays). MCP tools carry the server's
+annotations in `metadata.annotations` (`@ai-sdk/mcp` copies only the hints the server sent).
+Rules (normative, ADR-0025):
+
+1. **App metadata wins.** A valid `metadata.risk` is the risk; it is trusted, so it may be lower
+   than the hints suggest. `mcpServer({ risk })` (spec 09 §3) writes `metadata.risk` on its tools
+   (trusted app input, same rank). Invalid risk values are ignored.
+2. **Hints only tighten.** Without an app risk: `destructiveHint === true` → `'destructive'`; else
+   `openWorldHint === true` → `'external'`. `readOnlyHint` and `idempotentHint` never derive or
+   lower a risk. Only hints the server **sent** count — no MCP spec defaults are applied; a tool
+   without risk or hints has no risk (`unknown` in `approval.risk`).
+3. **One risk per tool**; derived precedence `destructive` > `external`. Policies that need both
+   facts read `hints`.
+4. **`idempotent`** comes only from app metadata (`metadata.idempotent: boolean`); `idempotentHint`
+   is reported in `hints` only.
+5. **Events carry traits.** `tool.approve` gets `risk?`, `idempotent?`, `hints?`; pending approvals
+   and `ApprovalDecision` (§3.3) carry `risk?` and `idempotent?` (absent = unknown).
+
+`approval.risk` maps a risk to a status; it is one more input of the most-restrictive
+combination, so it can require approval or deny, but never loosen a stricter policy, hook or
+grant. Pending approvals carry the tool input (after `tool.before` refinement, as the model call
+recorded it), the risk and `idempotent`, so an inbox can show them from `state.core.pending` or
 `TurnResult.pending` without loading messages.
+
+Mapping back to MCP hints (documentation only; eharness exposes no MCP server, so no helper):
+`read` ↔ `readOnlyHint: true`; `write` ↔ `readOnlyHint: false, destructiveHint: false,
+openWorldHint: false`; `destructive` ↔ `destructiveHint: true`; `external` ↔ `openWorldHint: true`
+(and `destructiveHint` as the tool requires).
+
+`'external'` (0.5.0) is a **type-level** addition: exhaustive `switch` statements and
+`Record<ToolRisk, …>` objects must add it. Behaviour of tools without the new hints or metadata
+is unchanged.
 
 ### 3.3 Decisions (`approval.decided`)
 
 Every decision is reported to `approval.decided` hooks (spec 01 §5) with an `ApprovalDecision`:
-`{ toolName, toolCallId, input, risk?, approved, by, reason?, actor?, approvalId?, remember? }`.
+`{ toolName, toolCallId, input, risk?, idempotent?, approved, by, reason?, actor?, approvalId?, remember? }`.
 
 - **Automatic** decisions, from the approval function when the combined status is `approved` or
   `denied` (not `user-approval`, not `not-applicable`): `by` is the source of the winning status —
