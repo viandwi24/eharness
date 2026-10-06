@@ -150,7 +150,8 @@ Pinned content is data, not instructions, and is framed so it cannot escape its 
 - Inside pinned content (and root paths and labels), every opening or closing `pinned` or
   `system-reminder` tag — any case, whitespace after `<` or `/` — is neutralised by writing its
   `<` as `&lt;` (`</pinned>` → `&lt;/pinned>`), so a stored file can neither close its block nor
-  the reminder (spec 02 §5) nor open a fake one.
+  the reminder (spec 02 §5) nor open a fake one. The rule is the core helper `neutralizeTags(text, tags)`
+  (0.5.0, shared with the group plugin and page context, spec 11 §7.1); the output is unchanged.
 - The `path` attribute is escaped (`&`, `"`, `<`, `>` → entities).
 
 - `pinned(ctx)` is called once per turn. Each path is normalized and must lie under a root of the
