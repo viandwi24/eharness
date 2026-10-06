@@ -158,6 +158,46 @@ describe('tools', () => {
     expect(body.required).toEqual(['name'])
   })
 
+  test('a fan-out schema is cut at maxSchemaBytes, quickly, with a warning', async () => {
+    const schemas: Record<string, unknown> = {}
+    for (let i = 0; i < 6; i++) {
+      schemas[`S${i}`] = {
+        type: 'object',
+        properties: Object.fromEntries(
+          Array.from({ length: 14 }, (_, k) => [
+            `f${k}`,
+            { $ref: `#/components/schemas/S${i + 1}` },
+          ]),
+        ),
+      }
+    }
+    schemas.S6 = { type: 'string' }
+    const spec = {
+      openapi: '3.1.0',
+      components: { schemas },
+      paths: {
+        '/x': {
+          post: {
+            operationId: 'x',
+            requestBody: {
+              required: true,
+              content: { 'application/json': { schema: { $ref: '#/components/schemas/S0' } } },
+            },
+          },
+        },
+      },
+    }
+    const warnings: string[] = []
+    const log = { debug() {}, info() {}, warn: (m: string) => void warnings.push(m), error() {} }
+    const started = Date.now()
+    const t = await tools(make({ schema: { maxSchemaBytes: 8_000 } }, spec), ctx({ log } as never))
+    expect(Date.now() - started).toBeLessThan(2_000)
+    const size = JSON.stringify(t.pets_x?.inputSchema.jsonSchema).length
+    expect(size).toBeLessThan(20_000)
+    expect(JSON.stringify(t.pets_x?.inputSchema.jsonSchema)).toContain('too large')
+    expect(warnings.join('\n')).toContain('maxSchemaBytes')
+  })
+
   test('maxDepth truncates deep schemas', async () => {
     const deep = {
       type: 'object',
@@ -320,8 +360,22 @@ describe('requests', () => {
       const out = await t.pets_getPet?.execute({ path: { petId } })
       expect(String(out)).toContain('REJECTED')
     }
-    expect(await t.pets_getPet?.execute({ path: { petId: '../../admin' } })).toEqual({})
-    expect(f.calls.map((c) => c.url)).toEqual([`${BASE}/pets/..%2F..%2Fadmin`])
+    for (const petId of [
+      '../../admin',
+      '..%2Fadmin',
+      '%2e%2e',
+      'a/../b',
+      'a\\..\\b',
+      'x%2Fy',
+      'x%5Cy',
+    ]) {
+      const out = await t.pets_getPet?.execute({ path: { petId } })
+      expect(String(out)).toContain('REJECTED')
+    }
+    expect(f.calls).toEqual([])
+    // a harmless value with a slash stays one encoded segment
+    expect(await t.pets_getPet?.execute({ path: { petId: 'a b/c.d' } })).toEqual({})
+    expect(f.calls.map((c) => c.url)).toEqual([`${BASE}/pets/a%20b%2Fc.d`])
   })
 
   test('invalid input is rejected as a string, nothing is sent', async () => {
