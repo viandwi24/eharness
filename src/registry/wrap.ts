@@ -21,7 +21,7 @@ import { HarnessToolError, type HarnessWarning } from '../errors.ts'
 import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
-import { riskOf } from './risk.ts'
+import { toolTraits } from './risk.ts'
 
 /** The text of a thrown tool error when `toolErrorText` throws or returns a non-string. */
 const TOOL_ERROR_FALLBACK = 'Error: the tool failed.'
@@ -279,8 +279,12 @@ export function buildApproval(
   })
   return async (options) => {
     const { toolCall } = options
-    const toolMetadata = (toolCall as { toolMetadata?: unknown }).toolMetadata
-    const risk = riskOf(toolMetadata)
+    // AI SDK's re-validation of approved calls (a respond() continuation) passes the stored call,
+    // which has no `toolMetadata`: read it from the tool itself, so traits never fall to `unknown`
+    const toolMetadata =
+      (toolCall as { toolMetadata?: unknown }).toolMetadata ??
+      (options.tools?.[toolCall.toolName] as { metadata?: unknown } | undefined)?.metadata
+    const { risk, idempotent, hints } = toolTraits(toolMetadata)
     const statuses: Array<{ status: Normalized; by: ApprovalDecision['by'] }> = []
     if (typeof policy === 'function') {
       try {
@@ -319,6 +323,8 @@ export function buildApproval(
           input: toolCall.input,
           ...(toolMetadata === undefined ? {} : { toolMetadata }),
           ...(risk === undefined ? {} : { risk }),
+          ...(idempotent === undefined ? {} : { idempotent }),
+          ...(hints === undefined ? {} : { hints: structuredClone(hints) }),
         })
         statuses.push({ status: normalizeStatus(status ?? undefined), by: `plugin:${hook.owner}` })
       } catch (error) {
@@ -365,6 +371,7 @@ export function buildApproval(
         toolCallId: toolCall.toolCallId,
         input: toolCall.input,
         ...(risk === undefined ? {} : { risk }),
+        ...(idempotent === undefined ? {} : { idempotent }),
         approved: winner.type === 'approved',
         by,
         ...(winner.reason === undefined ? {} : { reason: winner.reason }),

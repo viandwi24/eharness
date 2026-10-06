@@ -1,6 +1,7 @@
 # ADR-0017: Tool risk in AI SDK metadata; approval decisions are observable
 
-Status: **Accepted** · Date: 2026-09-30
+Status: **Accepted** · Date: 2026-09-30 · Amended by: [ADR-0025](0025-external-risk-and-mcp-annotations.md)
+(`'external'` risk, tighten-only `openWorldHint`, `idempotent` trait)
 
 ## Context
 

@@ -53,10 +53,12 @@ export type StopReason =
   | `plugin:${string}`
 
 /**
- * Risk class of a tool (spec 11 §3.2): `tool({ metadata: { risk } })`. MCP tools whose server marks
- * them `destructiveHint` are `'destructive'`.
+ * Risk class of a tool (spec 11 §3.2): `tool({ metadata: { risk } })` (trusted). Without it, MCP
+ * hints only tighten: `destructiveHint: true` → `'destructive'`, else `openWorldHint: true` →
+ * `'external'` (an effect outside the system: email, third-party post, payment). See `toolTraits`.
+ * `'external'` is a type-level addition of 0.5.0.
  */
-export type ToolRisk = 'read' | 'write' | 'destructive'
+export type ToolRisk = 'read' | 'write' | 'destructive' | 'external'
 
 /**
  * Approvals and client tool calls waiting for `respond()`.
@@ -69,7 +71,7 @@ export interface PendingState {
   /**
    * Tool calls waiting for a user approval decision. `input` (the refined tool input) and `risk`
    * (spec 11 §3.2) let an inbox show the request without loading messages; absent in state
-   * written before 0.3.
+   * written before 0.3. `idempotent` (0.5.0) only when the tool's app metadata declares it.
    */
   approvals: Array<{
     approvalId: string
@@ -77,6 +79,7 @@ export interface PendingState {
     toolName: string
     input?: unknown
     risk?: ToolRisk
+    idempotent?: boolean
   }>
   /** Calls of tools without `execute` waiting for a client-provided output. */
   clientTools: Array<{ toolCallId: string; toolName: string }>

@@ -149,8 +149,26 @@ const agent = defineHarnessAgent({
 - `pinDefinitions` stores a fingerprint of every server tool in the session state; changed or new
   tools are excluded with `W_MCP_DRIFT` until you re-pin with
   `clearMcpPins(agent, sessionId, 'github')` (use one `mcpServer()` instance per agent).
-- Tools annotated `destructiveHint` count as risk `'destructive'` for `approval.risk`;
-  `readOnlyHint` is ignored (annotations are hints from the server, not guarantees).
+- Annotations stay in the tool's `metadata.annotations` exactly as the server sent them and only
+  **tighten** the risk used by `approval.risk`: `destructiveHint: true` → `'destructive'`, else
+  `openWorldHint: true` → `'external'`. `readOnlyHint` never makes a tool `'read'` and
+  `idempotentHint` never makes it `idempotent` (annotations are hints from the server, not
+  guarantees). No defaults are applied: a tool without annotations has no risk (`unknown`).
+  The table is in [Routing by risk](approvals-and-interaction.md#routing-by-risk).
+- `risk` sets a **trusted** risk for the server's tools, overriding the hints:
+  `risk: 'read'` for a trusted read-only server, or a function per tool:
+
+  ```ts
+  mcpServer({
+    name: 'mail',
+    transport,
+    // server tool name (before the prefix) and the annotations as sent; undefined = derived risk
+    risk: ({ name, annotations }) =>
+      name.startsWith('list_') ? 'read' : annotations?.openWorldHint === false ? 'write' : 'external',
+  })
+  ```
+
+  A function that throws or returns an invalid risk keeps the derived risk and logs a warning.
 - `mcp: [...]` is the same as putting the sources into `tools`; it exists for readability.
 - Other options: `prefix` (default `<name>_`, `''` for none), `maxRetries` (retries of tool calls,
   default 0), `refresh` (`'session'` or `'turn'`).

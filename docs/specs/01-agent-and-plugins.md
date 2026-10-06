@@ -1,6 +1,6 @@
 # Spec 01 — Agent and plugins
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/agent`, `src/plugin`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0. Module: `src/agent`, `src/plugin`.
 
 ## 1. `defineHarnessAgent`
 
@@ -355,7 +355,8 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   'step.end'?(ctx: HarnessContext<DP>, e: StepEndEvent): Awaitable<{ stop?: string; context?: string } | void>
 
   /** Most restrictive wins (spec 11 §3). Throw = denied. Must be deterministic and side-effect free: AI SDK calls it again for approved calls when a continuation starts. */
-  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown; risk?: ToolRisk })
+  /** `risk`, `idempotent`, `hints`: the tool's traits (spec 11 §3.2, `toolTraits`), present when known. */
+  'tool.approve'?(ctx: HarnessContext<DP>, e: { toolName: string; toolCallId: string; input: unknown; toolMetadata?: unknown; risk?: ToolRisk; idempotent?: boolean; hints?: ToolHints })
     : Awaitable<ToolApprovalStatus | void>
   /** Every automatic approval decision and every respond() answer (spec 11 §3.3). Observational; errors are W_HOOK_FAILED. */
   'approval.decided'?(ctx: HarnessContext<DP>, e: ApprovalDecision): Awaitable<void>

@@ -8,7 +8,7 @@
  *
  * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
  */
-import type { MCPClient, MCPClientConfig, MCPTransport } from '@ai-sdk/mcp'
+import type { MCPClient, MCPClientConfig, MCPTransport, McpToolAnnotations } from '@ai-sdk/mcp'
 import { detectToolDrift, fingerprintTools, type Tool, type ToolSet } from 'ai'
 import {
   defineToolSource,
@@ -17,6 +17,7 @@ import {
   HarnessError,
   type SessionStateSnapshot,
   type StateAdapter,
+  type ToolRisk,
   type ToolSource,
 } from '../index.ts'
 
@@ -61,7 +62,23 @@ export interface McpServerOptions {
   maxRetries?: number
   /** When to list the tools: once per session (default) or before every turn. */
   refresh?: 'session' | 'turn'
+  /**
+   * A **trusted** risk for this server's tools (spec 11 §3.2), written to each tool's
+   * `metadata.risk`; it wins over the server's annotations, so it may be lower than they suggest.
+   * A constant, or a function per server tool (name before prefixing, annotations as sent);
+   * `undefined` keeps the risk derived from the annotations (tighten-only). A function that throws
+   * or returns an invalid value keeps the derived risk and logs `ctx.log.warn`.
+   */
+  risk?: ToolRisk | McpRiskFunction
 }
+
+/** Per-tool risk resolver of {@link McpServerOptions.risk}. */
+export type McpRiskFunction = (tool: {
+  /** The server's tool name (before prefixing). */
+  name: string
+  /** The annotations the server sent (untrusted), if any. */
+  annotations?: McpToolAnnotations
+}) => ToolRisk | undefined
 
 /** Tools above this count are deferred with `defer: 'auto'`. */
 export const MCP_AUTO_DEFER_THRESHOLD = 20
@@ -161,7 +178,14 @@ function validate(opts: McpServerOptions): void {
   if (opts.pinDefinitions !== undefined && typeof opts.pinDefinitions !== 'boolean') {
     invalid(`${at}: \`pinDefinitions\` must be a boolean.`)
   }
+  if (opts.risk !== undefined && typeof opts.risk !== 'function' && !RISKS.has(opts.risk)) {
+    invalid(
+      `${at}: \`risk\` must be 'read', 'write', 'destructive', 'external' or a function (got '${String(opts.risk)}').`,
+    )
+  }
 }
+
+const RISKS: ReadonlySet<unknown> = new Set(['read', 'write', 'destructive', 'external'])
 
 const internalsOf = new WeakMap<ToolSource, McpSourceInternals>()
 
@@ -303,6 +327,32 @@ export function createMcpServer(
     return new Set([...drift.changed, ...drift.added])
   }
 
+  /** The trusted risk of `mcpServer({ risk })` for one server tool (`undefined` = derived). */
+  function riskFor(ctx: HarnessContext, serverName: string, tool: Tool): ToolRisk | undefined {
+    const option = opts.risk
+    if (option === undefined) return undefined
+    if (typeof option !== 'function') return option
+    const annotations = (tool as { metadata?: { annotations?: McpToolAnnotations } }).metadata
+      ?.annotations
+    try {
+      const risk = option({
+        name: serverName,
+        ...(annotations === undefined ? {} : { annotations: structuredClone(annotations) }),
+      })
+      if (risk === undefined || RISKS.has(risk)) return risk
+      ctx.log.warn(
+        `eharness: mcpServer('${name}') risk function returned an invalid risk for '${serverName}'; using the derived risk`,
+        { risk },
+      )
+    } catch (error) {
+      ctx.log.warn(
+        `eharness: mcpServer('${name}') risk function failed for '${serverName}'; using the derived risk`,
+        { error },
+      )
+    }
+    return undefined
+  }
+
   const source = defineToolSource({
     id,
     ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
@@ -358,7 +408,13 @@ export function createMcpServer(
       }
       const deferred = defer === 'auto' ? exposed.length > MCP_AUTO_DEFER_THRESHOLD : defer
       const out: ToolSet = {}
-      for (const [serverName, tool] of exposed) {
+      for (const [serverName, original] of exposed) {
+        const risk = riskFor(ctx, serverName, original)
+        let tool = original
+        if (risk !== undefined) {
+          const metadata = (original as { metadata?: Record<string, unknown> }).metadata
+          tool = { ...tool, metadata: { ...metadata, risk } } as Tool
+        }
         out[`${prefix}${serverName}`] = deferred ? ({ ...tool, deferLoading: true } as Tool) : tool
       }
       return out
@@ -392,8 +448,10 @@ export function createMcpServer(
  * warn `W_TOOL_SOURCE_FAILED` and `connect: 'eager'` fails the session open with
  * `EH_CONFIG_INVALID`. Connection failures contribute no tools and are retried at the next turn.
  *
- * MCP tool annotations (`readOnlyHint`, `destructiveHint`, …) stay in the tool's metadata; they
- * are untrusted hints — use a `tool.before` or `tool.approve` hook to gate destructive tools.
+ * MCP tool annotations (`readOnlyHint`, `destructiveHint`, …) stay in the tool's metadata as
+ * untrusted hints that only tighten the derived risk (`destructiveHint` → `'destructive'`,
+ * `openWorldHint` → `'external'`, `toolTraits`); route them with `approval.risk`. Pass `risk` for a
+ * trusted server to set the risk yourself.
  *
  * @example
  * ```ts
