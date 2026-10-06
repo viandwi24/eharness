@@ -177,6 +177,12 @@ export interface SendOptions {
   toolsContext?: Record<string, unknown>     // merged over session toolsContext
   /** 0.4.0: ask the turn for a typed final answer (§3.3). Server-side only; not carried over 'tool-pending'. */
   output?: OutputSpec
+  /** 0.5.0: client tools declared for this turn only (spec 11 §7.1). Untrusted: validated, never shadow a server tool, no implied permission. Re-declare on respond(). */
+  clientTools?: ClientToolDeclaration[]
+  clientToolsOptions?: ClientToolsOptions    // allow, maxTools, maxSchemaBytes, timeoutMs, onTimeout
+  /** 0.5.0: page context of this turn only, framed as data in the turn reminder (spec 11 §7.1 rule 6). */
+  pageContext?: PageContextEntry[]
+  pageContextOptions?: PageContextOptions    // maxChars
 }
 
 /** 0.4.0 (§3.3). */
@@ -256,7 +262,11 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
    after step 6, because the contextSchemas of dynamic tools are known only once the turn's tool
    set is resolved.
 6. Resolve dynamic sources (spec 02 §5) → `TurnRegistry` (locked for the turn). Then validate
-   `SendOptions.output` and, in tool mode, append the output tool (§3.3 rules 1–2).
+   `SendOptions.output` and, in tool mode, append the output tool (§3.3 rules 1–2). Request-scoped
+   client tools (`SendOptions.clientTools`) are validated and appended as part of the resolution
+   (after `tool_search`, before the output tool) and the page context joins the turn reminder
+   (spec 11 §7.1); either failing is `EH_INVALID_INPUT` (`'client-tools'` / `'page-context'`)
+   before anything is persisted.
 7. **Normalize input** (unless omitted):
    - `role` must be `user` (else `EH_INVALID_INPUT`);
    - only `text` and `file` parts are accepted; any other part type (tool parts, `data-*`

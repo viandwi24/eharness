@@ -15,6 +15,7 @@ describe('core entry', () => {
 
   test('runtime exports', () => {
     expect(Object.keys(core).sort()).toEqual([
+      'CLIENT_TOOL_TIMED_OUT',
       'DENIED_NEW_INPUT',
       'FILE_UNAVAILABLE',
       'FINAL_ANSWER_DESCRIPTION',
@@ -29,6 +30,7 @@ describe('core entry', () => {
       'NOT_EXECUTED_NEW_INPUT',
       'OUTPUT_INSTRUCTION',
       'OUTPUT_RETRY',
+      'PAGE_CONTEXT_PREAMBLE',
       'PROGRESS_NUDGE',
       'TOOL_OUTPUT_PRUNED',
       'TOOL_OUTPUT_TRUNCATED',
@@ -51,6 +53,7 @@ describe('core entry', () => {
       'isUuidV7',
       'lookupModel',
       'modelsDevCatalog',
+      'neutralizeTags',
       'parseSkillMarkdown',
       'toolTraits',
       'uuidv7',

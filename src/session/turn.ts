@@ -49,7 +49,12 @@ import type {
   TurnResult,
 } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
-import { prepareTurnOutput, type TurnOutput, withOutputTool } from '../output/turn.ts'
+import {
+  DEFAULT_OUTPUT_TOOL,
+  prepareTurnOutput,
+  type TurnOutput,
+  withOutputTool,
+} from '../output/turn.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
@@ -68,7 +73,7 @@ import {
   type RespondPlan,
 } from './interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
-import { pendingCallIds, validateExternalAnswers } from './interaction/waits.ts'
+import { pendingCallIds, timedWaits, validateExternalAnswers } from './interaction/waits.ts'
 import { hiddenByRewind } from './load-context.ts'
 import { type AbortPoll, createAbortPoll, DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
@@ -772,8 +777,18 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       ...open.toolSources.map((s) => s.owner),
       ...open.instructions.filter((i) => i.kind !== 'static').map((i) => i.owner),
     ]
+    const outputSpec = op.options.output
     const resolved = await asOwner(sourceOwners, () =>
       resolveTurnRegistry({
+        clientTools: op.options.clientTools,
+        clientToolsOptions: op.options.clientToolsOptions,
+        pageContext: op.options.pageContext,
+        pageContextOptions: op.options.pageContextOptions,
+        // the output tool's name is the server's: a client can never take it (spec 11 §7.1 rule 2)
+        reservedNames:
+          outputSpec !== undefined && outputSpec.mode !== 'native'
+            ? [outputSpec.toolName ?? DEFAULT_OUTPUT_TOOL]
+            : [],
         open,
         approval: config.approval,
         toolOutput: config.toolOutput,
@@ -785,6 +800,27 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         grants: { current: currentGrants },
       }),
     )
+    // request-scoped tools change the cached prefix (tools → system → messages): warn once per
+    // turn when the declared set differs from the previous turn of this session (spec 11 §7.1).
+    // A continuation without declarations (a timeout, `resolveWait()`) is no client request: the
+    // client is gone, so it neither warns nor resets the comparison.
+    if (op.kind !== 'respond' || resolved.requestToolsSignature !== '') {
+      if (
+        open.requestToolsSignature !== undefined &&
+        open.requestToolsSignature !== resolved.requestToolsSignature
+      ) {
+        rt.warn(
+          {
+            code: 'W_CACHE_BUST',
+            message:
+              'The request-scoped client tools differ from the previous turn; the cached prompt prefix is rebuilt.',
+            details: { reason: 'client-tools' },
+          },
+          `${turnId}:client-tools`,
+        )
+      }
+      open.requestToolsSignature = resolved.requestToolsSignature
+    }
     // structured output (spec 05 §3.3 rule 1): validate the spec; tool mode appends its tool last
     turnOutput = await prepareTurnOutput(op.options.output, new Set(Object.keys(resolved.tools)))
     const registry = withOutputTool(resolved, turnOutput)
@@ -1735,7 +1771,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         rt.log.warn('eharness: end-of-turn state write failed', { error: stateError })
       }
       // external waits with a timeout: a durable timer item and the live timer (spec 11 §4.2 rule 6)
-      if (stateSaved && parked?.externals !== undefined) {
+      if (stateSaved && parked !== undefined && timedWaits(parked).length > 0) {
         await host.waitsParked(parked)
         // what `start` returned is stored with the pending state: the result carries it too
         const settled = rt.state.core().pending

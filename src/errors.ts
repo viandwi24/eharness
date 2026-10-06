@@ -162,6 +162,7 @@ export type WarningCode =
   | 'W_INBOX_FAILED'
   | 'W_GUARD_UNAVAILABLE'
   | 'W_INBOX_DEAD_LETTER'
+  | 'W_PAGE_CONTEXT_LIMITED'
 
 /**
  * A non-fatal problem, delivered to `config.onWarning`, as a transient `data-eh.warning` part

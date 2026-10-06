@@ -2,9 +2,10 @@
 
 Patterns for running an eharness agent behind a real product: what goes into the prompt without
 being stored, long-term and episodic memory, events from background jobs, several server
-instances, scheduled check-ins, skills from a database, and the security decisions eharness leaves
-to the application. Every pattern uses public API only; most of it existed before 0.4.0, the rest
-is new in 0.4.0 and linked to its guide.
+instances, poison items, long waits and webhooks, cross-session budgets, an LLM approval guard,
+browser tools, group bots, OpenAPI tools, scheduled check-ins, skills from a database, and the
+security decisions eharness leaves to the application. Every pattern uses public API only; most of
+it existed before 0.4.0, the rest is new in 0.4.0 / 0.5.0 and linked to its guide.
 
 Rule of thumb: **eharness runs turns; your application owns everything around them** — users and
 permissions, schedules, job queues, databases, and which session a request may touch.
@@ -13,6 +14,13 @@ permissions, schedules, job queues, databases, and which session a request may t
 - [Episodic and long-term memory](#episodic-and-long-term-memory)
 - [Background events](#background-events)
 - [Several instances](#several-instances)
+- [Poison items and alerting](#poison-items-and-alerting)
+- [Long waits and webhooks](#long-waits-and-webhooks)
+- [Cross-session budgets](#cross-session-budgets)
+- [Guard in production](#guard-in-production)
+- [Browser tools and page context](#browser-tools-and-page-context)
+- [Group bots](#group-bots)
+- [OpenAPI tools](#openapi-tools)
 - [Scheduling and heartbeats](#scheduling-and-heartbeats)
 - [Skills from a database](#skills-from-a-database)
 - [Pipeline workers and tool-heavy agents](#pipeline-workers-and-tool-heavy-agents)
@@ -271,6 +279,281 @@ Guides: [several instances](multi-instance.md), [writing a storage adapter](writ
 [long-running turns](long-running-turns.md#stopping-a-turn-from-another-instance). Contracts: spec 05
 §6–§9.1, §12; ADR-0021, ADR-0024.
 
+## Poison items and alerting
+
+A queue item that can never succeed must not block its session forever (0.5.0). Turn on
+`inbox.retry`, page a human from `onDeadLetter`, and watch the counts:
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+
+const agent = defineHarnessAgent({
+  model,
+  storage: { messages, state, inbox },
+  inbox: {
+    retry: { maxAttempts: 5 }, // needs an adapter that passes inboxAdapterConformance(…, { requireRetry: true })
+    onDeadLetter: async (item) => {
+      await alerts.page(`dead inbox item ${item.id} (${item.kind}): ${item.reason}`)
+    },
+  },
+})
+
+// a dashboard / health check: dead and delayed items are the numbers to alert on
+const stats = await inbox.stats?.()
+if (stats !== undefined && stats.dead > 0) await alerts.warn(`${stats.dead} dead inbox items`)
+```
+
+- A dead item is **kept** by the adapter (`listDead()`), never dropped; fix the cause, then
+  `redrive(ids)` (an admin route, not a core method).
+- Retries make side effects **at-least-once**: mark safe tools `metadata: { idempotent: true }` and
+  give the rest an idempotency key (the `waitId` of an external wait, the `inboxId` of a message).
+- Leave `retry` off for a 0.4-era custom adapter: it may not honour `release` options and would
+  dead-letter healthy items behind a long turn.
+
+Guide: [several instances → poison items](multi-instance.md#poison-items). Contract: spec 05 §12
+rules 11–15; ADR-0026.
+
+## Long waits and webhooks
+
+A CI build, a payment confirmation or a human review takes longer than a request. Park the turn
+instead of holding a worker (0.5.0): the tool is an `externalTool()`, the result arrives at **any**
+instance through `resolveWait()`, and a sweeper or an inbox timer expires waits nobody answers.
+
+```ts
+import { defineHarnessAgent, externalTool } from 'eharness'
+import { z } from 'zod/v4'
+
+const agent = defineHarnessAgent({
+  model,
+  storage: { messages, state, inbox }, // the inbox makes timeouts durable across instances
+  tools: {
+    run_build: externalTool({
+      description: 'Run a CI build for a git ref and wait for the result.',
+      inputSchema: z.object({ ref: z.string() }),
+      outputSchema: z.object({ ok: z.boolean(), summary: z.string() }),
+      start: async ({ ref }, { waitId }) => {
+        // the waitId is stable per tool call: use it as the idempotency key of the outside job
+        await ci.trigger(ref, { idempotencyKey: waitId })
+        return { correlationId: `ci:${ref}` }
+      },
+      timeoutMs: 60 * 60_000,
+      onTimeout: { output: { ok: false, summary: 'The build did not report back in time.' } },
+    }),
+  },
+})
+
+// POST /webhooks/ci — verify the sender first: the core cannot authenticate a webhook
+export async function POST(req: Request): Promise<Response> {
+  const event = await verifySignature(req) // yours; maps the provider payload to ids
+  const outcome = await agent.session(event.sessionId).resolveWait(event.waitId, {
+    output: { ok: event.ok, summary: event.summary },
+  })
+  return Response.json({ status: outcome.status }) // replays and unknown waits are fine: answer 200
+}
+
+// without an inbox, a cron sweeper applies the timeouts
+for (const id of await sessionsWithOpenWaits()) await agent.session(id).expireWaits()
+```
+
+- **Who may resolve what** is your decision: the browser never can (`handleChatRequest` ignores
+  such answers). Keep a map from your correlation id to `sessionId` + `waitId`.
+- **Resolved exactly once:** result, timeout and cancellation (new user input) race through one
+  compare-and-set; a replayed webhook is `already-resolved`.
+- **Crashes:** the parked call is answered, never re-executed. The in-process timer is capped at
+  2^31 ms; longer waits need the inbox timer or the sweeper.
+- Show open waits in a UI with `session.pendingWaits()`; audit with the `wait-resolved` event.
+
+Guide: [external waits](external-waits.md). Contract: spec 11 §4.2; ADR-0027. Runnable:
+[`examples/external-wait.ts`](../../examples/external-wait.ts).
+
+## Cross-session budgets
+
+`maxTurnUsd` / `maxSessionUsd` cap one turn and one session; a user with many sessions is not
+capped (see [security](#budgets-are-per-turn-and-per-session)). `budget.ledger` (0.5.0) is the
+inside-the-loop counterpart for **per-user, per-tenant, per-month** limits:
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+
+const agent = defineHarnessAgent({
+  model,
+  models, // prices
+  settings: { maxOutputTokens: 4_000 }, // tighter reservations than the 4 096 default estimate
+  budget: {
+    maxTurnUsd: 2,
+    ledger: {
+      adapter: postgresLedger, // yours: periods, prices and alerts live there
+      scopes: (ctx) => [`tenant:${String(ctx.runtime.tenantId)}`, `user:${String(ctx.runtime.userId)}`],
+      onError: 'stop', // the default: a ledger outage ends the turn instead of spending unchecked
+    },
+  },
+})
+
+// a UI or a pre-turn gate: read-only status of the same scopes
+const { ok, scopes } = await postgresLedger.check([`user:${userId}`])
+```
+
+- **Reserve before, commit after:** N sessions cannot overshoot by N steps, only by how far an
+  estimate was off. A refused reservation stops the turn with `'cost-cap'` and `W_BUDGET`
+  (`details.scope: 'ledger'`, `ledgerScope`) before the model is called.
+- **Nested usage counts:** the guard's judge, compaction and flush, `ctx.turn.addUsage`.
+- **Policy is yours:** scope names are opaque strings. Hierarchy, monthly reset, price lists, soft
+  limits and alerts belong in the adapter (see
+  [`examples/postgres-budget-ledger.ts`](../../examples/postgres-budget-ledger.ts)); run
+  `budgetLedgerConformance` against it.
+- A gateway (LiteLLM, Portkey, OpenRouter) stays a good last line of defence.
+
+Guide: [models and cost → budgets across sessions](models-and-cost.md#budgets-across-sessions).
+Contract: spec 12 §4.1; ADR-0029.
+
+## Guard in production
+
+`approvalGuard()` (0.5.0, `eharness/guard`) is a second model on the approval chain that can only
+**tighten**: deny a call with a reason the agent reads, or ask a person. Treat it as one layer
+after deterministic rules, not a replacement:
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+import { approvalGuard } from 'eharness/guard'
+
+const agent = defineHarnessAgent({
+  model,
+  models,
+  approval: {
+    // deterministic rules first: destructive always asks a person, the guard reviews the rest
+    risk: { read: 'approved', write: 'approved', external: 'approved', destructive: 'user-approval' },
+  },
+  plugins: [
+    approvalGuard({
+      model: 'openai/gpt-5-mini', // cheap and fast; price it in `models` to see USD
+      policy: 'Emails go only to @acme.com addresses the user named. Never delete customer data.',
+      skipTools: ['search_docs'], // calls that never need review
+      timeoutMs: 10_000, // a slow judge escalates to a person
+    }),
+  ],
+})
+```
+
+- **Latency and cost:** one judge call per reviewed, uncached call, before the tool runs.
+  Verdicts are cached per session by tool and input; `respond()` continuations never re-judge.
+  Judge usage is charged to the turn, so budgets and the ledger see it.
+- **Fail closed:** an unavailable judge escalates to a person with `W_GUARD_UNAVAILABLE`; alert
+  when it appears often.
+- **Breaker:** three consecutive denials escalate the next one to a person (a stuck loop should
+  not burn judge calls); tune `maxConsecutiveDenials`.
+- **Audit:** `approval.decided` receives guard denials with `by: 'plugin:guard'`.
+- **Standing grants:** a person's session-wide `always` turns later guard *escalations* into
+  approvals (never a denial). Avoid `remember: 'session'` for tools you want reviewed every time.
+- **It is probabilistic.** Keep least-privilege credentials and sandboxes; do not rely on a judge
+  for anything you could forbid with a rule.
+
+Guide: [approval guard](guard.md). Contract: spec 15; ADR-0030. Runnable:
+[`examples/approval-guard.ts`](../../examples/approval-guard.ts).
+
+## Browser tools and page context
+
+The frontend can run tools the server cannot (read the location, fill a form) and knows what is on
+screen. With the opt-in (0.5.0) a request declares both for one turn; the server treats them as
+**untrusted input**:
+
+```ts
+import { handleChatRequest } from 'eharness'
+
+export async function POST(req: Request): Promise<Response> {
+  const user = await authenticate(req)
+  const body = await req.json()
+  if (!(await userOwnsChat(user.id, body.id))) return new Response(null, { status: 404 })
+  return handleChatRequest(agent.session(body.id), body, {
+    runtime: { userId: user.id },
+    clientTools: { allow: ['get_location', 'open_dialog'], maxTools: 8, timeoutMs: 120_000 },
+    pageContext: { maxChars: 4_000 },
+  }).toResponse()
+}
+```
+
+- **Allow-list the names** you handle in the client; reject the rest. Declarations that collide with
+  a server tool fail the request.
+- **No implied permission:** a declared tool has risk `unknown`; approval policy applies, so
+  `approval.risk: { unknown: 'user-approval' }` makes a person confirm browser actions.
+- **A closed tab:** `timeoutMs` answers the call with `CLIENT_TOOL_TIMED_OUT` (or your
+  `onTimeout`) through a timer, an inbox item or `expireWaits()`.
+- **Cache:** a changing set of declarations busts the cached prefix (`W_CACHE_BUST`); keep them
+  stable per page.
+- **Page context is data:** framed with `PAGE_CONTEXT_PREAMBLE`, capped, never stored; do not put
+  secrets or instructions you rely on in it.
+
+Guide: [frontend tools and page context](client-tools.md). Contract: spec 11 §7.1; ADR-0028.
+
+## Group bots
+
+A bot in a group chat must not answer everything, must still know what it missed and must not
+loop with other bots. `eharness/group` (0.5.0) decides per incoming message; your channel code
+supplies the facts:
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+import { groupChat, routeGroupMessage } from 'eharness/group'
+
+const group = groupChat({ botId, botName: 'Harness', maxBotTurns: { count: 3, windowMs: 60_000 } })
+const agent = defineHarnessAgent({ model, plugins: [group] })
+
+export async function onChannelMessage(m: ChannelMessage): Promise<void> {
+  const session = agent.session(`telegram:${m.chatId}`, { acceptClientMetadata: true })
+  const result = await routeGroupMessage(group, session, {
+    text: m.text,
+    author: { id: m.authorId, name: m.authorName, isBot: m.isBot },
+    mentionsBot: m.mentionsBot, // the channel adapter's facts
+    replyToBot: m.replyToBot,
+    chatId: m.chatId,
+    messageId: m.id,
+  })
+  if (result.responded) await sendToChannel(m.chatId, result.run)
+}
+```
+
+- **One session per chat**, with `acceptClientMetadata: true` so the speaker survives in storage
+  and the bot-to-bot limit can be derived from history (safe across instances).
+- **Missed messages** are stored as the `group.message` kind and handed, framed as data, to the
+  next answer exactly once (`historyLimit`).
+- **Relevance scoring, personas and "when to chime in"** stay yours (`shouldRespond`).
+- Pair with the [memory plugin](memory.md) for a rolling summary, and with
+  [`ifBusy: 'collect'`](multi-instance.md) (the helper's default) for message bursts.
+
+Guide: [group chat](group-chat.md). Contract: spec 16; ADR-0031.
+
+## OpenAPI tools
+
+`openApiTools()` (0.5.0, `eharness/openapi`) turns an OpenAPI 3.x JSON document into tools. In
+production the rules are about **what you do not expose**:
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+import { openApiTools } from 'eharness/openapi'
+
+const orders = openApiTools(specJson, {
+  name: 'orders',
+  baseUrl: 'https://orders.example.com/v1', // yours: the spec's `servers` are ignored
+  headers: (ctx) => ({ authorization: `Bearer ${String(ctx.runtime.apiToken)}` }),
+  include: { tags: ['orders'] },
+  // third-party API: everything that changes state is external
+  risk: (op) => (op.method === 'get' ? 'read' : 'external'),
+})
+
+const agent = defineHarnessAgent({
+  model,
+  tools: [orders],
+  approval: { risk: { external: 'user-approval', destructive: 'user-approval' } },
+})
+```
+
+- **Curate:** a handful of well-described operations beat a mirror of the whole API.
+- **Credentials:** only through `headers()`, per call, from `ctx.runtime`; never in the spec.
+- **Risk and approval:** the default risk comes from the method; decide what a person confirms
+  with `approval.risk` or add the [guard](guard.md).
+- Failures return as error strings the model can fix; responses are capped.
+
+Guide: [OpenAPI tools](openapi-tools.md). Contract: spec 17; ADR-0032.
+
 ## Scheduling and heartbeats
 
 eharness has no scheduler, by design: cron, queues and timers are your infrastructure. A
@@ -459,8 +742,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   sessions, or a script that creates sessions, is not capped.
 - **Default:** no budget at all unless configured.
 - **Do:** enforce per-user and per-tenant quotas in your application (read `TurnResult.usage.costUsd`
-  or `state.core.usage` after every turn, refuse new turns over quota). Keep a turn budget for
-  unattended work (heartbeats, wake turns).
+  or `state.core.usage` after every turn, refuse new turns over quota), or let a
+  [`budget.ledger`](#cross-session-budgets) (0.5.0) enforce per-user and per-tenant scopes inside
+  the loop. Keep a turn budget for unattended work (heartbeats, wake turns).
 
 ### Path rules are exact prefixes
 
@@ -501,7 +785,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 - **Default:** `remember: 'once'`.
 - **Do:** offer "remember" only for low-risk tools; use `'once'` for destructive ones (risk
   `'destructive'`, spec 11 §3.2); call `session.clearGrants()` when the user's privileges change
-  or another person takes over the session.
+  or another person takes over the session. A standing grant also answers
+  [guard](#guard-in-production) escalations (never a guard denial).
 
 ### Logs and error texts
 

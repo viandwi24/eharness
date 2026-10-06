@@ -6,9 +6,9 @@
 [![CI](https://github.com/viandwi24/eharness/actions/workflows/ci.yml/badge.svg)](https://github.com/viandwi24/eharness/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/eharness)](https://www.npmjs.com/package/eharness)
 
-**Status: 0.4.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before
-1.0, breaking changes ship only in minor versions (`0.4 → 0.5`) with a migration note in the
-[changelog](CHANGELOG.md), so `^0.4.0` is safe to depend on
+**Status: 0.5.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before
+1.0, breaking changes ship only in minor versions (`0.5 → 0.6`) with a migration note in the
+[changelog](CHANGELOG.md), so `^0.5.0` is safe to depend on
 ([API stability](docs/engineering/api-stability.md)).
 
 ## Install
@@ -190,7 +190,7 @@ const agent = defineHarnessAgent({
   tools: {
     delete_record: tool({
       inputSchema: z.object({ id: z.string() }),
-      metadata: { risk: 'destructive' }, // 'read' | 'write' | 'destructive'
+      metadata: { risk: 'destructive' }, // 'read' | 'write' | 'destructive' | 'external'
       execute: async ({ id }) => `Deleted ${id}`,
     }),
   },
@@ -218,6 +218,77 @@ await session.respond({
 
 With `useChat`, approvals need no server code: `handleChatRequest` calls `respond()`. Guide:
 [approvals and interaction](docs/guides/approvals-and-interaction.md).
+
+### Waiting for the outside world, browser tools, budgets and guards (0.5)
+
+```ts
+import { defineHarnessAgent, externalTool, handleChatRequest } from 'eharness'
+import { approvalGuard } from 'eharness/guard'
+import { openApiTools } from 'eharness/openapi'
+import { memoryBudgetLedger } from 'eharness/storage/memory'
+import { z } from 'zod/v4'
+
+const agent = defineHarnessAgent({
+  model: 'anthropic/claude-sonnet-4.6',
+  models, // prices (see above): the ledger estimates and charges in USD
+  tools: [
+    {
+      // park the turn on a webhook: no process is held while it waits
+      run_build: externalTool({
+        description: 'Run a CI build and wait for its result.',
+        inputSchema: z.object({ ref: z.string() }),
+        outputSchema: z.object({ ok: z.boolean() }),
+        timeoutMs: 60 * 60_000,
+        onTimeout: { output: { ok: false } },
+      }),
+    },
+    // an OpenAPI document as tools: your base URL, your auth, risk from the HTTP method
+    openApiTools(specJson, { name: 'orders', baseUrl: 'https://orders.example.com/v1' }),
+  ],
+  // a cheap judge that can only tighten: deny or ask a person, never approve
+  approval: { risk: { read: 'approved', write: 'approved', external: 'approved' } },
+  plugins: [approvalGuard({ model: 'openai/gpt-5-mini', policy: 'Never delete customer data.' })],
+  // spending limits across sessions and instances, reserved before every model call
+  budget: {
+    ledger: {
+      adapter: memoryBudgetLedger({ limits: { 'tenant:acme': 50 } }), // yours in production
+      scopes: (ctx) => [`tenant:${String(ctx.runtime.tenantId)}`],
+    },
+  },
+  inbox: { retry: { maxAttempts: 5 }, onDeadLetter: (item) => alert(item) }, // poison items stop cycling
+})
+
+// A webhook in ANY instance resolves the parked call; the same assistant message continues
+await agent.session(sessionId).resolveWait(waitId, { output: { ok: true } })
+
+// The browser declares tools and page context per request — opt-in, validated, untrusted
+export async function POST(req: Request) {
+  const body = await req.json()
+  return handleChatRequest(agent.session(body.id), body, {
+    clientTools: { allow: ['get_location'], timeoutMs: 120_000 }, // body.clientTools
+    pageContext: { maxChars: 4_000 }, // body.pageContext → a turn reminder framed as data
+  }).toResponse()
+}
+```
+
+- **External waits:** `externalTool()` + `session.resolveWait()` park a turn for minutes or days
+  and continue it from any instance; timeouts resolve through a timer, a durable inbox item or
+  `expireWaits()`. Guide: [external waits](docs/guides/external-waits.md).
+- **Frontend tools and page context:** `handleChatRequest(…, { clientTools, pageContext })` accepts
+  what the browser declares for one turn, treated as untrusted; an unanswered call times out.
+  Guide: [frontend tools](docs/guides/client-tools.md).
+- **Risk `'external'`:** MCP `openWorldHint` maps to it (hints only tighten); route it with
+  `approval.risk`. Guide: [approvals](docs/guides/approvals-and-interaction.md).
+- **`eharness/guard`:** an LLM approval judge on a restricted transcript, with a verdict cache, a
+  circuit breaker and fail-closed escalation. Guide: [approval guard](docs/guides/guard.md).
+- **Budget ledger:** `budget.ledger` reserves and commits cost per app-defined scope across
+  sessions; fails closed. Guide: [models and cost](docs/guides/models-and-cost.md#budgets-across-sessions).
+- **Inbox dead-letter:** `inbox.retry` and `inbox.onDeadLetter` stop poison items from blocking a
+  session. Guide: [several instances](docs/guides/multi-instance.md#poison-items).
+- **`eharness/group`:** answer only when addressed, keep what was missed, stop bot-to-bot loops.
+  Guide: [group chat](docs/guides/group-chat.md).
+- **`eharness/openapi`:** curated OpenAPI operations as tools. Guide:
+  [OpenAPI tools](docs/guides/openapi-tools.md).
 
 ### Memory, background work and several instances (0.4)
 
@@ -286,7 +357,7 @@ thin and idiomatic:
   [models.dev](https://models.dev) via `modelsDevCatalog`) supplies context windows and prices;
   every turn records `costUsd`; `budget` stops turns and sessions in USD; subagent usage counts
   too (`ctx.turn.addUsage`).
-- **Interactive and safe:** tool approvals by policy or by tool risk (`read` / `write` /
+- **Interactive and safe:** tool approvals by policy or by tool risk (`read` / `write` / `external` /
   `destructive`), an `approval.decided` audit hook and `actor` on answers, client-side tools,
   regenerate/edit, steering while the agent works, background wake-ups, crash recovery.
 - **Built for several instances:** session locks, compare-and-set state, a durable inbox for
@@ -299,6 +370,14 @@ thin and idiomatic:
 - **Batteries included, optional:** a todos plugin (`eharness/todos`), a memory plugin
   (`eharness/memory`), a filesystem plugin with skills autoload, MCP servers as tool sources, a
   scripted test model and conformance suites.
+- **Waits that outlive the process (0.5):** a tool can park the turn on a webhook, a job or a
+  person (`externalTool()`, `resolveWait()`), and a browser can declare its own tools and page
+  context per request, safely opt-in.
+- **Guarded and capped across sessions (0.5):** an LLM approval guard that can only tighten
+  (`eharness/guard`), a `BudgetLedger` port for per-user / tenant limits, `'external'` tool risk,
+  and a dead-letter for poison inbox items.
+- **Beyond one-to-one chat (0.5):** group-chat gating and anti-loop (`eharness/group`) and
+  OpenAPI operations as tools (`eharness/openapi`).
 - **Prompt-cache friendly:** stable instructions and tool order; volatile context goes into
   per-turn and per-step reminders.
 
@@ -306,14 +385,17 @@ thin and idiomatic:
 
 | Import | Contents |
 |---|---|
-| `eharness` | `defineHarnessAgent`, `definePlugin`, `defineSkill`, `defineSkillSource`, `defineToolSource`, `defineDataPart`, `defineMessageKind`, `handleChatRequest`, `modelsDevCatalog`, `lookupModel`, `computeCost`, errors, fixed texts, types |
+| `eharness` | `defineHarnessAgent`, `definePlugin`, `defineSkill`, `defineSkillSource`, `defineToolSource`, `defineDataPart`, `defineMessageKind`, `handleChatRequest`, `externalTool`, `toolTraits`, `modelsDevCatalog`, `lookupModel`, `computeCost`, errors, fixed texts, types |
 | `eharness/filesystem` | `FileSystem` contract, `filesystem()` plugin (file tools, skills autoload), helpers |
 | `eharness/filesystem/memory` | `memoryFs()` |
-| `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage), `memoryInbox()` |
+| `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage), `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `mcpServer()` tool source (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `todos()` plugin (`todo_write` tool, `data-todos.list`), `latestTodos()`, `renderTodos()`, `openTodos()` |
 | `eharness/memory` | `memory()` plugin (memory files under app-chosen roots, pinned files, pre-compaction flush), `executeMemoryCommand()` |
-| `eharness/testing` | `scriptedModel()` and conformance suites for your adapters (messages, state, inbox, file system, skill source, ids) |
+| `eharness/guard` | `approvalGuard()` plugin: an LLM judge on the approval chain that can only tighten (deny / ask a person) |
+| `eharness/group` | `groupChat()` plugin and `routeGroupMessage()`: should-respond gating, pending history, speaker metadata, bot-to-bot anti-loop |
+| `eharness/openapi` | `openApiTools()` tool source (OpenAPI 3.0 / 3.1 JSON → tools), `riskFromMethod()` |
+| `eharness/testing` | `scriptedModel()` and conformance suites for your adapters (messages, state, inbox, budget ledger, file system, skill source, ids) |
 
 ## Examples
 
@@ -336,10 +418,16 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`background-events.ts`](examples/background-events.ts) | a job result as a message kind, `inject(…, { wake: true })`, a heartbeat that ends silently |
 | [`inbox.ts`](examples/inbox.ts) | two instances sharing a durable inbox: steer, `collect`, Stop across instances |
 | [`remote-abort.ts`](examples/remote-abort.ts) | `requestAbort()` from another instance through the state (`setIf`) |
+| [`external-wait.ts`](examples/external-wait.ts) | a build tool parks the turn; a webhook in another instance resolves it; a timeout through the inbox |
+| [`client-tools.ts`](examples/client-tools.ts) | request-declared client tools and page context, validation, timeouts |
+| [`approval-guard.ts`](examples/approval-guard.ts) | an LLM judge denies a prompt-injected exfiltration and escalates an odd call |
+| [`group-chat.ts`](examples/group-chat.ts) | two humans and another bot in one chat: mention gating, missed history, loop limit |
+| [`openapi-tools.ts`](examples/openapi-tools.ts) | an OpenAPI document as tools: curation, base URL, auth header, risk from the method |
 | [`subagent-tool.ts`](examples/subagent-tool.ts) | a tool that runs a child session, streams its progress, reports usage |
 | [`json-file-storage.ts`](examples/json-file-storage.ts) | `MessageAdapter` + `StateAdapter` on JSON files |
 | [`postgres-storage.ts`](examples/postgres-storage.ts) | Postgres adapters + advisory-lock `SessionLock` |
 | [`postgres-inbox.ts`](examples/postgres-inbox.ts) | Postgres `InboxAdapter` (`FOR UPDATE SKIP LOCKED`, `LISTEN`/`NOTIFY`) |
+| [`postgres-budget-ledger.ts`](examples/postgres-budget-ledger.ts) | Postgres `BudgetLedger`: monthly scopes, atomic reservations, conformance |
 | [`custom-fs-adapter.ts`](examples/custom-fs-adapter.ts) | a `FileSystem` over a key-value store |
 
 ## Guides
@@ -355,11 +443,16 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 [Filesystem](docs/guides/filesystem.md) ·
 [Context and compaction](docs/guides/compaction.md) ·
 [Approvals and interaction](docs/guides/approvals-and-interaction.md) ·
+[Approval guard](docs/guides/guard.md) ·
+[Frontend tools and page context](docs/guides/client-tools.md) ·
+[External waits](docs/guides/external-waits.md) ·
 [Long-running turns](docs/guides/long-running-turns.md) ·
 [Structured output](docs/guides/structured-output.md) ·
 [Models and cost](docs/guides/models-and-cost.md) ·
 [Todos](docs/guides/todos.md) ·
 [Memory](docs/guides/memory.md) ·
+[OpenAPI tools](docs/guides/openapi-tools.md) ·
+[Group chat](docs/guides/group-chat.md) ·
 [Subagents](docs/guides/subagents.md) ·
 [Testing](docs/guides/testing.md) ·
 [Reference](docs/guides/reference.md)
@@ -380,6 +473,7 @@ what to do: [production patterns → security](docs/guides/production-patterns.m
 
 | eharness | ai | zod | @ai-sdk/mcp (optional) | Runtime |
 |---|---|---|---|---|
+| 0.5.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
 | 0.4.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
 | 0.3.x | ^7.0.123 | ^3.25.76 \|\| ^4.1.8 | ^2.0.63 | Node ≥ 22, Bun |
 | 0.2.x | ^7.0.123 | ^3.25.76 \|\| ^4.1.8 | ^2.0.63 | Node ≥ 22, Bun |

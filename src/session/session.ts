@@ -1042,6 +1042,23 @@ export function createSessionHandle(args: {
           ),
         )
       }
+      // request-scoped tools and page context belong to one turn the same way (spec 11 §7.1)
+      if (
+        (options.clientTools !== undefined || options.pageContext !== undefined) &&
+        (options.ifBusy === 'steer' || options.ifBusy === 'collect')
+      ) {
+        return failedRun(
+          'send',
+          () => internals.generateId(),
+          new HarnessError(
+            'EH_INVALID_INPUT',
+            `send(…, { clientTools / pageContext }) cannot be combined with ifBusy '${options.ifBusy}'.`,
+            {
+              details: { reason: 'request-context-with-steer-or-collect', ifBusy: options.ifBusy },
+            },
+          ),
+        )
+      }
       if (rt.running) {
         const ifBusy = options.ifBusy ?? 'reject'
         if (ifBusy === 'reject') throw busyError(id)

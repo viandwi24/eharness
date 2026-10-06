@@ -78,6 +78,7 @@ export {
   type WarningCode,
 } from './errors.ts'
 export { type DataChunk, type DataPartDef, defineDataPart } from './messages/data-parts.ts'
+export { neutralizeTags } from './messages/framing.ts'
 export { isUuidV7, uuidv7 } from './messages/ids.ts'
 export {
   type CreateKindMessageOptions,
@@ -87,6 +88,7 @@ export {
   type MessageKindDef,
 } from './messages/kinds.ts'
 export {
+  CLIENT_TOOL_TIMED_OUT,
   DENIED_NEW_INPUT,
   FILE_UNAVAILABLE,
   FINAL_ANSWER_DESCRIPTION,
@@ -99,6 +101,7 @@ export {
   NOT_EXECUTED_NEW_INPUT,
   OUTPUT_INSTRUCTION,
   OUTPUT_RETRY,
+  PAGE_CONTEXT_PREAMBLE,
   PROGRESS_NUDGE,
   TOOL_OUTPUT_PRUNED,
   TOOL_OUTPUT_TRUNCATED,
@@ -119,6 +122,7 @@ export type {
   InputPartData,
   NoticePayload,
   OutputPartData,
+  PendingClientTool,
   PendingExternal,
   PendingState,
   ProjectionContext,
@@ -168,6 +172,12 @@ export {
   type WaitStart,
   type WaitStartEvent,
 } from './registry/external.ts'
+export type {
+  ClientToolDeclaration,
+  ClientToolsOptions,
+  PageContextEntry,
+  PageContextOptions,
+} from './registry/request-tools.ts'
 export { type ToolHints, type ToolTraits, toolTraits } from './registry/risk.ts'
 export { defineToolSource } from './registry/tool-source.ts'
 export type { GuardTranscriptEntry } from './registry/transcript.ts'
