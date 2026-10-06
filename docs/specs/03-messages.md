@@ -253,7 +253,9 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   //
   1. partial:    if the boundary has `partial`, drop the parts of `partial.messageId` before its
                  `partial.fromStep`-th `step-start` part (spec 06 §3)
   2. kinds:      kind messages with `metadata.eharness.deliveredIn` → drop (already delivered
-                 inline); other kinds → def.model → one message with def.role, or drop
+                 inline); other kinds → def.model → one message with def.role, or drop. The
+                 projected message carries `providerOptions: { eharness: { core: true } }`
+                 (spec 11 §3.4: judges tell it from a person's text)
   3. interrupted tool calls: every tool part without a result — `input-streaming`,
                  `input-available`, `approval-requested` not in `ctx.pending`, and
                  `approval-responded` unless it belongs to `ctx.continuing` — is projected as
