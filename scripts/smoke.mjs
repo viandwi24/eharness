@@ -102,6 +102,12 @@ const entries = {
     'verdictKey',
   ],
   'eharness/openapi': ['OPENAPI_AUTO_DEFER_THRESHOLD', 'openApiTools', 'riskFromMethod'],
+  'eharness/group': [
+    'GROUP_HISTORY_PREAMBLE',
+    'GROUP_SPEAKER_PREFIX',
+    'groupChat',
+    'routeGroupMessage',
+  ],
   'eharness/testing': [
     'SKILL_SOURCE_FIXTURE',
     'budgetLedgerConformance',

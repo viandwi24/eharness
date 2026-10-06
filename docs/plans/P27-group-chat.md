@@ -1,6 +1,6 @@
 # P27 — Group-chat plugin (`eharness/group`)
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#5** (verdict GENERIC-plugin, partly: should-respond gating, pending
 history of gated-out messages and bot-to-bot anti-loop are generic — OpenClaw `requireMention` /
@@ -108,31 +108,31 @@ Normative rules (spec 16):
 
 ## Checklist
 
-- [ ] Spec 16 (rules 1–6, options, fixed texts `GROUP_HISTORY_PREAMBLE`); spec 03 §3 note on the
+- [x] Spec 16 (rules 1–6, options, fixed texts `GROUP_HISTORY_PREAMBLE`); spec 03 §3 note on the
       `group` app metadata key convention.
-- [ ] Decide open question 1 (projection vs merge) with a quick test against the projection
+- [x] Decide open question 1 (projection vs merge) with a quick test against the projection
       goldens; record it here.
-- [ ] Plugin + helper in `src/group/` importing core only via `src/index.ts`; kind
+- [x] Plugin + helper in `src/group/` importing core only via `src/index.ts`; kind
       `group.message` with a schema.
-- [ ] Subpath wiring: `exports['./group']`, tsdown entry `group/index`, `check-imports`
+- [x] Subpath wiring: `exports['./group']`, tsdown entry `group/index`, `check-imports`
       `subpaths`, smoke exports, CLAUDE.md rule 4 + layout.
-- [ ] Tests: decision table (mention, reply, pattern, requireMention off, shouldRespond
+- [x] Tests: decision table (mention, reply, pattern, requireMention off, shouldRespond
       overrides, bot authors, allowBots list); gated messages stored as kind and omitted from the
       model; answer carries the newest `historyLimit` entries in order and they appear once;
       framing neutralises an injected `</group-message>`; anti-loop across two simulated
       instances sharing storage; `ifBusy: 'collect'` merges a burst; speaker metadata kept with
       `acceptClientMetadata`, warning without.
-- [ ] `examples/group-chat.ts` (offline: two humans and a bot) in `examples.test.ts`; guide
+- [x] `examples/group-chat.ts` (offline: two humans and a bot) in `examples.test.ts`; guide
       `docs/guides/group-chat.md` (Telegram / Slack wiring sketches, multi-bot channels).
-- [ ] Changeset; board; gate (incl. `build` + `check:package`).
+- [x] Changeset; board; gate (incl. `build` + `check:package`).
 
 ## Acceptance criteria
 
-- [ ] With defaults, the agent answers only when mentioned or replied to, and sees the messages it
+- [x] With defaults, the agent answers only when mentioned or replied to, and sees the messages it
       missed (bounded by `historyLimit`) exactly once, in order.
-- [ ] Two bots in one channel cannot exceed `maxBotTurns` per window.
-- [ ] No new message type: everything is `UIMessage` + metadata + one plugin kind.
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] Two bots in one channel cannot exceed `maxBotTurns` per window.
+- [x] No new message type: everything is `UIMessage` + metadata + one plugin kind.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
@@ -155,6 +155,23 @@ Normative rules (spec 16):
    speaker line only) rather than fail.
 4. **Anti-loop state**: derived from history (no state writes) vs plugin state counter. Pick:
    derived from history (multi-instance safe; bounded scan of the newest 200 messages).
+
+**Decisions / deviations (implementer):**
+
+- Q1 merge confirmed (spec 16 §3, ADR-0031); not tested against projection goldens since no core
+  projection changed (kinds are `model: 'omit'`).
+- The helper needs the plugin's options, so `groupChat()` returns the plugin with a `route`
+  method and `routeGroupMessage(group, session, message, opts?)` takes the plugin first (the
+  design block had no `group` argument). `shouldRespond` gets `{ mentioned, session }` instead of
+  `ctx` (no turn context outside a turn).
+- `botName` adds a default `@botName` mention pattern (case-insensitive).
+- The bot's own messages (`author.id === botId`) are dropped and not stored.
+- Gated kinds store file names/types only, never contents.
+- The speaker-metadata warning is `ctx.log.warn` from `input.submit` (no new `W_*` code), only
+  when `allowBots` is enabled (otherwise the anti-loop is moot).
+- The framing helper (`neutralizeTags`) is local to `src/group`, not lifted to core (P24 not landed).
+- Acceptance criterion "no new message type" holds; "bots cannot exceed maxBotTurns" is tested
+  across two instances sharing storage.
 
 ## Requests to other phases
 

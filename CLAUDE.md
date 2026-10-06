@@ -44,7 +44,7 @@ bunx changeset              # add a changeset (required for every user-facing ch
    Node built-ins are allowed only in clearly Node-only modules (none exist in v0). Use Web APIs
    (`crypto.subtle`, `TextEncoder`, `ReadableStream`).
 4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`,
-   `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**` and `src/testing/**` may import core only through `src/index.ts`
+   `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**`, `src/group/**` and `src/testing/**` may import core only through `src/index.ts`
    (dogfooding, ADR-0008).
 5. **The library ships memory adapters only.** Database/S3/JSON-file adapters are examples in
    `examples/`, never dependencies (ADR-0008).
@@ -85,6 +85,7 @@ src/
   memory/           eharness/memory
   guard/            eharness/guard
   openapi/          eharness/openapi
+  group/            eharness/group
   models/           model catalog, cost (core)
   testing/          eharness/testing (conformance suites, mocks)
 examples/           runnable examples, NOT published

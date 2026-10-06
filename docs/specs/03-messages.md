@@ -99,7 +99,8 @@ Rules:
   (spec 04 §2).
 - Client-supplied `metadata.eharness` is **discarded** and rebuilt by the server (spec 05 §3).
   App metadata keys from the client are kept only if `SessionOptions.acceptClientMetadata` is true
-  (default false).
+  (default false). Convention: shipped plugins use one top-level app key named after the plugin
+  (e.g. `metadata.group = { author, chatId?, messageId? }`, spec 16 §3).
 - Unknown keys inside `metadata.eharness` must be preserved on load/save (forward compatibility).
 
 ## 4. Data parts
