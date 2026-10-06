@@ -9,6 +9,19 @@ export interface InboxAdapterConformanceOptions {
   /** Require `pending`. Default false: its case runs only when present. */
   requirePending?: boolean
   /**
+   * Require the retry semantics of 0.5 (spec 05 §12 rules 11 and 14): `release` honours
+   * `uncount`, `delayMs` and `lastError`, and `availableAt` timers. Default false: those cases do
+   * not run (an adapter may ignore the options, which keeps the 0.4 behaviour).
+   */
+  requireRetry?: boolean
+  /**
+   * Require `deadLetter` + `redrive` + `listDead`. Default false: their cases run only when
+   * `deadLetter` is present (then all three are required).
+   */
+  requireDeadLetter?: boolean
+  /** Require `stats`. Default false: its case runs only when present. */
+  requireStats?: boolean
+  /**
    * Claim expiry used by the expiry case (ms). Default 50; raise it for adapters whose clock
    * resolution is coarse (e.g. a database `now()` on another host).
    */
@@ -53,16 +66,28 @@ const FIXTURES: InboxItemInput[] = [
 ]
 
 function strip(item: InboxItem): InboxItemInput {
-  const { id: _id, attempts: _attempts, ...rest } = item
-  return rest as InboxItemInput
+  const {
+    id: _id,
+    attempts: _attempts,
+    lastError: _lastError,
+    ...rest
+  } = item as InboxItem & { sessionId?: string; deadAt?: number; reason?: string }
+  const { sessionId: _s, deadAt: _d, reason: _r, ...input } = rest
+  return input as InboxItemInput
 }
+
+const ids = (items: readonly InboxItem[]) => items.map((i) => i.id)
 
 /**
  * Conformance cases for an {@link InboxAdapter} (spec 05 §12): durability (an enqueued item is
  * claimable once `enqueue` resolved), JSON round trip, FIFO per session, exactly one winner per
  * item under concurrent claims, head of line (nothing is claimed behind an item another owner
  * holds), renewal by the holder, claim expiry, `release`, `ack`, `limit`, session isolation,
- * copies, and — when implemented (or required) — `notify` / `subscribe` and `pending`.
+ * copies, and — when implemented (or required) — `notify` / `subscribe` and `pending`; with
+ * `requireRetry` the 0.5 retry semantics (`uncount`, `lastError`, delayed items holding back later
+ * `send` / `wake` items but not `abort`, `availableAt` timers that hold nothing back); when
+ * implemented (or required) the dead-letter store (`deadLetter`, `listDead`, `redrive`) and
+ * `stats`.
  *
  * @example
  * ```ts
@@ -381,6 +406,210 @@ export function inboxAdapterConformance(
         assertTrue(list.includes(ready), 'a session with a ready item must be listed')
         assertTrue(!list.includes(claimed), 'a session whose items are all claimed is not listed')
         assertTrue(!list.includes(acked), 'a session without items is not listed')
+      },
+    },
+    {
+      name: 'retry: release with uncount undoes the attempt; lastError round-trips',
+      run: async () => {
+        if (options.requireRetry !== true) return
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('uncount')
+        const id = await adapter.enqueue(sessionId, send('x'))
+        for (let i = 0; i < 3; i++) {
+          const [item] = await adapter.claim(sessionId, 'owner-a')
+          assertTrue(item?.attempts === 1, `deferred claims are not counted, got ${item?.attempts}`)
+          await adapter.release([id], { uncount: true })
+        }
+        await adapter.claim(sessionId, 'owner-a')
+        await adapter.release([id], { lastError: 'EH_STORAGE: boom ✓' })
+        const [failed] = await adapter.claim(sessionId, 'owner-b')
+        assertJsonEqual(
+          failed === undefined ? null : [failed.id, failed.attempts, failed.lastError],
+          [id, 2, 'EH_STORAGE: boom ✓'],
+          'a failed attempt keeps its count and its lastError',
+        )
+        assertJsonEqual(failed === undefined ? null : strip(failed), send('x'), 'item unchanged')
+        await adapter.release([id], { uncount: true })
+        const [again] = await adapter.claim(sessionId, 'owner-b')
+        assertTrue(again?.attempts === 2, 'uncount undoes only the claim being released')
+        await adapter.release(['unknown-id'], { uncount: true, delayMs: 10, lastError: 'x' })
+      },
+    },
+    {
+      name: 'retry: a claim that expires keeps its attempt (crash loops are counted)',
+      run: async () => {
+        if (options.requireRetry !== true) return
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('crash')
+        const id = await adapter.enqueue(sessionId, send('x'))
+        for (let i = 1; i <= 3; i++) {
+          const [item] = await adapter.claim(sessionId, `owner-${i}`, { claimTtlMs: ttl })
+          assertJsonEqual(item === undefined ? null : [item.id, item.attempts], [id, i], 'attempt')
+          await sleep(ttl * 2 + 20)
+        }
+      },
+    },
+    {
+      name: 'retry: a delayed item is invisible until due and holds back later send/wake items, not abort',
+      run: async () => {
+        if (options.requireRetry !== true) return
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('delay')
+        const a = await adapter.enqueue(sessionId, send('a'))
+        const b = await adapter.enqueue(sessionId, send('b'))
+        const c = await adapter.enqueue(sessionId, { kind: 'abort', turnId: 't', at: 1 })
+        const d = await adapter.enqueue(sessionId, { kind: 'wake', messageId: 'm', at: 2 })
+        await adapter.claim(sessionId, 'owner-a')
+        const delayMs = ttl * 4
+        await adapter.release([a], { delayMs, lastError: 'boom' })
+        await adapter.release([b, c, d], { uncount: true })
+        const early = await adapter.claim(sessionId, 'owner-b')
+        assertJsonEqual(ids(early), [c], 'only the abort is claimable behind a delayed item')
+        await adapter.release([c], { uncount: true })
+        if (adapter.pending !== undefined) {
+          const list = await adapter.pending({ limit: 10_000 })
+          assertTrue(list.includes(sessionId), 'a claimable abort makes the session pending')
+        }
+        await sleep(delayMs + 30)
+        const due = await adapter.claim(sessionId, 'owner-b')
+        assertJsonEqual(
+          due.map((i) => [i.id, i.attempts]),
+          [
+            [a, 2],
+            [b, 1],
+            [c, 1],
+            [d, 1],
+          ],
+          'once due the delayed item is claimed first, then the rest in id order',
+        )
+      },
+    },
+    {
+      name: 'retry: an availableAt timer is invisible until due and holds nothing back',
+      run: async () => {
+        if (options.requireRetry !== true) return
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('timer')
+        const availableAt = Date.now() + ttl * 4
+        const timer = send('later', { availableAt })
+        const t = await adapter.enqueue(sessionId, timer)
+        const n = await adapter.enqueue(sessionId, send('now'))
+        const p = await adapter.enqueue(sessionId, send('past', { availableAt: 1 }))
+        const first = await adapter.claim(sessionId, 'owner-a')
+        assertJsonEqual(ids(first), [n, p], 'a future timer is skipped, later items are claimed')
+        await adapter.ack([n, p])
+        if (adapter.pending !== undefined) {
+          const list = await adapter.pending({ limit: 10_000 })
+          assertTrue(!list.includes(sessionId), 'a session with only a future timer is not pending')
+        }
+        await sleep(ttl * 4 + 50)
+        const due = await adapter.claim(sessionId, 'owner-b')
+        assertJsonEqual(ids(due), [t], 'the timer is claimable once due')
+        assertJsonEqual(due[0] === undefined ? null : strip(due[0]), timer, 'availableAt kept')
+      },
+    },
+    {
+      name: 'dead letter: dead items are never claimed, hold nothing back, are listed and redriven in id order',
+      run: async () => {
+        const adapter = await factory()
+        if (adapter.deadLetter === undefined) {
+          assertTrue(
+            options.requireDeadLetter !== true,
+            'deadLetter required but not implemented',
+          )
+          return
+        }
+        assertTrue(
+          adapter.redrive !== undefined && adapter.listDead !== undefined,
+          'an adapter with deadLetter must implement redrive and listDead',
+        )
+        const redrive = adapter.redrive?.bind(adapter)
+        const listDead = adapter.listDead?.bind(adapter)
+        if (redrive === undefined || listDead === undefined) return
+        const sessionId = uniqueSessionId('dead')
+        const fixture = FIXTURES[0] as InboxItemInput
+        const a = await adapter.enqueue(sessionId, fixture)
+        const b = await adapter.enqueue(sessionId, send('b'))
+        const c = await adapter.enqueue(sessionId, send('c'))
+        const d = await adapter.enqueue(sessionId, send('d'))
+        await adapter.claim(sessionId, 'owner-a', { claimTtlMs: ttl })
+        await adapter.deadLetter([c], { reason: 'non-retryable', lastError: 'EH_INVALID_INPUT: bad' })
+        await adapter.deadLetter([a, 'unknown-id'], { reason: 'max-attempts' })
+        await adapter.release([b, d])
+        await sleep(ttl * 2 + 20) // dead items never come back through an expired claim
+        const live = await adapter.claim(sessionId, 'owner-b')
+        assertJsonEqual(ids(live), [b, d], 'dead items are skipped and hold nothing back')
+        await adapter.ack([b, d])
+        const dead = await listDead({ sessionId })
+        assertJsonEqual(ids(dead), [a, c], 'listDead: oldest (lowest id) first')
+        const [deadA, deadC] = dead
+        assertJsonEqual(deadA === undefined ? null : strip(deadA), fixture, 'dead item JSON')
+        assertTrue(
+          deadA?.sessionId === sessionId &&
+            deadA.reason === 'max-attempts' &&
+            deadA.attempts === 1 &&
+            typeof deadA.deadAt === 'number' &&
+            deadA.lastError === undefined,
+          `dead item fields: ${JSON.stringify(deadA)}`,
+        )
+        assertJsonEqual(
+          deadC === undefined ? null : [deadC.reason, deadC.lastError],
+          ['non-retryable', 'EH_INVALID_INPUT: bad'],
+          'deadLetter records reason and lastError',
+        )
+        assertJsonEqual(ids(await listDead({ sessionId, limit: 1 })), [a], 'listDead limit')
+        const all = await listDead({ limit: 100_000 })
+        assertTrue(
+          ids(all).includes(a) && ids(all).includes(c),
+          'listDead without sessionId lists every session',
+        )
+        await adapter.release([a]) // a dead item is not released
+        assertTrue((await adapter.claim(sessionId, 'owner-c')).length === 0, 'dead stays dead')
+        await redrive([c, a, b, 'unknown-id'])
+        assertJsonEqual(ids(await listDead({ sessionId })), [], 'redriven items are not dead')
+        const back = await adapter.claim(sessionId, 'owner-c')
+        assertJsonEqual(
+          back.map((i) => [i.id, i.attempts]),
+          [
+            [a, 1],
+            [c, 1],
+          ],
+          'redriven items are claimable in id order with attempts reset',
+        )
+        assertJsonEqual(back[0] === undefined ? null : strip(back[0]), fixture, 'redriven JSON')
+      },
+    },
+    {
+      name: 'stats counts ready, claimed, delayed and dead items',
+      run: async () => {
+        const adapter = await factory()
+        if (adapter.stats === undefined) {
+          assertTrue(options.requireStats !== true, 'stats required but not implemented')
+          return
+        }
+        const sessionId = uniqueSessionId('stats')
+        const r = await adapter.enqueue(sessionId, send('ready'))
+        await adapter.enqueue(sessionId, send('claimed'))
+        const d = await adapter.enqueue(sessionId, send('delayed'))
+        const x = await adapter.enqueue(sessionId, send('dead'))
+        await adapter.claim(sessionId, 'owner-a', { claimTtlMs: 60_000 })
+        await adapter.release([r])
+        const retry = options.requireRetry === true
+        await adapter.release([d], retry ? { delayMs: 60_000 } : undefined)
+        const dead = adapter.deadLetter !== undefined
+        if (dead) await adapter.deadLetter?.([x], { reason: 'max-attempts' })
+        else await adapter.ack([x])
+        if (retry) await adapter.enqueue(sessionId, send('timer', { availableAt: Date.now() + 60_000 }))
+        assertJsonEqual(
+          await adapter.stats({ sessionId }),
+          { ready: retry ? 1 : 2, claimed: 1, delayed: retry ? 2 : 0, dead: dead ? 1 : 0 },
+          'stats of the session',
+        )
+        const total = await adapter.stats()
+        assertTrue(
+          total.ready >= 1 && total.claimed >= 1 && total.dead >= (dead ? 1 : 0),
+          `stats of the whole inbox include the session: ${JSON.stringify(total)}`,
+        )
       },
     },
   ]

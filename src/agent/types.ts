@@ -48,6 +48,7 @@ import type {
 } from '../registry/types.ts'
 import type {
   CollectOptions,
+  DeadInboxItem,
   HarnessKindTypes,
   HarnessSession,
   InboxAdapter,
@@ -55,6 +56,38 @@ import type {
   SessionOptions,
   StateAdapter,
 } from './session-types.ts'
+
+/**
+ * Backoff between failed attempts of an inbox item (`inbox.retry.backoff`): `fixed` waits
+ * `delayMs`, `exponential` (default) `delayMs × 2^(attempts − 1)`, both capped at `maxDelayMs`;
+ * `jitter` (default true) draws the wait uniformly from `[0, delay]` (full jitter).
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface InboxBackoffOptions {
+  /** Default `'exponential'`. */
+  type?: 'fixed' | 'exponential'
+  /** Default 1 000. */
+  delayMs?: number
+  /** Default 60 000. */
+  maxDelayMs?: number
+  /** Default true. */
+  jitter?: boolean
+}
+
+/**
+ * Poison-item limits of the durable inbox (`inbox.retry`, spec 05 §12 rules 11–13). Without it
+ * an item is redelivered without limit (0.4).
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface InboxRetryOptions {
+  /** Counted claims after which an item is dead-lettered. Default: unlimited. */
+  maxAttempts?: number
+  backoff?: InboxBackoffOptions
+  /** Failures that go dead at once (reason `'non-retryable'`). Default: `code === 'EH_INVALID_INPUT'`. */
+  nonRetryable?: (error: { code?: string; message: string }) => boolean
+}
 
 /**
  * Loop limits and persistence.
@@ -304,9 +337,17 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * Durable inbox behaviour (spec 05 §12): `pollMs` (default 2 000; `0` = no polling) is how often
    * a live session claims inbox items when no notification arrived, `claimTtlMs` (default
    * `recovery.staleMs`) how long a claim hides an item, `collect` the default debounce of
-   * `collect` inputs (also used without an inbox).
+   * `collect` inputs (also used without an inbox). `retry` limits poison items (default: none,
+   * unlimited redelivery as in 0.4) and `onDeadLetter` reports items that went dead (spec 05 §12
+   * rules 11–15; a throwing callback is `W_HOOK_FAILED`).
    */
-  inbox?: { pollMs?: number; claimTtlMs?: number; collect?: CollectOptions }
+  inbox?: {
+    pollMs?: number
+    claimTtlMs?: number
+    collect?: CollectOptions
+    retry?: InboxRetryOptions
+    onDeadLetter?: (item: DeadInboxItem) => void | Promise<void>
+  }
   compaction?: CompactionConfig | false
   guard?: { maxContextRatio?: number; reserveTokens?: number }
   /** Extra overflow detection for providers the built-in patterns miss. */

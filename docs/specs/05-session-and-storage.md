@@ -850,20 +850,37 @@ export interface InboxAdapter {
    *  `owner` already holds are extended to now + `claimTtlMs` (not returned, `attempts` kept). */
   claim(sessionId: string, owner: string, opts?: { limit?: number; claimTtlMs?: number }): Promise<InboxItem[]>
   ack(ids: string[]): Promise<void>                     // unknown ids are ignored
-  release(ids: string[]): Promise<void>                 // unknown ids are ignored
+  release(ids: string[], opts?: InboxReleaseOptions): Promise<void>   // unknown ids are ignored; opts: 0.5.0, rule 11
   /** Optional wake-up of the instances subscribed to the session (LISTEN/NOTIFY, pub/sub). */
   notify?(sessionId: string): Promise<void>
   /** Optional subscription; without it the holder only polls (`inbox.pollMs`). */
   subscribe?(sessionId: string, onNotify: () => void): () => void
   /** Optional: sessions with claimable items — the oldest is not claimed (a sweeper). */
   pending?(opts?: { limit?: number }): Promise<string[]>
+  // 0.5.0, rules 11–15 — all optional (0.4 adapters stay valid)
+  /** Move items to dead (kept, never claimed). Without it the core acks them after reporting. */
+  deadLetter?(ids: string[], info: { reason: string; lastError?: string }): Promise<void>
+  /** Dead → ready again (attempts reset to 0), original id order. Unknown / not dead ids are ignored. */
+  redrive?(ids: string[]): Promise<void>
+  /** Dead items, oldest (lowest id) first (an admin UI). */
+  listDead?(opts?: { sessionId?: string; limit?: number }): Promise<DeadInboxItem[]>
+  /** Counts for metrics; without `sessionId` over the whole inbox. */
+  stats?(opts?: { sessionId?: string }): Promise<InboxStats>
 }
+export interface InboxReleaseOptions {
+  delayMs?: number      // claimable only after now + delayMs (backoff); keeps its place (rule 14)
+  uncount?: boolean     // a deferral: undo the attempt increment of the claim being released
+  lastError?: string    // returned as `lastError` by later claims
+}
+export interface InboxStats { ready: number; claimed: number; delayed: number; dead: number }
 
-export type InboxItemInput =
+export type InboxItemInput = (
   | { kind: 'send'; mode: 'queue' | 'steer' | 'collect'; input: SerializedInput; collect?: CollectOptions; at: number }
   | { kind: 'wake'; messageId: string; at: number }     // inject(…, { wake }) from another process
   | { kind: 'abort'; turnId?: string; reason?: string; at: number }
-export type InboxItem = InboxItemInput & { id: string; attempts: number }
+) & { availableAt?: number }   // 0.5.0: epoch ms; a durable timer (rule 14)
+export type InboxItem = InboxItemInput & { id: string; attempts: number; lastError?: string }
+export type DeadInboxItem = InboxItem & { sessionId: string; deadAt: number; reason: string }
 export interface SerializedInput {            // a normalized input (§3 step 7) as JSON
   parts: Array<TextUIPart | FileUIPart>
   clientId?: string
@@ -877,14 +894,25 @@ inbox?: {
   pollMs?: number        // default 2_000; 0 = no polling (notifications and turn ends only)
   claimTtlMs?: number    // default recovery.staleMs (120_000)
   collect?: CollectOptions   // default { quietMs: 1_500, maxWaitMs: 10_000, maxItems: 20 }; also used without an inbox
+  retry?: {                  // 0.5.0, rules 11–13; without it: 0.4 (unlimited redelivery, releases carry no options)
+    maxAttempts?: number     // default unlimited
+    backoff?: { type?: 'fixed' | 'exponential'; delayMs?: number; maxDelayMs?: number; jitter?: boolean }
+                             // defaults 'exponential', 1_000, 60_000, true (full jitter)
+    nonRetryable?: (error: { code?: string; message: string }) => boolean   // default: code === 'EH_INVALID_INPUT'
+  }
+  onDeadLetter?: (item: DeadInboxItem) => void | Promise<void>   // throws → W_HOOK_FAILED
 }
 ```
 
 `eharness/storage/memory` ships `memoryInbox()`; `eharness/testing` ships
-`inboxAdapterConformance(factory, { requireNotify?, requirePending?, claimTtlMs? })` (durability,
-JSON round trip, FIFO per session, exactly one winner per item under concurrent claims, head of
-line, renewal by the holder, claim expiry, `release`, `ack`, `limit`, session isolation, copies,
-`notify`/`subscribe`, `pending`). A Postgres adapter (claims serialized per session by an
+`inboxAdapterConformance(factory, { requireNotify?, requirePending?, requireRetry?,
+requireDeadLetter?, requireStats?, claimTtlMs? })` (durability, JSON round trip, FIFO per session,
+exactly one winner per item under concurrent claims, head of line, renewal by the holder, claim
+expiry, `release`, `ack`, `limit`, session isolation, copies, `notify`/`subscribe`, `pending`;
+0.5.0: `uncount`, `lastError`, attempts kept by an expired claim, delayed items holding back
+later `send`/`wake` items but not `abort`, `availableAt` timers holding nothing back — only with
+`requireRetry`, since an adapter may ignore the options — dead items skipped, listed and redriven
+in id order with attempts reset, and `stats`). A Postgres adapter (claims serialized per session by an
 advisory lock, `LISTEN`/`NOTIFY`) is `examples/postgres-inbox.ts`.
 
 Normative rules:
@@ -921,7 +949,8 @@ Normative rules:
    The lock / `activeTurn` CAS still decide who runs a turn: a unit whose turn fails before its
    commit point with `EH_SESSION_BUSY` or `EH_STORAGE`, or that is dropped by `close()`, is
    released; a unit that ends before its commit point for any other reason (input blocked
-   without `persist`, invalid input, aborted by its caller) is acked (dropped).
+   without `persist`, invalid input, aborted by its caller) is acked (dropped). With
+   `inbox.retry` releases are classified and failures may dead-letter instead (rules 11–13).
 4. **Abort** (U4, inbox path). `requestAbort()` / `abort()` with an inbox and no local turn read
    the state: no live foreign `activeTurn` → `'idle'`; otherwise an `abort` item for that
    `turnId` is enqueued and `notify()` called → `'remote'` (no state write). If the enqueue
@@ -969,9 +998,63 @@ Normative rules:
    drained. The turn of `respond()` drains when it ends.
 9. **Events.** `{ type: 'inbox-enqueued'; inboxId; kind; mode? }` in the enqueuing process;
    `{ type: 'inbox-drained'; inboxIds; turnId? }` in the process that applied (acked) the items
-   (`turnId` of the turn that applied them).
+   (`turnId` of the turn that applied them); `{ type: 'inbox-dead'; inboxId; kind; reason;
+   attempts }` in the process that dead-lettered an item (rule 12, 0.5.0).
 10. **`abort()` and `close()` never drop durable items:** inbox items claimed for a queued turn go
     back to the inbox (released); only in-memory queued turns are dropped.
+
+Retries and dead-letter (0.5.0, ADR-0026). Everything below applies only with `inbox.retry`;
+without it releases carry no options and rules 1–10 are the whole contract.
+
+11. **Attempts at claim.** Every claim increments `attempts` (unchanged); renewals do not. A
+    release that is a **deferral** — the core did not try to apply the item: a live foreign
+    `activeTurn`, pending approvals, a `collect` burst not due, a turn running here (non-steer
+    items), the items parked behind a started unit, a steer the running turn did not take,
+    `close()` before the unit's commit point, or a failure to read the session's state or
+    context in the drain (a session failure, not an item failure; released with the minimum
+    backoff) — passes `uncount: true`, and the adapter undoes the increment of the claim being
+    released. A release after a **failed attempt** — the unit's turn failed before its commit
+    point with `EH_STORAGE`, with `EH_SESSION_BUSY` from the lock race, or with any other error
+    that is not non-retryable (rule 13); a write after the commit point failed; `close()` after
+    the commit point — passes `delayMs` from the backoff (`fixed`: `delayMs`; `exponential`:
+    `delayMs × 2^(attempts − 1)`; capped at `maxDelayMs`; full jitter by default) and
+    `lastError` (`CODE: message`); the holder drains again when the backoff ends (also with
+    `pollMs: 0`). A holder that dies releases nothing, so the expired claim keeps its attempt
+    (crash loops are counted).
+12. **Dead.** With `retry.maxAttempts` set, a claimed item with `attempts > maxAttempts` is not
+    applied: after dedupe (rule 5) the core dead-letters it (`deadLetter(ids, { reason:
+    'max-attempts' })`), then reports it: `onDeadLetter(item)` (a `DeadInboxItem`; a throw is
+    `W_HOOK_FAILED`), the `inbox-dead` event and `W_INBOX_DEAD_LETTER`. Reporting happens after
+    the adapter call succeeded; a failed `deadLetter` is `W_INBOX_FAILED` (`operation:
+    'deadLetter'`) and the item is released (a deferral), never lost. **Without `deadLetter`**
+    `onDeadLetter` is the dead store: it runs first, the item is acked only after it returned
+    (then the event and the warning); if it throws the item is released and reported again at a
+    later claim.
+13. **Non-retryable.** A unit that fails before its commit point with an error for which
+    `retry.nonRetryable` is true (default: `EH_INVALID_INPUT`), and a stored input that no
+    longer normalizes, go to dead at once (reason `'non-retryable'`, `lastError` the error)
+    instead of the 0.4 silent ack; other errors before the commit point are failed attempts
+    (rule 11). Blocked input (`input.submit` block) and an abort by its caller stay acks (they are
+    outcomes, not failures).
+14. **Ordering, delays and timers.** A delayed item (released with `delayMs`) keeps its place:
+    claims never return a `send` / `wake` item behind a delayed or held older item of the same
+    session (head of line, rule 3); `abort` items behind a **delayed** item are claimable
+    (rule 8: aborts are never held) — behind an item another owner holds nothing is claimable, as
+    in 0.4. An item with a future `availableAt` is a durable timer, not a queue entry: invisible
+    to claims, `pending` and the head-of-line rule until due, then claimable in its id order.
+    Dead items are skipped (they hold nothing back). `pending()` lists a session when a claim by
+    a new owner would return an item.
+15. **Redrive.** `redrive(ids)` resets `attempts` to 0 (and clears `lastError`) and makes the
+    items claimable in their original id order; the core exposes no wrapper (it is an adapter
+    operation; `docs/guides/multi-instance.md` shows an admin route). `abort` items are never
+    dead-lettered (they are acked when stale, rule 4).
+
+At-least-once and dedupe (rule 5) are unchanged: a redelivered item already applied is acked by
+the stored-view dedupe before any attempt logic runs. With a 0.4 adapter (no new members,
+`release` ignoring the options) everything still works without `retry`; with `retry.maxAttempts`
+it would count deferrals and dead-letter healthy items, so turn it on only with an adapter that
+passes `inboxAdapterConformance(…, { requireRetry: true })`; without `deadLetter` dead items are
+acked after `onDeadLetter` ran ("bring a dead table").
 
 The poll interval is the latency without `subscribe` and the safety net for lost notifications
 with it; the core never claims from a session that is not live in its process. `wake` items are

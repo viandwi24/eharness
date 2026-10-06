@@ -159,6 +159,7 @@ export type WarningCode =
   | 'W_ABORT_UNSUPPORTED'
   | 'W_OUTPUT_INVALID'
   | 'W_INBOX_FAILED'
+  | 'W_INBOX_DEAD_LETTER'
 
 /**
  * A non-fatal problem, delivered to `config.onWarning`, as a transient `data-eh.warning` part

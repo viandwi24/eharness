@@ -216,6 +216,8 @@ export type SessionEvent =
   // durable inbox (0.4.0, spec 05 §12): an item was stored by this process / applied (acked) here
   | { type: 'inbox-enqueued'; inboxId: string; kind: 'send' | 'wake' | 'abort'; mode?: 'queue' | 'steer' | 'collect' }
   | { type: 'inbox-drained'; inboxIds: string[]; turnId?: string }
+  // 0.5.0, spec 05 §12 rule 12: an item was dead-lettered by this process (after the adapter call)
+  | { type: 'inbox-dead'; inboxId: string; kind: 'send' | 'wake' | 'abort'; reason: string; attempts: number }
 ```
 
 ## 7. `HarnessRun` and responses
