@@ -31,4 +31,5 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0024](0024-durable-inbox-port.md) | Durable inbox port: at-least-once with dedupe, drained by the session holder |
 | [0025](0025-external-risk-and-mcp-annotations.md) | External risk and tighten-only MCP annotation mapping (amends 0017) |
 | [0026](0026-inbox-retries-and-dead-letter.md) | Inbox retries and dead-letter: attempts at claim, uncounted deferrals, opt-in limits (amends 0024) |
+| [0027](0027-external-waits-park-at-the-tool-boundary.md) | External waits: park at the tool boundary, record with a compare-and-set, timeouts via inbox timers (amends 0012, 0014) |
 | [0029](0029-cross-session-budget-ledger.md) | Cross-session budget ledger port: reserve / commit, fail closed (amends 0016) |

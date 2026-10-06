@@ -82,7 +82,9 @@ export interface HarnessMessageMeta {
             cachedInputTokens?: number; cacheWriteTokens?: number; nested?: number; costUsd?: number }   // nested = addUsage() total; costUsd spec 12
   stop?: StopReason
   /** Set when the turn ended with stop 'tool-pending'; null once resolved (spec 11 §2). Metadata is
-   *  deep-merged by AI SDK, so resolution writes null instead of deleting the key. */
+   *  deep-merged by AI SDK, so resolution writes null instead of deleting the key. 0.5.0: the copy
+   *  carries `v: 2` and `externals` (spec 11 §4.2); the copy is not updated when a wait is
+   *  recorded (`state.core.pending` is authoritative), only nulled at the continuation. */
   pending?: PendingState | null
   steps?: number
   durationMs?: number

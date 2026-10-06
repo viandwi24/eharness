@@ -203,6 +203,14 @@ ends with `stop: 'tool-pending'` until the application calls `respond({ toolOutp
 (spec 11 §4) — `handleChatRequest` does this for `useChat`'s `addToolOutput`. Client outputs pass
 through `tool.after` and output limits like server outputs.
 
+**External tools (0.5.0).** `externalTool()` (spec 11 §4.2) is also a tool without `execute`, but
+its result comes from the server side, not from the client: the call is pending kind `externals`
+(not `clientTools`), `start` hands the work to the outside world, and the result arrives through
+`session.resolveWait()`. A client output for such a call is ignored by `handleChatRequest` and
+`EH_INVALID_INPUT` (`'wrong-kind'`) from `respond({ toolOutputs })`. It is detected by a symbol
+property on the tool (it survives the wrapping); like client tools it is not wrapped, its
+outputs pass `tool.after` and the output limits when they are recorded.
+
 ## 7. Deferred tools in practice
 
 ```ts
