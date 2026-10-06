@@ -101,6 +101,7 @@ const entries = {
     'canonicalJson',
     'verdictKey',
   ],
+  'eharness/openapi': ['OPENAPI_AUTO_DEFER_THRESHOLD', 'openApiTools', 'riskFromMethod'],
   'eharness/testing': [
     'SKILL_SOURCE_FIXTURE',
     'budgetLedgerConformance',
