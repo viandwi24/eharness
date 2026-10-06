@@ -11,7 +11,7 @@ specs in [`../specs`](../specs) are the full contracts.
 | `id` | `'agent'` | used in logs and telemetry |
 | `contextWindow` | from `models`, else 128k (`W_DEFAULT_CONTEXT_WINDOW`) | number or `(model) => number \| undefined` — [compaction](compaction.md) |
 | `models` | none | `ModelCatalog`: record keyed by model id, or function — [models and cost](models-and-cost.md) |
-| `budget` | none | `{ maxTurnUsd?, maxSessionUsd?, warnAt? = 0.8 }` → `'cost-cap'` — [models and cost](models-and-cost.md#budgets) |
+| `budget` | none | `{ maxTurnUsd?, maxSessionUsd?, warnAt? = 0.8, ledger? }` → `'cost-cap'` — [models and cost](models-and-cost.md#budgets); `ledger: { adapter, scopes, estimate?, reservationTtlMs?, onError? = 'stop' }` — [budgets across sessions](models-and-cost.md#budgets-across-sessions) |
 | `instructions` | none | string, `{ text, id? }`, function, or `{ text: fn, refresh: 'session' \| 'turn' }` — [tools and MCP](tools-and-mcp.md#instructions) |
 | `tools` | none | record of `Tool` / `(ctx) => Tool`, a `ToolSource`, or an array of both |
 | `skills` | none | `defineSkill(…)` / `defineSkillSource(…)` — [skills](skills.md) |
@@ -117,7 +117,7 @@ validated final answer of a turn with `SendOptions.output`, typed from the schem
 | `max-steps` | step budget used up (after the wrap-up step) |
 | `stuck` | the progress guard stopped a repeating or failing turn |
 | `context-thrash` | the context filled up again right after a compaction (`compaction.thrash`) |
-| `cost-cap` | `loop.maxTurnOutputTokens` exceeded or a USD budget used up |
+| `cost-cap` | `loop.maxTurnOutputTokens` exceeded, a USD budget used up, or a `budget.ledger` reservation refused |
 | `output-invalid` | `SendOptions.output`: no valid final answer within `maxRetries` retries |
 | `length`, `content-filter` | provider finish reasons |
 | `error` | provider, stream, storage or overflow error (`error.code`, e.g. `EH_CONTEXT_OVERFLOW`) |
@@ -185,7 +185,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 
 | Area | Codes |
 |---|---|
-| Loop and cost | `W_LOOP_STUCK`, `W_CONTINUE_LIMIT`, `W_BUDGET`, `W_MODEL_UNPRICED`, `W_OUTPUT_INVALID` |
+| Loop and cost | `W_LOOP_STUCK`, `W_CONTINUE_LIMIT`, `W_BUDGET`, `W_MODEL_UNPRICED`, `W_BUDGET_LEDGER_FAILED`, `W_OUTPUT_INVALID` |
 | Context | `W_DEFAULT_CONTEXT_WINDOW`, `W_COMPACTION_FAILED`, `W_COMPACTION_FLUSH_SKIPPED`, `W_CONTEXT_TRUNCATED`, `W_OVERFLOW_RETRY`, `W_CONTEXT_THRASH`, `W_CACHE_BUST` |
 | Tools and sources | `W_SHADOWED`, `W_TOOL_SOURCE_FAILED`, `W_INVALID_TOOL_NAME`, `W_MCP_DRIFT`, `W_TOOL_OUTPUT_LIMITED`, `W_GRANT_IGNORED` |
 | Skills | `W_INVALID_SKILL`, `W_SKILL_SOURCE_FAILED` |
@@ -229,17 +229,21 @@ can no longer be downloaded), `FINAL_ANSWER_DESCRIPTION`, `FINAL_ANSWER_RECORDED
   `SerializedInput`, `CollectOptions`, `EnqueueOptions`, `EnqueueResult`, `InputFilesConfig`,
   `ToolErrorTextFn`, `ChatRequestOptions`, `OutputSpec` (the `SendOptions.output` value),
   `SendOptionsWithOutput` (`SendOptions` with a required `output`, used by the typed overloads).
-- Storage (`eharness/storage/memory`): `memoryMessages()`, `memoryState()`, `memoryInbox()`.
+- Storage (`eharness/storage/memory`): `memoryMessages()`, `memoryState()`, `memoryInbox()`,
+  `memoryBudgetLedger({ limits })` (0.5.0).
 - Testing (`eharness/testing`): `scriptedModel()`, `messageAdapterConformance()`,
   `stateAdapterConformance()`, `inboxAdapterConformance()` (0.4.0), `fileSystemConformance()`
-  (`requireMove`), `skillSourceConformance()` (`version`), `idGeneratorConformance()`.
+  (`requireMove`), `skillSourceConformance()` (`version`), `idGeneratorConformance()`,
+  `budgetLedgerConformance()` (0.5.0).
 - Messages: `uuidv7()`, `isUuidV7()`, `createKindMessage()`, `isKindMessage()`,
   `defineMessageKind()`, `defineDataPart()`, types `HarnessUIMessage`, `HarnessMetadata`
   (`metadata.eharness`: `createdAt`, `kind`, `turnId`, `model`, `usage`, `stop`, `steps`,
   `durationMs`, `pending`, `error`, `output`, …), `DataChunk`, `OutputPartData` (the
   `data-eh.output` part).
 - Skills: `defineSkill()`, `defineSkillSource()`, `parseSkillMarkdown()`, `validateSkillPath()`.
-- Models: `modelsDevCatalog()`, `lookupModel()`, `computeCost()`.
+- Models: `modelsDevCatalog()`, `lookupModel()`, `computeCost()`, `estimateStepCostUsd()` (0.5.0);
+  budget ledger types `BudgetLedger`, `BudgetLedgerConfig`, `BudgetReservation`,
+  `BudgetScopeStatus`, `BudgetEstimateEvent`.
 - `version`: the package version of the build.
 
 ## Shipped plugins
