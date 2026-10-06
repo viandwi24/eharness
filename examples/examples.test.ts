@@ -229,6 +229,21 @@ describe('examples run offline', () => {
   )
 
   test(
+    'openapi-tools',
+    async () => {
+      const out = await run('openapi-tools.ts')
+      expect(out).toContain('turn: tool-pending')
+      expect(out).toContain(
+        'request: GET https://orders.example.com/v1/orders/o-404 auth=Bearer demo-token',
+      )
+      expect(out).not.toContain('169.254')
+      expect(out).toContain('"HTTP 404 Not Found: order not found"')
+      expect(out).toContain('pending: orders_cancelOrder')
+    },
+    timeout,
+  )
+
+  test(
     'risk-approvals',
     async () => {
       const out = await run('risk-approvals.ts')

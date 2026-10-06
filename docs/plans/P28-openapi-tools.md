@@ -1,6 +1,6 @@
 # P28 — OpenAPI → tools plugin (`eharness/openapi`)
 
-Status: todo · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#6** (verdict GENERIC-plugin, not core: ADK `OpenAPIToolset`,
 Semantic Kernel OpenAPI plugins, LangChain OpenAPI toolkit with `allow_dangerous_requests`,
@@ -110,25 +110,26 @@ Normative rules (spec 17):
 
 ## Checklist
 
-- [ ] ADR-0032 "OpenAPI tools: outbound HTTP and SSRF defaults" (why a plugin, JSON only, base URL
+- [x] ADR-0032 "OpenAPI tools: outbound HTTP and SSRF defaults" (why a plugin, JSON only, base URL
       required, no remote refs).
-- [ ] Spec 17 (rules 1–8, options, error texts); spec 09 new §8 "OpenAPI tools" pointer.
-- [ ] `src/openapi/`: loader + validator, operation filter, ref resolver with cycle guard, schema
+- [x] Spec 17 (rules 1–8, options, error texts); spec 09 new §8 "OpenAPI tools" pointer.
+- [x] `src/openapi/`: loader + validator, operation filter, ref resolver with cycle guard, schema
       summarizer (3.0 → JSON Schema), tool builder (`tool()` + `jsonSchema()`), request builder
       (path / query `style` + `explode` defaults, JSON body), fetch with timeout and
       `abortSignal`, result mapping; imports core only via `src/index.ts`.
-- [ ] Subpath wiring: `exports['./openapi']`, tsdown entry `openapi/index`, `check-imports`
+- [x] Subpath wiring: `exports['./openapi']`, tsdown entry `openapi/index`, `check-imports`
       `subpaths`, smoke exports, CLAUDE.md rule 4 + layout.
-- [ ] Tests (injected `fetch`, fixture specs: petstore-like 3.0 and 3.1, a recursive schema, a
+- [x] Tests (injected `fetch`, fixture specs: petstore-like 3.0 and 3.1, a recursive schema, a
       200-operation spec): names / prefix / duplicates; include / exclude by method, path glob,
       tag, operationId; ref cycle → `{}`; remote ref → config error; YAML string → config error;
       baseUrl enforced (`servers` pointing at `169.254.169.254` ignored); path param `../` cannot
       escape; cross-origin redirect not followed; auth header from `headers()` and model-supplied
       `authorization` rejected; non-2xx / timeout / network error as strings; risk mapping;
       count guard and `defer: 'auto'`.
-- [ ] `examples/openapi-tools.ts` (offline, fake `fetch`) in `examples.test.ts`; guide
+- [x] `examples/openapi-tools.ts` (offline, fake `fetch`) in `examples.test.ts`; guide
       `docs/guides/openapi-tools.md` (curate with include, describe well, approval for writes).
-- [ ] Changeset; board; gate (incl. `build` + `check:package`).
+- [x] Changeset; board.
+- [x] Gate (incl. `build` + `check:package`).
 
 ## Acceptance criteria
 
@@ -159,6 +160,14 @@ Normative rules (spec 17):
    outputs); responses are returned as-is under output limits.
 4. **Streaming / binary responses**: Pick: unsupported in 0.5.0 (binary → error string naming the
    content type); see the roadmap "Binary files" row.
+
+Decisions taken while implementing (most conservative option):
+
+5. `baseUrl` is optional only with `useSpecServers: true` (then `servers[0]`, variable defaults).
+6. A `cookie` parameter is ignored (logged); an operation with a required non-JSON body is
+   skipped (logged); `include` / `exclude` accept a filter, an array of filters (any) or a function.
+7. API-key header names from `components.securitySchemes` are also blocked from model input.
+8. `maxResponseChars` defaults to 50_000 and cuts while reading the body; core limits still apply.
 
 ## Requests to other phases
 
