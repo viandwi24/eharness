@@ -56,7 +56,7 @@ import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.t
 import { describeError } from '../stream/describe-error.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
 import { forgetDelivered, recordDelivered } from './inbox/dedupe.ts'
-import type { InboxUnit } from './inbox/driver.ts'
+import type { InboxSettle, InboxUnit } from './inbox/driver.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
 import { createTurnInputQueue, type PendingInput } from './interaction/inbox.ts'
 import {
@@ -120,8 +120,8 @@ export interface TurnHost {
   readonly inboxDurable: boolean
   /** Inbox items whose effect is durable now: ack them (spec 05 §12 rule 5). */
   inboxApplied(ids: string[], turnId: string): void
-  /** Inbox items this turn did not apply: released (`retry`) or acked as dropped. */
-  inboxNotApplied(ids: string[], retry: boolean): void
+  /** Inbox items this turn did not apply (spec 05 §12 rules 3, 11, 13). */
+  inboxNotApplied(ids: string[], outcome: InboxSettle): void
   /** Queue a no-input wake turn for an injection that was not delivered (spec 11 §6.3). */
   enqueueWake(): void
   /** Drop queued turns like `session.abort()` (a cross-process abort, spec 05 §9.1). */
@@ -913,13 +913,13 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     return user
   }
 
-  /** Settle the op's inbox items once (ack = applied or dropped, release = retry elsewhere). */
-  function settleOpInbox(how: 'applied' | 'retry' | 'dropped'): void {
+  /** Settle the op's inbox items once (ack when applied, else by outcome). */
+  function settleOpInbox(how: 'applied' | InboxSettle): void {
     const items = op.inbox
     if (items === undefined || inboxSettled) return
     inboxSettled = true
     if (how === 'applied') host.inboxApplied(items.ids, turnId)
-    else host.inboxNotApplied(items.ids, how === 'retry')
+    else host.inboxNotApplied(items.ids, how)
   }
 
   async function inputSubmit(
@@ -1297,7 +1297,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     } catch (error) {
       if (!committed) return earlyEnd('error', error)
       // committed but not applied: the items are tried again (dedupe skips a saved user message)
-      if (op.inbox !== undefined && !inboxSettled) settleOpInbox('retry')
+      if (op.inbox !== undefined && !inboxSettled) settleOpInbox({ how: 'retry', error })
       if (!startWritten)
         writeStart(assistantId ?? rt.agent.generateId(), undefined, plan === undefined)
       outcome = { stop: 'error', steps: 0, model: info.model, error: toTurnError(error, log) }
@@ -1559,7 +1559,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           }),
         )
         // a closing session hands a durable steer to the next holder; otherwise it is dropped
-        if (item.inboxId !== undefined) host.inboxNotApplied([item.inboxId], rt.closed)
+        if (item.inboxId !== undefined) {
+          host.inboxNotApplied([item.inboxId], rt.closed ? { how: 'defer' } : { how: 'drop' })
+        }
       } else {
         // a durable steer is released before the session's end-of-turn drain runs
         await host.enqueueSteer({ input: steer.input, contexts: steer.contexts }, item.inboxId)
@@ -1688,17 +1690,24 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         if (stateSaved) settleOpInbox('applied')
         else {
           forgetDelivered(rt.state.core(), wakeIds)
-          settleOpInbox('retry')
+          settleOpInbox({ how: 'retry', error: new Error('end-of-turn state write failed') })
         }
       }
     }
     rt.state.guard(undefined)
     if (op.inbox !== undefined && !inboxSettled) {
       // not applied: retried elsewhere when another instance had the session (or ours closes)
+      // (with `inbox.retry`: deferral / counted attempt / dead, spec 05 §12 rules 11–13)
       const code = outcome.error?.code
-      const retry =
-        rt.closed || (stop === 'error' && (code === 'EH_SESSION_BUSY' || code === 'EH_STORAGE'))
-      settleOpInbox(retry ? 'retry' : 'dropped')
+      const failure = outcome.error ?? new Error(`turn ended: ${stop}`)
+      if (rt.closed) {
+        // dropped by `close()`: not tried unless it got past its commit point
+        settleOpInbox(committed ? { how: 'retry', error: failure } : { how: 'defer' })
+      } else if (stop === 'error' && (code === 'EH_SESSION_BUSY' || code === 'EH_STORAGE')) {
+        settleOpInbox({ how: 'retry', error: failure })
+      } else if (stop === 'error') {
+        settleOpInbox({ how: 'error', error: failure })
+      } else settleOpInbox({ how: 'drop' })
     }
 
     const messages = [
@@ -1887,7 +1896,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
                 clientId: input.clientId,
               }),
             )
-            if (inboxId !== undefined) host.inboxNotApplied([inboxId], false)
+            if (inboxId !== undefined) host.inboxNotApplied([inboxId], { how: 'drop' })
             return undefined
           }
           const texts = submitted.input.parts.filter((p) => p.type === 'text').map((p) => p.text)
