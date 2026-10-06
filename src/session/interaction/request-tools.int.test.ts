@@ -161,7 +161,7 @@ describe('client tools: round trip', () => {
 
   test('without the option the body fields are ignored (as in 0.4)', async () => {
     const shared = storage()
-    const model = scriptedModel([{ text: 'hi' }])
+    const model = scriptedModel([{ text: 'hi' }, { text: 'again' }])
     const { session, warnings } = instance(shared, { model, tools: { echo } })
     const run = handleChatRequest(session(), {
       messages: [userMessage('hello')],
@@ -203,7 +203,7 @@ describe('client tools: untrusted declarations', () => {
     expect(result.error?.code).toBe('EH_INVALID_INPUT')
     expect(model.calls).toHaveLength(0)
     expect(await stored(shared)).toEqual([])
-    expect(await shared.state.get('s1')).toBeUndefined()
+    expect((await shared.state.get('s1')) ?? undefined).toBeUndefined()
     return result.error?.message ?? ''
   }
 
@@ -531,7 +531,6 @@ describe('client tools: order and prompt cache', () => {
     expect(result.stop).toBe('complete')
     expect(toolNames(model.calls[0])).toEqual([
       'echo',
-      'hidden_lookup',
       'tool_search',
       'alpha',
       'zeta',

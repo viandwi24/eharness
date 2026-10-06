@@ -152,7 +152,7 @@ Normative rules (spec 11 new §7.1, spec 02 §5–§6 updates):
 - [x] Without the options enabled, a body carrying `clientTools` / `pageContext` behaves exactly
       as 0.4 (fields ignored).
 - [x] Page context never appears in storage, never in `instructions`, and cannot close its block.
-- [ ] lint, typecheck, test, build, check:package, check:imports green.
+- [x] lint, typecheck, test, build, check:package, check:imports green.
 
 ## Changeset
 
