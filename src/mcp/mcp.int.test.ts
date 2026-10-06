@@ -646,6 +646,10 @@ describe('mcpServer: definition pinning', () => {
     expect(bad({ name: 'gh', transport, connect: 'now' })).toBe(true)
     expect(bad({ name: 'gh', transport, maxRetries: -1 })).toBe(true)
     expect(bad({ name: 'gh', transport, allow: 'search' })).toBe(true)
+    expect(bad({ name: 'gh', transport, risk: 'safe' })).toBe(true)
+    expect(bad({ name: 'gh', transport, risk: 7 })).toBe(true)
+    expect(bad({ name: 'gh', transport, risk: 'external' })).toBe(false)
+    expect(bad({ name: 'gh', transport, risk: () => undefined })).toBe(false)
     // a shared MCPTransport instance is rejected (one client per session)
     expect(bad({ name: 'gh', transport: fakeMcpServer().transport() })).toBe(true)
     expect(bad({ name: 'gh-2', transport, defer: true, connect: 'eager', maxRetries: 3 })).toBe(
@@ -654,5 +658,117 @@ describe('mcpServer: definition pinning', () => {
     expect(mcpServer({ name: 'gh', transport }).id).toBe('mcp:gh')
     const { agent } = setup([])
     await expect(clearMcpPins(agent, 's1', 'Bad Name')).rejects.toThrow()
+  })
+})
+
+describe('mcpServer: annotations and risk (spec 11 §3.2)', () => {
+  const hinted = (): FakeMcpTool[] => [
+    { name: 'plain' },
+    { name: 'read_only', annotations: { readOnlyHint: true } },
+    { name: 'wipe', annotations: { readOnlyHint: true, destructiveHint: true } },
+    { name: 'email', annotations: { openWorldHint: true, idempotentHint: true } },
+    { name: 'both', annotations: { destructiveHint: true, openWorldHint: true } },
+    { name: 'closed', annotations: { destructiveHint: false, openWorldHint: false } },
+  ]
+  const calls = (names: string[]): ScriptedStepInput[] => [
+    { toolCalls: names.map((n) => ({ toolName: `gh_${n}`, input: {} })) },
+    { text: 'ok' },
+  ]
+  const spyPlugin = (seen: unknown[]) =>
+    definePlugin({
+      name: 'spy',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) => void seen.push([e.toolName, e.risk, e.idempotent, e.hints]),
+        },
+      }),
+    })
+  const names = ['plain', 'read_only', 'wipe', 'email', 'both', 'closed']
+
+  test('each hint the server sends maps tighten-only; tools without hints stay unknown', async () => {
+    const server = fakeMcpServer(hinted())
+    const seen: unknown[] = []
+    const { agent } = setup(calls(names), {
+      mcp: [gh(server)],
+      plugins: [spyPlugin(seen)],
+      approval: {
+        risk: { destructive: 'user-approval', external: 'user-approval', unknown: 'approved' },
+      },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(seen).toEqual([
+      ['gh_plain', undefined, undefined, undefined],
+      ['gh_read_only', undefined, undefined, { readOnlyHint: true }],
+      ['gh_wipe', 'destructive', undefined, { readOnlyHint: true, destructiveHint: true }],
+      ['gh_email', 'external', undefined, { openWorldHint: true, idempotentHint: true }],
+      ['gh_both', 'destructive', undefined, { destructiveHint: true, openWorldHint: true }],
+      ['gh_closed', undefined, undefined, { destructiveHint: false, openWorldHint: false }],
+    ])
+    expect(result.stop).toBe('tool-pending')
+    expect(result.pending?.approvals.map((a) => [a.toolName, a.risk])).toEqual([
+      ['gh_wipe', 'destructive'],
+      ['gh_email', 'external'],
+      ['gh_both', 'destructive'],
+    ])
+    // the unknown-risk tools ran without asking
+    expect(server.calls).toEqual(['plain', 'read_only', 'closed'])
+    await agent.close()
+  })
+
+  test('mcpServer({ risk }) as a constant is trusted and wins over the hints', async () => {
+    const server = fakeMcpServer(hinted())
+    const seen: unknown[] = []
+    const { agent } = setup(calls(['wipe', 'plain']), {
+      mcp: [gh(server, { risk: 'read' })],
+      plugins: [spyPlugin(seen)],
+      approval: { risk: { read: 'approved', destructive: 'denied', unknown: 'denied' } },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    expect(seen).toEqual([
+      ['gh_wipe', 'read', undefined, { readOnlyHint: true, destructiveHint: true }],
+      ['gh_plain', 'read', undefined, undefined],
+    ])
+    expect(server.calls).toEqual(['wipe', 'plain'])
+    await agent.close()
+  })
+
+  test('mcpServer({ risk }) as a function: per server tool; undefined, throws or invalid keep the derived risk', async () => {
+    const server = fakeMcpServer(hinted())
+    const seen: unknown[] = []
+    const asked: unknown[] = []
+    const warned: string[] = []
+    const logger = { ...silent, warn: (message: string) => void warned.push(message) }
+    const { agent } = setup(calls(['plain', 'email', 'wipe', 'both']), {
+      logger,
+      mcp: [
+        gh(server, {
+          risk: (tool) => {
+            asked.push([tool.name, tool.annotations])
+            if (tool.name === 'plain') return 'write'
+            if (tool.name === 'wipe') throw new Error('boom')
+            if (tool.name === 'both') return 'nope' as never
+            return undefined
+          },
+        }),
+      ],
+      plugins: [spyPlugin(seen)],
+    })
+    await agent.session('s1').send('go').result
+    expect(asked).toEqual(
+      expect.arrayContaining([
+        ['plain', undefined],
+        ['email', { openWorldHint: true, idempotentHint: true }],
+      ]),
+    )
+    expect(seen.map((e) => (e as unknown[]).slice(0, 2))).toEqual([
+      ['gh_plain', 'write'],
+      ['gh_email', 'external'],
+      ['gh_wipe', 'destructive'],
+      ['gh_both', 'destructive'],
+    ])
+    expect(warned.some((m) => m.includes("risk function failed for 'wipe'"))).toBe(true)
+    expect(warned.some((m) => m.includes("invalid risk for 'both'"))).toBe(true)
+    await agent.close()
   })
 })

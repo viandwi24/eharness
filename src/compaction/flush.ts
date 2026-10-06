@@ -26,7 +26,7 @@ import { FLUSH_APPROVAL_DENIED } from '../messages/texts.ts'
 import type { FlushPayload, HarnessUIMessage } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { CompactionBeforeEvent, CompactionBeforePatch } from '../plugin/types.ts'
-import { riskOf } from '../registry/risk.ts'
+import { toolTraits } from '../registry/risk.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
 import { hookFailed, reportDecision } from '../registry/wrap.ts'
 import type { OpenSession, SessionRuntime } from '../session/runtime.ts'
@@ -177,7 +177,7 @@ function flushApproval(
     const type = typeof status === 'object' && status !== null ? status.type : status
     if (type !== 'user-approval') return status
     const { toolCall } = options
-    const risk = riskOf((toolCall as { toolMetadata?: unknown }).toolMetadata)
+    const { risk, idempotent } = toolTraits((toolCall as { toolMetadata?: unknown }).toolMetadata)
     const hooks = rt.open?.hooks
     if (hooks !== undefined) {
       await reportDecision(
@@ -187,6 +187,7 @@ function flushApproval(
           toolCallId: toolCall.toolCallId,
           input: toolCall.input,
           ...(risk === undefined ? {} : { risk }),
+          ...(idempotent === undefined ? {} : { idempotent }),
           approved: false,
           by: 'policy',
           reason: FLUSH_APPROVAL_DENIED,

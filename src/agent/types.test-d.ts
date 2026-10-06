@@ -14,6 +14,10 @@ import {
   type HarnessUIMessage,
   type InferHarnessUIMessage,
   type KindName,
+  type PendingState,
+  type ToolRisk,
+  type ToolTraits,
+  type toolTraits,
 } from '../index.ts'
 
 type Equal<A, B> =
@@ -138,3 +142,16 @@ type _bareHarness = Expect<Extends<BareMessage, HarnessUIMessage>>
 
 // InferHarnessUIMessage of something that is not an agent is never
 type _notAgent = Expect<Equal<InferHarnessUIMessage<{ id: string }>, never>>
+
+// ToolRisk (0.5.0) includes 'external'; a Record over it must name it
+type _riskMembers = Expect<Equal<ToolRisk, 'read' | 'write' | 'destructive' | 'external'>>
+// @ts-expect-error: 'external' is missing
+const _riskRecord: Record<ToolRisk, number> = { read: 0, write: 1, destructive: 2 }
+type _traitsRisk = Expect<Equal<ReturnType<typeof toolTraits>, ToolTraits>>
+type _pendingRisk = Expect<
+  Extends<'external', NonNullable<PendingState['approvals'][number]['risk']>>
+>
+type _pendingIdempotent = Expect<
+  Equal<PendingState['approvals'][number]['idempotent'], boolean | undefined>
+>
+void defineHarnessAgent({ model, approval: { risk: { external: 'user-approval' } } })

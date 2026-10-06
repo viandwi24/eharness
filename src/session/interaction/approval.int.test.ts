@@ -1080,6 +1080,112 @@ describe('risk, decisions and pending details (spec 11 §3.2–3.3)', () => {
     ])
   })
 
+  test("approval.risk.external asks for an openWorldHint tool; pending carries risk 'external'", async () => {
+    const send = tool({
+      description: 'Send an email',
+      inputSchema: z.object({ to: z.string() }),
+      // as @ai-sdk/mcp sets it for a server tool with openWorldHint
+      metadata: { annotations: { openWorldHint: true, idempotentHint: true } },
+      execute: async ({ to }) => `sent to ${to}`,
+    })
+    const post = tool({
+      inputSchema: z.object({}),
+      metadata: { risk: 'external', idempotent: true },
+      execute: async () => 'posted',
+    })
+    const seen: unknown[] = []
+    const decisions: unknown[] = []
+    const spy = definePlugin({
+      name: 'spy',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) => void seen.push([e.toolName, e.risk, e.idempotent, e.hints]),
+          'approval.decided': (_ctx, e) => void decisions.push(e),
+        },
+      }),
+    })
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'send', input: { to: 'a@example.com' } },
+          { toolName: 'post', input: {} },
+        ],
+      },
+      { text: 'ok' },
+    ])
+    const { agent, state } = setup({
+      model,
+      tools: { send, post },
+      plugins: [spy],
+      approval: { risk: { external: 'user-approval', unknown: 'approved' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('go').result
+    expect(first.stop).toBe('tool-pending')
+    expect(first.pending?.approvals).toEqual([
+      expect.objectContaining({ toolName: 'send', risk: 'external' }),
+      expect.objectContaining({ toolName: 'post', risk: 'external', idempotent: true }),
+    ])
+    // idempotentHint never becomes `idempotent`
+    expect(first.pending?.approvals[0]).not.toHaveProperty('idempotent')
+    expect(seen).toEqual([
+      ['send', 'external', undefined, { openWorldHint: true, idempotentHint: true }],
+      ['post', 'external', true, undefined],
+    ])
+    const stored = (await state.get('s1')) as { core?: { pending?: unknown } } | null
+    expect(stored?.core?.pending).toMatchObject({
+      approvals: [
+        { toolName: 'send', risk: 'external' },
+        { toolName: 'post', risk: 'external' },
+      ],
+    })
+    const approvals = (first.pending?.approvals ?? []).map((a) => ({
+      id: a.approvalId,
+      approved: true,
+    }))
+    const second = await session.respond({ approvals }).result
+    expect(second.stop).toBe('complete')
+    expect(decisions).toEqual([
+      expect.objectContaining({ toolName: 'send', risk: 'external', by: 'user', approved: true }),
+      expect.objectContaining({
+        toolName: 'post',
+        risk: 'external',
+        idempotent: true,
+        by: 'user',
+        approved: true,
+      }),
+    ])
+  })
+
+  test('a risk status never loosens a hook: approval.risk approved + hook denied → denied', async () => {
+    const send = tool({
+      inputSchema: z.object({}),
+      metadata: { annotations: { openWorldHint: true } },
+      execute: async () => 'sent',
+    })
+    const decisions: Array<{ by: string; approved: boolean; risk?: string }> = []
+    const guard = definePlugin({
+      name: 'guard',
+      setup: () => ({
+        hooks: {
+          'tool.approve': (_ctx, e) => (e.risk === 'external' ? 'denied' : undefined),
+          'approval.decided': (_ctx, e) =>
+            void decisions.push({ by: e.by, approved: e.approved, risk: e.risk }),
+        },
+      }),
+    })
+    const model = scriptedModel([{ toolCalls: [{ toolName: 'send', input: {} }] }, { text: 'ok' }])
+    const { agent } = setup({
+      model,
+      tools: { send },
+      plugins: [guard],
+      approval: { risk: { external: 'approved' } },
+    })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('complete')
+    expect(decisions).toEqual([{ by: 'plugin:guard', approved: false, risk: 'external' }])
+  })
+
   test('grant and hook decisions are reported with their source; new input denies with new-input', async () => {
     const decisions: Array<{ by: string; approved: boolean }> = []
     const plugin = definePlugin({
