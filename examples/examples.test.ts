@@ -138,6 +138,21 @@ describe('examples run offline', () => {
   )
 
   test(
+    'external-wait (park, resolve from another instance, timeout via the inbox)',
+    async () => {
+      const out = await run('external-wait.ts')
+      expect(out).toContain('A: turn 1 → tool-pending; waiting on w_call-0-0 (ci:main)')
+      expect(out).toContain('B: resolveWait → continued; the same message continued: true')
+      expect(out).toContain('B: replayed webhook → not-pending')
+      expect(out).toContain('A: turn 2 → tool-pending')
+      expect(out).toContain(
+        'B: timeout applied by the inbox timer; last answer: The integration build never reported back',
+      )
+    },
+    timeout,
+  )
+
+  test(
     'inbox (steer, collect and abort across instances)',
     async () => {
       const out = await run('inbox.ts')
