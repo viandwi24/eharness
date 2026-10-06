@@ -1,6 +1,6 @@
 # P28 — OpenAPI → tools plugin (`eharness/openapi`)
 
-Status: in progress · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
+Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
 Source: 0.5 prior-art item **#6** (verdict GENERIC-plugin, not core: ADK `OpenAPIToolset`,
 Semantic Kernel OpenAPI plugins, LangChain OpenAPI toolkit with `allow_dangerous_requests`,
