@@ -2,7 +2,9 @@
  * Durable inbox: two agent instances ("process A" and "process B", e.g. two servers behind a load
  * balancer) share one storage and one inbox. Messages that reach B while A runs the turn are
  * stored in the inbox and applied by A: a steer at A's next step boundary, a burst of chat
- * messages merged into one turn (`collect`), and a Stop through the inbox.
+ * messages merged into one turn (`collect`), and a Stop through the inbox. A poison item (a
+ * stored input that no longer validates) goes to the dead-letter store instead of blocking its
+ * session (`inbox.retry`, `onDeadLetter`).
  *
  *   bun examples/inbox.ts
  *
@@ -55,7 +57,15 @@ const settings = {
   contextWindow: 200_000,
   storage,
   // short timings for the demo (defaults: pollMs 2_000, collect.quietMs 1_500)
-  inbox: { pollMs: 50, collect: { quietMs: 100 } },
+  inbox: {
+    pollMs: 50,
+    collect: { quietMs: 100 },
+    // poison items: dead after 5 counted attempts (or at once when non-retryable)
+    retry: { maxAttempts: 5, backoff: { delayMs: 50 } },
+    onDeadLetter: (item: { reason: string; lastError?: string }) => {
+      console.log(`dead letter: ${item.reason} (${item.lastError?.split(':')[0]})`)
+    },
+  },
 }
 const processA = defineHarnessAgent({ ...settings, tools: { lookup } })
 const processB = defineHarnessAgent(settings)
@@ -98,6 +108,16 @@ await started.promise
 const { target } = await sessionB.requestAbort('user pressed stop')
 console.log(`B: requestAbort → ${target}`)
 console.log(`A: turn 3 → ${(await third.result).stop}`)
+
+// 4. a poison item: a stored input that no longer validates goes dead instead of blocking
+await storage.inbox.enqueue('chat-2', { kind: 'send', mode: 'queue', input: { parts: [] }, at: 0 })
+const poisoned = processA.session('chat-2')
+for (let i = 0; i < 200; i++) {
+  if ((await storage.inbox.listDead?.({ sessionId: 'chat-2' }))?.length === 1) break
+  await sleep(20)
+}
+await poisoned.idle()
+console.log(`stats: ${JSON.stringify(await storage.inbox.stats?.({ sessionId: 'chat-2' }))}`)
 
 await processA.close()
 await processB.close()
