@@ -1,5 +1,32 @@
 # eharness
 
+## 0.6.0
+
+### Minor Changes
+
+- [`33888e8`](https://github.com/viandwi24/eharness/commit/33888e8e04fd1383c181e6f39a834f095dc71d68) Thanks [@viandwi24](https://github.com/viandwi24)! - Add `wrapPlugin(plugin, overrides?)`: compose a plugin through the public API.
+  
+  - Returns a normal plugin with the inner plugin's name, `version`, `provides`, `requires`, data
+    parts and message kinds; intercept `setup`, `session` and any hook with a `next` that calls the
+    inner implementation. Hook order and boot validation are unchanged.
+  - `next.using(other)` runs another plugin's session phase, for per-request configuration of plugins
+    configured at construction (e.g. a judge model for `approvalGuard()` resolved from `ctx.runtime`).
+  - New types: `WrapPluginOverrides`, `WrapSessionNext`, `WrapHookOverride`, `WrapHookOverrides`,
+    `WrapHookNext`. No changes when unused (spec 01 §2.1, ADR-0033).
+
+### Patch Changes
+
+- [`32c8ea0`](https://github.com/viandwi24/eharness/commit/32c8ea0e61a43368b0345c86e01262515c3bc801) Thanks [@viandwi24](https://github.com/viandwi24)! - Fix approvals combined with tools that have no `execute` (`externalTool()` and client tools).
+  
+  - An `approved` status (policy, `approval.risk`, a `tool.approve` hook or a session grant) now means
+    "no human needed": the call parks as an external wait or a client call instead of showing up as a
+    pending approval that can never be answered meaningfully.
+  - After a `user-approval` is approved, an `externalTool()` call now parks its wait (the pending state
+    is committed, then `start` runs) and `resolveWait()` continues the same message, instead of the
+    turn ending `complete` with the call unanswered. Denials are unchanged.
+  - Approved server calls of the same batch stay pending with `granted: true` (new optional field of
+    `PendingState.approvals`) and run after the wait is resolved; `respond()` answers them itself.
+
 ## 0.5.0
 
 ### Minor Changes
