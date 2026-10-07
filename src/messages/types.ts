@@ -80,6 +80,11 @@ export interface PendingState {
     input?: unknown
     risk?: ToolRisk
     idempotent?: boolean
+    /**
+     * The approval was granted already; the call waits for the parked client calls or external
+     * waits of its batch (spec 11 §3.5). `respond()` answers it as approved without a second answer.
+     */
+    granted?: true
   }>
   /**
    * Calls of tools without `execute` waiting for a client-provided output. Calls of request-scoped

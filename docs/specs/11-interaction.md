@@ -32,7 +32,7 @@ A turn that ends with `stop: 'tool-pending'` leaves the session **pending**:
 export interface PendingState {
   v?: number                                          // 2 since 0.5.0; absent = 0.3 / 0.4 shape (rule 9 of §4.2)
   messageId: string                                   // the assistant message waiting for answers
-  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk; idempotent?: boolean }>  // input/risk since 0.3, idempotent since 0.5 (§3.2)
+  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk; idempotent?: boolean; granted?: true }>  // input/risk since 0.3, idempotent since 0.5 (§3.2); granted: approved already, waits for parked calls (§3.5)
   clientTools: PendingClientTool[]                    // calls of tools without execute (spec 09 §6); timeout fields: request-scoped client tools (§7.1)
   externals?: PendingExternal[]                       // 0.5.0, §4.2
 }
@@ -58,7 +58,8 @@ export interface PendingExternal {
 ```
 
 `tool-pending` is decided at step end (spec 05 §3.1): a tool part in state `approval-requested`
-whose request is **not** automatic, or a call to a tool without `execute` (client tool) with no
+whose request is **not** automatic (an automatically `approved` call has no approval entry, §3.5),
+or a call to a tool without `execute` (client tool) with no
 output. A call of an `externalTool()` (a tool without `execute`, §4.2) is pending kind
 `externals`, not `clientTools`. Automatic denials (`output-denied`, `isAutomatic`) are results,
 not pending.
@@ -111,6 +112,30 @@ Results are normalized to `{ type, reason? }` and combined **most restrictive wi
 that returns an unknown status (e.g. a typo such as `'deny'`), counts as `denied` (fail closed,
 reason `invalid approval status '<value>'`). The approval function sees the input **after** `tool.before` refinement
 (AI SDK runs `experimental_refineToolInput` before approval).
+
+### 3.5 Tools without `execute`: `approved` is not a human decision
+
+For a tool without `execute` (a client tool or an `externalTool()`, §4.2, §5) an `approved`
+status — from the policy, `approval.risk`, a `tool.approve` hook or a session grant — means *no
+human approval needed*; it never means "run it on the server". AI SDK answers such a request
+itself (`isAutomatic`, `tool-approval-request` + `tool-approval-response`) and leaves the call
+without a result. The core therefore creates **no approval entry** for it: the call parks as its
+normal kind — an external wait (`externals`, §4.2 rule 1) or a client call (`clientTools`) — and
+the stored part is an open call (`input-available`, no approval object), exactly as without a
+policy. Only a final `user-approval` produces an approval entry; `denied` denies as always.
+
+After a human approved such a call (`respond({ approvals })`), §4 step 4 parks it the same way:
+the approval answer is consumed and the new pending state stored in **one** compare-and-set write,
+then — for an external call — `start` runs after that commit (§4.2 rule 1, exactly once per
+approval; a crash between commit and `start` is the redispatch of rule 1), the turn ends
+`'tool-pending'` without a model step, and `resolveWait()` continues the same message. A denial
+is the normal denied result and `start` never runs.
+
+Approved calls of tools with `execute` in the same batch stay in `approvals` with `granted: true`
+(the human said yes already): they run after the parked calls were answered. Because nobody
+resends their approval after a `resolveWait()`, `respond()` answers a `granted` entry as approved
+by itself (a resent answer for it is accepted and cannot flip it), and a `granted` entry does not
+count as an open item of the wait machinery (`remaining`, `expireWaits()`).
 
 ### 3.1 Grants
 
@@ -290,9 +315,11 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
    go back to `input-available` (one `tool-input-available` chunk is streamed), and the turn ends
    `'tool-pending'` **without a model step**. The client runs the tool and answers with
    `respond({ toolOutputs })` / `handleChatRequest`; the output streams into the same message.
-   Approved calls of tools with `execute` in the same batch stay pending (they run after the
-   client answered; the client sends their approval again with the output, which
-   `handleChatRequest` does by itself). Denied approvals are unchanged (`execution-denied`).
+   Approved calls of an `externalTool()` park the same way, as `externals` entries completed with
+   the tool defaults (§4.2 rule 1; `start` runs after the commit, §3.5).
+   Approved calls of tools with `execute` in the same batch stay pending as `granted` approvals
+   (they run after the parked calls were answered; a client may send their approval again with the
+   output, `respond()` does not need it). Denied approvals are unchanged (`execution-denied`).
 5. **The first step of a continuation must end with that `tool` message.** AI SDK only collects
    approvals when the last prompt message has role `tool`. Therefore, for step 0 of a `respond`
    turn: no step reminder is appended (spec 02 §5), no `data-eh.input` is delivered (waiting
@@ -365,6 +392,8 @@ session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending
    `recovery.staleMs` (from `parkedAt`; the parking instance gets that time to dispatch) are
    dispatched again — at least once, hence idempotent by `waitId`; one instance never runs the
    same redispatch twice at once. The durable timer items (rule 6) are enqueued after `start`.
+   An `approved` status (policy, risk, hook, grant) does not turn the call into an approval
+   entry, and a call approved by a human parks its wait after the approval (§3.5).
 2. **Several waits** of one step are all parked; approvals, client tools and externals may be
    pending together.
 3. **Recording** (`resolveWait`). The wait id must be in `state.core.pending.externals`, else
@@ -711,9 +740,10 @@ export interface PageContextOptions { maxChars?: number }   // default 4 000, de
    JSON reaches AI SDK. A client can therefore never shadow, replace or hijack a server tool.
 3. **No implied permission.** A declaration becomes an AI SDK tool without `execute`, built with
    `jsonSchema()`, no `metadata` (risk `unknown`, §3.2): `approval.policy`, `approval.risk` and
-   `tool.approve` hooks apply to it like to any tool (an app can deny it or ask first; an approved
-   call then parks as a client call: the approving `respond()` ends `'tool-pending'` with the call
-   in `clientTools` — it is never run, nor answered as interrupted, by the server, §4 step 4).
+   `tool.approve` hooks apply to it like to any tool (an app can deny it or ask first). An
+   `approved` status without a human parks the call as a client call (§3.5); so does a call a user
+   approved: the approving `respond()` ends `'tool-pending'` with the call in `clientTools` — it
+   is never run, nor answered as interrupted, by the server, §4 step 4.
    It never runs server code; its output returns through
    `respond({ toolOutputs })` and passes `tool.after` and the output limits (spec 09 §6). The
    model-visible text of a declaration (name, description, schema) is the client's; the

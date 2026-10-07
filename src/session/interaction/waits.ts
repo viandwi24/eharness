@@ -39,10 +39,13 @@ export function pendingCallIds(pending: PendingState): Set<string> {
   return ids
 }
 
-/** Items that still wait: open approvals, client tools and external waits without a result. */
+/**
+ * Items that still wait: open approvals (not the granted ones, which only wait for the parked
+ * calls), client tools and external waits without a result.
+ */
 export function unresolvedCount(pending: PendingState): number {
   return (
-    pending.approvals.length +
+    pending.approvals.filter((a) => a.granted !== true).length +
     pending.clientTools.filter((c) => c.result === undefined).length +
     (pending.externals ?? []).filter((e) => e.result === undefined).length
   )

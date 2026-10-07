@@ -81,6 +81,13 @@ Rules worth knowing:
 - **A browser can never resolve a wait.** `handleChatRequest` ignores client outputs for external
   calls and `respond({ toolOutputs })` for one is `'wrong-kind'`. The server decides what a
   webhook is allowed to resolve.
+- **Approvals and external tools.** An `approved` status (policy, `approval.risk`, a `tool.approve`
+  hook, a session grant) means "no human needed": the call parks its wait as it does without a
+  policy. A `user-approval` first asks a human; after `respond({ approvals })` approves, the wait
+  is committed, `start` runs, and the turn ends `tool-pending` with the wait (no model step) until
+  `resolveWait()` continues the same message. A denial gives the normal denied result and `start`
+  never runs. Approved server calls of the same batch run after the wait is resolved; they are
+  already granted, so `resolveWait()` needs no second approval answer.
 - A wait next to an approval: record the result, then `respond({ approvals })` continues with
   both (the recorded result is used as recorded). `respond({ externals })` answers waits
   together with the rest in one call instead.

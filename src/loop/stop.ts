@@ -51,7 +51,7 @@ export function decideStop(facts: StepFacts): StopReason | undefined {
 
 /**
  * Calls of a step that wait for `respond()` (spec 11 §2): approval requested by the
- * user-approval path (no result yet), a call of a client tool (no `execute`) without output, or
+ * user-approval path (no result yet; an automatically `approved` call has no entry), a call of a client tool (no `execute`) without output, or
  * a call of an external tool (`externalTool()`, spec 11 §4.2: an entry of `externals` that
  * `armExternals` completes with the tool defaults; `start` runs after the commit). The state is written as version 2.
  */
@@ -66,6 +66,7 @@ export function findPending(
   const inputs = new Map<string, unknown>()
   const results = new Set<string>()
   const approvals = new Map<string, string>() // toolCallId -> approvalId
+  const granted = new Set<string>() // approvalIds the AI SDK answered itself (`approved` status)
   for (const message of response) {
     if (typeof message.content === 'string') continue
     for (const part of message.content) {
@@ -76,6 +77,8 @@ export function findPending(
         results.add(part.toolCallId)
       } else if (part.type === 'tool-approval-request') {
         approvals.set(part.toolCallId, part.approvalId)
+      } else if (part.type === 'tool-approval-response' && part.approved) {
+        granted.add(part.approvalId)
       }
     }
   }
@@ -83,7 +86,9 @@ export function findPending(
   for (const [toolCallId, toolName] of calls) {
     if (results.has(toolCallId)) continue
     const approvalId = approvals.get(toolCallId)
-    if (approvalId !== undefined) {
+    // an `approved` status answers the request in the same step: no human decision is waiting
+    // (a tool without `execute` then parks as its normal kind, spec 11 §3)
+    if (approvalId !== undefined && !granted.has(approvalId)) {
       const { risk, idempotent } = traitsOfTool?.(toolName) ?? {}
       pending.approvals.push({
         approvalId,

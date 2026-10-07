@@ -39,7 +39,12 @@ import {
 } from '../loop/steps.ts'
 import { waitIdOf } from '../loop/stop.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import { DENIED_NEW_INPUT, INTERRUPTED_CRASH, INTERRUPTED_TURN } from '../messages/texts.ts'
+import {
+  DENIED_NEW_INPUT,
+  INTERRUPTED_CRASH,
+  INTERRUPTED_TURN,
+  WAIT_TIMED_OUT,
+} from '../messages/texts.ts'
 import { answerDanglingToolParts } from '../messages/tool-parts.ts'
 import type {
   HarnessUIMessage,
@@ -74,7 +79,12 @@ import {
   type RespondPlan,
 } from './interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
-import { pendingCallIds, timedWaits, validateExternalAnswers } from './interaction/waits.ts'
+import {
+  armExternals,
+  pendingCallIds,
+  timedWaits,
+  validateExternalAnswers,
+} from './interaction/waits.ts'
 import { hiddenByRewind } from './load-context.ts'
 import { type AbortPoll, createAbortPoll, DEFAULT_ABORT_POLL_MS } from './remote-abort.ts'
 import type { OpenSession, SessionRuntime, TurnState } from './runtime.ts'
@@ -1052,10 +1062,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
    */
   function planParking(registry: TurnRegistry): void {
     if (plan === undefined) return
-    const parked = plan.approvals.filter(
-      (a) =>
-        a.approved && registry.clientTools.has(a.toolName) && !registry.externals.has(a.toolName),
-    )
+    const parked = plan.approvals.filter((a) => a.approved && registry.clientTools.has(a.toolName))
     if (parked.length === 0) return
     const next: PendingState = {
       v: 2,
@@ -1064,6 +1071,19 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       clientTools: [],
     }
     for (const answer of parked) {
+      if (registry.externals.has(answer.toolName)) {
+        // an approved external call parks its wait like an unapproved one (spec 11 §4.2); `start`
+        // runs after this pending state is committed
+        next.externals ??= []
+        next.externals.push({
+          waitId: waitIdOf(answer.toolCallId),
+          toolCallId: answer.toolCallId,
+          toolName: answer.toolName,
+          onTimeout: { errorText: WAIT_TIMED_OUT },
+        })
+        parkedCalls.add(answer.toolCallId)
+        continue
+      }
       const call: PendingState['clientTools'][number] = {
         toolCallId: answer.toolCallId,
         toolName: answer.toolName,
@@ -1083,9 +1103,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       if (!answer.approved || parkedCalls.has(answer.toolCallId)) continue
       const entry = plan.pending.approvals.find((a) => a.approvalId === answer.approvalId)
       if (entry === undefined) continue
-      next.approvals.push(structuredClone(entry))
+      // `granted`: the human said yes already; the continuation needs no second answer
+      next.approvals.push({ ...structuredClone(entry), granted: true })
       deferredCalls.add(answer.toolCallId)
     }
+    if (next.externals !== undefined) armExternals(next, { externals: registry.externals })
     parkedPending = next
   }
 
@@ -1777,12 +1799,30 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         final = {
           ...final,
           parts: final.parts.map((part) => {
-            const tool = part as { toolCallId?: string; input?: unknown; approval?: unknown }
-            if (tool.toolCallId === undefined || !interrupted.has(tool.toolCallId)) return part
+            const tool = part as {
+              toolCallId?: string
+              input?: unknown
+              approval?: { approved?: boolean }
+              state?: string
+            }
+            if (tool.toolCallId === undefined) return part
+            // an automatically `approved` call of a tool without `execute` parks as its normal
+            // kind: the part is an open call again, without the (answered) approval (spec 11 §3)
+            if (
+              pending !== undefined &&
+              tool.state === 'approval-responded' &&
+              tool.approval?.approved === true &&
+              pendingCallIds(pending).has(tool.toolCallId)
+            ) {
+              const { approval: _approval, ...rest } = tool
+              return { ...rest, state: 'input-available' } as typeof part
+            }
+            if (!interrupted.has(tool.toolCallId)) return part
             const { approval: _approval, ...rest } = tool
             return { ...rest, input: tool.input ?? {} } as typeof part
           }),
         }
+
         assistant = final
         try {
           assistant = (await host.persist([final]))[0] ?? final

@@ -79,6 +79,12 @@ if (result.stop === 'error') console.log(result.error?.details?.reason) // 'unkn
 - Every pending approval (and client tool) must be answered in one call; the answers are checked
   against server-side pending state and consumed atomically, so a replayed or stale request never
   runs a tool.
+- **Tools without `execute`** (client tools, `externalTool()`): `'approved'` from a policy, risk
+  rule, hook or grant means no human is needed and the call parks as a client call or an external
+  wait, exactly as without an approval policy. Only `'user-approval'` shows an approval; once a
+  human approves, the call parks the same way (an external wait runs its `start` after that), and
+  a denial is the normal denied result. Other approved calls of the batch run after the parked
+  calls were answered.
 - `remember: 'session'` records a grant (`always` / `never` for that tool name) for the rest of the
   session; `session.clearGrants()` forgets them.
 - Exactly-once across **several server instances** needs a `SessionLock` or a `StateAdapter` with

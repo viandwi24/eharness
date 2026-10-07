@@ -160,12 +160,24 @@ export function planRespond(args: {
       approvalId: entry.approvalId,
       toolCallId: entry.toolCallId,
       toolName: entry.toolName,
-      approved: a.approved,
+      // a granted approval (deferred behind parked calls) stays granted
+      approved: entry.granted === true ? true : a.approved,
     }
     if (typeof a.reason === 'string') out.reason = a.reason
     if (a.remember === 'once' || a.remember === 'session') out.remember = a.remember
     if (a.actor !== undefined) out.actor = structuredClone(a.actor) as ApprovalActor
     answeredApprovals.set(a.id, out)
+  }
+
+  // approvals granted before their batch parked (spec 11 §3.5) need no second answer
+  for (const entry of pending.approvals) {
+    if (entry.granted !== true || answeredApprovals.has(entry.approvalId)) continue
+    answeredApprovals.set(entry.approvalId, {
+      approvalId: entry.approvalId,
+      toolCallId: entry.toolCallId,
+      toolName: entry.toolName,
+      approved: true,
+    })
   }
 
   for (const answer of toolOutputs as unknown[]) {

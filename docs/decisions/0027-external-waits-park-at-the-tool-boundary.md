@@ -69,6 +69,12 @@ generation with the call unanswered; `tool.metadata` is never sent to the model)
   and plugin tools are found at once; tool-source tools are listed on demand.
 - In-process timers are capped at `setTimeout`'s 2^31-1 ms; longer waits rely on the inbox item or
   `expireWaits()`.
+- Approval and external tools compose (patch): an `approved` status of a tool without `execute`
+  (policy, risk, hook, grant) is "no human needed" and parks the wait as without a policy; only
+  `user-approval` creates an approval entry, and after the human approved, the call parks its wait
+  (commit, then `start`) like an approved client call. Approved server calls of the same batch stay
+  in `approvals` with `granted: true` (additive optional field of `PendingState.approvals`) so
+  `resolveWait()` can continue without a second approval answer (spec 11 §3.5).
 - Partial `respond()` for approvals stays roadmap: only external results are recorded one by one.
 - Without an adapter `setIf` and without a lock, two instances recording the same wait can both
   succeed (last write wins); the multi-instance guide already requires one of them.
