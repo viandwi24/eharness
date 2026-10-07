@@ -37,3 +37,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0030](0030-llm-approval-guard-plugin.md) | LLM approval guard as a plugin: tighten-only, restricted view in core, cached verdicts |
 | [0031](0031-group-chat-helper-outside-the-turn.md) | Group chat: gate in a helper outside the turn, merged bounded history, anti-loop derived from storage |
 | [0032](0032-openapi-tools-outbound-http.md) | OpenAPI tools: outbound HTTP, app-supplied base URL and auth, no remote refs |
+| [0033](0033-wrap-plugin.md) | `wrapPlugin`: composing plugins through the public API (setup / session / hook interception with `next`) |
