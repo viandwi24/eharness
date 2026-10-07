@@ -1,6 +1,6 @@
 # Spec 01 — Agent and plugins
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0. Module: `src/agent`, `src/plugin`.
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0 (`wrapPlugin`, §2.1). Module: `src/agent`, `src/plugin`.
 
 ## 1. `defineHarnessAgent`
 
@@ -232,6 +232,49 @@ Rules:
   in plugin order, and within one plugin its setup-phase hooks run before its session-phase hooks.
 - Plugins are ordered `[root, ...config.plugins]`. That order defines instruction order, hook order
   and "first wins" for dynamic conflicts.
+
+### 2.1 Wrapping a plugin
+
+```ts
+export function wrapPlugin<Name, DP, MK, NewName extends string = Name>(
+  plugin: HarnessPlugin<Name, DP, MK>,
+  overrides?: WrapPluginOverrides<DP, NewName>,
+): HarnessPlugin<NewName, DP, MK>
+
+export interface WrapPluginOverrides<DP, Name> {
+  name?: Name
+  setup?(ctx: AgentSetupContext, next: (ctx?) => PluginContribution<DP> | undefined): PluginContribution<DP> | undefined
+  session?(ctx: HarnessContext<DP>, next: WrapSessionNext<DP>): Promise<SessionContribution<DP> | undefined> | SessionContribution<DP> | undefined
+  hooks?: { [K in HookName]?: (...hookArgs, next) => ReturnType<Hook<K>> }  // ctx, event?, then next
+}
+export interface WrapSessionNext<DP> {
+  (ctx?): Promise<SessionContribution<DP> | undefined>   // the inner session phase
+  using(other: HarnessPlugin, ctx?): Promise<SessionContribution<DP> | undefined> // another plugin's session phase
+}
+```
+
+The public way to compose a plugin (ADR-0033); nothing needs `'~def'`. The result is an ordinary
+plugin (it goes through §7 unchanged) with the inner plugin's `version`, `provides`, `requires`,
+`dataParts` and `messageKinds`, and the inner `name` unless `overrides.name` is given.
+
+- No overrides: everything is delegated; behaviour is identical to the inner plugin.
+- `setup` / `session` receive the inner phase as `next` and return the contribution that is used.
+  They keep the phase rules of §2 (setup sync and pure, session may do I/O). The contribution
+  returned by `session` must still satisfy `provides` and carries its own `dispose`.
+- `next.using(other)` runs the **session phase** of another plugin with the same context. It is how
+  a plugin whose options are fixed at construction (`approvalGuard({ model })`) gets
+  per-session / per-request options: build the plugin from `ctx.runtime` and delegate to it.
+  The other plugin's `name`, `provides` and setup phase are not used.
+- `hooks.<name>(...args, next)`: same arguments as the hook, `next` last. `next()` calls the inner
+  hook with the original arguments (`next(...args)` replaces them) and resolves to its result, or
+  `undefined`. Each override wraps the inner registration where it was made (setup or session), so
+  hook order is unchanged; a hook the inner plugin never registers is added in the session phase.
+  The override decides how to combine results: for `tool.approve`, never return `'approved'` to
+  keep a tighten-only plugin tighten-only. Overrides also wrap hooks returned by a `setup` /
+  `session` override.
+- Wrapping is repeatable; the outermost override runs first.
+- `ctx.plugin.name` and the state namespace are those of the wrapper (its name). Keep the default
+  name for plugins with stored state.
 
 ## 3. Agent setup context
 

@@ -167,6 +167,14 @@ export type {
   TurnInfo,
 } from './plugin/types.ts'
 export {
+  type WrapHookNext,
+  type WrapHookOverride,
+  type WrapHookOverrides,
+  type WrapPluginOverrides,
+  type WrapSessionNext,
+  wrapPlugin,
+} from './plugin/wrap-plugin.ts'
+export {
   type ExternalToolDef,
   externalTool,
   type WaitStart,

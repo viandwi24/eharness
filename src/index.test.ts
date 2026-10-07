@@ -59,6 +59,7 @@ describe('core entry', () => {
       'uuidv7',
       'validateSkillPath',
       'version',
+      'wrapPlugin',
     ])
   })
 })

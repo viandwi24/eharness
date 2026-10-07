@@ -108,6 +108,41 @@ const report = definePlugin({
 Chainable hooks see the previous hook's result. A throwing hook is skipped with `W_HOOK_FAILED`,
 except `tool.approve` and `input.submit`, which fail closed (denied / blocked).
 
+## Wrapping a plugin
+
+Shipped plugins take their options when you construct them, but some configuration is only known
+per request (a judge model, a tenant, a policy). Wrap the plugin with `wrapPlugin()` instead of
+reaching into its internals: the result is a normal plugin with the same name, data parts, kinds
+and services, and you intercept the session phase and hooks with `next` calling the inner plugin.
+
+```ts
+import { wrapPlugin } from 'eharness'
+import { approvalGuard } from 'eharness/guard'
+
+const guard = wrapPlugin(approvalGuard({ model: defaultJudge }), {
+  // per-request options: build the plugin from ctx.runtime and delegate to its session phase
+  session: (ctx, next) =>
+    ctx.runtime.judge === undefined
+      ? next()
+      : next.using(approvalGuard({ model: ctx.runtime.judge as LanguageModel })),
+  hooks: {
+    // combine with the inner answer yourself; never return 'approved' to stay tighten-only
+    'tool.approve': async (ctx, e, next) => {
+      const status = await next()
+      return status === 'approved' ? 'not-applicable' : status
+    },
+  },
+})
+// session.send('...', { runtime: { judge } })
+```
+
+- `setup(ctx, next)` / `session(ctx, next)` return the contribution that is used; `next()` is the
+  inner phase, `next.using(other)` the session phase of another plugin.
+- `hooks.<name>(ctx, event, next)` takes the hook's own arguments plus `next` last. Order does not
+  change: the override wraps the inner hook where it was registered.
+- Wrapping twice works; boot validation (duplicate names, services, ordering) applies to the
+  result. Keep the default `name` for plugins that already have stored sessions.
+
 ## Rules that keep a plugin well-behaved
 
 - **Tools return errors as strings** for expected failures (`ERROR: file not found`); the model

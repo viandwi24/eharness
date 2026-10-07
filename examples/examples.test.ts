@@ -104,6 +104,17 @@ describe('examples run offline', () => {
   )
 
   test(
+    'wrap-plugin',
+    async () => {
+      const out = await run('wrap-plugin.ts')
+      expect(out).toContain('guard on send_email: denied')
+      expect(out).toContain('strict request: complete; outbox: []')
+      expect(out).toContain('trusted request: complete; outbox: [leak@evil.example]')
+    },
+    timeout,
+  )
+
+  test(
     'plugin-authoring',
     async () => {
       const out = await run('plugin-authoring.ts')
