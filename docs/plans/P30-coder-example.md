@@ -720,6 +720,28 @@ programs in auto-approved `git diff|log|show`; protected-path detection for shel
 <path>` is treated as recursive; transcripts of subagents only for runs seen live; mode is not
 persisted.
 
+### UI and provider update (2026-10-08)
+
+- **OpenRouter provider.** `--provider openrouter|gateway` (also a settings key); OpenRouter is the
+  default when `OPENROUTER_API_KEY` is set. Missing key: exit 2. Default models per provider in
+  `src/app/provider.ts`.
+- **Model and thinking switch** through a `turn.prepare` plugin (`src/app/model-switch.ts`) that
+  reads shared state, so `/model` and `/thinking` apply to every agent at its next step without
+  rebuilding agents. OpenRouter needs its own `providerOptions.openrouter.reasoning` next to the AI
+  SDK `reasoning` option. Choices persist per project in `preferences.json`.
+- **OpenRouter catalog** cached in `~/.coder/openrouter-models.json` (24 h, `CODER_OFFLINE`).
+- **Pages on the alternate screen.** `/context`, `/status`, `/cost`, `/help`, `/agents`,
+  `/permissions` and the transcript viewer. Ink's `alternateScreen` option is fixed per instance
+  and the conversation lives in `<Static>` scrollback, so `ui/pages/host.ts` switches the screen by
+  hand in four phases (`entering`, `open`, `leaving`, `closed`).
+- **Pickers** for model and thinking (`ui/pickers/`), opened by Alt+P and Alt+T.
+- **Enter inside an input chunk.** Terminals can deliver `hi\r` as one chunk (tmux, ssh, scripted
+  input), which inserted a newline. `PromptInput` now splits a non-paste chunk at its first Enter
+  (`splitEnter` in `ui/editor.ts`): the text before it is inserted, the Enter submits (or inserts a
+  newline after `\`), and text after it becomes the next draft (dropped while a turn runs).
+  Bracketed paste keeps newlines as text.
+- **Welcome box** shortens home to `~` and truncates the middle of long paths to the window width.
+
 ## Requests to the library
 
 Gaps this example works around; each becomes a roadmap row or a phase with a spec.
@@ -739,6 +761,8 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 | R11 | `step.prepare` cannot see that an approved tool of the continuation will change the active tools (the first step of a `respond()` is prepared before the approved tool runs) | `endsWithApprovedPlan` inspects the wire messages in the permissions plugin |
 | R12 | Per-agent `toolOrder` (the core has one global order; plugin tools always come after root tools) | tool order is "root tools, then plugins" (§6.1) |
 | R13 | Adapter exceptions from `FileSystem` become `Error: ...` tool errors (spec 08 §3) instead of an `ERROR:` string; an option to catch and format them in the filesystem plugin (or a per-tool `toolErrorText`) | `disk-fs.ts` throws plain sentences (binary or too large file, read-only directory) |
+| R14 | A public API to list a session's resolved tools with their definitions (name, description, input schema), so a UI can itemise tool sizes | `/context` reads plugin internals (`~def`) through `pluginStaticTools` in `src/app/tool-inventory.ts`, called from `contextInfo()` in `src/app/agent.ts`, and skips dynamic tool sources |
+| R15 | Per-category context stats in `session.stats()`: split `instructions` into memory, skills and MCP (today `ContextStats` has `instructions`, `tools` and `messages` only, spec 06 §2) | memory and skill tokens are estimated by the app (`estimateTokens`, `skillIndexTokens`), MCP only flagged by `hasMcp` |
 
 ## Open questions
 

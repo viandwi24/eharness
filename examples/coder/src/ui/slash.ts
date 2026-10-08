@@ -1,7 +1,13 @@
 /** Slash commands of the interactive UI: registry, parsing and the commands themselves. */
 import type { Todo } from 'eharness/todos'
 import type { CoderController, CoderMessage, PermissionRules } from '../contracts.ts'
-import { PERMISSION_MODES, type PermissionMode } from '../contracts.ts'
+import {
+  PERMISSION_MODES,
+  type PermissionMode,
+  THINKING_LEVELS,
+  type ThinkingLevel,
+} from '../contracts.ts'
+import type { PageSpec } from './pages/spec.ts'
 import type { SubagentRun } from './state.ts'
 
 /** What a command may do to the UI. */
@@ -17,12 +23,18 @@ export interface SlashContext {
   reset(): void
   /** Replace the transcript with these stored messages. */
   load(messages: CoderMessage[]): void
-  /** Show a read-only, indented transcript block (a subagent's messages). */
+  /** Show the transcript viewer page for a subagent's messages. */
   showTranscript(title: string, messages: CoderMessage[]): void
   /** Subagent runs seen in this session, oldest first. */
   subagents(): SubagentRun[]
+  /** Open a fullscreen page (`/context`, `/status`, `/cost`, `/help`, `/agents`, `/permissions`). */
+  openPage(page: PageSpec): void
   /** Open the session picker. */
   pickSession(): void
+  /** Open the model picker. */
+  pickModel(): void
+  /** Open the thinking-level picker. */
+  pickThinking(): void
   /** Start a turn with this prompt. */
   submit(prompt: string): void
   /** The latest todo list, if any. */
@@ -46,10 +58,6 @@ export interface SlashCommand {
 export const INIT_PROMPT =
   'Analyse this project: its layout, languages, build, test and lint commands, conventions and anything a new contributor should know. Then write an AGENTS.md at the project root that captures it concisely (commands first). If an AGENTS.md already exists, improve it instead of replacing it.'
 
-function formatTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
-}
-
 const RULE_KINDS: readonly (keyof PermissionRules)[] = ['allow', 'ask', 'deny']
 
 function isRuleKind(value: string | undefined): value is keyof PermissionRules {
@@ -67,21 +75,7 @@ function splitWord(text: string): [string, string] {
 
 async function runPermissions(ctx: SlashContext): Promise<void> {
   const engine = ctx.controller.permissions
-  if (!ctx.args) {
-    const rules = engine.rules()
-    const list = (name: string, items: string[]): string =>
-      `  ${name}: ${items.length > 0 ? items.join(', ') : '(none)'}`
-    ctx.print(
-      [
-        `Mode: ${engine.mode}`,
-        list('allow', rules.allow),
-        list('ask', rules.ask),
-        list('deny', rules.deny),
-        'Edit: /permissions allow|ask|deny <rule> [--project] · remove <kind> <rule> · mode <mode>',
-      ].join('\n'),
-    )
-    return
-  }
+  if (!ctx.args) return ctx.openPage({ kind: 'permissions' })
   const [sub, rest] = splitWord(ctx.args)
   try {
     if (isRuleKind(sub)) {
@@ -120,23 +114,6 @@ async function runPermissions(ctx: SlashContext): Promise<void> {
   }
 }
 
-function listAgents(ctx: SlashContext): void {
-  const agents = ctx.controller.agents()
-  const runs = ctx.subagents()
-  const lines = [
-    agents.length === 0
-      ? 'No subagents defined.'
-      : agents.map((a) => `  ${a.name} (${a.source}): ${a.description}`).join('\n'),
-  ]
-  if (runs.length > 0) {
-    lines.push('', 'Runs this session (open one with /agents <n>):')
-    runs.forEach((r, i) => {
-      lines.push(`  ${i + 1}. ${r.name} [${r.status}]: ${r.description}`)
-    })
-  }
-  ctx.print(lines.join('\n'))
-}
-
 async function openTranscript(ctx: SlashContext): Promise<void> {
   const runs = ctx.subagents()
   const n = Number(ctx.args)
@@ -158,21 +135,8 @@ async function openTranscript(ctx: SlashContext): Promise<void> {
 export const slashCommands: SlashCommand[] = [
   {
     name: 'help',
-    description: 'List the commands and keys',
-    run: (ctx) => {
-      const lines = slashCommands.map(
-        (c) => `  /${c.name}${c.usage ? ` ${c.usage}` : ''}`.padEnd(22) + c.description,
-      )
-      ctx.print(
-        [
-          'Commands:',
-          ...lines,
-          '',
-          'Keys: enter send · shift+enter or \\ + enter newline · esc interrupt · shift+tab mode',
-          '      ctrl+o expand tool output · ctrl+c twice exit · up/down history',
-        ].join('\n'),
-      )
-    },
+    description: 'Commands and keyboard shortcuts',
+    run: (ctx) => ctx.openPage({ kind: 'help' }),
   },
   {
     name: 'clear',
@@ -198,17 +162,46 @@ export const slashCommands: SlashCommand[] = [
     },
   },
   {
+    name: 'context',
+    description: 'Show what fills the context window',
+    run: (ctx) => ctx.openPage({ kind: 'context' }),
+  },
+  {
+    name: 'status',
+    description: 'Show version, model, mounts, trust and settings',
+    run: (ctx) => ctx.openPage({ kind: 'status' }),
+  },
+  {
+    name: 'cost',
+    description: 'Show token usage and estimated cost',
+    run: (ctx) => ctx.openPage({ kind: 'cost' }),
+  },
+  {
     name: 'model',
-    usage: '<id>',
-    description: 'Show or switch the model',
+    usage: '[id]',
+    description: 'Pick a model, or switch with /model <id> (alt+p)',
     run: (ctx) => {
-      if (!ctx.args) {
-        ctx.print(`Model: ${ctx.model}. Switch with /model <id>.`)
-        return
-      }
+      if (!ctx.args) return ctx.pickModel()
       ctx.controller.setModel(ctx.args)
       ctx.setModelLabel(ctx.args)
       ctx.print(`Model set to ${ctx.args}.`)
+      ctx.refreshStats()
+    },
+  },
+  {
+    name: 'thinking',
+    usage: '[level]',
+    description: `Pick the thinking level, or /thinking <${THINKING_LEVELS.join('|')}> (alt+t)`,
+    run: (ctx) => {
+      if (!ctx.args) return ctx.pickThinking()
+      if (!THINKING_LEVELS.includes(ctx.args as ThinkingLevel)) {
+        return ctx.print(
+          `Unknown thinking level "${ctx.args}". Levels: ${THINKING_LEVELS.join(', ')}.`,
+          'error',
+        )
+      }
+      ctx.controller.setThinking(ctx.args as ThinkingLevel)
+      ctx.print(`Thinking set to ${ctx.args}.`)
       ctx.refreshStats()
     },
   },
@@ -221,8 +214,8 @@ export const slashCommands: SlashCommand[] = [
   {
     name: 'agents',
     usage: '[n]',
-    description: 'List subagents and their runs; /agents <n> opens a run transcript',
-    run: (ctx) => (ctx.args ? openTranscript(ctx) : listAgents(ctx)),
+    description: 'Subagents and their runs; /agents <n> opens a run transcript',
+    run: (ctx) => (ctx.args ? openTranscript(ctx) : ctx.openPage({ kind: 'agents' })),
   },
   {
     name: 'transcript',
@@ -248,18 +241,6 @@ export const slashCommands: SlashCommand[] = [
       } catch (error) {
         ctx.print(`Cannot resume ${id}: ${error instanceof Error ? error.message : error}`, 'error')
       }
-    },
-  },
-  {
-    name: 'cost',
-    description: 'Show context usage and cost',
-    run: async (ctx) => {
-      const s = await ctx.controller.stats()
-      const pct = s.contextWindow > 0 ? Math.round((s.contextTokens / s.contextWindow) * 100) : 0
-      ctx.print(
-        `Context: ${formatTokens(s.contextTokens)} / ${formatTokens(s.contextWindow)} tokens (${pct}%)` +
-          (s.costUsd === undefined ? '' : ` · cost $${s.costUsd.toFixed(4)}`),
-      )
     },
   },
   {

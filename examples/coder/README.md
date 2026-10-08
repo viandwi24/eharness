@@ -11,14 +11,39 @@ Design and decisions: [`docs/plans/P30-coder-example.md`](../../docs/plans/P30-c
 
 ```bash
 bun install                                   # from the repo root
-export AI_GATEWAY_API_KEY=...                 # for the default AI Gateway model
+export OPENROUTER_API_KEY=...                 # OpenRouter (or AI_GATEWAY_API_KEY, see Providers)
 bun examples/coder/src/main.tsx               # interactive
 bun --filter eharness-coder start             # same thing
 ```
 
-The default model is `anthropic/claude-sonnet-4.6` (an AI Gateway id). Change it with `--model <id>`,
-`"model"` in a settings file, `CODER_MODEL`, or `/model <id>` inside a session (precedence: flag,
-settings, `CODER_MODEL`, default).
+## Providers, models, thinking
+
+| Provider | Key | Default model |
+|---|---|---|
+| `openrouter` | `OPENROUTER_API_KEY` (optional `OPENROUTER_BASE_URL`) | `anthropic/claude-sonnet-5.5` |
+| `gateway` (Vercel AI Gateway) | `AI_GATEWAY_API_KEY` | `anthropic/claude-sonnet-4.6` |
+
+The provider is `--provider`, else `"provider"` in a settings file, else OpenRouter when
+`OPENROUTER_API_KEY` is set, else the gateway. A missing key for the chosen provider is a startup
+error with exit code 2 (scripted offline runs with `CODER_SCRIPTED_MODEL` need no key). Keys are
+read from the environment only and are never logged.
+
+Model: `--model <id>`, `"model"` in settings, `CODER_MODEL`, then the model last chosen in this
+project (see Preferences), then the provider default. `/model <id>` switches inside a session.
+
+- **Model picker** (`/model`, Alt+P): a filterable list; typing an id that is not listed uses it as is.
+  The OpenRouter list comes from the OpenRouter model catalog, cached in
+  `~/.coder/openrouter-models.json` (24 h, refreshed in the background, 3 s fetch limit; with
+  `CODER_OFFLINE=1` only the cache is used).
+- **Thinking** (`--thinking <level>`, `/thinking [level]`, Alt+T opens the picker). Levels:
+  `provider-default` (send nothing), `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. The app
+  sets the AI SDK `reasoning` option and, for OpenRouter, also `providerOptions.openrouter.reasoning`,
+  because the OpenRouter provider ignores the generic option.
+- **Preferences.** The last model, provider and thinking level are saved per project in
+  `~/.coder/projects/<hash>/preferences.json` and used at the next start (a flag, a settings file or
+  `CODER_MODEL` wins for the model).
+- A switch applies to the next step of every agent, subagents included (a `turn.prepare` plugin
+  reads shared state), without rebuilding agents.
 
 Context window and prices come from the [models.dev](https://models.dev) catalog. It is fetched once
 at startup (at most 3 s of waiting) and cached in `~/.coder/models.json`. A cache older than 24 h is
@@ -31,7 +56,9 @@ cost is shown. `contextWindow` in a settings file always wins over the catalog.
 | `[prompt]` | first prompt of the interactive session |
 | `-p, --print <prompt>` | run one prompt headless, print the answer, exit |
 | `--output-format text\|json\|stream-json` | print mode output (default `text`) |
-| `--model <id>` | model id |
+| `--model <id>` | model id for the provider |
+| `--provider <name>` | `openrouter` or `gateway` |
+| `--thinking <level>` | reasoning effort (see Providers, models, thinking) |
 | `--permission-mode <mode>` | `default`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions` |
 | `--add-dir <path...>` | extra directories, mounted at `/@dirs/<basename>/` |
 | `--allowed-tools <rule...>` / `--disallowed-tools <rule...>` | extra allow / deny rules for this run |
@@ -78,32 +105,51 @@ Offline runs: set `CODER_SCRIPTED_MODEL` to a JSON file holding an array of `scr
 That scripted model replaces the real one for the main agent and every subagent. Set `CODER_HOME` to
 move the user directory (default `~/.coder`), for example to a temp folder.
 
-## Keys, slash commands, shell mode
+## The interface
+
+A rounded welcome box (version, `cwd` with `~` and a shortened middle, model, provider, thinking) opens
+the session. The transcript is plain scrollback: user prompts as `> text`, assistant text with
+Markdown, one compact card per tool call (`Ctrl+O` shows the full transcript). A footer under the
+prompt shows the permission mode, the model and thinking level, the context left and the cost. `?`
+on an empty prompt opens the shortcuts panel.
 
 | Key | Action |
 |---|---|
-| Enter | send |
-| Shift+Enter, or `\` then Enter, Ctrl+J | newline |
-| Esc | interrupt the running turn |
+| Enter | send (also when the terminal delivers text and Enter as one chunk: `hi\r` sends `hi`; text after the Enter becomes the next draft) |
+| Shift+Enter, or `\` then Enter, Ctrl+J | newline (a bracketed paste keeps its newlines as text) |
+| Esc | interrupt the running turn, close a page or picker |
 | Shift+Tab | cycle the mode: default, acceptEdits, plan |
-| Ctrl+O | expand or collapse tool output |
-| Ctrl+C twice | exit |
+| Alt+P | model picker |
+| Alt+T | thinking picker |
+| Ctrl+O | transcript viewer (full tool output) |
+| Ctrl+L | redraw the screen |
+| Ctrl+C twice | exit (the first press clears the input) |
+| `?` | shortcuts panel (empty prompt) |
 | Up / Down | prompt history |
 | Ctrl+A / Ctrl+E / Ctrl+U | line start / line end / clear |
 
 | Command | Does |
 |---|---|
-| `/help` | list commands and keys |
+| `/help` | commands and keys (page) |
 | `/clear` | start a new session |
 | `/compact` | summarise the conversation to free context |
-| `/model [id]` | show or switch the model |
-| `/permissions` | show the mode and rules; `allow\|ask\|deny <rule> [--project]`, `remove <kind> <rule>`, `mode <mode>` edit them |
-| `/agents [n]` | list the subagents and this session's runs; `/agents <n>` (or `/transcript <n>`) opens a run read-only |
+| `/context` | what fills the context window (page) |
+| `/status` | version, model, mounts, trust, settings (page) |
+| `/cost` | token usage and estimated cost (page) |
+| `/model [id]` | model picker, or switch to `id` |
+| `/thinking [level]` | thinking picker, or set the level |
+| `/permissions` | mode and rules (page); `allow\|ask\|deny <rule> [--project]`, `remove <kind> <rule>`, `mode <mode>` edit them |
+| `/agents [n]` | subagents and this session's runs (page); `/agents <n>` (or `/transcript <n>`) opens a run read-only |
 | `/resume [id]` | pick a stored session, or resume one by id |
-| `/cost` | context usage and cost |
 | `/todos` | show the current todo list |
 | `/init` | ask the agent to write an `AGENTS.md` for the project |
 | `/exit` | quit |
+
+**Fullscreen pages.** `/context`, `/status`, `/cost`, `/help`, `/agents`, `/permissions` and the
+transcript viewer open on the terminal's alternate screen, so your scrollback is untouched, and
+`Esc` or `q` returns to it. Scroll with the arrow keys (`g` / `G` for top / bottom), `Tab` jumps to the
+next section. `/context` draws the window as a grid of 1% cells (system, memory, skills, tools, MCP,
+messages, free space, autocompact buffer) and lists tools, memory files, messages and thresholds below.
 
 Prompt features:
 
@@ -262,7 +308,8 @@ concatenated): `~/.coder/settings.json`, `<root>/.coder/settings.json` (subject 
 
 ```json
 {
-  "model": "anthropic/claude-sonnet-4.6",
+  "provider": "openrouter",
+  "model": "anthropic/claude-sonnet-5.5",
   "contextWindow": 200000,
   "permissions": {
     "defaultMode": "default",
@@ -352,7 +399,8 @@ Notes:
 - **Sessions.** JSON files in `~/.coder/projects/<sha256(root)[0:16]>/sessions/`, written with the
   example JSON-file adapters. `-c` picks the newest, `-r` / `/resume` a given one. The project data
   directory also holds `tool-outputs/` and `audit.jsonl`. User data (`~/.coder`, or `CODER_HOME`):
-  `settings.json`, `agents/`, `trusted.json`, `models.json`, `projects/`.
+  `settings.json`, `agents/`, `trusted.json`, `models.json`, `openrouter-models.json`, `projects/`
+  (each project folder also has `preferences.json`).
 
 ## How it is built
 
@@ -364,7 +412,7 @@ Notes:
 | `shell/` | `bash` tool over the AI SDK sandbox shape (own process group per command, killed on abort, timeout and exit); streams stdout and stderr as a transient `data-bashOutput` part |
 | `permissions/` | rule engine, shell command parsing and read-only grammars, broker, audit; a plugin using `tool.approve`, `approval.decided`, `activeTools` and `exit_plan_mode`; approvals via `tool-pending` and `respond()` |
 | `agents/` | `agent` tool: child sessions, preliminary tool results for live progress, `addUsage` to roll child cost into the parent; `drive.ts` answers `tool-pending` stops for main and children |
-| `ui/` | Ink components: transcript, tool cards, diffs, todo panel (`data-todos.list`), subagent tree, permission prompt, status bar |
+| `ui/` | Ink components: welcome box, transcript, tool cards, diffs, todo panel (`data-todos.list`), subagent tree, permission prompt, footer; `pages/` (alternate-screen pages) and `pickers/` (model, thinking) |
 
 Tool order is stable (prompt-cache prefix): `glob`, `bash`, `agent`, `request_directory_access`, the
 filesystem tools, `todo_write`, MCP tools, `exit_plan_mode` last.

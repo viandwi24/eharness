@@ -37,6 +37,8 @@ export interface ViewState {
   /** The assistant message of the running turn. */
   live: CoderMessage | null
   running: boolean
+  /** Epoch ms the running turn started at (for the elapsed time), when the driver reported it. */
+  startedAt?: number
   /** Live bash output per tool call id (tail only). */
   bash: Record<string, string>
   timing: Record<string, ToolTiming>
@@ -53,7 +55,7 @@ export interface ViewState {
 /** Actions of {@link reduce}. */
 export type ViewAction =
   | { type: 'user-submitted'; text: string }
-  | { type: 'turn-started' }
+  | { type: 'turn-started'; now?: number }
   | { type: 'live'; message: CoderMessage; now: number }
   | { type: 'bash-output'; chunks: BashOutputData[] }
   | { type: 'turn-finished'; note?: { text: string; tone: 'info' | 'error' } }
@@ -63,6 +65,8 @@ export type ViewAction =
   | { type: 'reset' }
   | { type: 'load'; messages: CoderMessage[] }
   | { type: 'toggle-expand' }
+  /** Re-print the whole transcript (after the screen was cleared by Ctrl+L). */
+  | { type: 'redraw' }
 
 const BASH_TAIL_CHARS = 16_000
 const HISTORY_MAX = 200
@@ -156,7 +160,7 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
       }
     }
     case 'turn-started':
-      return { ...state, running: true, live: null }
+      return { ...state, running: true, live: null, startedAt: action.now }
     case 'live':
       return {
         ...state,
@@ -191,7 +195,15 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
             (r): SubagentRun => (r.status === 'running' ? { ...r, status: 'failed' } : r),
           )
         : state.subagents
-      return { ...state, seq, entries, subagents, live: null, running: false }
+      return {
+        ...state,
+        seq,
+        entries,
+        subagents,
+        live: null,
+        running: false,
+        startedAt: undefined,
+      }
     }
     case 'system':
       return {
@@ -253,6 +265,8 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
     }
     case 'toggle-expand':
       return { ...state, expanded: !state.expanded }
+    case 'redraw':
+      return { ...state, epoch: state.epoch + 1 }
   }
 }
 

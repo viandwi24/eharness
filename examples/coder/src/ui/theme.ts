@@ -1,41 +1,74 @@
-/** Colors and symbols of the terminal UI, in one place. */
+/**
+ * Colors and symbols of the terminal UI, in one place ("classic coding-agent terminal style").
+ * With `NO_COLOR` set every color is `undefined`, so Ink emits no color codes at all (bold, dim,
+ * inverse and strikethrough still apply).
+ */
 import type { PermissionMode } from '../contracts.ts'
 
-/** Ink color names. */
-export const color = {
-  ok: 'green',
-  running: 'yellow',
-  error: 'red',
-  denied: 'red',
-  accent: 'cyan',
-  user: 'blue',
-  added: 'green',
-  removed: 'red',
-  hunk: 'cyan',
-} as const
+const plain = (): boolean => (process.env.NO_COLOR ?? '') !== ''
+
+function palette<T extends Record<string, string>>(
+  colors: T,
+): { [K in keyof T]: string | undefined } {
+  const off = plain()
+  const out: Record<string, string | undefined> = {}
+  for (const [key, value] of Object.entries(colors)) out[key] = off ? undefined : value
+  return out as { [K in keyof T]: string | undefined }
+}
+
+/** Ink color values (hex or color names); `undefined` under `NO_COLOR`. */
+export const color = palette({
+  accent: '#D97757',
+  ok: '#4EBA65',
+  running: '#FFC107',
+  error: '#FF6B80',
+  denied: '#FF6B80',
+  warning: '#FFC107',
+  plan: '#48968C',
+  acceptEdits: '#AF87FF',
+  bypass: '#FF6B80',
+  shell: '#FD5DB1',
+  dim: '#888888',
+  /** Prompt box border when unfocused. */
+  border: '#888888',
+  text: '#FFFFFF',
+  user: '#999999',
+  userBg: '#373737',
+  added: '#4EBA65',
+  removed: '#FF6B80',
+  addedBg: '#1E4D2B',
+  removedBg: '#5A1F28',
+  hunk: '#48968C',
+  link: '#6CA6F0',
+})
 
 /** Symbols. */
 export const sym = {
-  bullet: '●',
+  bullet: '⏺',
   prompt: '>',
   branch: '⎿',
-  todo: { pending: '☐', in_progress: '◐', completed: '☑', cancelled: '☒' },
+  star: '✻',
+  pointer: '❯',
   minus: '−',
   ellipsis: '…',
-  pointer: '❯',
+  arrow: '↳',
+  down: '↓',
+  todo: { pending: '☐', in_progress: '◼', completed: '☒', cancelled: '☒' },
+  /** Frames of the thinking glyph. */
+  spinner: ['·', '✢', '✳', '✶', '✻', '✽'],
 } as const
 
-/** Color of a permission mode in the status bar. */
+/** Color of a permission mode in the footer. */
 export function modeColor(mode: PermissionMode): string | undefined {
   switch (mode) {
     case 'plan':
-      return 'cyan'
+      return color.plan
     case 'acceptEdits':
-      return 'magenta'
+      return color.acceptEdits
     case 'bypassPermissions':
-      return 'red'
+      return color.bypass
     case 'dontAsk':
-      return 'yellow'
+      return color.warning
     default:
       return undefined
   }

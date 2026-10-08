@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  backslashNewline,
   backspace,
   bufferOf,
   deleteForward,
@@ -10,6 +11,7 @@ import {
   move,
   moveLine,
   renderLines,
+  splitEnter,
 } from '../src/ui/editor.ts'
 
 describe('editor', () => {
@@ -57,5 +59,18 @@ describe('editor', () => {
     ])
     expect(renderLines(emptyBuffer)).toEqual([{ text: '', cursorAt: 0 }])
     expect(renderLines({ text: 'ab\ncd', cursor: 2 })[0]).toEqual({ text: 'ab', cursorAt: 2 })
+  })
+})
+
+describe('splitEnter', () => {
+  test('splits at the first line break', () => {
+    expect(splitEnter('hi')).toEqual({ before: 'hi', enter: false, rest: '' })
+    expect(splitEnter('hi\r')).toEqual({ before: 'hi', enter: true, rest: '' })
+    expect(splitEnter('hi\r\n')).toEqual({ before: 'hi', enter: true, rest: '' })
+    expect(splitEnter('a\nb\rc')).toEqual({ before: 'a', enter: true, rest: 'b\nc' })
+  })
+  test('backslashNewline replaces a trailing backslash', () => {
+    expect(backslashNewline(bufferOf('a\\'))).toEqual({ text: 'a\n', cursor: 2 })
+    expect(backslashNewline(bufferOf('a'))).toBeUndefined()
   })
 })

@@ -38,6 +38,9 @@ async function coder(
     CODER_OFFLINE: '1',
   }
   delete env.CODER_MODEL
+  for (const key of ['OPENROUTER_API_KEY', 'AI_GATEWAY_API_KEY', 'OPENROUTER_BASE_URL']) {
+    delete env[key]
+  }
   if (opts.steps !== undefined) {
     const script = join(await tempDir('coder-script-'), 'script.json')
     await writeFile(script, JSON.stringify(opts.steps))
@@ -240,5 +243,44 @@ describe('print mode e2e', () => {
     const trusted = await coder(['-p', 'go', '--trust-project'], { files, steps })
     expect(trusted.stderr).not.toContain('untrusted')
     expect(await readFile(join(trusted.root, 'new.txt'), 'utf8')).toBe('ok')
+  })
+
+  test('no API key and no scripted model: a clear startup error, exit 2', async () => {
+    const r = await coder(['-p', 'hi'])
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain('OPENROUTER_API_KEY')
+    expect(r.stderr).toContain('AI_GATEWAY_API_KEY')
+    expect(r.stdout).toBe('')
+  })
+
+  test('a provider without its key fails even when the other key is set; the key is never printed', async () => {
+    const r = await coder(['-p', 'hi', '--provider', 'openrouter'], {
+      env: { AI_GATEWAY_API_KEY: 'gw-secret-123' },
+    })
+    expect(r.code).toBe(2)
+    expect(r.stderr).toContain('--provider gateway')
+    expect(r.stderr + r.stdout).not.toContain('gw-secret-123')
+  })
+
+  test('invalid --provider and --thinking are usage errors', async () => {
+    expect((await coder(['-p', 'hi', '--provider', 'nope'], { steps: [{ text: 'x' }] })).code).toBe(
+      2,
+    )
+    expect((await coder(['-p', 'hi', '--thinking', 'nope'], { steps: [{ text: 'x' }] })).code).toBe(
+      2,
+    )
+  })
+
+  test('--provider and --thinking work with the scripted model; --help documents them', async () => {
+    const r = await coder(['-p', 'hi', '--provider', 'openrouter', '--thinking', 'high'], {
+      steps: [{ text: 'fine' }],
+    })
+    expect(r.code).toBe(0)
+    expect(r.stdout).toBe('fine\n')
+    const help = await coder(['--help'])
+    expect(help.code).toBe(0)
+    expect(help.stdout).toContain('--provider <name>')
+    expect(help.stdout).toContain('--thinking <level>')
+    expect(help.stdout).toContain('provider-default')
   })
 })

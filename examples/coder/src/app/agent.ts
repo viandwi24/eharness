@@ -16,8 +16,9 @@
  *   contracts.ts, which the core cannot express (it has no per-agent `toolOrder` option).
  */
 import { existsSync } from 'node:fs'
+import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { LanguageModel } from 'ai'
+import type { LanguageModel, Tool } from 'ai'
 import {
   defineHarnessAgent,
   type HarnessAgent,
@@ -45,6 +46,7 @@ import {
 import { permissionsPlugin } from '../permissions/index.ts'
 import { bashOutputPart, createBashTool } from '../shell/index.ts'
 import { createDirAccessTool, createGlobTool } from '../workspace/index.ts'
+import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
 import { loadProjectMemory } from './project-memory.ts'
 import {
   projectInstructions,
@@ -52,6 +54,7 @@ import {
   subagentInstructions,
   turnReminder,
 } from './prompt.ts'
+import { buildTools, estimateTokens, estimateTool, pluginStaticTools } from './tool-inventory.ts'
 
 /** Dependencies of {@link createAgents}. */
 export interface CreateAgentsDeps {
@@ -68,8 +71,15 @@ export interface CreateAgentsDeps {
   definitions: AgentDefinition[]
   /** Storage shared by the main agent and every child. */
   storage: { messages: MessageAdapter; state: StateAdapter }
-  /** Model override for offline tests; wins over `config.model` and every definition. */
+  /** Model override for offline tests; wins over the model state and every definition. */
   model?: LanguageModel
+  /**
+   * The current model and thinking level, shared with the controller (default: from `config`).
+   * Every agent reads it at the start of each turn (`app/model-switch.ts`).
+   */
+  modelState?: ModelState
+  /** Model id → model (default: the id itself, resolved by the AI Gateway). */
+  resolveModel?: (id: string) => LanguageModel
   /** models.dev (or custom) catalog: context window and cost of the models it lists. */
   models?: ModelCatalog
   /** `config.contextWindow` was set in a settings file: it then beats the catalog. */
@@ -84,7 +94,46 @@ export interface Agents {
   main: HarnessAgent
   /** Agent for a subagent definition at nesting depth `depth` (cached by `name:depth`). */
   agentFor(def: AgentDefinition, depth: number): HarnessAgent
+  /** Sizes of what the main agent puts into its context besides messages (for `/context`). */
+  contextInfo(): Promise<AgentContextInfo>
   closeAll(): Promise<void>
+}
+
+/** Estimated context contributions of the main agent. */
+export interface AgentContextInfo {
+  /** Static tool definitions (own tools and the static tools of plugins), by size. */
+  tools: Array<{ name: string; tokens: number }>
+  /** Project memory text in the instructions. */
+  memoryTokens: number
+  memoryFiles: Array<{ path: string; tokens: number }>
+  /** Skill index in the instructions. */
+  skillsTokens: number
+  skillCount: number
+  /** Whether the main agent has MCP servers configured. */
+  hasMcp: boolean
+}
+
+/** Frontmatter `name` and `description` of the skills under `<root>/.coder/skills`. */
+async function skillIndexTokens(root: string): Promise<{ tokens: number; count: number }> {
+  let tokens = 0
+  let count = 0
+  try {
+    const base = join(root, '.coder', 'skills')
+    for (const entry of await readdir(base, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue
+      try {
+        const text = await readFile(join(base, entry.name, 'SKILL.md'), 'utf8')
+        const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? ''
+        tokens += estimateTokens(`${entry.name}\n${front}`) + 4
+        count++
+      } catch {
+        // not a skill
+      }
+    }
+  } catch {
+    // no skills directory
+  }
+  return { tokens, count }
 }
 
 /** Removed from `plan` subagents; `bash` stays, its commands are restricted to read-only ones. */
@@ -119,6 +168,17 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
           .map((m) => `${m.virtual} (${m.real})`),
     }),
     refresh: 'turn' as const,
+  }
+
+  const modelState: ModelState = deps.modelState ?? {
+    provider: config.provider,
+    model: config.model,
+    thinking: 'provider-default',
+  }
+  const resolveModel = deps.resolveModel ?? ((id: string): LanguageModel => id)
+  const contextInfo: { tools: Record<string, unknown>; plugins: unknown[] } = {
+    tools: {},
+    plugins: [],
   }
 
   const cache = new Map<string, HarnessAgent>()
@@ -174,8 +234,32 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         })
       : []
 
-    const model: LanguageModel =
-      deps.model ?? (def?.model && def.model !== 'inherit' ? def.model : config.model)
+    // a subagent that pins a model keeps it; everything else follows the model state per turn
+    const pinned = def?.model && def.model !== 'inherit' ? def.model : undefined
+    const follows = deps.model === undefined && pinned === undefined
+    const model: LanguageModel = deps.model ?? resolveModel(pinned ?? modelState.model)
+
+    const plugins = [
+      filesystem({
+        fs: workspace.fs,
+        toolOutputs: { dir: '/.coder/tool-outputs' },
+        ...(hasSkills ? { skills: { root: '/.coder/skills' } } : {}),
+      }),
+      todos(),
+      permissionsPlugin({
+        engine: permissions,
+        ...(def ? { agent: def.name } : {}),
+        ...(def?.permissionMode === 'plan' ? { mode: 'plan' as const } : {}),
+        ...(def?.tools ? { allowedTools: def.tools } : {}),
+        ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
+        auditFile,
+      }),
+      modelSwitchPlugin({ state: modelState, ...(follows ? { resolve: resolveModel } : {}) }),
+    ]
+    if (isMain) {
+      contextInfo.tools = appTools
+      contextInfo.plugins = plugins
+    }
 
     const agent = defineHarnessAgent({
       id: isMain ? 'coder' : `coder-${def.name}-${depth}`,
@@ -183,28 +267,15 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       // an explicit setting wins; otherwise the catalog, with the config default as fallback
       contextWindow: deps.contextWindowExplicit
         ? config.contextWindow
-        : (m: LanguageModel) => lookupModel(deps.models, m)?.contextWindow ?? config.contextWindow,
+        : (m: LanguageModel) =>
+            lookupModel(deps.models, follows ? modelState.model : m)?.contextWindow ??
+            config.contextWindow,
       ...(deps.models ? { models: deps.models } : {}),
       instructions,
       dataParts: { bashOutput: bashOutputPart },
       tools: appTools as never,
       mcp,
-      plugins: [
-        filesystem({
-          fs: workspace.fs,
-          toolOutputs: { dir: '/.coder/tool-outputs' },
-          ...(hasSkills ? { skills: { root: '/.coder/skills' } } : {}),
-        }),
-        todos(),
-        permissionsPlugin({
-          engine: permissions,
-          ...(def ? { agent: def.name } : {}),
-          ...(def?.permissionMode === 'plan' ? { mode: 'plan' as const } : {}),
-          ...(def?.tools ? { allowedTools: def.tools } : {}),
-          ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
-          auditFile,
-        }),
-      ],
+      plugins,
       storage: deps.storage,
       loop: { maxSteps: isMain ? config.maxSteps : (def.maxTurns ?? 50) },
       compaction: { summarizeAt: 0.8, prune: {} },
@@ -229,6 +300,28 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
   return {
     main,
     agentFor,
+    async contextInfo(): Promise<AgentContextInfo> {
+      const tools: AgentContextInfo['tools'] = []
+      const all: Record<string, Tool> = buildTools(contextInfo.tools)
+      for (const plugin of contextInfo.plugins) Object.assign(all, await pluginStaticTools(plugin))
+      for (const [name, tool] of Object.entries(all)) {
+        if (typeof tool !== 'object' || tool === null) continue
+        tools.push({ name, tokens: await estimateTool(name, tool) })
+      }
+      const skills = hasSkills ? await skillIndexTokens(config.root) : { tokens: 0, count: 0 }
+      const memoryTokens = estimateTokens(projectText ?? '')
+      return {
+        tools,
+        memoryTokens,
+        memoryFiles:
+          memory.file !== undefined && memory.text !== undefined
+            ? [{ path: `/${memory.file}`, tokens: estimateTokens(memory.text) }]
+            : [],
+        skillsTokens: skills.tokens,
+        skillCount: skills.count,
+        hasMcp: Object.keys(config.mcpServers).length > 0,
+      }
+    },
     closeAll: async () => {
       await Promise.allSettled(built.map((a) => a.close()))
     },

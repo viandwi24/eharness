@@ -78,6 +78,8 @@ export interface PermissionRules {
 /** One settings file (`~/.coder/settings.json`, `<root>/.coder/settings.json`, `…local.json`). */
 export interface CoderSettings {
   model?: string
+  /** Model provider; default: from the API keys in the environment (see `app/provider.ts`). */
+  provider?: ModelProvider
   contextWindow?: number
   permissions?: Partial<PermissionRules> & {
     defaultMode?: PermissionMode
@@ -101,7 +103,9 @@ export interface CoderConfig {
   /** `~/.coder/projects/<sha256(root)[0:16]>`: sessions, tool outputs, audit log. */
   projectDataDir: string
   settingsFiles: { user: string; project: string; local: string }
-  /** AI Gateway id or a model id the app maps to a provider. Default `anthropic/claude-sonnet-4.6`. */
+  /** Where model calls go (`--provider`, settings, else the API keys in the environment). */
+  provider: ModelProvider
+  /** Model id for {@link CoderConfig.provider}; default `anthropic/claude-sonnet-5.5` (OpenRouter) or `anthropic/claude-sonnet-4.6` (gateway). */
   model: string
   /** Default 200_000. */
   contextWindow: number
@@ -262,6 +266,111 @@ export interface AgentProgress {
   text: string
 }
 
+// ─── Models, thinking, context (app/) → consumed by ui/ ─────────────────────────────────────
+
+/** AI SDK `reasoning` levels (`LanguageModelCallOptions['reasoning']`), shown as "thinking". */
+export type ThinkingLevel =
+  | 'provider-default'
+  | 'none'
+  | 'minimal'
+  | 'low'
+  | 'medium'
+  | 'high'
+  | 'xhigh'
+export const THINKING_LEVELS: readonly ThinkingLevel[] = [
+  'provider-default',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+]
+
+/** Where model calls go: OpenRouter (`OPENROUTER_API_KEY`) or the AI Gateway (`AI_GATEWAY_API_KEY`). */
+export type ModelProvider = 'openrouter' | 'gateway'
+
+/** One entry of the model picker. */
+export interface ModelOption {
+  /** Id passed to the provider, e.g. `anthropic/claude-sonnet-4.6`. */
+  id: string
+  /** Display name. */
+  name: string
+  provider: ModelProvider
+  contextWindow?: number
+  maxOutputTokens?: number
+  /** USD per 1M tokens. */
+  pricing?: { input: number; output: number; cacheRead?: number }
+  /** Supports reasoning effort ("thinking"). */
+  reasoning: boolean
+  /** Supports tool calls (models without tools are not usable by the agent). */
+  tools: boolean
+  description?: string
+}
+
+/** One slice of the context window for the `/context` page. */
+export interface ContextCategory {
+  key: 'system' | 'tools' | 'mcp' | 'memory' | 'skills' | 'messages'
+  label: string
+  tokens: number
+}
+
+/** Everything the `/context` page shows. Token counts are the core's calibrated estimates. */
+export interface ContextDetails {
+  model: string
+  provider: ModelProvider
+  window: number
+  /** Estimated tokens of the next request. */
+  used: number
+  /** `window - used`, never negative. */
+  free: number
+  /** Auto-compaction threshold in tokens (`summarizeAt`). */
+  summarizeAt: number
+  /** Hard limit of the context guard in tokens. */
+  hardLimit: number
+  /** `window - summarizeAt`: space kept free for compaction. */
+  autocompactBuffer: number
+  categories: ContextCategory[]
+  /** Tool definitions by estimated size, largest first. */
+  tools: Array<{ name: string; tokens: number; source: 'builtin' | 'mcp' | 'skill' }>
+  /** Project memory files (AGENTS.md …) by estimated size. */
+  memoryFiles: Array<{ path: string; tokens: number }>
+  messages: { count: number; user: number; assistant: number; toolCalls: number }
+  lastCompaction?: { before: number; after: number; at: number }
+  pruned?: { outputs: number; chars: number }
+}
+
+/** Token and cost totals of the session for `/cost` and the footer. */
+export interface UsageSummary {
+  inputTokens: number
+  outputTokens: number
+  cachedInputTokens?: number
+  turns: number
+  /** Estimated USD; absent when the model is not priced. */
+  costUsd?: number
+  /** Wall-clock time of all turns in this process. */
+  durationMs: number
+}
+
+/** Everything the `/status` page shows. */
+export interface StatusInfo {
+  version: string
+  eharnessVersion: string
+  cwd: string
+  provider: ModelProvider
+  model: string
+  thinking: ThinkingLevel
+  mode: PermissionMode
+  sessionId: string
+  mounts: Mount[]
+  trusted: boolean
+  untrusted: string[]
+  memoryFile?: string
+  mcpServers: string[]
+  agents: number
+  settingsFiles: Array<{ path: string; exists: boolean }>
+}
+
 // ─── Controller (app/) → consumed by ui/ and print.ts ────────────────────────────────────────
 
 export type CoderMessage = HarnessUIMessage
@@ -307,6 +416,17 @@ export interface CoderController {
    */
   shell(command: string, signal?: AbortSignal): Promise<{ output: string; exitCode: number | null }>
   setModel(model: string): void
+  /** Current model id (changes with {@link CoderController.setModel}; takes effect at the next turn). */
+  readonly model: string
+  readonly provider: ModelProvider
+  /** Current thinking level (default `provider-default`); applies to the main agent and subagents. */
+  readonly thinking: ThinkingLevel
+  setThinking(level: ThinkingLevel): void
+  /** Models for the picker (OpenRouter catalog when available, cached), tool-capable first. */
+  models(): Promise<ModelOption[]>
+  contextDetails(): Promise<ContextDetails>
+  usage(): Promise<UsageSummary>
+  status(): Promise<StatusInfo>
   agents(): AgentDefinition[]
   /** Context and cost for the status bar. */
   stats(): Promise<{ contextTokens: number; contextWindow: number; costUsd?: number }>

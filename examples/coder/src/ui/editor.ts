@@ -88,3 +88,28 @@ export function renderLines(buf: Buffer): RenderedLine[] {
     return at >= 0 && at <= text.length ? { text, cursorAt: at } : { text }
   })
 }
+
+/**
+ * Split a non-paste input chunk at its first Enter (`\r`, `\n` or `\r\n`). Terminals can deliver
+ * `hi\r` as one chunk (tmux, ssh, scripted input), so Enter is not always its own key event.
+ * `before` is text typed before the Enter, `rest` is whatever followed it (any further line breaks
+ * in it become `\n` text). `enter` is false when the chunk has no line break.
+ */
+export function splitEnter(chunk: string): { before: string; enter: boolean; rest: string } {
+  const at = chunk.search(/[\r\n]/)
+  if (at === -1) return { before: chunk, enter: false, rest: '' }
+  const after = chunk.slice(at).replace(/^\r\n|^[\r\n]/, '')
+  return { before: chunk.slice(0, at), enter: true, rest: after.replace(/\r\n?/g, '\n') }
+}
+
+/** `\` + Enter: replace the backslash before the cursor with a newline, or `undefined` when there is none. */
+export function backslashNewline(buf: Buffer): Buffer | undefined {
+  if (buf.cursor === 0 || buf.text[buf.cursor - 1] !== '\\') return undefined
+  return insert(
+    {
+      text: buf.text.slice(0, buf.cursor - 1) + buf.text.slice(buf.cursor),
+      cursor: buf.cursor - 1,
+    },
+    '\n',
+  )
+}

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { TOOL } from '../src/contracts.ts'
 import {
+  bashBody,
   countChanges,
   describeTool,
   displayPath,
@@ -8,8 +9,10 @@ import {
   formatDuration,
   isAgentProgress,
   parseBashFooter,
+  splitMcpName,
   type ToolView,
   tailLines,
+  todosOf,
   toolView,
 } from '../src/ui/tool-summary.ts'
 
@@ -78,111 +81,136 @@ describe('parseBashFooter: the three footers', () => {
 })
 
 describe('describeTool', () => {
-  test('read_file, with and without a range, running vs done', () => {
-    const d = describeTool(view(TOOL.read, { path: '/src/a.ts', offset: 120, limit: 61 }))
-    expect(d).toMatchObject({ label: 'Read', target: 'src/a.ts', suffix: '(lines 120–180)' })
-    expect(describeTool(view(TOOL.read, { path: '/a', offset: 3 })).suffix).toBe('(from line 3)')
-    expect(describeTool(view(TOOL.read, { path: '/a', limit: 5 })).suffix).toBe('(first 5 lines)')
+  test('read_file: Read(path) and a line count', () => {
+    const d = describeTool(view(TOOL.read, { path: '/src/a.ts' }, { output: 'a\nb\nc' }))
+    expect(d).toMatchObject({ label: 'Read', target: 'src/a.ts', summary: 'Read 3 lines' })
+    const ranged = describeTool(view(TOOL.read, { path: '/a', offset: 120, limit: 61 }))
+    expect(ranged.target).toBe('a, lines 120–180')
+    expect(describeTool(view(TOOL.read, { path: '/a', offset: 3 })).target).toBe('a, from line 3')
     const running = describeTool(view(TOOL.read, { path: '/a' }, { state: 'input-available' }))
-    expect(running).toMatchObject({ label: 'Reading', status: 'running' })
+    expect(running).toMatchObject({ label: 'Read', status: 'running', summary: '' })
   })
 
-  test('list_files, glob, grep counts and empty results', () => {
+  test('list_files, glob, grep: counts and empty results', () => {
     expect(describeTool(view(TOOL.list, { prefix: '/src' }, { output: 'a\nb\n' }))).toMatchObject({
       label: 'List',
       target: 'src',
-      suffix: '(2 files)',
+      summary: 'Found 2 files',
     })
-    expect(describeTool(view(TOOL.list, {}, { output: 'No files found' })).suffix).toBe('(0 files)')
+    expect(describeTool(view(TOOL.list, {}, { output: 'No files found' })).summary).toBe(
+      'Found 0 files',
+    )
     expect(
       describeTool(view(TOOL.glob, { pattern: '**/*.ts' }, { output: 'a\nb\nc' })),
+    ).toMatchObject({ label: 'Glob', target: '**/*.ts', summary: 'Found 3 files' })
+    expect(describeTool(view(TOOL.glob, { pattern: 'x' }, { output: 'a' })).summary).toBe(
+      'Found 1 file',
+    )
+    expect(
+      describeTool(view(TOOL.grep, { pattern: 'foo', path: '/src' }, { output: 'a:1\nb:2' })),
     ).toMatchObject({
-      target: '**/*.ts',
-      suffix: '(3 files)',
+      label: 'Search',
+      target: 'pattern: "foo", path: "src"',
+      summary: 'Found 2 matches',
     })
-    expect(describeTool(view(TOOL.glob, { pattern: 'x' }, { output: 'No files' })).suffix).toBe(
-      '(0 files)',
-    )
-    expect(describeTool(view(TOOL.grep, { pattern: 'foo' }, { output: 'a:1\nb:2' }))).toMatchObject(
-      {
-        label: 'Grep',
-        target: '"foo"',
-        suffix: '(2 matches)',
-      },
-    )
-    expect(describeTool(view(TOOL.grep, { pattern: 'f' }, { output: 'No matches' })).suffix).toBe(
-      '(0 matches)',
+    expect(describeTool(view(TOOL.grep, { pattern: 'f' }, { output: 'No matches' })).summary).toBe(
+      'Found 0 matches',
     )
   })
 
-  test('edit_file shows (+N −M)', () => {
+  test('edit_file: Update(path) with addition and removal counts', () => {
     const d = describeTool(
       view(TOOL.edit, { path: '/a.ts', old_string: 'a\nb\n', new_string: 'a\nB\nC\n' }),
     )
-    expect(d).toMatchObject({ label: 'Edited', target: 'a.ts', suffix: '(+2 −1)', status: 'ok' })
+    expect(d).toMatchObject({
+      label: 'Update',
+      target: 'a.ts',
+      summary: 'Updated a.ts with 2 additions and 1 removal',
+      status: 'ok',
+    })
+    const one = describeTool(view(TOOL.edit, { path: '/a', old_string: 'x\n', new_string: 'y\n' }))
+    expect(one.summary).toBe('Updated a with 1 addition and 1 removal')
   })
 
-  test('write_file: Created vs Wrote and line count', () => {
+  test('write_file: Write(path), created vs wrote', () => {
     const v = view(TOOL.write, { path: '/n.ts', content: 'a\nb\nc' })
     expect(describeTool(v, { change: { action: 'create' } })).toMatchObject({
-      label: 'Created',
-      suffix: '(3 lines)',
+      label: 'Write',
+      target: 'n.ts',
+      summary: 'Created 3 lines in n.ts',
     })
-    expect(describeTool(v, { change: { action: 'write' } }).label).toBe('Wrote')
-    expect(describeTool(v, {}).label).toBe('Wrote')
+    expect(describeTool(v, { change: { action: 'write' } }).summary).toBe('Wrote 3 lines to n.ts')
+    expect(describeTool(v, {}).summary).toBe('Wrote 3 lines to n.ts')
   })
 
-  test('delete_file, todo_write, agent, exit_plan_mode, request_directory_access, unknown', () => {
+  test('delete_file, todo_write, agent, exit_plan_mode, request_directory_access', () => {
     expect(describeTool(view(TOOL.delete, { path: '/x' }))).toMatchObject({
-      label: 'Deleted',
+      label: 'Delete',
       target: 'x',
+      summary: 'Deleted x',
     })
-    expect(describeTool(view(TOOL.todo, { todos: [1, 2] })).target).toBe('updated (2 items)')
-    expect(describeTool(view(TOOL.todo, {})).target).toBe('updated')
+    expect(describeTool(view(TOOL.todo, { todos: [1, 2] }))).toMatchObject({
+      label: 'Update Todos',
+      target: '',
+    })
     expect(
       describeTool(view(TOOL.agent, { subagent_type: 'explore', description: 'look' })),
-    ).toMatchObject({ label: 'Agent', target: 'explore: look' })
-    expect(describeTool(view(TOOL.agent, { description: 'd' })).target).toBe('general-purpose: d')
-    expect(describeTool(view(TOOL.exitPlan, {}))).toMatchObject({
-      label: 'Plan',
-      target: 'proposed',
-    })
+    ).toMatchObject({ label: 'Task', target: 'look', note: 'explore' })
+    expect(describeTool(view(TOOL.agent, { description: 'd' })).note).toBe('general-purpose')
+    expect(describeTool(view(TOOL.exitPlan, {}))).toMatchObject({ label: 'Plan', target: '' })
     expect(describeTool(view(TOOL.dirAccess, { path: '/tmp/x' }))).toMatchObject({
       label: 'Directory access',
       target: '/tmp/x',
     })
-    const unknown = describeTool(view('mcp_thing', { a: 1 }))
-    expect(unknown).toMatchObject({ label: 'mcp_thing', target: '{"a":1}' })
+  })
+
+  test('MCP tools: server - tool (MCP)(args)', () => {
+    const d = describeTool(view('github_search_issues', { q: 'bug', n: 3 }))
+    expect(d.label).toBe('github - search_issues (MCP)')
+    expect(d.target).toBe('q: "bug", n: 3')
+    expect(describeTool(view('mcp__fs__read', {})).label).toBe('fs - read (MCP)')
+    expect(describeTool(view('load_skill', {})).label).toBe('load_skill')
     expect(describeTool(view('t', { a: 'x'.repeat(200) })).target.length).toBe(80)
+    expect(splitMcpName('nounderscore')).toBeUndefined()
+  })
+
+  test('todosOf and bashBody', () => {
+    expect(todosOf({ todos: [{ content: 'a', status: 'completed' }, { content: 'b' }] })).toEqual([
+      { content: 'a', status: 'completed' },
+      { content: 'b', status: 'pending' },
+    ])
+    expect(todosOf({})).toEqual([])
+    expect(bashBody('a\nb\nExit code 0 · 1.0s')).toEqual(['a', 'b'])
+    expect(bashBody('plain\n')).toEqual(['plain'])
   })
 
   test('bash: three footers', () => {
     const ok = describeTool(view(TOOL.bash, { command: 'ls' }, { output: 'a\nExit code 0 · 4.2s' }))
     expect(ok).toMatchObject({
-      label: 'Bash:',
+      label: 'Bash',
       target: 'ls',
-      suffix: 'exit 0 · 4.2s',
+      summary: 'exit 0 · 4.2s',
       status: 'ok',
     })
-    expect(ok.suffixError).toBeUndefined()
+    expect(ok.summaryError).toBeUndefined()
     const fail = describeTool(view(TOOL.bash, { command: 'x' }, { output: 'Exit code 1 · 0.2s' }))
-    expect(fail).toMatchObject({ suffix: 'exit 1 · 0.2s', status: 'error', suffixError: true })
+    expect(fail).toMatchObject({ summary: 'exit 1 · 0.2s', status: 'error', summaryError: true })
     expect(fail.error).toBeUndefined()
     const timeout = describeTool(
       view(TOOL.bash, { command: 'x' }, { output: '(timed out after 5s)' }),
     )
-    expect(timeout).toMatchObject({ suffix: 'timed out', status: 'error', suffixError: true })
+    expect(timeout).toMatchObject({ summary: 'timed out', status: 'error', summaryError: true })
     const aborted = describeTool(
       view(TOOL.bash, { command: 'x' }, { output: '(aborted after 1.0s)' }),
     )
-    expect(aborted).toMatchObject({ suffix: 'aborted', status: 'error' })
+    expect(aborted).toMatchObject({ summary: 'aborted', status: 'error' })
   })
 
   test('bash without a footer falls back to the observed timing; running shows a tail', () => {
     const d = describeTool(view(TOOL.bash, { command: 'x' }, { output: 'plain' }), {
       timing: { start: 0, end: 1500 },
     })
-    expect(d.suffix).toBe('1.5s')
+    expect(d.summary).toBe('1.5s')
     const running = describeTool(view(TOOL.bash, { command: 'x' }, { state: 'input-available' }), {
       bashLive: '1\n2\n3\n4\n5\n6\n',
     })
@@ -191,11 +219,16 @@ describe('describeTool', () => {
   })
 
   test('classifyToolResult-based error states', () => {
-    for (const prefix of ['ERROR: nope', 'STALE: changed', 'CONFLICT: x', 'REJECTED: ro']) {
+    for (const [prefix, shown] of [
+      ['ERROR: nope', 'Error: nope'],
+      ['STALE: changed', 'Error: STALE: changed'],
+      ['CONFLICT: x', 'Error: CONFLICT: x'],
+      ['REJECTED: ro', 'Error: REJECTED: ro'],
+    ] as const) {
       const d = describeTool(view(TOOL.edit, { path: '/a' }, { output: `${prefix}\nmore` }))
       expect(d.status).toBe('error')
-      expect(d.error).toBe(prefix)
-      expect(d.suffix).toBe('')
+      expect(d.error).toBe(shown)
+      expect(d.summary).toBe('')
     }
   })
 
@@ -203,13 +236,17 @@ describe('describeTool', () => {
     const err = describeTool(
       view(TOOL.read, { path: '/a' }, { state: 'output-error', errorText: 'bad\nx' }),
     )
-    expect(err).toMatchObject({ status: 'error', error: 'bad' })
+    expect(err).toMatchObject({ status: 'error', error: 'Error: bad' })
+    const reason = describeTool(
+      view(TOOL.bash, { command: 'rm' }, { state: 'output-error', errorText: 'Denied: rule X' }),
+    )
+    expect(reason).toMatchObject({ status: 'denied', error: 'Denied: rule X' })
     const denied = describeTool(view(TOOL.bash, { command: 'rm' }, { state: 'output-denied' }))
-    expect(denied).toMatchObject({ status: 'denied', error: 'denied' })
+    expect(denied).toMatchObject({ status: 'denied', error: 'Denied by user' })
     const waiting = describeTool(
       view(TOOL.bash, { command: 'ls' }, { state: 'approval-requested' }),
     )
-    expect(waiting).toMatchObject({ status: 'waiting', suffix: 'awaiting approval' })
+    expect(waiting).toMatchObject({ status: 'waiting', summary: 'awaiting approval' })
     const prelim = describeTool(
       view(TOOL.agent, { description: 'd' }, { output: { status: 'running' }, preliminary: true }),
     )

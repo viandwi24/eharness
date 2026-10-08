@@ -227,3 +227,19 @@ describe('subagent run tracking', () => {
     expect(s.entries.at(-1)).toMatchObject({ kind: 'transcript', title: 't' })
   })
 })
+
+describe('turn clock and redraw', () => {
+  test('turn-started records the start time and turn-finished clears it', () => {
+    let s = reduce(initialState(), { type: 'turn-started', now: 1234 })
+    expect(s.startedAt).toBe(1234)
+    s = reduce(s, { type: 'turn-finished' })
+    expect(s.startedAt).toBeUndefined()
+  })
+
+  test('redraw bumps the epoch and keeps the entries', () => {
+    const before = reduce(initialState(), { type: 'system', text: 'x' })
+    const after = reduce(before, { type: 'redraw' })
+    expect(after.epoch).toBe(before.epoch + 1)
+    expect(after.entries).toEqual(before.entries)
+  })
+})

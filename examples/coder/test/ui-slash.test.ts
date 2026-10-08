@@ -15,6 +15,7 @@ function harness(over: Record<string, unknown> = {}) {
   const printed: Array<{ text: string; tone?: string }> = []
   const rules = { allow: ['Bash(ls)'], ask: [] as string[], deny: ['Read(./.env)'] }
   const runs: SubagentRun[] = []
+  const pages: unknown[] = []
   const transcripts: Array<{ title: string; messages: unknown[] }> = []
   const controller = {
     permissions: {
@@ -47,6 +48,9 @@ function harness(over: Record<string, unknown> = {}) {
     reset: () => void calls.push('reset'),
     load: () => void calls.push('load'),
     pickSession: () => void calls.push('pick'),
+    pickModel: () => void calls.push('pickModel'),
+    pickThinking: () => void calls.push('pickThinking'),
+    openPage: (page) => void pages.push(page),
     subagents: () => runs,
     showTranscript: (title, messages) => void transcripts.push({ title, messages }),
     submit: (p) => void calls.push(`submit:${p}`),
@@ -55,7 +59,7 @@ function harness(over: Record<string, unknown> = {}) {
     refreshStats: () => void calls.push('refresh'),
     exit: () => void calls.push('exit'),
   }
-  return { ctx, calls, printed, runs, transcripts }
+  return { ctx, calls, printed, runs, transcripts, pages }
 }
 
 describe('slash parsing', () => {
@@ -70,7 +74,7 @@ describe('slash parsing', () => {
 
   test('matchSlash by prefix', () => {
     expect(matchSlash('/re').map((c) => c.name)).toEqual(['resume'])
-    expect(matchSlash('/c').map((c) => c.name)).toEqual(['clear', 'compact', 'cost'])
+    expect(matchSlash('/c').map((c) => c.name)).toEqual(['clear', 'compact', 'context', 'cost'])
     expect(matchSlash('/').length).toBe(slashCommands.length)
     expect(matchSlash('/model x')).toEqual([])
     expect(matchSlash('nope')).toEqual([])
@@ -81,12 +85,15 @@ describe('slash parsing', () => {
       'help',
       'clear',
       'compact',
+      'context',
+      'status',
+      'cost',
       'model',
+      'thinking',
       'permissions',
       'agents',
       'transcript',
       'resume',
-      'cost',
       'todos',
       'init',
       'exit',
@@ -107,11 +114,15 @@ describe('slash effects', () => {
     expect(h.printed[0]?.text).toContain('/nope')
   })
 
-  test('/help lists every command', async () => {
+  test('/help, /context, /status, /cost open their page', async () => {
     const h = harness()
-    await runSlash('/help', h.ctx)
-    for (const c of slashCommands) expect(h.printed[0]?.text).toContain(`/${c.name}`)
-    expect(h.printed[0]?.text).toContain('shift+tab')
+    for (const name of ['help', 'context', 'status', 'cost']) await runSlash(`/${name}`, h.ctx)
+    expect(h.pages).toEqual([
+      { kind: 'help' },
+      { kind: 'context' },
+      { kind: 'status' },
+      { kind: 'cost' },
+    ])
   })
 
   test('/clear clears the controller, resets the view, refreshes stats', async () => {
@@ -138,30 +149,31 @@ describe('slash effects', () => {
     expect(bad.printed[1]?.text).toContain('nope')
   })
 
-  test('/model shows or switches', async () => {
+  test('/model opens the picker or switches', async () => {
     const h = harness()
     await runSlash('/model', h.ctx)
-    expect(h.printed[0]?.text).toContain('m0')
-    expect(h.calls).toEqual([])
+    expect(h.calls).toEqual(['pickModel'])
     await runSlash('/model new-model', h.ctx)
-    expect(h.calls).toEqual(['setModel:new-model', 'label:new-model', 'refresh'])
+    expect(h.calls).toEqual(['pickModel', 'setModel:new-model', 'label:new-model', 'refresh'])
   })
 
-  test('/permissions, /agents, /cost, /todos', async () => {
+  test('/thinking opens the picker, sets a level, rejects an unknown one', async () => {
+    const h = harness({ setThinking: (l: string) => void h.calls.push(`setThinking:${l}`) })
+    await runSlash('/thinking', h.ctx)
+    await runSlash('/thinking high', h.ctx)
+    await runSlash('/thinking turbo', h.ctx)
+    expect(h.calls).toEqual(['pickThinking', 'setThinking:high', 'refresh'])
+    expect(h.printed[0]?.text).toBe('Thinking set to high.')
+    expect(h.printed[1]).toMatchObject({ tone: 'error' })
+  })
+
+  test('/permissions, /agents open pages; /todos prints', async () => {
     const h = harness()
     await runSlash('/permissions', h.ctx)
-    expect(h.printed[0]?.text).toContain('Mode: plan')
-    expect(h.printed[0]?.text).toContain('allow: Bash(ls)')
-    expect(h.printed[0]?.text).toContain('ask: (none)')
     await runSlash('/agents', h.ctx)
-    expect(h.printed[1]?.text).toContain('explore (builtin): finds things')
-    await runSlash('/cost', h.ctx)
-    expect(h.printed[2]?.text).toBe('Context: 2.5k / 10.0k tokens (25%) · cost $0.0123')
+    expect(h.pages).toEqual([{ kind: 'permissions' }, { kind: 'agents' }])
     await runSlash('/todos', h.ctx)
-    expect(h.printed[3]?.text).toContain('◐ do it')
-    const none = harness({ agents: () => [] })
-    await runSlash('/agents', none.ctx)
-    expect(none.printed[0]?.text).toBe('No subagents defined.')
+    expect(h.printed[0]?.text).toContain('◐ do it')
   })
 
   test('/resume without an id opens the picker, with an id resumes', async () => {
@@ -271,16 +283,6 @@ describe('/agents runs and transcripts', () => {
     description: `task ${n}`,
     sessionId: `child-${n}`,
     status: n === 2 ? 'running' : 'done',
-  })
-
-  test('lists definitions and numbered runs', async () => {
-    const h = harness()
-    h.runs.push(run(1), run(2))
-    await runSlash('/agents', h.ctx)
-    const text = h.printed[0]?.text ?? ''
-    expect(text).toContain('explore (builtin): finds things')
-    expect(text).toContain('1. explore [done]: task 1')
-    expect(text).toContain('2. explore [running]: task 2')
   })
 
   test('/agents <n> and /transcript <n> load the child messages', async () => {

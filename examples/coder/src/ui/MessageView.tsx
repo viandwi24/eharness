@@ -1,10 +1,10 @@
 import { Box, Text } from 'ink'
 import type { ReactElement } from 'react'
 import type { CoderMessage } from '../contracts.ts'
-import { keyedLines } from './keys.ts'
+import { InlineMarkdown, Markdown } from './markdown.tsx'
 import type { ToolTiming } from './state.ts'
 import { ToolCard } from './ToolCard.tsx'
-import { color } from './theme.ts'
+import { color, sym } from './theme.ts'
 import { toolView } from './tool-summary.ts'
 
 /** Props of {@link MessageView}. */
@@ -15,32 +15,28 @@ export interface MessageViewProps {
   timing: Record<string, ToolTiming>
 }
 
-const INLINE = /(\*\*[^*\n]+\*\*|`[^`\n]+`)/g
-
-/** Bold and inline code of a text line; everything else is plain. */
+/** Inline Markdown of one line (kept for compatibility; see `markdown.tsx`). */
 export function InlineText({ text }: { text: string }): ReactElement {
-  const pieces = text.split(INLINE)
+  return <InlineMarkdown text={text} />
+}
+
+/**
+ * A prompt the user sent: `> text` on a gray quoted background; `!cmd` shows as `! cmd` in the
+ * shell color.
+ */
+export function UserMessage({ text }: { text: string }): ReactElement {
+  const shell = text.startsWith('!')
   return (
-    <Text>
-      {pieces.map((piece, i) => {
-        const key = `${i}:${piece}`
-        if (piece.startsWith('**') && piece.endsWith('**') && piece.length > 4) {
-          return (
-            <Text key={key} bold>
-              {piece.slice(2, -2)}
-            </Text>
-          )
-        }
-        if (piece.startsWith('`') && piece.endsWith('`') && piece.length > 2) {
-          return (
-            <Text key={key} color={color.accent}>
-              {piece.slice(1, -1)}
-            </Text>
-          )
-        }
-        return <Text key={key}>{piece}</Text>
-      })}
-    </Text>
+    <Box marginTop={1} backgroundColor={shell ? undefined : color.userBg}>
+      <Box flexShrink={0} width={2}>
+        <Text color={shell ? color.shell : color.user}>{shell ? '!' : sym.prompt}</Text>
+      </Box>
+      <Box flexShrink={1} flexGrow={1}>
+        <Text color={shell ? color.shell : undefined}>
+          {shell ? text.slice(1).trimStart() : text}
+        </Text>
+      </Box>
+    </Box>
   )
 }
 
@@ -102,14 +98,7 @@ export function MessageView({
   if (message.role === 'user') {
     const text = userText(message)
     if (!text) return null
-    return (
-      <Box marginTop={1}>
-        <Text color={color.user} bold>
-          {'> '}
-        </Text>
-        <Text>{text}</Text>
-      </Box>
-    )
+    return <UserMessage text={text} />
   }
   return (
     <Box flexDirection="column">
@@ -118,10 +107,11 @@ export function MessageView({
         if (part.type === 'text') {
           if (part.text.trim() === '') return null
           return (
-            <Box key={key} marginTop={1} flexDirection="column">
-              {keyedLines(part.text.split('\n')).map(({ key: lineKey, line }) => (
-                <InlineText key={lineKey} text={line === '' ? ' ' : line} />
-              ))}
+            <Box key={key} marginTop={1}>
+              <Box flexShrink={0} width={2}>
+                <Text color={color.text}>{sym.bullet}</Text>
+              </Box>
+              <Markdown text={part.text} />
             </Box>
           )
         }

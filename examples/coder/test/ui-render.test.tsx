@@ -37,12 +37,13 @@ function mount(opts: Parameters<typeof fakeController>[0] = {}) {
 describe('render', () => {
   test('splash header and status bar', async () => {
     const { frame } = mount()
-    await until(() => frame().includes('context 5%'), 'stats')
+    await until(() => frame().includes('provider-default'), 'stats')
     expect(frame()).toContain('coder')
     expect(frame()).toContain('/work/project')
     expect(frame()).toContain('test/model')
-    expect(frame()).toContain('type /help for commands')
-    expect(frame()).toContain('default · test/model')
+    expect(frame()).toContain('/help for help')
+    expect(frame()).toContain('? for shortcuts')
+    expect(frame()).toContain('model · thinking provider-default')
   })
 
   test('typing, then a prompt and streamed assistant text', async () => {
@@ -74,19 +75,8 @@ describe('render', () => {
     await type('go')
     await type(ENTER)
     await until(() => frame().includes('done editing'), 'finish')
-    expect(frame()).toContain('Read src/app.ts')
-    expect(frame()).toContain('Edited src/app.ts (+2 −1)')
-  })
-
-  test('/help lists the commands', async () => {
-    const { frame, type } = mount()
-    await type('/help')
-    expect(frame()).toContain('/help')
-    await type(ENTER)
-    await until(() => frame().includes('Commands:'), 'help')
-    for (const c of ['/clear', '/compact', '/model', '/resume', '/exit']) {
-      expect(frame()).toContain(c)
-    }
+    expect(frame()).toContain('Read(src/app.ts)')
+    expect(frame()).toContain('Updated src/app.ts with 2 additions and 1 removal')
   })
 
   test('unknown slash command prints an error', async () => {
@@ -100,10 +90,10 @@ describe('render', () => {
     const { frame, type, calls } = mount()
     await until(() => frame().includes('default'), 'status')
     await type(SHIFT_TAB)
-    await until(() => frame().includes('accept edits'), 'acceptEdits')
+    await until(() => frame().includes('accept edits on'), 'acceptEdits')
     expect(calls).toContain('cycleMode')
     await type(SHIFT_TAB)
-    await until(() => frame().includes('plan ·'), 'plan')
+    await until(() => frame().includes('plan mode on'), 'plan')
   })
 
   test('Esc while running calls abort', async () => {
@@ -175,25 +165,25 @@ describe('permission prompt', () => {
   test('appears for a pending request with its options', async () => {
     const { frame, broker } = mount()
     broker.push(request)
-    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await until(() => frame().includes('Bash command'), 'prompt')
     expect(frame()).toContain('1. Yes')
-    expect(frame()).toContain('esc to deny')
+    expect(frame()).toContain('No, and tell coder')
   })
 
   test('key 1 answers approved', async () => {
     const { frame, broker, type } = mount()
     broker.push(request)
-    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await until(() => frame().includes('Bash command'), 'prompt')
     await type('1')
     await until(() => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]).toEqual({ id: 'ap1', answer: { approved: true } })
-    await until(() => !frame().includes('Bash: bun test'), 'prompt gone')
+    await until(() => !frame().includes('Bash command'), 'prompt gone')
   })
 
   test('key 2 remembers for the session', async () => {
     const { frame, broker, type } = mount()
     broker.push(request)
-    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await until(() => frame().includes('Bash command'), 'prompt')
     await type('2')
     await until(() => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]?.answer).toEqual({ approved: true, remember: 'session' })
@@ -202,9 +192,9 @@ describe('permission prompt', () => {
   test('key 4 then feedback + Enter denies with the feedback', async () => {
     const { frame, broker, type } = mount()
     broker.push(request)
-    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await until(() => frame().includes('Bash command'), 'prompt')
     await type('4')
-    await until(() => frame().includes('Tell the agent what to do instead'), 'feedback')
+    await until(() => frame().includes('Tell coder what to do differently'), 'feedback')
     await type('use bun run')
     await type(ENTER)
     await until(() => broker.answers.length === 1, 'answer')
@@ -217,12 +207,12 @@ describe('permission prompt', () => {
   test('Esc denies; without a rule option 2 is the feedback entry', async () => {
     const { frame, broker, type } = mount()
     broker.push({ ...request, id: 'ap2', suggestedRule: undefined })
-    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await until(() => frame().includes('Bash command'), 'prompt')
     expect(frame()).not.toContain('3.')
     await type('2')
-    await until(() => frame().includes('Tell the agent'), 'feedback')
+    await until(() => frame().includes('Tell coder'), 'feedback')
     await type(ESC)
-    await until(() => !frame().includes('Tell the agent'), 'feedback closed')
+    await until(() => !frame().includes('Tell coder'), 'feedback closed')
     await type(ESC)
     await until(() => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]).toEqual({ id: 'ap2', answer: { approved: false } })
@@ -231,7 +221,7 @@ describe('permission prompt', () => {
   test('typing into the prompt input is blocked while a request is pending', async () => {
     const { frame, broker, type } = mount()
     broker.push(request)
-    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await until(() => frame().includes('Bash command'), 'prompt')
     await type('x')
     expect(broker.answers).toHaveLength(0)
   })
@@ -285,7 +275,7 @@ describe('review fixes', () => {
   test('Shift+Tab is ignored while a permission prompt is open', async () => {
     const { frame, broker, type, calls } = mount()
     broker.push(request)
-    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await until(() => frame().includes('Bash command'), 'prompt')
     await type(SHIFT_TAB)
     await tick(50)
     expect(calls).not.toContain('cycleMode')
@@ -314,8 +304,7 @@ describe('review fixes', () => {
       title: 'Bash: \x1b[31mred\x1b[0m\x07 cmd',
       detail: 'line \x1b]0;pwned\x07one\x1b[2J\r\ntwo',
     })
-    await until(() => frame().includes('Bash: red cmd'), 'prompt')
-    expect(frame()).toContain('line one')
+    await until(() => frame().includes('line one'), 'prompt')
     expect(frame()).toContain('two')
     expect(frame()).not.toContain('pwned')
     expect(frame()).not.toContain('\x07')
@@ -341,7 +330,7 @@ describe('review fixes', () => {
 
   test('no notice when trusted', async () => {
     const { frame } = mount()
-    await until(() => frame().includes('context 5%'), 'stats')
+    await until(() => frame().includes('provider-default'), 'stats')
     expect(frame()).not.toContain('Project settings ignored')
   })
 
@@ -353,7 +342,8 @@ describe('review fixes', () => {
     expect(calls).toContain('addRule:allow:Bash(ls):project')
     await type('/permissions')
     await type(ENTER)
-    await until(() => frame().includes('allow: Bash(ls)'), 'list')
+    await until(() => frame().includes('Permissions'), 'page')
+    await until(() => frame().includes('Bash(ls)') && frame().includes('allow (1)'), 'list')
   })
 
   test('/permissions mode refuses bypassPermissions without --yes', async () => {

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { scriptedModel } from 'eharness/testing'
 import type { CoderController, RunHooks } from '../src/contracts.ts'
-import { makeController, nextPending } from './helpers.ts'
+import { makeController, nextPending, routerModel } from './helpers.ts'
 
 /** Hooks that consume every run's stream and record the chunk types. */
 function hooks(): RunHooks & {
@@ -296,5 +296,238 @@ describe('controller', () => {
     expect(() => controller.setModel('')).toThrow(/non-empty/)
     const { result } = await run(controller, 'hello')
     expect(result.stop).toBe('complete')
+  })
+})
+
+describe('model, thinking and preferences', () => {
+  const idOf = (m: unknown): string => String((m as { modelId?: string }).modelId ?? m)
+
+  /** Two scripted models picked by id; `calls` of each show what reached the provider. */
+  function twoModels() {
+    const a = scriptedModel([{ text: 'from a' }, { text: 'again a' }], { modelId: 'a' })
+    const b = scriptedModel([{ text: 'from b' }, { text: 'again b' }], { modelId: 'b' })
+    return { a, b, resolve: (id: string) => (id === 'm/b' ? b : a) }
+  }
+
+  test('setModel and setThinking reach the next turn without rebuilding anything', async () => {
+    const { a, b, resolve } = twoModels()
+    const { controller } = await makeController({
+      model: a,
+      resolveModel: resolve,
+      flags: { model: 'm/a' },
+    })
+    expect(controller.model).toBe('m/a')
+    expect(controller.provider).toBe('gateway')
+    expect(controller.thinking).toBe('provider-default')
+    await run(controller, 'one')
+    expect(a.calls).toHaveLength(1)
+    expect(a.calls[0]?.reasoning).toBeUndefined()
+
+    controller.setModel('m/b')
+    controller.setThinking('high')
+    expect(controller.model).toBe('m/b')
+    expect(controller.thinking).toBe('high')
+    await run(controller, 'two')
+    expect(a.calls).toHaveLength(1)
+    expect(b.calls).toHaveLength(1)
+    expect(b.calls[0]?.reasoning).toBe('high')
+
+    controller.setThinking('provider-default')
+    await run(controller, 'three')
+    expect(b.calls[1]?.reasoning).toBeUndefined()
+  })
+
+  test('OpenRouter also gets the effort as a provider option (the provider ignores `reasoning`)', async () => {
+    const model = scriptedModel([{ text: 'ok' }])
+    const { controller } = await makeController({
+      model,
+      resolveModel: () => model,
+      flags: { provider: 'openrouter' },
+      thinking: 'medium',
+    })
+    expect(controller.provider).toBe('openrouter')
+    expect(controller.model).toBe('anthropic/claude-sonnet-5.5')
+    await run(controller, 'hi')
+    expect(model.calls[0]?.reasoning).toBe('medium')
+    expect(
+      (model.calls[0]?.providerOptions as { openrouter?: { reasoning?: { effort?: string } } })
+        ?.openrouter?.reasoning?.effort,
+    ).toBe('medium')
+  })
+
+  test('a switch made while an approval is pending applies to the respond continuation', async () => {
+    const a = scriptedModel([{ toolCalls: [edit('/code.ts', 'one', 'ONE')] }], { modelId: 'a' })
+    const b = scriptedModel([{ text: 'done' }], { modelId: 'b' })
+    const { controller } = await makeController({
+      files: { 'code.ts': 'one\n' },
+      model: a,
+      resolveModel: (id) => (id === 'm/b' ? b : a),
+      flags: { model: 'm/a' },
+    })
+    const h = hooks()
+    const turn = controller.run('edit', h)
+    const request = await nextPending(controller.broker)
+    controller.setModel('m/b')
+    controller.setThinking('low')
+    controller.broker.answer(request.id, { approved: true })
+    expect((await turn).stop).toBe('complete')
+    await Promise.all(h.done)
+    expect(a.calls).toHaveLength(1)
+    expect(idOf(b)).toBe('b')
+    expect(b.calls).toHaveLength(1)
+    expect(b.calls[0]?.reasoning).toBe('low')
+  })
+
+  test('subagents follow the model and thinking choice too', async () => {
+    const router = routerModel((r) =>
+      r.isChild
+        ? { text: 'child done' }
+        : r.toolResults === 0
+          ? {
+              toolCalls: [
+                {
+                  toolName: 'agent',
+                  input: { description: 'd', prompt: 'look around', subagent_type: 'explore' },
+                },
+              ],
+            }
+          : { text: 'main done' },
+    )
+    const { controller } = await makeController({
+      model: router,
+      resolveModel: () => router,
+      thinking: 'minimal',
+    })
+    const { result } = await run(controller, 'explore')
+    expect(result.stop).toBe('complete')
+    expect(router.routes.some((r) => r.isChild)).toBe(true)
+    for (const route of router.routes) expect(route.call.reasoning).toBe('minimal')
+  })
+
+  test('setThinking validates the level', async () => {
+    const { controller } = await makeController({ model: scriptedModel([{ text: 'x' }]) })
+    expect(() => controller.setThinking('extreme' as never)).toThrow(/invalid level/)
+    expect(controller.thinking).toBe('provider-default')
+  })
+
+  test('the last choice is saved per project and restored; flags and settings win for the model', async () => {
+    const files = {}
+    const first = await makeController({ model: scriptedModel([{ text: 'x' }]), files })
+    first.controller.setModel('saved/model')
+    first.controller.setThinking('xhigh')
+    await first.controller.close()
+    const file = join(first.controller.config.projectDataDir, 'preferences.json')
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      provider: 'gateway',
+      model: 'saved/model',
+      thinking: 'xhigh',
+    })
+
+    // same project + home again: the preference is restored
+    const { createController } = await import('../src/app/controller.ts')
+    const { loadConfig } = await import('../src/app/config.ts')
+    const config = await loadConfig({ cwd: first.root })
+    const again = await createController({ config, model: scriptedModel([{ text: 'x' }]) })
+    expect(again.model).toBe('saved/model')
+    expect(again.thinking).toBe('xhigh')
+    await again.close()
+
+    // an explicit --model wins, --thinking wins
+    const flagged = await loadConfig({ cwd: first.root, model: 'flag/model' })
+    const third = await createController({
+      config: flagged,
+      model: scriptedModel([{ text: 'x' }]),
+      thinking: 'low',
+    })
+    expect(third.model).toBe('flag/model')
+    expect(third.thinking).toBe('low')
+    await third.close()
+
+    // a preference saved for another provider is not applied
+    const other = await loadConfig({ cwd: first.root, provider: 'openrouter' })
+    const fourth = await createController({ config: other, model: scriptedModel([{ text: 'x' }]) })
+    expect(fourth.model).toBe('anthropic/claude-sonnet-5.5')
+    await fourth.close()
+  })
+})
+
+describe('context, usage and status', () => {
+  test('contextDetails works before the first turn and its parts add up', async () => {
+    const { controller } = await makeController({
+      files: { 'AGENTS.md': `# Project\n${'Always be careful.\n'.repeat(40)}` },
+      model: scriptedModel([{ text: 'x' }]),
+    })
+    const c = await controller.contextDetails()
+    expect(c.model).toBe(controller.model)
+    expect(c.provider).toBe('gateway')
+    expect(c.window).toBe(200_000)
+    expect(c.messages).toEqual({ count: 0, user: 0, assistant: 0, toolCalls: 0 })
+    const byKey = Object.fromEntries(c.categories.map((x) => [x.key, x.tokens]))
+    expect(byKey.system).toBeGreaterThan(0)
+    expect(byKey.memory).toBeGreaterThan(100)
+    expect(byKey.tools).toBeGreaterThan(0)
+    expect(byKey.mcp).toBe(0)
+    const sum = c.categories.reduce((n, x) => n + x.tokens, 0)
+    expect(Math.abs(sum - c.used)).toBeLessThanOrEqual(2)
+    expect(c.free).toBe(c.window - c.used)
+    expect(c.autocompactBuffer).toBe(c.window - c.summarizeAt)
+    expect(c.summarizeAt).toBeLessThan(c.hardLimit)
+    expect(c.memoryFiles.map((f) => f.path)).toEqual(['/AGENTS.md'])
+    expect(c.memoryFiles[0]?.tokens).toBeLessThanOrEqual(byKey.memory ?? 0)
+    expect(c.memoryFiles[0]?.tokens).toBeGreaterThan(150)
+    const names = c.tools.map((t) => t.name)
+    for (const expected of ['bash', 'glob', 'read_file', 'edit_file', 'todo_write']) {
+      expect(names).toContain(expected)
+    }
+    // largest first, and the itemised sizes add up to the tools category
+    expect(c.tools.map((t) => t.tokens)).toEqual(
+      [...c.tools.map((t) => t.tokens)].sort((x, y) => y - x),
+    )
+    const itemised = c.tools.reduce((n, t) => n + t.tokens, 0)
+    expect(Math.abs(itemised - (byKey.tools ?? 0))).toBeLessThanOrEqual(c.tools.length)
+  })
+
+  test('messages are counted after a turn; usage and status', async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'glob', input: { pattern: '*.ts' } }] },
+      { text: 'done', usage: { inputTokens: 300, outputTokens: 12 } },
+    ])
+    const { controller, root } = await makeController({ files: { 'a.ts': 'x' }, model })
+    const before = await controller.usage()
+    expect(before).toMatchObject({ inputTokens: 0, outputTokens: 0, turns: 0, durationMs: 0 })
+    await run(controller, 'find ts files')
+    const c = await controller.contextDetails()
+    expect(c.messages).toMatchObject({ count: 2, user: 1, assistant: 1, toolCalls: 1 })
+    expect(c.categories.find((x) => x.key === 'messages')?.tokens).toBeGreaterThan(0)
+
+    const u = await controller.usage()
+    expect(u.turns).toBe(1)
+    expect(u.inputTokens).toBeGreaterThanOrEqual(300)
+    expect(u.outputTokens).toBeGreaterThanOrEqual(12)
+    expect(u.durationMs).toBeGreaterThan(0)
+
+    const s = await controller.status()
+    expect(s).toMatchObject({
+      version: '0.0.0',
+      cwd: root,
+      provider: 'gateway',
+      model: controller.model,
+      thinking: 'provider-default',
+      mode: 'default',
+      sessionId: controller.sessionId,
+      trusted: true,
+      untrusted: [],
+      mcpServers: [],
+    })
+    expect(s.eharnessVersion).toMatch(/^\d+\.\d+\.\d+/)
+    expect(s.agents).toBeGreaterThan(0)
+    expect(s.mounts.length).toBeGreaterThan(0)
+    expect(s.settingsFiles).toHaveLength(3)
+    expect(s.settingsFiles.every((f) => f.exists === false)).toBe(true)
+  })
+
+  test('models() is empty offline without a cache, and has the cached list otherwise', async () => {
+    const { controller } = await makeController({ model: scriptedModel([{ text: 'x' }]) })
+    expect(await controller.models()).toEqual([])
   })
 })

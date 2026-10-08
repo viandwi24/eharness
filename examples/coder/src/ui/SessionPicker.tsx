@@ -1,6 +1,7 @@
-import { Box, Text, useInput } from 'ink'
+import { Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import type { SessionSummary } from '../contracts.ts'
+import { PickerFrame, VISIBLE_ROWS, windowStart } from './pickers/PickerFrame.tsx'
 import { color, sym } from './theme.ts'
 
 /** Props of {@link SessionPicker}. */
@@ -11,8 +12,6 @@ export interface SessionPickerProps {
   /** Esc, or nothing to pick. */
   onCancel(): void
 }
-
-const VISIBLE = 10
 
 function formatDate(ms: number): string {
   return new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
@@ -52,21 +51,20 @@ export function SessionPicker({ load, onSelect, onCancel }: SessionPickerProps):
   })
 
   if (!sessions) return <Text dimColor>Loading sessions…</Text>
-  const first = Math.max(0, Math.min(index - Math.floor(VISIBLE / 2), sessions.length - VISIBLE))
+  const first = windowStart(index, sessions.length)
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={color.accent} paddingX={1}>
-      <Text bold>Resume a session</Text>
-      {sessions.slice(first, first + VISIBLE).map((s, i) => {
+    <PickerFrame title="Resume a session" hint="↑/↓ select · enter resume · esc new session">
+      {sessions.slice(first, first + VISIBLE_ROWS).map((s, i) => {
         const selected = first + i === index
         return (
           <Text key={s.id} wrap="truncate-end" color={selected ? color.accent : undefined}>
-            {selected ? sym.pointer : ' '} {formatDate(s.updatedAt)}
+            {selected ? sym.pointer : ' '}{' '}
+            <Text dimColor={!selected}>{formatDate(s.updatedAt)}</Text>
             {'  '}
             {s.firstPrompt.split('\n')[0]?.slice(0, 80) ?? ''}
           </Text>
         )
       })}
-      <Text dimColor>↑/↓ select · enter resume · esc new session</Text>
-    </Box>
+    </PickerFrame>
   )
 }

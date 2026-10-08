@@ -15,6 +15,8 @@ import { version as eharnessVersion } from 'eharness'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { type CliFlags, loadConfig, trustProject } from './app/config.ts'
 import { createController } from './app/controller.ts'
+import { KEY_ENV, missingKeyError } from './app/provider.ts'
+import { THINKING_LEVELS, type ThinkingLevel } from './contracts.ts'
 import { createDenyingBroker } from './permissions/index.ts'
 import { runPrint } from './print.ts'
 import { killAllSandboxProcesses } from './shell/index.ts'
@@ -29,6 +31,13 @@ function parseSteps(value: string): number {
   const n = Number(value)
   if (!Number.isInteger(n) || n < 1) throw new InvalidArgumentError('must be a positive integer')
   return n
+}
+
+function parseThinking(value: string): ThinkingLevel {
+  if (!(THINKING_LEVELS as readonly string[]).includes(value)) {
+    throw new InvalidArgumentError(`must be one of: ${THINKING_LEVELS.join(', ')}`)
+  }
+  return value as ThinkingLevel
 }
 
 /** Ask a yes/no question on stderr/stdin; anything but `y`/`yes` is no. */
@@ -71,7 +80,19 @@ const program = new Command()
   .argument('[prompt]', 'first prompt of the interactive session')
   .option('-p, --print <prompt>', 'run one prompt headless, print the answer and exit')
   .option('--output-format <format>', 'print mode output: text | json | stream-json', 'text')
-  .option('--model <id>', 'AI Gateway model id (default from settings)')
+  .option(
+    '--model <id>',
+    'model id for the provider, e.g. anthropic/claude-sonnet-5.5 (default: settings, saved choice, provider default)',
+  )
+  .option(
+    '--provider <name>',
+    `openrouter | gateway (default: openrouter when ${KEY_ENV.openrouter} is set, else gateway)`,
+  )
+  .option(
+    '--thinking <level>',
+    `reasoning effort: ${THINKING_LEVELS.join(' | ')} (default: saved choice, else provider-default)`,
+    parseThinking,
+  )
   .option('--permission-mode <mode>', 'default | acceptEdits | plan | dontAsk | bypassPermissions')
   .option('--add-dir <path...>', 'extra directories, mounted at /@dirs/<basename>/')
   .option('--allowed-tools <rule...>', 'extra allow rules for this run')
@@ -89,9 +110,14 @@ const program = new Command()
   .action(
     async (
       prompt: string | undefined,
-      options: Options & { continue?: boolean; trustProject?: boolean },
+      options: Options & {
+        continue?: boolean
+        trustProject?: boolean
+        thinking?: ThinkingLevel
+      },
     ) => {
-      const flags: CliFlags = { ...options }
+      const { thinking, ...rest } = options
+      const flags: CliFlags = { ...rest }
 
       let config: Awaited<ReturnType<typeof loadConfig>>
       try {
@@ -138,11 +164,21 @@ const program = new Command()
         }
       }
 
+      // a real model needs the key of the chosen provider (scripted offline runs do not)
+      if (model === undefined) {
+        const problem = missingKeyError(config.provider)
+        if (problem !== undefined) {
+          process.stderr.write(`coder: ${problem}\n`)
+          process.exit(2)
+        }
+      }
+
       if (config.print !== undefined) {
         // never prompts: anything that would ask is denied, unless everything is allowed anyway
         const controller = await createController({
           config,
           model,
+          ...(thinking ? { thinking } : {}),
           broker: createDenyingBroker(),
         })
         for (const warning of config.warnings) process.stderr.write(`coder: warning: ${warning}\n`)
@@ -158,7 +194,11 @@ const program = new Command()
         process.exit(code)
       }
 
-      const controller = await createController({ config, model })
+      const controller = await createController({
+        config,
+        model,
+        ...(thinking ? { thinking } : {}),
+      })
       for (const warning of config.warnings) process.stderr.write(`coder: warning: ${warning}\n`)
       activeController = controller
       await runInteractive(controller, { initialPrompt: prompt })

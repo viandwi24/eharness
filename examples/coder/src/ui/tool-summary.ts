@@ -39,18 +39,20 @@ export interface ToolContext {
   change?: { action: 'create' | 'write' | 'edit' | 'delete'; bytes?: number }
 }
 
-/** Result of {@link describeTool}. */
+/** Result of {@link describeTool}. Rendered as `label(target)` and, below it, `⎿  summary`. */
 export interface ToolDescription {
-  /** Verb or tool label, e.g. `Read`, `Edited`, `Bash`. */
+  /** Tool name shown in bold, e.g. `Read`, `Update`, `Bash`, `github - search (MCP)`. */
   label: string
-  /** Text after the label. */
+  /** Short argument summary shown in parentheses (empty: no parentheses). */
   target: string
-  /** Dim suffix, e.g. `(lines 120–180)` or `exit 0 · 4.2s`. */
-  suffix: string
+  /** Dim text after the call, e.g. the subagent type of a `Task`. */
+  note?: string
   status: ToolStatus
-  /** Render the suffix red (bash: non-zero exit, timeout, abort). */
-  suffixError?: boolean
-  /** First line of an error, shown under the card. */
+  /** Result summary under the call (`Read 120 lines`, `exit 0 · 4.2s`); empty while running. */
+  summary: string
+  /** Render the summary red (bash: non-zero exit, timeout, abort). */
+  summaryError?: boolean
+  /** Error text (`Error: …`, `Denied by user`), shown red under the call. */
   error?: string
   /** Last lines of live output (bash while running). */
   tail?: string[]
@@ -179,81 +181,151 @@ function countLines(text: string): number {
   return text.split('\n').filter((line) => line.trim() !== '').length
 }
 
+function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`
+}
+
+const NON_MCP = new Set(['load_skill', 'read_skill_file', 'search_skills', 'tool_search'])
+
+/**
+ * Split an MCP tool name into server and tool: `mcp__server__tool`, or `server_tool` for any tool
+ * outside the built-in set (the default tool prefix of `mcpServer()` is `<name>_`).
+ */
+export function splitMcpName(name: string): { server: string; tool: string } | undefined {
+  const long = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(name)
+  if (long) return { server: long[1] as string, tool: long[2] as string }
+  if ((Object.values(TOOL) as string[]).includes(name) || NON_MCP.has(name)) return undefined
+  const at = name.indexOf('_')
+  if (at <= 0 || at === name.length - 1) return undefined
+  return { server: name.slice(0, at), tool: name.slice(at + 1) }
+}
+
+/** `key: "value", key: 3` of a tool input, cut to `max` characters. */
+export function argsSummary(input: unknown, max = 80): string {
+  const entries = Object.entries(asRecord(input))
+  const text = entries
+    .map(
+      ([key, value]) =>
+        `${key}: ${typeof value === 'string' ? JSON.stringify(value) : (JSON.stringify(value) ?? '')}`,
+    )
+    .join(', ')
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text
+}
+
+/** Output lines of a bash result without its footer line. */
+export function bashBody(output: string): string[] {
+  const lines = output.replace(/\s+$/, '').split('\n')
+  if (parseBashFooter(output)) lines.pop()
+  while (lines.length > 0 && (lines[lines.length - 1] ?? '').trim() === '') lines.pop()
+  return lines
+}
+
+/** The `todos` of a `todo_write` input. */
+export function todosOf(input: unknown): Array<{
+  content: string
+  status: string
+  activeForm?: string
+}> {
+  const todos = asRecord(input).todos
+  if (!Array.isArray(todos)) return []
+  return todos.map((todo) => {
+    const t = asRecord(todo)
+    return {
+      content: str(t.content),
+      status: str(t.status) || 'pending',
+      ...(typeof t.activeForm === 'string' ? { activeForm: t.activeForm } : {}),
+    }
+  })
+}
+
+function errorLine(message: string): string {
+  const line = firstLine(message, 160)
+  if (/^error:/i.test(line)) return `Error:${line.slice(6)}`
+  return `Error: ${line}`
+}
+
 /** Describe one tool call. */
 export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescription {
   const input = asRecord(view.input)
-  const status = baseStatus(view)
-  const done = status !== 'running' && status !== 'waiting'
+  let status = baseStatus(view)
   const text = outputText(view)
   const path = displayPath(str(input.path))
-  const desc: ToolDescription = { label: view.toolName, target: '', suffix: '', status }
+  const desc: ToolDescription = { label: view.toolName, target: '', summary: '', status }
+  const ok = status === 'ok'
 
   switch (view.toolName) {
     case TOOL.read: {
-      desc.label = done ? 'Read' : 'Reading'
+      desc.label = 'Read'
       desc.target = path
       const offset = typeof input.offset === 'number' ? input.offset : undefined
       const limit = typeof input.limit === 'number' ? input.limit : undefined
-      if (offset !== undefined && limit !== undefined) {
-        desc.suffix = `(lines ${offset}–${offset + limit - 1})`
-      } else if (offset !== undefined) desc.suffix = `(from line ${offset})`
-      else if (limit !== undefined) desc.suffix = `(first ${limit} lines)`
+      if (offset !== undefined && limit !== undefined)
+        desc.target += `, lines ${offset}–${offset + limit - 1}`
+      else if (offset !== undefined) desc.target += `, from line ${offset}`
+      if (ok) desc.summary = `Read ${plural(text.replace(/\s+$/, '').split('\n').length, 'line')}`
       break
     }
     case TOOL.list: {
       desc.label = 'List'
       desc.target = displayPath(str(input.prefix) || '/')
-      if (status === 'ok')
-        desc.suffix = `(${text.startsWith('No files') ? 0 : countLines(text)} files)`
+      if (ok)
+        desc.summary = `Found ${plural(text.startsWith('No files') ? 0 : countLines(text), 'file')}`
       break
     }
     case TOOL.glob: {
       desc.label = 'Glob'
       desc.target = str(input.pattern)
-      if (status === 'ok') desc.suffix = `(${text.startsWith('No ') ? 0 : countLines(text)} files)`
+      if (ok)
+        desc.summary = `Found ${plural(text.startsWith('No ') ? 0 : countLines(text), 'file')}`
       break
     }
     case TOOL.grep: {
-      desc.label = 'Grep'
-      desc.target = `"${str(input.pattern)}"`
-      if (status === 'ok') {
-        desc.suffix = `(${text.startsWith('No matches') ? 0 : countLines(text)} matches)`
-      }
+      desc.label = 'Search'
+      const parts = [`pattern: ${JSON.stringify(str(input.pattern))}`]
+      if (str(input.path)) parts.push(`path: ${JSON.stringify(displayPath(str(input.path)))}`)
+      if (str(input.glob)) parts.push(`glob: ${JSON.stringify(str(input.glob))}`)
+      desc.target = parts.join(', ')
+      if (ok)
+        desc.summary = `Found ${plural(text.startsWith('No matches') ? 0 : countLines(text), 'match', 'matches')}`
       break
     }
     case TOOL.edit: {
-      desc.label = done ? 'Edited' : 'Editing'
+      desc.label = 'Update'
       desc.target = path
-      if (status === 'ok') {
+      if (ok) {
         const { added, removed } = countChanges(str(input.old_string), str(input.new_string))
-        desc.suffix = `(+${added} −${removed})`
+        const bits: string[] = []
+        if (added > 0) bits.push(plural(added, 'addition'))
+        if (removed > 0) bits.push(plural(removed, 'removal'))
+        desc.summary = `Updated ${path}${bits.length > 0 ? ` with ${bits.join(' and ')}` : ''}`
       }
       break
     }
     case TOOL.write: {
-      desc.label = done ? (ctx.change?.action === 'create' ? 'Created' : 'Wrote') : 'Writing'
+      desc.label = 'Write'
       desc.target = path
-      if (status === 'ok') {
+      if (ok) {
         const lines = str(input.content).split('\n').length
-        desc.suffix = `(${lines} lines)`
+        desc.summary = `${ctx.change?.action === 'create' ? 'Created' : 'Wrote'} ${plural(lines, 'line')} ${ctx.change?.action === 'create' ? 'in' : 'to'} ${path}`
       }
       break
     }
     case TOOL.delete: {
-      desc.label = done ? 'Deleted' : 'Deleting'
+      desc.label = 'Delete'
       desc.target = path
+      if (ok) desc.summary = `Deleted ${path}`
       break
     }
     case TOOL.bash: {
-      desc.label = 'Bash:'
+      desc.label = 'Bash'
       desc.target = firstLine(str(input.command), 90)
       if (status === 'running') {
         const tail = tailLines(ctx.bashLive ?? '', 5)
         if (tail.length > 0) desc.tail = tail
       } else if (view.state === 'output-available') {
         const footer = parseBashFooter(text)
-        if (footer?.kind === 'timeout') desc.suffix = 'timed out'
-        else if (footer?.kind === 'aborted') desc.suffix = 'aborted'
+        if (footer?.kind === 'timeout') desc.summary = 'timed out'
+        else if (footer?.kind === 'aborted') desc.summary = 'aborted'
         else {
           const parts: string[] = []
           if (footer?.kind === 'exit') parts.push(`exit ${footer.code}`)
@@ -261,49 +333,59 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
             parts.push(`${footer.seconds.toFixed(1)}s`)
           else if (ctx.timing?.end !== undefined)
             parts.push(formatDuration(ctx.timing.end - ctx.timing.start))
-          desc.suffix = parts.join(' · ')
+          desc.summary = parts.join(' · ')
         }
         if (footer && (footer.kind !== 'exit' || footer.code !== 0)) {
-          desc.status = 'error'
-          desc.suffixError = true
+          status = 'error'
+          desc.summaryError = true
         }
       }
       break
     }
     case TOOL.todo: {
-      desc.label = 'Todos'
-      const todos = asRecord(view.input).todos
-      desc.target = Array.isArray(todos) ? `updated (${todos.length} items)` : 'updated'
+      desc.label = 'Update Todos'
       break
     }
     case TOOL.agent: {
-      desc.label = 'Agent'
-      desc.target = `${str(input.subagent_type) || 'general-purpose'}: ${str(input.description)}`
+      desc.label = 'Task'
+      desc.target = firstLine(str(input.description), 90)
+      desc.note = str(input.subagent_type) || 'general-purpose'
       break
     }
     case TOOL.exitPlan: {
       desc.label = 'Plan'
-      desc.target = 'proposed'
+      if (ok) desc.summary = 'Plan proposed'
       break
     }
     case TOOL.dirAccess: {
       desc.label = 'Directory access'
       desc.target = str(input.path)
+      if (ok && text) desc.summary = firstLine(text, 120)
       break
     }
     default: {
-      desc.label = view.toolName
-      const json = JSON.stringify(view.input ?? {})
-      desc.target = json.length > 80 ? `${json.slice(0, 79)}…` : json
+      const mcp = splitMcpName(view.toolName)
+      desc.label = mcp ? `${mcp.server} - ${mcp.tool} (MCP)` : view.toolName
+      desc.target = argsSummary(view.input)
     }
   }
 
-  if (desc.status === 'error' || desc.status === 'denied') {
-    const message = view.errorText ?? text
-    if (message && view.toolName !== TOOL.bash) desc.error = firstLine(message, 160)
-    else if (view.state === 'output-error' && view.errorText) desc.error = firstLine(view.errorText)
+  const message = view.errorText ?? text
+  if (view.state === 'output-denied') {
+    status = 'denied'
+    desc.error = 'Denied by user'
+  } else if (status === 'error') {
+    if (view.toolName !== TOOL.bash || view.state === 'output-error') {
+      if (message) {
+        desc.error = errorLine(message)
+        if (/^(error: )?(denied|permission denied|rejected by user|plan mode)/i.test(message)) {
+          status = 'denied'
+          desc.error = firstLine(message, 160)
+        }
+      }
+    }
   }
-  if (view.state === 'output-denied') desc.error = 'denied'
-  if (status === 'waiting') desc.suffix = 'awaiting approval'
+  if (status === 'waiting') desc.summary = 'awaiting approval'
+  desc.status = status
   return desc
 }

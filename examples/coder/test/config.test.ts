@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadConfig, trustProject } from '../src/app/config.ts'
+import { createModelResolver, missingKeyError } from '../src/app/provider.ts'
 import { isolateHome, setup, tempDir, writeFiles } from './helpers.ts'
 
 describe('loadConfig', () => {
@@ -253,5 +254,83 @@ describe('loadConfig', () => {
       expect(config.trusted).toBe(true)
       expect(config.untrusted).toEqual([])
     })
+  })
+})
+
+describe('provider selection', () => {
+  const withEnv = async (env: Record<string, string | undefined>, fn: () => Promise<void>) => {
+    const previous = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]))
+    for (const [k, v] of Object.entries(env)) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
+    try {
+      await fn()
+    } finally {
+      for (const [k, v] of Object.entries(previous)) {
+        if (v === undefined) delete process.env[k]
+        else process.env[k] = v
+      }
+    }
+  }
+
+  test('OPENROUTER_API_KEY selects openrouter and its default model', async () => {
+    const { root } = await setup()
+    await withEnv({ OPENROUTER_API_KEY: 'k', AI_GATEWAY_API_KEY: 'g' }, async () => {
+      const config = await loadConfig({ cwd: root })
+      expect(config.provider).toBe('openrouter')
+      expect(config.model).toBe('anthropic/claude-sonnet-5.5')
+      expect(config.modelExplicit).toBe(false)
+    })
+  })
+
+  test('only AI_GATEWAY_API_KEY, or no key at all, selects the gateway', async () => {
+    const { root } = await setup()
+    await withEnv({ OPENROUTER_API_KEY: undefined, AI_GATEWAY_API_KEY: 'g' }, async () => {
+      const config = await loadConfig({ cwd: root })
+      expect(config.provider).toBe('gateway')
+      expect(config.model).toBe('anthropic/claude-sonnet-4.6')
+    })
+    await withEnv({ OPENROUTER_API_KEY: undefined, AI_GATEWAY_API_KEY: undefined }, async () => {
+      expect((await loadConfig({ cwd: root })).provider).toBe('gateway')
+    })
+  })
+
+  test('the settings key beats the environment and the flag beats the settings', async () => {
+    const { root } = await setup({ '.coder/settings.json': '{"provider":"gateway"}' })
+    await withEnv({ OPENROUTER_API_KEY: 'k' }, async () => {
+      expect((await loadConfig({ cwd: root })).provider).toBe('gateway')
+      const flagged = await loadConfig({ cwd: root, provider: 'openrouter', model: 'a/b' })
+      expect(flagged.provider).toBe('openrouter')
+      expect(flagged.model).toBe('a/b')
+      expect(flagged.modelExplicit).toBe(true)
+    })
+  })
+
+  test('an unknown provider is rejected, in a flag and in settings', async () => {
+    const { root } = await setup()
+    await expect(loadConfig({ cwd: root, provider: 'nope' })).rejects.toThrow(/Invalid provider/)
+    await writeFiles(root, { '.coder/settings.json': '{"provider":"nope"}' })
+    await expect(loadConfig({ cwd: root })).rejects.toThrow(/Invalid settings file/)
+  })
+})
+
+describe('provider helpers', () => {
+  test('missingKeyError names what to set and never leaks a key', () => {
+    expect(missingKeyError('openrouter', { OPENROUTER_API_KEY: 'secret' })).toBeUndefined()
+    expect(missingKeyError('gateway', {})).toMatch(/OPENROUTER_API_KEY.*AI_GATEWAY_API_KEY/)
+    const hint = missingKeyError('openrouter', { AI_GATEWAY_API_KEY: 'secret-key' })
+    expect(hint).toContain('--provider gateway')
+    expect(hint).not.toContain('secret-key')
+  })
+
+  test('the resolver gives OpenRouter model instances and gateway plain ids', () => {
+    expect(createModelResolver('gateway', {})('a/b')).toBe('a/b')
+    const model = createModelResolver('openrouter', {
+      OPENROUTER_API_KEY: 'k',
+      OPENROUTER_BASE_URL: 'http://localhost:1/api/v1',
+    })('anthropic/claude-sonnet-5.5') as { provider: string; modelId: string }
+    expect(model.modelId).toBe('anthropic/claude-sonnet-5.5')
+    expect(model.provider).toContain('openrouter')
   })
 })

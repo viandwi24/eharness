@@ -11,16 +11,20 @@ import {
   type AgentDefinitionInput,
   type CoderConfig,
   type CoderSettings,
+  type ModelProvider,
   PERMISSION_MODES,
   type PermissionMode,
   type PermissionRules,
   type PrintOptions,
 } from '../contracts.ts'
+import { DEFAULT_MODEL, detectProvider, MODEL_PROVIDERS, parseProvider } from './provider.ts'
 
 /** Raw CLI flags as parsed by the command line (all optional). */
 export interface CliFlags {
   cwd?: string
   model?: string
+  /** `openrouter` | `gateway`. */
+  provider?: string
   permissionMode?: string
   addDir?: string[]
   allowedTools?: string[]
@@ -40,6 +44,7 @@ const modeSchema = z.enum(PERMISSION_MODES as [PermissionMode, ...PermissionMode
 
 const settingsSchema = z.object({
   model: z.string().min(1).optional(),
+  provider: z.enum(MODEL_PROVIDERS).optional(),
   contextWindow: z.number().int().positive().optional(),
   permissions: z
     .object({
@@ -68,8 +73,6 @@ const agentsSchema = z.record(
 )
 
 const FORMATS = ['text', 'json', 'stream-json'] as const
-
-const DEFAULT_MODEL = 'anthropic/claude-sonnet-4.6'
 
 async function readSettings(file: string): Promise<CoderSettings | undefined> {
   let raw: string
@@ -237,6 +240,8 @@ export type LoadedConfig = CoderConfig & {
   warnings: string[]
   /** A settings file set `contextWindow` (it then beats the models.dev catalog). */
   contextWindowExplicit: boolean
+  /** The model came from a flag, a settings file or `CODER_MODEL` (a saved preference then loses). */
+  modelExplicit: boolean
 }
 
 /** Load settings files, merge them with the flags and prepare the data directories. */
@@ -256,6 +261,7 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
   }
 
   let model: string | undefined
+  let provider: ModelProvider | undefined
   let contextWindow: number | undefined
   let mode: PermissionMode | undefined
   const rules: PermissionRules = { allow: [], ask: [], deny: [] }
@@ -285,6 +291,7 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
       }
     }
     model = settings.model ?? model
+    provider = settings.provider ?? provider
     contextWindow = settings.contextWindow ?? contextWindow
     const p = settings.permissions
     if (p) {
@@ -310,6 +317,8 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     }
     mode = parsed.data
   }
+  if (flags.provider !== undefined) provider = parseProvider(flags.provider, '--provider')
+  const resolvedProvider = provider ?? detectProvider(process.env)
   rules.allow.push(...(flags.allowedTools ?? []))
   rules.deny.push(...(flags.disallowedTools ?? []))
   dirs.push(...(await resolveDirs(flags.addDir ?? [], root, '--add-dir', warnings)))
@@ -341,13 +350,15 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
 
   // unique by real path; a dir equal to the root is pointless
   const additionalDirectories = dedupe(dirs).filter((d) => d !== root)
+  const explicitModel = flags.model ?? model ?? (process.env.CODER_MODEL || undefined)
 
   return {
     root,
     userDir,
     projectDataDir,
     settingsFiles,
-    model: flags.model ?? model ?? process.env.CODER_MODEL ?? DEFAULT_MODEL,
+    provider: resolvedProvider,
+    model: explicitModel ?? DEFAULT_MODEL[resolvedProvider],
     contextWindow: contextWindow ?? 200_000,
     mode: mode ?? 'default',
     rules: { allow: dedupe(rules.allow), ask: dedupe(rules.ask), deny: dedupe(rules.deny) },
@@ -363,5 +374,6 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     trusted,
     warnings,
     contextWindowExplicit: contextWindow !== undefined,
+    modelExplicit: explicitModel !== undefined,
   }
 }

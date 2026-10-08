@@ -20,6 +20,7 @@ import type {
   ApprovalBroker,
   CoderConfig,
   CoderController,
+  ThinkingLevel,
   ToolCallInfo,
 } from '../src/contracts.ts'
 import { createBroker, createPermissionEngine, describeApproval } from '../src/permissions/index.ts'
@@ -59,6 +60,9 @@ export async function isolateHome(): Promise<string> {
   const previous = process.env.CODER_HOME
   const previousModel = process.env.CODER_MODEL
   const previousOffline = process.env.CODER_OFFLINE
+  const providerEnv = ['OPENROUTER_API_KEY', 'AI_GATEWAY_API_KEY', 'OPENROUTER_BASE_URL']
+  const previousProviderEnv = providerEnv.map((k) => [k, process.env[k]] as const)
+  for (const k of providerEnv) delete process.env[k]
   process.env.CODER_HOME = home
   process.env.CODER_OFFLINE = '1'
   delete process.env.CODER_MODEL
@@ -68,6 +72,10 @@ export async function isolateHome(): Promise<string> {
     if (previousOffline === undefined) delete process.env.CODER_OFFLINE
     else process.env.CODER_OFFLINE = previousOffline
     if (previousModel !== undefined) process.env.CODER_MODEL = previousModel
+    for (const [k, v] of previousProviderEnv) {
+      if (v === undefined) delete process.env[k]
+      else process.env[k] = v
+    }
   })
   return home
 }
@@ -103,9 +111,17 @@ export async function makeController(opts: {
   flags?: CliFlags
   model: LanguageModel
   broker?: ApprovalBroker
+  /** Instead of `model`: id → model, so `setModel` can be observed. */
+  resolveModel?: (id: string) => LanguageModel
+  thinking?: ThinkingLevel
 }): Promise<{ controller: CoderController; root: string; home: string }> {
   const { root, home, config } = await setup(opts.files, opts.flags)
-  const controller = await createController({ config, model: opts.model, broker: opts.broker })
+  const controller = await createController({
+    config,
+    ...(opts.resolveModel ? { resolveModel: opts.resolveModel } : { model: opts.model }),
+    broker: opts.broker,
+    ...(opts.thinking ? { thinking: opts.thinking } : {}),
+  })
   onCleanup(() => controller.close())
   return { controller, root, home }
 }

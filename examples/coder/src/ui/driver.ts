@@ -64,7 +64,7 @@ export async function runTurn(
   text: string,
   dispatch: (action: ViewAction) => void,
 ): Promise<void> {
-  dispatch({ type: 'turn-started' })
+  dispatch({ type: 'turn-started', now: Date.now() })
   const batcher = createBatcher(dispatch)
   const consumers: Promise<void>[] = []
   let last: CoderMessage | null = null

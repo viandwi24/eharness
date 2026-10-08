@@ -1,11 +1,17 @@
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
-import type { ApprovalAnswer, ApprovalBroker, ApprovalRequest } from '../contracts.ts'
+import {
+  type ApprovalAnswer,
+  type ApprovalBroker,
+  type ApprovalRequest,
+  TOOL,
+} from '../contracts.ts'
 import { DiffView } from './DiffView.tsx'
 import { type Buffer, backspace, deleteForward, emptyBuffer, insert, move } from './editor.ts'
 import { keyedLines } from './keys.ts'
 import { stripControl } from './sanitize.ts'
 import { color, sym } from './theme.ts'
+import { displayPath } from './tool-summary.ts'
 
 /** One selectable answer. */
 export interface PromptOption {
@@ -18,7 +24,7 @@ export function optionsFor(request: ApprovalRequest): PromptOption[] {
   const options: PromptOption[] = [{ label: 'Yes', answer: { approved: true } }]
   if (request.suggestedRule) {
     options.push({
-      label: `Yes, and don't ask again for ${stripControl(request.suggestedRule)} (this session)`,
+      label: `Yes, and don't ask again for ${stripControl(request.suggestedRule)}`,
       answer: { approved: true, remember: 'session' },
     })
     options.push({
@@ -26,7 +32,7 @@ export function optionsFor(request: ApprovalRequest): PromptOption[] {
       answer: { approved: true, remember: 'project' },
     })
   }
-  options.push({ label: 'No, and tell the agent what to do instead', answer: 'feedback' })
+  options.push({ label: 'No, and tell coder what to do differently (esc)', answer: 'feedback' })
   return options
 }
 
@@ -40,19 +46,57 @@ export function usePending(broker: ApprovalBroker): ApprovalRequest[] {
   return pending
 }
 
+/** Dialog title of a tool call. */
+export function dialogTitle(toolName: string): string {
+  switch (toolName) {
+    case TOOL.bash:
+      return 'Bash command'
+    case TOOL.edit:
+      return 'Edit file'
+    case TOOL.write:
+      return 'Create file'
+    case TOOL.delete:
+      return 'Delete file'
+    case TOOL.agent:
+      return 'Agent'
+    case TOOL.exitPlan:
+      return 'Plan'
+    case TOOL.dirAccess:
+      return 'Directory access'
+    default:
+      return toolName
+  }
+}
+
+/** The question above the options. */
+export function dialogQuestion(request: ApprovalRequest): string {
+  const path = (request.input as { path?: unknown } | null)?.path
+  const file = typeof path === 'string' ? stripControl(displayPath(path)) : undefined
+  switch (request.toolName) {
+    case TOOL.edit:
+      return file ? `Do you want to make this edit to ${file}?` : 'Do you want to make this edit?'
+    case TOOL.write:
+      return file ? `Do you want to create ${file}?` : 'Do you want to create this file?'
+    case TOOL.delete:
+      return file ? `Do you want to delete ${file}?` : 'Do you want to delete this file?'
+    default:
+      return 'Do you want to proceed?'
+  }
+}
+
 function Detail({ request }: { request: ApprovalRequest }): ReactElement | null {
-  if (!request.detail) return null
-  const detail = stripControl(request.detail)
+  const command = (request.input as { command?: unknown } | null)?.command
+  const raw = request.detail ?? (typeof command === 'string' ? command : undefined)
+  if (!raw) return null
+  const detail = stripControl(raw)
   if (/^(--- |@@ |Index: )/m.test(detail)) {
-    return <DiffView patch={detail} maxLines={20} />
+    return <DiffView patch={detail} maxLines={20} expandHint={false} />
   }
   const lines = detail.split('\n')
   return (
     <Box flexDirection="column">
       {keyedLines(lines.slice(0, 20)).map(({ key, line }) => (
-        <Text key={key} dimColor>
-          {line === '' ? ' ' : line}
-        </Text>
+        <Text key={key}>{line === '' ? ' ' : line}</Text>
       ))}
       {lines.length > 20 ? <Text dimColor>… {lines.length - 20} more lines</Text> : null}
     </Box>
@@ -117,38 +161,48 @@ export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactE
   )
 
   if (!request) return null
-  const who = request.agent ? `${stripControl(request.agent)} wants to` : 'The agent wants to'
+  const heading = dialogTitle(request.toolName)
+  const hasDetail =
+    request.detail !== undefined ||
+    typeof (request.input as { command?: unknown } | null)?.command === 'string'
   return (
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor={color.running}
+      borderColor={color.warning}
       paddingX={1}
       marginTop={1}
     >
       <Text>
-        <Text color={color.running} bold>
-          {who}:{' '}
+        <Text color={color.warning} bold>
+          {heading}
         </Text>
-        <Text bold>{stripControl(request.title).replace(/\s*\n\s*/g, ' ')}</Text>
+        {request.agent ? <Text dimColor> (from {stripControl(request.agent)})</Text> : null}
         {pending.length > 1 ? <Text dimColor> (+{pending.length - 1} more)</Text> : null}
       </Text>
-      <Detail request={request} />
+      <Box flexDirection="column" marginTop={1} paddingLeft={2}>
+        <Detail request={request} />
+        <Text dimColor>
+          {hasDetail ? '' : stripControl(request.title).replace(/\s*\n\s*/g, ' ')}
+        </Text>
+      </Box>
+      <Box marginTop={1}>
+        <Text bold>{dialogQuestion(request)}</Text>
+      </Box>
       {feedback ? (
-        <Box marginTop={1}>
-          <Text color={color.accent}>Tell the agent what to do instead: </Text>
+        <Box>
+          <Text color={color.accent}>Tell coder what to do differently: </Text>
           <Text>{feedback.text.slice(0, feedback.cursor)}</Text>
           <Text inverse>{feedback.text[feedback.cursor] ?? ' '}</Text>
           <Text>{feedback.text.slice(feedback.cursor + 1)}</Text>
         </Box>
       ) : (
-        <Box flexDirection="column" marginTop={1}>
+        <Box flexDirection="column">
           {options.map((option, i) => (
             <Text key={option.label} color={i === index ? color.accent : undefined}>
               {i === index ? sym.pointer : ' '} {i + 1}. {option.label}
             </Text>
           ))}
-          <Text dimColor>↑/↓ and enter, or press a number · esc to deny</Text>
         </Box>
       )}
     </Box>
