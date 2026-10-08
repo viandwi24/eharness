@@ -301,8 +301,10 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
    `stop: 'interrupted'` (same for the `onNewInput: 'deny'` patch).
 4. **Continue the same message**: `createUIMessageStream({ originalMessages: [A'], … })`, `start`
    with `messageId: A.id` and no metadata (so `run.messageId` resolves to A's id and A's
-   `createdAt`/`turnId` are kept), then one `tool-output-available` / `tool-output-error` chunk
-   per client tool answer (headless readers see the outputs). The final `message-metadata`
+   `createdAt`/`turnId` are kept), then one `tool-approval-response` chunk per approval consumed by
+   this continuation (0.6.1; the approval id of the stored part, `approved`, `reason`; not for
+   deferred or parked calls), then one `tool-output-available` / `tool-output-error` chunk
+   per client tool answer (headless readers see the approval state and the outputs). The final `message-metadata`
    carries `pending: null` (or the new pending state) and usage/steps cumulative over both turns.
    The projected wire ends with a `tool` message holding the
    `tool-approval-response`s, so the first `streamText` call executes approved tools and emits

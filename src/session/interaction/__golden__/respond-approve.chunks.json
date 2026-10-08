@@ -4,6 +4,11 @@
     "messageId": "<id:0>"
   },
   {
+    "type": "tool-approval-response",
+    "approvalId": "<approval:0>",
+    "approved": true
+  },
+  {
     "type": "data-eh.status",
     "data": {
       "state": "thinking",

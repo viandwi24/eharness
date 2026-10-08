@@ -70,23 +70,35 @@ export function spyState(inner: StateAdapter = defaultMemoryState()): SpyState {
 }
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/g
+/** AI SDK approval ids (`aitxt-…`), random per run. */
+const APPROVAL_ID = /aitxt-[A-Za-z0-9]+/g
 
 /**
- * Normalize volatile values for golden comparisons: UUIDv7 ids become `<id:n>` (numbered by first
- * appearance), numeric `createdAt` / `durationMs` / `heartbeatAt` / `startedAt` become 0.
+ * Normalize volatile values for golden comparisons: UUIDv7 ids become `<id:n>` and AI SDK approval
+ * ids `<approval:n>` (numbered by first appearance), numeric `createdAt` / `durationMs` / `heartbeatAt` / `startedAt` become 0.
  */
 export function normalizeVolatile(value: unknown): unknown {
   const ids = new Map<string, string>()
+  const approvals = new Map<string, string>()
   const walk = (v: unknown, key?: string): unknown => {
     if (typeof v === 'string') {
-      return v.replace(UUID, (id) => {
-        let name = ids.get(id)
-        if (name === undefined) {
-          name = `<id:${ids.size}>`
-          ids.set(id, name)
-        }
-        return name
-      })
+      return v
+        .replace(UUID, (id) => {
+          let name = ids.get(id)
+          if (name === undefined) {
+            name = `<id:${ids.size}>`
+            ids.set(id, name)
+          }
+          return name
+        })
+        .replace(APPROVAL_ID, (id) => {
+          let name = approvals.get(id)
+          if (name === undefined) {
+            name = `<approval:${approvals.size}>`
+            approvals.set(id, name)
+          }
+          return name
+        })
     }
     if (typeof v === 'number' && key !== undefined) {
       if (['createdAt', 'durationMs', 'heartbeatAt', 'startedAt'].includes(key)) return 0

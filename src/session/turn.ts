@@ -1475,6 +1475,26 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (plan !== undefined) {
       // continuation: stream into A' (spec 04 §2); client outputs first, approved calls are open
       writeStart(plan.pending.messageId, undefined, false)
+      // every answered approval first: a reader that rebuilds the message from the stream
+      // (readUIMessageStream, attach(), a non-useChat UI) sees `approval-responded` before the
+      // approved calls run, instead of `approval-requested` until their output arrives (spec 04 §2)
+      // Only approvals consumed by this continuation: deferred calls (granted, waiting for client
+      // outputs or external waits of their batch) keep `approval-requested` in storage, and parked
+      // calls lost their approval in the patch. The id is the one on the stored part.
+      for (const answer of plan.approvals) {
+        if (parkedCalls.has(answer.toolCallId) || deferredCalls.has(answer.toolCallId)) continue
+        const part = baseMessage?.parts.find(
+          (p) => (p as { toolCallId?: string }).toolCallId === answer.toolCallId,
+        ) as { approval?: { id?: string } } | undefined
+        const approvalId = part?.approval?.id
+        if (approvalId === undefined) continue
+        write({
+          type: 'tool-approval-response',
+          approvalId,
+          approved: answer.approved,
+          ...(answer.reason !== undefined ? { reason: answer.reason } : {}),
+        })
+      }
       for (const answer of clientOutputs) {
         write(
           'errorText' in answer

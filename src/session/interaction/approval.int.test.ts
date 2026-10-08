@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { tool, type UIMessageChunk } from 'ai'
+import { readUIMessageStream, tool, type UIMessage, type UIMessageChunk } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../../agent/define-agent.ts'
 import type { StateAdapter } from '../../agent/session-types.ts'
@@ -80,6 +80,73 @@ function roles(prompt: ScriptedPrompt | undefined): string[] {
 function lastMessage(prompt: ScriptedPrompt | undefined) {
   return prompt?.at(-1)
 }
+
+describe('continuation stream: approval answers are streamed first', () => {
+  test('a reader rebuilding the message sees approval-responded while the approved call runs', async () => {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const slow = tool({
+      description: 'Slow',
+      inputSchema: z.object({}),
+      execute: async () => {
+        await gate
+        return 'ok'
+      },
+    })
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'slow', input: {} }] },
+      { text: 'done' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { slow },
+      approval: { policy: { slow: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('go').result
+    const approvalId = first.pending?.approvals[0]?.approvalId as string
+    const before = first.messages.find((m) => m.id === first.messageId) as UIMessage
+    const run = session.respond({ approvals: [{ id: approvalId, approved: true }] })
+    const states: string[] = []
+    const reading = (async () => {
+      for await (const message of readUIMessageStream({ stream: run.stream, message: before })) {
+        const part = message.parts.find((p) => p.type === 'tool-slow') as { state?: string }
+        if (part?.state !== undefined && states.at(-1) !== part.state) states.push(part.state)
+        if (part?.state === 'approval-responded') release()
+      }
+    })()
+    setTimeout(() => release(), 2_000) // never hang the test
+    await reading
+    expect((await run.result).stop).toBe('complete')
+    // the stored part was approval-requested; the stream moves it on before the output arrives
+    expect(states).toEqual(['approval-requested', 'approval-responded', 'output-available'])
+  })
+
+  test('a denial streams approved: false with the reason, then the denied output', async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] },
+      { text: 'ok' },
+    ])
+    const { agent } = setup({
+      model,
+      tools: { pay: payTool() },
+      approval: { policy: { pay: 'user-approval' } },
+    })
+    const session = agent.session('s1')
+    const first = await session.send('pay').result
+    const approvalId = first.pending?.approvals[0]?.approvalId as string
+    const run = session.respond({ approvals: [{ id: approvalId, approved: false, reason: 'no' }] })
+    const chunks = await collect<UIMessageChunk>(run.stream)
+    const types = chunkTypes(chunks)
+    const response = chunks.find((c) => c.type === 'tool-approval-response')
+    expect(response).toMatchObject({ approvalId, approved: false, reason: 'no' })
+    expect(types.indexOf('tool-approval-response')).toBeLessThan(
+      types.indexOf('tool-output-denied'),
+    )
+  })
+})
 
 describe('scenario 17: approval → respond → continuation', () => {
   test('approve: same message id, tool runs once before the next model call, golden chunks', async () => {

@@ -7,7 +7,6 @@ import { MessageView, UserMessage } from './MessageView.tsx'
 import { ThinkingIndicator } from './Spinner.tsx'
 import type { Entry, ViewState } from './state.ts'
 import { color, sym } from './theme.ts'
-import { toolView } from './tool-summary.ts'
 import { WelcomeBox } from './WelcomeBox.tsx'
 
 function EntryView({
@@ -118,24 +117,25 @@ function EntryView({
   }
 }
 
-function hasLiveText(message: CoderMessage | null): boolean {
-  return !!message?.parts.some((p) => p.type === 'text' && p.text.trim() !== '')
+/**
+ * Parts of the step the model is working on: everything after the last `step-start`. A
+ * `respond()` continuation streams into the previous message, so the whole message already holds
+ * text, reasoning and tool parts of earlier steps; only the current step says whether the agent
+ * is visibly producing something right now.
+ */
+function currentStepParts(message: CoderMessage | null): CoderMessage['parts'] {
+  if (message === null) return []
+  const parts = message.parts
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i]?.type === 'step-start') return parts.slice(i + 1)
+  }
+  return parts
 }
 
-function hasStreamingReasoning(message: CoderMessage | null): boolean {
-  return !!message?.parts.some(
+function hasStreamingReasoning(parts: CoderMessage['parts']): boolean {
+  return parts.some(
     (p) => p.type === 'reasoning' && (p as { state?: string }).state === 'streaming',
   )
-}
-
-function hasRunningTool(message: CoderMessage | null): boolean {
-  return !!message?.parts.some((p) => {
-    const view = toolView(p)
-    return (
-      view !== null &&
-      (view.state === 'input-streaming' || view.state === 'input-available' || !!view.preliminary)
-    )
-  })
 }
 
 /** Extra facts for the welcome box (all optional). */
@@ -167,8 +167,10 @@ function useRunStart(running: boolean): number {
 /** Finished entries once in `<Static>`, then the live assistant message. */
 export function Transcript({ state, config, welcome = {}, tokens }: TranscriptProps): ReactElement {
   const live: CoderMessage | null = state.live
-  const waiting =
-    state.running && !hasLiveText(live) && !hasRunningTool(live) && !hasStreamingReasoning(live)
+  // The indicator shows for the whole turn (also while text streams and tools run, also in a
+  // continuation after an approval or a dismissed question); only a reasoning block that is
+  // streaming in the current step replaces it with its own "Thinking…" line.
+  const waiting = state.running && !hasStreamingReasoning(currentStepParts(live))
   const startedAt = useRunStart(state.running)
   return (
     <>
