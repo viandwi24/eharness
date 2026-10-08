@@ -40,6 +40,7 @@ const FILE_TOOLS: readonly FileToolName[] = [
   'edit_file',
   'delete_file',
   'grep',
+  'glob',
 ]
 
 /** Data parts of the filesystem plugin (`data-filesystem.change`). */
@@ -107,8 +108,8 @@ function toolOutputStore(fs: FileSystem, dir: string): ToolOutputStore {
 
 /**
  * The filesystem plugin: provides the `fs` service (a {@link FileSystem}) and the `toolOutputs`
- * service, the file tools `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`
- * and `grep` with the editing rules of spec 08 §4 (read before edit/overwrite/delete, `STALE:`
+ * service, the file tools `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`,
+ * `grep` and `glob` with the editing rules of spec 08 §4 (read before edit/overwrite/delete, `STALE:`
  * with the current content, smart replace, optimistic locking), the `data-filesystem.change`
  * part on every mutation, and skills autoload from the same file system.
  *
@@ -161,6 +162,9 @@ export function filesystem(
       return (ext.startsWith('.') ? ext : `.${ext}`).toLowerCase()
     })
   }
+  if (opts.onAdapterError !== undefined && typeof opts.onAdapterError !== 'function') {
+    invalid('`onAdapterError` must be a function.')
+  }
   const hidden = prefixes(opts.hiddenPrefixes, 'hiddenPrefixes')
   const readonly = prefixes(opts.readonlyPrefixes, 'readonlyPrefixes')
 
@@ -212,6 +216,7 @@ export function filesystem(
             allowedExtensions,
             isUndeletable: opts.isUndeletable,
             maxReadChars,
+            onAdapterError: opts.onAdapterError,
           },
           tools,
         ),

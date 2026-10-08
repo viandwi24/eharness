@@ -440,6 +440,15 @@ export interface SendOptions {
   pageContext?: PageContextEntry[]
   /** Limits of {@link SendOptions.pageContext} (`maxChars`, default 4 000). */
   pageContextOptions?: PageContextOptions
+  /**
+   * `respond()` only (0.7.0, spec 11 §4): end the turn after the answers are recorded and the
+   * approved tools ran, without calling the model. `'after-answers'`: always. `'if-denied'`: only
+   * when at least one approval was denied (otherwise the model continues as usual). The turn
+   * stops `'complete'` with `steps: 0`; the next `send()` continues normally. Ignored when the
+   * answers park approved client-tool calls (the turn stops `'tool-pending'` anyway). Server side
+   * only (`handleChatRequest` passes it through, a request body cannot set it).
+   */
+  endTurn?: 'after-answers' | 'if-denied'
 }
 
 /** {@link SendOptions} with a typed {@link OutputSpec} (the `send()` overload that types `output`). */
@@ -480,6 +489,14 @@ export interface PendingResponse {
     remember?: 'once' | 'session'
     /** Who answered (for audit, `approval.decided`); never sent to the model. */
     actor?: ApprovalActor
+    /**
+     * A free-text note of the human about this call (0.7.0, max 4 000 characters, else
+     * `EH_INVALID_INPUT`). Approved: the model reads it on the first step of the continuation,
+     * right after the tool result, framed as `<user-note tool="…" call="…">…</user-note>` and
+     * stored as a `data-eh.input` part (spec 11 §3.6). Denied: appended to the `reason`. Server
+     * side only: AI SDK's UI approval object has no note, so `handleChatRequest` never reads one.
+     */
+    note?: string
   }>
   toolOutputs?: Array<
     { toolCallId: string; output: unknown } | { toolCallId: string; errorText: string }
@@ -533,6 +550,9 @@ export type SessionEvent<M extends UIMessage = HarnessUIMessage> =
       attempts: number
     }
 
+/** Outcome of a steer (`HarnessRun.delivery`). */
+export type SteerDelivery = 'step' | 'turn' | 'dropped'
+
 /**
  * A running (or finished) turn.
  *
@@ -550,6 +570,16 @@ export interface HarnessRun<M extends UIMessage = HarnessUIMessage, O = never> {
    * started with `SendOptions.output` (spec 05 §3.3).
    */
   readonly result: Promise<TurnResult<M, O>>
+  /**
+   * Only on the run of `send(input, { ifBusy: 'steer' })` (0.7.0, spec 05 §2): where the input
+   * went. `'step'`: delivered at a step boundary of the running turn (this run follows that turn).
+   * `'turn'`: no turn took it and it runs as a queued turn of its own (when the running turn
+   * refused it at once, this run is that queued turn's; when the turn ended without taking it,
+   * the run is still the first turn's — follow the new one with `attach()` / `events()`).
+   * `'dropped'`: not delivered — the turn stopped `'tool-pending'`, was aborted, or an
+   * `input.submit` hook blocked it (`input-dropped` event). Never rejects.
+   */
+  readonly delivery?: Promise<SteerDelivery>
   abort(reason?: string): void
   /** `createUIMessageStreamResponse({ stream })`. */
   toResponse(init?: ResponseInit): Response

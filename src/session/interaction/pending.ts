@@ -37,6 +37,39 @@ export interface ApprovalAnswer {
   reason?: string
   remember?: 'once' | 'session'
   actor?: ApprovalActor
+  /** The human's note (spec 11 §3.6): delivered to the model for an approved call. */
+  note?: string
+}
+
+/** Longest `note` of an approval answer (characters). */
+export const MAX_NOTE_CHARS: number = 4_000
+
+/** Largest stored `input` of a pending client tool call (UTF-8 bytes of its JSON). */
+export const MAX_PENDING_INPUT_BYTES: number = 16 * 1024
+
+/**
+ * The pending entry of a client tool call, with its `input` unless the JSON is larger than 16 KB
+ * (then `inputTruncated: true`; spec 11 §2). An input that is not JSON-serialisable is left out.
+ */
+export function clientToolEntry(
+  toolCallId: string,
+  toolName: string,
+  input: unknown,
+): PendingState['clientTools'][number] {
+  const entry: PendingState['clientTools'][number] = { toolCallId, toolName }
+  if (input === undefined) return entry
+  try {
+    const json = JSON.stringify(input)
+    if (json === undefined) return entry
+    if (new TextEncoder().encode(json).length > MAX_PENDING_INPUT_BYTES) {
+      entry.inputTruncated = true
+    } else {
+      entry.input = JSON.parse(json)
+    }
+  } catch {
+    entry.inputTruncated = true
+  }
+  return entry
 }
 
 /**
@@ -126,6 +159,7 @@ export function planRespond(args: {
       reason?: unknown
       remember?: unknown
       actor?: unknown
+      note?: unknown
     }
     if (typeof a !== 'object' || a === null || typeof a.id !== 'string') {
       throw invalidShape('every approval needs a string `id`.')
@@ -136,6 +170,9 @@ export function planRespond(args: {
     }
     if (a.remember !== undefined && a.remember !== 'once' && a.remember !== 'session') {
       throw invalidShape("`remember` must be 'once' or 'session'.")
+    }
+    if (a.note !== undefined && (typeof a.note !== 'string' || a.note.length > MAX_NOTE_CHARS)) {
+      throw invalidShape(`\`note\` must be a string of at most ${MAX_NOTE_CHARS} characters.`)
     }
     if (
       a.actor !== undefined &&
@@ -156,14 +193,22 @@ export function planRespond(args: {
         { id: a.id },
       )
     }
+    const approved = entry.granted === true ? true : a.approved
     const out: ApprovalAnswer = {
       approvalId: entry.approvalId,
       toolCallId: entry.toolCallId,
       toolName: entry.toolName,
       // a granted approval (deferred behind parked calls) stays granted
-      approved: entry.granted === true ? true : a.approved,
+      approved,
     }
-    if (typeof a.reason === 'string') out.reason = a.reason
+    const note = typeof a.note === 'string' && a.note.trim().length > 0 ? a.note : undefined
+    if (approved) {
+      if (typeof a.reason === 'string') out.reason = a.reason
+      if (note !== undefined) out.note = note
+    } else if (typeof a.reason === 'string' || note !== undefined) {
+      // a note on a denial reaches the model through the reason (spec 11 §3.6)
+      out.reason = [a.reason, note].filter((t): t is string => typeof t === 'string').join('\n\n')
+    }
     if (a.remember === 'once' || a.remember === 'session') out.remember = a.remember
     if (a.actor !== undefined) out.actor = structuredClone(a.actor) as ApprovalActor
     answeredApprovals.set(a.id, out)

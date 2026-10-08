@@ -3,12 +3,14 @@
  * staleness with current content, smart replace, optimistic locking, policy checks.
  *
  * Every expected failure is returned as a prefixed string (`ERROR:`, `STALE:`, `CONFLICT:`,
- * `REJECTED:`); only adapter failures (I/O errors) throw and become tool errors.
+ * `REJECTED:`); adapter failures (I/O errors) become `ERROR: <message>` through `onAdapterError`
+ * (or rethrow when it returns `undefined`).
  *
  * @see docs/specs/08-filesystem-plugin.md#3-tools
  */
 import { type Tool, tool } from 'ai'
 import { z } from 'zod/v4'
+import { compileGlob } from './glob.ts'
 import type { LastRead } from './last-read.ts'
 import { dirPrefix, isUnder, isUnderAny, normalizePath } from './paths.ts'
 import { smartReplace } from './smart-replace.ts'
@@ -25,6 +27,7 @@ import type {
   FileEntry,
   FileMeta,
   FileSystem,
+  FilesystemOptions,
   FileToolName,
   GrepHit,
 } from './types.ts'
@@ -36,6 +39,10 @@ export const READ_LINE_LIMIT = 2000
 export const GREP_MAX_HITS = 50
 /** Hit budget of the adapter's `grep` fast path (before hidden/unlisted hits are filtered). */
 export const GREP_FAST_PATH_HITS = 500
+/** Maximum paths returned by `glob`. */
+export const GLOB_MAX_RESULTS = 200
+/** Budget of the adapter's `glob` fast path (before hidden/unlisted paths are filtered). */
+export const GLOB_FAST_PATH_LIMIT = 5000
 /** Maximum characters of one grep line in the result. */
 export const GREP_LINE_CHARS = 300
 
@@ -55,6 +62,8 @@ export interface FileToolsEnv {
   allowedExtensions: readonly string[] | undefined
   isUndeletable: ((path: string) => boolean) | undefined
   maxReadChars: number
+  /** Maps adapter exceptions to model text; see `FilesystemOptions.onAdapterError`. */
+  onAdapterError?: FilesystemOptions['onAdapterError']
 }
 
 type Resolved = { ok: true; path: string } | { ok: false; text: string }
@@ -140,6 +149,15 @@ export function renderWindow(
     window.text += window.cut !== undefined ? continues(window.last, window.cut) : hint(window.last)
   }
   return { text: window.text }
+}
+
+/** Most edits one `edit_file` call may carry. */
+export const MAX_EDITS = 50
+
+/** `ERROR: <message>` for an exception thrown by an adapter (a leading `Error: ` is dropped). */
+function defaultAdapterError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return `ERROR: ${message.replace(/^Error:\s*/, '')}`
 }
 
 const pathSchema = z.string().describe('Absolute path of the file, e.g. /src/main.pine')
@@ -284,37 +302,84 @@ export function createFileTools(
 
     edit_file: tool({
       description:
-        'Replace text in a file (read it first). old_string must match exactly one place (include surrounding lines to make it unique) unless replace_all is true. Indentation and whitespace differences are tolerated when unambiguous.',
+        'Replace text in a file (read it first). Give old_string/new_string, or edits: a list of up to 50 { old_string, new_string, replace_all? } applied in order, all or nothing. old_string must match exactly one place (include surrounding lines to make it unique) unless replace_all is true. Indentation and whitespace differences are tolerated when unambiguous.',
       inputSchema: z.object({
         path: pathSchema,
-        old_string: z.string().describe('Text to replace'),
-        new_string: z.string().describe('Replacement text'),
+        old_string: z.string().optional().describe('Text to replace (single edit)'),
+        new_string: z.string().optional().describe('Replacement text (single edit)'),
         replace_all: z.boolean().optional().describe('Replace every match. Default false'),
+        edits: z
+          .array(
+            z.object({
+              old_string: z.string().describe('Text to replace'),
+              new_string: z.string().describe('Replacement text'),
+              replace_all: z.boolean().optional().describe('Replace every match. Default false'),
+            }),
+          )
+          .optional()
+          .describe(`${MAX_EDITS} edits at most, instead of old_string/new_string`),
       }),
       execute: async (input): Promise<string> => {
         const resolved = resolvePath(input.path)
         if (!resolved.ok) return resolved.text
         const path = resolved.path
+        const single = input.old_string !== undefined || input.new_string !== undefined
+        if (single && input.edits !== undefined) {
+          return 'ERROR: pass either old_string and new_string, or edits, not both.'
+        }
+        if (!single && input.edits === undefined) {
+          return 'ERROR: pass old_string and new_string, or edits.'
+        }
+        if (single && (input.old_string === undefined || input.new_string === undefined)) {
+          return 'ERROR: old_string and new_string must be given together.'
+        }
+        if (
+          input.edits !== undefined &&
+          (input.edits.length < 1 || input.edits.length > MAX_EDITS)
+        ) {
+          return `ERROR: edits must contain 1 to ${MAX_EDITS} entries (got ${input.edits.length}).`
+        }
+        const edits: Array<{ old_string: string; new_string: string; replace_all?: boolean }> =
+          input.edits ?? [
+            {
+              old_string: input.old_string as string,
+              new_string: input.new_string as string,
+              ...(input.replace_all === undefined ? {} : { replace_all: input.replace_all }),
+            },
+          ]
         const denied = policy(path, 'write')
         if (denied !== undefined) return denied
         const current = await fs.read(path)
         if (current === null) return `ERROR: file not found: ${path} (use write_file to create it)`
         const problem = freshness(current, 'editing')
         if (problem !== undefined) return problem
-        const replaced = smartReplace(
-          current.content,
-          input.old_string,
-          input.new_string,
-          input.replace_all === true,
-        )
-        if (!replaced.ok) return `ERROR: ${replaced.error}`
-        const result = await fs.write(path, replaced.content, { ifVersion: current.version })
+        let content = current.content
+        let count = 0
+        for (let i = 0; i < edits.length; i++) {
+          const edit = edits[i] as (typeof edits)[number]
+          const replaced = smartReplace(
+            content,
+            edit.old_string,
+            edit.new_string,
+            edit.replace_all === true,
+          )
+          if (!replaced.ok) {
+            return input.edits === undefined
+              ? `ERROR: ${replaced.error}`
+              : `ERROR: edit ${i + 1} of ${edits.length}: ${replaced.error}`
+          }
+          content = replaced.content
+          count += replaced.count
+        }
+        const result = await fs.write(path, content, { ifVersion: current.version })
         if (!result.ok) return conflict(path)
-        const bytes = byteLength(replaced.content)
+        const bytes = byteLength(content)
         lastRead.set(path, result.version)
         env.change({ path, action: 'edit', version: result.version, bytes })
-        const count = replaced.count === 1 ? '1 replacement' : `${replaced.count} replacements`
-        return `Edited ${path} (${count}).`
+        const replacements = count === 1 ? '1 replacement' : `${count} replacements`
+        if (input.edits === undefined) return `Edited ${path} (${replacements}).`
+        const n = edits.length === 1 ? '1 edit' : `${edits.length} edits`
+        return `Edited ${path} (${n}, ${replacements}).`
       },
     }),
 
@@ -383,6 +448,54 @@ export function createFileTools(
         return shown.join('\n')
       },
     }),
+    glob: tool({
+      description: `Find files by glob pattern (**, *, ?, [abc], {a,b}; e.g. "src/**/*.ts"), newest first when known, at most ${GLOB_MAX_RESULTS}. path is the directory to search (default /); the pattern is relative to it. Dotfiles match only patterns that name them.`,
+      inputSchema: z.object({
+        pattern: z.string().describe('Glob pattern, relative to path, e.g. **/*.{ts,tsx}'),
+        path: z.string().optional().describe('Directory to search. Default: /'),
+      }),
+      execute: async ({ pattern, path }): Promise<string> => {
+        const resolved = resolvePath(path ?? '/')
+        if (!resolved.ok) return resolved.text
+        const root = resolved.path
+        const compiled = compileGlob(pattern)
+        if (!compiled.ok) return `ERROR: invalid pattern: ${compiled.error}`
+        if (isUnderAny(root, env.hidden)) return 'No files match.'
+        const prefix = dirPrefix(root)
+        const relative = (file: FileMeta): string => file.path.slice(prefix.length)
+        const visible = (file: FileMeta): boolean =>
+          file.path.startsWith(prefix) && isUnder(file.path, root) && listed(file.path, root)
+        let files: FileMeta[] | undefined
+        if (fs.glob !== undefined) {
+          const raw = await fs.glob(pattern, { prefix, limit: GLOB_FAST_PATH_LIMIT })
+          // a full budget may have been used up by hidden paths: fall back to the full scan
+          if (raw.length < GLOB_FAST_PATH_LIMIT) files = raw.filter(visible)
+        }
+        if (files === undefined) {
+          files = (await fs.list(prefix)).filter(
+            (file) => visible(file) && compiled.test(relative(file)),
+          )
+        }
+        if (files.length === 0) return 'No files match.'
+        const sorted = [...files]
+        if (sorted.every((file) => file.updatedAt !== undefined)) {
+          sorted.sort(
+            (a, b) =>
+              (b.updatedAt as number) - (a.updatedAt as number) ||
+              (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+          )
+        } else {
+          sorted.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+        }
+        const lines = sorted.slice(0, GLOB_MAX_RESULTS).map((file) => file.path)
+        if (sorted.length > GLOB_MAX_RESULTS) {
+          lines.push(
+            `(Showing ${GLOB_MAX_RESULTS} of ${sorted.length} matches; narrow the pattern.)`,
+          )
+        }
+        return lines.join('\n')
+      },
+    }),
   }
 
   /** Up to GREP_MAX_HITS + 1 visible hits under `root`. */
@@ -425,6 +538,31 @@ export function createFileTools(
   }
 
   const selected: Record<string, Tool> = {}
-  for (const name of names) selected[name] = all[name]
+  for (const name of names) selected[name] = guarded(name, all[name])
   return selected
+
+  /** Wrap `execute` so adapter exceptions become model-readable text (`onAdapterError`). */
+  function guarded(name: FileToolName, base: Tool): Tool {
+    const execute = base.execute as ((input: unknown, options: unknown) => unknown) | undefined
+    if (execute === undefined) return base
+    return {
+      ...base,
+      execute: async (input: unknown, options: unknown): Promise<unknown> => {
+        try {
+          return await execute(input, options)
+        } catch (error) {
+          const raw = (input as { path?: unknown; prefix?: unknown } | null) ?? {}
+          const given = typeof raw.path === 'string' ? raw.path : raw.prefix
+          const normalized = typeof given === 'string' ? normalizePath(given) : undefined
+          const path =
+            normalized?.ok === true ? normalized.path : typeof given === 'string' ? given : '/'
+          const mapped = env.onAdapterError
+            ? env.onAdapterError(error, { tool: name, path })
+            : defaultAdapterError(error)
+          if (mapped === undefined) throw error
+          return mapped
+        }
+      },
+    } as Tool
+  }
 }

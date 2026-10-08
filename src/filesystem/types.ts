@@ -112,6 +112,14 @@ export interface FileSystem {
    */
   grep?(pattern: RegExp, opts?: { prefix?: string; maxHits?: number }): Promise<GrepHit[]>
   /**
+   * Optional fast path for the `glob` tool (since 0.5); the plugin falls back to `list` + its own
+   * matcher when absent. `pattern` is relative to `prefix` (a directory prefix ending in `/`) and
+   * uses the `glob` syntax (`**`, `*`, `?`, `[abc]`, `{a,b}`; dotfiles only matched by segments
+   * that start with a literal `.`). Returns the matching files (any order; the tool sorts), at
+   * most `limit`; the tool filters hidden paths itself.
+   */
+  glob?(pattern: string, opts: { prefix: string; limit: number }): Promise<FileMeta[]>
+  /**
    * Optional atomic rename of one file: `to` gets the content (and therefore the version) of
    * `from`, and `from` is removed, in one step. Never overwrites `to`. `ifVersion` → only if the
    * version of `from` matches. Callers fall back to write + delete when absent (the memory plugin
@@ -139,6 +147,7 @@ export type FileToolName =
   | 'edit_file'
   | 'delete_file'
   | 'grep'
+  | 'glob'
 
 /**
  * Payload of the `data-filesystem.change` part, written on every mutation (`id` = path).
@@ -179,6 +188,15 @@ export interface FilesystemOptions {
   maxReadChars?: number
   /** Which tools to expose. Default all. */
   tools?: FileToolName[]
+  /**
+   * Maps an exception thrown by an adapter method (`read`, `write`, `list`, …) to the text the
+   * model reads. Default: `ERROR: <message>` (a leading `Error: ` is dropped), so it reads like
+   * any other expected failure. Return `undefined` to rethrow (an ordinary tool error).
+   */
+  onAdapterError?: (
+    error: unknown,
+    info: { tool: FileToolName; path: string },
+  ) => string | undefined
   /**
    * The `toolOutputs` service (evicted tool outputs, spec 09 §4). Default
    * `{ dir: '/.eharness/tool-outputs' }`; `false` disables the service.

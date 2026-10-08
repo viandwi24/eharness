@@ -663,7 +663,7 @@ at the end.
 - [ ] MCP servers from settings (`mcpServer`, risk per server): implemented in `app/agent.ts`
       (main agent only, project servers need trust); no automated test, and the security of this
       path (MCP tools run with the user's privileges, they only ask by default) is untested
-- [ ] OS sandbox driver for `bash` (macOS `sandbox-exec`, Linux `bubblewrap`): not done
+- [x] OS sandbox driver for `bash` (macOS `sandbox-exec`, Linux `bubblewrap`), opt-in via `sandbox.enabled` (see the remaining-features notes)
 - [ ] `bun run compile` single binary; smoke-run it outside the repo: script exists, smoke not done
 - [ ] Docs: guide page `docs/guides/coding-agent.md` walking through the example: not done
 
@@ -782,46 +782,46 @@ quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
 | Queue messages while the agent works | `Enter` during a turn queues; queued entries shown gray; `Up` takes them back; sent at the next step boundary or after the turn done: queued while a turn runs, steered at the next tool result or sent as the next prompt (`ActiveTurn` in `app/controller.ts`); `Up` takes back | `ifBusy: 'queue' \| 'steer' \| 'collect'` (spec 05) | done | — |
 | Reverse history search | `Ctrl+R`, history of all projects, persisted done: `Ctrl+R` over `~/.coder/history.jsonl` of all projects | app | done | — |
 | Persistent prompt history | across sessions per project done: `~/.coder/history.jsonl`, `Up`/`Down` per project | app | done | — |
-| Double `Esc` | clears a draft (saved to history) or opens the rewind menu | no | app | P2 | S |
-| Rewind / checkpoints | restore conversation and/or code to an earlier message | no | conversation: `regenerate` / `edit` (rewind markers); code: needs file snapshots (app) | P2 | L |
-| External editor | `Ctrl+G` opens `$EDITOR` for the prompt | no | app | P2 | S |
-| Stash prompt | `Ctrl+S` stash / restore | no | app | P3 | S |
-| Kill ring and word motions | `Ctrl+K/U/W/Y`, `Alt+B/F/D`, undo `Ctrl+_` | `Ctrl+A/E/U` only | app | P2 | S |
-| Large paste collapsed | `[Pasted text #1 +42 lines]` chip | pasted inline | app | P2 | S |
-| Image paste | `Ctrl+V` inserts `[Image #N]`, sent as a file part | no | user file parts supported (spec 05 §3) | P2 | M |
-| Prompt suggestions | ghost text from git history; next-prompt suggestion after a reply (`Tab` accepts) | static placeholder | app (+ a cheap model call) | P3 | M |
-| Vim mode | NORMAL/INSERT/VISUAL editing | no | app | P3 | M |
-| `@` mentions of folders and agents | folders, files, agents | files only | app | P3 | S |
+| Double `Esc` | clears a draft (saved to history) or opens the rewind menu | done: `Esc Esc` clears a draft (saved) or opens `/rewind` on an empty prompt | app | done | — |
+| Rewind / checkpoints | restore conversation and/or code to an earlier message | done: `/rewind` restores code, conversation or both; code from per-turn file snapshots (file tools only, not shell changes) | conversation: `regenerate` / `edit` (rewind markers); code: needs file snapshots (app) | done | — |
+| External editor | `Ctrl+G` opens `$EDITOR` for the prompt | done: `Ctrl+G` runs `$VISUAL` / `$EDITOR` on a temp file | app | done | — |
+| Stash prompt | `Ctrl+S` stash / restore | done: `Ctrl+S` stashes and restores the draft | app | done | — |
+| Kill ring and word motions | `Ctrl+K/U/W/Y`, `Alt+B/F/D`, undo `Ctrl+_` | done: `Ctrl+K/U/W/Y`, `Alt+B/F/D/Y`, undo `Ctrl+_` | app | done | — |
+| Large paste collapsed | `[Pasted text #1 +42 lines]` chip | done: `[Pasted text #N +L lines]` chips (over 800 characters or 10 lines) | app | done | — |
+| Image paste | `Ctrl+V` inserts `[Image #N]`, sent as a file part | done: `Ctrl+V` / `Alt+V` reads the clipboard image, `[Image #N]` chip, sent as a file part | user file parts supported (spec 05 §3) | done | — |
+| Prompt suggestions | ghost text from git history; next-prompt suggestion after a reply (`Tab` accepts) | done: `promptSuggestions` setting, dim placeholder, `Tab` or `Right` accepts | app (+ a cheap model call) | done | — |
+| Vim mode | NORMAL/INSERT/VISUAL editing | done: `editorMode: "vim"` or `/vim` (insert, normal, visual, operators, counts, `.`) | app | done | — |
+| `@` mentions of folders and agents | folders, files, agents | done: files, folders and `@agent-<name>` | app | done | — |
 
 ### Transcript and display
 
 | Feature | Reference behaviour | Here | eharness support | Prio | Effort |
 |---|---|---|---|---|---|
 | Reasoning display | collapsed thinking block, expandable done: `✻ Thinking…` live, `∴ Thought for Ns`, full text in the transcript viewer (`Ctrl+O`) | reasoning parts are in the UI message | done | — |
-| Task list toggle | `Ctrl+T` shows/hides the checklist (≤ 5 items) | always shown while open | todos plugin | P3 | S |
-| Focus view | `/focus`: only last prompt, one-line tool summaries, diffstats | no | app | P3 | S |
+| Task list toggle | `Ctrl+T` shows/hides the checklist (≤ 5 items) | done: `Ctrl+T` | todos plugin | done | — |
+| Focus view | `/focus`: only last prompt, one-line tool summaries, diffstats | done: `/focus` shows prompts and final answers only | app | done | — |
 | Message timestamps / model per message | in the transcript viewer | viewer shows them when metadata has them | `metadata.eharness` | done | — |
-| Terminal title and notifications | title shows the task; bell/desktop notification when a long turn ends or input is needed | no | app (`turn-end`, `pending` session events) | P2 | S |
-| Session recap | one-line recap when returning; `/recap` | no | app (summarizer call) | P3 | S |
-| Custom status line | user command renders the footer | fixed footer | app | P3 | S |
-| Themes | `/theme`, light/dark, syntax colors | one palette (`NO_COLOR`) | app | P3 | S |
+| Terminal title and notifications | title shows the task; bell/desktop notification when a long turn ends or input is needed | done: OSC title; `notifications` bell / desktop / off | app (`turn-end`, `pending` session events) | done | — |
+| Session recap | one-line recap when returning; `/recap` | done: `/recap` (one cheap model call) | app (summarizer call) | done | — |
+| Custom status line | user command renders the footer | done: `statusLine.command` with status JSON on stdin | app | done | — |
+| Themes | `/theme`, light/dark, syntax colors | done: `dark`, `light`, `auto`; `/theme` | app | done | — |
 
 ### Commands
 
 | Command | Reference behaviour | Here | eharness support | Prio | Effort |
 |---|---|---|---|---|---|
 | `/diff` | review working-tree changes and per-turn edits done: `/diff` page (git + agent edits) | app (git) + `data-filesystem.change` parts | done | — |
-| `/compact [instructions]` | focus instructions for the summary | `/compact` without instructions | `compaction.prompt` hook | P2 | S |
+| `/compact [instructions]` | focus instructions for the summary | done: focus text added through `compaction.prompt` | `compaction.prompt` hook | done | — |
 | `/plan [description]` | enter plan mode from the prompt done: `/plan [description]` | app | done | — |
-| `/add-dir <path>` | mount a directory mid-session | tool + flag only | `workspace.addDirectory` | P2 | S |
-| `/export`, `/copy [N]` | export conversation, copy a response | no | `session.messages()` | P2 | S |
-| `/btw` side question | answer from context without adding to history | no | a separate `streamText` over the projected context | P2 | M |
-| `/rename`, named sessions | name shown on the prompt bar; resume by name | ids only | app (state) | P2 | S |
-| `/branch`, `/fork` | branch the conversation | no | roadmap "Fork" (`session.fork`) | P3 | M |
-| `/memory` | edit project memory files | no | app | P2 | S |
-| `/config` | settings dialog | settings files only | app | P2 | M |
+| `/add-dir <path>` | mount a directory mid-session | done: mounts under `/@dirs/` | `workspace.addDirectory` | done | — |
+| `/export`, `/copy [N]` | export conversation, copy a response | done: `/export [file]`, `/copy [n]` (clipboard command or OSC 52) | `session.messages()` | done | — |
+| `/btw` side question | answer from context without adding to history | done: tool-less `streamText`, nothing stored, not charged | a separate `streamText` over the projected context | done | — |
+| `/rename`, named sessions | name shown on the prompt bar; resume by name | done: `/rename <name>` | app (state) | done | — |
+| `/branch`, `/fork` | branch the conversation | done: `/branch [name]` copies the stored messages into a new session | roadmap "Fork" (`session.fork`) | done | — |
+| `/memory` | edit project memory files | done: page listing memory files incl. `~/.coder/AGENTS.md` | app | done | — |
+| `/config` | settings dialog | done: page over the settings files (user / local scope) | app | done | — |
 | `/init` | draft `AGENTS.md` | done | — | done | — |
-| `/doctor` | setup diagnostics | no | app | P3 | S |
+| `/doctor` | setup diagnostics | done: environment checks page | app | done | — |
 | `/release-notes`, `/feedback`, `/bug` | product-specific | not applicable | — | — | — |
 | Custom commands and skills by `/name` | project/user command files, skills invokable as `/skill` done: `.coder/commands`, `~/.coder/commands`, skills as `/skill-name` | skill sources (spec 07) | done | — |
 
@@ -830,22 +830,69 @@ quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
 | Feature | Reference behaviour | Here | eharness support | Prio | Effort |
 |---|---|---|---|---|---|
 | Web fetch / web search tools | fetch a URL as markdown; search done: `web_fetch` and `web_search` with approval and `WebFetch(domain:…)` / `WebSearch` rules | app tools (+ approval) | done | — |
-| Background shells | `Ctrl+B` backgrounds a command; output read later; `/tasks` | foreground only | app (sandbox `spawn`) + external waits (spec 11 §4.2) | P2 | M |
-| Background subagents | run while the user keeps working; completion notification | foreground, parallel inside one turn | inject + wake (spec 05 §12) | P2 | L |
-| Monitor tool | stream a background command's lines back to the agent | no | inject `next-step` events | P3 | M |
-| LSP diagnostics | definitions, references, type errors | no | MCP or app tool | P3 | L |
-| Hooks | shell commands on tool/turn events | no | plugin hooks (spec 01 §5) | P2 | M |
+| Background shells | `Ctrl+B` backgrounds a command; output read later; `/tasks` | done: `run_in_background`, `bash_output`, `kill_shell`, `/tasks` | app (sandbox `spawn`) + external waits (spec 11 §4.2) | done | — |
+| Background subagents | run while the user keeps working; completion notification | done: `agent { run_in_background }`; the report wakes the parent | inject + wake (spec 05 §12) | done | — |
+| Monitor tool | stream a background command's lines back to the agent | done: `notify_on` regex on a background shell | inject `next-step` events | done | — |
+| LSP diagnostics | definitions, references, type errors | done: `lsp` tool over a JSON-RPC client; default TypeScript server | MCP or app tool | done | — |
+| Hooks | shell commands on tool/turn events | done: seven events, settings `hooks` (determinism deviation, see notes) | plugin hooks (spec 01 §5) | done | — |
 | Plan approval options | approve with auto-accept edits / approve manual / keep planning with feedback done: auto-accept edits / manual / keep planning (`setPlanExitMode`) | `exit_plan_mode` + mode switch | done | — |
 | Permission prompt notes | `Tab` adds a note to Yes/No | done; the note reaches the model one model call later than in the reference (R16); a bare No stops the main turn via a stream workaround (R17) | steer + denial reason | done | — |
 | Multiple-choice questions | `ask_user_question` dialog, radio/checkbox, Other, notes | done (client tool answered in process through the broker) | client tools (spec 11) | done | — |
-| Question timeout | optional auto-continue after idle | no | client tool timeouts (spec 11 §7.1) | P3 | S |
-| Output styles | switchable response styles | no | instructions | P3 | S |
-| OS sandbox | sandboxed shell | not sandboxed (documented) | roadmap "Sandbox plugin" | P2 | L |
+| Question timeout | optional auto-continue after idle | done: `askUserQuestionTimeout` seconds | client tool timeouts (spec 11 §7.1) | done | — |
+| Output styles | switchable response styles | done: built-ins and Markdown files; session instruction | instructions | done | — |
+| OS sandbox | sandboxed shell | done: Seatbelt / bubblewrap, opt-in `sandbox.enabled`; writes and network only | roadmap "Sandbox plugin" | done | — |
 
 **Done since (the P1 batch):** message queueing, reasoning display, persistent history with
 `Ctrl+R`, plan approval options, `/plan`, `/diff`, web fetch/search tools, custom `/commands` and
-skill invocation. **Next:** P2 input polish (external editor, kill ring, paste chips, double Esc) and
-notifications.
+skill invocation. **Done since (the remaining features, 2026-10-08):** every row above marked
+done: input polish, rewind and checkpoints, background tasks, hooks, LSP, output styles, themes,
+status line, notifications, OS sandbox. Library follow-ups from this work are in
+[P31](P31-library-from-coder.md).
+
+### Implementation notes: remaining features (2026-10-08)
+
+- **Wake-ups drive background turns.** A finished background shell, a throttled `notify_on` match
+  (at most one event per 5 s, batched) and a finished background agent are injected into the
+  parent session as `eh.event` messages with `{ deliver: 'next-step', wake: true }` (`app/tasks.ts`,
+  `app/background-bash.ts`, `agents/agent-tool.ts`). A busy turn sees them at its next step
+  boundary; an idle session starts a no-input turn. That run is handed to `onWake` in the
+  controller, which drives it like a prompt (approvals through the broker) and streams it through
+  the hooks of the most recent `run()` / `steer()`, or drains it when there were none, so no wake
+  run stops unanswered at an approval. A task the user stopped sends nothing.
+- **Output style is a session instruction.** The style text goes into the session instruction
+  block (after the static instructions), never into the static prefix. Switching style (or the
+  sandbox note) reopens the session handle when idle (`refreshSession`), so the prompt cache is
+  rebuilt from the session block onwards; tools and the static instructions stay cached. `default`
+  adds no text. Project styles need project trust (they are part of the trust hash).
+- **Hook determinism deviation** (spec 01 section 5 wants `tool.approve` hooks to be deterministic and
+  free of side effects). A `PreToolUse` hook is an arbitrary user command, so its decision is
+  computed once per tool call id and cached (500 entries); the `tool.approve` re-evaluation of a
+  `respond()` continuation sees the same answer without running the command again. `Stop` hooks
+  may force at most 3 continuations in a row. Project hooks load only when the project is trusted.
+- **Sandbox mechanism and limits** (`shell/os-sandbox.ts`). macOS: `sandbox-exec` with a generated
+  Seatbelt profile (default allow, file writes denied except the project root, `allowWrite`, temp
+  directories and a few device files; network denied unless `sandbox.network`, local unix sockets
+  stay allowed). Linux: `bwrap` with a read-only bind of `/`, writable binds for the root and
+  `allowWrite`, a private `/tmp`, `--unshare-net` unless the network is allowed. Not covered: reads
+  (secrets in `$HOME` stay readable), CPU and memory, unix-socket IPC on macOS. When the tool is
+  missing the state is `none` and the app says commands run unsandboxed instead of pretending.
+  A project settings file may only tighten the sandbox until trusted. Seatbelt is deprecated by
+  Apple but still ships.
+- **Checkpoint scope.** The `checkpoints` plugin records a file's content before its first change
+  in a turn (`edit_file`, `write_file`, `delete_file`; subagent edits are filed under the root
+  turn), the last 50 turns per session, under `<projectDataDir>/checkpoints/`. `/rewind` restores
+  code, conversation (a NEW session with the messages before the point; the old one is untouched)
+  or both. Not checkpointed: shell and `!command` changes, other tools, edits made outside the
+  agent. A file changed since is overwritten with the earliest snapshot of the later turns.
+
+### Bugs found in real use
+
+- **Continuation streams left approved calls in `approval-requested`.** After `respond()` the
+  stream did not carry the answers, so an approved long-running tool looked as if it still waited.
+  Fixed in the library (0.6.1 patch: `tool-approval-response` chunks at the start of a `respond()`
+  continuation).
+- **The thinking indicator hid during continuations** after an answered question or approval. Fixed
+  in the example UI.
 
 ## Requests to the library
 

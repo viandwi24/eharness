@@ -20,6 +20,7 @@ import type {
   PendingResponse,
   SendInput,
   SendOptions,
+  SteerDelivery,
 } from '../agent/session-types.ts'
 import type { BudgetConfig } from '../agent/types.ts'
 import type { BudgetOverrun, SessionCompaction } from '../compaction/compact.ts'
@@ -71,8 +72,10 @@ import { forgetDelivered, recordDelivered } from './inbox/dedupe.ts'
 import type { InboxSettle, InboxUnit } from './inbox/driver.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.ts'
 import { createTurnInputQueue, type PendingInput } from './interaction/inbox.ts'
+import { approvalNoteData } from './interaction/notes.ts'
 import {
   type ClientToolAnswer,
+  clientToolEntry,
   patchForNewInput,
   patchForRespond,
   planRespond,
@@ -160,7 +163,11 @@ export interface RunningTurn {
    * Steer the running turn: `input.submit` (`via: 'steer'`) now, delivery at the next step
    * boundary (spec 11 §6.1). False when the turn no longer takes input.
    */
-  steer(input: NormalizedInput, inboxId?: string): boolean
+  steer(
+    input: NormalizedInput,
+    inboxId?: string,
+    settle?: (outcome: SteerDelivery) => void,
+  ): boolean
   /**
    * Deliver a saved kind message into the running turn (`next-step`, spec 11 §6.3). With `wake`,
    * an undelivered event queues a wake turn. False when the turn no longer takes input.
@@ -1084,10 +1091,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         parkedCalls.add(answer.toolCallId)
         continue
       }
-      const call: PendingState['clientTools'][number] = {
-        toolCallId: answer.toolCallId,
-        toolName: answer.toolName,
-      }
+      const call = clientToolEntry(
+        answer.toolCallId,
+        answer.toolName,
+        plan.pending.approvals.find((a) => a.approvalId === answer.approvalId)?.input,
+      )
       const meta = registry.requestTools.get(answer.toolName)
       if (meta?.timeoutMs !== undefined) {
         call.waitId = waitIdOf(answer.toolCallId)
@@ -1448,6 +1456,33 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
   }
 
+  /**
+   * What the step loop needs to know about the `respond()` that started this continuation:
+   * the answered tool names (`step.prepare`, spec 01 §5), the notes of approved calls (spec 11
+   * §3.4) and `endTurn` (spec 11 §4).
+   */
+  function continuationOptions(): Pick<
+    Parameters<typeof runSteps>[0],
+    'continuing' | 'approvalNotes' | 'endAfterContinuation'
+  > {
+    if (plan === undefined) return {}
+    const names = (approved: boolean) => [
+      ...new Set(plan?.approvals.filter((a) => a.approved === approved).map((a) => a.toolName)),
+    ]
+    const notes = plan.approvals.flatMap((a) =>
+      a.approved && a.note !== undefined ? [approvalNoteData(a)] : [],
+    )
+    const endTurn = op.options.endTurn
+    const end =
+      endTurn === 'after-answers' ||
+      (endTurn === 'if-denied' && plan.approvals.some((a) => !a.approved))
+    return {
+      continuing: { approved: names(true), denied: names(false) },
+      ...(notes.length === 0 ? {} : { approvalNotes: notes }),
+      ...(end ? { endAfterContinuation: true } : {}),
+    }
+  }
+
   // ─── execute ──────────────────────────────────────────────────────────────────────────────
   async function body(): Promise<void> {
     let prep: Prepared
@@ -1642,8 +1677,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         heartbeat,
         compaction,
         continuation: op.kind === 'respond',
+        ...continuationOptions(),
         inbox,
         delivered: (item) => {
+          item.settle?.('step')
           if (item.inboxId !== undefined) {
             // dedupe of a redelivery reads `inboxId` of the saved data-eh.input part (spec 05 §12
             // rule 5): nothing goes to the state before that snapshot is durable
@@ -1776,6 +1813,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
             clientId: steer.input.clientId,
           }),
         )
+        item.settle?.('dropped')
         // a closing session hands a durable steer to the next holder; otherwise it is dropped
         if (item.inboxId !== undefined) {
           host.inboxNotApplied([item.inboxId], rt.closed ? { how: 'defer' } : { how: 'drop' })
@@ -1783,6 +1821,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       } else {
         // a durable steer is released before the session's end-of-turn drain runs
         await host.enqueueSteer({ input: steer.input, contexts: steer.contexts }, item.inboxId)
+        item.settle?.(rt.closed ? 'dropped' : 'turn')
       }
     }
     if (wake) host.enqueueWake()
@@ -2113,7 +2152,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     run,
     buffer,
     abort,
-    steer(input, inboxId) {
+    steer(input, inboxId, settle) {
       if (!inbox.open || ended) return false
       // idempotent per inbox id: a redelivered steer this turn already holds is not delivered again
       if (inboxId !== undefined) {
@@ -2138,6 +2177,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
               }),
             )
             if (inboxId !== undefined) host.inboxNotApplied([inboxId], { how: 'drop' })
+            settle?.('dropped')
             return undefined
           }
           const texts = submitted.input.parts.filter((p) => p.type === 'text').map((p) => p.text)
@@ -2152,6 +2192,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
             }),
             steer: { input: submitted.input, contexts: submitted.contexts, text },
             ...(inboxId === undefined ? {} : { inboxId }),
+            ...(settle === undefined ? {} : { settle }),
           }
         })(),
       )

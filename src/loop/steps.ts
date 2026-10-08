@@ -30,7 +30,7 @@ import { HarnessToolError } from '../errors.ts'
 import { describeModel } from '../internal/model.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import { FILE_UNAVAILABLE, MAX_STEPS_WRAP_UP, PROGRESS_NUDGE } from '../messages/texts.ts'
-import type { PendingState, StopReason } from '../messages/types.ts'
+import type { InputPartData, PendingState, StopReason } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { ModelCatalog } from '../models/types.ts'
 import {
@@ -44,6 +44,7 @@ import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.t
 import { toolTraits } from '../registry/risk.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
+import { noCallModel } from '../session/interaction/end-turn.ts'
 import type { PendingInput, TurnInputQueue } from '../session/interaction/inbox.ts'
 import { inputWireMessage } from '../session/interaction/inbox.ts'
 import { armExternals } from '../session/interaction/waits.ts'
@@ -168,6 +169,15 @@ export interface StepLoopInput {
    * message — no step reminder, no input delivery, no rewrite that moves it (spec 11 §4 step 5).
    */
   continuation?: boolean
+  /** Final tool names the `respond()` answered; reported to `step.prepare` on step 0. */
+  continuing?: { approved: string[]; denied: string[] }
+  /**
+   * Notes of approved calls (spec 11 §3.6): written as `data-eh.input` after the tool outputs of
+   * step 0 of the continuation, and shown to the model after the tool result message.
+   */
+  approvalNotes?: InputPartData[]
+  /** `respond(…, { endTurn })`: step 0 runs the approved tools but never calls the model. */
+  endAfterContinuation?: boolean
   /** Steers and `next-step` injections waiting for the next step boundary (spec 11 §6). */
   inbox?: TurnInputQueue
   /** Called after an inbox item was written as `data-eh.input` (and appended to the wire). */
@@ -576,6 +586,9 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
             messages: rewrite ?? requestWire,
             toolNames: Object.keys(registry.tools),
             model: stepModel,
+            ...(firstOfContinuation() && input.continuing !== undefined
+              ? { continuing: structuredClone(input.continuing) }
+              : {}),
           })) ?? undefined
       } catch (error) {
         hookFailed(rt, 'step.prepare', hook.owner, error)
@@ -722,8 +735,28 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     let held: UIMessageChunk | undefined
     let rawError: unknown
     const toolErrorTexts = new Set<string>()
+    // step 0 of a continuation: the notes of approved calls follow the tool result message, and
+    // `endTurn` runs the approved tools against a model that makes no call (spec 11 §4)
+    const endStep = firstOfContinuation() && input.endAfterContinuation === true
+    const noteData = firstOfContinuation() ? (input.approvalNotes ?? []) : []
+    const noteWire: ModelMessage[] = []
+    for (const data of noteData) noteWire.push(...(await inputWireMessage(data)))
+    let notesWritten = noteData.length === 0
+    const writeNotes = (): void => {
+      if (notesWritten) return
+      notesWritten = true
+      for (const data of noteData)
+        input.write({ type: 'data-eh.input', data: structuredClone(data) })
+    }
     const result = streamText({
-      model: stepModel,
+      model: endStep ? noCallModel() : stepModel,
+      ...(noteWire.length === 0
+        ? {}
+        : {
+            prepareStep: ({ messages }: { messages: ModelMessage[] }) => ({
+              messages: [...messages, ...noteWire],
+            }),
+          }),
       ...(cached.system.length > 0 ? { instructions: cached.system } : {}),
       messages: cached.messages,
       tools: cached.tools,
@@ -775,7 +808,10 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         stepAborted = true
         continue // the core writes the single terminal abort
       }
-      if (chunk.type === 'start-step') stepStarted = true
+      if (chunk.type === 'start-step') {
+        stepStarted = true
+        writeNotes() // after the approved tools' outputs, before the model's answer
+      }
       if (chunk.type === 'error') {
         if (!stepStarted && held === undefined) {
           held = chunk as UIMessageChunk // decided after the stream (spec 06 §7)
@@ -787,6 +823,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       input.write(chunk as UIMessageChunk)
     }
     const response = await guarded(result.responseMessages)
+    if (held === undefined && !stepAborted) writeNotes()
     if (held !== undefined) {
       const heldText = (held as { errorText?: string }).errorText ?? 'The model call failed.'
       // a file of an earlier turn could not be downloaded (an expired link): degrade it to a
@@ -844,7 +881,9 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       errorText ??= heldText
     }
     if (response !== undefined) {
-      wire.push(...response)
+      // the notes sit between the tool result message and the model's answer (stored order)
+      const split = noteWire.length === 0 ? 0 : response[0]?.role === 'tool' ? 1 : 0
+      wire.push(...response.slice(0, split), ...noteWire, ...response.slice(split))
       collectDiscovered(response, input.discovered)
     }
     await input.barrier()
@@ -871,7 +910,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         )
       }
       addUsage(input.usage, stepUsage, false, cost)
-      compaction.observe(capped.raw, stepUsage.inputTokens)
+      if (!endStep) compaction.observe(capped.raw, stepUsage.inputTokens)
     }
     // commit what is known (an aborted or failed step without usage commits 0, spec 12 §4.1)
     if (input.ledger !== undefined) await input.ledger.afterCall(stepCost ?? 0)
@@ -928,6 +967,12 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       }
     }
     if (input.signal.aborted) return aborted()
+    // `endTurn`: the answers are recorded and the approved tools ran; no model step happened
+    if (endStep && !sawError && response !== undefined) {
+      if (external.length > 0) inbox?.unshift(external)
+      external = []
+      return { stop: 'complete', steps: 0, model }
+    }
 
     const pending =
       response === undefined || finishReason !== 'tool-calls'

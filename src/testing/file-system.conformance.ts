@@ -39,6 +39,7 @@ export interface FileSystemUnderTest {
     pattern: RegExp,
     opts?: { prefix?: string; maxHits?: number },
   ): Promise<Array<{ path: string; line: number; text: string }>>
+  glob?(pattern: string, opts: { prefix: string; limit: number }): Promise<MetaUnderTest[]>
   move?(
     from: string,
     to: string,
@@ -54,6 +55,8 @@ export interface FileSystemConformanceOptions {
   requireStat?: boolean
   /** Require the optional `grep`. Default false: the case runs only when the adapter has it. */
   requireGrep?: boolean
+  /** Require the optional `glob`. Default false: the case runs only when the adapter has it. */
+  requireGlob?: boolean
   /** Require the optional `move`. Default false: the case runs only when the adapter has it. */
   requireMove?: boolean
 }
@@ -398,6 +401,37 @@ export function fileSystemConformance(
           'grep with maxHits',
         )
         assertJsonEqual(await fs.grep(/absent/), [], 'grep without matches')
+      },
+    },
+    {
+      name: 'glob matches relative to the prefix, skips dotfiles unless named, honours limit',
+      run: async () => {
+        const fs = await factory()
+        if (fs.glob === undefined) {
+          assertTrue(!options.requireGlob, 'glob is required but not implemented')
+          return
+        }
+        await written(fs, '/src/a.ts', 'a')
+        await written(fs, '/src/b.tsx', 'b')
+        await written(fs, '/src/deep/c.ts', 'c')
+        await written(fs, '/src/.hidden.ts', 'h')
+        await written(fs, '/docs/x.md', 'x')
+        const paths = async (pattern: string, prefix: string, limit = 100) =>
+          (await fs.glob?.(pattern, { prefix, limit }))?.map((m) => m.path).sort()
+        assertJsonEqual(
+          await paths('**/*.ts', '/'),
+          ['/src/a.ts', '/src/deep/c.ts'],
+          'glob **/*.ts',
+        )
+        assertJsonEqual(
+          await paths('*.{ts,tsx}', '/src/'),
+          ['/src/a.ts', '/src/b.tsx'],
+          'glob *.{ts,tsx} relative to the prefix',
+        )
+        assertJsonEqual(await paths('.*', '/src/'), ['/src/.hidden.ts'], 'glob names a dotfile')
+        assertJsonEqual(await paths('**', '/docs/'), ['/docs/x.md'], 'glob ** under a prefix')
+        assertJsonEqual(await paths('*.rs', '/'), [], 'glob without matches')
+        assertTrue((await paths('**', '/', 2))?.length === 2, 'glob honours limit')
       },
     },
     {

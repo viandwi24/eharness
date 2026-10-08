@@ -7,6 +7,7 @@ import type { FinishReason, ModelMessage } from 'ai'
 import { WAIT_TIMED_OUT } from '../messages/texts.ts'
 import type { PendingState, StopReason } from '../messages/types.ts'
 import type { ToolTraits } from '../registry/risk.ts'
+import { clientToolEntry } from '../session/interaction/pending.ts'
 
 /** The wait id of an external call: stable per tool call (spec 11 §4.2 rule 1). */
 export function waitIdOf(toolCallId: string): string {
@@ -106,7 +107,9 @@ export function findPending(
         toolName,
         onTimeout: { errorText: WAIT_TIMED_OUT },
       })
-    } else if (clientTools.has(toolName)) pending.clientTools.push({ toolCallId, toolName })
+    } else if (clientTools.has(toolName)) {
+      pending.clientTools.push(clientToolEntry(toolCallId, toolName, inputs.get(toolCallId)))
+    }
   }
   return pending.approvals.length + pending.clientTools.length + (pending.externals?.length ?? 0) >
     0

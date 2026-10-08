@@ -38,6 +38,7 @@ export interface PendingState {
 }
 export interface PendingClientTool {
   toolCallId: string; toolName: string
+  input?: unknown; inputTruncated?: true              // 0.7.0: the call's (refined) input; > 16 KB (UTF-8 bytes of its JSON) is omitted with inputTruncated
   waitId?: string                                     // `w_<toolCallId>`; set with `timeoutAt` (§7.1 rule 5)
   timeoutAt?: number                                  // epoch ms
   onTimeout?: { errorText: string } | { output: JSONValue }  // default { errorText: CLIENT_TOOL_TIMED_OUT }
@@ -259,13 +260,38 @@ user-role text on the wire and appear as `user` entries. At AI SDK's re-validati
 calls the wire is the continuation's (it ends with the answered calls); judges cache by call id
 (spec 15 §2 rule 4).
 
+### 3.6 Approval notes (0.7.0)
+
+`respond({ approvals: [{ id, approved, note }] })` lets the human attach a free-text note to an
+answer (max 4 000 characters, else `EH_INVALID_INPUT` — the answers are not consumed; an empty or
+whitespace-only note is ignored).
+
+- **Approved call.** The model of the **first step of the continuation** reads the note right
+  after the tool result, as a user message
+  `<user-note tool="<name>" call="<id>">\n<note>\n</user-note>` (one per note, in answer order;
+  `<user-note` / `<system-reminder` tags inside the note are neutralised, `tool` / `call` are
+  reduced to `[A-Za-z0-9_.:-]`). It is stored where the model saw it (ADR-0011): a
+  `data-eh.input` part of the continued assistant message **after the approved tool outputs and
+  before the first `start-step`** of the continuation, with `source: 'user'`, `text` = the framed
+  note and `approvalNote: { toolCallId, toolName, text }` (the raw note, for a UI). Stored order
+  equals model order, so a reload projects the same conversation. AI SDK needs the approvals as
+  the **last** message of the first call, so the core adds the note through `prepareStep` (after
+  the tool result message AI SDK appends) and inserts it at the same place into its own wire.
+  A note of a call that is parked or deferred (§4 step 4) is not delivered: no model step runs.
+  With `endTurn` (§4) the note is still stored (the next turn's model reads it).
+- **Denied call.** The note is appended to `reason` (`<reason>\n\n<note>`); it reaches the model,
+  the stored `approval.reason` and the `tool-approval-response` chunk through the reason only.
+- Never sent to the model otherwise; not part of `approval.decided` events.
+- Server side only: AI SDK's UI approval object (`{ id, approved, reason }`) carries no note, so
+  `handleChatRequest` never reads one — an app that wants notes calls `respond()` itself.
+
 ## 4. `respond()`
 
 ```ts
 respond(response: PendingResponse, options?: SendOptions): HarnessRun<M>
 
 export interface PendingResponse {
-  approvals?: Array<{ id: string; approved: boolean; reason?: string; remember?: 'once' | 'session'; actor?: ApprovalActor }>
+  approvals?: Array<{ id: string; approved: boolean; reason?: string; remember?: 'once' | 'session'; actor?: ApprovalActor; note?: string }>   // note: 0.7.0, §3.6
   toolOutputs?: Array<{ toolCallId: string; output: unknown } | { toolCallId: string; errorText: string }>
   externals?: Array<{ waitId: string; output: unknown } | { waitId: string; errorText: string }>   // 0.5.0, §4.2
 }
@@ -330,6 +356,22 @@ Inside the run (same failure semantics as `send()`, spec 05 §2):
 
 A continuation turn must stream into the existing UI message: starting a fresh UI message fails in
 AI SDK with `No tool invocation found for tool call ID`.
+
+**`endTurn` (0.7.0).** `respond(response, { endTurn: 'after-answers' | 'if-denied' })` records the
+answers and runs the approved tools like any continuation, but never calls the model:
+`'after-answers'` always, `'if-denied'` only when at least one approval answer is a denial (else the
+continuation proceeds normally). The first step's `streamText` call runs against a model that
+answers with an empty stream and makes no provider request (the approved tools run first, as in
+step 5); it is not a model step: the turn stops **`'complete'`** (no new stop reason; the model has
+nothing left to do) with `steps: 0` and zero usage, no step reminder or `turn.beforeEnd` applies,
+`step.prepare` runs (with `continuing`, spec 01 §5; its model choice is ignored) and `step.end` fires once for the
+tool results. The
+stored assistant message is complete (`stop: 'complete'`, `pending: null`, tool parts with their
+outputs / denials, approval notes as `data-eh.input`); the next `send()` continues normally and the
+model then sees the tool results. A steer that arrives meanwhile is not delivered: it runs as a
+queued turn (§6.1). Ignored when the answers park an approved client-tool call (the turn stops
+`'tool-pending'` without a model step anyway). `endTurn` is a server-side option:
+`handleChatRequest` passes `options` through, a request body cannot set it.
 
 **Structured output (0.4.0).** `SendOptions.output` (spec 05 §3.3) is not part of the pending state
 (a schema is not serializable): a turn that stopped `'tool-pending'` returns `output: undefined`,
@@ -525,8 +567,17 @@ step's tool results, before the next model call):
     `events()` so the UI can put the text back into the input box;
   - any other stop → the input becomes a queued `send` turn (§6.2), announced by `turn-start`
     with `queued: true`.
-- `send(…, { ifBusy: 'steer' })` returns `session.attach()` of the running turn. If the session
-  is idle, it behaves like a normal `send()`.
+- `send(…, { ifBusy: 'steer' })` returns `session.attach()` of the running turn (same `turnId`),
+  extended with `delivery: Promise<'step' | 'turn' | 'dropped'>` (0.7.0): `'step'` — delivered at a
+  step boundary of the running turn; `'turn'` — it runs as a queued `send` turn of its own;
+  `'dropped'` — not delivered (`input-dropped`, see above, or a `block` of `input.submit`). When
+  the running turn refuses the steer at once (§ below: its step loop ended, no input, a manual
+  `compact()` runs) the returned run **is the queued turn's run** (drive it like a queued
+  `send`), and `delivery` is `'turn'`. When the turn accepted the steer but ended without
+  delivering it (a `length` stop, …) the run stays the first turn's and `delivery` settles
+  `'turn'` when the queued turn was created — follow it with `attach()` or `events()`
+  (`turn-start` with `queued: true`). If the session is idle, it behaves like a normal `send()`
+  (`delivery` resolves `'turn'`). `delivery` never rejects and is absent on every other run.
 - The delivered `text` is the input's text parts followed by `input.submit` `context` strings,
   joined with a blank line; `files` are its file parts.
 - A steer that arrives when the running turn no longer takes input (its step loop ended), a steer
@@ -659,7 +710,7 @@ run and reported as a run error):
 
 1. `trigger === 'regenerate-message'` → `regenerate({ messageId: body.messageId })`.
 2. last message has `role: 'assistant'` → `respond(extractResponses(last))`: reads only
-   `approval.id / approved / reason` of parts in `approval-responded`, and `toolCallId` /
+   `approval.id / approved / reason` of parts in `approval-responded` (never a `note`, §3.6), and `toolCallId` /
    `output` / `errorText` of tool parts in `output-available` / `output-error`. Inside the run
    the answers are matched against `state.core.pending`; entries that are not pending are ignored,
    and a pending item without an answer → `EH_INVALID_INPUT` (`'incomplete'`). External waits are

@@ -127,7 +127,21 @@ on an empty prompt opens the shortcuts panel.
 | `?` | shortcuts panel (empty prompt) |
 | Up / Down | prompt history (this project, saved across sessions); `Up` on an empty prompt with queued messages takes them back |
 | Ctrl+R | reverse history search across all projects (see Prompt history) |
-| Ctrl+A / Ctrl+E / Ctrl+U | line start / line end / clear |
+| Ctrl+A / Ctrl+E | line start / line end |
+| Ctrl+B / Ctrl+F | move one character left / right |
+| Ctrl+U / Ctrl+K | delete to line start / to line end (into the kill ring) |
+| Ctrl+W, Alt+Backspace | delete the previous word (kill ring) |
+| Alt+D | delete the next word (kill ring) |
+| Ctrl+Y, then Alt+Y | paste the last kill; Alt+Y cycles through older kills |
+| Alt+B / Alt+F | move one word left / right (macOS: Option works when it sends Meta, or as the `∫` / `ƒ` characters) |
+| Ctrl+_ | undo in the prompt |
+| Ctrl+D | delete forward; on an empty prompt press twice to exit |
+| Ctrl+G | edit the prompt in `$VISUAL` / `$EDITOR` (see Input editing) |
+| Ctrl+S | stash the draft; on an empty prompt restore it |
+| Ctrl+V, Alt+V | paste an image from the clipboard as an `[Image #N]` chip |
+| Esc Esc (twice within 500 ms) | clear a draft (it stays in prompt history); on an empty prompt open `/rewind` |
+| Ctrl+T | show or hide the todo list |
+| Tab, Right | accept the dim next-prompt suggestion on an empty prompt |
 
 | Command | Does |
 |---|---|
@@ -148,9 +162,27 @@ on an empty prompt opens the shortcuts panel.
 | `/<name> [args]` | a custom command or a skill (see Custom commands) |
 | `/init` | ask the agent to write an `AGENTS.md` for the project |
 | `/exit` | quit |
+| `/compact [instructions]` | as `/compact`; the optional text tells the summary what to keep |
+| `/rewind` | restore code and/or conversation to an earlier prompt (also `Esc Esc`) |
+| `/branch [name]` | copy the conversation into a new session and switch to it |
+| `/rename <name>` | name this session |
+| `/export [file]` | write the conversation as text (default `coder-export-<time>.txt` in the project root) |
+| `/copy [n]` | copy the latest (or n-th latest) assistant response to the clipboard |
+| `/btw <question>` | side question answered from the current context, nothing stored |
+| `/recap` | one-line recap of the session |
+| `/add-dir <path>` | mount another directory under `/@dirs/` |
+| `/memory` | memory files the agent reads (page) |
+| `/config` | view and change settings (page) |
+| `/tasks` | background shells and agents (page) |
+| `/doctor` | check the environment (page) |
+| `/output-style [name]` | pick the response style, or set it by name |
+| `/theme [dark\|light\|auto]` | show or set the colour theme |
+| `/sandbox` | toggle the OS sandbox of the bash tool |
+| `/vim` | toggle vim keys in the prompt editor |
+| `/focus` | toggle the focus view |
 
-**Fullscreen pages.** `/context`, `/status`, `/cost`, `/help`, `/agents`, `/permissions`, `/diff` and the
-transcript viewer open on the terminal's alternate screen, so your scrollback is untouched, and
+**Fullscreen pages.** `/context`, `/status`, `/cost`, `/help`, `/agents`, `/permissions`, `/diff`, `/memory`, `/config`,
+`/tasks`, `/doctor` and the transcript viewer open on the terminal's alternate screen, so your scrollback is untouched, and
 `Esc` or `q` returns to it. Scroll with the arrow keys (`g` / `G` for top / bottom), `Tab` jumps to the
 next section. `/context` draws the window as a grid of 1% cells (system, memory, skills, tools, MCP,
 messages, free space, autocompact buffer) and lists tools, memory files, messages and thresholds below.
@@ -289,6 +321,254 @@ notes to a question. Keys: `←/→` or `Tab` switch tabs, `↑/↓` move, `Spac
 `Enter` selects and moves on (or submits), `Esc` dismisses (the agent is told you did not answer).
 In print mode questions are dismissed.
 
+### Input editing
+
+The prompt is a multiline editor with its own undo stack, kill ring and word motions (keys above).
+
+- **External editor.** `Ctrl+G` writes the prompt to a temp file, runs `$VISUAL`, then `$EDITOR`,
+  then `vi` on it in the foreground (arguments such as `code -w` are allowed) and reads the text
+  back. `/doctor` warns when neither is set.
+- **Stash.** `Ctrl+S` on a non-empty prompt saves it and clears the editor; `Ctrl+S` on an empty
+  prompt brings it back. One stash slot, kept for the session.
+- **Paste chips.** A bracketed paste of more than 800 characters or 10 lines becomes
+  `[Pasted text #N +L lines]`. The chip is one unit for the arrow keys and Backspace/Delete; the full
+  text is sent when you submit.
+- **Images.** `Ctrl+V` / `Alt+V` reads a PNG from the clipboard (macOS `osascript`, Linux `wl-paste`
+  or `xclip`; at most 5 MB) and inserts an `[Image #N]` chip. On submit the images go to the model
+  as `file` parts, in chip order. If the model has no vision support the provider decides what
+  happens.
+- **Mentions.** `@` completes files, folders (a trailing `/`) and agents (`@agent-<name>`); Tab
+  completes, up to 8 matches, shortest first.
+- **Vim mode.** `"editorMode": "vim"` or `/vim`; the footer shows `-- INSERT --`, `-- NORMAL --`,
+  `-- VISUAL --` or `-- VISUAL LINE --`. The prompt starts in INSERT, `Esc` goes to NORMAL (a lone
+  `Esc` still interrupts a running turn), `Enter` in NORMAL submits.
+
+  | Group | Keys |
+  |---|---|
+  | enter INSERT | `i I a A o O` |
+  | motions | `h j k l w e b 0 ^ $ gg G`, `f F t T` with `;` `,` |
+  | operators | `d c y` with a motion, `dd cc yy`, text objects `iw` `aw` |
+  | edits | `x X D C s S r J ~ p P Y u` and `.` (repeat last change) |
+  | counts | `3w`, `2dd`, `d2w` |
+  | VISUAL | `v`, `V`, then `d x y c` |
+
+### Sessions, rewind and checkpoints
+
+- **Checkpoints.** Before the first change of a turn to a file through `edit_file`, `write_file` or
+  `delete_file`, the file's previous content is saved (subagent edits count for the turn that
+  started them). The last 50 turns per session are kept under
+  `~/.coder/projects/<hash>/checkpoints/`.
+- **`/rewind`** (or `Esc Esc` on an empty prompt) lists your earlier prompts. Pick one, then
+  **Restore code and conversation**, **Restore conversation** or **Restore code**. Code: files the
+  agent changed in that turn and later are put back (files that did not exist are deleted).
+  Conversation: a new session is created with the messages before that prompt (the old session stays
+  untouched) and the prompt text returns to the editor.
+- **What is not checkpointed.** Changes made by the shell (`bash`, `!command`, a background shell),
+  by other tools, and by you or other programs outside the agent. A rewind never undoes those.
+- `/branch [name]` copies the conversation into a new session and switches to it. `/rename <name>`
+  names the session (shown in the footer). `/export [file]` writes a text
+  transcript. `/copy [n]` copies an assistant response with `pbcopy`, `wl-copy`, `xclip`, `xsel` or
+  `clip`, else the terminal's OSC 52 clipboard sequence.
+- **`/compact [instructions]`**: the text is added to the summariser's context for that one
+  compaction.
+
+### Side questions, recap and suggestions
+
+- **`/btw <question>`** answers from the current context in a bordered box under the prompt. It
+  uses the stored messages (tool calls reduced to short text lines), calls the model without tools,
+  and stores nothing: not in the conversation, not in `/cost`. `Esc` cancels or dismisses it.
+- **`/recap`** prints a one-line summary of the session (one cheap model call over the recent
+  messages, 15 s limit).
+- **Prompt suggestions** (`promptSuggestions: true`): after a turn, one cheap model call proposes the
+  next prompt, shown dim in the empty prompt; `Tab` or `Right` accepts it. Off by default because it
+  costs a call per turn.
+
+### Background tasks
+
+The `bash` tool takes two extra inputs, and `agent` takes one:
+
+| Input | Effect |
+|---|---|
+| `bash { run_in_background: true }` | start the command and return a task id (`bash-1`, ...) at once |
+| `bash { notify_on: "<regex>" }` | with `run_in_background`: each new output line matching the regex is reported to the agent, at most one notification per 5 s (batched) |
+| `agent { run_in_background: true }` | run the subagent in the background (`agent-1`, ...); its report (cut to 4000 characters) arrives later |
+
+Two more tools: **`bash_output { id, filter? }`** returns the output since the last read with status
+and exit code (`filter` is a regex over lines); **`kill_shell { id }`** stops a task. Background
+commands use the same sandbox and permission checks as `bash`. Output is capped at 1 MB per task.
+
+When a task finishes (or a `notify_on` line matches) the event is delivered to the agent at its next
+step. If the agent is idle, the event wakes it: a new turn starts without input so it can react,
+with approvals and the stream shown as usual. A task you stopped sends nothing. All tasks are
+stopped when coder exits.
+
+`/tasks` opens a page with every task, its status and tail output: `↑/↓` select, `Enter` shows the
+output, `k` stops a running task, `Esc` or `q` closes.
+
+### Settings reference
+
+Settings files merge in this order, later wins: `~/.coder/settings.json` (user),
+`<root>/.coder/settings.json` (project, committed), `<root>/.coder/settings.local.json` (yours,
+git-ignored by convention). Every key may appear in any file; an invalid file is an error (exit 2 in
+print mode). `/config` edits the keys below in the user file or the local file (`u` / `l` switch the
+scope; `Enter` or `Space` toggles or cycles, `Enter` edits text and numbers).
+
+| Key | Default | Meaning | Project trust |
+|---|---|---|---|
+| `model` | provider default | model id | no |
+| `provider` | from API keys | `openrouter` or `gateway` | no |
+| `contextWindow` | 200000 without a catalog entry | context window override | no |
+| `permissions.allow` / `ask` / `deny` | `[]` | rules (see Permissions); `ask` and `deny` only tighten | `allow` only |
+| `permissions.defaultMode` | `default` | mode a new session starts in | yes |
+| `permissions.additionalDirectories` | `[]` | extra mounted directories | yes |
+| `mcpServers` | `{}` | MCP servers by name | yes |
+| `theme` | `dark` | `dark`, `light` or `auto` (`auto` reads `COLORFGBG`); `/config` default scope: user | no |
+| `outputStyle` | `default` | response style name | no |
+| `notifications` | `bell` | `off`, `bell` or `desktop`; default scope: user | no |
+| `askUserQuestionTimeout` | `0` | seconds until an unanswered question is dismissed (0 = never) | no |
+| `statusLine` | none | `{ "command": "..." }` footer command | yes |
+| `promptSuggestions` | `false` | next-prompt suggestion after each turn | no |
+| `editorMode` | `normal` | `normal` or `vim`; default scope: user | no |
+| `hooks` | `{}` | shell hooks by event | yes |
+| `sandbox.enabled` | `false` | OS sandbox for `bash` | turning it off needs trust; turning it on does not |
+| `sandbox.network` | `false` | allow network in the sandbox | enabling needs trust |
+| `sandbox.allowWrite` | `[]` | extra writable directories | yes |
+| `lsp` | auto | language servers by name | yes |
+
+Trust is explained under Project trust. `/config` also shows `model`, `provider` and `thinking`; those
+live in the per-project preferences file, not in a settings file. `/status` shows which keys were
+ignored for lack of trust.
+
+### Hooks
+
+Shell commands that run on agent events, configured in `hooks` (user, local, or a trusted project
+file):
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [{ "matcher": "bash", "command": ".coder/hooks/check.sh", "timeoutMs": 5000 }],
+    "PostToolUse": [{ "matcher": "edit_file|write_file", "command": "bunx biome format --write ." }]
+  }
+}
+```
+
+Each command runs with `/bin/sh -c` in the project root; the event JSON is written to its stdin;
+`CODER_PROJECT_DIR` and `CODER_HOOK_EVENT` are set. Default timeout 60 s (`timeoutMs` per entry);
+the process group is killed on timeout. All matching commands of an event run in parallel. `matcher`
+is a regular expression that must match the whole tool name (omitted, empty or `*` match every tool);
+it only applies to the tool events.
+
+| Event | stdin JSON (besides `event`, `cwd`, `session_id`) | Exit code 2 | stdout JSON |
+|---|---|---|---|
+| `PreToolUse` | `tool_name`, `tool_input` | deny the call; stderr is the reason | `{ "decision": "approve" \| "deny" \| "ask", "reason" }` (the strictest answer among hooks wins) |
+| `PostToolUse` | `tool_name`, `tool_input`, `tool_output` | stderr is appended to the output | `{ "additionalContext" }` is appended to the output |
+| `UserPromptSubmit` | `prompt` | block the prompt; stderr is the reason | `{ "decision": "block", "reason" }`, or text / `{ "additionalContext" }` added as context |
+| `Stop`, `SubagentStop` | `stop_hook_active`, `last_text` | keep working; stderr is the instruction (at most 3 times in a row) | `{ "decision": "block", "reason" }` does the same |
+| `SessionStart` | none | ignored | none |
+| `Notification` | `message` | ignored | none |
+
+Exit 0 with no output means no opinion. A spawn failure, a timeout or any other exit code shows a
+warning and is otherwise ignored: a broken hook never breaks the agent. A `systemMessage` string in
+the stdout JSON is shown to you. An invalid `matcher` skips that hook with a warning.
+
+- `PreToolUse` runs as a `tool.approve` hook of the hooks plugin, which is added to every agent
+  after the permissions plugin. `approve`, `ask` and `deny` map to the matching approval statuses;
+  when several hooks answer, the strictest wins. The decision is computed once per tool call and
+  cached, so an approval round does not run the command twice. This deviates from the library rule
+  that approval hooks are deterministic and side-effect free; see the plan.
+- Hooks are your own code. A project's hooks run only after you trust the project.
+
+### Output styles
+
+`/output-style` (or `outputStyle`) changes how the agent words answers. Built-ins: `default` (no
+extra text), `concise`, `explanatory` (adds short "Insight:" notes) and `learning` (leaves
+`TODO(human)` parts for you). Custom styles are Markdown files with optional `name` and
+`description` frontmatter; the body is the instruction:
+
+| Location | Scope |
+|---|---|
+| `<root>/.coder/output-styles/*.md` | the project (only when trusted) |
+| `~/.coder/output-styles/*.md` | you |
+
+A project style beats a user style beats a built-in of the same name. The style is a session
+instruction placed after the static instructions, so switching it rebuilds the prompt cache from
+that point on (tools and the static prefix stay cached). Switch rarely.
+
+### Themes, status line, notifications
+
+- **Themes.** `/theme dark|light|auto` (or `theme`); `auto` reads `COLORFGBG`. `NO_COLOR` removes
+  every colour.
+- **Status line.** `statusLine.command` runs with this JSON on stdin and the first non-empty line
+  of stdout (ANSI colours allowed) replaces the footer's right side. 2 s timeout, result cached for
+  1 s, any failure shows nothing.
+
+  ```json
+  { "session_id": "...", "cwd": "/path", "mode": "default",
+    "model": { "id": "anthropic/claude-sonnet-5.5" },
+    "cost": { "total_cost_usd": 0.12 },
+    "context": { "used_tokens": 12000, "window": 200000, "used_percentage": 6 } }
+  ```
+- **Notifications and title.** The terminal title is set to `coder · <task text>` (OSC 0). When a turn ends or the
+  agent needs input (approval, question), `notifications` rings the bell (`bell`, default), sends a
+  desktop notification (`desktop`: OSC 9 and OSC 777, plus `osascript` in Apple Terminal) or does
+  nothing (`off`). Hooks on `Notification` fire at the same moments.
+- **Focus view.** `/focus` shows only your prompts and the final answers (one-line tool summaries
+  are hidden); toggle again to leave. `Ctrl+T` toggles the todo list.
+
+### LSP
+
+The `lsp` tool gives the agent code intelligence from language servers. It is read-only (risk
+`read`) and starts a server lazily, on the first file of its type.
+
+```json
+{ "lsp": { "python": { "command": ["pyright-langserver", "--stdio"], "extensions": [".py"] } } }
+```
+
+Without an `lsp` setting, coder starts `typescript-language-server --stdio` for `.ts .tsx .js .jsx
+.mts .cts .mjs .cjs` when the binary is found in `node_modules/.bin` or on `PATH`; otherwise the
+tool has no server. A request times out after 10 s; `diagnostics` waits up to 3 s for the server.
+Paths are virtual (`/src/a.ts`), line and character are 1-based.
+
+| Operation | Inputs | Returns |
+|---|---|---|
+| `definition`, `references`, `hover` | `path`, `line`, `character` | locations (up to 100) or hover text |
+| `diagnostics` | `path` | errors and warnings of the file (up to 100) |
+| `symbols` | `path` | outline of the file (up to 200) |
+| `workspace_symbols` | `query`, optional `path` to pick the language | matching symbols (up to 200) |
+
+### OS sandbox
+
+`sandbox.enabled: true` (or `/sandbox`, or `/config`) runs every `bash` command (also background and
+`!command` shells) inside an OS sandbox:
+
+- **macOS:** `sandbox-exec` (Seatbelt) with a generated profile. Apple deprecated the tool, but it
+  still ships with macOS.
+- **Linux:** bubblewrap (`bwrap`) with the root mounted read-only.
+
+What it restricts: **writes** (only the project root, `sandbox.allowWrite` directories and temp
+directories are writable) and the **network** (off unless `sandbox.network` is true; local unix
+sockets stay usable on macOS for git, ssh-agent and DNS).
+
+What it does not restrict: **reads**. Everything on disk, secrets in your home directory included,
+stays readable by a sandboxed command. It does not limit CPU or memory either, and it does not cover
+the file tools (those use the virtual path tree) or MCP servers and hooks. When the platform tool is
+missing, coder says so and commands run unsandboxed; `/doctor` and `/status` show the state. The
+permission engine still asks as described in the Safety model; the sandbox is a second layer. A
+write blocked by the sandbox is reported to the model with a hint.
+
+### Doctor, memory
+
+- **`/doctor`** checks: runtime, provider key, model in the catalog, `git`, `rg`, `$VISUAL` /
+  `$EDITOR`, clipboard command, OS sandbox tool, settings files (valid JSON and schema), project
+  trust, MCP servers, LSP servers and that the data directory is writable. Each is `ok`, `warn` or
+  `error` with a detail.
+- **`/memory`** lists the memory files the agent reads, in load order: user memory
+  `~/.coder/AGENTS.md`, then the project `AGENTS.md` (fallback `CLAUDE.md`), then nested
+  `AGENTS.md` files. Missing ones are listed too; `Enter` shows the edit command for `$EDITOR`.
+  User memory is added to the static instructions ahead of the project file (capped at 40 000
+  characters) and applies to every project.
+
 ## Safety model
 
 Read this before pointing the agent at anything you care about.
@@ -319,9 +599,9 @@ Read this before pointing the agent at anything you care about.
 - **`glob` containment.** Patterns with `..`, an absolute path, `~` or backslashes are rejected;
   results are re-checked with `realpath` against the mount.
 
-**The shell is not sandboxed.** The `bash` tool runs `/bin/bash -c` with your user's privileges. The
-name of the local sandbox module is historical; it does not isolate anything. Protection comes only
-from the permission engine:
+**The shell is not sandboxed by default.** The `bash` tool runs `/bin/bash -c` with your user's
+privileges. The name of the local sandbox module is historical. Protection comes from the permission
+engine; the opt-in OS sandbox (see OS sandbox) adds write and network limits, not read limits:
 
 - A command is auto-approved only if every part is a read-only command with a **per-command
   argument allow-list** (flags and positional arguments are checked, not just the program name) and
@@ -375,6 +655,17 @@ Known limits:
   `defaultMode` again, not in the mode the session ended in.
 - Transcripts of subagents (`/agents <n>`) exist only for runs seen live in this process. After a
   resume the final tool output carries no child session id.
+- The OS sandbox does not restrict reads, CPU or memory, and needs `sandbox-exec` (macOS, deprecated
+  by Apple) or `bwrap` (Linux); Windows has none. Without the tool commands run unsandboxed.
+- Rewind restores only files changed through the file tools. Shell changes, other tools and outside
+  edits are not checkpointed. Only the last 50 turns per session have checkpoints.
+- Hooks are arbitrary commands: a `PreToolUse` hook runs once per tool call and its answer is
+  cached, which deviates from the library's deterministic-approval rule.
+- Background tasks live in the process: they stop when coder exits and are not restored on resume.
+- Image paste reads PNGs only (macOS `osascript`, Linux `wl-paste` / `xclip`); there is no Windows
+  image paste.
+- Vim mode covers the common subset listed above, not macros, registers by name or ex commands.
+- Output style changes rebuild part of the prompt cache.
 
 ## Permissions
 
@@ -516,6 +807,8 @@ Notes:
 
 ## Project memory, skills, MCP, sessions
 
+- **User memory.** `~/.coder/AGENTS.md` (if present) is added to the instructions before the
+  project file, for every project (see `/memory`).
 - **Project memory.** `AGENTS.md` at the project root is added to the instructions (fallback:
   `CLAUDE.md`). Other `AGENTS.md` files in the tree are listed as virtual paths so the model can
   read them when working there. `/init` asks the agent to write one.
@@ -528,9 +821,10 @@ Notes:
   them (`mcp__server__tool`). This path has no automated test yet.
 - **Sessions.** JSON files in `~/.coder/projects/<sha256(root)[0:16]>/sessions/`, written with the
   example JSON-file adapters. `-c` picks the newest, `-r` / `/resume` a given one. The project data
-  directory also holds `tool-outputs/` and `audit.jsonl`. User data (`~/.coder`, or `CODER_HOME`):
-  `settings.json`, `agents/`, `commands/`, `history.jsonl`, `trusted.json`, `models.json`, `openrouter-models.json`, `projects/`
-  (each project folder also has `preferences.json`).
+  directory also holds `tool-outputs/`, `checkpoints/` and `audit.jsonl`. User data (`~/.coder`, or `CODER_HOME`):
+  `settings.json`, `AGENTS.md`, `agents/`, `commands/`, `output-styles/`, `history.jsonl`, `trusted.json`, `models.json`, `openrouter-models.json`, `projects/`
+  (each project folder also has `preferences.json`). Project trust also covers `.coder/commands/` and
+  `.coder/output-styles/`.
 
 ## How it is built
 

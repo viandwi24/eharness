@@ -263,7 +263,9 @@ describe('scenario 14: tool-pending', () => {
       v: 2,
       messageId: result.messageId as string,
       approvals: [],
-      clientTools: [{ toolCallId: 'call-0-0', toolName: 'ask_user' }],
+      clientTools: [
+        { toolCallId: 'call-0-0', toolName: 'ask_user', input: { question: 'Which city?' } },
+      ],
     })
     expect((await state.get('s1'))?.core.pending).toEqual(result.pending)
     const assistant = result.messages.find((m) => m.id === result.messageId)

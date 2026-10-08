@@ -6,6 +6,7 @@
  * @see docs/specs/11-interaction.md#63-inject-delivery-and-wake
  */
 import { convertToModelMessages, type ModelMessage } from 'ai'
+import type { SteerDelivery } from '../../agent/session-types.ts'
 import { kindOf } from '../../messages/kinds.ts'
 import type { MessageRegistry } from '../../messages/registry.ts'
 import type { HarnessUIMessage, InputPartData } from '../../messages/types.ts'
@@ -23,6 +24,8 @@ export interface PendingInput {
   wake?: boolean
   /** A steer claimed from the durable inbox: acked once its `data-eh.input` is saved. */
   inboxId?: string
+  /** Reports where a steer went (`HarnessRun.delivery`); the first call wins. */
+  settle?: (outcome: SteerDelivery) => void
 }
 
 /** The input queue of one running turn. */

@@ -449,7 +449,11 @@ export interface CompactionBeforePatch {
     model?: LanguageModel            // default compaction.model ?? the turn's model
   }
 }
-export interface StepPrepareEvent { stepIndex: number; messages: ModelMessage[]; toolNames: string[]; model: LanguageModel }
+export interface StepPrepareEvent {
+  stepIndex: number; messages: ModelMessage[]; toolNames: string[]; model: LanguageModel
+  /** 0.7.0: step 0 of a respond() continuation only — the final tool names that respond() answered (each once); `denied` = denied approvals (spec 11 §4). */
+  continuing?: { approved: string[]; denied: string[] }
+}
 export interface StepPreparePatch {
   model?: LanguageModel               // last hook wins
   settings?: Partial<ModelSettings>   // shallow-merged

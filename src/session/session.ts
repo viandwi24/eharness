@@ -19,6 +19,7 @@ import type {
   SendOptions,
   SessionOptions,
   StateAdapter,
+  SteerDelivery,
 } from '../agent/session-types.ts'
 import { createSessionCompaction } from '../compaction/compact.ts'
 import { manualFlushEnv } from '../compaction/flush.ts'
@@ -1085,17 +1086,29 @@ export function createSessionHandle(args: {
         if (ifBusy === 'collect' && normalized !== undefined) {
           return collectInput(normalized, options.collect, undefined, true) as HarnessRun<UIMessage>
         }
-        if (ifBusy === 'steer' && current !== undefined) {
-          const running = session.attach() as HarnessRun<UIMessage>
-          // a turn that stopped taking input: the steer becomes a queued turn (spec 11 §6.1)
-          if (normalized === undefined || !current.steer(normalized)) {
-            enqueue({ input: normalized, options })
+        if (ifBusy === 'steer') {
+          // where the input went (spec 05 §2): a step of the running turn, a turn of its own, or nowhere
+          let settle!: (outcome: SteerDelivery) => void
+          const delivery = new Promise<SteerDelivery>((resolve) => {
+            settle = resolve
+          })
+          if (current !== undefined && normalized !== undefined) {
+            if (current.steer(normalized, undefined, settle)) {
+              return { ...(session.attach() as HarnessRun<UIMessage>), delivery }
+            }
           }
-          return running
+          // a turn that stopped taking input (or none to take it): a queued turn of its own,
+          // and the caller gets that turn's run (spec 11 §6.1)
+          settle('turn')
+          return { ...enqueue({ input: normalized, options }), delivery }
         }
         return enqueue({ input: normalized, options })
       }
-      return begin({ kind: 'send', input, options, queued: false })
+      const started = begin({ kind: 'send', input, options, queued: false })
+      // a steer with nothing running starts a turn of its own
+      return options.ifBusy === 'steer'
+        ? { ...started, delivery: Promise.resolve<SteerDelivery>('turn') }
+        : started
     },
     respond(response: PendingResponse, options: SendOptions = {}) {
       assertOpen()

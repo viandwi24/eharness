@@ -102,7 +102,7 @@ describe('client tools: round trip', () => {
     expect(first.stop).toBe('tool-pending')
     expect(toolNames(model.calls[0])).toEqual(['get_location'])
     expect(first.pending?.clientTools).toEqual([
-      { toolCallId: 'call-0-0', toolName: 'get_location' }, // no timeout configured
+      { toolCallId: 'call-0-0', toolName: 'get_location', input: { precise: true } }, // no timeout configured
     ])
     const toolCall = (await stored(shared))
       .at(-1)
@@ -721,7 +721,9 @@ describe('client tools: an approved call is parked for the client, never run on 
     expect(second.stop).toBe('tool-pending')
     expect(second.messageId).toBe(first.messageId)
     expect(second.pending?.approvals).toEqual([])
-    expect(second.pending?.clientTools).toEqual([{ toolCallId: 'call-0-0', toolName: 'wipe' }])
+    expect(second.pending?.clientTools).toEqual([
+      { toolCallId: 'call-0-0', toolName: 'wipe', input: {} },
+    ])
     expect(model.calls).toHaveLength(1) // no model call until the client answered
     const parked = (await stored(shared)).find((m) => m.id === first.messageId)
     expect(parked?.parts.find((p) => p.type === 'tool-wipe')).toMatchObject({
@@ -770,7 +772,9 @@ describe('client tools: an approved call is parked for the client, never run on 
     const second = await session().respond({ approvals: [{ id: approvalId, approved: true }] })
       .result
     expect(second.stop).toBe('tool-pending')
-    expect(second.pending?.clientTools).toEqual([{ toolCallId: 'call-0-0', toolName: 'wipe' }])
+    expect(second.pending?.clientTools).toEqual([
+      { toolCallId: 'call-0-0', toolName: 'wipe', input: {} },
+    ])
     expect(model.calls).toHaveLength(1)
     // the approval is consumed: answering it again is rejected, nothing runs twice
     const again = await session().respond({ approvals: [{ id: approvalId, approved: true }] })

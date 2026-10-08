@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { fileSystemConformance } from '../testing/file-system.conformance.ts'
+import { compileGlob } from './glob.ts'
 import { memoryFs } from './memory.ts'
 import type { FileSystem } from './types.ts'
 import { contentVersion } from './version.ts'
@@ -10,6 +11,25 @@ describe('memoryFs() conformance', () => {
     requireGrep: true,
     requireMove: true,
   })) {
+    test(c.name, c.run)
+  }
+})
+
+describe('an adapter with the optional glob (conformance)', () => {
+  const withGlob = (): FileSystem => {
+    const inner = memoryFs()
+    return {
+      ...inner,
+      async glob(pattern, { prefix, limit }) {
+        const compiled = compileGlob(pattern)
+        if (!compiled.ok) return []
+        return (await inner.list(prefix))
+          .filter((file) => compiled.test(file.path.slice(prefix.length)))
+          .slice(0, limit)
+      },
+    }
+  }
+  for (const c of fileSystemConformance(withGlob, { requireGlob: true })) {
     test(c.name, c.run)
   }
 })

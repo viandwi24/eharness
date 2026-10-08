@@ -119,6 +119,9 @@ const inputSchema = z.looseObject({
   text: z.string(),
   files: z.array(fileUIPartSchema).optional(),
   clientId: z.string().optional(),
+  approvalNote: z
+    .looseObject({ toolCallId: z.string(), toolName: z.string(), text: z.string() })
+    .optional(),
 })
 
 const outputSchema = z.looseObject({

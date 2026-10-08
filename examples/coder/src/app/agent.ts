@@ -371,6 +371,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       filesystem({
         fs: workspace.fs,
         toolOutputs: { dir: '/.coder/tool-outputs' },
+        // the example registers its own disk-backed `glob` tool
+        tools: ['list_files', 'read_file', 'write_file', 'edit_file', 'delete_file', 'grep'],
         ...(hasSkills ? { skills: { root: '/.coder/skills' } } : {}),
       }),
       todos(),

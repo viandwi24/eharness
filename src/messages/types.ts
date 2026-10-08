@@ -108,6 +108,13 @@ export interface PendingState {
 export interface PendingClientTool {
   toolCallId: string
   toolName: string
+  /**
+   * The (refined) input of the call (0.7.0, spec 11 §2), so an inbox can show the request without
+   * loading messages. Omitted — with `inputTruncated: true` — when its JSON is larger than 16 KB.
+   */
+  input?: unknown
+  /** `input` was left out because it exceeds the 16 KB cap. */
+  inputTruncated?: true
   /** `w_<toolCallId>`; set with `timeoutAt` (request-scoped client tools with a timeout). */
   waitId?: string
   /** Epoch ms after which the call takes its `onTimeout` result. */
@@ -307,6 +314,12 @@ export interface InputPartData {
   clientId?: string
   /** A steer from the durable inbox: its item id (dedupe on redelivery). */
   inboxId?: string
+  /**
+   * Set when this input is the note of an approved tool call (`respond({ approvals: [{ note }] })`,
+   * 0.7.0, spec 11 §3.6): `text` is the framed `<user-note>` the model saw, `approvalNote.text`
+   * the raw note (for a UI).
+   */
+  approvalNote?: { toolCallId: string; toolName: string; text: string }
 }
 
 /**

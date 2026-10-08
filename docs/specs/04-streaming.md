@@ -237,6 +237,14 @@ export interface HarnessRun<M extends HarnessUIMessage = HarnessUIMessage, O = n
    * `never` keeps `HarnessRun<M>` unchanged for every other turn.
    */
   readonly result: Promise<TurnResult<M, O>>
+  /**
+   * 0.7.0, only on the run of `send(input, { ifBusy: 'steer' })` (spec 11 §6.1): where the input
+   * went — 'step' (delivered at a step boundary of the running turn; this run follows that turn),
+   * 'turn' (no turn took it: it runs as a queued turn of its own; when the running turn refused it
+   * at once this run is that turn's), 'dropped' (not delivered: tool-pending / aborted stop or an
+   * `input.submit` block; an `input-dropped` event, §6). Never rejects.
+   */
+  readonly delivery?: Promise<'step' | 'turn' | 'dropped'>
   abort(reason?: string): void
   /** createUIMessageStreamResponse({ stream }) with UI_MESSAGE_STREAM_HEADERS. */
   toResponse(init?: ResponseInit): Response

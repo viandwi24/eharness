@@ -209,6 +209,12 @@ export interface StepPrepareEvent {
   messages: ModelMessage[]
   toolNames: string[]
   model: LanguageModel
+  /**
+   * Step 0 of a `respond()` continuation only (0.7.0): the final tool names this `respond()`
+   * answered — `approved` (the call runs or parks) and `denied`. Lets a hook react to what is
+   * about to run (e.g. leaving plan mode) without inspecting the wire. Each name appears once.
+   */
+  continuing?: { approved: string[]; denied: string[] }
 }
 
 /**

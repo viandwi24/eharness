@@ -1,6 +1,6 @@
 # Spec 08 — Filesystem plugin
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/filesystem` (`eharness/filesystem`, `eharness/filesystem/memory`).
+Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0 (multi-edit `edit_file`, `glob`, `onAdapterError`). Module: `src/filesystem` (`eharness/filesystem`, `eharness/filesystem/memory`).
 
 The filesystem plugin is the **reference plugin**: it shows how a plugin provides a service, tools,
 skills, state and data parts using only the public API. It ships one adapter (`memoryFs`). Anything
@@ -23,6 +23,11 @@ export interface FileSystem {
   /** Optional fast paths; the plugin falls back to list+read when absent. */
   stat?(path: string): Promise<FileMeta | null>
   grep?(pattern: RegExp, opts?: { prefix?: string; maxHits?: number }): Promise<GrepHit[]>
+  /**
+   * Optional (since 0.5): fast path of the `glob` tool. `pattern` is relative to `prefix` (a
+   * directory prefix ending in `/`) and uses the glob syntax of §3; at most `limit` files, any order.
+   */
+  glob?(pattern: string, opts: { prefix: string; limit: number }): Promise<FileMeta[]>
   /** Optional (since 0.4): atomic rename of one file; never overwrites `to`. */
   move?(from: string, to: string, opts?: { ifVersion?: string }): Promise<MoveResult>
 }
@@ -79,11 +84,11 @@ Rules for adapters:
   and falls back to write + delete when it is absent.
 - Returned objects are copies (mutating them never changes stored data).
 - Text only in v0 (UTF-8). Binary files are a roadmap item.
-- Conformance: `fileSystemConformance(factory, { requireStat?, requireGrep?, requireMove? })` in
+- Conformance: `fileSystemConformance(factory, { requireStat?, requireGrep?, requireGlob?, requireMove? })` in
   `eharness/testing`. The factory returns an **empty** file system per case. It checks the rules
   above: round trips (non-ASCII, CRLF, empty file), version iff content, `ifVersion` semantics
   incl. concurrent writers (exactly one wins), `DeleteResult` reasons, `list` order and prefixes,
-  metadata-only listings, copies, and `stat` / `grep` / `move` when implemented. `eharness/testing` does
+  metadata-only listings, copies, and `stat` / `grep` / `glob` / `move` when implemented. `eharness/testing` does
   not import `eharness/filesystem`, so the suite types its parameter with the structural mirror
   `FileSystemUnderTest` (every `FileSystem` is assignable).
 
@@ -108,7 +113,13 @@ export interface FilesystemOptions {
   /** Max characters returned by read_file per call. Default 50_000. */
   maxReadChars?: number
   /** Which tools to expose. Default all. */
-  tools?: Array<'list_files' | 'read_file' | 'write_file' | 'edit_file' | 'delete_file' | 'grep'>
+  tools?: Array<'list_files' | 'read_file' | 'write_file' | 'edit_file' | 'delete_file' | 'grep' | 'glob'>
+  /**
+   * Maps an exception thrown by an adapter method to the model-visible text. Default:
+   * `ERROR: <message>` (a leading `Error: ` dropped). Return `undefined` to rethrow (an ordinary
+   * tool error).
+   */
+  onAdapterError?: (error: unknown, info: { tool: FileToolName; path: string }) => string | undefined
 }
 ```
 
@@ -148,9 +159,10 @@ cleaned up by the core (the application owns retention). `dir` must not be `/`.
 | `list_files` | `{ prefix? }` | paths + sizes, hidden prefixes excluded |
 | `read_file` | `{ path, offset?, limit?, charOffset? }` | line-numbered text window; records `lastRead[path] = version` |
 | `write_file` | `{ path, content }` | create or overwrite; overwrite requires a prior read with matching version |
-| `edit_file` | `{ path, old_string, new_string, replace_all? }` | smart replace (§4); requires prior read |
+| `edit_file` | `{ path, old_string, new_string, replace_all? }` or `{ path, edits }` | smart replace (§4); requires prior read; `edits` = 1–50 `{ old_string, new_string, replace_all? }`, all or nothing |
 | `delete_file` | `{ path }` | requires prior read; respects `isUndeletable` |
 | `grep` | `{ pattern, prefix? }` | regex, max 50 hits |
+| `glob` | `{ pattern, path? }` | files matching a glob under `path` (default `/`), max 200 (since 0.5) |
 
 All tools **return strings**. Expected failures use prefixes the model (and UIs) can recognise:
 
@@ -190,6 +202,29 @@ Exact formats (model-visible, api-stability.md):
 - `edit_file` → `Edited <path> (1 replacement).` / `(<n> replacements).`; missing file →
   `ERROR: file not found: <path> (use write_file to create it)`; smart replace failures →
   `ERROR: <reason>`.
+- `edit_file` with `edits` (since 0.5): exactly one form per call — both →
+  `ERROR: pass either old_string and new_string, or edits, not both.`, neither →
+  `ERROR: pass old_string and new_string, or edits.`, `old_string` without `new_string` (or the
+  reverse) → `ERROR: old_string and new_string must be given together.`, not 1–50 entries →
+  `ERROR: edits must contain 1 to 50 entries (got <n>).`. The edits apply in order to the
+  in-memory content (each sees the result of the previous ones) with the §4 cascade and ambiguity
+  rules per edit. All or nothing: the first failing edit returns
+  `ERROR: edit <i> of <n>: <reason>` (1-based) and nothing is written. One read-before-write
+  check, one staleness check, one `ifVersion` write and one change part for the whole call.
+  Result `Edited <path> (<n> edits, <m> replacements).` (`1 edit`, `1 replacement` singular).
+  The single form's texts are unchanged.
+- `glob` (since 0.5): `pattern` is relative to `path` and supports `**` (any number of
+  directories), `*`, `?`, `[abc]` / `[!abc]` / `[a-z]` and `{a,b}` (nested, at most 64
+  alternatives). Paths are virtual; a pattern with a leading `/` or `~`, a `..` segment or a `\`
+  is `ERROR: invalid pattern: <reason>`. A segment that does not start with a literal `.` never
+  matches a name starting with `.` (so `*` and `**` skip dotfiles and dot directories; `.*` and
+  `.github/**` name them). Hidden prefixes are excluded and the tool outputs directory only
+  appears when `path` is inside it (like `list_files`). Output: one absolute path per line, newest
+  first (`updatedAt` descending, ties by path) when every match has `updatedAt`, else sorted by
+  path; at most 200, then `(Showing 200 of <n> matches; narrow the pattern.)`; none (or a hidden
+  `path`) → `No files match.` The adapter's `glob` (when implemented) is tried first with a
+  budget of 5000 results, filtered for hidden paths afterwards; a full budget falls back to
+  `list` + the built-in matcher. The matcher is exported as `compileGlob(pattern)`.
 - `delete_file` → `Deleted <path>.`
 - Read-before-write: `ERROR: read <path> with read_file before overwriting|editing|deleting it.`
 - `STALE: <path> changed since you last read it. Its current content is below; apply your change
@@ -227,8 +262,12 @@ Exact formats (model-visible, api-stability.md):
   returned a full budget and fewer than 51 hits remain visible (hidden files used up the
   budget), the tool falls back to list + read, so hidden files never hide visible hits.
 - Order of checks for mutations: path → policy (`REJECTED`) → existence → read-before-write →
-  staleness → operation (`CONFLICT`). Adapter exceptions (I/O failures) are not caught: they
-  become ordinary tool errors.
+  staleness → operation (`CONFLICT`). Adapter exceptions (I/O failures, e.g. a binary or
+  oversized file) are mapped by `onAdapterError` (since 0.5): by default the tool returns
+  `ERROR: <message>` (a leading `Error: ` is dropped), so the model reads an ordinary `ERROR:`
+  string and `classifyToolResult` says `'error'`. The callback receives `{ tool, path }` (the
+  normalized requested path); returning `undefined` rethrows, i.e. the pre-0.5 behaviour of an
+  ordinary tool error.
 
 ## 4. Editing rules (from the predecessor harness, proven in production)
 

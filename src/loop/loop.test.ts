@@ -74,7 +74,7 @@ describe('findPending', () => {
       v: 2,
       messageId: 'm',
       approvals: [{ approvalId: 'ap', toolCallId: 'b', toolName: 'server', input: {} }],
-      clientTools: [{ toolCallId: 'c', toolName: 'client' }],
+      clientTools: [{ toolCallId: 'c', toolName: 'client', input: {} }],
     })
     expect(findPending('m', response.slice(1), new Set())).toBeUndefined()
   })

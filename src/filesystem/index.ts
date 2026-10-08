@@ -9,6 +9,7 @@
 import type { FileSystem, ToolOutputStore } from './types.ts'
 
 export { classifyToolResult, type FileToolResultKind } from './classify.ts'
+export { type CompiledGlob, compileGlob } from './glob.ts'
 export { normalizePath } from './paths.ts'
 export {
   DEFAULT_MAX_READ_CHARS,

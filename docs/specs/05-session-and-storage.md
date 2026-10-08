@@ -60,7 +60,11 @@ export interface HarnessSession<
    */
   ready(): Promise<void>
 
-  /** Start a turn. `input` omitted = continue from history (e.g. after inject). */
+  /**
+   * Start a turn. `input` omitted = continue from history (e.g. after inject). With
+   * `ifBusy: 'steer'` (0.7.0) the returned run has `delivery: Promise<'step' | 'turn' | 'dropped'>`
+   * (spec 11 §6.1, spec 04 §7): into a step of the running turn, a queued turn of its own, or dropped.
+   */
   send(input?: SendInput, options?: SendOptions): HarnessRun<M>
   /** Answer pending tool approvals / client tool calls and continue that message (spec 11 §4). */
   respond(response: PendingResponse, options?: SendOptions): HarnessRun<M>
@@ -183,6 +187,8 @@ export interface SendOptions {
   /** 0.5.0: page context of this turn only, framed as data in the turn reminder (spec 11 §7.1 rule 6). */
   pageContext?: PageContextEntry[]
   pageContextOptions?: PageContextOptions    // maxChars
+  /** 0.7.0, respond() only: end the turn after the answers, without a model call (spec 11 §4). 'if-denied': only when an approval was denied. Server-side only. */
+  endTurn?: 'after-answers' | 'if-denied'
 }
 
 /** 0.4.0 (§3.3). */
@@ -954,7 +960,9 @@ Normative rules:
 1. **Without an inbox** behaviour and storage are those of 0.3. `session.enqueue()` then applies
    the input in this process (`target: 'local'`, `inboxId` a generated id): `'queue'` → a turn
    now (idle) or a queued turn; `'steer'` → a steer of the running turn (else like `'queue'`);
-   `'collect'` → the process's collect burst (rule 6).
+   `'collect'` → the process's collect burst (rule 6). (`send(…, { ifBusy: 'steer' })` reports its
+   outcome as `run.delivery`, spec 11 §6.1; `enqueue()` does not: it returns the item id and its
+   effect is visible through `inbox-drained` / `input-dropped` events.)
 2. **Enqueue.** With an inbox, `enqueue()` normalizes the input (§3 step 7, `EH_INVALID_INPUT`),
    stores it (`EH_STORAGE` on failure), emits `inbox-enqueued`, then: if no turn of the session
    runs here, reads the state — a live foreign `activeTurn` (§9) → `target: 'remote'` and

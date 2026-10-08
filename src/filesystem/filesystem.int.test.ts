@@ -929,3 +929,273 @@ describe('filesystem() options validation', () => {
     expect(invalid({ fs: () => fs })).toBe(false)
   })
 })
+
+describe('edit_file: multiple edits (R2)', () => {
+  const seed = { '/a.ts': 'one\ntwo\nthree\ntwo\n' }
+
+  test('applies all edits in order, one write, one change part', async () => {
+    const inner = memoryFs(seed)
+    let writes = 0
+    const fs: FileSystem = {
+      ...inner,
+      write: (...args) => {
+        writes++
+        return inner.write(...args)
+      },
+    }
+    const { agent } = setup(
+      steps(
+        call('read_file', { path: '/a.ts' }),
+        call('edit_file', {
+          path: '/a.ts',
+          edits: [
+            { old_string: 'one', new_string: 'ONE' },
+            { old_string: 'two', new_string: '2', replace_all: true },
+            { old_string: 'ONE\n2', new_string: 'x\n2' },
+          ],
+        }),
+      ),
+      { fs },
+    )
+    const result = await agent.session('s').send('go').result
+    expect(outputs(result).at(-1)).toBe('Edited /a.ts (3 edits, 4 replacements).')
+    expect((await inner.read('/a.ts'))?.content).toBe('x\n2\nthree\n2\n')
+    expect(writes).toBe(1)
+    expect(changeParts(assistant(result))).toHaveLength(1)
+  })
+
+  test('an ambiguous edit 2 writes nothing and names the edit', async () => {
+    const fs = memoryFs(seed)
+    const { agent } = setup(
+      steps(
+        call('read_file', { path: '/a.ts' }),
+        call('edit_file', {
+          path: '/a.ts',
+          edits: [
+            { old_string: 'one', new_string: 'ONE' },
+            { old_string: 'two', new_string: '2' },
+          ],
+        }),
+      ),
+      { fs },
+    )
+    const result = await agent.session('s').send('go').result
+    const text = outputs(result).at(-1) as string
+    expect(text).toStartWith('ERROR: edit 2 of 2: ')
+    expect(classifyToolResult(text)).toBe('error')
+    expect((await fs.read('/a.ts'))?.content).toBe(seed['/a.ts'])
+    expect(changeParts(assistant(result))).toHaveLength(0)
+  })
+
+  test('read-before-edit and staleness are checked once for the whole call', async () => {
+    const inner = memoryFs(seed)
+    const { agent } = setup(
+      steps(
+        call('edit_file', { path: '/a.ts', edits: [{ old_string: 'one', new_string: '1' }] }),
+        call('read_file', { path: '/a.ts' }),
+      ),
+      { fs: inner },
+    )
+    const result = await agent.session('s').send('go').result
+    expect(outputs(result)[0]).toBe('ERROR: read /a.ts with read_file before editing it.')
+  })
+
+  test('stale file returns STALE and writes nothing', async () => {
+    const inner = memoryFs(seed)
+    let reads = 0
+    const fs: FileSystem = {
+      ...inner,
+      async read(path) {
+        // someone else edits the file right before the edit tool looks at it (2nd read)
+        if (++reads === 2) await inner.write(path, 'changed\n')
+        return inner.read(path)
+      },
+    }
+    const { agent } = setup(
+      [
+        { toolCalls: [call('read_file', { path: '/a.ts' })] },
+        {
+          toolCalls: [
+            call('edit_file', { path: '/a.ts', edits: [{ old_string: 'one', new_string: '1' }] }),
+          ],
+        },
+        { text: 'done' },
+      ],
+      { fs },
+    )
+    const result = await agent.session('s').send('go').result
+    const text = outputs(result)[1] as string
+    expect(text).toStartWith('STALE: /a.ts changed since you last read it.')
+    expect((await inner.read('/a.ts'))?.content).toBe('changed\n')
+    expect(changeParts(assistant(result))).toHaveLength(0)
+  })
+
+  test('mixed, missing and out-of-range forms are ERROR strings', async () => {
+    const { agent } = setup(
+      steps(
+        call('edit_file', {
+          path: '/a.ts',
+          old_string: 'one',
+          new_string: '1',
+          edits: [{ old_string: 'two', new_string: '2' }],
+        }),
+        call('edit_file', { path: '/a.ts' }),
+        call('edit_file', { path: '/a.ts', old_string: 'one' }),
+        call('edit_file', { path: '/a.ts', edits: [] }),
+        call('edit_file', {
+          path: '/a.ts',
+          edits: Array.from({ length: 51 }, () => ({ old_string: 'a', new_string: 'b' })),
+        }),
+      ),
+      { fs: memoryFs(seed) },
+    )
+    const result = await agent.session('s').send('go').result
+    expect(outputs(result)).toEqual([
+      'ERROR: pass either old_string and new_string, or edits, not both.',
+      'ERROR: pass old_string and new_string, or edits.',
+      'ERROR: old_string and new_string must be given together.',
+      'ERROR: edits must contain 1 to 50 entries (got 0).',
+      'ERROR: edits must contain 1 to 50 entries (got 51).',
+    ])
+  })
+})
+
+describe('glob tool (R3)', () => {
+  const seed = {
+    '/src/a.ts': 'a',
+    '/src/b.tsx': 'b',
+    '/src/deep/c.ts': 'c',
+    '/docs/x.md': 'x',
+    '/.env': 'secret',
+    '/secret/z.ts': 'z',
+  }
+
+  test('matches, sorts by path without updatedAt, hides hidden prefixes and dotfiles', async () => {
+    const inner = memoryFs(seed)
+    const fs: FileSystem = {
+      ...inner,
+      list: async (prefix) => (await inner.list(prefix)).map(({ updatedAt: _u, ...meta }) => meta),
+    }
+    const { agent } = setup(
+      steps(
+        call('glob', { pattern: '**/*.ts' }),
+        call('glob', { pattern: 'src/**' }),
+        call('glob', { pattern: '*.{ts,tsx}', path: '/src' }),
+        call('glob', { pattern: '*' }),
+        call('glob', { pattern: '.*' }),
+        call('glob', { pattern: '**/*.rs' }),
+        call('glob', { pattern: '**', path: '/secret' }),
+        call('glob', { pattern: '../x' }),
+        call('glob', { pattern: 'a\\b' }),
+      ),
+      { fs, hiddenPrefixes: ['/secret'] },
+    )
+    const result = await agent.session('s').send('go').result
+    const out = outputs(result) as string[]
+    expect(out[0]).toBe('/src/a.ts\n/src/deep/c.ts')
+    expect(out[1]).toBe('/src/a.ts\n/src/b.tsx\n/src/deep/c.ts')
+    expect(out[2]).toBe('/src/a.ts\n/src/b.tsx')
+    expect(out[3]).toBe('No files match.')
+    expect(out[4]).toBe('/.env')
+    expect(out[5]).toBe('No files match.')
+    expect(out[6]).toBe('No files match.')
+    expect(out[7]).toStartWith('ERROR: invalid pattern: ')
+    expect(out[8]).toStartWith('ERROR: invalid pattern: ')
+    expect(classifyToolResult(out[7])).toBe('error')
+  })
+
+  test('sorts newest first when every file has updatedAt', async () => {
+    const inner = memoryFs({ '/a.md': '1', '/b.md': '2', '/c.md': '3' })
+    const stamps: Record<string, number> = { '/a.md': 1, '/b.md': 3, '/c.md': 2 }
+    const fs: FileSystem = {
+      ...inner,
+      list: async (prefix) =>
+        (await inner.list(prefix)).map((meta) => ({ ...meta, updatedAt: stamps[meta.path] })),
+    }
+    const { agent } = setup(steps(call('glob', { pattern: '*.md' })), { fs })
+    const result = await agent.session('s').send('go').result
+    expect(outputs(result)[0]).toBe('/b.md\n/c.md\n/a.md')
+  })
+
+  test('caps at 200 with a notice', async () => {
+    const files: Record<string, string> = {}
+    for (let i = 0; i < 230; i++) files[`/f/${String(i).padStart(3, '0')}.txt`] = 'x'
+    const { agent } = setup(steps(call('glob', { pattern: 'f/*.txt' })), {
+      fs: memoryFs(files),
+    })
+    const result = await agent.session('s').send('go').result
+    const lines = (outputs(result)[0] as string).split('\n')
+    expect(lines).toHaveLength(201)
+    expect(lines.at(-1)).toBe('(Showing 200 of 230 matches; narrow the pattern.)')
+  })
+
+  test('uses the adapter fast path when present, filtering hidden paths', async () => {
+    const inner = memoryFs(seed)
+    const seen: Array<{ pattern: string; prefix: string; limit: number }> = []
+    const fs: FileSystem = {
+      ...inner,
+      list: () => {
+        throw new Error('list must not be used')
+      },
+      glob: async (pattern, opts) => {
+        seen.push({ pattern, ...opts })
+        return [
+          { path: '/src/a.ts', version: 'v', size: 1 },
+          { path: '/secret/z.ts', version: 'v', size: 1 },
+        ]
+      },
+    }
+    const { agent } = setup(steps(call('glob', { pattern: '**/*.ts', path: '/src/' })), {
+      fs,
+      hiddenPrefixes: ['/secret'],
+    })
+    const result = await agent.session('s').send('go').result
+    expect(outputs(result)[0]).toBe('/src/a.ts')
+    expect(seen).toEqual([{ pattern: '**/*.ts', prefix: '/src/', limit: 5000 }])
+  })
+})
+
+describe('adapter errors (R13)', () => {
+  const failing = (): FileSystem => ({
+    ...memoryFs({ '/big.bin': 'x' }),
+    read: async (path) => {
+      throw new Error(`Error: cannot read ${path}: binary file`)
+    },
+  })
+
+  test('default: ERROR: <message> without the Error: prefix', async () => {
+    const { agent } = setup(steps(call('read_file', { path: '/big.bin' })), { fs: failing() })
+    const result = await agent.session('s').send('go').result
+    const text = outputs(result)[0] as string
+    expect(text).toBe('ERROR: cannot read /big.bin: binary file')
+    expect(classifyToolResult(text)).toBe('error')
+  })
+
+  test('custom mapper receives tool and normalized path; undefined rethrows', async () => {
+    const seen: unknown[] = []
+    const { agent } = setup(
+      steps(
+        call('read_file', { path: 'big.bin' }),
+        call('edit_file', { path: '/big.bin', old_string: 'a', new_string: 'b' }),
+      ),
+      {
+        fs: failing(),
+        onAdapterError: (error, info) => {
+          seen.push(info)
+          return info.tool === 'read_file'
+            ? `ERROR: custom ${(error as Error).message.length}`
+            : undefined
+        },
+      },
+    )
+    const result = await agent.session('s').send('go').result
+    const out = outputs(result)
+    expect(out[0]).toStartWith('ERROR: custom ')
+    expect(String(out[1])).toContain('cannot read /big.bin')
+    expect(String(out[1])).not.toStartWith('ERROR:')
+    expect(seen).toEqual([
+      { tool: 'read_file', path: '/big.bin' },
+      { tool: 'edit_file', path: '/big.bin' },
+    ])
+  })
+})

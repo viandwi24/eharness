@@ -23,7 +23,7 @@ const agent = defineHarnessAgent({
       allowedExtensions: ['.md', '.txt'], // writes only; default any
       isUndeletable: (path) => path === '/README.md',
       maxReadChars: 50_000, // default (DEFAULT_MAX_READ_CHARS)
-      tools: ['list_files', 'read_file', 'edit_file', 'grep'], // default: all six
+      tools: ['list_files', 'read_file', 'edit_file', 'grep'], // default: all seven
       skills: { root: '/skills', refresh: 'turn' }, // SKILL.md folders → skill tools
       toolOutputs: { dir: '/.eharness/tool-outputs' }, // default; false disables the service
     }),
@@ -41,9 +41,10 @@ tree per user, project or session.
 | `list_files` | `{ prefix? }` | paths and sizes (hidden prefixes excluded) |
 | `read_file` | `{ path, offset?, limit? }` | line-numbered window (up to 2000 lines, `maxReadChars`), with a "continue with offset=…" hint |
 | `write_file` | `{ path, content }` | create, or overwrite a file read before |
-| `edit_file` | `{ path, old_string, new_string, replace_all? }` | smart replace in a file read before |
+| `edit_file` | `{ path, old_string, new_string, replace_all? }` or `{ path, edits }` | smart replace in a file read before; `edits` applies up to 50 replacements in order, all or nothing (`ERROR: edit 3 of 5: …`) |
 | `delete_file` | `{ path }` | delete a file read before (not `isUndeletable` ones) |
 | `grep` | `{ pattern, prefix? }` | JavaScript regex per line, at most 50 hits |
+| `glob` | `{ pattern, path? }` | files by glob (`**`, `*`, `?`, `[abc]`, `{a,b}`), newest first when the adapter has `updatedAt`, at most 200; adapters may add a `glob` fast path |
 
 The rules that make them safe for a model:
 
@@ -56,6 +57,9 @@ The rules that make them safe for a model:
   lost race answers `CONFLICT:`.
 - **Smart replace.** `edit_file` tries an exact match, then a line-trimmed match, then a
   whitespace-normalized match; an ambiguous match is an error, never a guess.
+- **Adapter errors are text too.** An exception thrown by the adapter (a binary or oversized file,
+  an I/O failure) reaches the model as `ERROR: <message>`; map or rethrow it with
+  `filesystem({ onAdapterError: (error, { tool, path }) => string | undefined })`.
 - **Errors are text.** Results start with `ERROR:`, `STALE:`, `CONFLICT:` or `REJECTED:` (policy).
   `classifyToolResult(text)` → `'ok' | 'error' | 'stale' | 'conflict' | 'rejected'` lets a UI
   colour them.

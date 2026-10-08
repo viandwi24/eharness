@@ -40,6 +40,7 @@ export type {
   SessionOptions,
   SessionStateSnapshot,
   StateAdapter,
+  SteerDelivery,
 } from './agent/session-types.ts'
 export type {
   AgentDataTypes,
