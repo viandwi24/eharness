@@ -48,6 +48,8 @@ export interface ToolDescription {
   /** Dim suffix, e.g. `(lines 120–180)` or `exit 0 · 4.2s`. */
   suffix: string
   status: ToolStatus
+  /** Render the suffix red (bash: non-zero exit, timeout, abort). */
+  suffixError?: boolean
   /** First line of an error, shown under the card. */
   error?: string
   /** Last lines of live output (bash while running). */
@@ -117,10 +119,30 @@ export function formatDuration(ms: number): string {
   return `${minutes}m ${String(Math.floor(seconds % 60)).padStart(2, '0')}s`
 }
 
-/** Exit code in a bash tool result, when the text carries one. */
-export function parseExitCode(output: string): number | undefined {
-  const match = /\bexit(?:ed)?(?: with)?(?: code| status)?[:= ]+(-?\d+)/i.exec(output)
-  return match ? Number(match[1]) : undefined
+/** Footer of a bash tool result (`shell/bash-tool.ts`), as parsed by {@link parseBashFooter}. */
+export type BashFooter =
+  | { kind: 'exit'; code: number; seconds?: number }
+  | { kind: 'timeout' }
+  | { kind: 'aborted' }
+
+/**
+ * Parse the last non-empty line of a bash result: `Exit code <n> · <s>s`, `(timed out after Ns)`
+ * or `(aborted after Ns)` (case-insensitive). Undefined when the output carries none of them.
+ */
+export function parseBashFooter(output: string): BashFooter | undefined {
+  const lines = output.trimEnd().split('\n')
+  const last = (lines[lines.length - 1] ?? '').trim()
+  const exit = /^exit code (-?\d+)(?:\s*·\s*([\d.]+)s)?$/i.exec(last)
+  if (exit) {
+    return {
+      kind: 'exit',
+      code: Number(exit[1]),
+      ...(exit[2] !== undefined ? { seconds: Number(exit[2]) } : {}),
+    }
+  }
+  if (/^\(timed out after \d+s\)$/i.test(last)) return { kind: 'timeout' }
+  if (/^\(aborted after [\d.]+s\)$/i.test(last)) return { kind: 'aborted' }
+  return undefined
 }
 
 /** True when the output of the agent tool is a progress record. */
@@ -229,13 +251,22 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
         const tail = tailLines(ctx.bashLive ?? '', 5)
         if (tail.length > 0) desc.tail = tail
       } else if (view.state === 'output-available') {
-        const code = parseExitCode(text)
-        const parts: string[] = []
-        if (code !== undefined) parts.push(`exit ${code}`)
-        if (ctx.timing?.end !== undefined)
-          parts.push(formatDuration(ctx.timing.end - ctx.timing.start))
-        desc.suffix = parts.join(' · ')
-        if (code !== undefined && code !== 0) desc.status = 'error'
+        const footer = parseBashFooter(text)
+        if (footer?.kind === 'timeout') desc.suffix = 'timed out'
+        else if (footer?.kind === 'aborted') desc.suffix = 'aborted'
+        else {
+          const parts: string[] = []
+          if (footer?.kind === 'exit') parts.push(`exit ${footer.code}`)
+          if (footer?.kind === 'exit' && footer.seconds !== undefined)
+            parts.push(`${footer.seconds.toFixed(1)}s`)
+          else if (ctx.timing?.end !== undefined)
+            parts.push(formatDuration(ctx.timing.end - ctx.timing.start))
+          desc.suffix = parts.join(' · ')
+        }
+        if (footer && (footer.kind !== 'exit' || footer.code !== 0)) {
+          desc.status = 'error'
+          desc.suffixError = true
+        }
       }
       break
     }

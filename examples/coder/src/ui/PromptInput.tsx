@@ -1,5 +1,5 @@
 import { Box, Text, useInput, usePaste } from 'ink'
-import { type ReactElement, useRef, useState } from 'react'
+import { type ReactElement, useEffect, useRef, useState } from 'react'
 import {
   type Buffer,
   backspace,
@@ -12,6 +12,7 @@ import {
   moveLine,
   renderLines,
 } from './editor.ts'
+import { completeMention, matchPaths, mentionAt } from './mentions.ts'
 import { matchSlash } from './slash.ts'
 import { color, sym } from './theme.ts'
 
@@ -23,6 +24,8 @@ export interface PromptInputProps {
   running: boolean
   /** Previous prompts, oldest first. */
   history: string[]
+  /** Workspace file paths for `@` completion (cached by the caller). */
+  listFiles?(): Promise<string[]>
   onSubmit(text: string): void
   /** Enter pressed while a turn runs. */
   onBusy(): void
@@ -48,7 +51,7 @@ function EditorLines({ buf, active }: { buf: Buffer; active: boolean }): ReactEl
 
 /** Multiline prompt editor: Enter submits, Shift+Enter or `\` + Enter inserts a newline. */
 export function PromptInput(props: PromptInputProps): ReactElement {
-  const { disabled = false, running, history, onSubmit, onBusy } = props
+  const { disabled = false, running, history, listFiles, onSubmit, onBusy } = props
   const [view, setView] = useState<Buffer>(emptyBuffer)
   const bufRef = useRef<Buffer>(emptyBuffer)
   const setBuf = (next: Buffer): void => {
@@ -58,6 +61,27 @@ export function PromptInput(props: PromptInputProps): ReactElement {
   const [histIndex, setHistIndex] = useState<number | null>(null)
   const draft = useRef('')
   const active = !disabled
+  const [files, setFiles] = useState<string[]>([])
+  const [pick, setPick] = useState(0)
+  const mention = mentionAt(view.text, view.cursor)
+  const mentionActive = mention !== undefined
+  useEffect(() => {
+    if (!mentionActive || !listFiles) return
+    let cancelled = false
+    listFiles()
+      .then((paths) => {
+        if (!cancelled) setFiles(paths)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [mentionActive, listFiles])
+  const completions = active && !running && mention ? matchPaths(files, mention.query) : []
+  const completionsRef = useRef<string[]>([])
+  completionsRef.current = completions
+  const pickRef = useRef(0)
+  pickRef.current = Math.min(pick, Math.max(0, completions.length - 1))
 
   const edit = (next: Buffer): void => {
     setBuf(next)
@@ -113,6 +137,12 @@ export function PromptInput(props: PromptInputProps): ReactElement {
       }
       if (key.tab) {
         if (key.shift) return
+        const chosen = completionsRef.current[pickRef.current]
+        const at = mentionAt(bufRef.current.text, bufRef.current.cursor)
+        if (chosen && at) {
+          setPick(0)
+          return edit(completeMention(bufRef.current.text, at.start, bufRef.current.cursor, chosen))
+        }
         const matches = matchSlash(bufRef.current.text)
         const first = matches[0]
         if (first) edit(bufferOf(`/${first.name} `))
@@ -131,6 +161,10 @@ export function PromptInput(props: PromptInputProps): ReactElement {
       if (key.rightArrow) return setBuf(move(bufRef.current, 1))
       if (key.home) return setBuf(home(bufRef.current))
       if (key.end) return setBuf(end(bufRef.current))
+      if ((key.upArrow || key.downArrow) && completionsRef.current.length > 0) {
+        const count = completionsRef.current.length
+        return setPick((pickRef.current + (key.upArrow ? count - 1 : 1)) % count)
+      }
       if (key.upArrow) {
         return bufRef.current.text.includes('\n')
           ? setBuf(moveLine(bufRef.current, -1))
@@ -156,14 +190,26 @@ export function PromptInput(props: PromptInputProps): ReactElement {
   )
 
   const suggestions = active && !running ? matchSlash(view.text) : []
+  const shellMode = view.text.startsWith('!')
   return (
     <Box flexDirection="column">
       <Box borderStyle="round" borderColor={active ? color.accent : 'gray'} paddingX={1}>
-        <Text color={active ? color.accent : 'gray'} bold>
-          {sym.prompt}{' '}
+        <Text color={shellMode ? color.running : active ? color.accent : 'gray'} bold>
+          {shellMode ? '!' : sym.prompt}{' '}
         </Text>
         <EditorLines buf={view} active={active} />
       </Box>
+      {shellMode ? <Text dimColor> shell mode: runs in the project root, no approval</Text> : null}
+      {completions.map((path, i) => (
+        <Text
+          key={path}
+          dimColor={i !== pickRef.current}
+          color={i === pickRef.current ? color.accent : undefined}
+        >
+          {'  '}
+          {i === pickRef.current ? sym.pointer : ' '} @{path}
+        </Text>
+      ))}
       {suggestions.slice(0, 8).map((command) => (
         <Text key={command.name} dimColor>
           {'  '}/{command.name}

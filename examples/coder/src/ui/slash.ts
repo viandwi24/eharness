@@ -15,6 +15,8 @@ export interface SlashContext {
   reset(): void
   /** Replace the transcript with these stored messages. */
   load(messages: CoderMessage[]): void
+  /** Open the session picker. */
+  pickSession(): void
   /** Start a turn with this prompt. */
   submit(prompt: string): void
   /** The latest todo list, if any. */
@@ -37,12 +39,6 @@ export interface SlashCommand {
 /** Fixed prompt of `/init`. */
 export const INIT_PROMPT =
   'Analyse this project: its layout, languages, build, test and lint commands, conventions and anything a new contributor should know. Then write an AGENTS.md at the project root that captures it concisely (commands first). If an AGENTS.md already exists, improve it instead of replacing it.'
-
-let lastSessionList: string[] = []
-
-function formatDate(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 16).replace('T', ' ')
-}
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
@@ -138,26 +134,13 @@ export const slashCommands: SlashCommand[] = [
   {
     name: 'resume',
     usage: '[id]',
-    description: 'List stored sessions, or resume one',
+    description: 'Pick a stored session, or resume one by id',
     run: async (ctx) => {
       if (!ctx.args) {
-        const sessions = await ctx.controller.sessions()
-        lastSessionList = sessions.map((s) => s.id)
-        ctx.print(
-          sessions.length === 0
-            ? 'No stored sessions.'
-            : [
-                'Sessions (resume with /resume <number or id>):',
-                ...sessions.map(
-                  (s, i) =>
-                    `  ${i + 1}. ${formatDate(s.updatedAt)}  ${s.firstPrompt.split('\n')[0]?.slice(0, 70) ?? ''}`,
-                ),
-              ].join('\n'),
-        )
+        ctx.pickSession()
         return
       }
-      const byNumber = /^\d+$/.test(ctx.args) ? lastSessionList[Number(ctx.args) - 1] : undefined
-      const id = byNumber ?? ctx.args
+      const id = ctx.args
       try {
         await ctx.controller.resume(id)
         ctx.load(await ctx.controller.messages())

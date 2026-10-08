@@ -12,6 +12,7 @@ export type Entry =
   | { kind: 'user'; id: string; text: string }
   | { kind: 'message'; id: string; message: CoderMessage }
   | { kind: 'system'; id: string; text: string; tone: 'info' | 'error' }
+  | { kind: 'shell'; id: string; command: string; output: string; exitCode: number | null }
 
 /** Wall-clock timing of a tool call, as observed by the UI. */
 export interface ToolTiming {
@@ -44,6 +45,7 @@ export type ViewAction =
   | { type: 'bash-output'; chunks: BashOutputData[] }
   | { type: 'turn-finished'; note?: { text: string; tone: 'info' | 'error' } }
   | { type: 'system'; text: string; tone?: 'info' | 'error' }
+  | { type: 'shell-result'; command: string; output: string; exitCode: number | null }
   | { type: 'reset' }
   | { type: 'load'; messages: CoderMessage[] }
   | { type: 'toggle-expand' }
@@ -145,6 +147,22 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
         entries: [
           ...state.entries,
           { kind: 'system', id: `s${seq}`, text: action.text, tone: action.tone ?? 'info' },
+        ],
+      }
+    case 'shell-result':
+      return {
+        ...state,
+        seq,
+        history: [...state.history, `!${action.command}`].slice(-HISTORY_MAX),
+        entries: [
+          ...state.entries,
+          {
+            kind: 'shell',
+            id: `sh${seq}`,
+            command: action.command,
+            output: action.output,
+            exitCode: action.exitCode,
+          },
         ],
       }
     case 'reset':

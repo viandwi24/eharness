@@ -429,6 +429,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`postgres-inbox.ts`](examples/postgres-inbox.ts) | Postgres `InboxAdapter` (`FOR UPDATE SKIP LOCKED`, `LISTEN`/`NOTIFY`) |
 | [`postgres-budget-ledger.ts`](examples/postgres-budget-ledger.ts) | Postgres `BudgetLedger`: monthly scopes, atomic reservations, conformance |
 | [`custom-fs-adapter.ts`](examples/custom-fs-adapter.ts) | a `FileSystem` over a key-value store |
+| [`coder/`](examples/coder/README.md) | a terminal coding agent (Ink UI): permissions, subagents, todos, compaction, JSON storage |
 
 ## Guides
 

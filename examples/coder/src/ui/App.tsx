@@ -1,9 +1,19 @@
 import { Box, useApp, useInput, useStdout } from 'ink'
-import { type ReactElement, useCallback, useEffect, useReducer, useRef, useState } from 'react'
-import type { CoderController, PermissionMode } from '../contracts.ts'
+import {
+  type ReactElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from 'react'
+import type { CoderController, CoderMessage, PermissionMode } from '../contracts.ts'
 import { runTurn } from './driver.ts'
+import { createFileLister } from './mentions.ts'
 import { PermissionPrompt, usePending } from './PermissionPrompt.tsx'
 import { PromptInput } from './PromptInput.tsx'
+import { SessionPicker } from './SessionPicker.tsx'
 import { StatusBar } from './StatusBar.tsx'
 import { parseSlash, runSlash } from './slash.ts'
 import { hasOpenTodos, initialState, latestTodos, reduce } from './state.ts'
@@ -15,6 +25,14 @@ export interface AppProps {
   controller: CoderController
   /** Sent as the first prompt once the UI is up. */
   initialPrompt?: string
+  /** Stored messages of an already existing session (`--continue`, `--resume <id>`). */
+  initialMessages?: CoderMessage[]
+}
+
+interface ShellRun {
+  command: string
+  output: string
+  exitCode: number | null
 }
 
 const EXIT_WINDOW_MS = 2000
@@ -22,14 +40,22 @@ const HINT_MS = 3000
 const CLEAR_SCREEN = '\x1b[2J\x1b[3J\x1b[H'
 
 /** The interactive coding agent UI. */
-export function App({ controller, initialPrompt }: AppProps): ReactElement {
+export function App({ controller, initialPrompt, initialMessages }: AppProps): ReactElement {
   const { exit } = useApp()
   const { stdout } = useStdout()
-  const [state, dispatch] = useReducer(reduce, undefined, initialState)
+  const [state, dispatch] = useReducer(reduce, initialMessages, (messages) =>
+    messages && messages.length > 0
+      ? reduce(initialState(), { type: 'load', messages })
+      : initialState(),
+  )
   const [mode, setMode] = useState<PermissionMode>(controller.permissions.mode)
   const [model, setModel] = useState(controller.config.model)
   const [statsVersion, setStatsVersion] = useState(0)
   const [hint, setHint] = useState<string | null>(null)
+  const [picking, setPicking] = useState(controller.config.resume === true)
+  const listFiles = useMemo(() => createFileLister(controller.workspace), [controller])
+  const shellRuns = useRef<ShellRun[]>([])
+  const shellAbort = useRef<AbortController | undefined>(undefined)
   const pending = usePending(controller.broker)
   const stateRef = useRef(state)
   stateRef.current = state
@@ -58,7 +84,17 @@ export function App({ controller, initialPrompt }: AppProps): ReactElement {
   const startTurn = useCallback(
     (text: string) => {
       busy.current = true
-      void runTurn(controller, text, dispatch).finally(() => {
+      // commands the user ran with `!` since the last prompt: the model sees them first
+      const ran = shellRuns.current.splice(0)
+      const context = ran
+        .map(
+          (r) =>
+            `<shell-command>${r.command}</shell-command>\n<shell-output>${r.output}${
+              r.exitCode === null ? '\n(aborted)' : `\n(exit ${r.exitCode})`
+            }</shell-output>\n\n`,
+        )
+        .join('')
+      void runTurn(controller, context + text, dispatch).finally(() => {
         busy.current = false
         refreshStats()
       })
@@ -70,6 +106,31 @@ export function App({ controller, initialPrompt }: AppProps): ReactElement {
     (text: string) => {
       if (busy.current) {
         showHint('A turn is running. Press esc to interrupt it.')
+        return
+      }
+      if (text.startsWith('!')) {
+        const command = text.slice(1).trim()
+        if (!command) return
+        busy.current = true
+        const abort = new AbortController()
+        shellAbort.current = abort
+        void controller
+          .shell(command, abort.signal)
+          .then((result) => {
+            shellRuns.current.push({ command, ...result })
+            dispatch({ type: 'shell-result', command, ...result })
+          })
+          .catch((error: unknown) => {
+            dispatch({
+              type: 'system',
+              text: `Shell failed: ${error instanceof Error ? error.message : String(error)}`,
+              tone: 'error',
+            })
+          })
+          .finally(() => {
+            shellAbort.current = undefined
+            busy.current = false
+          })
         return
       }
       dispatch({ type: 'user-submitted', text })
@@ -90,6 +151,7 @@ export function App({ controller, initialPrompt }: AppProps): ReactElement {
           stdout.write(CLEAR_SCREEN)
           dispatch({ type: 'load', messages })
         },
+        pickSession: () => setPicking(true),
         submit: (prompt) => {
           busy.current = false
           startTurn(prompt)
@@ -115,6 +177,7 @@ export function App({ controller, initialPrompt }: AppProps): ReactElement {
       const now = Date.now()
       if (now - lastCtrlC.current <= EXIT_WINDOW_MS) {
         if (stateRef.current.running) controller.abort()
+        shellAbort.current?.abort()
         exit()
         return
       }
@@ -130,10 +193,40 @@ export function App({ controller, initialPrompt }: AppProps): ReactElement {
       setMode(controller.permissions.cycleMode())
       return
     }
+    if (key.escape && shellAbort.current) {
+      shellAbort.current.abort()
+      return
+    }
     if (key.escape && stateRef.current.running && controller.broker.pending().length === 0) {
       controller.abort()
     }
   })
+
+  const selectSession = useCallback(
+    (id: string) => {
+      setPicking(false)
+      busy.current = true
+      void (async () => {
+        try {
+          await controller.resume(id)
+          const messages = await controller.messages()
+          stdout.write(CLEAR_SCREEN)
+          dispatch({ type: 'load', messages })
+          dispatch({ type: 'system', text: `Resumed session ${id}.` })
+          refreshStats()
+        } catch (error) {
+          dispatch({
+            type: 'system',
+            text: `Cannot resume ${id}: ${error instanceof Error ? error.message : String(error)}`,
+            tone: 'error',
+          })
+        } finally {
+          busy.current = false
+        }
+      })()
+    },
+    [controller, refreshStats, stdout],
+  )
 
   const todos = latestTodos(state)
   return (
@@ -141,8 +234,16 @@ export function App({ controller, initialPrompt }: AppProps): ReactElement {
       <Transcript state={state} config={{ ...controller.config, model }} />
       {pending.length > 0 ? <PermissionPrompt broker={controller.broker} /> : null}
       {hasOpenTodos(todos) && todos ? <TodoPanel todos={todos} /> : null}
+      {picking ? (
+        <SessionPicker
+          load={() => controller.sessions()}
+          onSelect={selectSession}
+          onCancel={() => setPicking(false)}
+        />
+      ) : null}
       <PromptInput
-        disabled={pending.length > 0}
+        disabled={pending.length > 0 || picking}
+        listFiles={listFiles}
         running={state.running}
         history={state.history}
         onSubmit={submit}

@@ -16,7 +16,7 @@ import type {
   ToolCallInfo,
 } from '../contracts.ts'
 import { createBroker, createPermissionEngine, describeApproval } from '../permissions/index.ts'
-import { createLocalSandbox } from '../shell/index.ts'
+import { capOutput, createLocalSandbox } from '../shell/index.ts'
 import { createWorkspace } from '../workspace/index.ts'
 import { type Agents, createAgents } from './agent.ts'
 import { createStorage, latestSessionId, listSessions, newSessionId } from './sessions.ts'
@@ -129,6 +129,45 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     },
 
     sessions: (): Promise<SessionSummary[]> => listSessions(config),
+
+    async shell(command: string, signal?: AbortSignal) {
+      let proc: Awaited<ReturnType<typeof sandbox.spawn>>
+      try {
+        proc = await sandbox.spawn({ command })
+      } catch (error) {
+        return {
+          output: `could not start the command: ${error instanceof Error ? error.message : String(error)}`,
+          exitCode: null,
+        }
+      }
+      let aborted = false
+      const onAbort = (): void => {
+        aborted = true
+        void proc.kill()
+      }
+      if (signal?.aborted) onAbort()
+      else signal?.addEventListener('abort', onAbort, { once: true })
+      let output = ''
+      const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
+        const dec = new TextDecoder()
+        try {
+          for await (const bytes of stream) output += dec.decode(bytes, { stream: true })
+          output += dec.decode()
+        } catch {
+          // stream torn down by a kill
+        }
+      }
+      let exitCode: number | null = null
+      try {
+        const [, , result] = await Promise.all([pump(proc.stdout), pump(proc.stderr), proc.wait()])
+        exitCode = aborted ? null : result.exitCode
+      } catch (error) {
+        if (!aborted) output += `\n${error instanceof Error ? error.message : String(error)}`
+      } finally {
+        signal?.removeEventListener('abort', onAbort)
+      }
+      return { output: capOutput(output.trimEnd(), 30_000), exitCode }
+    },
 
     /**
      * Rebuilds the agents with the new model (the simplest correct way: respond() continuations

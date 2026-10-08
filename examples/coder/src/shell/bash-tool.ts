@@ -44,8 +44,8 @@ const DESCRIPTION = `Run a shell command in the project root and return its comb
 - Long output is truncated to the first and last part. A non-zero exit code is reported, not an error.
 - Default timeout 120 s, at most 600 s (timeoutMs); a timed-out command is killed. Set \`description\` to a 5-10 word summary of what the command does.`
 
-/** Cap `text` to `max` characters: head (10 000) + marker + tail. */
-function capOutput(text: string, max: number): string {
+/** Cap `text` to `max` characters: head (10 000) + marker + tail (shared with `!command` mode). */
+export function capOutput(text: string, max: number): string {
   if (text.length <= max) return text
   const head = Math.min(HEAD_CHARS, Math.floor(max / 3))
   const tail = max - head

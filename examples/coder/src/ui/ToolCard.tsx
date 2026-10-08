@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 import { TOOL } from '../contracts.ts'
 import { DiffView } from './DiffView.tsx'
 import { keyedLines } from './keys.ts'
+import { Spinner } from './Spinner.tsx'
 import { SubagentTree } from './SubagentTree.tsx'
 import { color, sym } from './theme.ts'
 import {
@@ -78,10 +79,21 @@ export function ToolCard({ view, context, expanded }: ToolCardProps): ReactEleme
   return (
     <Box flexDirection="column">
       <Text wrap="truncate-end">
-        <Text color={STATUS_COLOR[desc.status]}>{sym.bullet} </Text>
+        {desc.status === 'running' ? (
+          <Spinner />
+        ) : (
+          <Text color={STATUS_COLOR[desc.status]}>{sym.bullet}</Text>
+        )}
+        <Text> </Text>
         <Text bold>{desc.label}</Text>
         <Text> {desc.target}</Text>
-        {desc.suffix ? <Text dimColor> {desc.suffix}</Text> : null}
+        {desc.suffix ? (
+          desc.suffixError ? (
+            <Text color={color.error}> {desc.suffix}</Text>
+          ) : (
+            <Text dimColor> {desc.suffix}</Text>
+          )
+        ) : null}
       </Text>
       {keyedLines(desc.tail ?? []).map(({ key, line }) => (
         <Text key={key} dimColor wrap="truncate-end">

@@ -75,9 +75,12 @@ function kindLine(message: CoderMessage): string {
   return `${kind.replace(/^eh\./, '')}${text}`
 }
 
+const SHELL_BLOCKS =
+  /<shell-command>[\s\S]*?<\/shell-command>\s*<shell-output>[\s\S]*?<\/shell-output>\s*/g
+
 function userText(message: CoderMessage): string {
   return message.parts
-    .map((part) => (part.type === 'text' ? part.text : ''))
+    .map((part) => (part.type === 'text' ? part.text.replace(SHELL_BLOCKS, '') : ''))
     .filter(Boolean)
     .join('\n')
 }

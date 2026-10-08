@@ -1,5 +1,5 @@
 import { render } from 'ink'
-import type { CoderController } from '../contracts.ts'
+import type { CoderController, CoderMessage } from '../contracts.ts'
 import { App } from './App.tsx'
 
 /**
@@ -12,10 +12,26 @@ export async function runInteractive(
   controller: CoderController,
   opts: { initialPrompt?: string } = {},
 ): Promise<void> {
-  const instance = render(<App controller={controller} initialPrompt={opts.initialPrompt} />, {
-    incrementalRendering: true,
-    exitOnCtrlC: false,
-  })
+  // `--continue` / `--resume <id>`: the session already has messages, show them from the start
+  let initialMessages: CoderMessage[] = []
+  if (controller.config.resume !== true) {
+    try {
+      initialMessages = await controller.messages()
+    } catch {
+      // an unreadable session starts empty
+    }
+  }
+  const instance = render(
+    <App
+      controller={controller}
+      initialPrompt={opts.initialPrompt}
+      initialMessages={initialMessages}
+    />,
+    {
+      incrementalRendering: true,
+      exitOnCtrlC: false,
+    },
+  )
   try {
     await instance.waitUntilExit()
   } finally {

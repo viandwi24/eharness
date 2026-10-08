@@ -28,4 +28,5 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Group chat](group-chat.md) | `groupChat()`: answer only when addressed, history of missed messages, bot-to-bot loop limit |
 | [Subagents](subagents.md) | a tool that runs a child session with live progress, usage and cost |
 | [Testing](testing.md) | `scriptedModel`, asserting on prompts and results, conformance suites |
+| [Coding agent example](../../examples/coder/README.md) | a terminal coding agent built only on the public API: virtual workspace, permission rules, subagents, Ink UI |
 | [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |

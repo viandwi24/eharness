@@ -286,6 +286,12 @@ export interface CoderController {
   /** Switch to a stored session (`/resume`). */
   resume(sessionId: string): Promise<void>
   sessions(): Promise<SessionSummary[]>
+  /**
+   * Run a command directly in the project root through the sandbox (`!command` shell mode). No
+   * model is involved and there is no approval: the user typed it. Output (stdout and stderr,
+   * capped like the bash tool) is returned; `exitCode` is null when the command was aborted.
+   */
+  shell(command: string, signal?: AbortSignal): Promise<{ output: string; exitCode: number | null }>
   setModel(model: string): void
   agents(): AgentDefinition[]
   /** Context and cost for the status bar. */

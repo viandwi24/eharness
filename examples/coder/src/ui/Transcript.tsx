@@ -2,8 +2,10 @@ import { Box, Static, Text } from 'ink'
 import type { ReactElement } from 'react'
 import type { CoderConfig, CoderMessage } from '../contracts.ts'
 import { MessageView } from './MessageView.tsx'
+import { Thinking } from './Spinner.tsx'
 import type { Entry, ViewState } from './state.ts'
 import { color } from './theme.ts'
+import { toolView } from './tool-summary.ts'
 
 function Header({ config }: { config: CoderConfig }): ReactElement {
   return (
@@ -49,6 +51,19 @@ function EntryView({
           </Text>
         </Box>
       )
+    case 'shell':
+      return (
+        <Box flexDirection="column" marginTop={1}>
+          <Text dimColor>
+            {'! '}
+            {entry.command}
+          </Text>
+          {entry.output ? <Text dimColor>{entry.output}</Text> : null}
+          <Text dimColor color={entry.exitCode === 0 ? undefined : color.error}>
+            {entry.exitCode === null ? 'aborted' : `exit ${entry.exitCode}`}
+          </Text>
+        </Box>
+      )
     case 'message':
       return (
         <MessageView
@@ -61,6 +76,20 @@ function EntryView({
   }
 }
 
+function hasLiveText(message: CoderMessage | null): boolean {
+  return !!message?.parts.some((p) => p.type === 'text' && p.text.trim() !== '')
+}
+
+function hasRunningTool(message: CoderMessage | null): boolean {
+  return !!message?.parts.some((p) => {
+    const view = toolView(p)
+    return (
+      view !== null &&
+      (view.state === 'input-streaming' || view.state === 'input-available' || !!view.preliminary)
+    )
+  })
+}
+
 /** Finished entries once in `<Static>`, then the live assistant message. */
 export function Transcript({
   state,
@@ -70,6 +99,7 @@ export function Transcript({
   config: CoderConfig
 }): ReactElement {
   const live: CoderMessage | null = state.live
+  const waiting = state.running && !hasLiveText(live) && !hasRunningTool(live)
   return (
     <>
       <Static key={state.epoch} items={state.entries}>
@@ -87,6 +117,7 @@ export function Transcript({
           timing={state.timing}
         />
       ) : null}
+      {waiting ? <Thinking /> : null}
     </>
   )
 }
