@@ -251,7 +251,7 @@ examples/coder/
       modes.ts            # default | acceptEdits | plan | dontAsk | bypassPermissions
       rules.ts            # parse + match Tool(spec) rules, deny → ask → allow
       plugin.ts           # definePlugin: tool.approve, turn.prepare/step.prepare, exit_plan_mode
-      broker.ts           # in-process prompt broker for subagent approvals (§6.4)
+      broker.ts           # in-process question queue for the UI (main agent and subagents, §6.4)
     agents/
       builtin.ts          # general-purpose, explore, plan
       load.ts             # .coder/agents/*.md, ~/.coder/agents/*.md, --agents JSON
@@ -425,20 +425,20 @@ output (head + tail, exit code, duration) to the model.
 - Several pending approvals of one step are answered together in one `respond()` (partial answers
   are not supported by the core, roadmap).
 
-### 6.4 Subagent approvals (the hard part)
+### 6.4 Subagent approvals
 
-Claude Code passes a child's permission prompts through to the user. In eharness a child turn that
-needs approval stops `tool-pending`, and the parent's tool call cannot surface that and resume the
-child (no nested-approval mechanism; request R1).
+Claude Code passes a child's permission prompts through to the user. In eharness a child turn
+that needs approval stops `tool-pending` in **its own** session. Decision (revised during
+implementation): the parent's `agent` tool drives that child like the controller drives the main
+session. It awaits `run.result`, and for each `tool-pending` stop it asks the user through the
+in-process `ApprovalBroker` (the prompt names the subagent), applies "don't ask again" rules, and
+calls `respond()` on the **child** session, until the child turn ends. Parent and children
+therefore both use real eharness approvals (`tool.approve`, pending state, `respond()`, audit);
+the broker is only the UI's question queue. Print mode answers the broker with denials.
 
-P30 decision, conservative: children use the **same rules and mode**, decided by the same
-`permissions` plugin, but a child call that would be `user-approval` does not use eharness
-approval. Instead the child's tool wrapper awaits the in-process **approval broker**
-(`permissions/broker.ts`), which shows the prompt in the TUI labelled with the subagent name and
-resolves with the answer; a denial returns `Denied by the user: <feedback>` as the tool result.
-Print mode answers the broker with "denied". The parent session keeps real eharness approvals.
-This is documented in the example README as an app-level workaround for a single-process CLI,
-not a pattern for servers.
+What stays a library gap (R1): the parent turn cannot *park* while a child waits for a person, so
+this works in one process (a CLI) but not for a server that must survive restarts between the
+question and the answer.
 
 ---
 
@@ -521,9 +521,9 @@ not a pattern for servers.
   transport over `handleChatRequest` could drive it today. Rejected for P30: fixed UI (no
   subagent tree, modes, slash commands), and it requires `ai@7.0.133` (lockfile 7.0.127). Worth
   a small separate example once the `asAgent()` adapter exists.
-- **One shared approval mechanism (broker) for parent and children.** Simpler UI code, but the
-  example would no longer exercise eharness approvals (`tool-pending`, `respond()`, audit), which
-  is half its value. Rejected.
+- **Asking the user from inside tool execution** (a wrapper that awaits the broker before
+  `execute`, bypassing eharness approvals). Simpler, but the example would no longer exercise
+  eharness approvals (`tool-pending`, `respond()`, audit), which is half its value. Rejected.
 - **A real shell sandbox from the start.** Platform-specific and slow to get right; deferred to
   M5 behind the sandbox interface.
 
@@ -571,7 +571,7 @@ at the end.
 - [ ] Built-in definitions; loader for `--agents`, project and user `agents/*.md`
 - [ ] `agent` tool: child session, parent link, abort, usage, progress generator, final output
 - [ ] Parallel execution with the concurrency cap; depth limit
-- [ ] Approval broker for children (§6.4); prompts labelled with the child name
+- [ ] Child approvals: the `agent` tool answers the child's `tool-pending` through the broker and `respond()` (§6.4); prompts labelled with the child name
 - [ ] Subagent tree UI; open a child transcript from `/agents`
 - [ ] Acceptance: "explore how X works in three areas" runs three `explore` children in parallel,
       the parent's context gets only their reports; a user-defined `reviewer` agent with
@@ -611,7 +611,7 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 
 | # | Request | Workaround in P30 |
 |---|---|---|
-| R1 | **Nested approvals**: a child session's `tool-pending` surfaced through the parent's tool call and resumed after the parent's `respond()` | in-process broker (§6.4) |
+| R1 | **Nested approvals across processes**: park the parent turn while a child session waits for an approval, resume both later from any instance | the `agent` tool awaits the child's approvals in process (§6.4) |
 | R2 | `edit_file` with several edits in one call (atomic, one read check) | the model calls `edit_file` several times |
 | R3 | `glob` tool in `eharness/filesystem` (uses `list`, adapter fast path) | app tool |
 | R4 | Node-only `eharness/filesystem/node` disk adapter with the containment rules of §5 (ADR: first Node-only module) | `examples/coder/src/workspace/disk-fs.ts` |
