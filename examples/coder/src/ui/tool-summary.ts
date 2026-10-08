@@ -352,6 +352,16 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       desc.note = str(input.subagent_type) || 'general-purpose'
       break
     }
+    case TOOL.ask: {
+      desc.label = 'Ask'
+      const questions = Array.isArray(input.questions) ? input.questions : []
+      desc.target = questions
+        .map((q) => str(asRecord(q).header))
+        .filter(Boolean)
+        .join(', ')
+      if (ok && text) desc.summary = firstLine(text, 120)
+      break
+    }
     case TOOL.exitPlan: {
       desc.label = 'Plan'
       if (ok) desc.summary = 'Plan proposed'

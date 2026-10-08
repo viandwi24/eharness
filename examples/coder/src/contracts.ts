@@ -24,6 +24,7 @@ export const TOOL = {
   agent: 'agent',
   exitPlan: 'exit_plan_mode',
   dirAccess: 'request_directory_access',
+  ask: 'ask_user_question',
 } as const
 export type CoderToolName = (typeof TOOL)[keyof typeof TOOL]
 
@@ -41,6 +42,7 @@ export const TOOL_ORDER: readonly string[] = [
   TOOL.agent,
   TOOL.exitPlan,
   TOOL.dirAccess,
+  TOOL.ask,
 ]
 
 /** Tools that never modify anything (allowed in plan mode and for read-only agents). */
@@ -221,15 +223,59 @@ export interface ApprovalRequest {
   suggestedRule?: string
 }
 
+/**
+ * The user's answer. `note` (Tab on "Yes") is sent to the model after the tool result; `feedback`
+ * (Tab on "No") is the denial reason. A bare "No" from the main agent's prompt stops the turn.
+ */
 export type ApprovalAnswer =
-  | { approved: true; remember?: 'session' | 'project' }
+  | { approved: true; remember?: 'session' | 'project'; note?: string }
   | { approved: false; feedback?: string }
+
+/** One multiple-choice question of the `ask_user_question` tool. */
+export interface Question {
+  /** The full question, ends with `?`. */
+  question: string
+  /** Short chip label (max 12 chars), e.g. `Auth method`. */
+  header: string
+  /** 2–4 options; an "Other" free-text row is always added by the UI. */
+  options: Array<{ label: string; description?: string }>
+  /** Checkbox (several answers) instead of radio (exactly one). */
+  multiSelect: boolean
+}
+
+/** A batch of 1–4 questions from the model, shown as one dialog with a tab per question. */
+export interface QuestionRequest {
+  id: string
+  agent?: string
+  questions: Question[]
+}
+
+export interface QuestionAnswer {
+  /** Same order as the request's questions. */
+  answers: Array<{
+    question: string
+    /** Labels of the chosen options (radio: exactly one unless `other` is set). */
+    selected: string[]
+    /** Text typed in the "Other" row. */
+    other?: string
+    /** Free notes the user attached to this question. */
+    notes?: string
+  }>
+}
+
+/** `null` = the user dismissed the dialog (Esc) without answering. */
+export type QuestionResult = QuestionAnswer | null
 
 /** In-process queue of questions for the user. Print mode answers everything with a denial. */
 export interface ApprovalBroker {
   ask(request: ApprovalRequest, signal?: AbortSignal): Promise<ApprovalAnswer>
   pending(): ApprovalRequest[]
   answer(id: string, answer: ApprovalAnswer): void
+  /** Ask the user a batch of questions (`ask_user_question`). Abort resolves `null`. */
+  question(request: QuestionRequest, signal?: AbortSignal): Promise<QuestionResult>
+  pendingQuestions(): QuestionRequest[]
+  answerQuestion(id: string, result: QuestionResult): void
+  /** Fires on every change of approvals or questions. */
   subscribe(listener: (pending: ApprovalRequest[]) => void): () => void
 }
 

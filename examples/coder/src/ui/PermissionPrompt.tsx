@@ -1,4 +1,4 @@
-import { Box, Text, useInput } from 'ink'
+import { Box, type Key, Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import {
   type ApprovalAnswer,
@@ -7,7 +7,7 @@ import {
   TOOL,
 } from '../contracts.ts'
 import { DiffView } from './DiffView.tsx'
-import { type Buffer, backspace, deleteForward, emptyBuffer, insert, move } from './editor.ts'
+import { type Buffer, backspace, deleteForward, insert, move } from './editor.ts'
 import { keyedLines } from './keys.ts'
 import { stripControl } from './sanitize.ts'
 import { color, sym } from './theme.ts'
@@ -16,12 +16,23 @@ import { displayPath } from './tool-summary.ts'
 /** One selectable answer. */
 export interface PromptOption {
   label: string
-  answer: ApprovalAnswer | 'feedback'
+  answer: ApprovalAnswer
+  /** Tab opens a comment field on this option: a note (Yes) or the denial feedback (No). */
+  comment?: 'note' | 'feedback'
+}
+
+/** The answer of an option with the user's comment applied (empty comment: none). */
+export function answerWith(option: PromptOption, comment: string): ApprovalAnswer {
+  const text = comment.trim()
+  if (!text || !option.comment) return option.answer
+  return option.answer.approved
+    ? { ...option.answer, note: text }
+    : { approved: false, feedback: text }
 }
 
 /** The options for a request; "don't ask again" entries only when a rule is offered. */
 export function optionsFor(request: ApprovalRequest): PromptOption[] {
-  const options: PromptOption[] = [{ label: 'Yes', answer: { approved: true } }]
+  const options: PromptOption[] = [{ label: 'Yes', answer: { approved: true }, comment: 'note' }]
   if (request.suggestedRule) {
     options.push({
       label: `Yes, and don't ask again for ${stripControl(request.suggestedRule)}`,
@@ -32,7 +43,11 @@ export function optionsFor(request: ApprovalRequest): PromptOption[] {
       answer: { approved: true, remember: 'project' },
     })
   }
-  options.push({ label: 'No, and tell coder what to do differently (esc)', answer: 'feedback' })
+  options.push({
+    label: 'No, and tell coder what to do differently (esc)',
+    answer: { approved: false },
+    comment: 'feedback',
+  })
   return options
 }
 
@@ -103,58 +118,70 @@ function Detail({ request }: { request: ApprovalRequest }): ReactElement | null 
   )
 }
 
+/** Pure key handling of the comment field; returns the next buffer. */
+function editComment(buf: Buffer, input: string, key: Key): Buffer {
+  if (key.leftArrow) return move(buf, -1)
+  if (key.rightArrow) return move(buf, 1)
+  if (key.backspace) return backspace(buf)
+  if (key.delete) return deleteForward(buf)
+  if (input && !key.ctrl && !key.meta && !key.tab)
+    return insert(buf, input.replace(/[\r\n]+/g, ' '))
+  return buf
+}
+
 /** Shows the first pending request of the broker and answers it. */
 export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactElement | null {
   const pending = usePending(broker)
   const request = pending[0]
   const [index, setIndex] = useState(0)
-  const [feedback, setFeedback] = useState<Buffer | null>(null)
+  /** Comments kept per option index (Tab closes the field without dropping the text). */
+  const [comments, setComments] = useState<Record<number, string>>({})
+  /** The open comment field: option index and its buffer. */
+  const [field, setField] = useState<{ index: number; buffer: Buffer } | null>(null)
   const requestId = request?.id
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reset the selection per request
   useEffect(() => {
     setIndex(0)
-    setFeedback(null)
+    setComments({})
+    setField(null)
   }, [requestId])
 
   const options = request ? optionsFor(request) : []
 
-  const choose = (option: PromptOption | undefined): void => {
+  const choose = (i: number, comment = comments[i] ?? ''): void => {
+    const option = options[i]
     if (!request || !option) return
-    if (option.answer === 'feedback') {
-      setFeedback(emptyBuffer)
-      return
-    }
-    broker.answer(request.id, option.answer)
+    broker.answer(request.id, answerWith(option, comment))
   }
 
   useInput(
     (input, key) => {
       if (!request) return
-      if (feedback) {
-        if (key.escape) setFeedback(null)
-        else if (key.return) {
-          const text = feedback.text.trim()
-          broker.answer(
-            request.id,
-            text ? { approved: false, feedback: text } : { approved: false },
-          )
-        } else if (key.leftArrow) setFeedback(move(feedback, -1))
-        else if (key.rightArrow) setFeedback(move(feedback, 1))
-        else if (key.backspace) setFeedback(backspace(feedback))
-        else if (key.delete) setFeedback(deleteForward(feedback))
-        else if (input && !key.ctrl && !key.meta && !key.tab) {
-          setFeedback(insert(feedback, input.replace(/[\r\n]+/g, ' ')))
+      if (field) {
+        if (key.escape || key.tab) {
+          // close without answering, keep the text
+          setComments((c) => ({ ...c, [field.index]: field.buffer.text }))
+          setField(null)
+        } else if (key.return) {
+          choose(field.index, field.buffer.text)
+        } else {
+          setField({ ...field, buffer: editComment(field.buffer, input, key) })
         }
         return
       }
       if (key.escape) {
         broker.answer(request.id, { approved: false })
       } else if (key.upArrow) setIndex((i) => (i + options.length - 1) % options.length)
-      else if (key.downArrow || (key.tab && !key.shift)) setIndex((i) => (i + 1) % options.length)
-      else if (key.return) choose(options[index])
+      else if (key.downArrow) setIndex((i) => (i + 1) % options.length)
+      else if (key.tab) {
+        if (!key.shift && options[index]?.comment) {
+          const text = comments[index] ?? ''
+          setField({ index, buffer: { text, cursor: text.length } })
+        }
+      } else if (key.return) choose(index)
       else if (/^[1-9]$/.test(input) && Number(input) <= options.length) {
-        choose(options[Number(input) - 1])
+        choose(Number(input) - 1)
       }
     },
     { isActive: request !== undefined },
@@ -189,22 +216,45 @@ export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactE
       <Box marginTop={1}>
         <Text bold>{dialogQuestion(request)}</Text>
       </Box>
-      {feedback ? (
-        <Box>
-          <Text color={color.accent}>Tell coder what to do differently: </Text>
-          <Text>{feedback.text.slice(0, feedback.cursor)}</Text>
-          <Text inverse>{feedback.text[feedback.cursor] ?? ' '}</Text>
-          <Text>{feedback.text.slice(feedback.cursor + 1)}</Text>
-        </Box>
-      ) : (
-        <Box flexDirection="column">
-          {options.map((option, i) => (
-            <Text key={option.label} color={i === index ? color.accent : undefined}>
-              {i === index ? sym.pointer : ' '} {i + 1}. {option.label}
-            </Text>
-          ))}
-        </Box>
-      )}
+      <Box flexDirection="column">
+        {options.map((option, i) => {
+          const comment = field?.index === i ? field.buffer : undefined
+          const kept = comments[i]
+          return (
+            <Box key={option.label} flexDirection="column">
+              <Text color={i === index ? color.accent : undefined}>
+                {i === index ? sym.pointer : ' '} {i + 1}. {option.label}
+              </Text>
+              {comment ? (
+                <Text>
+                  {'     '}
+                  <Text color={color.accent}>
+                    {option.comment === 'note' ? 'Note: ' : 'Tell coder: '}
+                  </Text>
+                  {comment.text.slice(0, comment.cursor)}
+                  <Text inverse>{comment.text[comment.cursor] ?? ' '}</Text>
+                  {comment.text.slice(comment.cursor + 1)}
+                </Text>
+              ) : kept ? (
+                <Text dimColor>
+                  {'     '}
+                  {option.comment === 'note' ? 'Note: ' : 'Feedback: '}
+                  {kept}
+                </Text>
+              ) : null}
+            </Box>
+          )
+        })}
+      </Box>
+      <Box marginTop={1}>
+        <Text dimColor>
+          {field
+            ? 'Enter to send · Tab to close'
+            : options[index]?.comment
+              ? 'Tab to add a note · Esc to cancel'
+              : 'Esc to cancel'}
+        </Text>
+      </Box>
     </Box>
   )
 }

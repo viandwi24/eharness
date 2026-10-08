@@ -189,30 +189,32 @@ describe('permission prompt', () => {
     expect(broker.answers[0]?.answer).toEqual({ approved: true, remember: 'session' })
   })
 
-  test('key 4 then feedback + Enter denies with the feedback', async () => {
+  test('key 4 denies; Tab on No then feedback + Enter denies with the feedback', async () => {
     const { frame, broker, type } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
     await type('4')
-    await until(() => frame().includes('Tell coder what to do differently'), 'feedback')
+    await until(() => broker.answers.length === 1, 'answer')
+    expect(broker.answers[0]).toEqual({ id: 'ap1', answer: { approved: false } })
+    broker.push({ ...request, id: 'ap3' })
+    await until(() => frame().includes('Bash command'), 'prompt 2')
+    await type('\x1b[B\x1b[B\x1b[B')
+    await type('\t')
+    await until(() => frame().includes('Tell coder:'), 'field')
     await type('use bun run')
     await type(ENTER)
-    await until(() => broker.answers.length === 1, 'answer')
-    expect(broker.answers[0]).toEqual({
-      id: 'ap1',
+    await until(() => broker.answers.length === 2, 'answer 2')
+    expect(broker.answers[1]).toEqual({
+      id: 'ap3',
       answer: { approved: false, feedback: 'use bun run' },
     })
   })
 
-  test('Esc denies; without a rule option 2 is the feedback entry', async () => {
+  test('Esc denies; without a rule option 2 is No', async () => {
     const { frame, broker, type } = mount()
     broker.push({ ...request, id: 'ap2', suggestedRule: undefined })
     await until(() => frame().includes('Bash command'), 'prompt')
     expect(frame()).not.toContain('3.')
-    await type('2')
-    await until(() => frame().includes('Tell coder'), 'feedback')
-    await type(ESC)
-    await until(() => !frame().includes('Tell coder'), 'feedback closed')
     await type(ESC)
     await until(() => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]).toEqual({ id: 'ap2', answer: { approved: false } })
@@ -224,6 +226,44 @@ describe('permission prompt', () => {
     await until(() => frame().includes('Bash command'), 'prompt')
     await type('x')
     expect(broker.answers).toHaveLength(0)
+  })
+})
+
+describe('question dialog in the app', () => {
+  const single = {
+    id: 'q1',
+    questions: [
+      {
+        question: 'Which database?',
+        header: 'Database',
+        multiSelect: false,
+        options: [{ label: 'SQLite' }, { label: 'Postgres' }],
+      },
+    ],
+  }
+
+  test('shows above the prompt, blocks Shift+Tab and answers on Enter', async () => {
+    const { frame, broker, type, calls } = mount()
+    broker.pushQuestion(single)
+    await until(() => frame().includes('Which database?'), 'dialog')
+    await type(SHIFT_TAB)
+    expect(calls).not.toContain('cycleMode')
+    await type('\x1b[B')
+    await type(ENTER)
+    await until(() => broker.questionAnswers.length === 1, 'answer')
+    expect(broker.questionAnswers[0]).toEqual({
+      id: 'q1',
+      result: { answers: [{ question: 'Which database?', selected: ['Postgres'] }] },
+    })
+    await until(() => !frame().includes('Which database?'), 'dialog gone')
+  })
+
+  test('an approval is shown before a question', async () => {
+    const { frame, broker } = mount()
+    broker.pushQuestion(single)
+    broker.push({ id: 'ap9', toolName: 'bash', input: { command: 'ls' }, title: 'Bash: ls' })
+    await until(() => frame().includes('Bash command'), 'approval first')
+    expect(frame()).not.toContain('Which database?')
   })
 })
 

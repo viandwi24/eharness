@@ -26,6 +26,7 @@ import type { PageSpec } from './pages/spec.ts'
 import { TranscriptPage } from './pages/TranscriptPage.tsx'
 import { ModelPicker } from './pickers/ModelPicker.tsx'
 import { ThinkingPicker } from './pickers/ThinkingPicker.tsx'
+import { QuestionDialog, usePendingQuestions } from './QuestionDialog.tsx'
 import { SessionPicker } from './SessionPicker.tsx'
 import { parseSlash, runSlash } from './slash.ts'
 import {
@@ -127,7 +128,9 @@ export function App({
   const listFiles = useMemo(() => createFileLister(controller.workspace), [controller])
   const shellRuns = useRef<ShellRun[]>([])
   const shellAbort = useRef<AbortController | undefined>(undefined)
-  const pending = usePending(controller.broker)
+  const approvals = usePending(controller.broker)
+  const questions = usePendingQuestions(controller.broker)
+  const pending = useMemo(() => [...approvals, ...questions], [approvals, questions])
   const stateRef = useRef(state)
   stateRef.current = state
   const modelRef = useRef(model)
@@ -447,7 +450,11 @@ export function App({
         {...(liveTokens(state.live) !== undefined ? { tokens: liveTokens(state.live) } : {})}
       />
       <Box flexDirection="column" display={pageHost.active ? 'none' : 'flex'}>
-        {pending.length > 0 ? <PermissionPrompt broker={controller.broker} /> : null}
+        {approvals.length > 0 ? (
+          <PermissionPrompt broker={controller.broker} />
+        ) : questions.length > 0 ? (
+          <QuestionDialog broker={controller.broker} />
+        ) : null}
         {hasOpenTodos(todos) && todos ? <TodoPanel todos={todos} /> : null}
         {picker === 'session' ? (
           <SessionPicker

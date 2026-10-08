@@ -31,7 +31,7 @@ import {
 import { filesystem } from 'eharness/filesystem'
 import { mcpServer } from 'eharness/mcp'
 import { todos } from 'eharness/todos'
-import { createAgentTool } from '../agents/index.ts'
+import { createAgentTool, createAskTool } from '../agents/index.ts'
 import {
   type AgentDefinition,
   type ApprovalBroker,
@@ -213,7 +213,10 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       [TOOL.bash]: createBashTool({ sandbox: deps.sandbox }),
     }
     if (depth < config.maxAgentDepth) appTools[TOOL.agent] = createAgentTool(toolDeps, depth)
-    if (isMain) appTools[TOOL.dirAccess] = createDirAccessTool(workspace)
+    if (isMain) {
+      appTools[TOOL.dirAccess] = createDirAccessTool(workspace)
+      appTools[TOOL.ask] = createAskTool()
+    }
 
     const disallowed = [...(def?.disallowedTools ?? [])]
     if (def !== undefined) {

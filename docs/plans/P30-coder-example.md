@@ -742,6 +742,85 @@ persisted.
   Bracketed paste keeps newlines as text.
 - **Welcome box** shortens home to `~` and truncates the middle of long paths to the window width.
 
+## UX gap analysis (2026-10-08)
+
+Compared with the reference terminal coding agent's documentation (interactive mode, commands,
+tools, permissions; Sources). "Here" is the state of `examples/coder` after the approval-note and
+question-dialog work. Priority: P1 = expected by every user of a coding agent, P2 = strong
+quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
+
+### Input and prompt
+
+| Feature | Reference behaviour | Here | eharness support | Prio | Effort |
+|---|---|---|---|---|---|
+| Queue messages while the agent works | `Enter` during a turn queues; queued entries shown gray; `Up` takes them back; sent at the next step boundary or after the turn | hint "turn is running" only | `ifBusy: 'queue' \| 'steer' \| 'collect'` (spec 05) | P1 | M |
+| Reverse history search | `Ctrl+R`, history of all projects, persisted | in-memory Up/Down only | app | P1 | S |
+| Persistent prompt history | across sessions per project | no | app | P1 | S |
+| Double `Esc` | clears a draft (saved to history) or opens the rewind menu | no | app | P2 | S |
+| Rewind / checkpoints | restore conversation and/or code to an earlier message | no | conversation: `regenerate` / `edit` (rewind markers); code: needs file snapshots (app) | P2 | L |
+| External editor | `Ctrl+G` opens `$EDITOR` for the prompt | no | app | P2 | S |
+| Stash prompt | `Ctrl+S` stash / restore | no | app | P3 | S |
+| Kill ring and word motions | `Ctrl+K/U/W/Y`, `Alt+B/F/D`, undo `Ctrl+_` | `Ctrl+A/E/U` only | app | P2 | S |
+| Large paste collapsed | `[Pasted text #1 +42 lines]` chip | pasted inline | app | P2 | S |
+| Image paste | `Ctrl+V` inserts `[Image #N]`, sent as a file part | no | user file parts supported (spec 05 §3) | P2 | M |
+| Prompt suggestions | ghost text from git history; next-prompt suggestion after a reply (`Tab` accepts) | static placeholder | app (+ a cheap model call) | P3 | M |
+| Vim mode | NORMAL/INSERT/VISUAL editing | no | app | P3 | M |
+| `@` mentions of folders and agents | folders, files, agents | files only | app | P3 | S |
+
+### Transcript and display
+
+| Feature | Reference behaviour | Here | eharness support | Prio | Effort |
+|---|---|---|---|---|---|
+| Reasoning display | collapsed thinking block, expandable | hidden | reasoning parts are in the UI message | P1 | S |
+| Task list toggle | `Ctrl+T` shows/hides the checklist (≤ 5 items) | always shown while open | todos plugin | P3 | S |
+| Focus view | `/focus`: only last prompt, one-line tool summaries, diffstats | no | app | P3 | S |
+| Message timestamps / model per message | in the transcript viewer | viewer shows them when metadata has them | `metadata.eharness` | done | — |
+| Terminal title and notifications | title shows the task; bell/desktop notification when a long turn ends or input is needed | no | app (`turn-end`, `pending` session events) | P2 | S |
+| Session recap | one-line recap when returning; `/recap` | no | app (summarizer call) | P3 | S |
+| Custom status line | user command renders the footer | fixed footer | app | P3 | S |
+| Themes | `/theme`, light/dark, syntax colors | one palette (`NO_COLOR`) | app | P3 | S |
+
+### Commands
+
+| Command | Reference behaviour | Here | eharness support | Prio | Effort |
+|---|---|---|---|---|---|
+| `/diff` | review working-tree changes and per-turn edits | no | app (git) + `data-filesystem.change` parts | P1 | M |
+| `/compact [instructions]` | focus instructions for the summary | `/compact` without instructions | `compaction.prompt` hook | P2 | S |
+| `/plan [description]` | enter plan mode from the prompt | Shift+Tab / mode command | app | P2 | S |
+| `/add-dir <path>` | mount a directory mid-session | tool + flag only | `workspace.addDirectory` | P2 | S |
+| `/export`, `/copy [N]` | export conversation, copy a response | no | `session.messages()` | P2 | S |
+| `/btw` side question | answer from context without adding to history | no | a separate `streamText` over the projected context | P2 | M |
+| `/rename`, named sessions | name shown on the prompt bar; resume by name | ids only | app (state) | P2 | S |
+| `/branch`, `/fork` | branch the conversation | no | roadmap "Fork" (`session.fork`) | P3 | M |
+| `/memory` | edit project memory files | no | app | P2 | S |
+| `/config` | settings dialog | settings files only | app | P2 | M |
+| `/init` | draft `AGENTS.md` | done | — | done | — |
+| `/doctor` | setup diagnostics | no | app | P3 | S |
+| `/release-notes`, `/feedback`, `/bug` | product-specific | not applicable | — | — | — |
+| Custom commands and skills by `/name` | project/user command files, skills invokable as `/skill` | skills load through `load_skill` only | skill sources (spec 07) | P1 | M |
+
+### Agent and tools
+
+| Feature | Reference behaviour | Here | eharness support | Prio | Effort |
+|---|---|---|---|---|---|
+| Web fetch / web search tools | fetch a URL as markdown; search | no | app tools (+ approval) | P1 | M |
+| Background shells | `Ctrl+B` backgrounds a command; output read later; `/tasks` | foreground only | app (sandbox `spawn`) + external waits (spec 11 §4.2) | P2 | M |
+| Background subagents | run while the user keeps working; completion notification | foreground, parallel inside one turn | inject + wake (spec 05 §12) | P2 | L |
+| Monitor tool | stream a background command's lines back to the agent | no | inject `next-step` events | P3 | M |
+| LSP diagnostics | definitions, references, type errors | no | MCP or app tool | P3 | L |
+| Hooks | shell commands on tool/turn events | no | plugin hooks (spec 01 §5) | P2 | M |
+| Plan approval options | approve with auto-accept edits / approve manual / keep planning with feedback | approve or deny | `exit_plan_mode` + mode switch | P1 | S |
+| Permission prompt notes | `Tab` adds a note to Yes/No | done; the note reaches the model one model call later than in the reference (R16); a bare No stops the main turn via a stream workaround (R17) | steer + denial reason | done | — |
+| Multiple-choice questions | `ask_user_question` dialog, radio/checkbox, Other, notes | done (client tool answered in process through the broker) | client tools (spec 11) | done | — |
+| Question timeout | optional auto-continue after idle | no | client tool timeouts (spec 11 §7.1) | P3 | S |
+| Output styles | switchable response styles | no | instructions | P3 | S |
+| OS sandbox | sandboxed shell | not sandboxed (documented) | roadmap "Sandbox plugin" | P2 | L |
+
+**Suggested next batch (P1, mostly S/M):** message queueing, reasoning display, persistent history
+with `Ctrl+R`, plan approval options, `/diff`, web fetch/search tools, custom `/commands` and skill
+invocation. Then P2 input polish (external editor, kill ring, paste chips, double Esc) and
+notifications.
+
 ## Requests to the library
 
 Gaps this example works around; each becomes a roadmap row or a phase with a spec.
@@ -763,6 +842,9 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 | R13 | Adapter exceptions from `FileSystem` become `Error: ...` tool errors (spec 08 §3) instead of an `ERROR:` string; an option to catch and format them in the filesystem plugin (or a per-tool `toolErrorText`) | `disk-fs.ts` throws plain sentences (binary or too large file, read-only directory) |
 | R14 | A public API to list a session's resolved tools with their definitions (name, description, input schema), so a UI can itemise tool sizes | `/context` reads plugin internals (`~def`) through `pluginStaticTools` in `src/app/tool-inventory.ts`, called from `contextInfo()` in `src/app/agent.ts`, and skips dynamic tool sources |
 | R15 | Per-category context stats in `session.stats()`: split `instructions` into memory, skills and MCP (today `ContextStats` has `instructions`, `tools` and `messages` only, spec 06 §2) | memory and skill tokens are estimated by the app (`estimateTokens`, `skillIndexTokens`), MCP only flagged by `hasMcp` |
+| R16 | An approval answer that carries a note for the model, delivered on the continuation's first step (today `PendingResponse.approvals[].reason` only reaches the model for denials, and no steer is delivered before step 0 of a `respond()` continuation) | the note is a steer sent after `respond()`, so the model reads it one call later; undelivered notes are carried into the next `respond()` (`agents/drive.ts`) |
+| R17 | `respond()` option to end the turn after recording the answers (e.g. stop on a bare denial) without starting a model step | the drive tees the continuation stream and aborts the run right after the `tool-output-denied` chunk; one model request may already have started (`agents/drive.ts`) |
+| R18 | The tool input of a pending client-tool call in `PendingState.clientTools` (only `toolCallId` and `toolName` today) | `ask_user_question` input is read back from the stored tool part via `session.messages()` |
 
 ## Open questions
 
@@ -784,5 +866,6 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 - AI SDK `Experimental_SandboxSession`: `@ai-sdk/provider-utils` type declarations (ai 7.0.127)
 - npm registry metadata for every package in §2 (versions and dates as of 2026-10-08)
 - Bun workspaces: https://bun.com/docs/pm/workspaces
+- Reference interactive-mode, commands and tools documentation: https://code.claude.com/docs/en/interactive-mode, https://code.claude.com/docs/en/commands, https://code.claude.com/docs/en/tools-reference
 - Bun module resolution (`tsconfig` `paths`, export conditions): https://bun.com/docs/runtime/module-resolution
 - Local probes (2026-10-08, Bun 1.4.2, `@changesets/cli` 3.0.3): root as a workspace dependency, `paths` through `extends`, `changeset version` / `status` with a private workspace

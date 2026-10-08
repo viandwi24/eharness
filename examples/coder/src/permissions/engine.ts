@@ -434,7 +434,9 @@ export function createPermissionEngine(opts: {
       if (m === 'acceptEdits' && isAcceptedFileCommand(command, ctx)) return { status: 'approved' }
       return { status: 'user-approval' }
     }
-    if (name === TOOL.agent || READ_ONLY_TOOLS.includes(name)) return { status: 'approved' }
+    if (name === TOOL.agent || name === TOOL.ask || READ_ONLY_TOOLS.includes(name)) {
+      return { status: 'approved' }
+    }
     return m === 'bypassPermissions' ? { status: 'approved' } : { status: 'user-approval' }
   }
 
@@ -480,6 +482,9 @@ export function createPermissionEngine(opts: {
       return { status: 'denied', rule: denied.raw, reason: `Denied by the rule ${denied.raw}.` }
     }
 
+    // the question tool is not an action: it only talks to the user (ask rules cannot gate it)
+    if (name === TOOL.ask) return { status: 'approved' }
+
     // 2. tools that always ask
     if (name === TOOL.dirAccess) {
       return { status: 'user-approval', reason: 'Access to a new directory always needs approval.' }
@@ -492,7 +497,12 @@ export function createPermissionEngine(opts: {
     }
 
     // 3. plan mode: reads and read-only commands only
-    if (m === 'plan' && name !== TOOL.agent && !READ_ONLY_TOOLS.includes(name)) {
+    if (
+      m === 'plan' &&
+      name !== TOOL.agent &&
+      name !== TOOL.ask &&
+      !READ_ONLY_TOOLS.includes(name)
+    ) {
       if (!(bash !== undefined && isReadOnlyCommand(bash))) {
         return { status: 'denied', reason: PLAN_MODE_REASON }
       }
@@ -577,6 +587,7 @@ export function createPermissionEngine(opts: {
           !READ_ONLY_TOOLS.includes(name) &&
           name !== TOOL.exitPlan &&
           name !== TOOL.agent &&
+          name !== TOOL.ask &&
           name !== TOOL.bash
         ) {
           out.add(name)
@@ -666,7 +677,7 @@ export function createPermissionEngine(opts: {
     },
     suggestRule(call: ToolCallInfo): string | undefined {
       const name = call.toolName
-      if (name === TOOL.exitPlan || name === TOOL.dirAccess) return undefined
+      if (name === TOOL.exitPlan || name === TOOL.dirAccess || name === TOOL.ask) return undefined
       const ctx = context()
       if (writeTargets(call, ctx).some((real) => isProtectedPath(real, ctx.mounts))) {
         return undefined

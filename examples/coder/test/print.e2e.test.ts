@@ -84,6 +84,34 @@ describe('print mode e2e', () => {
     expect(r.stderr).toContain('[tool] read_file')
   })
 
+  test('ask_user_question is dismissed without a prompt and the exit code is 0', async () => {
+    const r = await coder(['-p', 'ask me'], {
+      steps: [
+        {
+          toolCalls: [
+            {
+              toolName: 'ask_user_question',
+              input: {
+                questions: [
+                  {
+                    question: 'Which?',
+                    header: 'Pick',
+                    options: [{ label: 'A' }, { label: 'B' }],
+                    multiSelect: false,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+        { text: 'Proceeding on my own.' },
+      ],
+    })
+    expect(r.code).toBe(0)
+    expect(r.stdout).toBe('Proceeding on my own.\n')
+    expect(r.stderr).toContain('[tool] ask_user_question')
+  })
+
   test('--output-format json has the documented shape', async () => {
     const r = await coder(['-p', 'json please', '--output-format', 'json'], {
       steps: [{ text: 'answer', usage: { inputTokens: 100, outputTokens: 7 } }],

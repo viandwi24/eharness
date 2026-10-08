@@ -159,6 +159,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
           permissions,
           describe,
           signal: active.signal,
+          stopOnBareDeny: true,
           onRun: hooks.onRun,
         })
       } finally {

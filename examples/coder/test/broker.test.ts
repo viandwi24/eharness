@@ -1,6 +1,6 @@
 /** The approval broker: FIFO queue, answers, abort and listeners. */
 import { describe, expect, test } from 'bun:test'
-import type { ApprovalAnswer, ApprovalRequest } from '../src/contracts.ts'
+import type { ApprovalAnswer, ApprovalRequest, QuestionRequest } from '../src/contracts.ts'
 import { createBroker, createDenyingBroker } from '../src/permissions/broker.ts'
 
 const request = (id: string): ApprovalRequest => ({
@@ -149,5 +149,55 @@ describe('createDenyingBroker', () => {
     expect(broker.pending()).toEqual([])
     broker.answer('a', { approved: true })
     broker.subscribe(() => {})()
+  })
+})
+
+const question = (id: string): QuestionRequest => ({
+  id,
+  questions: [
+    {
+      question: 'Which?',
+      header: 'Pick',
+      options: [{ label: 'A' }, { label: 'B' }],
+      multiSelect: false,
+    },
+  ],
+})
+
+describe('broker questions', () => {
+  test('FIFO queue, answerQuestion resolves the matching ask, listeners are notified', async () => {
+    const broker = createBroker()
+    let notified = 0
+    broker.subscribe(() => notified++)
+    const a = broker.question(question('a'))
+    const b = broker.question(question('b'))
+    expect(broker.pendingQuestions().map((q) => q.id)).toEqual(['a', 'b'])
+    expect(broker.pending()).toEqual([])
+    broker.answerQuestion('b', { answers: [{ question: 'Which?', selected: ['B'] }] })
+    expect(await b).toEqual({ answers: [{ question: 'Which?', selected: ['B'] }] })
+    broker.answerQuestion('a', null)
+    expect(await a).toBeNull()
+    expect(broker.pendingQuestions()).toEqual([])
+    expect(notified).toBe(4)
+    broker.answerQuestion('a', null)
+    expect(notified).toBe(4)
+  })
+
+  test('abort resolves null and removes the question; an aborted signal never queues', async () => {
+    const broker = createBroker()
+    const abort = new AbortController()
+    const p = broker.question(question('a'), abort.signal)
+    abort.abort()
+    expect(await p).toBeNull()
+    expect(broker.pendingQuestions()).toEqual([])
+    expect(await broker.question(question('b'), abort.signal)).toBeNull()
+    expect(broker.pendingQuestions()).toEqual([])
+  })
+
+  test('the denying broker dismisses every question at once', async () => {
+    const broker = createDenyingBroker()
+    expect(await broker.question(question('a'))).toBeNull()
+    expect(broker.pendingQuestions()).toEqual([])
+    broker.answerQuestion('a', null)
   })
 })

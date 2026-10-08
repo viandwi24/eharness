@@ -161,6 +161,28 @@ Prompt features:
   (numbers are listed by `/agents`).
 - `/permissions mode bypassPermissions` needs `--yes` to confirm.
 
+### Permission prompts and questions
+
+A permission prompt lists numbered options with a `❯` cursor. Keys: `↑/↓` move, `1..N` answer at
+once, `Enter` answers the focused option, `Esc` is "No" without a comment.
+
+- **Notes with Tab.** On **Yes** or **No**, `Tab` opens a one-line field. `Enter` sends the answer
+  with the text, `Tab` or `Shift+Tab` closes the field and keeps the text for a later answer, `Esc`
+  closes the field only. The "don't ask again" options take no note.
+- A note on **Yes** reaches the agent after the tool result, as a steer at the next step boundary.
+  Because the core delivers no steer before the first step of a continuation, the agent reads it on
+  its second model call after the result, not the first.
+- A comment on **No** is the denial reason, and the agent keeps working. A bare **No** on a prompt of
+  the main agent stops the turn (`aborted`); in a subagent it is a plain denial.
+
+The agent can ask you multiple-choice questions with the `ask_user_question` tool (main agent only,
+allowed in every mode). One dialog holds 1–4 questions, one tab each (`☐`/`☒` marks answered ones),
+plus a **Submit** tab with a review when there are several. Each question is radio `(•)` (pick one)
+or checkbox `[✔]` (pick several), always with an **Other** row for your own text, and `n` adds
+notes to a question. Keys: `←/→` or `Tab` switch tabs, `↑/↓` move, `Space` selects or toggles,
+`Enter` selects and moves on (or submits), `Esc` dismisses (the agent is told you did not answer).
+In print mode questions are dismissed.
+
 ## Safety model
 
 Read this before pointing the agent at anything you care about.

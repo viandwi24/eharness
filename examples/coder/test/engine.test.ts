@@ -635,6 +635,25 @@ describe('rules and precedence', () => {
   })
 })
 
+describe('ask_user_question', () => {
+  const ask = call(TOOL.ask, { questions: [] })
+  for (const mode of PERMISSION_MODES) {
+    test(`approved in ${mode}, even with a catch-all ask rule`, () => {
+      expect(status(make(mode).decide(ask))).toBe('approved')
+      expect(status(make(mode, { ask: [TOOL.ask] }).decide(ask))).toBe('approved')
+    })
+  }
+  test('stays active in plan mode and in every other mode', () => {
+    for (const mode of PERMISSION_MODES) {
+      expect(make(mode).inactiveTools()).not.toContain(TOOL.ask)
+    }
+    expect(make('default').inactiveTools('plan')).not.toContain(TOOL.ask)
+  })
+  test('no rule suggestion', () => {
+    expect(make().suggestRule(ask)).toBeUndefined()
+  })
+})
+
 describe('inactiveTools', () => {
   test('default: only exit_plan_mode', () => {
     for (const mode of ['default', 'acceptEdits', 'dontAsk', 'bypassPermissions'] as const) {

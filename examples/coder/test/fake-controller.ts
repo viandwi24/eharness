@@ -16,6 +16,8 @@ import type {
   PermissionEngine,
   PermissionMode,
   PermissionRules,
+  QuestionRequest,
+  QuestionResult,
   SessionSummary,
   StatusInfo,
   ThinkingLevel,
@@ -107,19 +109,34 @@ export const FIXTURE_MODELS: ModelOption[] = [
 
 export function fakeBroker(): ApprovalBroker & {
   answers: Array<{ id: string; answer: ApprovalAnswer }>
+  questionAnswers: Array<{ id: string; result: QuestionResult }>
   push(request: ApprovalRequest): void
+  pushQuestion(request: QuestionRequest): void
 } {
   let queue: ApprovalRequest[] = []
+  let questions: QuestionRequest[] = []
   const listeners = new Set<(p: ApprovalRequest[]) => void>()
+  const notify = (): void => {
+    for (const l of listeners) l(queue)
+  }
   const answers: Array<{ id: string; answer: ApprovalAnswer }> = []
+  const questionAnswers: Array<{ id: string; result: QuestionResult }> = []
   return {
     answers,
+    questionAnswers,
     ask: () => new Promise(() => {}),
     pending: () => queue,
     answer(id, answer) {
       answers.push({ id, answer })
       queue = queue.filter((r) => r.id !== id)
-      for (const l of listeners) l(queue)
+      notify()
+    },
+    question: () => new Promise(() => {}),
+    pendingQuestions: () => questions,
+    answerQuestion(id, result) {
+      questionAnswers.push({ id, result })
+      questions = questions.filter((r) => r.id !== id)
+      notify()
     },
     subscribe(l) {
       listeners.add(l)
@@ -127,7 +144,11 @@ export function fakeBroker(): ApprovalBroker & {
     },
     push(request) {
       queue = [...queue, request]
-      for (const l of listeners) l(queue)
+      notify()
+    },
+    pushQuestion(request) {
+      questions = [...questions, request]
+      notify()
     },
   }
 }

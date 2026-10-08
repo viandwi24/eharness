@@ -125,6 +125,17 @@ function Body({
         </>
       )
     }
+    case TOOL.ask: {
+      if (!finished) return null
+      const lines = output.split('\n').filter((line) => line.trim() !== '')
+      const dismissed = lines.length === 0 || /dismiss|declin/i.test(lines[0] ?? '')
+      const shown = dismissed ? ['Dismissed'] : lines.slice(expanded ? 0 : 1, expanded ? 40 : 12)
+      return (
+        <Branch>
+          <Lines lines={shown.length > 0 ? shown : lines} />
+        </Branch>
+      )
+    }
     case TOOL.bash: {
       const live = desc.tail
       const lines = finished ? bashBody(output) : (live ?? [])

@@ -319,6 +319,9 @@ function fakeBroker(request: ApprovalRequest): ApprovalBroker & { answers: Appro
     answer: (_id, answer) => {
       answers.push(answer)
     },
+    question: () => new Promise(() => {}),
+    pendingQuestions: () => [],
+    answerQuestion: () => {},
     subscribe: () => () => {},
   }
 }

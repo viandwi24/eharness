@@ -105,6 +105,23 @@ describe('controller', () => {
     expect(JSON.stringify(model.prompts.at(-1))).toContain('no thanks')
   })
 
+  test('default mode: a bare No stops the turn (aborted), a No with feedback continues', async () => {
+    const model = scriptedModel([
+      { toolCalls: [read('/code.ts')] },
+      { toolCalls: [edit('/code.ts', 'one', 'ONE')] },
+      { text: 'must not run', delayMs: 30 },
+    ])
+    const { controller, root } = await makeController({ files: { 'code.ts': 'one\n' }, model })
+    const h = hooks()
+    const turn = controller.run('edit', h)
+    controller.broker.answer((await nextPending(controller.broker)).id, { approved: false })
+    const result = await turn
+    await Promise.all(h.done)
+    expect(result.stop).toBe('aborted')
+    expect(await readFile(join(root, 'code.ts'), 'utf8')).toBe('one\n')
+    expect(JSON.stringify(await controller.messages())).not.toContain('must not run')
+  })
+
   test('messages, clear, resume, sessions and stats', async () => {
     const model = scriptedModel([
       { text: 'first answer', usage: { inputTokens: 500, outputTokens: 20 } },

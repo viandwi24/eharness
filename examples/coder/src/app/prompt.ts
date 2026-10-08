@@ -33,6 +33,7 @@ export const STATIC_INSTRUCTIONS: string = `You are a coding agent working in th
 # Tasks and planning
 - For work with three or more steps, use \`todo_write\`: list the steps, keep exactly one item \`in_progress\`, and mark items \`completed\` as soon as they are done. Skip it for trivial requests.
 - If the request is ambiguous in a way that changes the result, ask one focused question instead of guessing. Otherwise proceed.
+- Use \`ask_user_question\` to offer the user multiple-choice options when you need a decision or requirements (the user can always type another answer). Do not use it to ask permission for an action (tool approval does that) or whether your plan is ready (use \`exit_plan_mode\`).
 
 # Verification
 - After changing code, run the project's tests, linter and type checker when they exist (look at the package manifest, Makefile or README for the commands). Fix what you broke.
