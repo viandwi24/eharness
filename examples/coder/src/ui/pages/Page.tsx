@@ -29,6 +29,8 @@ export interface PageProps {
   arrows?: boolean
   /** Open scrolled to the end (the transcript viewer). */
   startAtEnd?: boolean
+  /** A child is capturing text input: the page ignores every key (Esc and `q` included). */
+  editing?: boolean
   /** Override the terminal size (tests). */
   size?: { rows: number; columns: number }
   children: ReactNode
@@ -80,6 +82,7 @@ export function Page({
   onClose,
   arrows = true,
   startAtEnd = false,
+  editing = false,
   size,
   children,
 }: PageProps): ReactElement {
@@ -109,27 +112,30 @@ export function Page({
   const max = Math.max(0, contentHeight - viewport)
   const top = Math.min(requested, max)
 
-  useInput((input, key) => {
-    if (key.escape || input === 'q') return onClose()
-    const fresh = contentRef.current ? measureElement(contentRef.current).height : contentHeight
-    const limit = Math.max(0, fresh - viewport)
-    const set = (n: number): void => setRequested(Math.max(0, Math.min(limit, n)))
-    if (arrows && key.upArrow) return set(top - 1)
-    if (arrows && key.downArrow) return set(top + 1)
-    if (key.pageUp) return set(top - (viewport - 1))
-    if (key.pageDown) return set(top + (viewport - 1))
-    if (input === 'g' || key.home) return set(0)
-    if (input === 'G' || key.end) return set(limit)
-    if (key.tab && !key.shift) {
-      const base = contentRef.current ? measureElement(contentRef.current).y : 0
-      const ys = sections.current
-        .map((ref) => (ref.current ? measureElement(ref.current).y - base : -1))
-        .filter((y) => y >= 0)
-        .sort((a, b) => a - b)
-      const next = ys.find((y) => y > top)
-      set(next ?? 0)
-    }
-  })
+  useInput(
+    (input, key) => {
+      if (key.escape || input === 'q') return onClose()
+      const fresh = contentRef.current ? measureElement(contentRef.current).height : contentHeight
+      const limit = Math.max(0, fresh - viewport)
+      const set = (n: number): void => setRequested(Math.max(0, Math.min(limit, n)))
+      if (arrows && key.upArrow) return set(top - 1)
+      if (arrows && key.downArrow) return set(top + 1)
+      if (key.pageUp) return set(top - (viewport - 1))
+      if (key.pageDown) return set(top + (viewport - 1))
+      if (input === 'g' || key.home) return set(0)
+      if (input === 'G' || key.end) return set(limit)
+      if (key.tab && !key.shift) {
+        const base = contentRef.current ? measureElement(contentRef.current).y : 0
+        const ys = sections.current
+          .map((ref) => (ref.current ? measureElement(ref.current).y - base : -1))
+          .filter((y) => y >= 0)
+          .sort((a, b) => a - b)
+        const next = ys.find((y) => y > top)
+        set(next ?? 0)
+      }
+    },
+    { isActive: !editing },
+  )
 
   const position =
     max > 0 ? `${top + 1}-${Math.min(top + viewport, contentHeight)}/${contentHeight}` : ''

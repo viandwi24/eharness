@@ -1,7 +1,7 @@
 import { Box, Text, useWindowSize } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import type { CoderController, PermissionMode, ThinkingLevel } from '../contracts.ts'
-import { color } from './theme.ts'
+import { color, useTheme } from './theme.ts'
 
 /** Props of {@link Footer}. */
 export interface FooterProps {
@@ -17,6 +17,14 @@ export interface FooterProps {
   shortcutsOpen?: boolean
   /** A turn is running. */
   busy?: boolean
+  /** Vim mode label shown at the far left (`INSERT` renders as `-- INSERT --`). */
+  vimMode?: string
+  /** Output of the user's status line command; replaces the right side (ANSI allowed). */
+  statusLine?: string
+  /** Running background tasks (`⧉ N background` when above 0). */
+  tasks?: number
+  /** Session name, dim, left of the model. */
+  sessionName?: string
 }
 
 /** `anthropic/claude-sonnet-4.6` → `claude-sonnet-4.6`. */
@@ -44,6 +52,8 @@ export function modeIndicator(mode: PermissionMode): { text: string; color: stri
 /** Below the prompt box: mode indicator on the left, model, thinking and context on the right. */
 export function Footer(props: FooterProps): ReactElement {
   const { mode, model, thinking, contextLeftPct, costUsd, hint, shortcutsOpen, busy } = props
+  const { vimMode, statusLine, tasks, sessionName } = props
+  useTheme()
   const indicator = modeIndicator(mode)
   const low = contextLeftPct !== undefined && contextLeftPct <= 20
   const left =
@@ -51,6 +61,9 @@ export function Footer(props: FooterProps): ReactElement {
   return (
     <Box paddingX={1} justifyContent="space-between">
       <Box flexShrink={0}>
+        {vimMode ? (
+          <Text bold>{vimMode.startsWith('--') ? vimMode : `-- ${vimMode.toUpperCase()} --`} </Text>
+        ) : null}
         <Text
           color={hint ? undefined : indicator.color}
           dimColor={hint ? false : indicator.color === undefined}
@@ -61,15 +74,25 @@ export function Footer(props: FooterProps): ReactElement {
       </Box>
       <Box flexShrink={1} marginLeft={2}>
         <Text wrap="truncate-end">
-          {low ? (
-            <Text color={(contextLeftPct as number) <= 10 ? color.error : color.warning}>
-              Context left until auto-compact: {contextLeftPct}%<Text dimColor> · </Text>
-            </Text>
-          ) : null}
-          <Text dimColor>
-            {shortModel(model)} · thinking {thinking}
-            {costUsd !== undefined ? ` · $${costUsd.toFixed(2)}` : ''}
-          </Text>
+          {statusLine ? (
+            statusLine
+          ) : (
+            <>
+              {tasks !== undefined && tasks > 0 ? (
+                <Text dimColor>⧉ {tasks} background · </Text>
+              ) : null}
+              {sessionName ? <Text dimColor>{sessionName} · </Text> : null}
+              {low ? (
+                <Text color={(contextLeftPct as number) <= 10 ? color.error : color.warning}>
+                  Context left until auto-compact: {contextLeftPct}%<Text dimColor> · </Text>
+                </Text>
+              ) : null}
+              <Text dimColor>
+                {shortModel(model)} · thinking {thinking}
+                {costUsd !== undefined ? ` · $${costUsd.toFixed(2)}` : ''}
+              </Text>
+            </>
+          )}
         </Text>
       </Box>
     </Box>

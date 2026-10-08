@@ -127,3 +127,20 @@ describe('killAllSandboxProcesses', () => {
     killAllSandboxProcesses('SIGKILL') // registry is empty: no-op, must not throw
   })
 })
+
+describe('local sandbox state', () => {
+  test('default: not sandboxed, description says so', async () => {
+    const sb = createLocalSandbox(await temp())
+    expect(sb.sandboxState().enabled).toBe(false)
+    expect(sb.description).toContain('not sandboxed')
+  })
+
+  test('requested but tool missing never reports enabled', async () => {
+    const sb = createLocalSandbox(await temp(), {
+      os: { enabled: true, network: true, allowWrite: [] },
+    })
+    const s = sb.sandboxState()
+    expect(s.enabled).toBe(s.kind !== 'none')
+    expect(s.network).toBe(true)
+  })
+})

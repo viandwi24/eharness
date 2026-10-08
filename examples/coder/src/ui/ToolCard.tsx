@@ -9,6 +9,7 @@ import { TodoList } from './TodoPanel.tsx'
 import { color, sym } from './theme.ts'
 import {
   bashBody,
+  countChanges,
   describeTool,
   displayPath,
   firstLine,
@@ -27,12 +28,20 @@ export interface ToolCardProps {
   expanded: boolean
 }
 
-const STATUS_COLOR: Record<ToolStatus, string | undefined> = {
-  running: color.dim,
-  waiting: color.warning,
-  ok: color.ok,
-  error: color.error,
-  denied: color.denied,
+/** Bullet color of a status (read at render time so theme switches apply). */
+export function statusColor(status: ToolStatus): string | undefined {
+  switch (status) {
+    case 'running':
+      return color.dim
+    case 'waiting':
+      return color.warning
+    case 'ok':
+      return color.ok
+    case 'error':
+      return color.error
+    case 'denied':
+      return color.denied
+  }
 }
 
 const BASH_LINES = 4
@@ -47,7 +56,7 @@ function pretty(value: unknown): string {
 export function StatusBullet({ status }: { status: ToolStatus }): ReactElement {
   const { frame } = useAnimation({ interval: 500, isActive: status === 'running' })
   const hidden = status === 'running' && frame % 2 === 1
-  return <Text color={STATUS_COLOR[status]}>{hidden ? ' ' : sym.bullet}</Text>
+  return <Text color={statusColor(status)}>{hidden ? ' ' : sym.bullet}</Text>
 }
 
 function More({ count, expandHint = true }: { count: number; expandHint?: boolean }): ReactElement {
@@ -215,6 +224,45 @@ function Body({
       )
     }
   }
+}
+
+/**
+ * Focus view: the call on a single line, `⏺ Update(src/a.ts) +3 −1` (diffstat for edits, `exit N`
+ * for bash, nothing more for the rest).
+ */
+export function ToolLine({
+  view,
+  context,
+}: {
+  view: ToolView
+  context: ToolContext
+}): ReactElement {
+  const desc = describeTool(view, context)
+  const input = (view.input ?? {}) as Record<string, unknown>
+  let stat = ''
+  if (view.toolName === TOOL.edit && desc.status === 'ok') {
+    const { added, removed } = countChanges(
+      String(input.old_string ?? ''),
+      String(input.new_string ?? ''),
+    )
+    stat = [added > 0 ? `+${added}` : '', removed > 0 ? `${sym.minus}${removed}` : '']
+      .filter(Boolean)
+      .join(' ')
+  } else if (view.toolName === TOOL.bash && desc.summary) {
+    stat = /^exit \d+/.exec(desc.summary)?.[0] ?? desc.summary
+  }
+  return (
+    <Box>
+      <Box flexShrink={0} width={2}>
+        <StatusBullet status={desc.status} />
+      </Box>
+      <Text wrap="truncate-end">
+        <Text bold>{desc.label}</Text>
+        {desc.target ? `(${desc.target})` : ''}
+        {stat ? <Text dimColor> {stat}</Text> : null}
+      </Text>
+    </Box>
+  )
 }
 
 /**

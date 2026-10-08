@@ -26,22 +26,41 @@ export function TodoList({ todos, max = 12 }: { todos: TodoItem[]; max?: number 
       })}
       {todos.length > max ? (
         <Text dimColor>
-          {sym.ellipsis} +{todos.length - max} more
+          {sym.ellipsis} {todos.length - max} more
         </Text>
       ) : null}
     </Box>
   )
 }
 
-/** The latest todo list, shown above the prompt while items are open. */
-export function TodoPanel({ todos }: { todos: TodoItem[] }): ReactElement {
+/**
+ * The latest todo list, shown above the prompt while items are open. `collapsed` shows one dim
+ * line (`☰ 3/7 todos (ctrl+t)`); expanded shows up to 5 items and `… N more`.
+ */
+export function TodoPanel({
+  todos,
+  collapsed = false,
+}: {
+  todos: TodoItem[]
+  collapsed?: boolean
+}): ReactElement {
+  if (collapsed) {
+    const done = todos.filter((t) => t.status === 'completed' || t.status === 'cancelled').length
+    return (
+      <Box marginTop={1} paddingLeft={1}>
+        <Text dimColor>
+          ☰ {done}/{todos.length} todos (ctrl+t)
+        </Text>
+      </Box>
+    )
+  }
   return (
     <Box flexDirection="column" marginTop={1} paddingLeft={1}>
       <Text color={color.accent}>
         {sym.bullet} <Text bold>Todos</Text>
       </Text>
       <Box paddingLeft={2}>
-        <TodoList todos={todos} />
+        <TodoList todos={todos} max={5} />
       </Box>
     </Box>
   )

@@ -58,6 +58,17 @@ function harness(over: Record<string, unknown> = {}) {
     setModelLabel: (m) => void calls.push(`label:${m}`),
     refreshStats: () => void calls.push('refresh'),
     exit: () => void calls.push('exit'),
+    openRewind: () => void calls.push('openRewind'),
+    sideQuestion: (q) => void calls.push(`side:${q}`),
+    pickOutputStyle: () => void calls.push('pickOutputStyle'),
+    applyTheme: (t) => void calls.push(`theme:${t}`),
+    applyEditorMode: (m) => void calls.push(`editor:${m}`),
+    toggleFocus: () => void calls.push('focus'),
+    copy: async (t) => {
+      calls.push(`copy:${t}`)
+      return 'pbcopy'
+    },
+    refreshTitle: () => void calls.push('title'),
   }
   return { ctx, calls, printed, runs, transcripts, pages }
 }
@@ -73,8 +84,15 @@ describe('slash parsing', () => {
   })
 
   test('matchSlash by prefix', () => {
-    expect(matchSlash('/re').map((c) => c.name)).toEqual(['resume'])
-    expect(matchSlash('/c').map((c) => c.name)).toEqual(['clear', 'compact', 'context', 'cost'])
+    expect(matchSlash('/re').map((c) => c.name)).toEqual(['resume', 'rewind', 'rename', 'recap'])
+    expect(matchSlash('/c').map((c) => c.name)).toEqual([
+      'clear',
+      'compact',
+      'context',
+      'cost',
+      'copy',
+      'config',
+    ])
     expect(matchSlash('/').length).toBe(slashCommands.length)
     expect(matchSlash('/model x')).toEqual([])
     expect(matchSlash('nope')).toEqual([])
@@ -112,6 +130,23 @@ describe('slash parsing', () => {
       'todos',
       'diff',
       'plan',
+      'rewind',
+      'branch',
+      'rename',
+      'export',
+      'copy',
+      'btw',
+      'recap',
+      'add-dir',
+      'memory',
+      'config',
+      'tasks',
+      'doctor',
+      'output-style',
+      'theme',
+      'sandbox',
+      'vim',
+      'focus',
       'init',
       'exit',
     ])

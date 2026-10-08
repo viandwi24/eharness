@@ -6,6 +6,7 @@ import { tool } from 'ai'
 import { type DataPartDef, defineDataPart, type HarnessContext, type ToolInput } from 'eharness'
 import { z } from 'zod/v4'
 import { type Sandbox, TOOL } from '../contracts.ts'
+import { SANDBOX_DENIAL, SANDBOX_HINT } from './os-sandbox.ts'
 
 const bashOutputSchema = z.object({
   toolCallId: z.string(),
@@ -146,7 +147,11 @@ export function createBashTool(
           abortSignal?.removeEventListener('abort', onAbort)
         }
 
-        const body = capOutput(output.trimEnd(), maxChars)
+        let body = capOutput(output.trimEnd(), maxChars)
+        const state = (opts.sandbox as { sandboxState?: () => { enabled: boolean } }).sandboxState
+        if (state?.call(opts.sandbox).enabled && SANDBOX_DENIAL.test(output)) {
+          body = body ? `${body}\n${SANDBOX_HINT}` : SANDBOX_HINT
+        }
         let footer: string
         if (timedOut) footer = `(timed out after ${Math.round(timeout / 1000)}s)`
         else if (aborted) footer = `(aborted after ${seconds()}s)`

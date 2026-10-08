@@ -18,6 +18,11 @@ export function StatusBody({ s }: { s: StatusInfo }): ReactElement {
         <Field label="Session id">{s.sessionId}</Field>
         <Field label="Provider">{s.provider}</Field>
         <Field label="Model">{s.model}</Field>
+        <Field label="Sandbox">
+          {s.sandbox.enabled
+            ? `${s.sandbox.kind}${s.sandbox.network ? '' : ' (no network)'}`
+            : 'off'}
+        </Field>
         <Field label="Thinking">{s.thinking}</Field>
         <Field label="Permission mode">{modeLabel(s.mode)}</Field>
       </Section>

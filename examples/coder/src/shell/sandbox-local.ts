@@ -1,7 +1,9 @@
 /**
  * Local sandbox: the AI SDK `SandboxSession` shape over `node:child_process` and `node:fs/promises`.
- * Despite the name this is NOT isolated: commands run with the user's privileges (see the
- * plan's "The shell is not jailed" note); permissions are enforced by the permission engine.
+ * By default NOT isolated: commands run with the user's privileges and permissions are enforced
+ * by the permission engine. With `opts.os.enabled` (and a platform tool, see `os-sandbox.ts`)
+ * every command runs in an OS sandbox: writes only in the root, `allowWrite` and temp dirs.
+ * File tools (`readFile`/`writeFile`) are unaffected: they run in this process.
  */
 import { type ChildProcess, spawn as spawnChild } from 'node:child_process'
 import { existsSync } from 'node:fs'
@@ -13,6 +15,27 @@ import type {
   Experimental_SandboxSession as SandboxSession,
 } from 'ai'
 import type { Sandbox } from '../contracts.ts'
+import { detectOsSandbox, type OsSandboxKind, wrapCommand } from './os-sandbox.ts'
+
+/** OS sandbox settings of a local sandbox. */
+export interface OsSandboxOptions {
+  enabled: boolean
+  network: boolean
+  allowWrite: string[]
+}
+
+/** Current OS sandbox state: `enabled` is true only when requested AND the platform tool exists. */
+export interface SandboxState {
+  enabled: boolean
+  kind: OsSandboxKind
+  network: boolean
+}
+
+/** A {@link Sandbox} whose OS isolation can be inspected and toggled at runtime. */
+export type LocalSandbox = Sandbox & {
+  sandboxState(): SandboxState
+  setOsSandbox(opts: OsSandboxOptions): void
+}
 
 type ProcessOptions = Parameters<SandboxSession['spawn']>[0]
 
@@ -81,7 +104,14 @@ function isMissing(error: unknown): boolean {
  *
  * @param root Absolute project root.
  */
-export function createLocalSandbox(root: string): Sandbox {
+export function createLocalSandbox(root: string, opts?: { os?: OsSandboxOptions }): LocalSandbox {
+  const detected = detectOsSandbox()
+  let os: OsSandboxOptions = opts?.os ?? { enabled: false, network: false, allowWrite: [] }
+  const active = (): boolean => os.enabled && detected.kind !== 'none'
+  const describeState = (): string =>
+    active()
+      ? `Commands run in ${root} in an OS sandbox: writes only inside ${[root, ...os.allowWrite].join(', ')} (and temp dirs), network ${os.network ? 'on' : 'off'}. Relative file paths resolve against that directory.`
+      : `Commands run in ${root} with the user's privileges (not sandboxed). Relative file paths resolve against that directory.`
   const abs = (path: string): string => resolve(root, path)
 
   function throwIfAborted(signal: AbortSignal | undefined): void {
@@ -116,7 +146,16 @@ export function createLocalSandbox(root: string): Sandbox {
     const signal = options.abortSignal
     throwIfAborted(signal)
     const { file, flag } = shellFor()
-    const child: ChildProcess = spawnChild(file, [flag, options.command], {
+    const [cmd, ...args] = active()
+      ? wrapCommand(options.command, {
+          root,
+          allowWrite: os.allowWrite.map(abs),
+          network: os.network,
+          kind: detected.kind,
+          toolPath: detected.path,
+        })
+      : [file, flag, options.command]
+    const child: ChildProcess = spawnChild(cmd as string, args, {
       cwd: options.workingDirectory ? abs(options.workingDirectory) : root,
       env: { ...process.env, ...options.env },
       detached: true,
@@ -191,7 +230,15 @@ export function createLocalSandbox(root: string): Sandbox {
   }
 
   return {
-    description: `Commands run in ${root} with the user's privileges (the shell is not isolated). Relative file paths resolve against that directory.`,
+    get description(): string {
+      return describeState()
+    },
+
+    sandboxState: () => ({ enabled: active(), kind: detected.kind, network: os.network }),
+
+    setOsSandbox(next) {
+      os = { ...next, allowWrite: [...next.allowWrite] }
+    },
 
     async readFile(options) {
       const bytes = await readBytes(options.path, options.abortSignal)

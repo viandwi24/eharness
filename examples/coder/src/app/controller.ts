@@ -2,9 +2,10 @@
  * The application controller: wires workspace, shell, permissions, agents and storage behind the
  * {@link CoderController} contract that the Ink UI and print mode consume.
  */
+import { spawnSync } from 'node:child_process'
 import { access } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
-import type { LanguageModel } from 'ai'
+import type { FileUIPart, LanguageModel } from 'ai'
 import {
   type HarnessRun,
   type HarnessSession,
@@ -16,16 +17,23 @@ import { driveTurn, loadAgentDefinitions } from '../agents/index.ts'
 import {
   type AgentDefinition,
   type ApprovalBroker,
+  type BackgroundTask,
   type CoderConfig,
   type CoderController,
   type CoderMessage,
+  type CoderSettings,
   type ContextCategory,
   type ContextDetails,
   type CustomCommand,
   type DiffResult,
+  type DoctorCheck,
   type ModelOption,
+  type PermissionMode,
+  type RewindPoint,
+  type RewindResult,
   type RunHooks,
   type SessionSummary,
+  type SettingView,
   type StatusInfo,
   type SteerResult,
   THINKING_LEVELS,
@@ -33,19 +41,33 @@ import {
   type ToolCallInfo,
   type UsageSummary,
 } from '../contracts.ts'
+import { createLspManager } from '../lsp/index.ts'
 import { createBroker, createPermissionEngine, describeApproval } from '../permissions/index.ts'
-import { capOutput, createLocalSandbox } from '../shell/index.ts'
+import { capOutput, createLocalSandbox, detectOsSandbox } from '../shell/index.ts'
 import { createWorkspace } from '../workspace/index.ts'
 import { type Agents, createAgents } from './agent.ts'
+import { checkpointPlugin, createCheckpointStore, createCheckpoints } from './checkpoints.ts'
 import { expandBody, expandSkill, type LoadedCommand, loadCommands } from './commands.ts'
+import { compactWithFocus, createCompactFocus } from './compact-focus.ts'
+import { mergeSettings, readSettingsLayers } from './config.ts'
 import { computeDiff } from './diff.ts'
+import { runDoctor } from './doctor.ts'
 import { addHistory, readHistory } from './history.ts'
+import { createHookRunner, hasHooks, hooksPlugin } from './hooks.ts'
+import { addDirectory, listMemoryFiles, loadUserMemory } from './memory-files.ts'
 import type { ModelState } from './model-switch.ts'
 import { loadProviderModels } from './models.ts'
+import { createOutputStyles } from './output-styles.ts'
 import { loadPreferences, savePreferences } from './preferences.ts'
 import { loadProjectMemory } from './project-memory.ts'
 import { createModelResolver, KEY_ENV } from './provider.ts'
+import { createRecap } from './recap.ts'
+import { createSessionTools } from './session-tools.ts'
 import { createStorage, latestSessionId, listSessions, newSessionId } from './sessions.ts'
+import { createSettingsManager } from './settings.ts'
+import { createSideQuestion } from './side-question.ts'
+import { createStatusLine } from './status-line.ts'
+import { createTaskManager, type TaskInject } from './tasks.ts'
 import { createSearchFn, type SearchFn, type WebFetchDeps } from './web-tools.ts'
 
 /** Options of {@link createController}. */
@@ -55,6 +77,8 @@ export interface CreateControllerOptions {
     contextWindowExplicit?: boolean
     /** The model came from a flag, settings or `CODER_MODEL`: a saved preference does not override it. */
     modelExplicit?: boolean
+    /** Merged settings files (`LoadedConfig.settings`); `{}` when absent. */
+    settings?: CoderSettings
   }
   /** Model catalog override (tests). Default: the cached catalog of the provider (`app/models.ts`). */
   models?: ModelCatalog
@@ -102,10 +126,17 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     saving = saving.then(() => savePreferences(config.projectDataDir, snapshot))
   }
   let turnMs = 0
+  const startSettings: CoderSettings = opts.config.settings ?? {}
+  const warn = (message: string): void => {
+    opts.config.warnings?.push(message)
+  }
   const workspace = await createWorkspace(config)
-  const sandbox = createLocalSandbox(config.root)
+  const osProblem = probeOsSandbox(startSettings.sandbox?.enabled === true)
+  if (osProblem !== undefined) warn(osProblem)
+  const sandbox = createLocalSandbox(config.root, {
+    os: osOptions(startSettings.sandbox, osProblem === undefined),
+  })
   const permissions = createPermissionEngine({ config, mounts: () => workspace.mounts() })
-  const broker = opts.broker ?? createBroker()
   const describe = (call: ToolCallInfo) => describeApproval(call, workspace.fs, permissions)
   const storage = createStorage(config)
   const { definitions, warnings } = await loadAgentDefinitions({
@@ -144,6 +175,174 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       ? createSearchFn({ provider: config.provider, resolveModel })
       : undefined)
 
+  // ─── session state shared by the feature modules ───
+  let sessionId: string =
+    opts.sessionId ??
+    (typeof config.resume === 'string' ? config.resume : undefined) ??
+    (config.continueLast ? await latestSessionId(config) : undefined) ??
+    newSessionId()
+  const currentModel = (): LanguageModel => opts.model ?? resolveModel(modelState.model)
+  let api: CoderController
+  /** The session handle must be reopened (output style / sandbox note changed): see `refreshSession`. */
+  let sessionStale = false
+
+  // ─── settings, output styles ───
+  const outputStyles = createOutputStyles({
+    root: config.root,
+    userDir: config.userDir,
+    trusted: config.trusted,
+  })
+  const settingsMgr = createSettingsManager({
+    config: {
+      ...config,
+      settings: startSettings,
+      modelExplicit: opts.config.modelExplicit === true,
+    },
+    current: () => ({
+      provider: modelState.provider,
+      model: modelState.model,
+      thinking: modelState.thinking,
+      mode: permissions.mode,
+    }),
+    outputStyleNames: async () => (await outputStyles.styles()).map((x) => x.name),
+    apply: async (key, value) => {
+      switch (key) {
+        case 'permissions.defaultMode':
+          permissions.setMode(value as PermissionMode)
+          break
+        case 'model':
+          if (typeof value === 'string' && value.trim() !== '') api.setModel(value)
+          break
+        case 'thinking':
+          api.setThinking(value as ThinkingLevel)
+          break
+        case 'sandbox.enabled':
+        case 'sandbox.network': {
+          const wanted = settingsMgr.setting('sandbox')
+          const problem = probeOsSandbox(wanted?.enabled === true)
+          if (problem !== undefined) warn(problem)
+          sandbox.setOsSandbox(osOptions(wanted, problem === undefined))
+          sessionStale = true // the bash tool description says whether it is sandboxed
+          await refreshSession()
+          break
+        }
+        case 'outputStyle':
+          sessionStale = true // a session instruction: re-evaluated when the session reopens
+          await refreshSession()
+          break
+        default:
+      }
+    },
+  })
+
+  // ─── hooks (settings.hooks) ───
+  const hookNotices: string[] = []
+  const hookRunner = hasHooks(startSettings.hooks)
+    ? createHookRunner({
+        hooks: startSettings.hooks ?? {},
+        root: config.root,
+        onNotify: (message) => {
+          hookNotices.push(message)
+          if (hookNotices.length > 50) hookNotices.shift()
+          warn(`hook: ${message}`)
+        },
+      })
+    : undefined
+  const baseBroker = opts.broker ?? createBroker()
+  /** Fires the `Notification` hooks when the user is needed: a prompt or a question is shown. */
+  const broker: ApprovalBroker = hookRunner?.has('Notification')
+    ? {
+        ask(request, signal) {
+          void hookRunner.notification(`Permission needed: ${request.title}`, sessionId)
+          return baseBroker.ask(request, signal)
+        },
+        pending: () => baseBroker.pending(),
+        answer: (id, answer) => baseBroker.answer(id, answer),
+        question(request, signal) {
+          const first = request.questions[0]
+          void hookRunner.notification(
+            `Question: ${first?.question ?? first?.header ?? 'the agent needs an answer'}`,
+            sessionId,
+          )
+          return baseBroker.question(request, signal)
+        },
+        pendingQuestions: () => baseBroker.pendingQuestions(),
+        answerQuestion: (id, result) => baseBroker.answerQuestion(id, result),
+        subscribe: (listener) => baseBroker.subscribe(listener),
+      }
+    : baseBroker
+
+  // ─── sessions, checkpoints, side calls ───
+  const sessionTools = await createSessionTools({
+    config,
+    storage,
+    sessionId: () => sessionId,
+  })
+  const checkpointStore = createCheckpointStore({
+    projectDataDir: config.projectDataDir,
+    fs: workspace.fs,
+  })
+  const checkpoints = createCheckpoints({
+    store: checkpointStore,
+    storage,
+    fs: workspace.fs,
+    sessionId: () => sessionId,
+  })
+  const focus = createCompactFocus()
+  const sideQuestion = createSideQuestion({
+    storage,
+    sessionId: () => sessionId,
+    model: currentModel,
+  })
+  const recap = createRecap({ storage, sessionId: () => sessionId, model: currentModel })
+
+  // ─── background tasks ───
+  const taskManager = createTaskManager()
+  /**
+   * Delivers a task event into the session. A producer may run inside a subagent session
+   * (`<root>:agent:<call>`): the event always goes to the ROOT session. Only the current session
+   * is woken; an event for a session we left waits for its next turn.
+   */
+  const inject: TaskInject = async (id, data, options) => {
+    try {
+      const root = id.split(':agent:')[0] ?? id
+      const live = (await agentsReady).main.session(root)
+      const out = await live.inject(
+        'eh.event',
+        data,
+        root === sessionId ? options : { deliver: 'next-turn' },
+      )
+      const run = (out as { run?: HarnessRun<CoderMessage> } | undefined)?.run
+      return run !== undefined ? { run } : undefined
+    } catch {
+      return undefined // the session was closed or the event was rejected
+    }
+  }
+  let waking: Promise<unknown> | undefined
+  const onWake = (run: HarnessRun<CoderMessage>): void => {
+    // driven exactly like a prompt: approvals through the broker, the stream through the hooks
+    // of the most recent run()/steer() (the UI's), or drained when there were none
+    const done = drive(() => run, {
+      onRun: (r) => {
+        if (lastHooks !== undefined) lastHooks.onRun(r)
+        else void drain(r)
+      },
+    })
+      .catch(() => undefined)
+      .finally(() => {
+        if (waking === done) waking = undefined
+      })
+    waking = done
+  }
+
+  // ─── LSP ───
+  const lsp = createLspManager({
+    servers: startSettings.lsp,
+    root: config.root,
+    toReal: (path) => workspace.toReal(path),
+    toVirtual: (path) => workspace.toVirtual(path),
+  })
+
   const agents: Promise<Agents> = createAgents({
     config,
     workspace,
@@ -158,17 +357,28 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     ...(opts.model ? { model: opts.model } : {}),
     ...(catalog ? { models: catalog } : {}),
     contextWindowExplicit: opts.config.contextWindowExplicit === true,
+    extraPlugins: () => [
+      checkpointPlugin(checkpointStore),
+      ...(hookRunner
+        ? [
+            hooksPlugin({
+              hooks: startSettings.hooks ?? {},
+              root: config.root,
+              runner: hookRunner,
+            }),
+          ]
+        : []),
+    ],
+    mainPlugins: [focus.plugin],
+    userMemory: () => loadUserMemory(config.userDir),
+    outputStyle: () => outputStyles.instruction(settingsMgr.setting('outputStyle')),
+    background: { tasks: taskManager, inject, onWake },
+    lsp,
     ...(search ? { search } : {}),
     ...(opts.webFetch ? { webFetch: opts.webFetch } : {}),
   })
   const agentsReady = agents
   await agentsReady
-
-  let sessionId: string =
-    opts.sessionId ??
-    (typeof config.resume === 'string' ? config.resume : undefined) ??
-    (config.continueLast ? await latestSessionId(config) : undefined) ??
-    newSessionId()
 
   let controller: AbortController | undefined
 
@@ -211,12 +421,36 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
   const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
+  /** The hooks of the most recent `run()` / `steer()`: the UI's, reused for runs a background event wakes. */
+  let lastHooks: RunHooks | undefined
+
+  /** Read a run's stream to its end when nobody displays it. */
+  const drain = async (run: HarnessRun<CoderMessage>): Promise<void> => {
+    try {
+      const reader = (run.stream as ReadableStream<unknown>).getReader()
+      for (;;) if ((await reader.read()).done) return
+    } catch {
+      // the stream failed or was already consumed: the result carries the outcome
+    }
+  }
+
+  /** Reopen the session handle when a setting that shapes the prompt changed (idle only). */
+  const refreshSession = async (): Promise<void> => {
+    if (!sessionStale || controller !== undefined) return
+    sessionStale = false
+    await (await agentsReady).main.closeSession(sessionId).catch(() => {})
+  }
+
   /**
-   * Run one prompt to its end: drive the turn, then every turn that follows it without the user
+   * Drive the run `start` returns to its end, then every turn that follows it without the user
    * (a steer that became a queued turn, a steer dropped by an approval stop). Nothing the session
-   * starts runs undriven, so no approval stays unanswered.
+   * starts runs undriven, so no approval stays unanswered. Also drives the wake runs that
+   * background tasks start (`onWake`).
    */
-  const execute = async (text: string, hooks: RunHooks): Promise<TurnResult<CoderMessage>> => {
+  const drive = async (
+    start: (s: HarnessSession<CoderMessage>, signal: AbortSignal) => HarnessRun<CoderMessage>,
+    hooks: RunHooks,
+  ): Promise<TurnResult<CoderMessage>> => {
     const abort = new AbortController()
     controller = abort
     const turn: ActiveTurn = {
@@ -242,12 +476,13 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         describe,
         signal: abort.signal,
         stopOnBareDeny: true,
+        questionTimeout: () => settingsMgr.setting('askUserQuestionTimeout'),
         onRun: (run: HarnessRun<CoderMessage>) => {
           turn.seen.add(run.turnId)
           hooks.onRun(run)
         },
       }
-      const first = s.send(text, { abortSignal: abort.signal })
+      const first = start(s, abort.signal)
       turn.seen.add(first.turnId)
       markStarted()
       let result = await driveTurn(first, driveOptions)
@@ -274,7 +509,26 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       turnMs += Date.now() - began
       if (controller === abort) controller = undefined
       if (active === turn) active = undefined
+      await refreshSession()
     }
+  }
+
+  /** One prompt (with optional images) as a turn. */
+  const execute = async (
+    text: string,
+    hooks: RunHooks,
+    files?: FileUIPart[],
+  ): Promise<TurnResult<CoderMessage>> => {
+    lastHooks = hooks
+    // a turn woken by a background task is still running: it must end before the next prompt
+    if (waking !== undefined) await waking
+    return drive(
+      (s, signal) =>
+        s.send(files !== undefined && files.length > 0 ? { text, files } : text, {
+          abortSignal: signal,
+        }),
+      hooks,
+    )
   }
 
   /** Close the handle of a session we leave (never while its turn runs). */
@@ -286,7 +540,36 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   const session = async (): Promise<HarnessSession<CoderMessage>> =>
     (await agentsReady).main.session(sessionId) as unknown as HarnessSession<CoderMessage>
 
-  return {
+  /** Switch the controller to another stored session and close the handle of the one it leaves. */
+  const switchTo = async (id: string): Promise<void> => {
+    const old = sessionId
+    sessionId = id
+    if (old !== id) await closeSessionHandle(old)
+  }
+
+  const sandboxInfo = (): { enabled: boolean; kind: string; network: boolean } => {
+    const state = sandbox.sandboxState()
+    return { enabled: state.enabled, kind: state.kind, network: state.network }
+  }
+
+  const statusLine = createStatusLine({
+    command: () => settingsMgr.setting('statusLine')?.command,
+    cwd: config.root,
+    input: async () => {
+      const stats = await api.stats()
+      return {
+        sessionId,
+        cwd: config.root,
+        mode: permissions.mode,
+        model: modelState.model,
+        ...(stats.costUsd !== undefined ? { costUsd: stats.costUsd } : {}),
+        contextTokens: stats.contextTokens,
+        contextWindow: stats.contextWindow,
+      }
+    },
+  })
+
+  api = {
     config,
     permissions,
     broker,
@@ -295,9 +578,14 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       return sessionId
     },
 
-    run: (text: string, hooks: RunHooks): Promise<TurnResult<CoderMessage>> => execute(text, hooks),
+    run: (
+      text: string,
+      hooks: RunHooks,
+      runOpts?: { files?: FileUIPart[] },
+    ): Promise<TurnResult<CoderMessage>> => execute(text, hooks, runOpts?.files),
 
     async steer(text: string, hooks: RunHooks): Promise<SteerResult> {
+      lastHooks = hooks
       const turn = active
       if (turn !== undefined) {
         await turn.started
@@ -329,26 +617,24 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       return (await storage.messages.load({ sessionId: id })) as CoderMessage[]
     },
 
-    async compact(): Promise<void> {
-      await (await session()).compact()
+    async compact(instructions?: string): Promise<void> {
+      const s = await session()
+      await compactWithFocus(focus, () => s.compact(), instructions)
     },
 
     async clear(): Promise<void> {
-      const old = sessionId
-      sessionId = newSessionId()
-      await closeSessionHandle(old)
+      await switchTo(newSessionId())
     },
 
     async resume(id: string): Promise<void> {
       if (id.includes(':agent:')) throw new Error(`cannot resume a subagent session: ${id}`)
       if ((await storage.messages.load({ sessionId: id, limit: 1 })).length === 0)
         throw new Error(`unknown session: ${id}`)
-      const old = sessionId
-      sessionId = id
-      if (old !== id) await closeSessionHandle(old)
+      await switchTo(id)
     },
 
-    sessions: (): Promise<SessionSummary[]> => listSessions(config),
+    sessions: async (): Promise<SessionSummary[]> =>
+      sessionTools.withNames(await listSessions(config)),
 
     async shell(command: string, signal?: AbortSignal) {
       let proc: Awaited<ReturnType<typeof sandbox.spawn>>
@@ -529,6 +815,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         mcpServers: Object.keys(config.mcpServers),
         agents: definitions.length,
         settingsFiles,
+        sandbox: sandboxInfo(),
       }
     },
 
@@ -588,10 +875,150 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       }
     },
 
+    // ─── sessions and conversation ───
+    rewindPoints: (): Promise<RewindPoint[]> => checkpoints.rewindPoints(),
+
+    async rewind(messageId, what): Promise<RewindResult> {
+      const result = await checkpoints.rewind(messageId, what)
+      if (result.sessionId !== undefined) await switchTo(result.sessionId)
+      return result
+    },
+
+    async branch(name?: string): Promise<string> {
+      const from = sessionId
+      const to = await sessionTools.branch(name)
+      await checkpointStore.copy(
+        from,
+        to,
+        (await checkpointStore.list(from)).map((cp) => cp.userMessageId),
+      )
+      await switchTo(to)
+      return to
+    },
+
+    rename: (name: string): Promise<void> => sessionTools.rename(name),
+
+    get sessionName(): string | undefined {
+      return sessionTools.sessionName()
+    },
+
+    async exportText(): Promise<string> {
+      return sessionTools.exportText(await (await session()).messages())
+    },
+
+    async assistantText(n?: number): Promise<string | undefined> {
+      return sessionTools.assistantText(await (await session()).messages(), n)
+    },
+
+    sideQuestion,
+    recap: recap.recap,
+    async suggestNext(): Promise<string | undefined> {
+      return settingsMgr.setting('promptSuggestions') === true ? recap.suggestNext() : undefined
+    },
+
+    // ─── workspace and memory ───
+    addDirectory: (path: string): Promise<string> => addDirectory(workspace, path),
+    memoryFiles: () => listMemoryFiles({ root: config.root, userDir: config.userDir }),
+
+    // ─── background tasks ───
+    tasks: (): BackgroundTask[] => taskManager.tasks(),
+    stopTask: (id: string): Promise<void> => taskManager.stopTask(id),
+    async taskOutput(id: string): Promise<string> {
+      return taskManager.taskOutput(id)
+    },
+    onTasks: (listener) => taskManager.onTasks(listener),
+
+    // ─── settings and diagnostics ───
+    settings: (): Promise<SettingView[]> => settingsMgr.settings(),
+    updateSetting: (key, value, scope): Promise<void> =>
+      settingsMgr.updateSetting(key, value, scope),
+    setting: (key) => settingsMgr.setting(key),
+    outputStyles: () => outputStyles.styles(),
+
+    async doctor(): Promise<DoctorCheck[]> {
+      let merged: CoderSettings = startSettings
+      try {
+        merged = mergeSettings((await readSettingsLayers(config)).map((l) => l.settings))
+      } catch {
+        // an invalid file: runDoctor reports it under "Settings files"
+      }
+      const checks = await runDoctor({ config, settings: merged, models: () => api.models() })
+      const os = sandboxInfo()
+      checks.push({
+        name: 'Sandbox state',
+        status: 'ok',
+        detail: os.enabled
+          ? `on (${os.kind}), network ${os.network ? 'allowed' : 'blocked'}`
+          : 'off: bash commands run unsandboxed',
+      })
+      if (lsp.available) {
+        const servers = lsp.status()
+        const failed = servers.filter((x) => x.state === 'failed')
+        checks.push({
+          name: 'Language servers',
+          status: failed.length > 0 ? 'warn' : 'ok',
+          detail: servers
+            .map((x) => `${x.name}: ${x.state}${x.detail ? ` (${x.detail})` : ''}`)
+            .join('; '),
+        })
+      }
+      if (hookRunner !== undefined) {
+        checks.push({
+          name: 'Hooks',
+          status: hookNotices.length > 0 ? 'warn' : 'ok',
+          detail:
+            hookNotices.length > 0
+              ? `${hookNotices.length} notice(s), latest: ${hookNotices.at(-1)}`
+              : 'configured, no problems so far',
+        })
+      }
+      return checks
+    },
+
+    statusLineText: () => statusLine.text(),
+
     async close(): Promise<void> {
       controller?.abort()
+      await taskManager.stopAll().catch(() => {})
+      await lsp.close().catch(() => {})
       await (await agentsReady).closeAll()
       await saving
     },
   }
+  return api
+}
+
+/** OS sandbox options from the `sandbox` setting; `usable` false forces it off. */
+function osOptions(
+  setting: CoderSettings['sandbox'],
+  usable: boolean,
+): { enabled: boolean; network: boolean; allowWrite: string[] } {
+  return {
+    enabled: usable && setting?.enabled === true,
+    network: setting?.network ?? false,
+    allowWrite: setting?.allowWrite ?? [],
+  }
+}
+
+/**
+ * Why the OS sandbox cannot be used although it is wanted, or `undefined`. bubblewrap is probed
+ * with a real run (it fails inside containers and on kernels without user namespaces);
+ * sandbox-exec on macOS needs no probe.
+ */
+function probeOsSandbox(wanted: boolean): string | undefined {
+  if (!wanted) return undefined
+  const detected = detectOsSandbox()
+  if (detected.kind === 'none') {
+    return 'sandbox.enabled is on but no OS sandbox tool was found (sandbox-exec or bwrap): commands run unsandboxed'
+  }
+  if (detected.kind === 'bubblewrap') {
+    const probe = spawnSync(detected.path ?? 'bwrap', ['--ro-bind', '/', '/', 'true'], {
+      stdio: 'ignore',
+      timeout: 5000,
+    })
+    if (probe.status !== 0) {
+      return 'sandbox.enabled is on but bubblewrap cannot start here (no user namespaces?): commands run unsandboxed'
+    }
+  }
+  return undefined
 }

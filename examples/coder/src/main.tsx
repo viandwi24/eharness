@@ -51,11 +51,17 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
-let activeController: { abort(): void } | undefined
+let activeController: { abort(): void; close(): Promise<void> } | undefined
 let shuttingDown = false
 
-/** Abort the running turn, stop every sandbox process group and exit. */
-function shutdown(code: number): void {
+/** Longest wait for the controller to stop background tasks and language servers on exit. */
+const CLOSE_GRACE_MS = 1500
+
+/**
+ * Abort the running turn, stop background tasks and language servers (`controller.close()`, with
+ * a grace period), stop every sandbox process group and exit.
+ */
+async function shutdown(code: number): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
   try {
@@ -64,14 +70,29 @@ function shutdown(code: number): void {
     // exiting anyway
   }
   killAllSandboxProcesses('SIGTERM')
+  if (activeController !== undefined) {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      activeController.close().catch(() => {}),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, CLOSE_GRACE_MS)
+      }),
+    ])
+    clearTimeout(timer)
+  }
   killAllSandboxProcesses('SIGKILL')
   process.exit(code)
 }
 
+/** Print what the controller added to `warnings` after startup (hook problems, sandbox fallbacks). */
+function flushWarnings(warnings: string[], from: number): void {
+  for (const warning of warnings.slice(from)) process.stderr.write(`coder: warning: ${warning}\n`)
+}
+
 // last resort on any exit: no command of ours outlives the process
 process.on('exit', () => killAllSandboxProcesses('SIGKILL'))
-process.on('SIGTERM', () => shutdown(143))
-const onSigint = (): void => shutdown(130)
+process.on('SIGTERM', () => void shutdown(143))
+const onSigint = (): void => void shutdown(130)
 
 const program = new Command()
   .name('coder')
@@ -182,6 +203,7 @@ const program = new Command()
           broker: createDenyingBroker(),
         })
         for (const warning of config.warnings) process.stderr.write(`coder: warning: ${warning}\n`)
+        const shown = config.warnings.length
         activeController = controller
         process.on('SIGINT', onSigint)
         let code = 1
@@ -190,6 +212,7 @@ const program = new Command()
         } finally {
           await controller.close()
         }
+        flushWarnings(config.warnings, shown)
         killAllSandboxProcesses('SIGKILL')
         process.exit(code)
       }
@@ -200,10 +223,13 @@ const program = new Command()
         ...(thinking ? { thinking } : {}),
       })
       for (const warning of config.warnings) process.stderr.write(`coder: warning: ${warning}\n`)
+      const shown = config.warnings.length
       activeController = controller
       await runInteractive(controller, { initialPrompt: prompt })
       process.on('SIGINT', onSigint)
-      shutdown(0)
+      // after the UI is gone stderr is safe again: show what happened while it was up
+      flushWarnings(config.warnings, shown)
+      await shutdown(0)
     },
   )
 

@@ -1,6 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import type { Workspace } from '../src/contracts.ts'
-import { completeMention, createFileLister, matchPaths, mentionAt } from '../src/ui/mentions.ts'
+import {
+  completeItem,
+  completeMention,
+  createFileLister,
+  folderPaths,
+  matchMentions,
+  matchPaths,
+  mentionAt,
+} from '../src/ui/mentions.ts'
 
 describe('mentionAt', () => {
   test('detects the token ending at the cursor', () => {
@@ -81,5 +89,34 @@ describe('createFileLister', () => {
     )
     expect(await Promise.all([lister(), lister()])).toEqual([[], []])
     expect(calls).toBe(1)
+  })
+})
+
+describe('folders and agents', () => {
+  const paths = ['src/ui/a.ts', 'src/b.ts', 'README.md']
+  test('folderPaths lists every directory prefix with a trailing slash', () => {
+    expect(folderPaths(paths).sort()).toEqual(['src/', 'src/ui/'])
+  })
+  test('matchMentions mixes files, folders and agents with kinds', () => {
+    const items = matchMentions(paths, 'src/ui', ['reviewer'])
+    expect(items).toEqual([
+      { kind: 'folder', value: 'src/ui/' },
+      { kind: 'file', value: 'src/ui/a.ts' },
+    ])
+    expect(matchMentions(paths, 'agent-rev', ['reviewer'])).toEqual([
+      { kind: 'agent', value: 'agent-reviewer' },
+    ])
+    expect(matchMentions(paths, '', ['x'])).toHaveLength(6)
+  })
+  test('completeItem keeps the cursor on a folder (no space) and spaces files and agents', () => {
+    expect(completeItem('@sr', 0, 3, { kind: 'folder', value: 'src/' })).toEqual({
+      text: '@src/',
+      cursor: 5,
+    })
+    expect(completeItem('@a', 0, 2, { kind: 'agent', value: 'agent-x' })).toEqual({
+      text: '@agent-x ',
+      cursor: 9,
+    })
+    expect(completeItem('@a', 0, 2, { kind: 'file', value: 'a.ts' }).text).toBe('@a.ts ')
   })
 })

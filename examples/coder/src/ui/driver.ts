@@ -3,7 +3,7 @@
  * UI message stream with `readUIMessageStream` and picks the transient `data-bashOutput` chunks
  * out of the same raw chunk stream (transient parts never appear in messages).
  */
-import { readUIMessageStream } from 'ai'
+import { type FileUIPart, readUIMessageStream } from 'ai'
 import type { HarnessRun, TurnResult } from 'eharness'
 import type { BashOutputData, CoderController, CoderMessage, RunHooks } from './../contracts.ts'
 import type { ViewAction } from './state.ts'
@@ -173,8 +173,14 @@ export async function runTurn(
   text: string,
   dispatch: (action: ViewAction) => void,
   options: DriveOptions = {},
+  files?: FileUIPart[],
 ): Promise<void> {
-  await drive((hooks) => controller.run(text, hooks), dispatch, options)
+  await drive(
+    (hooks) =>
+      files?.length ? controller.run(text, hooks, { files }) : controller.run(text, hooks),
+    dispatch,
+    options,
+  )
 }
 
 /**

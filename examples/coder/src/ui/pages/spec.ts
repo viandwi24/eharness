@@ -9,6 +9,10 @@ export type PageSpec =
   | { kind: 'agents' }
   | { kind: 'permissions' }
   | { kind: 'diff' }
+  | { kind: 'config' }
+  | { kind: 'tasks' }
+  | { kind: 'doctor' }
+  | { kind: 'memory' }
   | {
       kind: 'transcript'
       title: string

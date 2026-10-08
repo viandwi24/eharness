@@ -1,3 +1,4 @@
+import type { FileUIPart } from 'ai'
 import { Box, useApp, useInput, useStdout } from 'ink'
 import {
   type ReactElement,
@@ -8,34 +9,46 @@ import {
   useRef,
   useState,
 } from 'react'
+import { copyToClipboard } from '../app/session-tools.ts'
 import type {
+  BackgroundTask,
   CoderController,
   CoderMessage,
   CustomCommand,
   PermissionMode,
+  RewindResult,
   ThinkingLevel,
 } from '../contracts.ts'
 import { runTurn, steerTurn } from './driver.ts'
 import { Footer, ShortcutsPanel } from './Footer.tsx'
 import { createFileLister } from './mentions.ts'
+import { notify as rawNotify, setTerminalTitle as rawSetTitle } from './notify.ts'
 import { PermissionPrompt, usePending } from './PermissionPrompt.tsx'
 import { PromptInput } from './PromptInput.tsx'
 import { AgentsPage } from './pages/AgentsPage.tsx'
+import { ConfigPage } from './pages/ConfigPage.tsx'
 import { ContextPage } from './pages/ContextPage.tsx'
 import { CostPage } from './pages/CostPage.tsx'
 import { DiffPage } from './pages/DiffPage.tsx'
+import { DoctorPage } from './pages/DoctorPage.tsx'
 import { shortModel } from './pages/format.ts'
 import { HelpPage } from './pages/HelpPage.tsx'
 import { usePageHost } from './pages/host.ts'
+import { MemoryPage } from './pages/MemoryPage.tsx'
 import { PermissionsPage } from './pages/PermissionsPage.tsx'
 import { StatusPage } from './pages/StatusPage.tsx'
 import type { PageSpec } from './pages/spec.ts'
+import { TasksPage } from './pages/TasksPage.tsx'
 import { TranscriptPage } from './pages/TranscriptPage.tsx'
 import { ModelPicker } from './pickers/ModelPicker.tsx'
+import { OutputStylePicker } from './pickers/OutputStylePicker.tsx'
 import { ThinkingPicker } from './pickers/ThinkingPicker.tsx'
 import { QuestionDialog, usePendingQuestions } from './QuestionDialog.tsx'
 import { QueuedMessages } from './QueuedMessages.tsx'
+import { RewindMenu } from './RewindMenu.tsx'
 import { SessionPicker } from './SessionPicker.tsx'
+import { SideQuestion } from './SideQuestion.tsx'
+import { SuggestionKeys } from './Suggestion.tsx'
 import { isBuiltin, parseSlash, runSlash } from './slash.ts'
 import {
   type Entry,
@@ -47,6 +60,8 @@ import {
 } from './state.ts'
 import { TodoPanel } from './TodoPanel.tsx'
 import { Transcript } from './Transcript.tsx'
+import { setTheme, useTheme } from './theme.ts'
+import { modeLabel as vimModeLabel } from './vim.ts'
 
 /** Props of {@link App}. */
 export interface AppProps {
@@ -57,12 +72,21 @@ export interface AppProps {
   initialMessages?: CoderMessage[]
   /** coder version for the welcome box. */
   version?: string
+  /** Test seams for the terminal side effects (bell/desktop notification, title, clipboard). */
+  io?: {
+    notify?(text: string, mode: 'off' | 'bell' | 'desktop'): void
+    setTitle?(text: string): void
+    /** Copy text; resolves with the method used. */
+    copy?(text: string): Promise<string>
+  }
 }
 
 /** A message typed while a turn runs. Plain messages are steered or sent after the turn; commands wait. */
 interface Queued {
   kind: 'message' | 'command'
   text: string
+  /** Pasted images: such an entry waits for the turn to end and runs as its own prompt. */
+  files?: FileUIPart[]
 }
 
 /** Previous prompts without consecutive duplicates, newest last. */
@@ -77,11 +101,20 @@ interface ShellRun {
 }
 
 /** The inline dialog below the prompt, if any. */
-type Picker = 'session' | 'model' | 'thinking' | null
+type Picker = 'session' | 'model' | 'thinking' | 'rewind' | 'outputStyle' | null
 
 const EXIT_WINDOW_MS = 2000
+const CTRL_D_WINDOW_MS = 800
 const HINT_MS = 3000
 const CLEAR_SCREEN = '\x1b[2J\x1b[3J\x1b[H'
+
+/** Terminal side effects only on a real terminal (piped output and tests stay clean). */
+const defaultNotify = (text: string, mode: 'off' | 'bell' | 'desktop'): void => {
+  if (process.stdout.isTTY) rawNotify(text, mode)
+}
+const defaultSetTitle = (text: string): void => {
+  if (process.stdout.isTTY) rawSetTitle(text)
+}
 
 /** The one-line notice shown when project settings were ignored. */
 export function untrustedNotice(keys: string[]): string {
@@ -120,9 +153,14 @@ export function App({
   initialPrompt,
   initialMessages,
   version,
+  io,
 }: AppProps): ReactElement {
   const { exit } = useApp()
   const { stdout } = useStdout()
+  useState(() => setTheme(controller.setting('theme') ?? 'auto'))
+  useTheme()
+  const notifyFn = io?.notify ?? defaultNotify
+  const setTitleFn = io?.setTitle ?? defaultSetTitle
   const [state, dispatch] = useReducer(reduce, initialMessages, (messages) => {
     let initial =
       messages && messages.length > 0
@@ -142,6 +180,25 @@ export function App({
   const [hint, setHint] = useState<string | null>(null)
   const [picker, setPicker] = useState<Picker>(controller.config.resume === true ? 'session' : null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [editorMode, setEditorMode] = useState<'normal' | 'vim'>(
+    controller.setting('editorMode') === 'vim' ? 'vim' : 'normal',
+  )
+  const [vimLabel, setVimLabel] = useState<string | undefined>(undefined)
+  const [focus, setFocus] = useState(false)
+  const [todosCollapsed, setTodosCollapsed] = useState(false)
+  const [tasks, setTasks] = useState<BackgroundTask[]>(() => controller.tasks())
+  const [sideQuestion, setSideQuestion] = useState<string | null>(null)
+  const [suggestion, setSuggestion] = useState<string | undefined>(undefined)
+  const [inputEmpty, setInputEmpty] = useState(true)
+  const [prefill, setPrefill] = useState<{ id: number; text: string }>({ id: 0, text: '' })
+  const [sessionLabel, setSessionLabel] = useState<string | undefined>(controller.sessionName)
+  const [statusLine, setStatusLine] = useState<string | undefined>(undefined)
+  const editorRunning = useRef(false)
+  const lastCtrlD = useRef(0)
+  const sideRef = useRef(sideQuestion)
+  sideRef.current = sideQuestion
+  const inputEmptyRef = useRef(true)
+  const taskStatus = useRef<Map<string, BackgroundTask['status']>>(new Map())
   const [inputEpoch, setInputEpoch] = useState(0)
   const [queue, setQueueState] = useState<Queued[]>([])
   const queueRef = useRef<Queued[]>([])
@@ -216,10 +273,38 @@ export function App({
         })
       })
       .catch(() => {})
+    controller
+      .statusLineText()
+      .then((text) => {
+        if (!cancelled) setStatusLine(text || undefined)
+      })
+      .catch(() => {})
     return () => {
       cancelled = true
     }
   }, [controller, statsVersion])
+
+  // background tasks: footer count and a line when one finishes
+  useEffect(() => {
+    for (const t of controller.tasks()) taskStatus.current.set(t.id, t.status)
+    return controller.onTasks((list) => {
+      setTasks(list)
+      for (const t of list) {
+        const before = taskStatus.current.get(t.id)
+        taskStatus.current.set(t.id, t.status)
+        if (before === 'running' && t.status !== 'running') {
+          const how =
+            t.status === 'completed' || t.status === 'failed'
+              ? `exit ${t.exitCode ?? (t.status === 'completed' ? 0 : '?')}`
+              : t.status
+          dispatch({
+            type: 'system',
+            text: `Background task ${t.id} finished (${how})`,
+          })
+        }
+      }
+    })
+  }, [controller])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: reload after each turn (statsVersion)
   useEffect(() => {
@@ -260,6 +345,23 @@ export function App({
     if (pending.length > 0 && pagePhase === 'open') closePage()
   }, [pending.length, pagePhase, closePage])
 
+  // a question or approval needs the user: tell them, in case the terminal is in the background
+  const lastPending = useRef(0)
+  useEffect(() => {
+    if (pending.length > lastPending.current) {
+      notifyFn('coder needs your input', controller.setting('notifications') ?? 'bell')
+    }
+    lastPending.current = pending.length
+  }, [pending.length, controller, notifyFn])
+
+  // terminal title: the session name, else the first prompt
+  const firstPrompt = state.entries.find((e) => e.kind === 'user')
+  const titleText =
+    sessionLabel ?? (firstPrompt?.kind === 'user' ? firstPrompt.text.split('\n')[0] : undefined)
+  useEffect(() => {
+    setTitleFn(titleText ? `coder · ${titleText.slice(0, 60)}` : 'coder')
+  }, [titleText, setTitleFn])
+
   const openPage = useCallback((page: PageSpec) => {
     if (pendingRef.current > 0) return
     setPicker(null)
@@ -278,8 +380,9 @@ export function App({
   }, [openPage])
 
   const startTurn = useCallback(
-    (text: string) => {
+    (text: string, files?: FileUIPart[]) => {
       busy.current = true
+      setSuggestion(undefined)
       // commands the user ran with `!` since the last prompt: the model sees them first
       const ran = shellRuns.current.splice(0)
       const context = ran
@@ -291,16 +394,29 @@ export function App({
         )
         .join('')
       turnActive.current = true
-      void runTurn(controller, context + text, dispatch, {
-        onToolResult: () => deliverRef.current(),
-      }).finally(() => {
+      void runTurn(
+        controller,
+        context + text,
+        dispatch,
+        { onToolResult: () => deliverRef.current() },
+        files,
+      ).finally(() => {
         turnActive.current = false
         busy.current = false
         refreshStats()
+        notifyFn('coder: turn finished', controller.setting('notifications') ?? 'bell')
+        if (controller.setting('promptSuggestions') === true) {
+          controller
+            .suggestNext()
+            .then((next) => {
+              if (next && !busy.current && inputEmptyRef.current) setSuggestion(next)
+            })
+            .catch(() => {})
+        }
         drainRef.current()
       })
     },
-    [controller, refreshStats],
+    [controller, refreshStats, notifyFn],
   )
 
   /** Release the busy flag and run whatever waited for it. */
@@ -311,7 +427,7 @@ export function App({
 
   /** Run a submitted line right now: shell command, slash command, custom command or prompt. */
   const execute = useCallback(
-    (text: string) => {
+    (text: string, files?: FileUIPart[]) => {
       if (text.startsWith('!')) {
         const command = text.slice(1).trim()
         if (!command) return
@@ -340,7 +456,7 @@ export function App({
       dispatch({ type: 'user-submitted', text })
       const parsed = parseSlash(text)
       if (!parsed) {
-        startTurn(text)
+        startTurn(text, files)
         return
       }
       busy.current = true
@@ -397,6 +513,26 @@ export function App({
           startTurn(prompt)
         },
         todos: () => latestTodos(stateRef.current),
+        openRewind: () => {
+          if (pendingRef.current === 0) setPicker('rewind')
+        },
+        sideQuestion: (question) => setSideQuestion(question),
+        pickOutputStyle: () => setPicker('outputStyle'),
+        applyTheme: (name) => setTheme(name),
+        applyEditorMode: setEditorMode,
+        toggleFocus: () => {
+          setFocus((f) => {
+            dispatch({ type: 'system', text: `Focus view ${f ? 'off' : 'on'}.` })
+            return !f
+          })
+        },
+        copy: async (text) => {
+          if (io?.copy) return io.copy(text)
+          const res = await copyToClipboard(text)
+          if (res.osc52) stdout.write(res.osc52)
+          return res.method
+        },
+        refreshTitle: () => setSessionLabel(controller.sessionName),
         setModelLabel: setModel,
         refreshStats,
         exit,
@@ -404,7 +540,7 @@ export function App({
         if (!turnActive.current) release()
       })
     },
-    [controller, exit, openPage, refreshStats, release, startTurn, stdout],
+    [controller, exit, io, openPage, refreshStats, release, startTurn, stdout],
   )
 
   // Runs whatever waited for the busy flag: queued commands one at a time, queued messages as one prompt.
@@ -414,7 +550,7 @@ export function App({
     if (!first) return
     if (first.kind === 'command') {
       setQueue(rest)
-      execute(first.text)
+      execute(first.text, first.files)
       return
     }
     const messages: Queued[] = [first]
@@ -445,17 +581,22 @@ export function App({
   }
 
   const submit = useCallback(
-    (text: string) => {
+    (text: string, files?: FileUIPart[]) => {
       setShortcutsOpen(false)
+      setSuggestion(undefined)
+      // the editor clears itself on submit without reporting a text change
+      inputEmptyRef.current = true
+      setInputEmpty(true)
       setPromptHistory((list) => pushHistory(list, text))
       void controller.addHistory(text).catch(() => {})
       if (busy.current) {
         if (text === '!') return
-        const kind = text.startsWith('!') || parseSlash(text) ? 'command' : 'message'
-        setQueue([...queueRef.current, { kind, text }])
+        const withFiles = files !== undefined && files.length > 0
+        const kind = text.startsWith('!') || parseSlash(text) || withFiles ? 'command' : 'message'
+        setQueue([...queueRef.current, { kind, text, ...(withFiles ? { files } : {}) }])
         return
       }
-      execute(text)
+      execute(text, files)
     },
     [controller, execute, setQueue],
   )
@@ -472,8 +613,21 @@ export function App({
     if (initialPrompt?.trim()) submit(initialPrompt.trim())
   }, [])
 
+  const ctrlDExit = useCallback(() => {
+    const now = Date.now()
+    if (now - lastCtrlD.current <= CTRL_D_WINDOW_MS) {
+      if (stateRef.current.running) controller.abort()
+      shellAbort.current?.abort()
+      exit()
+      return
+    }
+    lastCtrlD.current = now
+    showHint('press Ctrl+D again to exit')
+  }, [controller, exit, showHint])
+
   useInput((input, key) => {
-    const overlay = pendingRef.current > 0 || pickerRef.current !== null
+    if (editorRunning.current) return
+    const overlay = pendingRef.current > 0 || pickerRef.current !== null || sideRef.current !== null
     const pageOpen = pageRef.current.active
     if (key.ctrl && input === 'c') {
       const now = Date.now()
@@ -498,6 +652,10 @@ export function App({
       return
     }
     if (pageOpen) return // the page handles its own keys
+    if (key.ctrl && input === 't') {
+      setTodosCollapsed((c) => !c)
+      return
+    }
     if (key.ctrl && input === 'l') {
       stdout.write(CLEAR_SCREEN)
       dispatch({ type: 'redraw' })
@@ -575,6 +733,61 @@ export function App({
     [controller],
   )
 
+  const finishRewind = useCallback(
+    (result: RewindResult) => {
+      setPicker(null)
+      busy.current = true
+      void (async () => {
+        try {
+          if (result.sessionId) {
+            const messages = await controller.messages()
+            stdout.write(CLEAR_SCREEN)
+            dispatch({ type: 'load', messages })
+            setSessionLabel(controller.sessionName)
+          }
+          const n = result.restoredFiles.length
+          dispatch({
+            type: 'system',
+            text: `Restored ${n} file${n === 1 ? '' : 's'}`,
+          })
+          if (result.prompt) setPrefill((p) => ({ id: p.id + 1, text: result.prompt }))
+          refreshStats()
+        } catch (error) {
+          dispatch({
+            type: 'system',
+            text: `Rewind failed: ${error instanceof Error ? error.message : String(error)}`,
+            tone: 'error',
+          })
+        } finally {
+          release()
+        }
+      })()
+    },
+    [controller, refreshStats, release, stdout],
+  )
+
+  const selectOutputStyle = useCallback(
+    (name: string) => {
+      setPicker(null)
+      void controller
+        .updateSetting('outputStyle', name, 'local')
+        .then(() => dispatch({ type: 'system', text: `Output style set to ${name}.` }))
+        .catch((error: unknown) =>
+          dispatch({
+            type: 'system',
+            text: `Cannot save: ${error instanceof Error ? error.message : String(error)}`,
+            tone: 'error',
+          }),
+        )
+    },
+    [controller],
+  )
+
+  const configSaved = useCallback((key: string, value: unknown) => {
+    if (key === 'theme') setTheme(value as 'dark' | 'light' | 'auto')
+    else if (key === 'editorMode') setEditorMode(value === 'vim' ? 'vim' : 'normal')
+  }, [])
+
   const openRun = useCallback(
     (run: { name: string; description: string; sessionId: string }) => {
       void controller
@@ -604,6 +817,7 @@ export function App({
     ? { ...(frozen ? held.current : state), live: null, running: false }
     : state
 
+  const overlayOpen = pending.length > 0 || picker !== null || sideQuestion !== null
   const todos = latestTodos(state)
   const page = pageHost.view.phase === 'open' ? pageHost.view.page : null
   return (
@@ -611,6 +825,7 @@ export function App({
       <Transcript
         state={shown}
         config={{ ...controller.config, model }}
+        focus={focus}
         welcome={{ provider: controller.provider, thinking, ...(version ? { version } : {}) }}
         {...(liveTokens(state.live) !== undefined ? { tokens: liveTokens(state.live) } : {})}
       />
@@ -620,7 +835,9 @@ export function App({
         ) : questions.length > 0 ? (
           <QuestionDialog broker={controller.broker} />
         ) : null}
-        {hasOpenTodos(todos) && todos ? <TodoPanel todos={todos} /> : null}
+        {hasOpenTodos(todos) && todos ? (
+          <TodoPanel todos={todos} collapsed={todosCollapsed} />
+        ) : null}
         {picker === 'session' ? (
           <SessionPicker
             load={() => controller.sessions()}
@@ -642,10 +859,50 @@ export function App({
             onCancel={() => setPicker(null)}
           />
         ) : null}
+        {picker === 'rewind' ? (
+          <RewindMenu
+            controller={controller}
+            onDone={finishRewind}
+            onCancel={(reason) => {
+              setPicker(null)
+              if (reason) dispatch({ type: 'system', text: reason })
+            }}
+          />
+        ) : null}
+        {picker === 'outputStyle' ? (
+          <OutputStylePicker
+            controller={controller}
+            onSelect={selectOutputStyle}
+            onCancel={() => setPicker(null)}
+          />
+        ) : null}
+        {sideQuestion !== null ? (
+          <SideQuestion
+            controller={controller}
+            question={sideQuestion}
+            onClose={() => setSideQuestion(null)}
+          />
+        ) : null}
         <QueuedMessages items={queue.map((q) => q.text)} />
         <PromptInput
           key={inputEpoch}
-          disabled={pending.length > 0 || picker !== null || pageHost.active}
+          disabled={
+            pending.length > 0 || picker !== null || pageHost.active || sideQuestion !== null
+          }
+          {...(suggestion ? { placeholder: suggestion } : {})}
+          prefill={prefill}
+          editorMode={editorMode}
+          agents={controller.agents().map((a) => a.name)}
+          onVimMode={(m) => setVimLabel(vimModeLabel(m))}
+          onHint={showHint}
+          onCtrlDEmpty={ctrlDExit}
+          onExternalEditor={(running) => {
+            editorRunning.current = running
+          }}
+          onSaveDraft={(text) => void controller.addHistory(text).catch(() => {})}
+          onRewindMenu={() => {
+            if (pendingRef.current === 0 && !busy.current) setPicker('rewind')
+          }}
           listFiles={listFiles}
           history={promptHistory}
           commands={customCommands}
@@ -656,9 +913,21 @@ export function App({
             searchOpen.current = open
           }}
           onSubmit={submit}
+          onSubmitDetailed={({ text, files }) => submit(text, files)}
           onShortcuts={() => setShortcutsOpen((open) => !open)}
           onTextChange={(text) => {
             if (text !== '') setShortcutsOpen(false)
+            inputEmptyRef.current = text === ''
+            setInputEmpty(text === '')
+            if (text !== '') setSuggestion(undefined)
+          }}
+        />
+        <SuggestionKeys
+          suggestion={suggestion}
+          enabled={inputEmpty && !overlayOpen && !pageHost.active}
+          onAccept={(text) => {
+            setSuggestion(undefined)
+            setPrefill((p) => ({ id: p.id + 1, text }))
           }}
         />
         {shortcutsOpen ? <ShortcutsPanel /> : null}
@@ -671,6 +940,12 @@ export function App({
           hint={hint ?? (queue.length > 0 ? `${queue.length} queued · ↑ to edit` : null)}
           shortcutsOpen={shortcutsOpen}
           busy={state.running}
+          {...(editorMode === 'vim' && vimLabel ? { vimMode: vimLabel } : {})}
+          {...(statusLine ? { statusLine } : {})}
+          {...(tasks.filter((t) => t.status === 'running').length > 0
+            ? { tasks: tasks.filter((t) => t.status === 'running').length }
+            : {})}
+          {...(sessionLabel ? { sessionName: sessionLabel } : {})}
         />
       </Box>
       {page ? (
@@ -680,6 +955,7 @@ export function App({
           runs={state.subagents}
           onClose={pageHost.close}
           onOpenRun={openRun}
+          onConfigSaved={configSaved}
         />
       ) : null}
     </Box>
@@ -692,14 +968,24 @@ function PageRoute({
   runs,
   onClose,
   onOpenRun,
+  onConfigSaved,
 }: {
   page: PageSpec
   controller: CoderController
   runs: ViewState['subagents']
   onClose(): void
   onOpenRun(run: ViewState['subagents'][number]): void
+  onConfigSaved(key: string, value: unknown): void
 }): ReactElement {
   switch (page.kind) {
+    case 'config':
+      return <ConfigPage controller={controller} onClose={onClose} onSaved={onConfigSaved} />
+    case 'tasks':
+      return <TasksPage controller={controller} onClose={onClose} />
+    case 'doctor':
+      return <DoctorPage controller={controller} onClose={onClose} />
+    case 'memory':
+      return <MemoryPage controller={controller} onClose={onClose} />
     case 'context':
       return <ContextPage controller={controller} onClose={onClose} />
     case 'status':

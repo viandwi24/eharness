@@ -2,6 +2,7 @@
 import { type LanguageModelUsage, readUIMessageStream, tool } from 'ai'
 import type { HarnessAgent, HarnessRun, ToolInput } from 'eharness'
 import { z } from 'zod/v4'
+import type { TaskInject, TaskManager } from '../app/tasks.ts'
 import type {
   AgentDefinition,
   AgentProgress,
@@ -24,7 +25,27 @@ export interface AgentToolDeps {
   describe(call: ToolCallInfo): Promise<{ title: string; detail?: string; suggestedRule?: string }>
   /** Default 8 concurrent children per nesting depth. */
   maxConcurrent?: number
+  /**
+   * Enables `run_in_background`: the child is registered here (`agent-N`, tail = its latest text,
+   * `stopTask` aborts it). Without `tasks` and `inject` the input field does not exist.
+   */
+  tasks?: TaskManager
+  /**
+   * Delivers the finished child's report into the PARENT session as an `eh.event`
+   * (`{ deliver: 'next-step', wake: true }`: a busy parent sees it at its next step boundary, an
+   * idle one starts a no-input turn). Typically `(id, data, opts) => liveSession(id).inject('eh.event', data, opts)`.
+   */
+  inject?: TaskInject
+  /**
+   * Called with the run `inject` started on an idle parent. The integrator must drive it like any
+   * turn (`driveTurn`: approvals answered, stream shown); an undriven wake run stops at its first
+   * approval.
+   */
+  onWake?(run: HarnessRun<CoderMessage>): void
 }
+
+/** Cap of the report injected into the parent when a background agent finishes. */
+export const BACKGROUND_REPORT_CHARS = 4000
 
 const THROTTLE_MS = 100
 
@@ -147,6 +168,123 @@ function describeTypes(defs: AgentDefinition[]): string {
   return defs.map((d) => `- ${d.name}: ${d.description}`).join('\n')
 }
 
+interface BackgroundArgs {
+  def: AgentDefinition
+  description: string
+  prompt: string
+  sessionId: string
+  parentSessionId: string
+  parentTurnId: string
+  toolCallId: string
+  parentDepth: number
+  turn: { addUsage(usage: LanguageModelUsage, meta?: { costUsd?: number; source?: string }): void }
+  tasks: TaskManager
+  inject: TaskInject
+}
+
+/** Start a child detached from the calling turn; returns the text for the model. */
+function startBackground(deps: AgentToolDeps, depth: number, b: BackgroundArgs): string {
+  const ac = new AbortController()
+  const id = b.tasks.add({
+    kind: 'agent',
+    label: `${b.def.name}: ${b.description}`,
+    stop: () => ac.abort('stopped'),
+  })
+  const sem = semaphoreFor(deps, depth)
+
+  const finish = async (status: 'completed' | 'failed', text: string): Promise<void> => {
+    const stopped = b.tasks.get(id)?.status === 'stopped'
+    b.tasks.update(id, { tail: text })
+    b.tasks.complete(id, { status })
+    if (stopped) return
+    const report =
+      text.length > BACKGROUND_REPORT_CHARS
+        ? `${text.slice(0, BACKGROUND_REPORT_CHARS)}\n… [report truncated]`
+        : text
+    const head = `Background agent ${id} (${b.def.name}: ${b.description}) ${status === 'completed' ? 'finished' : 'failed'}.`
+    try {
+      const out = await b.inject(
+        b.parentSessionId,
+        { name: 'task', text: `${head}\n\n${report || '(no report)'}`, data: { id, status } },
+        { deliver: 'next-step', wake: true },
+      )
+      if (out?.run !== undefined) deps.onWake?.(out.run)
+    } catch {
+      // the parent session may be closed by now
+    }
+  }
+
+  void (async () => {
+    if (!(await sem.acquire(ac.signal))) {
+      b.tasks.complete(id, { status: 'failed' })
+      return
+    }
+    let opened = false
+    // biome-ignore lint/suspicious/noExplicitAny: same loose agent type as AgentToolDeps.agentFor
+    let agent: HarnessAgent<any> | undefined
+    try {
+      agent = deps.agentFor(b.def, depth + 1)
+      const child = agent.session(b.sessionId, {
+        parent: {
+          sessionId: b.parentSessionId,
+          turnId: b.parentTurnId,
+          toolCallId: b.toolCallId,
+          depth: b.parentDepth + 1,
+        },
+      })
+      opened = true
+      const consumers: Promise<void>[] = []
+      const consume = async (run: HarnessRun<CoderMessage>): Promise<void> => {
+        try {
+          for await (const message of readUIMessageStream<CoderMessage>({ stream: run.stream })) {
+            const text = textOf(message, true)
+            const tool = inspect(message).lastTool
+            b.tasks.update(id, { tail: text || (tool !== undefined ? `running ${tool}` : '') })
+          }
+        } catch {
+          // stream errors surface through run.result
+        }
+      }
+      const run = child.send(b.prompt, { abortSignal: ac.signal, maxSteps: b.def.maxTurns })
+      const result = await driveTurn(run, {
+        session: child,
+        broker: deps.broker,
+        permissions: deps.permissions,
+        describe: deps.describe,
+        agent: b.def.name,
+        signal: ac.signal,
+        onRun: (r) => {
+          consumers.push(consume(r))
+        },
+      })
+      await Promise.all(consumers)
+      try {
+        b.turn.addUsage(usageOf(result.usage), {
+          costUsd: result.usage.costUsd,
+          source: `subagent:${b.def.name}`,
+        })
+      } catch {
+        // the parent turn is over; its cost is already final
+      }
+      const assistant =
+        result.messages.findLast((m) => m.id === result.messageId) ??
+        result.messages.findLast((m) => m.role === 'assistant')
+      const text = textOf(assistant, true) || b.tasks.get(id)?.tail || ''
+      await finish(
+        result.stop === 'complete' ? 'completed' : 'failed',
+        result.stop === 'complete' ? text : `[stopped: ${result.stop}] ${text}`,
+      )
+    } catch (error) {
+      await finish('failed', error instanceof Error ? error.message : String(error))
+    } finally {
+      if (opened) await agent?.closeSession(b.sessionId).catch(() => {})
+      sem.release()
+    }
+  })()
+
+  return `Started background agent ${id} (${b.def.name}): ${b.description}. You will be notified when it finishes.`
+}
+
 /** The `agent` tool for an agent running at `depth` (0 = main). */
 export function createAgentTool(deps: AgentToolDeps, depth: number): ToolInput {
   return ((ctx: {
@@ -158,6 +296,7 @@ export function createAgentTool(deps: AgentToolDeps, depth: number): ToolInput {
   }) => {
     // resolved once per session so the description (and the prompt-cache prefix) stays stable
     const initial = deps.definitions()
+    const canBackground = deps.tasks !== undefined && deps.inject !== undefined
     return tool({
       description: `Launch a subagent to handle a task on its own and return a report.
 
@@ -173,9 +312,19 @@ Usage:
         subagent_type: z.string().describe('The subagent type to use'),
         description: z.string().describe('A short (3-5 words) label for the task'),
         prompt: z.string().describe('The complete task for the subagent'),
+        ...(canBackground
+          ? {
+              run_in_background: z
+                .boolean()
+                .optional()
+                .describe(
+                  'Start the subagent in the background and return at once; its report arrives later as an event. Use it for work you do not need before continuing.',
+                ),
+            }
+          : {}),
       }),
       async *execute(
-        { subagent_type, description, prompt },
+        { subagent_type, description, prompt, run_in_background },
         { toolCallId, abortSignal },
       ): AsyncGenerator<AgentProgress | string, void, undefined> {
         const defs = deps.definitions()
@@ -190,6 +339,22 @@ Usage:
           return
         }
         const sessionId = `${ctx.session.id}:agent:${toolCallId}`
+        if (run_in_background === true && deps.tasks !== undefined && deps.inject !== undefined) {
+          yield startBackground(deps, depth, {
+            def,
+            description,
+            prompt,
+            sessionId,
+            parentSessionId: ctx.session.id,
+            parentTurnId: turn.id,
+            toolCallId,
+            parentDepth: ctx.session.parent?.depth ?? depth,
+            turn,
+            tasks: deps.tasks,
+            inject: deps.inject,
+          })
+          return
+        }
         const progress = (over: Partial<AgentProgress>): AgentProgress => ({
           status: 'running',
           agent: def.name,

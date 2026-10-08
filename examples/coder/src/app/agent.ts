@@ -21,7 +21,9 @@ import { join } from 'node:path'
 import type { LanguageModel, Tool } from 'ai'
 import {
   defineHarnessAgent,
+  type definePlugin,
   type HarnessAgent,
+  type HarnessRun,
   type HarnessWarning,
   lookupModel,
   type MessageAdapter,
@@ -36,6 +38,7 @@ import {
   type AgentDefinition,
   type ApprovalBroker,
   type CoderConfig,
+  type CoderMessage,
   type PermissionEngine,
   READ_ONLY_TOOLS,
   type Sandbox,
@@ -43,14 +46,17 @@ import {
   type ToolCallInfo,
   type Workspace,
 } from '../contracts.ts'
+import type { LspManager } from '../lsp/index.ts'
+import { createLspTools } from '../lsp/index.ts'
 import {
   domainSpecifierMatches,
   parseRule,
   permissionsPlugin,
   ruleToolMatches,
 } from '../permissions/index.ts'
-import { bashOutputPart, createBashTool } from '../shell/index.ts'
+import { bashOutputPart, createBashTool, type LocalSandbox } from '../shell/index.ts'
 import { createDirAccessTool, createGlobTool } from '../workspace/index.ts'
+import { createBackgroundBashTools, withBackgroundOption } from './background-bash.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
 import { loadProjectMemory } from './project-memory.ts'
 import {
@@ -59,6 +65,7 @@ import {
   subagentInstructions,
   turnReminder,
 } from './prompt.ts'
+import type { TaskInject, TaskManager } from './tasks.ts'
 import { buildTools, estimateTokens, estimateTool, pluginStaticTools } from './tool-inventory.ts'
 import {
   createWebFetchTool,
@@ -71,7 +78,7 @@ import {
 export interface CreateAgentsDeps {
   config: CoderConfig
   workspace: Workspace
-  sandbox: Sandbox
+  sandbox: Sandbox | LocalSandbox
   permissions: PermissionEngine
   broker: ApprovalBroker
   /** Title/detail/suggested rule of a tool call, for approval prompts. */
@@ -101,6 +108,29 @@ export interface CreateAgentsDeps {
   webFetch?: Partial<Pick<WebFetchDeps, 'fetch' | 'resolve' | 'timeoutMs'>>
   /** Cap of concurrent subagents per nesting depth (default 8). */
   maxConcurrentAgents?: number
+  /**
+   * Plugins added to EVERY agent, after the permissions plugin (checkpoints, settings hooks).
+   * They must not add tools: tool order is the prompt-cache prefix. Called once per agent built.
+   */
+  extraPlugins?: (agent: { main: boolean }) => Array<ReturnType<typeof definePlugin>>
+  /** Plugins of the MAIN agent only (compact focus). */
+  mainPlugins?: Array<ReturnType<typeof definePlugin>>
+  /** User memory text (`~/.coder/AGENTS.md`), a SESSION instruction after the project memory. */
+  userMemory?: () => Promise<string | undefined>
+  /**
+   * Text of the active output style, a SESSION instruction of the main agent. Evaluated when the
+   * session opens: the controller closes the session handle after a style change so the next turn
+   * re-evaluates it (the prompt cache is rebuilt from that block on).
+   */
+  outputStyle?: () => Promise<string | undefined>
+  /** Background tasks: `bash` gets `run_in_background`, `bash_output`/`kill_shell` are added, `agent` can run in background. */
+  background?: {
+    tasks: TaskManager
+    inject: TaskInject
+    onWake: (run: HarnessRun<CoderMessage>) => void
+  }
+  /** `lsp` tool for every agent when the manager has a server. */
+  lsp?: LspManager
   onWarning?: (warning: HarnessWarning) => void
 }
 
@@ -149,6 +179,28 @@ async function skillIndexTokens(root: string): Promise<{ tokens: number; count: 
     // no skills directory
   }
   return { tokens, count }
+}
+
+type LooseTool = { description?: string } & Record<string, unknown>
+
+/**
+ * Append whether bash is sandboxed to the tool description. The description is resolved when a
+ * session opens, so a live `sandbox.enabled` toggle reaches the model at the next session open
+ * (the controller reopens the session handle after the toggle).
+ */
+function withSandboxNote(base: unknown, sandbox: Sandbox | LocalSandbox): unknown {
+  const state = (sandbox as Partial<LocalSandbox>).sandboxState?.bind(sandbox)
+  if (state === undefined) return base
+  return (ctx: unknown): unknown => {
+    const inner = (
+      typeof base === 'function' ? (base as (c: unknown) => unknown)(ctx) : base
+    ) as LooseTool
+    const s = state()
+    const note = s.enabled
+      ? `\n\nSandbox: ON (${s.kind}). Commands can write only inside the project, the extra directories and temp dirs; network access is ${s.network ? 'allowed' : 'blocked'}. "Operation not permitted" / "Read-only file system" errors usually come from the sandbox: do not retry them, tell the user.`
+      : '\n\nSandbox: off. Commands run with the full privileges of the user.'
+    return { ...inner, description: `${inner.description ?? ''}${note}` }
+  }
 }
 
 /** Removed from `plan` subagents; `bash` stays, its commands are restricted to read-only ones. */
@@ -222,6 +274,13 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     permissions: deps.permissions,
     describe: deps.describe,
     ...(deps.maxConcurrentAgents !== undefined ? { maxConcurrent: deps.maxConcurrentAgents } : {}),
+    ...(deps.background
+      ? {
+          tasks: deps.background.tasks,
+          inject: deps.background.inject,
+          onWake: deps.background.onWake,
+        }
+      : {}),
   }
 
   const warnMcp = (message: string): void => {
@@ -230,23 +289,53 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
 
   const build = (def: AgentDefinition | undefined, depth: number): HarnessAgent => {
     const isMain = def === undefined
+    // Order = prompt order. Strings are the static block; functions are SESSION instructions
+    // (block 2, evaluated at the first turn of a session, then cached): user memory, then the
+    // output style. The turn reminder is the only per-turn text.
+    const userMemory = deps.userMemory
+    const userMemoryText = userMemory
+      ? (): Promise<string | undefined> =>
+          userMemory().then((text) =>
+            text === undefined
+              ? undefined
+              : `# User instructions (~/.coder/AGENTS.md)\n\nThe user wrote these personal instructions for every project. Follow them.\n\n${text.trim()}`,
+          )
+      : undefined
     const instructions = isMain
-      ? [STATIC_INSTRUCTIONS, ...(projectText ? [projectText] : []), reminder]
+      ? [
+          STATIC_INSTRUCTIONS,
+          ...(projectText ? [projectText] : []),
+          ...(userMemoryText ? [userMemoryText] : []),
+          ...(deps.outputStyle ? [deps.outputStyle] : []),
+          reminder,
+        ]
       : [
           subagentInstructions(def),
           ...(projectText && !def.omitProjectMemory ? [projectText] : []),
+          ...(userMemoryText && !def.omitProjectMemory ? [userMemoryText] : []),
           reminder,
         ]
 
     // typed loosely: the tools mix plain tools and tool factories
+    const bash = withSandboxNote(createBashTool({ sandbox: deps.sandbox }), deps.sandbox)
     const appTools: Record<string, unknown> = {
       [TOOL.glob]: createGlobTool(workspace),
-      [TOOL.bash]: createBashTool({ sandbox: deps.sandbox }),
+      [TOOL.bash]: deps.background
+        ? withBackgroundOption(bash as never, { sandbox: deps.sandbox, ...deps.background })
+        : bash,
       [TOOL.webFetch]: createWebFetchTool({
         isHostAllowed: (host) => hostAllowedBy(permissions, host),
         ...deps.webFetch,
       }),
       [TOOL.webSearch]: createWebSearchTool({ ...(deps.search ? { search: deps.search } : {}) }),
+    }
+    if (deps.lsp?.available) Object.assign(appTools, createLspTools(deps.lsp))
+    if (deps.background) {
+      // not model-visible for agents whose `tools` allowlist omits them (read-only subagents)
+      Object.assign(
+        appTools,
+        createBackgroundBashTools({ sandbox: deps.sandbox, ...deps.background }).tools,
+      )
     }
     if (depth < config.maxAgentDepth) appTools[TOOL.agent] = createAgentTool(toolDeps, depth)
     if (isMain) {
@@ -294,6 +383,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         auditFile,
       }),
       modelSwitchPlugin({ state: modelState, ...(follows ? { resolve: resolveModel } : {}) }),
+      ...(deps.extraPlugins?.({ main: isMain }) ?? []),
+      ...(isMain ? (deps.mainPlugins ?? []) : []),
     ]
     if (isMain) {
       contextInfo.tools = appTools
@@ -312,6 +403,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       ...(deps.models ? { models: deps.models } : {}),
       instructions,
       dataParts: { bashOutput: bashOutputPart },
+      // pasted images arrive as data: URLs only, at most 5 MB each (never fetched URLs)
+      ...(isMain ? { inputFiles: { protocols: ['data:'], maxBytes: 5 * 1024 * 1024 } } : {}),
       tools: appTools as never,
       mcp,
       plugins,
@@ -348,14 +441,19 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         tools.push({ name, tokens: await estimateTool(name, tool) })
       }
       const skills = hasSkills ? await skillIndexTokens(config.root) : { tokens: 0, count: 0 }
-      const memoryTokens = estimateTokens(projectText ?? '')
+      const userText = await deps.userMemory?.().catch(() => undefined)
+      const memoryTokens = estimateTokens(projectText ?? '') + estimateTokens(userText ?? '')
       return {
         tools,
         memoryTokens,
-        memoryFiles:
-          memory.file !== undefined && memory.text !== undefined
+        memoryFiles: [
+          ...(memory.file !== undefined && memory.text !== undefined
             ? [{ path: `/${memory.file}`, tokens: estimateTokens(memory.text) }]
-            : [],
+            : []),
+          ...(userText !== undefined
+            ? [{ path: '~/.coder/AGENTS.md', tokens: estimateTokens(userText) }]
+            : []),
+        ],
         skillsTokens: skills.tokens,
         skillCount: skills.count,
         hasMcp: Object.keys(config.mcpServers).length > 0,

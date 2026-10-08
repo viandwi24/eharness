@@ -6,7 +6,7 @@ import { keyedLines } from './keys.ts'
 import { MessageView, UserMessage } from './MessageView.tsx'
 import { ThinkingIndicator } from './Spinner.tsx'
 import type { Entry, ViewState } from './state.ts'
-import { color, sym } from './theme.ts'
+import { color, sym, useTheme } from './theme.ts'
 import { WelcomeBox } from './WelcomeBox.tsx'
 
 function EntryView({
@@ -14,11 +14,13 @@ function EntryView({
   config,
   state,
   welcome,
+  focus,
 }: {
   entry: Entry
   config: CoderConfig
   state: ViewState
   welcome: WelcomeInfo
+  focus: boolean
 }): ReactElement | null {
   switch (entry.kind) {
     case 'header':
@@ -112,6 +114,7 @@ function EntryView({
           expanded={state.expanded}
           bash={state.bash}
           timing={state.timing}
+          focus={focus}
         />
       )
   }
@@ -153,6 +156,8 @@ export interface TranscriptProps {
   welcome?: WelcomeInfo
   /** Output tokens of the running turn for the thinking line. */
   tokens?: number
+  /** Focus view: last prompt and final text in full, tool calls on one line. */
+  focus?: boolean
 }
 
 /** `Date.now()` of the moment `running` last became true (stable while it stays true). */
@@ -165,7 +170,14 @@ function useRunStart(running: boolean): number {
 }
 
 /** Finished entries once in `<Static>`, then the live assistant message. */
-export function Transcript({ state, config, welcome = {}, tokens }: TranscriptProps): ReactElement {
+export function Transcript({
+  state,
+  config,
+  welcome = {},
+  tokens,
+  focus = false,
+}: TranscriptProps): ReactElement {
+  useTheme()
   const live: CoderMessage | null = state.live
   // The indicator shows for the whole turn (also while text streams and tools run, also in a
   // continuation after an approval or a dismissed question); only a reasoning block that is
@@ -177,7 +189,13 @@ export function Transcript({ state, config, welcome = {}, tokens }: TranscriptPr
       <Static key={state.epoch} items={state.entries}>
         {(entry) => (
           <Box key={entry.id} flexDirection="column">
-            <EntryView entry={entry} config={config} state={state} welcome={welcome} />
+            <EntryView
+              entry={entry}
+              config={config}
+              state={state}
+              welcome={welcome}
+              focus={focus}
+            />
           </Box>
         )}
       </Static>
@@ -187,6 +205,7 @@ export function Transcript({ state, config, welcome = {}, tokens }: TranscriptPr
           expanded={state.expanded}
           bash={state.bash}
           timing={state.timing}
+          focus={focus}
         />
       ) : null}
       {waiting ? (

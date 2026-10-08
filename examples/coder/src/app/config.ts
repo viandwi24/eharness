@@ -11,6 +11,7 @@ import {
   type AgentDefinitionInput,
   type CoderConfig,
   type CoderSettings,
+  type HookEvent,
   type ModelProvider,
   PERMISSION_MODES,
   type PermissionMode,
@@ -42,6 +43,23 @@ export interface CliFlags {
 
 const modeSchema = z.enum(PERMISSION_MODES as [PermissionMode, ...PermissionMode[]])
 
+/** Every event a settings hook can run on. */
+export const HOOK_EVENTS: readonly HookEvent[] = [
+  'PreToolUse',
+  'PostToolUse',
+  'UserPromptSubmit',
+  'Stop',
+  'SubagentStop',
+  'Notification',
+  'SessionStart',
+]
+
+const hookEntrySchema = z.object({
+  matcher: z.string().optional(),
+  command: z.string().min(1),
+  timeoutMs: z.number().int().positive().optional(),
+})
+
 const settingsSchema = z.object({
   model: z.string().min(1).optional(),
   provider: z.enum(MODEL_PROVIDERS).optional(),
@@ -56,6 +74,29 @@ const settingsSchema = z.object({
     })
     .optional(),
   mcpServers: z.record(z.string(), z.unknown()).optional(),
+  theme: z.enum(['dark', 'light', 'auto']).optional(),
+  outputStyle: z.string().min(1).optional(),
+  notifications: z.enum(['off', 'bell', 'desktop']).optional(),
+  askUserQuestionTimeout: z.number().min(0).optional(),
+  statusLine: z.object({ command: z.string().min(1) }).optional(),
+  promptSuggestions: z.boolean().optional(),
+  editorMode: z.enum(['normal', 'vim']).optional(),
+  hooks: z
+    .partialRecord(z.enum(HOOK_EVENTS as [HookEvent, ...HookEvent[]]), z.array(hookEntrySchema))
+    .optional(),
+  sandbox: z
+    .object({
+      enabled: z.boolean().optional(),
+      network: z.boolean().optional(),
+      allowWrite: z.array(z.string()).optional(),
+    })
+    .optional(),
+  lsp: z
+    .record(
+      z.string(),
+      z.object({ command: z.array(z.string()).min(1), extensions: z.array(z.string()) }),
+    )
+    .optional(),
 })
 
 const agentsSchema = z.record(
@@ -74,7 +115,8 @@ const agentsSchema = z.record(
 
 const FORMATS = ['text', 'json', 'stream-json'] as const
 
-async function readSettings(file: string): Promise<CoderSettings | undefined> {
+/** Parse and validate one settings file; `undefined` when it does not exist, throws on invalid content. */
+export async function readSettingsFile(file: string): Promise<CoderSettings | undefined> {
   let raw: string
   try {
     raw = await readFile(file, 'utf8')
@@ -143,7 +185,7 @@ async function walkFiles(dir: string, base = ''): Promise<string[]> {
 /** Names of the project agent, skill and custom command files (empty lists when the directories do not exist). */
 async function projectContentFiles(
   root: string,
-): Promise<{ agents: string[]; skills: string[]; commands: string[] }> {
+): Promise<{ agents: string[]; skills: string[]; commands: string[]; styles: string[] }> {
   const agents = (await walkFiles(join(root, '.coder', 'agents'))).filter(
     (f) => f.endsWith('.md') && !f.includes('/'),
   )
@@ -151,7 +193,10 @@ async function projectContentFiles(
   const commands = (await walkFiles(join(root, '.coder', 'commands'))).filter((f) =>
     f.endsWith('.md'),
   )
-  return { agents, skills, commands }
+  const styles = (await walkFiles(join(root, '.coder', 'output-styles'))).filter((f) =>
+    f.endsWith('.md'),
+  )
+  return { agents, skills, commands, styles }
 }
 
 /** Hash of the project settings file content plus every project agent and skill file. */
@@ -167,7 +212,8 @@ async function projectHash(root: string): Promise<string> {
     hash.update(`${label}\0`).update(content).update('\0')
   }
   await feed('settings', join(root, '.coder', 'settings.json'))
-  const { agents, skills, commands } = await projectContentFiles(root)
+  const { agents, skills, commands, styles } = await projectContentFiles(root)
+  for (const f of styles) await feed(`style:${f}`, join(root, '.coder', 'output-styles', f))
   for (const f of agents) await feed(`agent:${f}`, join(root, '.coder', 'agents', f))
   for (const f of skills) await feed(`skill:${f}`, join(root, '.coder', 'skills', f))
   for (const f of commands) await feed(`command:${f}`, join(root, '.coder', 'commands', f))
@@ -216,15 +262,48 @@ function riskyKeys(settings: CoderSettings): string[] {
   if (settings.mcpServers !== undefined && Object.keys(settings.mcpServers).length > 0) {
     keys.push('mcpServers')
   }
+  if (
+    settings.hooks !== undefined &&
+    Object.values(settings.hooks).some((list) => (list?.length ?? 0) > 0)
+  ) {
+    keys.push('hooks')
+  }
+  if (settings.statusLine !== undefined) keys.push('statusLine')
+  if (settings.lsp !== undefined && Object.keys(settings.lsp).length > 0) keys.push('lsp')
+  const sb = settings.sandbox
+  if (
+    sb !== undefined &&
+    (sb.enabled === false || sb.network === true || (sb.allowWrite?.length ?? 0) > 0)
+  ) {
+    keys.push('sandbox')
+  }
   return keys
 }
 
 /** Settings without the keys that need trust (`ask` and `deny` only tighten, so they stay). */
 function withoutRisky(settings: CoderSettings): CoderSettings {
-  const { mcpServers: _mcp, permissions, ...rest } = settings
-  if (permissions === undefined) return rest
-  const { defaultMode: _m, allow: _a, additionalDirectories: _d, ...safe } = permissions
-  return { ...rest, permissions: safe }
+  const {
+    mcpServers: _mcp,
+    hooks: _hooks,
+    statusLine: _status,
+    lsp: _lsp,
+    sandbox,
+    permissions,
+    ...rest
+  } = settings
+  const out: CoderSettings = { ...rest }
+  if (sandbox !== undefined) {
+    // only tightening survives: the sandbox may be turned on, never off, opened or widened
+    const kept: NonNullable<CoderSettings['sandbox']> = {}
+    if (sandbox.enabled === true) kept.enabled = true
+    if (sandbox.network === false) kept.network = false
+    if (Object.keys(kept).length > 0) out.sandbox = kept
+  }
+  if (permissions !== undefined) {
+    const { defaultMode: _m, allow: _a, additionalDirectories: _d, ...safe } = permissions
+    out.permissions = safe
+  }
+  return out
 }
 
 /** No project settings file: only project agents and skills can need trust. */
@@ -233,16 +312,110 @@ async function projectAgentsSkillsTrusted(
   userDir: string,
   untrusted: string[],
 ): Promise<boolean> {
-  const { agents, skills, commands } = await projectContentFiles(root)
+  const { agents, skills, commands, styles } = await projectContentFiles(root)
   const risky = [
     ...(agents.length > 0 ? ['agents'] : []),
     ...(skills.length > 0 ? ['skills'] : []),
     ...(commands.length > 0 ? ['commands'] : []),
+    ...(styles.length > 0 ? ['output-styles'] : []),
   ]
   if (risky.length === 0) return true
   if ((await readTrusted(userDir))[root] === (await projectHash(root))) return true
   untrusted.push(...risky)
   return false
+}
+
+/** One settings file that exists, trust applied (a project file without its risky keys when untrusted). */
+export interface SettingsLayer {
+  scope: 'user' | 'project' | 'local'
+  file: string
+  settings: CoderSettings
+}
+
+/** Read the three settings files in merge order and apply the project trust rules. */
+async function readLayers(
+  root: string,
+  userDir: string,
+  settingsFiles: CoderConfig['settingsFiles'],
+): Promise<{ layers: SettingsLayer[]; untrusted: string[]; trusted: boolean }> {
+  const layers: SettingsLayer[] = []
+  const untrusted: string[] = []
+  let trusted = true
+  const scopes = [
+    ['user', settingsFiles.user],
+    ['project', settingsFiles.project],
+    ['local', settingsFiles.local],
+  ] as const
+  for (const [scope, file] of scopes) {
+    let settings = await readSettingsFile(file)
+    if (!settings) {
+      if (scope === 'project') trusted = await projectAgentsSkillsTrusted(root, userDir, untrusted)
+      continue
+    }
+    if (scope === 'project') {
+      const risky = riskyKeys(settings)
+      const { agents, skills, commands, styles } = await projectContentFiles(root)
+      if (styles.length > 0) risky.push('output-styles')
+      if (agents.length > 0) risky.push('agents')
+      if (skills.length > 0) risky.push('skills')
+      if (commands.length > 0) risky.push('commands')
+      if (risky.length > 0 && (await readTrusted(userDir))[root] !== (await projectHash(root))) {
+        trusted = false
+        untrusted.push(...risky)
+        settings = withoutRisky(settings)
+      }
+    }
+    layers.push({ scope, file, settings })
+  }
+  return { layers, untrusted, trusted }
+}
+
+/**
+ * The settings files of a loaded config, in merge order (user, project, local), with the trust
+ * rules applied. Used by the settings manager to show where a value comes from.
+ */
+export async function readSettingsLayers(
+  config: Pick<CoderConfig, 'root' | 'userDir' | 'settingsFiles'>,
+): Promise<SettingsLayer[]> {
+  return (await readLayers(config.root, config.userDir, config.settingsFiles)).layers
+}
+
+/**
+ * Merge settings objects (later wins). Scalars and `statusLine` are replaced; `hooks` lists are
+ * concatenated per event; `sandbox`, `lsp` and `permissions` merge key by key (`allowWrite`
+ * concatenated). `mcpServers` merges by server name.
+ */
+export function mergeSettings(list: readonly CoderSettings[]): CoderSettings {
+  const out: CoderSettings = {}
+  for (const s of list) {
+    const { hooks, sandbox, lsp, permissions, mcpServers, ...scalars } = s
+    Object.assign(out, scalars)
+    if (hooks !== undefined) {
+      const merged: NonNullable<CoderSettings['hooks']> = { ...out.hooks }
+      for (const event of Object.keys(hooks) as HookEvent[]) {
+        merged[event] = [...(merged[event] ?? []), ...(hooks[event] ?? [])]
+      }
+      out.hooks = merged
+    }
+    if (sandbox !== undefined) {
+      out.sandbox = {
+        ...out.sandbox,
+        ...sandbox,
+        ...(sandbox.allowWrite || out.sandbox?.allowWrite
+          ? {
+              allowWrite: dedupe([
+                ...(out.sandbox?.allowWrite ?? []),
+                ...(sandbox.allowWrite ?? []),
+              ]),
+            }
+          : {}),
+      }
+    }
+    if (lsp !== undefined) out.lsp = { ...out.lsp, ...lsp }
+    if (permissions !== undefined) out.permissions = { ...out.permissions, ...permissions }
+    if (mcpServers !== undefined) out.mcpServers = { ...out.mcpServers, ...mcpServers }
+  }
+  return out
 }
 
 /** What {@link loadConfig} returns. */
@@ -252,6 +425,12 @@ export type LoadedConfig = CoderConfig & {
   contextWindowExplicit: boolean
   /** The model came from a flag, a settings file or `CODER_MODEL` (a saved preference then loses). */
   modelExplicit: boolean
+  /**
+   * Merged settings of the three files (trust applied): the UI/runtime keys (`theme`,
+   * `outputStyle`, `hooks`, `sandbox`, `lsp`, …). Refresh with {@link readSettingsLayers} +
+   * {@link mergeSettings} after a settings write.
+   */
+  settings: CoderSettings
 }
 
 /** Load settings files, merge them with the flags and prepare the data directories. */
@@ -279,28 +458,9 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
   const mcpServers: Record<string, unknown> = {}
 
   if (flags.trustProject) await trustProject({ root, userDir })
-  const untrusted: string[] = []
-  let trusted = true
+  const { layers, untrusted, trusted } = await readLayers(root, userDir, settingsFiles)
 
-  for (const file of [settingsFiles.user, settingsFiles.project, settingsFiles.local]) {
-    let settings = await readSettings(file)
-    if (!settings) {
-      if (file === settingsFiles.project)
-        trusted = await projectAgentsSkillsTrusted(root, userDir, untrusted)
-      continue
-    }
-    if (file === settingsFiles.project) {
-      const risky = riskyKeys(settings)
-      const { agents, skills, commands } = await projectContentFiles(root)
-      if (agents.length > 0) risky.push('agents')
-      if (skills.length > 0) risky.push('skills')
-      if (commands.length > 0) risky.push('commands')
-      if (risky.length > 0 && (await readTrusted(userDir))[root] !== (await projectHash(root))) {
-        trusted = false
-        untrusted.push(...risky)
-        settings = withoutRisky(settings)
-      }
-    }
+  for (const { file, settings } of layers) {
     model = settings.model ?? model
     provider = settings.provider ?? provider
     contextWindow = settings.contextWindow ?? contextWindow
@@ -386,5 +546,6 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     warnings,
     contextWindowExplicit: contextWindow !== undefined,
     modelExplicit: explicitModel !== undefined,
+    settings: mergeSettings(layers.map((l) => l.settings)),
   }
 }

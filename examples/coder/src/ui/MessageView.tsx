@@ -4,7 +4,7 @@ import type { CoderMessage } from '../contracts.ts'
 import { InlineMarkdown, Markdown } from './markdown.tsx'
 import { partDuration, Reasoning } from './Reasoning.tsx'
 import type { ToolTiming } from './state.ts'
-import { ToolCard } from './ToolCard.tsx'
+import { ToolCard, ToolLine } from './ToolCard.tsx'
 import { color, sym } from './theme.ts'
 import { toolView } from './tool-summary.ts'
 
@@ -14,6 +14,8 @@ export interface MessageViewProps {
   expanded: boolean
   bash: Record<string, string>
   timing: Record<string, ToolTiming>
+  /** Focus view: tool calls on one line, reasoning hidden, only the final text shown. */
+  focus?: boolean
 }
 
 /** Inline Markdown of one line (kept for compatibility; see `markdown.tsx`). */
@@ -128,6 +130,7 @@ export function MessageView({
   expanded,
   bash,
   timing,
+  focus = false,
 }: MessageViewProps): ReactElement | null {
   if (message.metadata?.eharness?.kind) {
     return (
@@ -141,12 +144,19 @@ export function MessageView({
     if (!text) return null
     return <UserMessage text={text} />
   }
+  let lastText = -1
+  if (focus) {
+    message.parts.forEach((p, i) => {
+      if (p.type === 'text' && p.text.trim() !== '') lastText = i
+    })
+  }
   return (
     <Box flexDirection="column">
       {message.parts.map((part, i) => {
         const key = `${message.id}:${i}`
         if (part.type === 'text') {
           if (part.text.trim() === '') return null
+          if (focus && i !== lastText) return null
           return (
             <Box key={key} marginTop={1}>
               <Box flexShrink={0} width={2}>
@@ -157,6 +167,7 @@ export function MessageView({
           )
         }
         if (part.type === 'reasoning') {
+          if (focus) return null
           const r = part as { text: string; state?: 'streaming' | 'done' }
           const ms = partDuration(part)
           return (
@@ -176,6 +187,19 @@ export function MessageView({
         }
         const view = toolView(part)
         if (view) {
+          if (focus) {
+            return (
+              <ToolLine
+                key={key}
+                view={view}
+                context={{
+                  bashLive: bash[view.toolCallId],
+                  timing: timing[view.toolCallId],
+                  change: changeFor(message, view.input),
+                }}
+              />
+            )
+          }
           return (
             <ToolCard
               key={key}

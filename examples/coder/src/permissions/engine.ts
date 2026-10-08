@@ -74,6 +74,9 @@ const BUILTIN_ASK = ['Read(.env*)', 'Read(**/.env*)']
 const NULL_DEVICE = '/dev/null'
 /** Network tools: they change nothing locally (allowed in plan mode) but always ask. */
 const WEB_TOOLS: readonly string[] = [TOOL.webFetch, TOOL.webSearch]
+
+/** Background task tools (`app/background-bash.ts`): reading output and stopping a task never prompt. */
+const BACKGROUND_TASK_TOOLS: readonly string[] = ['bash_output', 'kill_shell']
 const FILE_OPS = new Set(['mkdir', 'touch', 'mv', 'cp'])
 
 const protectedMatcher = ignore().add(PROTECTED)
@@ -498,6 +501,8 @@ export function createPermissionEngine(opts: {
 
     // the question tool is not an action: it only talks to the user (ask rules cannot gate it)
     if (name === TOOL.ask) return { status: 'approved' }
+    // reading a background task's output or stopping it asks nothing, in every mode (plan included)
+    if (BACKGROUND_TASK_TOOLS.includes(name)) return { status: 'approved' }
 
     // 2. tools that always ask
     if (name === TOOL.dirAccess) {

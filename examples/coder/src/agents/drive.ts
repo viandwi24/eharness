@@ -3,6 +3,7 @@
  * continues with `respond()`. Shared by the controller (main agent) and the `agent` tool (children).
  */
 import type { HarnessRun, HarnessSession, TurnResult } from 'eharness'
+import { QUESTION_TIMEOUT_NOTE, withQuestionTimeout } from '../app/ask-timeout.ts'
 import {
   type ApprovalBroker,
   type ApprovalRequest,
@@ -31,6 +32,12 @@ export interface DriveOptions {
    * the denial is recorded. Main agent only; a subagent's denial lets the child continue.
    */
   stopOnBareDeny?: boolean
+  /**
+   * Seconds after which an unanswered `ask_user_question` dialog is dismissed (the
+   * `askUserQuestionTimeout` setting, read per question; 0 or absent = never). The tool result
+   * then carries {@link QUESTION_TIMEOUT_NOTE}.
+   */
+  questionTimeout?(): number | undefined
 }
 
 /** Input of a tool call: a pending client tool carries only its id, the call is in the messages. */
@@ -182,17 +189,20 @@ export async function driveTurn(
         continue
       }
       const request = questionRequest(call.toolCallId, parsed.questions, opts.agent)
-      let answered: Awaited<ReturnType<ApprovalBroker['question']>>
-      try {
-        answered = await broker.question(request, signal)
-      } catch {
-        answered = null
-      }
+      const asked = await withQuestionTimeout(
+        (s) => broker.question(request, s),
+        opts.questionTimeout?.() ?? 0,
+        signal,
+      )
       if (signal?.aborted) {
         session.abort()
         return result
       }
-      toolOutputs.push({ toolCallId: call.toolCallId, output: formatAnswers(request, answered) })
+      const text = formatAnswers(request, asked.result)
+      toolOutputs.push({
+        toolCallId: call.toolCallId,
+        output: asked.timedOut ? `${text}\n\n${asked.note ?? QUESTION_TIMEOUT_NOTE}` : text,
+      })
     }
     run = session.respond({ approvals, toolOutputs }, { abortSignal: signal })
     if (bareDeny && opts.stopOnBareDeny) {

@@ -5,7 +5,7 @@
  * Layering: `workspace/`, `shell/`, `permissions/`, `agents/`, `app/` never import Ink or React.
  * `ui/` and `print.ts` consume a {@link CoderController}.
  */
-import type { Experimental_SandboxSession } from 'ai'
+import type { Experimental_SandboxSession, FileUIPart } from 'ai'
 import type { HarnessRun, HarnessUIMessage, TurnResult } from 'eharness'
 import type { FileSystem } from 'eharness/filesystem'
 
@@ -27,6 +27,7 @@ export const TOOL = {
   ask: 'ask_user_question',
   webFetch: 'web_fetch',
   webSearch: 'web_search',
+  lsp: 'lsp',
 } as const
 export type CoderToolName = (typeof TOOL)[keyof typeof TOOL]
 
@@ -47,6 +48,7 @@ export const TOOL_ORDER: readonly string[] = [
   TOOL.ask,
   TOOL.webFetch,
   TOOL.webSearch,
+  TOOL.lsp,
 ]
 
 /** Tools that never modify anything (allowed in plan mode and for read-only agents). */
@@ -59,6 +61,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   'load_skill',
   'read_skill_file',
   'search_skills',
+  TOOL.lsp,
 ]
 
 // ─── Configuration ───────────────────────────────────────────────────────────────────────────
@@ -93,7 +96,39 @@ export interface CoderSettings {
   }
   /** MCP servers (M5); shape of `mcpServer()` transport configs, keyed by server name. */
   mcpServers?: Record<string, unknown>
+  /** UI palette. Default `dark`; `auto` reads `COLORFGBG`. */
+  theme?: 'dark' | 'light' | 'auto'
+  /** Output style name (`default`, `concise`, `explanatory`, `learning`, or a file in `.coder/output-styles/`). */
+  outputStyle?: string
+  /** Terminal bell / desktop notification when a turn ends or input is needed. Default `bell`. */
+  notifications?: 'off' | 'bell' | 'desktop'
+  /** Auto-dismiss unanswered `ask_user_question` dialogs after this many seconds (0 = never, default). */
+  askUserQuestionTimeout?: number
+  /** Footer status line: a shell command that receives the status JSON on stdin; first stdout line is shown. */
+  statusLine?: { command: string }
+  /** Next-prompt suggestions after each turn (a cheap model call). Default false. */
+  promptSuggestions?: boolean
+  /** Prompt editor mode. Default `normal`. */
+  editorMode?: 'normal' | 'vim'
+  /** Shell hooks on agent events (project hooks need trust). */
+  hooks?: Partial<
+    Record<HookEvent, Array<{ matcher?: string; command: string; timeoutMs?: number }>>
+  >
+  /** OS sandbox for the bash tool. */
+  sandbox?: { enabled?: boolean; network?: boolean; allowWrite?: string[] }
+  /** Language servers by name: command and file extensions. */
+  lsp?: Record<string, { command: string[]; extensions: string[] }>
 }
+
+/** Events a settings hook can run on. */
+export type HookEvent =
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'UserPromptSubmit'
+  | 'Stop'
+  | 'SubagentStop'
+  | 'Notification'
+  | 'SessionStart'
 
 export interface PrintOptions {
   prompt: string
@@ -425,6 +460,8 @@ export interface StatusInfo {
   mcpServers: string[]
   agents: number
   settingsFiles: Array<{ path: string; exists: boolean }>
+  /** The OS sandbox of the bash tool: `enabled` is true only when it is on AND the platform tool works. */
+  sandbox: { enabled: boolean; kind: string; network: boolean }
 }
 
 // ─── Controller (app/) → consumed by ui/ and print.ts ────────────────────────────────────────
@@ -440,6 +477,58 @@ export interface SessionSummary {
   id: string
   updatedAt: number
   firstPrompt: string
+  /** Set by `/rename`. */
+  name?: string
+}
+
+/** A point the conversation and/or code can be rewound to: just before a user prompt. */
+export interface RewindPoint {
+  /** The user message id. */
+  messageId: string
+  text: string
+  at: number
+  /** Files the agent changed from this point on (they would be restored). */
+  files: string[]
+}
+
+export interface RewindResult {
+  /** Root-relative paths restored to their content before the point. */
+  restoredFiles: string[]
+  /** New session id when the conversation was rewound (the old session stays resumable). */
+  sessionId?: string
+  /** The prompt text of the point, to put back into the input. */
+  prompt: string
+}
+
+/** A shell command or subagent running in the background. */
+export interface BackgroundTask {
+  id: string
+  kind: 'shell' | 'agent'
+  label: string
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  startedAt: number
+  endedAt?: number
+  exitCode?: number | null
+  /** Last lines of output (shell) or of the agent's text. */
+  tail: string
+}
+
+/** One editable setting for the `/config` page. */
+export interface SettingView {
+  key: string
+  label: string
+  description: string
+  type: 'boolean' | 'enum' | 'number' | 'string'
+  options?: string[]
+  value: unknown
+  /** Where the current value comes from. */
+  source: 'default' | 'user' | 'project' | 'local' | 'flag'
+}
+
+export interface DoctorCheck {
+  name: string
+  status: 'ok' | 'warn' | 'error'
+  detail: string
 }
 
 /** One changed file of `git status` for the `/diff` page. */
@@ -490,13 +579,18 @@ export interface CoderController {
    * each pending approval, apply "don't ask again" rules, `respond()`, until the turn ends.
    * Resolves with the last turn's result. Never rejects for run errors.
    */
-  run(text: string, hooks: RunHooks): Promise<TurnResult<CoderMessage>>
+  run(
+    text: string,
+    hooks: RunHooks,
+    opts?: { files?: FileUIPart[] },
+  ): Promise<TurnResult<CoderMessage>>
   /** Abort the running turn (Esc). */
   abort(): void
   messages(): Promise<CoderMessage[]>
   /** Stored messages of another session of this project, e.g. a subagent child (`AgentProgress.sessionId`). */
   messagesOf(sessionId: string): Promise<CoderMessage[]>
-  compact(): Promise<void>
+  /** Summarize the conversation now; `instructions` focus the summary. */
+  compact(instructions?: string): Promise<void>
   /** Start a fresh session (`/clear`). */
   clear(): Promise<void>
   /** Switch to a stored session (`/resume`). */
@@ -525,6 +619,47 @@ export interface CoderController {
    * message runs as its own turn with `hooks` (approvals included), like {@link CoderController.run}.
    */
   steer(text: string, hooks: RunHooks): Promise<SteerResult>
+  // ─── sessions and conversation ───
+  rewindPoints(): Promise<RewindPoint[]>
+  rewind(messageId: string, what: 'conversation' | 'code' | 'both'): Promise<RewindResult>
+  /** Copy the conversation into a new session and switch to it. Returns the new id. */
+  branch(name?: string): Promise<string>
+  rename(name: string): Promise<void>
+  readonly sessionName: string | undefined
+  /** The conversation as plain text (`/export`). */
+  exportText(): Promise<string>
+  /** Text of the n-th latest assistant response (1 = latest), for `/copy`. */
+  assistantText(n?: number): Promise<string | undefined>
+  /** Side question answered from the current context, not added to the history (`/btw`). */
+  sideQuestion(
+    question: string,
+    onDelta: (text: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string>
+  /** One-line recap of the session (`/recap`, max 400 chars). */
+  recap(): Promise<string>
+  /** A suggested next prompt after the last turn, when `promptSuggestions` is on. */
+  suggestNext(): Promise<string | undefined>
+  // ─── workspace and memory ───
+  addDirectory(path: string): Promise<string>
+  memoryFiles(): Promise<
+    Array<{ path: string; real: string; exists: boolean; scope: 'project' | 'user' }>
+  >
+  // ─── background tasks ───
+  tasks(): BackgroundTask[]
+  stopTask(id: string): Promise<void>
+  taskOutput(id: string): Promise<string>
+  onTasks(listener: (tasks: BackgroundTask[]) => void): () => void
+  // ─── settings and diagnostics ───
+  settings(): Promise<SettingView[]>
+  /** Write a setting to the user or project-local settings file and apply it when possible. */
+  updateSetting(key: string, value: unknown, scope: 'user' | 'local'): Promise<void>
+  /** The merged value of a UI-relevant setting (theme, notifications, editorMode, statusLine…). */
+  setting<K extends keyof CoderSettings>(key: K): CoderSettings[K]
+  outputStyles(): Promise<Array<{ name: string; description: string }>>
+  doctor(): Promise<DoctorCheck[]>
+  /** Output of the `statusLine` command (first line), or undefined. */
+  statusLineText(): Promise<string | undefined>
   /** Prompt history, newest last, persisted across sessions (`~/.coder/history.jsonl`). */
   history(opts?: { allProjects?: boolean; limit?: number }): Promise<string[]>
   addHistory(text: string): Promise<void>

@@ -84,10 +84,12 @@ export async function isolateHome(): Promise<string> {
 export async function setup(
   files: Record<string, string> = {},
   flags: CliFlags = {},
+  homeFiles: Record<string, string> = {},
 ): Promise<{ root: string; home: string; config: CoderConfig & { warnings: string[] } }> {
   const home = await isolateHome()
   const root = await tempDir('coder-proj-')
   await writeFiles(root, files)
+  await writeFiles(home, homeFiles)
   const config = await loadConfig({ cwd: root, ...flags })
   return { root, home, config }
 }
@@ -108,6 +110,8 @@ export async function gitInit(root: string, branch = 'main'): Promise<void> {
 /** A controller over a temp project with a scripted model. */
 export async function makeController(opts: {
   files?: Record<string, string>
+  /** Files written into the isolated CODER_HOME (user `settings.json`, `AGENTS.md`, `output-styles/`). */
+  homeFiles?: Record<string, string>
   flags?: CliFlags
   model: LanguageModel
   broker?: ApprovalBroker
@@ -117,7 +121,7 @@ export async function makeController(opts: {
   search?: CreateControllerOptions['search']
   webFetch?: CreateControllerOptions['webFetch']
 }): Promise<{ controller: CoderController; root: string; home: string }> {
-  const { root, home, config } = await setup(opts.files, opts.flags)
+  const { root, home, config } = await setup(opts.files, opts.flags, opts.homeFiles)
   const controller = await createController({
     config,
     ...(opts.resolveModel ? { resolveModel: opts.resolveModel } : { model: opts.model }),

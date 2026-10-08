@@ -5,13 +5,13 @@ import type { ApprovalAnswer, ApprovalBroker, ApprovalRequest } from '../src/con
 import { TOOL } from '../src/contracts.ts'
 import { DiffView } from '../src/ui/DiffView.tsx'
 import { Footer, modeIndicator, ShortcutsPanel, shortModel } from '../src/ui/Footer.tsx'
-import { UserMessage } from '../src/ui/MessageView.tsx'
+import { MessageView, UserMessage } from '../src/ui/MessageView.tsx'
 import { Markdown, parseInline, parseMarkdown } from '../src/ui/markdown.tsx'
 import { dialogQuestion, optionsFor, PermissionPrompt } from '../src/ui/PermissionPrompt.tsx'
 import { PromptInput } from '../src/ui/PromptInput.tsx'
 import { formatTokens, ThinkingIndicator, VERBS } from '../src/ui/Spinner.tsx'
 import { SubagentTree } from '../src/ui/SubagentTree.tsx'
-import { TodoList } from '../src/ui/TodoPanel.tsx'
+import { TodoList, TodoPanel } from '../src/ui/TodoPanel.tsx'
 import { ToolCard } from '../src/ui/ToolCard.tsx'
 import type { ToolView } from '../src/ui/tool-summary.ts'
 import { shortenHome, truncateMiddle, WelcomeBox } from '../src/ui/WelcomeBox.tsx'
@@ -505,5 +505,85 @@ describe('PromptInput', () => {
     app.stdin.write('!')
     await tick()
     expect(app.text()).toContain('shell mode')
+  })
+})
+
+describe('footer extras, focus view, todo toggle', () => {
+  test('footer vim mode, tasks, session name', () => {
+    const f = show(
+      <Footer
+        mode="default"
+        model="a/m"
+        thinking="low"
+        vimMode="INSERT"
+        tasks={2}
+        sessionName="work"
+      />,
+    )
+    const t = f.text()
+    expect(t).toContain('-- INSERT -- ? for shortcuts')
+    expect(t).toContain('⧉ 2 background')
+    expect(t).toContain('work · m')
+    expect(
+      show(<Footer mode="default" model="a/m" thinking="low" tasks={0} />).text(),
+    ).not.toContain('background')
+  })
+  test('footer statusLine replaces the right side', () => {
+    const t = show(
+      <Footer
+        mode="default"
+        model="a/m"
+        thinking="low"
+        statusLine={'\u001b[32mgreen\u001b[0m line'}
+        costUsd={1}
+      />,
+    ).text()
+    expect(t).toContain('green line')
+    expect(t).not.toContain('thinking')
+  })
+  test('focus collapses tool calls and hides reasoning and earlier text', () => {
+    const message = {
+      id: 'm1',
+      role: 'assistant',
+      parts: [
+        { type: 'reasoning', text: 'secret thoughts', state: 'done' },
+        { type: 'text', text: 'intermediate words' },
+        {
+          type: `tool-${TOOL.edit}`,
+          toolCallId: 'e1',
+          state: 'output-available',
+          input: { path: '/src/a.ts', old_string: 'a\nb', new_string: 'a\nc\nd\ne' },
+          output: 'Edited /src/a.ts',
+        },
+        {
+          type: `tool-${TOOL.bash}`,
+          toolCallId: 'b1',
+          state: 'output-available',
+          input: { command: 'ls' },
+          output: 'x\nExit code 2 · 0.1s',
+        },
+        { type: 'text', text: 'final answer' },
+      ],
+    } as never
+    const t = show(
+      <MessageView message={message} expanded={false} bash={{}} timing={{}} focus />,
+    ).text()
+    expect(t).toContain('Update(src/a.ts) +3 −1')
+    expect(t).toContain('Bash(ls) exit 2')
+    expect(t).toContain('final answer')
+    expect(t).not.toContain('secret')
+    expect(t).not.toContain('intermediate')
+    expect(t).not.toContain('⎿')
+  })
+  test('todo panel collapsed and expanded', () => {
+    const todos = Array.from({ length: 7 }, (_, i) => ({
+      content: `t${i}`,
+      status: i < 3 ? 'completed' : 'pending',
+    }))
+    expect(show(<TodoPanel todos={todos} collapsed />).text()).toContain('☰ 3/7 todos (ctrl+t)')
+    const open = show(<TodoPanel todos={todos} />).text()
+    expect(open).toContain('t4')
+    expect(open).not.toContain('t5')
+    expect(open).toContain('… 2 more')
   })
 })
