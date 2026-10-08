@@ -144,9 +144,10 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): ReturnType<ty
               plan: z.string().describe('The complete implementation plan, in markdown'),
             }),
             metadata: { risk: 'external' },
-            // runs only after the user approved the call: back to the mode before plan mode
+            // runs only after the user approved the call: to the mode the user chose when
+            // approving the plan, else back to the mode before plan mode
             execute: async (): Promise<string> => {
-              engine.setMode(isExtras(engine) ? engine.modeBeforePlan() : 'default')
+              engine.setMode(isExtras(engine) ? engine.leavePlanMode() : 'default')
               return 'The user approved the plan. Plan mode is off; start implementing it now.'
             },
           }),
@@ -180,7 +181,11 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): ReturnType<ty
             mode === undefined && engine.mode === 'plan' && endsWithApprovedPlan(e.messages)
           const inactive = new Set(
             engine.inactiveTools(
-              leavingPlan ? (isExtras(engine) ? engine.modeBeforePlan() : 'default') : mode,
+              leavingPlan
+                ? isExtras(engine)
+                  ? (engine.planExitMode() ?? engine.modeBeforePlan())
+                  : 'default'
+                : mode,
             ),
           )
           const active = e.toolNames.filter(

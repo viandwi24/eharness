@@ -267,3 +267,48 @@ describe('describeTool', () => {
     expect(isAgentProgress(progress)).toBe(true)
   })
 })
+
+describe('web tools', () => {
+  test('web_fetch: ok, error, redirect', () => {
+    const ok = describeTool(
+      view(
+        TOOL.webFetch,
+        { url: 'https://www.example.com/docs/page' },
+        {
+          output: 'URL: https://example.com/docs/page · 200 OK · 12595\n\nbody',
+        },
+      ),
+    )
+    expect(ok).toMatchObject({ label: 'Fetch', target: 'example.com/docs/page', status: 'ok' })
+    expect(ok.summary).toBe('Received 12.3KB (200 OK)')
+    const kb = describeTool(
+      view(
+        TOOL.webFetch,
+        { url: 'https://a.io' },
+        { output: 'URL: https://a.io · 404 Not Found · 12.3KB' },
+      ),
+    )
+    expect(kb.summary).toBe('Received 12.3KB (404 Not Found)')
+    const err = describeTool(
+      view(TOOL.webFetch, { url: 'https://a.io' }, { output: 'ERROR: timed out' }),
+    )
+    expect(err.status).toBe('error')
+    expect(err.error).toBe('Error: timed out')
+    const redirect = describeTool(
+      view(TOOL.webFetch, { url: 'https://a.io' }, { output: 'REDIRECT: https://b.io/x (301)' }),
+    )
+    expect(redirect.status).toBe('ok')
+    expect(redirect.summary).toBe('REDIRECT: https://b.io/x (301)')
+  })
+
+  test('web_search counts sources', () => {
+    const out = 'Results for x\n\nSources:\n- https://a.io\n- https://b.io\n- https://c.io'
+    const d = describeTool(view(TOOL.webSearch, { query: 'bun test' }, { output: out }))
+    expect(d).toMatchObject({ label: 'Web Search', target: '"bun test"' })
+    expect(d.summary).toBe('Did 1 search · 3 sources')
+    const urls = describeTool(
+      view(TOOL.webSearch, { query: 'q' }, { output: 'see https://a.io and https://b.io/x.' }),
+    )
+    expect(urls.summary).toBe('Did 1 search · 2 sources')
+  })
+})

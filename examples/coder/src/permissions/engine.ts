@@ -49,6 +49,7 @@ import {
 import {
   callTarget,
   EDIT_PATH_TOOLS,
+  fetchHost,
   type MatchContext,
   type ParsedRule,
   parseRule,
@@ -71,6 +72,8 @@ const PROTECTED = ['.git', '.coder/settings*.json', '.coder/agents']
 /** Ask rules built in; an explicit allow rule overrides them. */
 const BUILTIN_ASK = ['Read(.env*)', 'Read(**/.env*)']
 const NULL_DEVICE = '/dev/null'
+/** Network tools: they change nothing locally (allowed in plan mode) but always ask. */
+const WEB_TOOLS: readonly string[] = [TOOL.webFetch, TOOL.webSearch]
 const FILE_OPS = new Set(['mkdir', 'touch', 'mv', 'cp'])
 
 const protectedMatcher = ignore().add(PROTECTED)
@@ -342,6 +345,16 @@ export interface PermissionEngineExtras extends PermissionEngine {
    * `list_files` and `glob` output.
    */
   readBlocked(virtualPath: string): boolean
+  /**
+   * Remember the mode the user chose when approving the plan (`acceptEdits` or `default`):
+   * `exit_plan_mode` switches to it instead of the mode before plan mode. Cleared when plan mode
+   * is entered again; pass `undefined` to clear it.
+   */
+  setPlanExitMode(mode: PermissionMode | undefined): void
+  /** The mode chosen for leaving plan mode, if any (not consumed). */
+  planExitMode(): PermissionMode | undefined
+  /** Mode `exit_plan_mode` switches to: the chosen one, else the one before plan mode. */
+  leavePlanMode(): PermissionMode
 }
 
 /** Read a settings file as an object; `undefined` when it is missing or not an object. */
@@ -370,6 +383,7 @@ export function createPermissionEngine(opts: {
   const { config } = opts
   let mode: PermissionMode = config.mode
   let beforePlan: PermissionMode = 'default'
+  let planExit: PermissionMode | undefined
   const rules: PermissionRules = {
     allow: [...config.rules.allow],
     ask: [...config.rules.ask],
@@ -501,6 +515,7 @@ export function createPermissionEngine(opts: {
       m === 'plan' &&
       name !== TOOL.agent &&
       name !== TOOL.ask &&
+      !WEB_TOOLS.includes(name) &&
       !READ_ONLY_TOOLS.includes(name)
     ) {
       if (!(bash !== undefined && isReadOnlyCommand(bash))) {
@@ -588,7 +603,8 @@ export function createPermissionEngine(opts: {
           name !== TOOL.exitPlan &&
           name !== TOOL.agent &&
           name !== TOOL.ask &&
-          name !== TOOL.bash
+          name !== TOOL.bash &&
+          !WEB_TOOLS.includes(name)
         ) {
           out.add(name)
         }
@@ -604,7 +620,10 @@ export function createPermissionEngine(opts: {
 
   const setMode = (next: PermissionMode): void => {
     if (next === mode) return
-    if (next === 'plan') beforePlan = mode
+    if (next === 'plan') {
+      beforePlan = mode
+      planExit = undefined
+    }
     mode = next
     for (const listener of [...listeners]) listener(mode)
   }
@@ -657,6 +676,17 @@ export function createPermissionEngine(opts: {
     modeBeforePlan(): PermissionMode {
       return beforePlan === 'plan' ? 'default' : beforePlan
     },
+    setPlanExitMode(next: PermissionMode | undefined): void {
+      planExit = next === 'acceptEdits' || next === 'default' ? next : undefined
+    },
+    planExitMode(): PermissionMode | undefined {
+      return planExit
+    },
+    leavePlanMode(): PermissionMode {
+      const target = planExit ?? (beforePlan === 'plan' ? 'default' : beforePlan)
+      planExit = undefined
+      return target
+    },
     cycleMode(): PermissionMode {
       const index = MODE_CYCLE.indexOf(mode)
       const next =
@@ -688,6 +718,11 @@ export function createPermissionEngine(opts: {
         return bashSuggestion(command)
       }
       if (EDIT_PATH_TOOLS.includes(name)) return 'Edit'
+      if (name === TOOL.webFetch) {
+        const host = fetchHost(call.input)
+        return host === undefined ? undefined : `WebFetch(domain:${host})`
+      }
+      if (name === TOOL.webSearch) return 'WebSearch'
       return name
     },
     async allow(rule: string, scope: 'session' | 'project'): Promise<void> {

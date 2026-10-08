@@ -122,6 +122,12 @@ function hasLiveText(message: CoderMessage | null): boolean {
   return !!message?.parts.some((p) => p.type === 'text' && p.text.trim() !== '')
 }
 
+function hasStreamingReasoning(message: CoderMessage | null): boolean {
+  return !!message?.parts.some(
+    (p) => p.type === 'reasoning' && (p as { state?: string }).state === 'streaming',
+  )
+}
+
 function hasRunningTool(message: CoderMessage | null): boolean {
   return !!message?.parts.some((p) => {
     const view = toolView(p)
@@ -161,7 +167,8 @@ function useRunStart(running: boolean): number {
 /** Finished entries once in `<Static>`, then the live assistant message. */
 export function Transcript({ state, config, welcome = {}, tokens }: TranscriptProps): ReactElement {
   const live: CoderMessage | null = state.live
-  const waiting = state.running && !hasLiveText(live) && !hasRunningTool(live)
+  const waiting =
+    state.running && !hasLiveText(live) && !hasRunningTool(live) && !hasStreamingReasoning(live)
   const startedAt = useRunStart(state.running)
   return (
     <>

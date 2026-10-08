@@ -12,6 +12,7 @@ import type {
   CoderController,
   CoderMessage,
   ContextDetails,
+  CustomCommand,
   ModelOption,
   PermissionEngine,
   PermissionMode,
@@ -168,12 +169,20 @@ export interface FakeOptions {
   status?: Partial<StatusInfo>
   model?: string
   thinking?: ThinkingLevel
+  /** Prompt history of this project, newest last. */
+  history?: string[]
+  /** History of all projects (Ctrl+R), newest last. */
+  allHistory?: string[]
+  commands?: CustomCommand[]
+  /** `steer()` result: joined the running turn (default) or ran as a turn of its own. */
+  steerAs?: 'step' | 'turn'
 }
 
 export function fakeController(opts: FakeOptions = {}) {
   const broker = fakeBroker()
   const calls: string[] = []
   const shellCalls: string[] = []
+  const stored = [...(opts.history ?? [])]
   let mode: PermissionMode = opts.mode ?? 'default'
   const listeners = new Set<(m: PermissionMode) => void>()
   const rules: PermissionRules = { allow: [], ask: [], deny: [] }
@@ -255,7 +264,10 @@ export function fakeController(opts: FakeOptions = {}) {
       hooks.onRun(run as never)
       return (await run.result) as never
     },
-    abort: () => void calls.push('abort'),
+    abort: () => {
+      calls.push('abort')
+      agent.session('s1').abort()
+    },
     messages: async () => [],
     messagesOf: async (id) => opts.childMessages?.[id] ?? [],
     compact: async () => {},
@@ -313,6 +325,27 @@ export function fakeController(opts: FakeOptions = {}) {
       ],
       ...opts.status,
     }),
+    async steer(text, hooks) {
+      calls.push(`steer:${text}`)
+      if (opts.steerAs !== 'turn') return { delivered: 'step' }
+      const run = agent.session('s1').send(text)
+      hooks.onRun(run as never)
+      return { delivered: 'turn', result: (await run.result) as never }
+    },
+    async history(o) {
+      calls.push(`history:${o?.allProjects ? 'all' : 'project'}`)
+      return o?.allProjects ? [...(opts.allHistory ?? stored)] : [...stored]
+    },
+    async addHistory(text) {
+      calls.push(`addHistory:${text}`)
+      stored.push(text)
+    },
+    diff: async () => ({ git: false, files: [] }),
+    commands: async () => opts.commands ?? [],
+    async expandCommand(name, args) {
+      calls.push(`expand:${name}:${args}`)
+      return `EXPANDED ${name} ${args}`.trim()
+    },
     agents: () => [],
     stats: async () => ({ contextTokens: 5000, contextWindow: 100_000, costUsd: 0.5 }),
     close: async () => {},

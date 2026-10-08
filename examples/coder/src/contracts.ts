@@ -25,6 +25,8 @@ export const TOOL = {
   exitPlan: 'exit_plan_mode',
   dirAccess: 'request_directory_access',
   ask: 'ask_user_question',
+  webFetch: 'web_fetch',
+  webSearch: 'web_search',
 } as const
 export type CoderToolName = (typeof TOOL)[keyof typeof TOOL]
 
@@ -43,6 +45,8 @@ export const TOOL_ORDER: readonly string[] = [
   TOOL.exitPlan,
   TOOL.dirAccess,
   TOOL.ask,
+  TOOL.webFetch,
+  TOOL.webSearch,
 ]
 
 /** Tools that never modify anything (allowed in plan mode and for read-only agents). */
@@ -228,7 +232,13 @@ export interface ApprovalRequest {
  * (Tab on "No") is the denial reason. A bare "No" from the main agent's prompt stops the turn.
  */
 export type ApprovalAnswer =
-  | { approved: true; remember?: 'session' | 'project'; note?: string }
+  | {
+      approved: true
+      remember?: 'session' | 'project'
+      note?: string
+      /** Plan approvals (`exit_plan_mode`): the mode to switch to (`acceptEdits` or `default`). */
+      mode?: PermissionMode
+    }
   | { approved: false; feedback?: string }
 
 /** One multiple-choice question of the `ask_user_question` tool. */
@@ -432,6 +442,43 @@ export interface SessionSummary {
   firstPrompt: string
 }
 
+/** One changed file of `git status` for the `/diff` page. */
+export interface DiffFile {
+  /** Path relative to the project root. */
+  path: string
+  status: 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked'
+  added: number
+  removed: number
+  /** Unified diff (empty for binary files). */
+  patch: string
+  binary: boolean
+  /** The agent edited this file in the current session (from `data-filesystem.change` parts). */
+  editedByAgent: boolean
+}
+
+export interface DiffResult {
+  /** False when the project is not a git repository (then only agent edits are listed). */
+  git: boolean
+  branch?: string
+  files: DiffFile[]
+}
+
+/** A custom slash command (`.coder/commands/*.md`, `~/.coder/commands/*.md`) or a skill. */
+export interface CustomCommand {
+  /** Without the slash. */
+  name: string
+  description: string
+  argumentHint?: string
+  source: 'project' | 'user' | 'skill'
+}
+
+/** Result of {@link CoderController.steer}. */
+export type SteerResult =
+  /** Delivered into the running turn at its next step boundary. */
+  | { delivered: 'step' }
+  /** No turn was running any more: it ran as a turn of its own, driven with the given hooks. */
+  | { delivered: 'turn'; result: TurnResult<CoderMessage> }
+
 export interface CoderController {
   readonly config: CoderConfig
   readonly permissions: PermissionEngine
@@ -473,6 +520,20 @@ export interface CoderController {
   contextDetails(): Promise<ContextDetails>
   usage(): Promise<UsageSummary>
   status(): Promise<StatusInfo>
+  /**
+   * Send a queued message into the running turn (steer). If the turn ended meanwhile, the
+   * message runs as its own turn with `hooks` (approvals included), like {@link CoderController.run}.
+   */
+  steer(text: string, hooks: RunHooks): Promise<SteerResult>
+  /** Prompt history, newest last, persisted across sessions (`~/.coder/history.jsonl`). */
+  history(opts?: { allProjects?: boolean; limit?: number }): Promise<string[]>
+  addHistory(text: string): Promise<void>
+  /** Working-tree changes for the `/diff` page. */
+  diff(): Promise<DiffResult>
+  /** Custom commands and invocable skills, for `/` completion. */
+  commands(): Promise<CustomCommand[]>
+  /** The prompt a custom command or skill invocation sends (`$ARGUMENTS` substituted). */
+  expandCommand(name: string, args: string): Promise<string>
   agents(): AgentDefinition[]
   /** Context and cost for the status bar. */
   stats(): Promise<{ contextTokens: number; contextWindow: number; costUsd?: number }>

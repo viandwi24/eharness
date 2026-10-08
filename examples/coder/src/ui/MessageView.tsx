@@ -2,6 +2,7 @@ import { Box, Text } from 'ink'
 import type { ReactElement } from 'react'
 import type { CoderMessage } from '../contracts.ts'
 import { InlineMarkdown, Markdown } from './markdown.tsx'
+import { partDuration, Reasoning } from './Reasoning.tsx'
 import type { ToolTiming } from './state.ts'
 import { ToolCard } from './ToolCard.tsx'
 import { color, sym } from './theme.ts'
@@ -38,6 +39,46 @@ export function UserMessage({ text }: { text: string }): ReactElement {
       </Box>
     </Box>
   )
+}
+
+const APPROVAL_NOTE = /^Note from the user about the approved \S+ call:\s*([\s\S]*)$/
+
+/**
+ * A `data-eh.input` part: input delivered inside the running turn (ADR-0011). `source: 'user'` is a
+ * steered message (or an approval note, shown as a dim `Note: ...`); `source: 'event'` is a
+ * next-step event (dim system line); `plugin:*` is hook context for the model and is hidden.
+ */
+export function SteeredInput({
+  source,
+  text,
+}: {
+  source: string
+  text: string
+}): ReactElement | null {
+  if (source === 'user') {
+    const note = APPROVAL_NOTE.exec(text)
+    if (note) {
+      return (
+        <Box marginTop={1}>
+          <Text dimColor>Note: {note[1]}</Text>
+        </Box>
+      )
+    }
+    return (
+      <Box flexDirection="column">
+        <UserMessage text={text} />
+        <Text dimColor> (sent while the agent was working)</Text>
+      </Box>
+    )
+  }
+  if (source === 'event') {
+    return (
+      <Box marginTop={1}>
+        <Text dimColor>· {text}</Text>
+      </Box>
+    )
+  }
+  return null
 }
 
 function changeFor(
@@ -114,6 +155,24 @@ export function MessageView({
               <Markdown text={part.text} />
             </Box>
           )
+        }
+        if (part.type === 'reasoning') {
+          const r = part as { text: string; state?: 'streaming' | 'done' }
+          const ms = partDuration(part)
+          return (
+            <Reasoning
+              key={key}
+              text={r.text}
+              state={r.state}
+              expanded={expanded}
+              {...(ms !== undefined ? { durationMs: ms } : {})}
+            />
+          )
+        }
+        if ((part.type as string) === 'data-eh.input') {
+          const data = (part as unknown as { data?: { source?: string; text?: string } }).data
+          if (typeof data?.text !== 'string') return null
+          return <SteeredInput key={key} source={data.source ?? 'user'} text={data.text} />
         }
         const view = toolView(part)
         if (view) {

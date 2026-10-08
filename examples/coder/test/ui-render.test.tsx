@@ -113,17 +113,6 @@ describe('render', () => {
     expect(calls).not.toContain('abort')
   })
 
-  test('Enter while a turn runs shows the hint and does not start a second run', async () => {
-    const { frame, type, calls } = mount({ script: [{ text: 'slow', delayMs: 300 }] })
-    await type('one')
-    await type(ENTER)
-    await until(() => calls.includes('run:one'), 'run')
-    await type('two')
-    await type(ENTER)
-    await until(() => frame().includes('A turn is running'), 'hint')
-    expect(calls.filter((c) => c.startsWith('run:'))).toHaveLength(1)
-  })
-
   test('shell mode runs the command without the model', async () => {
     const { frame, type, controller, calls } = mount()
     await type('!echo hi')
@@ -407,5 +396,142 @@ describe('review fixes', () => {
     await type('/agents 1')
     await type(ENTER)
     await until(() => frame().includes('No subagent runs'), 'no runs')
+  })
+})
+
+describe('custom commands and skills', () => {
+  const commands = [
+    {
+      name: 'review',
+      description: 'Review a PR',
+      argumentHint: '<pr>',
+      source: 'project' as const,
+    },
+    { name: 'deploy', description: 'Ship it', source: 'skill' as const },
+  ]
+
+  test('/ completion lists them with their source and argument hint', async () => {
+    const { frame, type } = mount({ commands })
+    await tick(60)
+    await type('/rev')
+    await until(() => frame().includes('/review <pr>'), 'completion')
+    expect(frame()).toContain('Review a PR')
+    expect(frame()).toContain('(project)')
+    await type('\x15')
+    await type('/dep')
+    await until(() => frame().includes('(skill)'), 'skill')
+  })
+
+  test('/name args expands, keeps the typed text visible and runs the expansion', async () => {
+    const { frame, type, calls } = mount({ commands, script: [{ text: 'reviewed it' }] })
+    await tick(60)
+    await type('/review 42')
+    await type(ENTER)
+    await until(() => calls.includes('expand:review:42'), 'expand')
+    await until(() => calls.includes('run:EXPANDED review 42'), 'run')
+    await until(() => frame().includes('reviewed it'), 'reply')
+    expect(frame()).toContain('> /review 42')
+  })
+
+  test('a skill invocation works the same way', async () => {
+    const { type, calls } = mount({ commands })
+    await tick(60)
+    await type('/deploy now')
+    await type(ENTER)
+    await until(() => calls.includes('run:EXPANDED deploy now'), 'run')
+  })
+
+  test('an unknown /name still reports an unknown command', async () => {
+    const { frame, type, calls } = mount({ commands })
+    await tick(60)
+    await type('/nothing')
+    await type(ENTER)
+    await until(() => frame().includes('Unknown command /nothing'), 'error')
+    expect(calls.some((c) => c.startsWith('expand:'))).toBe(false)
+  })
+
+  test('/plan description sets plan mode and sends the description', async () => {
+    const { frame, type, calls } = mount({ script: [{ text: 'planning' }] })
+    await type('/plan add dark mode')
+    await type(ENTER)
+    await until(() => calls.includes('setMode:plan'), 'mode')
+    await until(() => calls.includes('run:add dark mode'), 'run')
+    await until(() => frame().includes('plan mode on'), 'footer')
+  })
+})
+
+describe('plan approval dialog', () => {
+  const plan = {
+    id: 'pl1',
+    toolName: 'exit_plan_mode',
+    input: {},
+    title: 'Plan',
+    detail: '## Steps\n\n- add the **parser**\n- write tests',
+  }
+
+  async function open() {
+    const m = mount()
+    m.broker.push(plan)
+    await until(() => m.frame().includes('Ready to code?'), 'dialog')
+    return m
+  }
+
+  test('renders the plan as markdown with the three options', async () => {
+    const { frame } = await open()
+    expect(frame()).toContain('Steps')
+    expect(frame()).toContain('add the parser')
+    expect(frame()).not.toContain('**')
+    expect(frame()).toContain('Would you like to proceed?')
+    expect(frame()).toContain('1. Yes, and auto-accept edits')
+    expect(frame()).toContain('2. Yes, and manually approve edits')
+    expect(frame()).toContain('3. No, keep planning')
+  })
+
+  test('1 approves with acceptEdits, 2 with default', async () => {
+    const { broker, type } = await open()
+    await type('1')
+    await until(() => broker.answers.length === 1, 'answer')
+    expect(broker.answers[0]?.answer).toEqual({ approved: true, mode: 'acceptEdits' })
+    broker.push({ ...plan, id: 'pl2' })
+    await tick(60)
+    await type('2')
+    await until(() => broker.answers.length === 2, 'answer 2')
+    expect(broker.answers[1]?.answer).toEqual({ approved: true, mode: 'default' })
+  })
+
+  test('3 keeps planning; Tab on 3 sends feedback; Tab on 1 adds a note; Esc is option 3', async () => {
+    const { broker, type, frame } = await open()
+    await type('3')
+    await until(() => broker.answers.length === 1, 'answer')
+    expect(broker.answers[0]?.answer).toEqual({ approved: false })
+
+    broker.push({ ...plan, id: 'pl2' })
+    await until(() => frame().includes('Ready to code?'), 'again')
+    await type('\x1b[B\x1b[B')
+    await type('\t')
+    await until(() => frame().includes('Tell coder:'), 'field')
+    await type('split step two')
+    await type(ENTER)
+    await until(() => broker.answers.length === 2, 'answer 2')
+    expect(broker.answers[1]?.answer).toEqual({ approved: false, feedback: 'split step two' })
+
+    broker.push({ ...plan, id: 'pl3' })
+    await until(() => frame().includes('Ready to code?'), 'third')
+    await type('\t')
+    await until(() => frame().includes('Note:'), 'note field')
+    await type('go fast')
+    await type(ENTER)
+    await until(() => broker.answers.length === 3, 'answer 3')
+    expect(broker.answers[2]?.answer).toEqual({
+      approved: true,
+      mode: 'acceptEdits',
+      note: 'go fast',
+    })
+
+    broker.push({ ...plan, id: 'pl4' })
+    await until(() => frame().includes('Ready to code?'), 'fourth')
+    await type(ESC)
+    await until(() => broker.answers.length === 4, 'answer 4')
+    expect(broker.answers[3]?.answer).toEqual({ approved: false })
   })
 })

@@ -10,8 +10,11 @@
  *   `~/x` is relative to the home directory, `/x` and `./x` are relative to the project root,
  *   `x` follows gitignore (a pattern without a slash matches at any depth).
  * - `Agent(name)`: the `subagent_type` of the call.
+ * - `WebFetch(domain:example.com)`: the host of the URL; `domain:*.example.com` matches its
+ *   subdomains. `WebFetch` and `WebSearch` without a specifier cover the whole tool.
  * - Tool aliases: `Read` = read_file, list_files, grep, glob; `Edit` (and `Write`) = edit_file,
- *   write_file, delete_file; `Bash` = bash; `Agent` = agent. Real tool names work too.
+ *   write_file, delete_file; `Bash` = bash; `Agent` = agent; `WebFetch` = web_fetch;
+ *   `WebSearch` = web_search. Real tool names work too.
  */
 import { homedir } from 'node:os'
 import { isAbsolute, join, posix, relative } from 'node:path'
@@ -45,6 +48,33 @@ const ALIASES: Record<string, readonly string[]> = {
   Write: [TOOL.edit, TOOL.write, TOOL.delete],
   Bash: [TOOL.bash],
   Agent: [TOOL.agent],
+  WebFetch: [TOOL.webFetch],
+  WebSearch: [TOOL.webSearch],
+}
+
+/**
+ * Whether a `domain:` specifier of a `WebFetch` rule matches a host. `example.com` matches that
+ * host only, `*.example.com` its subdomains. Anything not starting with `domain:` matches nothing.
+ */
+export function domainSpecifierMatches(specifier: string, host: string): boolean {
+  if (!specifier.startsWith('domain:')) return false
+  const pattern = specifier.slice('domain:'.length).trim().toLowerCase()
+  const name = host.toLowerCase().replace(/\.$/, '')
+  if (pattern === '') return false
+  if (pattern.startsWith('*.'))
+    return name.endsWith(pattern.slice(1)) && name.length > pattern.length - 1
+  return name === pattern
+}
+
+/** Host of the `url` input of a `web_fetch` call (`http` upgraded or not), if it parses. */
+export function fetchHost(input: unknown): string | undefined {
+  const url = (input as { url?: unknown } | null)?.url
+  if (typeof url !== 'string') return undefined
+  try {
+    return new URL(url.includes('://') ? url : `https://${url}`).hostname
+  } catch {
+    return undefined
+  }
 }
 
 /** Tools that read files (inputs carry a virtual path in `path` or `prefix`). */
@@ -366,6 +396,10 @@ export function ruleMatchesCall(
       parsed.subcommands.some((sub) => matchBashSpec(specifier, sub)) ||
       matchBashSpec(specifier, command)
     )
+  }
+  if (call.toolName === TOOL.webFetch) {
+    const host = fetchHost(call.input)
+    return host !== undefined && domainSpecifierMatches(specifier, host)
   }
   if (call.toolName === TOOL.agent) {
     const type = (call.input as { subagent_type?: unknown } | null)?.subagent_type

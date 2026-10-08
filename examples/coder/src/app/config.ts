@@ -140,13 +140,18 @@ async function walkFiles(dir: string, base = ''): Promise<string[]> {
   return out
 }
 
-/** Names of the project agent and skill files (empty lists when the directories do not exist). */
-async function projectContentFiles(root: string): Promise<{ agents: string[]; skills: string[] }> {
+/** Names of the project agent, skill and custom command files (empty lists when the directories do not exist). */
+async function projectContentFiles(
+  root: string,
+): Promise<{ agents: string[]; skills: string[]; commands: string[] }> {
   const agents = (await walkFiles(join(root, '.coder', 'agents'))).filter(
     (f) => f.endsWith('.md') && !f.includes('/'),
   )
   const skills = await walkFiles(join(root, '.coder', 'skills'))
-  return { agents, skills }
+  const commands = (await walkFiles(join(root, '.coder', 'commands'))).filter((f) =>
+    f.endsWith('.md'),
+  )
+  return { agents, skills, commands }
 }
 
 /** Hash of the project settings file content plus every project agent and skill file. */
@@ -162,9 +167,10 @@ async function projectHash(root: string): Promise<string> {
     hash.update(`${label}\0`).update(content).update('\0')
   }
   await feed('settings', join(root, '.coder', 'settings.json'))
-  const { agents, skills } = await projectContentFiles(root)
+  const { agents, skills, commands } = await projectContentFiles(root)
   for (const f of agents) await feed(`agent:${f}`, join(root, '.coder', 'agents', f))
   for (const f of skills) await feed(`skill:${f}`, join(root, '.coder', 'skills', f))
+  for (const f of commands) await feed(`command:${f}`, join(root, '.coder', 'commands', f))
   return hash.digest('hex')
 }
 
@@ -227,8 +233,12 @@ async function projectAgentsSkillsTrusted(
   userDir: string,
   untrusted: string[],
 ): Promise<boolean> {
-  const { agents, skills } = await projectContentFiles(root)
-  const risky = [...(agents.length > 0 ? ['agents'] : []), ...(skills.length > 0 ? ['skills'] : [])]
+  const { agents, skills, commands } = await projectContentFiles(root)
+  const risky = [
+    ...(agents.length > 0 ? ['agents'] : []),
+    ...(skills.length > 0 ? ['skills'] : []),
+    ...(commands.length > 0 ? ['commands'] : []),
+  ]
   if (risky.length === 0) return true
   if ((await readTrusted(userDir))[root] === (await projectHash(root))) return true
   untrusted.push(...risky)
@@ -281,9 +291,10 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     }
     if (file === settingsFiles.project) {
       const risky = riskyKeys(settings)
-      const { agents, skills } = await projectContentFiles(root)
+      const { agents, skills, commands } = await projectContentFiles(root)
       if (agents.length > 0) risky.push('agents')
       if (skills.length > 0) risky.push('skills')
+      if (commands.length > 0) risky.push('commands')
       if (risky.length > 0 && (await readTrusted(userDir))[root] !== (await projectHash(root))) {
         trusted = false
         untrusted.push(...risky)

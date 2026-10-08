@@ -8,6 +8,7 @@ import {
   type ApprovalRequest,
   type CoderMessage,
   type PermissionEngine,
+  type PermissionMode,
   TOOL,
   type ToolCallInfo,
 } from '../contracts.ts'
@@ -94,6 +95,11 @@ async function inputTexts(session: HarnessSession<CoderMessage>): Promise<Set<st
 
 const DENIED = 'Denied by the user.'
 
+/** The part of the permission engine that remembers the mode chosen on a plan approval. */
+interface PlanExitControl {
+  setPlanExitMode(mode: PermissionMode | undefined): void
+}
+
 /**
  * Awaits `first`, and while the turn stops `tool-pending` asks the user for each open approval
  * (one prompt at a time), applies "don't ask again" rules and continues with `respond()`.
@@ -143,6 +149,13 @@ export async function driveTurn(
           await permissions.allow(request.suggestedRule, answer.remember)
         }
         approvals.push({ id: entry.approvalId, approved: true })
+        if (entry.toolName === TOOL.exitPlan && opts.agent === undefined) {
+          // the user chose the mode to continue in; the exit_plan_mode tool switches to it
+          const chosen =
+            answer.mode === 'acceptEdits' || answer.mode === 'default' ? answer.mode : undefined
+          const engine = permissions as Partial<PlanExitControl>
+          engine.setPlanExitMode?.(chosen)
+        }
         const note = answer.note?.trim()
         if (note) {
           notes.push(`Note from the user about the approved ${entry.toolName} call: ${note}`)

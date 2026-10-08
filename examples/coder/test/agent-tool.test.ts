@@ -88,7 +88,9 @@ describe('agent tool', () => {
       for (const t of ['write_file', 'edit_file', 'delete_file', 'agent', 'exit_plan_mode']) {
         expect(r.tools).not.toContain(t)
       }
-      expect(r.tools).toEqual(expect.arrayContaining(['read_file', 'grep', 'glob', 'bash']))
+      expect(r.tools).toEqual(
+        expect.arrayContaining(['read_file', 'grep', 'glob', 'bash', 'web_fetch', 'web_search']),
+      )
     }
     expect(await exists(join(env.root, 'evil.txt'))).toBe(false)
     expect(env.broker.pending()).toEqual([])

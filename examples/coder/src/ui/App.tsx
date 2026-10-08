@@ -8,8 +8,14 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { CoderController, CoderMessage, PermissionMode, ThinkingLevel } from '../contracts.ts'
-import { runTurn } from './driver.ts'
+import type {
+  CoderController,
+  CoderMessage,
+  CustomCommand,
+  PermissionMode,
+  ThinkingLevel,
+} from '../contracts.ts'
+import { runTurn, steerTurn } from './driver.ts'
 import { Footer, ShortcutsPanel } from './Footer.tsx'
 import { createFileLister } from './mentions.ts'
 import { PermissionPrompt, usePending } from './PermissionPrompt.tsx'
@@ -17,6 +23,7 @@ import { PromptInput } from './PromptInput.tsx'
 import { AgentsPage } from './pages/AgentsPage.tsx'
 import { ContextPage } from './pages/ContextPage.tsx'
 import { CostPage } from './pages/CostPage.tsx'
+import { DiffPage } from './pages/DiffPage.tsx'
 import { shortModel } from './pages/format.ts'
 import { HelpPage } from './pages/HelpPage.tsx'
 import { usePageHost } from './pages/host.ts'
@@ -27,8 +34,9 @@ import { TranscriptPage } from './pages/TranscriptPage.tsx'
 import { ModelPicker } from './pickers/ModelPicker.tsx'
 import { ThinkingPicker } from './pickers/ThinkingPicker.tsx'
 import { QuestionDialog, usePendingQuestions } from './QuestionDialog.tsx'
+import { QueuedMessages } from './QueuedMessages.tsx'
 import { SessionPicker } from './SessionPicker.tsx'
-import { parseSlash, runSlash } from './slash.ts'
+import { isBuiltin, parseSlash, runSlash } from './slash.ts'
 import {
   type Entry,
   hasOpenTodos,
@@ -49,6 +57,17 @@ export interface AppProps {
   initialMessages?: CoderMessage[]
   /** coder version for the welcome box. */
   version?: string
+}
+
+/** A message typed while a turn runs. Plain messages are steered or sent after the turn; commands wait. */
+interface Queued {
+  kind: 'message' | 'command'
+  text: string
+}
+
+/** Previous prompts without consecutive duplicates, newest last. */
+function pushHistory(list: string[], text: string): string[] {
+  return list[list.length - 1] === text ? list : [...list, text].slice(-1000)
 }
 
 interface ShellRun {
@@ -124,6 +143,20 @@ export function App({
   const [picker, setPicker] = useState<Picker>(controller.config.resume === true ? 'session' : null)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [inputEpoch, setInputEpoch] = useState(0)
+  const [queue, setQueueState] = useState<Queued[]>([])
+  const queueRef = useRef<Queued[]>([])
+  const setQueue = useCallback((next: Queued[]) => {
+    queueRef.current = next
+    setQueueState(next)
+  }, [])
+  const [promptHistory, setPromptHistory] = useState<string[]>([])
+  const [customCommands, setCustomCommands] = useState<CustomCommand[]>([])
+  const commandsRef = useRef<CustomCommand[]>([])
+  commandsRef.current = customCommands
+  const searchOpen = useRef(false)
+  const turnActive = useRef(false)
+  const drainRef = useRef<() => void>(() => {})
+  const deliverRef = useRef<() => void>(() => {})
   const pageHost = usePageHost()
   const listFiles = useMemo(() => createFileLister(controller.workspace), [controller])
   const shellRuns = useRef<ShellRun[]>([])
@@ -141,6 +174,8 @@ export function App({
   pageRef.current = pageHost
   const pendingRef = useRef(pending.length)
   pendingRef.current = pending.length
+  const promptHistoryRef = useRef(promptHistory)
+  promptHistoryRef.current = promptHistory
   const busy = useRef(false)
   const lastCtrlC = useRef(0)
   const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -186,6 +221,38 @@ export function App({
     }
   }, [controller, statsVersion])
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload after each turn (statsVersion)
+  useEffect(() => {
+    let cancelled = false
+    controller
+      .commands()
+      .then((list) => {
+        if (!cancelled) setCustomCommands(list)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [controller, statsVersion])
+
+  useEffect(() => {
+    let cancelled = false
+    controller
+      .history()
+      .then((stored) => {
+        if (!cancelled) setPromptHistory((now) => [...stored, ...now].slice(-1000))
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [controller])
+
+  const loadSearchPool = useCallback(async (): Promise<string[]> => {
+    const all = await controller.history({ allProjects: true, limit: 1000 })
+    return [...all, ...promptHistoryRef.current]
+  }, [controller])
+
   // a permission question must be seen: leave any open page for it
   const { close: closePage } = pageHost
   const pagePhase = pageHost.view.phase
@@ -223,21 +290,28 @@ export function App({
             }</shell-output>\n\n`,
         )
         .join('')
-      void runTurn(controller, context + text, dispatch).finally(() => {
+      turnActive.current = true
+      void runTurn(controller, context + text, dispatch, {
+        onToolResult: () => deliverRef.current(),
+      }).finally(() => {
+        turnActive.current = false
         busy.current = false
         refreshStats()
+        drainRef.current()
       })
     },
     [controller, refreshStats],
   )
 
-  const submit = useCallback(
+  /** Release the busy flag and run whatever waited for it. */
+  const release = useCallback(() => {
+    busy.current = false
+    drainRef.current()
+  }, [])
+
+  /** Run a submitted line right now: shell command, slash command, custom command or prompt. */
+  const execute = useCallback(
     (text: string) => {
-      setShortcutsOpen(false)
-      if (busy.current) {
-        showHint('A turn is running. Press esc to interrupt it.')
-        return
-      }
       if (text.startsWith('!')) {
         const command = text.slice(1).trim()
         if (!command) return
@@ -259,16 +333,46 @@ export function App({
           })
           .finally(() => {
             shellAbort.current = undefined
-            busy.current = false
+            release()
           })
         return
       }
       dispatch({ type: 'user-submitted', text })
-      if (!parseSlash(text)) {
+      const parsed = parseSlash(text)
+      if (!parsed) {
         startTurn(text)
         return
       }
       busy.current = true
+      if (!isBuiltin(parsed.name)) {
+        // a custom command or skill: the typed text stays visible, the expansion is sent
+        void (async () => {
+          let known = commandsRef.current.some((c) => c.name === parsed.name)
+          if (!known) {
+            const fresh = await controller.commands().catch(() => [])
+            known = fresh.some((c) => c.name === parsed.name)
+          }
+          if (!known) {
+            dispatch({
+              type: 'system',
+              text: `Unknown command /${parsed.name}. Type /help.`,
+              tone: 'error',
+            })
+            return release()
+          }
+          try {
+            startTurn(await controller.expandCommand(parsed.name, parsed.args))
+          } catch (error) {
+            dispatch({
+              type: 'system',
+              text: `/${parsed.name} failed: ${error instanceof Error ? error.message : String(error)}`,
+              tone: 'error',
+            })
+            release()
+          }
+        })()
+        return
+      }
       void runSlash(text, {
         controller,
         model: modelRef.current,
@@ -297,11 +401,71 @@ export function App({
         refreshStats,
         exit,
       }).finally(() => {
-        if (!stateRef.current.running) busy.current = false
+        if (!turnActive.current) release()
       })
     },
-    [controller, exit, openPage, refreshStats, showHint, startTurn, stdout],
+    [controller, exit, openPage, refreshStats, release, startTurn, stdout],
   )
+
+  // Runs whatever waited for the busy flag: queued commands one at a time, queued messages as one prompt.
+  drainRef.current = () => {
+    if (busy.current) return
+    const [first, ...rest] = queueRef.current
+    if (!first) return
+    if (first.kind === 'command') {
+      setQueue(rest)
+      execute(first.text)
+      return
+    }
+    const messages: Queued[] = [first]
+    let i = 0
+    while (rest[i]?.kind === 'message') messages.push(rest[i++] as Queued)
+    setQueue(rest.slice(i))
+    for (const m of messages) dispatch({ type: 'user-submitted', text: m.text })
+    startTurn(messages.map((m) => m.text).join('\n\n'))
+  }
+
+  // A tool result is on the live stream: steer every queued message into the running turn.
+  deliverRef.current = () => {
+    const messages = queueRef.current.filter((q) => q.kind === 'message')
+    if (messages.length === 0) return
+    setQueue(queueRef.current.filter((q) => q.kind !== 'message'))
+    void steerTurn(controller, messages.map((m) => m.text).join('\n\n'), dispatch, {
+      onToolResult: () => deliverRef.current(),
+      onOwnTurn: () => {
+        busy.current = true
+        turnActive.current = true
+      },
+    }).then((how) => {
+      if (how !== 'turn') return
+      turnActive.current = false
+      refreshStats()
+      release()
+    })
+  }
+
+  const submit = useCallback(
+    (text: string) => {
+      setShortcutsOpen(false)
+      setPromptHistory((list) => pushHistory(list, text))
+      void controller.addHistory(text).catch(() => {})
+      if (busy.current) {
+        if (text === '!') return
+        const kind = text.startsWith('!') || parseSlash(text) ? 'command' : 'message'
+        setQueue([...queueRef.current, { kind, text }])
+        return
+      }
+      execute(text)
+    },
+    [controller, execute, setQueue],
+  )
+
+  const recallQueue = useCallback((): string | null => {
+    const items = queueRef.current
+    if (items.length === 0) return null
+    setQueue([])
+    return items.map((q) => q.text).join('\n')
+  }, [setQueue])
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: once, on mount
   useEffect(() => {
@@ -354,6 +518,7 @@ export function App({
       return
     }
     if (overlay) return
+    if (key.escape && searchOpen.current) return
     if (key.escape && shellAbort.current) {
       shellAbort.current.abort()
       return
@@ -382,11 +547,11 @@ export function App({
             tone: 'error',
           })
         } finally {
-          busy.current = false
+          release()
         }
       })()
     },
-    [controller, refreshStats, stdout],
+    [controller, refreshStats, release, stdout],
   )
 
   const selectModel = useCallback(
@@ -477,14 +642,20 @@ export function App({
             onCancel={() => setPicker(null)}
           />
         ) : null}
+        <QueuedMessages items={queue.map((q) => q.text)} />
         <PromptInput
           key={inputEpoch}
           disabled={pending.length > 0 || picker !== null || pageHost.active}
           listFiles={listFiles}
-          running={state.running}
-          history={state.history}
+          history={promptHistory}
+          commands={customCommands}
+          queuedCount={queue.length}
+          onRecallQueue={recallQueue}
+          loadSearchPool={loadSearchPool}
+          onSearchChange={(open) => {
+            searchOpen.current = open
+          }}
           onSubmit={submit}
-          onBusy={() => showHint('A turn is running. Press esc to interrupt it.')}
           onShortcuts={() => setShortcutsOpen((open) => !open)}
           onTextChange={(text) => {
             if (text !== '') setShortcutsOpen(false)
@@ -497,7 +668,7 @@ export function App({
           thinking={thinking}
           {...(stats.leftPct !== undefined ? { contextLeftPct: stats.leftPct } : {})}
           {...(stats.costUsd !== undefined ? { costUsd: stats.costUsd } : {})}
-          hint={hint}
+          hint={hint ?? (queue.length > 0 ? `${queue.length} queued · ↑ to edit` : null)}
           shortcutsOpen={shortcutsOpen}
           busy={state.running}
         />
@@ -535,6 +706,8 @@ function PageRoute({
       return <StatusPage controller={controller} onClose={onClose} />
     case 'cost':
       return <CostPage controller={controller} onClose={onClose} />
+    case 'diff':
+      return <DiffPage controller={controller} onClose={onClose} />
     case 'help':
       return <HelpPage onClose={onClose} />
     case 'agents':

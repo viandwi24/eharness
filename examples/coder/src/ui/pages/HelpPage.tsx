@@ -6,9 +6,12 @@ import { color } from '../theme.ts'
 import { Page, Section } from './Page.tsx'
 
 const GROUPS: Array<{ title: string; names: string[] }> = [
-  { title: 'Conversation', names: ['clear', 'compact', 'resume', 'init', 'exit'] },
+  { title: 'Conversation', names: ['clear', 'compact', 'resume', 'plan', 'init', 'exit'] },
   { title: 'Model', names: ['model', 'thinking'] },
-  { title: 'Inspect', names: ['context', 'status', 'cost', 'todos', 'agents', 'transcript'] },
+  {
+    title: 'Inspect',
+    names: ['context', 'status', 'cost', 'todos', 'agents', 'transcript', 'diff'],
+  },
   { title: 'Safety', names: ['permissions'] },
   { title: 'Help', names: ['help'] },
 ]

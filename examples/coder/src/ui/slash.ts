@@ -1,6 +1,6 @@
 /** Slash commands of the interactive UI: registry, parsing and the commands themselves. */
 import type { Todo } from 'eharness/todos'
-import type { CoderController, CoderMessage, PermissionRules } from '../contracts.ts'
+import type { CoderController, CoderMessage, CustomCommand, PermissionRules } from '../contracts.ts'
 import {
   PERMISSION_MODES,
   type PermissionMode,
@@ -257,6 +257,21 @@ export const slashCommands: SlashCommand[] = [
     },
   },
   {
+    name: 'diff',
+    description: 'Review the working-tree changes',
+    run: (ctx) => ctx.openPage({ kind: 'diff' }),
+  },
+  {
+    name: 'plan',
+    usage: '[description]',
+    description: 'Switch to plan mode, optionally starting with a task',
+    run: (ctx) => {
+      ctx.controller.permissions.setMode('plan')
+      ctx.print('Mode set to plan.')
+      if (ctx.args) ctx.submit(ctx.args)
+    },
+  },
+  {
     name: 'init',
     description: 'Ask the agent to write an AGENTS.md for this project',
     run: (ctx) => ctx.submit(INIT_PROMPT),
@@ -274,12 +289,41 @@ export function parseSlash(text: string): { name: string; args: string } | null 
   return match ? { name: match[1] as string, args: (match[2] ?? '').trim() } : null
 }
 
-/** Commands whose name starts with the typed prefix (`/re` → `resume`). */
-export function matchSlash(input: string): SlashCommand[] {
+/** One entry of the `/` completion list: a built-in, a custom command or a skill. */
+export interface SlashSuggestion {
+  name: string
+  usage?: string
+  description: string
+  /** Set for custom commands and skills. */
+  source?: CustomCommand['source']
+}
+
+/** Commands (built-ins first, then `custom`) whose name starts with the typed prefix. */
+export function matchSlash(
+  input: string,
+  custom: readonly CustomCommand[] = [],
+): SlashSuggestion[] {
   const match = /^\/([\w-]*)$/.exec(input)
   if (!match) return []
   const prefix = (match[1] as string).toLowerCase()
-  return slashCommands.filter((c) => c.name.startsWith(prefix))
+  const builtin: SlashSuggestion[] = slashCommands.filter((c) => c.name.startsWith(prefix))
+  const names = new Set(slashCommands.map((c) => c.name))
+  const extra = custom
+    .filter((c) => !names.has(c.name) && c.name.toLowerCase().startsWith(prefix))
+    .map(
+      (c): SlashSuggestion => ({
+        name: c.name,
+        ...(c.argumentHint ? { usage: c.argumentHint } : {}),
+        description: c.description,
+        source: c.source,
+      }),
+    )
+  return [...builtin, ...extra]
+}
+
+/** True when `name` is a built-in slash command. */
+export function isBuiltin(name: string): boolean {
+  return slashCommands.some((c) => c.name === name)
 }
 
 /**

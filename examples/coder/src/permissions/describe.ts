@@ -154,6 +154,22 @@ export async function describeApproval(
         `Agent ${str(input, 'subagent_type') ?? ''}: ${oneLine(str(input, 'description') ?? '')}`,
         str(input, 'prompt'),
       )
+    case TOOL.webFetch: {
+      const url = oneLine(str(input, 'url') ?? '', 300)
+      const prompt = str(input, 'prompt')
+      return out(`Fetch ${url}`, prompt === undefined || prompt === '' ? undefined : prompt)
+    }
+    case TOOL.webSearch: {
+      const allowed = (input as { allowed_domains?: unknown } | null)?.allowed_domains
+      const blocked = (input as { blocked_domains?: unknown } | null)?.blocked_domains
+      const lines: string[] = []
+      if (Array.isArray(allowed) && allowed.length > 0) lines.push(`Only: ${allowed.join(', ')}`)
+      if (Array.isArray(blocked) && blocked.length > 0) lines.push(`Not: ${blocked.join(', ')}`)
+      return out(
+        `Web search: ${oneLine(str(input, 'query') ?? '', 200)}`,
+        lines.length > 0 ? lines.join('\n') : undefined,
+      )
+    }
     case TOOL.exitPlan:
       return out('Plan ready: start implementing?', str(input, 'plan'))
     case TOOL.dirAccess: {

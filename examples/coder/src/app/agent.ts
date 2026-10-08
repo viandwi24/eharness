@@ -43,7 +43,12 @@ import {
   type ToolCallInfo,
   type Workspace,
 } from '../contracts.ts'
-import { permissionsPlugin } from '../permissions/index.ts'
+import {
+  domainSpecifierMatches,
+  parseRule,
+  permissionsPlugin,
+  ruleToolMatches,
+} from '../permissions/index.ts'
 import { bashOutputPart, createBashTool } from '../shell/index.ts'
 import { createDirAccessTool, createGlobTool } from '../workspace/index.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
@@ -55,6 +60,12 @@ import {
   turnReminder,
 } from './prompt.ts'
 import { buildTools, estimateTokens, estimateTool, pluginStaticTools } from './tool-inventory.ts'
+import {
+  createWebFetchTool,
+  createWebSearchTool,
+  type SearchFn,
+  type WebFetchDeps,
+} from './web-tools.ts'
 
 /** Dependencies of {@link createAgents}. */
 export interface CreateAgentsDeps {
@@ -84,6 +95,10 @@ export interface CreateAgentsDeps {
   models?: ModelCatalog
   /** `config.contextWindow` was set in a settings file: it then beats the catalog. */
   contextWindowExplicit?: boolean
+  /** Web search of the `web_search` tool; absent = `ERROR: web search is not available`. */
+  search?: SearchFn
+  /** Overrides of `web_fetch` internals (tests): `fetch`, host resolution, timeout. */
+  webFetch?: Partial<Pick<WebFetchDeps, 'fetch' | 'resolve' | 'timeoutMs'>>
   /** Cap of concurrent subagents per nesting depth (default 8). */
   maxConcurrentAgents?: number
   onWarning?: (warning: HarnessWarning) => void
@@ -138,8 +153,24 @@ async function skillIndexTokens(root: string): Promise<{ tokens: number; count: 
 
 /** Removed from `plan` subagents; `bash` stays, its commands are restricted to read-only ones. */
 const NON_READ_ONLY_TOOLS: string[] = Object.values(TOOL).filter(
-  (name) => !READ_ONLY_TOOLS.includes(name) && name !== TOOL.bash,
+  (name) =>
+    !READ_ONLY_TOOLS.includes(name) &&
+    name !== TOOL.bash &&
+    name !== TOOL.webFetch &&
+    name !== TOOL.webSearch,
 )
+
+/** Does an allow rule name this host (`WebFetch(domain:host)`)? Only then private hosts are fetched. */
+function hostAllowedBy(permissions: PermissionEngine, host: string): boolean {
+  return permissions.rules().allow.some((raw) => {
+    const rule = parseRule(raw)
+    return (
+      rule?.specifier !== undefined &&
+      ruleToolMatches(rule.tool, TOOL.webFetch) &&
+      domainSpecifierMatches(rule.specifier, host)
+    )
+  })
+}
 
 /**
  * Create the main agent and the subagent factory.
@@ -211,6 +242,11 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     const appTools: Record<string, unknown> = {
       [TOOL.glob]: createGlobTool(workspace),
       [TOOL.bash]: createBashTool({ sandbox: deps.sandbox }),
+      [TOOL.webFetch]: createWebFetchTool({
+        isHostAllowed: (host) => hostAllowedBy(permissions, host),
+        ...deps.webFetch,
+      }),
+      [TOOL.webSearch]: createWebSearchTool({ ...(deps.search ? { search: deps.search } : {}) }),
     }
     if (depth < config.maxAgentDepth) appTools[TOOL.agent] = createAgentTool(toolDeps, depth)
     if (isMain) {

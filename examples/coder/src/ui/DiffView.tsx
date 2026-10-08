@@ -17,22 +17,15 @@ export interface DiffViewProps {
 
 /** One row of a rendered diff. */
 export type DiffRow =
-  | { kind: 'add' | 'remove' | 'context'; line: number; text: string }
+  | { kind: 'add'; line: number; text: string }
+  | { kind: 'remove'; line: number; text: string }
+  | { kind: 'context'; line: number; text: string }
   | { kind: 'gap' }
+  | { kind: 'note'; text: string }
+  | { kind: 'header'; text: string }
 
-function isHeader(line: string): boolean {
+function patchText(props: DiffViewProps): string {
   return (
-    line.startsWith('Index: ') ||
-    line.startsWith('====') ||
-    line.startsWith('--- ') ||
-    line.startsWith('+++ ') ||
-    line === '\\ No newline at end of file'
-  )
-}
-
-/** Unified diff lines without the file headers. */
-export function diffLinesOf(props: DiffViewProps): string[] {
-  const patch =
     props.patch ??
     createTwoFilesPatch(
       props.path ?? 'file',
@@ -43,31 +36,84 @@ export function diffLinesOf(props: DiffViewProps): string[] {
       '',
       { context: 3 },
     )
-  const lines = patch.split('\n')
-  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
-  return lines.filter((line) => !isHeader(line))
+  )
 }
 
-/** Rows with line numbers (new-file numbers; removals carry their old number); hunks separated by a gap. */
+interface FileMeta {
+  row: { kind: 'header'; text: string }
+  path: string
+  tags: string[]
+}
+
+function refreshHeader(meta: FileMeta): void {
+  meta.row.text = [meta.path, ...meta.tags].join(' · ')
+}
+
+/**
+ * Parses a unified diff (plain hunks, or a full `git diff` with extended headers) into rows.
+ * Header lines are only recognised outside hunks; hunk bodies are consumed by the counts of
+ * their `@@` header, so a removed line like `-- x` is never mistaken for a `--- ` header.
+ * Line numbers come from the hunk headers; git extended headers become one dim header row.
+ */
 export function diffRows(props: DiffViewProps): DiffRow[] {
+  const lines = patchText(props).split('\n')
+  while (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
   const rows: DiffRow[] = []
+  let meta: FileMeta | undefined
+  let hunksInFile = 0
   let oldNo = 0
   let newNo = 0
-  for (const line of diffLinesOf(props)) {
-    const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line)
-    if (hunk) {
-      oldNo = Number(hunk[1])
-      newNo = Number(hunk[2])
-      if (rows.length > 0) rows.push({ kind: 'gap' })
+  let oldLeft = 0
+  let newLeft = 0
+  const tag = (t: string): void => {
+    if (!meta) return
+    meta.tags.push(t)
+    refreshHeader(meta)
+  }
+  for (const line of lines) {
+    if (oldLeft > 0 || newLeft > 0 || (line.startsWith('\\') && hunksInFile > 0)) {
+      if (line.startsWith('\\')) {
+        rows.push({ kind: 'note', text: line.replace(/^\\ ?/, '') })
+      } else if (line.startsWith('+')) {
+        rows.push({ kind: 'add', line: newNo++, text: line.slice(1) })
+        newLeft--
+      } else if (line.startsWith('-')) {
+        rows.push({ kind: 'remove', line: oldNo++, text: line.slice(1) })
+        oldLeft--
+      } else {
+        rows.push({ kind: 'context', line: newNo++, text: line.slice(1) })
+        oldNo++
+        oldLeft--
+        newLeft--
+      }
       continue
     }
-    if (line.startsWith('+')) rows.push({ kind: 'add', line: newNo++, text: line.slice(1) })
-    else if (line.startsWith('-')) rows.push({ kind: 'remove', line: oldNo++, text: line.slice(1) })
-    else {
-      rows.push({ kind: 'context', line: newNo, text: line.slice(1) })
-      oldNo++
-      newNo++
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line)
+    if (hunk) {
+      oldNo = Number(hunk[1])
+      newNo = Number(hunk[3])
+      oldLeft = hunk[2] === undefined ? 1 : Number(hunk[2])
+      newLeft = hunk[4] === undefined ? 1 : Number(hunk[4])
+      if (hunksInFile > 0) rows.push({ kind: 'gap' })
+      hunksInFile++
+      continue
     }
+    const git = /^diff --git a\/(.*) b\/(.*)$/.exec(line)
+    if (git) {
+      const row = { kind: 'header' as const, text: '' }
+      meta = { row, path: git[2] ?? git[1] ?? '', tags: [] }
+      refreshHeader(meta)
+      rows.push(row)
+      hunksInFile = 0
+      continue
+    }
+    if (!meta) continue
+    if (line.startsWith('new file mode')) tag('new file')
+    else if (line.startsWith('deleted file mode')) tag('deleted')
+    else if (line.startsWith('rename from ')) tag(`renamed from ${line.slice(12)}`)
+    else if (line.startsWith('copy from ')) tag(`copied from ${line.slice(10)}`)
+    else if (line.startsWith('Binary files') || line.startsWith('GIT binary patch')) tag('binary')
+    else if (line.startsWith('new mode ')) tag(`mode ${line.slice(9)}`)
   }
   return rows
 }
@@ -82,7 +128,14 @@ export function diffCounts(props: DiffViewProps): { added: number; removed: numb
 }
 
 function Row({ row, width }: { row: DiffRow; width: number }): ReactElement {
-  if (row.kind === 'gap') return <Text dimColor>{' '.repeat(width + 1)}…</Text>
+  if (row.kind === 'gap') return <Text dimColor>{' '.repeat(width + 1)}⋯</Text>
+  if (row.kind === 'header' || row.kind === 'note')
+    return (
+      <Text dimColor>
+        {row.kind === 'note' ? ' '.repeat(width + 3) : ''}
+        {row.text}
+      </Text>
+    )
   const gutter = String(row.line).padStart(width)
   const sign = row.kind === 'add' ? '+' : row.kind === 'remove' ? '-' : ' '
   const bg =
@@ -109,10 +162,7 @@ export function DiffView(props: DiffViewProps): ReactElement {
   const max = props.maxLines ?? 16
   const rows = diffRows(props)
   const shown = rows.slice(0, max)
-  const width = Math.max(
-    2,
-    ...shown.map((row) => (row.kind === 'gap' ? 0 : String(row.line).length)),
-  )
+  const width = Math.max(2, ...shown.map((row) => ('line' in row ? String(row.line).length : 0)))
   const hidden = rows.length - shown.length
   return (
     <Box flexDirection="column">

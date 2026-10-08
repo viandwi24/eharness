@@ -8,6 +8,7 @@ export type PageSpec =
   | { kind: 'help' }
   | { kind: 'agents' }
   | { kind: 'permissions' }
+  | { kind: 'diff' }
   | {
       kind: 'transcript'
       title: string

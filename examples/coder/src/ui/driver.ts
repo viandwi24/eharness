@@ -4,8 +4,8 @@
  * out of the same raw chunk stream (transient parts never appear in messages).
  */
 import { readUIMessageStream } from 'ai'
-import type { HarnessRun } from 'eharness'
-import type { BashOutputData, CoderController, CoderMessage } from './../contracts.ts'
+import type { HarnessRun, TurnResult } from 'eharness'
+import type { BashOutputData, CoderController, CoderMessage, RunHooks } from './../contracts.ts'
 import type { ViewAction } from './state.ts'
 
 const THROTTLE_MS = 50
@@ -55,20 +55,42 @@ function isBashChunk(chunk: unknown): chunk is { type: 'data-bashOutput'; data: 
   )
 }
 
+/** A finished tool call on the raw chunk stream (preliminary outputs do not count). */
+function isToolResultChunk(chunk: unknown): boolean {
+  if (typeof chunk !== 'object' || chunk === null) return false
+  const c = chunk as { type?: string; preliminary?: boolean }
+  if (c.type === 'tool-output-available') return c.preliminary !== true
+  return c.type === 'tool-output-error' || c.type === 'tool-output-denied'
+}
+
+/** Optional callbacks of a driven turn. */
+export interface DriveOptions {
+  /** A tool call finished on the live stream (the queue delivers its messages here). */
+  onToolResult?(): void
+}
+
 /**
- * Run one prompt to the end. Dispatches `turn-started`, then live snapshots, then `turn-finished`.
- * Never rejects.
+ * Drive one turn: `start` calls the controller with the hooks. `lazy` dispatches `turn-started`
+ * on the first run instead of up front (a steer that may not start a turn at all). Resolves with
+ * whether a turn was driven. Never rejects.
  */
-export async function runTurn(
-  controller: CoderController,
-  text: string,
+async function drive(
+  start: (hooks: RunHooks) => Promise<TurnResult<CoderMessage> | undefined>,
   dispatch: (action: ViewAction) => void,
-): Promise<void> {
-  dispatch({ type: 'turn-started', now: Date.now() })
+  options: DriveOptions,
+  lazy?: { before(): void },
+): Promise<boolean> {
+  let started = false
+  const begin = (): void => {
+    if (started) return
+    started = true
+    lazy?.before()
+    dispatch({ type: 'turn-started', now: Date.now() })
+  }
+  if (!lazy) begin()
   const batcher = createBatcher(dispatch)
   const consumers: Promise<void>[] = []
   let last: CoderMessage | null = null
-
   const consume = async (run: HarnessRun<CoderMessage>): Promise<void> => {
     const reader = run.stream.getReader()
     try {
@@ -79,6 +101,7 @@ export async function runTurn(
       const base = last && startId && last.id === startId ? structuredClone(last) : undefined
       const observe = (chunk: unknown): void => {
         if (isBashChunk(chunk)) batcher.bash(structuredClone(chunk.data))
+        else if (isToolResultChunk(chunk)) options.onToolResult?.()
       }
       observe(first.value)
       let pending: typeof first.value | undefined = first.value
@@ -114,23 +137,80 @@ export async function runTurn(
 
   let note: { text: string; tone: 'info' | 'error' } | undefined
   try {
-    const result = await controller.run(text, {
+    const result = await start({
       onRun(run) {
+        begin()
         consumers.push(consume(run))
       },
     })
     await Promise.all(consumers)
-    if (result.stop === 'error') {
-      note = { text: result.error?.message ?? 'The turn failed.', tone: 'error' }
-    } else if (result.stop === 'aborted') {
-      note = { text: 'Interrupted.', tone: 'info' }
-    } else if (result.stop !== 'complete' && result.stop !== 'tool-pending') {
-      note = { text: `Turn stopped: ${result.stop}.`, tone: 'info' }
+    if (result) {
+      if (result.stop === 'error') {
+        note = { text: result.error?.message ?? 'The turn failed.', tone: 'error' }
+      } else if (result.stop === 'aborted') {
+        note = { text: 'Interrupted.', tone: 'info' }
+      } else if (result.stop !== 'complete' && result.stop !== 'tool-pending') {
+        note = { text: `Turn stopped: ${result.stop}.`, tone: 'info' }
+      }
     }
   } catch (error) {
     await Promise.allSettled(consumers)
+    begin()
     note = { text: error instanceof Error ? error.message : String(error), tone: 'error' }
   }
+  if (!started) return false
   batcher.flush()
   dispatch({ type: 'turn-finished', note })
+  return true
+}
+
+/**
+ * Run one prompt to the end. Dispatches `turn-started`, then live snapshots, then `turn-finished`.
+ * Never rejects.
+ */
+export async function runTurn(
+  controller: CoderController,
+  text: string,
+  dispatch: (action: ViewAction) => void,
+  options: DriveOptions = {},
+): Promise<void> {
+  await drive((hooks) => controller.run(text, hooks), dispatch, options)
+}
+
+/**
+ * Steer a running turn with a queued message. Returns `'step'` when it joined the running turn
+ * (its `data-eh.input` part shows up in the live stream), or `'turn'` when no turn was running
+ * any more and it ran as a turn of its own (`onOwnTurn` fires when that turn starts). Never
+ * rejects: a failure is printed as a system line and `'step'` is returned.
+ */
+export async function steerTurn(
+  controller: CoderController,
+  text: string,
+  dispatch: (action: ViewAction) => void,
+  options: DriveOptions & { onOwnTurn?(): void } = {},
+): Promise<'step' | 'turn'> {
+  try {
+    const own = await drive(
+      async (hooks) => {
+        const result = await controller.steer(text, hooks)
+        return result.delivered === 'turn' ? result.result : undefined
+      },
+      dispatch,
+      options,
+      {
+        before() {
+          options.onOwnTurn?.()
+          dispatch({ type: 'user-submitted', text })
+        },
+      },
+    )
+    return own ? 'turn' : 'step'
+  } catch (error) {
+    dispatch({
+      type: 'system',
+      text: `Could not send the queued message: ${error instanceof Error ? error.message : String(error)}`,
+      tone: 'error',
+    })
+    return 'step'
+  }
 }

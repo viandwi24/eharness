@@ -115,17 +115,18 @@ on an empty prompt opens the shortcuts panel.
 
 | Key | Action |
 |---|---|
-| Enter | send (also when the terminal delivers text and Enter as one chunk: `hi\r` sends `hi`; text after the Enter becomes the next draft) |
+| Enter | send; while a turn runs, queue the message (see Message queue). Also when the terminal delivers text and Enter as one chunk: `hi\r` sends `hi`; text after the Enter becomes the next draft) |
 | Shift+Enter, or `\` then Enter, Ctrl+J | newline (a bracketed paste keeps its newlines as text) |
-| Esc | interrupt the running turn, close a page or picker |
+| Esc | interrupt the running turn (queued messages are then sent), close a page, picker or search |
 | Shift+Tab | cycle the mode: default, acceptEdits, plan |
 | Alt+P | model picker |
 | Alt+T | thinking picker |
-| Ctrl+O | transcript viewer (full tool output) |
+| Ctrl+O | transcript viewer (full tool output, reasoning expanded) |
 | Ctrl+L | redraw the screen |
 | Ctrl+C twice | exit (the first press clears the input) |
 | `?` | shortcuts panel (empty prompt) |
-| Up / Down | prompt history |
+| Up / Down | prompt history (this project, saved across sessions); `Up` on an empty prompt with queued messages takes them back |
+| Ctrl+R | reverse history search across all projects (see Prompt history) |
 | Ctrl+A / Ctrl+E / Ctrl+U | line start / line end / clear |
 
 | Command | Does |
@@ -142,10 +143,13 @@ on an empty prompt opens the shortcuts panel.
 | `/agents [n]` | subagents and this session's runs (page); `/agents <n>` (or `/transcript <n>`) opens a run read-only |
 | `/resume [id]` | pick a stored session, or resume one by id |
 | `/todos` | show the current todo list |
+| `/diff` | review the working-tree changes (page, see below) |
+| `/plan [description]` | switch to plan mode; with a description, start planning that task |
+| `/<name> [args]` | a custom command or a skill (see Custom commands) |
 | `/init` | ask the agent to write an `AGENTS.md` for the project |
 | `/exit` | quit |
 
-**Fullscreen pages.** `/context`, `/status`, `/cost`, `/help`, `/agents`, `/permissions` and the
+**Fullscreen pages.** `/context`, `/status`, `/cost`, `/help`, `/agents`, `/permissions`, `/diff` and the
 transcript viewer open on the terminal's alternate screen, so your scrollback is untouched, and
 `Esc` or `q` returns to it. Scroll with the arrow keys (`g` / `G` for top / bottom), `Tab` jumps to the
 next section. `/context` draws the window as a grid of 1% cells (system, memory, skills, tools, MCP,
@@ -160,6 +164,108 @@ Prompt features:
 - `/agents <n>` and `/transcript <n>` open run `n` of this session's subagent runs read-only
   (numbers are listed by `/agents`).
 - `/permissions mode bypassPermissions` needs `--yes` to confirm.
+
+### Message queue
+
+Press Enter while a turn runs and the message is queued instead of refused. Queued entries show
+under the transcript in gray with a `⧗` mark.
+
+- A plain message is steered into the running turn: it is delivered after the next tool result, at
+  a step boundary, and shows in the transcript where the model saw it as a `> text` line with a dim
+  `(sent while the agent was working)`. If the turn ends before that, the queued messages are sent
+  together as the next prompt.
+- `/command` and `!command` lines are held until the turn ends and then run one at a time.
+- `Up` on an empty prompt takes every queued entry back into the editor.
+- `Esc` interrupts the turn; whatever is still queued is then sent as the next prompt.
+- A steer arriving while the turn waits for a permission answer is kept and delivered after the
+  answer (the core would otherwise deny the pending approval).
+- An approval note (Tab on Yes) is stored the same way and shows as a dim `Note: ...`.
+
+### Prompt history
+
+Every submitted prompt is appended to `~/.coder/history.jsonl` (`CODER_HOME` moves it): one JSON
+line `{ at, project, text }`, consecutive duplicates of a project dropped, at most 1000 lines. `Up` /
+`Down` browse the prompts of this project, also from earlier sessions.
+
+`Ctrl+R` opens a reverse search over the prompts of every project: type to filter (case-insensitive
+substring, newest first, duplicates collapsed), `Ctrl+R` or `Up` goes to an older match, `Down` to a
+newer one, `Enter` puts the match in the editor, `Esc` or `Ctrl+G` cancels.
+
+### Custom commands and skills
+
+A Markdown file is a slash command; its body is the prompt that is sent.
+
+| Location | Scope |
+|---|---|
+| `<root>/.coder/commands/**/*.md` | the project (loaded only when the project is trusted) |
+| `~/.coder/commands/**/*.md` | you |
+
+The name is the path without `.md`, with `/` written as `:` (`frontend/test.md` is
+`/frontend:test`). A project command beats a user command of the same name; a built-in command name
+is never overridden (a warning is shown). Optional frontmatter: `description` and `argument-hint`
+(shown in `/` completion); `model` is read and ignored.
+
+```markdown
+---
+description: Review a file
+argument-hint: <path> [focus]
+---
+Review $1 for bugs, paying attention to: $2. Everything typed: $ARGUMENTS
+```
+
+`$ARGUMENTS` is the text after the command, `$1`..`$9` are its words (quotes group words). When the
+body has no placeholder, typed arguments are appended as `ARGUMENTS: ...`. The typed line stays in
+the transcript; the expanded prompt is what the model gets.
+
+Skills of a trusted project (`<root>/.coder/skills/`) are listed in `/` completion as `/skill-name
+[request]` and send a prompt asking the model to load that skill.
+
+### Plan mode
+
+`/plan [description]` (or Shift+Tab) switches to plan mode; the description, if given, starts the
+turn. When the agent calls `exit_plan_mode` you choose:
+
+1. **Yes, and auto-accept edits** continues in `acceptEdits`.
+2. **Yes, and manually approve edits** continues in `default`.
+3. **No, keep planning**: your comment is the feedback and the agent keeps planning.
+
+On Yes, Tab adds a note like on any approval.
+
+### `/diff`
+
+A fullscreen page listing the working-tree changes: `git status` + `git diff` against HEAD, untracked
+files as additions, and the files the agent edited in this session. Outside a git repository only the
+agent's edits are listed. Keys: `↑/↓` select a file, `Enter` or `→` open its patch, `←` back to the
+list, `a` toggle agent-only, `r` reload, `PgUp/PgDn` scroll, `Esc` or `q` close. Files over 200 KB and
+more than 300 files are cut.
+
+### Reasoning
+
+Model reasoning shows as `✻ Thinking...` while it streams, then `∴ Thought for 12s` with its first
+line dim below. `Ctrl+O` opens the transcript viewer, where the whole text is shown. The duration is
+measured by the UI for live parts, so a message loaded from storage shows `Thought` without it.
+
+### Web tools
+
+Both tools always ask (risk `external`) and are allowed in plan mode, since they change nothing
+locally.
+
+- **`web_fetch { url, prompt? }`** fetches one page and returns Markdown (scripts, styles, nav and
+  footers dropped; text and JSON as is; binary types refused). `http` is upgraded to `https`. Private
+  and local hosts (loopback, RFC 1918, link-local, `.local`, single-label names, hosts that resolve to a
+  private address), URLs with credentials and ports other than 80/443 are refused unless an allow
+  rule names the host. Redirects within the same host are followed (at most 5); a redirect to another
+  host is returned as `REDIRECT: <url>` so the model fetches it again (and you approve that host).
+  Limits: 15 s, 5 MB of body, 30 000 characters of result (a truncation note is added).
+- **`web_search { query, allowed_domains?, blocked_domains? }`** runs one provider-side search
+  and returns the findings with `Sources:`. OpenRouter: `google/gemini-2.5-flash` with the `web`
+  plugin. AI Gateway: `anthropic/claude-haiku-4.5` with the Perplexity search tool.
+  `CODER_SEARCH_MODEL` overrides the model. The search call's usage is added to the turn (tokens and
+  cost). Without an API key for the provider (and with `CODER_SCRIPTED_MODEL`) the tool answers
+  `ERROR: web search is not available`.
+
+Rules: `WebFetch(domain:example.com)` (`domain:*.example.com` matches subdomains), `WebFetch` for the
+whole tool, `WebSearch`. "Don't ask again" suggests `WebFetch(domain:<host>)` or `WebSearch`.
 
 ### Permission prompts and questions
 
@@ -292,6 +398,8 @@ plans change it; it takes effect at the next step.
 | `Read(.env*)`, `Read(./secrets/**)` | read tools on matching paths (gitignore patterns); also read-only shell commands that read a matching path, directory or glob |
 | `Edit(src/**)` | edit tools on matching paths; also redirect targets of shell commands |
 | `Agent(explore)` | the `agent` tool with that `subagent_type` |
+| `WebFetch(domain:example.com)` | `web_fetch` for that host (`domain:*.example.com`: its subdomains); also lets it reach private hosts |
+| `WebFetch`, `WebSearch` | the whole tool |
 | `Edit`, `Bash`, `mcp__server__tool` | the whole tool |
 
 Path specifiers: `//abs/path` is absolute, `~/x` is under the home directory, `/x` and `./x` are
@@ -299,7 +407,7 @@ relative to the project root, a bare `x` follows gitignore (no slash: matches at
 pattern also applies inside every mounted directory, not only the project root.
 
 Aliases: `Read` = `read_file`, `list_files`, `grep`, `glob`. `Edit` and `Write` = `edit_file`,
-`write_file`, `delete_file`. `Bash` = `bash`. `Agent` = `agent`. Real tool names work too. A rule
+`write_file`, `delete_file`. `Bash` = `bash`. `Agent` = `agent`. `WebFetch` = `web_fetch`. `WebSearch` = `web_search`. Real tool names work too. A rule
 without a specifier on a tool (`Edit`) in `deny` also removes that tool from the model's tool list.
 
 Bash allow rules must match every subcommand of a `&&`, `;`, `|` chain and never match a complex
@@ -421,7 +529,7 @@ Notes:
 - **Sessions.** JSON files in `~/.coder/projects/<sha256(root)[0:16]>/sessions/`, written with the
   example JSON-file adapters. `-c` picks the newest, `-r` / `/resume` a given one. The project data
   directory also holds `tool-outputs/` and `audit.jsonl`. User data (`~/.coder`, or `CODER_HOME`):
-  `settings.json`, `agents/`, `trusted.json`, `models.json`, `openrouter-models.json`, `projects/`
+  `settings.json`, `agents/`, `commands/`, `history.jsonl`, `trusted.json`, `models.json`, `openrouter-models.json`, `projects/`
   (each project folder also has `preferences.json`).
 
 ## How it is built

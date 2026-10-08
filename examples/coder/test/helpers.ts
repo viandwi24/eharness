@@ -13,7 +13,7 @@ import {
 import { loadAgentDefinitions } from '../src/agents/index.ts'
 import { createAgents } from '../src/app/agent.ts'
 import { type CliFlags, loadConfig } from '../src/app/config.ts'
-import { createController } from '../src/app/controller.ts'
+import { type CreateControllerOptions, createController } from '../src/app/controller.ts'
 import { createStorage } from '../src/app/sessions.ts'
 import type {
   AgentDefinition,
@@ -114,6 +114,8 @@ export async function makeController(opts: {
   /** Instead of `model`: id → model, so `setModel` can be observed. */
   resolveModel?: (id: string) => LanguageModel
   thinking?: ThinkingLevel
+  search?: CreateControllerOptions['search']
+  webFetch?: CreateControllerOptions['webFetch']
 }): Promise<{ controller: CoderController; root: string; home: string }> {
   const { root, home, config } = await setup(opts.files, opts.flags)
   const controller = await createController({
@@ -121,6 +123,8 @@ export async function makeController(opts: {
     ...(opts.resolveModel ? { resolveModel: opts.resolveModel } : { model: opts.model }),
     broker: opts.broker,
     ...(opts.thinking ? { thinking: opts.thinking } : {}),
+    ...(opts.search ? { search: opts.search } : {}),
+    ...(opts.webFetch ? { webFetch: opts.webFetch } : {}),
   })
   onCleanup(() => controller.close())
   return { controller, root, home }

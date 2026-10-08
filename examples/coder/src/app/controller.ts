@@ -3,8 +3,15 @@
  * {@link CoderController} contract that the Ink UI and print mode consume.
  */
 import { access } from 'node:fs/promises'
+import { isAbsolute, join, relative } from 'node:path'
 import type { LanguageModel } from 'ai'
-import { type HarnessSession, type ModelCatalog, type TurnResult, version } from 'eharness'
+import {
+  type HarnessRun,
+  type HarnessSession,
+  type ModelCatalog,
+  type TurnResult,
+  version,
+} from 'eharness'
 import { driveTurn, loadAgentDefinitions } from '../agents/index.ts'
 import {
   type AgentDefinition,
@@ -14,10 +21,13 @@ import {
   type CoderMessage,
   type ContextCategory,
   type ContextDetails,
+  type CustomCommand,
+  type DiffResult,
   type ModelOption,
   type RunHooks,
   type SessionSummary,
   type StatusInfo,
+  type SteerResult,
   THINKING_LEVELS,
   type ThinkingLevel,
   type ToolCallInfo,
@@ -27,12 +37,16 @@ import { createBroker, createPermissionEngine, describeApproval } from '../permi
 import { capOutput, createLocalSandbox } from '../shell/index.ts'
 import { createWorkspace } from '../workspace/index.ts'
 import { type Agents, createAgents } from './agent.ts'
+import { expandBody, expandSkill, type LoadedCommand, loadCommands } from './commands.ts'
+import { computeDiff } from './diff.ts'
+import { addHistory, readHistory } from './history.ts'
 import type { ModelState } from './model-switch.ts'
 import { loadProviderModels } from './models.ts'
 import { loadPreferences, savePreferences } from './preferences.ts'
 import { loadProjectMemory } from './project-memory.ts'
-import { createModelResolver } from './provider.ts'
+import { createModelResolver, KEY_ENV } from './provider.ts'
 import { createStorage, latestSessionId, listSessions, newSessionId } from './sessions.ts'
+import { createSearchFn, type SearchFn, type WebFetchDeps } from './web-tools.ts'
 
 /** Options of {@link createController}. */
 export interface CreateControllerOptions {
@@ -52,6 +66,10 @@ export interface CreateControllerOptions {
   thinking?: ThinkingLevel
   /** Default: an interactive broker. Print mode passes `createDenyingBroker()`. */
   broker?: ApprovalBroker
+  /** Web search of the `web_search` tool (tests). Default: the provider's search; none for scripted models. */
+  search?: SearchFn
+  /** Overrides of `web_fetch` internals (tests): `fetch`, host resolution, timeout. */
+  webFetch?: Partial<Pick<WebFetchDeps, 'fetch' | 'resolve' | 'timeoutMs'>>
   /** Start on this session id (wins over `config.resume` and `config.continueLast`). */
   sessionId?: string
 }
@@ -96,12 +114,35 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     cliAgents: config.cliAgents,
     loadProject: config.trusted,
   })
+  const commandsWarned = new Set<string>()
+  const readCommands = async (): Promise<LoadedCommand[]> => {
+    const { commands, warnings: found } = await loadCommands({
+      root: config.root,
+      userDir: config.userDir,
+      trusted: config.trusted,
+    })
+    for (const w of found) {
+      if (!commandsWarned.has(w)) {
+        commandsWarned.add(w)
+        opts.config.warnings?.push(w)
+      }
+    }
+    return commands
+  }
+  await readCommands()
   const loaded = opts.models ? undefined : await loadProviderModels(config.provider, config.userDir)
   const catalog = opts.models ?? loaded?.catalog
   const modelOptions: ModelOption[] = loaded?.options ?? []
 
   // invalid agent files: reported next to the config warnings
   opts.config.warnings?.push(...warnings)
+
+  // web search needs a real provider call: scripted/offline models have none
+  const search: SearchFn | undefined =
+    opts.search ??
+    (opts.model === undefined && process.env[KEY_ENV[config.provider]]
+      ? createSearchFn({ provider: config.provider, resolveModel })
+      : undefined)
 
   const agents: Promise<Agents> = createAgents({
     config,
@@ -117,6 +158,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     ...(opts.model ? { model: opts.model } : {}),
     ...(catalog ? { models: catalog } : {}),
     contextWindowExplicit: opts.config.contextWindowExplicit === true,
+    ...(search ? { search } : {}),
+    ...(opts.webFetch ? { webFetch: opts.webFetch } : {}),
   })
   const agentsReady = agents
   await agentsReady
@@ -128,6 +171,111 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     newSessionId()
 
   let controller: AbortController | undefined
+
+  /** The turn `run()` / `steer()` is driving: lets a steer that missed it join the drive loop. */
+  interface ActiveTurn {
+    /** Resolves once the first `send()` returned (a steer waits for it). */
+    started: Promise<void>
+    /** Turn ids already driven. */
+    seen: Set<string>
+    /** Runs a steer started that nothing drives yet (it arrived as the turn ended). */
+    pending: Array<HarnessRun<CoderMessage>>
+    /** Steers that found no running turn (it waits for an approval) or were dropped by one. */
+    deferred: string[]
+  }
+  let active: ActiveTurn | undefined
+
+  /** Texts of steers the core dropped because the turn stopped `tool-pending`. */
+  const watchDropped = (s: HarnessSession<CoderMessage>, into: string[]): (() => void) => {
+    let reader: ReadableStreamDefaultReader<unknown> | undefined
+    try {
+      reader = (s.events() as ReadableStream<unknown>).getReader()
+    } catch {
+      return () => {}
+    }
+    const r = reader
+    void (async () => {
+      try {
+        for (;;) {
+          const { done, value } = await r.read()
+          if (done) return
+          const e = value as { type?: string; reason?: string; text?: string }
+          if (e.type === 'input-dropped' && e.reason === 'tool-pending' && e.text) into.push(e.text)
+        }
+      } catch {
+        // the stream was cancelled or the session closed
+      }
+    })()
+    return () => void r.cancel().catch(() => {})
+  }
+
+  const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
+
+  /**
+   * Run one prompt to its end: drive the turn, then every turn that follows it without the user
+   * (a steer that became a queued turn, a steer dropped by an approval stop). Nothing the session
+   * starts runs undriven, so no approval stays unanswered.
+   */
+  const execute = async (text: string, hooks: RunHooks): Promise<TurnResult<CoderMessage>> => {
+    const abort = new AbortController()
+    controller = abort
+    const turn: ActiveTurn = {
+      started: Promise.resolve(),
+      seen: new Set(),
+      pending: [],
+      deferred: [],
+    }
+    let markStarted: () => void = () => {}
+    turn.started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    active = turn
+    const began = Date.now()
+    let stopWatching: () => void = () => {}
+    try {
+      const s = await session()
+      stopWatching = watchDropped(s, turn.deferred)
+      const driveOptions = {
+        session: s,
+        broker,
+        permissions,
+        describe,
+        signal: abort.signal,
+        stopOnBareDeny: true,
+        onRun: (run: HarnessRun<CoderMessage>) => {
+          turn.seen.add(run.turnId)
+          hooks.onRun(run)
+        },
+      }
+      const first = s.send(text, { abortSignal: abort.signal })
+      turn.seen.add(first.turnId)
+      markStarted()
+      let result = await driveTurn(first, driveOptions)
+      for (;;) {
+        if (abort.signal.aborted || result.stop === 'aborted') break
+        await tick()
+        await tick()
+        const next =
+          turn.pending.shift() ??
+          (() => {
+            const queued = s.attach() as HarnessRun<CoderMessage> | undefined
+            return queued !== undefined && !turn.seen.has(queued.turnId) ? queued : undefined
+          })() ??
+          (turn.deferred.length > 0
+            ? s.send(turn.deferred.splice(0).join('\n\n'), { abortSignal: abort.signal })
+            : undefined)
+        if (next === undefined) break
+        result = await driveTurn(next, driveOptions)
+      }
+      return result
+    } finally {
+      markStarted()
+      stopWatching()
+      turnMs += Date.now() - began
+      if (controller === abort) controller = undefined
+      if (active === turn) active = undefined
+    }
+  }
 
   /** Close the handle of a session we leave (never while its turn runs). */
   const closeSessionHandle = async (id: string): Promise<void> => {
@@ -147,25 +295,27 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       return sessionId
     },
 
-    async run(text: string, hooks: RunHooks): Promise<TurnResult<CoderMessage>> {
-      const active = new AbortController()
-      controller = active
-      const s = await session()
-      const began = Date.now()
-      try {
-        return await driveTurn(s.send(text, { abortSignal: active.signal }), {
-          session: s,
-          broker,
-          permissions,
-          describe,
-          signal: active.signal,
-          stopOnBareDeny: true,
-          onRun: hooks.onRun,
-        })
-      } finally {
-        turnMs += Date.now() - began
-        if (controller === active) controller = undefined
+    run: (text: string, hooks: RunHooks): Promise<TurnResult<CoderMessage>> => execute(text, hooks),
+
+    async steer(text: string, hooks: RunHooks): Promise<SteerResult> {
+      const turn = active
+      if (turn !== undefined) {
+        await turn.started
+        const s = await session()
+        // still running (nothing awaits between this check and the send)
+        if (active === turn && controller !== undefined) {
+          // no running turn = it stopped for an approval: a send would auto-deny that approval
+          if (s.attach() === undefined) {
+            turn.deferred.push(text)
+            return { delivered: 'step' }
+          }
+          const run = s.send(text, { ifBusy: 'steer' })
+          // a run of a turn nobody drives (the turn had just ended): the drive loop takes it over
+          if (!turn.seen.has(run.turnId)) turn.pending.push(run)
+          return { delivered: 'step' }
+        }
       }
+      return { delivered: 'turn', result: await execute(text, hooks) }
     },
 
     abort(): void {
@@ -380,6 +530,49 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         agents: definitions.length,
         settingsFiles,
       }
+    },
+
+    history: (q?: { allProjects?: boolean; limit?: number }): Promise<string[]> =>
+      readHistory(config.userDir, config.root, q),
+
+    addHistory: (text: string): Promise<void> => addHistory(config.userDir, config.root, text),
+
+    async diff(): Promise<DiffResult> {
+      const toRoot = (virtualPath: string): string | null => {
+        let best: { virtual: string; real: string } | undefined
+        const probe = `${virtualPath.replace(/\/+$/, '')}/`
+        for (const m of workspace.mounts()) {
+          if (
+            probe.startsWith(m.virtual) &&
+            (best === undefined || m.virtual.length > best.virtual.length)
+          ) {
+            best = m
+          }
+        }
+        if (best === undefined) return null
+        const real = join(best.real, probe.slice(best.virtual.length).replace(/\/+$/, ''))
+        const rel = relative(config.root, real)
+        return rel === '' || rel.startsWith('..') || isAbsolute(rel)
+          ? null
+          : rel.split('\\').join('/')
+      }
+      return computeDiff({
+        root: config.root,
+        messages: await (await session()).messages(),
+        toRoot,
+      })
+    },
+
+    async commands(): Promise<CustomCommand[]> {
+      return (await readCommands()).map(({ body: _body, ...command }) => command)
+    },
+
+    async expandCommand(name: string, args: string): Promise<string> {
+      const command = (await readCommands()).find((c) => c.name === name)
+      if (command === undefined) throw new Error(`unknown command: /${name}`)
+      return command.source === 'skill' || command.body === undefined
+        ? expandSkill(command.name, args)
+        : expandBody(command.body, args)
     },
 
     agents: (): AgentDefinition[] => definitions,

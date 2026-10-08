@@ -24,6 +24,7 @@ const PLAN_PROMPT = `You are a read-only software architect. Research the codeba
 - End with a "Critical files" list of the 3 to 7 files that matter most, with a one-line reason each.`
 
 const WRITE_TOOLS = [TOOL.edit, TOOL.write, TOOL.delete]
+const WEB_TOOLS = [TOOL.webFetch, TOOL.webSearch]
 
 /** The agents every session can spawn; lowest priority on a name collision. */
 export const BUILTIN_AGENTS: AgentDefinition[] = [
@@ -39,7 +40,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     description:
       'Fast read-only agent for searching and analysing the codebase (find files, locate code, answer how/where questions). State the thoroughness: quick, medium or very thorough.',
     prompt: EXPLORE_PROMPT,
-    tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash],
+    tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash, ...WEB_TOOLS],
     disallowedTools: [...WRITE_TOOLS, TOOL.agent],
     permissionMode: 'plan',
     source: 'builtin',
@@ -49,7 +50,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     description:
       'Read-only software architect: researches the codebase and returns a step-by-step implementation plan with the critical files.',
     prompt: PLAN_PROMPT,
-    tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash],
+    tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash, ...WEB_TOOLS],
     disallowedTools: [...WRITE_TOOLS, TOOL.agent],
     permissionMode: 'plan',
     source: 'builtin',

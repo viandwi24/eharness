@@ -80,6 +80,21 @@ describe('slash parsing', () => {
     expect(matchSlash('nope')).toEqual([])
   })
 
+  test('matchSlash lists custom commands and skills after the built-ins, never shadowing them', () => {
+    const custom = [
+      { name: 'review', description: 'Review', argumentHint: '<pr>', source: 'project' as const },
+      { name: 'clear', description: 'shadow', source: 'user' as const },
+      { name: 'deploy', description: 'Ship', source: 'skill' as const },
+    ]
+    const hits = matchSlash('/', custom)
+    expect(hits.slice(-2).map((c) => [c.name, c.usage, c.source])).toEqual([
+      ['review', '<pr>', 'project'],
+      ['deploy', undefined, 'skill'],
+    ])
+    expect(hits.filter((c) => c.name === 'clear')).toHaveLength(1)
+    expect(matchSlash('/rev', custom).map((c) => c.name)).toEqual(['review'])
+  })
+
   test('every documented command exists', () => {
     expect(slashCommands.map((c) => c.name)).toEqual([
       'help',
@@ -95,6 +110,8 @@ describe('slash parsing', () => {
       'transcript',
       'resume',
       'todos',
+      'diff',
+      'plan',
       'init',
       'exit',
     ])
@@ -203,6 +220,15 @@ describe('slash effects', () => {
     expect(h.printed[0]?.text).toContain('unknown session')
     expect(h.calls).not.toContain('load')
     expect(slashCommands.find((c) => c.name === 'resume')?.usage).toBe('[id]')
+  })
+
+  test('/diff opens the diff page; /plan sets plan mode and sends its description', async () => {
+    const h = harness()
+    await runSlash('/diff', h.ctx)
+    expect(h.pages).toEqual([{ kind: 'diff' }])
+    await runSlash('/plan', h.ctx)
+    await runSlash('/plan add a login page', h.ctx)
+    expect(h.calls).toEqual(['setMode:plan', 'setMode:plan', 'submit:add a login page'])
   })
 
   test('/init submits the fixed prompt and /exit exits', async () => {

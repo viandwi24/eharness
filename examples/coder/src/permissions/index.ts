@@ -15,10 +15,13 @@ export {
   readPathArguments,
 } from './readonly-commands.ts'
 export {
+  domainSpecifierMatches,
+  fetchHost,
   type MatchContext,
   matchBashSpec,
   type ParsedRule,
   parseRule,
   ruleMatchesCall,
+  ruleToolMatches,
   toolsForRuleTool,
 } from './rules.ts'

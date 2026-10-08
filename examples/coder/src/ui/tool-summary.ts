@@ -244,6 +244,70 @@ function errorLine(message: string): string {
   return `Error: ${line}`
 }
 
+/** Shorten a URL for display: no scheme, no `www.`, no trailing slash, cut to `max` characters. */
+export function shortUrl(url: string, max = 60): string {
+  const bare = url
+    .trim()
+    .replace(/^[a-z]+:\/\//i, '')
+    .replace(/^www\./i, '')
+    .replace(/\/$/, '')
+  return bare.length > max ? `${bare.slice(0, max - 1)}…` : bare
+}
+
+function humanBytes(raw: string): string {
+  const m = /^([\d.,]+)\s*(bytes?|b|kb|mb|gb)?$/i.exec(raw.trim())
+  if (!m) return raw.trim()
+  const n = Number((m[1] as string).replace(/,/g, ''))
+  const unit = (m[2] ?? 'b').toLowerCase()
+  if (Number.isNaN(n)) return raw.trim()
+  if (unit.startsWith('b')) {
+    if (n < 1024) return `${n}B`
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
+    return `${(n / 1024 / 1024).toFixed(1)}MB`
+  }
+  return `${m[1]}${unit.toUpperCase()}`
+}
+
+/** Parsed `URL: <url> · <status> · <bytes>` header line of a `web_fetch` result (lenient). */
+export interface FetchHeader {
+  url?: string
+  status?: string
+  bytes?: string
+}
+
+/** Parse the header line of a `web_fetch` result; fields that are missing stay undefined. */
+export function parseFetchHeader(output: string): FetchHeader {
+  const line = output.split('\n').find((l) => /^url:/i.test(l.trim()))
+  if (!line) return {}
+  const parts = line
+    .trim()
+    .replace(/^url:\s*/i, '')
+    .split(/\s+[·|]\s+/)
+  const [url, a, b] = parts
+  const header: FetchHeader = {}
+  if (url) header.url = url.trim()
+  for (const part of [a, b]) {
+    if (!part) continue
+    if (/^\d{3}\b/.test(part.trim()) || /^(status:?)/i.test(part.trim()))
+      header.status = part.trim().replace(/^status:?\s*/i, '')
+    else if (/\d/.test(part)) header.bytes = humanBytes(part.replace(/^(bytes|size):?\s*/i, ''))
+  }
+  return header
+}
+
+/** Number of sources in a `web_search` result: `Sources:` list entries, else distinct URLs. */
+export function countSources(output: string): number {
+  const lines = output.split('\n')
+  const at = lines.findIndex((l) => /^sources:/i.test(l.trim()))
+  if (at >= 0) {
+    const inline = (lines[at] ?? '').replace(/^\s*sources:\s*/i, '').trim()
+    const listed = lines.slice(at + 1).filter((l) => /^\s*(?:[-*]|\d+[.)])\s+\S/.test(l)).length
+    if (listed > 0) return listed
+    if (inline) return (inline.match(/https?:\/\/\S+/g) ?? [inline]).length
+  }
+  return new Set(output.match(/https?:\/\/[^\s)>\]"']+/g) ?? []).size
+}
+
 /** Describe one tool call. */
 export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescription {
   const input = asRecord(view.input)
@@ -371,6 +435,28 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       desc.label = 'Directory access'
       desc.target = str(input.path)
       if (ok && text) desc.summary = firstLine(text, 120)
+      break
+    }
+    case TOOL.webFetch: {
+      desc.label = 'Fetch'
+      desc.target = shortUrl(str(input.url))
+      if (view.state === 'output-available' && !view.preliminary) {
+        if (/^redirect:/i.test(text)) {
+          status = 'ok'
+          desc.summary = firstLine(text, 160)
+        } else if (!/^error:/i.test(text)) {
+          const h = parseFetchHeader(text)
+          desc.summary = `Received ${h.bytes ?? `${text.length}B`}${h.status ? ` (${h.status})` : ''}`
+        } else status = 'error'
+      }
+      break
+    }
+    case TOOL.webSearch: {
+      desc.label = 'Web Search'
+      desc.target = JSON.stringify(str(input.query))
+      if (view.state === 'output-available' && !view.preliminary && !/^error:/i.test(text))
+        desc.summary = `Did 1 search · ${plural(countSources(text), 'source')}`
+      else if (/^error:/i.test(text)) status = 'error'
       break
     }
     default: {

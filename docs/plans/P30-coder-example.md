@@ -742,6 +742,32 @@ persisted.
   Bracketed paste keeps newlines as text.
 - **Welcome box** shortens home to `~` and truncates the middle of long paths to the window width.
 
+### Implementation notes: UX batch (2026-10-08)
+
+- **Steer fallbacks** (`app/controller.ts`): `run()` and `steer()` share an `ActiveTurn`
+  (`started`, `seen`, `pending`, `deferred`). A steer is sent with `ifBusy: 'steer'`. If the turn had
+  just ended, the steer became a queued turn nobody drives; the drive loop picks it up through
+  `pending` or `session.attach()` so it never runs without its approvals being answered.
+- **Deferred steers during approvals.** While the turn waits for an approval (`session.attach()` is
+  `undefined`) a send would auto-deny it, so the text goes to `deferred`. Steers the core dropped
+  with `input-dropped` / `reason: 'tool-pending'` (read from `session.events()`) join `deferred` and
+  are sent as the next turn after the approval round.
+- **Plan-exit mode.** The prompt's choice (`acceptEdits` / `default`) is passed to the engine with
+  `setPlanExitMode` just before `respond()`; the `exit_plan_mode` tool switches to it instead of the
+  previous mode.
+- **Steered input in the transcript.** `data-eh.input` parts render where they sit
+  (`MessageView`): `source: 'user'` as a `> text` line with a dim marker, an approval note
+  (`Note from the user about the approved … call:`) as a dim `Note: …`, `source: 'event'` as a dim
+  line, `plugin:*` hidden (model-only context).
+- **Web safety** (`app/web-tools.ts`): http upgraded to https; private/local hosts, resolved private
+  addresses, credentials in the URL and odd ports refused unless `WebFetch(domain:host)` allows the
+  host; redirects followed only within the same host (else `REDIRECT:` for a new approval); 15 s,
+  5 MB, 30 000 characters; HTML to Markdown. Both tools always ask and run in plan mode.
+- **Search per provider.** OpenRouter: `generateText` with `google/gemini-2.5-flash` and the
+  `web` plugin in `providerOptions.openrouter.plugins`. AI Gateway: `anthropic/claude-haiku-4.5` with
+  `gateway.tools.perplexitySearch`. `CODER_SEARCH_MODEL` overrides; usage goes to the turn through
+  `turn.addUsage`. No key or a scripted model: the tool reports it is unavailable.
+
 ## UX gap analysis (2026-10-08)
 
 Compared with the reference terminal coding agent's documentation (interactive mode, commands,
@@ -753,9 +779,9 @@ quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
 
 | Feature | Reference behaviour | Here | eharness support | Prio | Effort |
 |---|---|---|---|---|---|
-| Queue messages while the agent works | `Enter` during a turn queues; queued entries shown gray; `Up` takes them back; sent at the next step boundary or after the turn | hint "turn is running" only | `ifBusy: 'queue' \| 'steer' \| 'collect'` (spec 05) | P1 | M |
-| Reverse history search | `Ctrl+R`, history of all projects, persisted | in-memory Up/Down only | app | P1 | S |
-| Persistent prompt history | across sessions per project | no | app | P1 | S |
+| Queue messages while the agent works | `Enter` during a turn queues; queued entries shown gray; `Up` takes them back; sent at the next step boundary or after the turn done: queued while a turn runs, steered at the next tool result or sent as the next prompt (`ActiveTurn` in `app/controller.ts`); `Up` takes back | `ifBusy: 'queue' \| 'steer' \| 'collect'` (spec 05) | done | — |
+| Reverse history search | `Ctrl+R`, history of all projects, persisted done: `Ctrl+R` over `~/.coder/history.jsonl` of all projects | app | done | — |
+| Persistent prompt history | across sessions per project done: `~/.coder/history.jsonl`, `Up`/`Down` per project | app | done | — |
 | Double `Esc` | clears a draft (saved to history) or opens the rewind menu | no | app | P2 | S |
 | Rewind / checkpoints | restore conversation and/or code to an earlier message | no | conversation: `regenerate` / `edit` (rewind markers); code: needs file snapshots (app) | P2 | L |
 | External editor | `Ctrl+G` opens `$EDITOR` for the prompt | no | app | P2 | S |
@@ -771,7 +797,7 @@ quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
 
 | Feature | Reference behaviour | Here | eharness support | Prio | Effort |
 |---|---|---|---|---|---|
-| Reasoning display | collapsed thinking block, expandable | hidden | reasoning parts are in the UI message | P1 | S |
+| Reasoning display | collapsed thinking block, expandable done: `✻ Thinking…` live, `∴ Thought for Ns`, full text in the transcript viewer (`Ctrl+O`) | reasoning parts are in the UI message | done | — |
 | Task list toggle | `Ctrl+T` shows/hides the checklist (≤ 5 items) | always shown while open | todos plugin | P3 | S |
 | Focus view | `/focus`: only last prompt, one-line tool summaries, diffstats | no | app | P3 | S |
 | Message timestamps / model per message | in the transcript viewer | viewer shows them when metadata has them | `metadata.eharness` | done | — |
@@ -784,9 +810,9 @@ quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
 
 | Command | Reference behaviour | Here | eharness support | Prio | Effort |
 |---|---|---|---|---|---|
-| `/diff` | review working-tree changes and per-turn edits | no | app (git) + `data-filesystem.change` parts | P1 | M |
+| `/diff` | review working-tree changes and per-turn edits done: `/diff` page (git + agent edits) | app (git) + `data-filesystem.change` parts | done | — |
 | `/compact [instructions]` | focus instructions for the summary | `/compact` without instructions | `compaction.prompt` hook | P2 | S |
-| `/plan [description]` | enter plan mode from the prompt | Shift+Tab / mode command | app | P2 | S |
+| `/plan [description]` | enter plan mode from the prompt done: `/plan [description]` | app | done | — |
 | `/add-dir <path>` | mount a directory mid-session | tool + flag only | `workspace.addDirectory` | P2 | S |
 | `/export`, `/copy [N]` | export conversation, copy a response | no | `session.messages()` | P2 | S |
 | `/btw` side question | answer from context without adding to history | no | a separate `streamText` over the projected context | P2 | M |
@@ -797,28 +823,28 @@ quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
 | `/init` | draft `AGENTS.md` | done | — | done | — |
 | `/doctor` | setup diagnostics | no | app | P3 | S |
 | `/release-notes`, `/feedback`, `/bug` | product-specific | not applicable | — | — | — |
-| Custom commands and skills by `/name` | project/user command files, skills invokable as `/skill` | skills load through `load_skill` only | skill sources (spec 07) | P1 | M |
+| Custom commands and skills by `/name` | project/user command files, skills invokable as `/skill` done: `.coder/commands`, `~/.coder/commands`, skills as `/skill-name` | skill sources (spec 07) | done | — |
 
 ### Agent and tools
 
 | Feature | Reference behaviour | Here | eharness support | Prio | Effort |
 |---|---|---|---|---|---|
-| Web fetch / web search tools | fetch a URL as markdown; search | no | app tools (+ approval) | P1 | M |
+| Web fetch / web search tools | fetch a URL as markdown; search done: `web_fetch` and `web_search` with approval and `WebFetch(domain:…)` / `WebSearch` rules | app tools (+ approval) | done | — |
 | Background shells | `Ctrl+B` backgrounds a command; output read later; `/tasks` | foreground only | app (sandbox `spawn`) + external waits (spec 11 §4.2) | P2 | M |
 | Background subagents | run while the user keeps working; completion notification | foreground, parallel inside one turn | inject + wake (spec 05 §12) | P2 | L |
 | Monitor tool | stream a background command's lines back to the agent | no | inject `next-step` events | P3 | M |
 | LSP diagnostics | definitions, references, type errors | no | MCP or app tool | P3 | L |
 | Hooks | shell commands on tool/turn events | no | plugin hooks (spec 01 §5) | P2 | M |
-| Plan approval options | approve with auto-accept edits / approve manual / keep planning with feedback | approve or deny | `exit_plan_mode` + mode switch | P1 | S |
+| Plan approval options | approve with auto-accept edits / approve manual / keep planning with feedback done: auto-accept edits / manual / keep planning (`setPlanExitMode`) | `exit_plan_mode` + mode switch | done | — |
 | Permission prompt notes | `Tab` adds a note to Yes/No | done; the note reaches the model one model call later than in the reference (R16); a bare No stops the main turn via a stream workaround (R17) | steer + denial reason | done | — |
 | Multiple-choice questions | `ask_user_question` dialog, radio/checkbox, Other, notes | done (client tool answered in process through the broker) | client tools (spec 11) | done | — |
 | Question timeout | optional auto-continue after idle | no | client tool timeouts (spec 11 §7.1) | P3 | S |
 | Output styles | switchable response styles | no | instructions | P3 | S |
 | OS sandbox | sandboxed shell | not sandboxed (documented) | roadmap "Sandbox plugin" | P2 | L |
 
-**Suggested next batch (P1, mostly S/M):** message queueing, reasoning display, persistent history
-with `Ctrl+R`, plan approval options, `/diff`, web fetch/search tools, custom `/commands` and skill
-invocation. Then P2 input polish (external editor, kill ring, paste chips, double Esc) and
+**Done since (the P1 batch):** message queueing, reasoning display, persistent history with
+`Ctrl+R`, plan approval options, `/plan`, `/diff`, web fetch/search tools, custom `/commands` and
+skill invocation. **Next:** P2 input polish (external editor, kill ring, paste chips, double Esc) and
 notifications.
 
 ## Requests to the library
@@ -845,6 +871,8 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 | R16 | An approval answer that carries a note for the model, delivered on the continuation's first step (today `PendingResponse.approvals[].reason` only reaches the model for denials, and no steer is delivered before step 0 of a `respond()` continuation) | the note is a steer sent after `respond()`, so the model reads it one call later; undelivered notes are carried into the next `respond()` (`agents/drive.ts`) |
 | R17 | `respond()` option to end the turn after recording the answers (e.g. stop on a bare denial) without starting a model step | the drive tees the continuation stream and aborts the run right after the `tool-output-denied` chunk; one model request may already have started (`agents/drive.ts`) |
 | R18 | The tool input of a pending client-tool call in `PendingState.clientTools` (only `toolCallId` and `toolName` today) | `ask_user_question` input is read back from the stored tool part via `session.messages()` |
+| R19 | A steer API that reports what happened to the input: delivered at a step of the running turn, fell back to a queued turn, or was dropped because the turn waits for an approval (today `send({ ifBusy: 'steer' })` returns a run and the app infers the outcome from `session.attach()` and `input-dropped` session events) | `steer()` in `app/controller.ts` checks `attach()` first, tracks `ActiveTurn.pending` / `deferred` and watches `input-dropped` |
+| R20 | Duration of a reasoning part in UI messages (only the message-level `durationMs` exists; a part carries no start/end time) | the UI measures it for live parts and shows `Thought` without a time for stored ones (`partDuration` reads `providerMetadata.eharness.durationMs` if a future core writes it) |
 
 ## Open questions
 

@@ -9,6 +9,7 @@ import {
 import { DiffView } from './DiffView.tsx'
 import { type Buffer, backspace, deleteForward, insert, move } from './editor.ts'
 import { keyedLines } from './keys.ts'
+import { Markdown } from './markdown.tsx'
 import { stripControl } from './sanitize.ts'
 import { color, sym } from './theme.ts'
 import { displayPath } from './tool-summary.ts'
@@ -32,6 +33,21 @@ export function answerWith(option: PromptOption, comment: string): ApprovalAnswe
 
 /** The options for a request; "don't ask again" entries only when a rule is offered. */
 export function optionsFor(request: ApprovalRequest): PromptOption[] {
+  if (request.toolName === TOOL.exitPlan) {
+    return [
+      {
+        label: 'Yes, and auto-accept edits',
+        answer: { approved: true, mode: 'acceptEdits' },
+        comment: 'note',
+      },
+      {
+        label: 'Yes, and manually approve edits',
+        answer: { approved: true, mode: 'default' },
+        comment: 'note',
+      },
+      { label: 'No, keep planning', answer: { approved: false }, comment: 'feedback' },
+    ]
+  }
   const options: PromptOption[] = [{ label: 'Yes', answer: { approved: true }, comment: 'note' }]
   if (request.suggestedRule) {
     options.push({
@@ -75,7 +91,7 @@ export function dialogTitle(toolName: string): string {
     case TOOL.agent:
       return 'Agent'
     case TOOL.exitPlan:
-      return 'Plan'
+      return 'Ready to code?'
     case TOOL.dirAccess:
       return 'Directory access'
     default:
@@ -88,6 +104,8 @@ export function dialogQuestion(request: ApprovalRequest): string {
   const path = (request.input as { path?: unknown } | null)?.path
   const file = typeof path === 'string' ? stripControl(displayPath(path)) : undefined
   switch (request.toolName) {
+    case TOOL.exitPlan:
+      return 'Would you like to proceed?'
     case TOOL.edit:
       return file ? `Do you want to make this edit to ${file}?` : 'Do you want to make this edit?'
     case TOOL.write:
@@ -99,7 +117,22 @@ export function dialogQuestion(request: ApprovalRequest): string {
   }
 }
 
+const PLAN_MAX_LINES = 60
+
 function Detail({ request }: { request: ApprovalRequest }): ReactElement | null {
+  if (request.toolName === TOOL.exitPlan) {
+    const plan = stripControl(request.detail ?? '')
+    if (!plan.trim()) return null
+    const lines = plan.split('\n')
+    return (
+      <Box flexDirection="column">
+        <Markdown text={lines.slice(0, PLAN_MAX_LINES).join('\n')} />
+        {lines.length > PLAN_MAX_LINES ? (
+          <Text dimColor>… {lines.length - PLAN_MAX_LINES} more lines</Text>
+        ) : null}
+      </Box>
+    )
+  }
   const command = (request.input as { command?: unknown } | null)?.command
   const raw = request.detail ?? (typeof command === 'string' ? command : undefined)
   if (!raw) return null

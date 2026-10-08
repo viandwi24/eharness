@@ -288,7 +288,7 @@ describe('DiffView', () => {
     const out = show(<DiffView oldText={oldText} newText={newText} maxLines={50} />).text()
     expect(out).toMatch(/3 -\s+l2/)
     expect(out).toMatch(/3 \+\s+L2/)
-    expect(out).toContain('…')
+    expect(out).toContain('⋯')
     expect(out).toContain('L25')
   })
 })
