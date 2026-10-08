@@ -163,6 +163,7 @@ export type WarningCode =
   | 'W_GUARD_UNAVAILABLE'
   | 'W_INBOX_DEAD_LETTER'
   | 'W_PAGE_CONTEXT_LIMITED'
+  | 'W_TOOL_ORDER'
 
 /**
  * A non-fatal problem, delivered to `config.onWarning`, as a transient `data-eh.warning` part

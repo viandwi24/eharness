@@ -105,6 +105,35 @@ describe('driveTurn', () => {
     expect(env.broker.pending()).toEqual([])
   })
 
+  test('edit_file with edits[]: one approval shows the combined diff and applies all edits', async () => {
+    const { drive, env } = await setupDrive([
+      { toolCalls: [read] },
+      {
+        toolCalls: [
+          {
+            toolName: 'edit_file',
+            input: {
+              path: '/a.txt',
+              edits: [
+                { old_string: 'alpha', new_string: 'ALPHA' },
+                { old_string: 'beta', new_string: 'BETA' },
+              ],
+            },
+          },
+        ],
+      },
+      { text: 'edited' },
+    ])
+    const turn = drive('edit it')
+    const request = await nextPending(env.broker)
+    expect(request.title).toContain('a.txt')
+    expect(request.detail).toContain('-alpha\n-beta\n+ALPHA\n+BETA')
+    expect(request.suggestedRule).toBe('Edit')
+    env.broker.answer(request.id, { approved: true })
+    expect((await turn).stop).toBe('complete')
+    expect(await readFile(join(env.root, 'a.txt'), 'utf8')).toBe('ALPHA\nBETA\n')
+  })
+
   test('abort while waiting for the user ends the turn without running the tool', async () => {
     const { drive, env } = await setupDrive([
       { toolCalls: [read] },
@@ -143,42 +172,42 @@ describe('driveTurn', () => {
     expect(runs).toBe(2)
   })
 
-  test('Yes + note: the note reaches the model after the tool result and is stored as data-eh.input', async () => {
+  test('Yes + note: the note reaches the model right after the tool result and is stored as data-eh.input', async () => {
     const { drive, env, model, session } = await setupDrive([
       { toolCalls: [read] },
       { toolCalls: [edit('alpha', 'ALPHA')] },
       { text: 'edited' },
-      { text: 'noted' },
     ])
     const turn = drive('edit it')
     env.broker.answer((await nextPending(env.broker)).id, { approved: true, note: 'keep it small' })
     const result = await turn
     expect(result.stop).toBe('complete')
     expect(await readFile(join(env.root, 'a.txt'), 'utf8')).toBe('ALPHA\nbeta\n')
-    const note = 'Note from the user about the approved edit_file call: keep it small'
-    // step 2 (right after the approved tool) cannot carry it yet; step 3 sees it, last in the prompt
-    expect(JSON.stringify(model.prompts[2])).not.toContain(note)
-    expect(model.prompts).toHaveLength(4)
-    const last = model.prompts[3] as Array<{ role: string; content: unknown }>
-    expect(JSON.stringify(last.at(-1))).toContain(note)
+    // the first step of the continuation already sees the note, last in the prompt
+    expect(model.prompts).toHaveLength(3)
+    const last = model.prompts[2] as Array<{ role: string; content: unknown }>
+    expect(JSON.stringify(last.at(-1))).toContain('keep it small')
+    expect(JSON.stringify(last.at(-1))).toContain('<user-note tool=\\"edit_file\\"')
     expect(last.at(-1)?.role).toBe('user')
     expect(last.map((m) => m.role)).toContain('tool')
-    const stored = await session.messages()
-    const parts = stored.flatMap((m) => m.parts) as Array<{
+    const parts = (await session.messages()).flatMap((m) => m.parts) as Array<{
       type: string
-      data?: { text?: string }
+      data?: { approvalNote?: { text?: string; toolName?: string } }
     }>
-    const input = parts.find((p) => p.type === 'data-eh.input')
-    expect(input?.data?.text).toBe(note)
+    const inputs = parts.filter((p) => p.type === 'data-eh.input')
+    expect(inputs).toHaveLength(1)
+    expect(inputs[0]?.data?.approvalNote).toMatchObject({
+      text: 'keep it small',
+      toolName: 'edit_file',
+    })
   })
 
-  test('Yes + note, then the continuation stops pending again: the note is re-sent and still reaches the model', async () => {
+  test('Yes + note, then the continuation stops pending again: the note is stored once and reaches the model once', async () => {
     const { drive, env, model, session } = await setupDrive([
       { toolCalls: [read] },
       { toolCalls: [edit('alpha', 'ALPHA')] },
       { toolCalls: [edit('beta', 'BETA')] },
       { text: 'both edited' },
-      { text: 'ack' },
     ])
     const turn = drive('edit twice')
     env.broker.answer((await nextPending(env.broker)).id, { approved: true, note: 'be careful' })
@@ -186,16 +215,15 @@ describe('driveTurn', () => {
     env.broker.answer(second.id, { approved: true })
     const result = await turn
     expect(result.stop).toBe('complete')
-    const note = 'Note from the user about the approved edit_file call: be careful'
-    expect(JSON.stringify(model.prompts.at(-1))).toContain(note)
+    expect(JSON.stringify(model.prompts.at(-1))).toContain('be careful')
     const inputs = (await session.messages())
       .flatMap((m) => m.parts)
       .filter((p) => p.type === 'data-eh.input')
     expect(inputs).toHaveLength(1)
   })
 
-  test('bare No on the main agent stops the turn; the stored result is the denial', async () => {
-    const { drive, env, session } = await setupDrive([
+  test('bare No on the main agent ends the turn without a model call; the stored result is the denial', async () => {
+    const { drive, env, session, model } = await setupDrive([
       { toolCalls: [read] },
       { toolCalls: [edit('alpha', 'ALPHA')] },
       { text: 'must not run', delayMs: 50 },
@@ -203,7 +231,9 @@ describe('driveTurn', () => {
     const turn = drive('edit it')
     env.broker.answer((await nextPending(env.broker)).id, { approved: false })
     const result = await turn
-    expect(result.stop).toBe('aborted')
+    expect(result.stop).toBe('complete')
+    expect(result.steps).toBe(0)
+    expect(model.calls).toHaveLength(2)
     expect(await readFile(join(env.root, 'a.txt'), 'utf8')).toBe('alpha\nbeta\n')
     const parts = ((await session.messages()).at(-1)?.parts ?? []) as Array<{
       type: string
@@ -212,6 +242,23 @@ describe('driveTurn', () => {
     expect(parts.find((p) => p.type === 'tool-edit_file')?.state).toBe('output-denied')
     expect(JSON.stringify(parts)).not.toContain('must not run')
     expect(JSON.stringify(parts)).not.toContain('Interrupted')
+  })
+
+  test('a No with feedback continues even with stopOnBareDeny', async () => {
+    const { drive, env, model } = await setupDrive([
+      { toolCalls: [read] },
+      { toolCalls: [edit('alpha', 'ALPHA')] },
+      { text: 'adapting' },
+    ])
+    const turn = drive('edit it')
+    env.broker.answer((await nextPending(env.broker)).id, {
+      approved: false,
+      feedback: 'use beta instead',
+    })
+    const result = await turn
+    expect(result.stop).toBe('complete')
+    expect(model.calls).toHaveLength(3)
+    expect(JSON.stringify(model.prompts[2])).toContain('use beta instead')
   })
 
   test('bare No continues when stopOnBareDeny is off (subagents)', async () => {

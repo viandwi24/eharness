@@ -131,8 +131,27 @@ export interface TurnInfo {
    * Add usage from nested work (subagents, tool-internal model calls) to this turn. Pass `model`
    * (priced from the agent's `models`) or `costUsd` so it counts toward cost and budgets (spec 12).
    */
-  addUsage(usage: LanguageModelUsage, source?: string | AddUsageOptions): void
+  addUsage(usage: AddUsageInput, source?: string | AddUsageOptions): void
 }
+
+/**
+ * Plain token counts accepted by {@link TurnInfo.addUsage}: the shape of `TurnResult['usage']`
+ * (a subagent's result) with optional reasoning tokens. `costUsd` counts like
+ * `AddUsageOptions.costUsd` (which wins when both are set).
+ */
+export interface PlainUsage {
+  inputTokens: number
+  outputTokens: number
+  totalTokens?: number
+  cachedInputTokens?: number
+  cacheWriteTokens?: number
+  reasoningTokens?: number
+  /** Known cost in USD of this usage. */
+  costUsd?: number
+}
+
+/** What {@link TurnInfo.addUsage} accepts: AI SDK usage or plain token counts. */
+export type AddUsageInput = LanguageModelUsage | PlainUsage
 
 /** Options of {@link TurnInfo.addUsage}. */
 export interface AddUsageOptions {

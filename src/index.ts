@@ -121,6 +121,7 @@ export type {
   HarnessUsageMeta,
   InferHarnessUIMessage,
   InputPartData,
+  InstructionBlockStats,
   NoticePayload,
   OutputPartData,
   PendingClientTool,
@@ -131,6 +132,7 @@ export type {
   StatusPartData,
   StopReason,
   ToolRisk,
+  ToolSourceStats,
   TurnKind,
   TurnResult,
   UsagePartData,
@@ -144,6 +146,7 @@ export type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './models
 export type { OutputSpec } from './output/types.ts'
 export { definePlugin } from './plugin/define-plugin.ts'
 export type {
+  AddUsageInput,
   AddUsageOptions,
   AgentSetupContext,
   ApprovalDecision,
@@ -157,6 +160,7 @@ export type {
   HarnessServices,
   HookName,
   KindMap,
+  PlainUsage,
   PluginContribution,
   PluginDef,
   PluginState,
@@ -181,6 +185,7 @@ export {
   type WaitStart,
   type WaitStartEvent,
 } from './registry/external.ts'
+export type { SessionToolInfo } from './registry/inventory.ts'
 export type {
   ClientToolDeclaration,
   ClientToolsOptions,

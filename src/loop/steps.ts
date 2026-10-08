@@ -40,7 +40,13 @@ import {
   outputRetryText,
   type TurnOutput,
 } from '../output/turn.ts'
-import type { StepEndEvent, StepPreparePatch, TurnInfo } from '../plugin/types.ts'
+import type {
+  AddUsageInput,
+  PlainUsage,
+  StepEndEvent,
+  StepPreparePatch,
+  TurnInfo,
+} from '../plugin/types.ts'
 import { toolTraits } from '../registry/risk.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
@@ -89,6 +95,28 @@ export function emptyUsage(): UsageTotals {
   }
 }
 
+/**
+ * AI SDK usage from either accepted shape of `TurnInfo.addUsage`: AI SDK's `LanguageModelUsage`
+ * (returned as is) or plain token counts (`TurnResult['usage']`).
+ */
+export function normalizeUsage(input: AddUsageInput): LanguageModelUsage {
+  if ('inputTokenDetails' in input && 'outputTokenDetails' in input) return input
+  const plain = input as PlainUsage
+  const inputTokens = plain.inputTokens
+  const outputTokens = plain.outputTokens
+  return {
+    inputTokens,
+    inputTokenDetails: {
+      noCacheTokens: undefined,
+      cacheReadTokens: plain.cachedInputTokens,
+      cacheWriteTokens: plain.cacheWriteTokens,
+    },
+    outputTokens,
+    outputTokenDetails: { textTokens: undefined, reasoningTokens: plain.reasoningTokens },
+    totalTokens: plain.totalTokens ?? (inputTokens ?? 0) + (outputTokens ?? 0),
+  }
+}
+
 /** Add AI SDK usage to totals (`nested` for `addUsage()`); `costUsd` undefined = unpriced. */
 export function addUsage(
   totals: UsageTotals,
@@ -118,6 +146,28 @@ export function addUsage(
   const write = usage.inputTokenDetails?.cacheWriteTokens
   if (read !== undefined) totals.cacheRead = (totals.cacheRead ?? 0) + read
   if (write !== undefined) totals.cacheWrite = (totals.cacheWrite ?? 0) + write
+}
+
+/**
+ * The `reasoning-end` chunk with the part's duration in `providerMetadata.eharness.durationMs`
+ * (spec 04 §2). Merged into the existing metadata: provider keys are never overwritten.
+ */
+function withReasoningDuration<C extends { type: 'reasoning-end'; id: string }>(
+  chunk: C,
+  started: Map<string, number>,
+): C {
+  const at = started.get(chunk.id)
+  if (at === undefined) return chunk
+  started.delete(chunk.id)
+  const existing = (chunk as { providerMetadata?: Record<string, Record<string, unknown>> })
+    .providerMetadata
+  return {
+    ...chunk,
+    providerMetadata: {
+      ...existing,
+      eharness: { ...existing?.eharness, durationMs: Math.max(0, Date.now() - at) },
+    },
+  }
 }
 
 /** Input of {@link runSteps}. */
@@ -803,7 +853,13 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         return describeError(error, (m, d) => rt.log.error(m, d))
       },
     })
-    for await (const chunk of ui) {
+    /** Start time of every open reasoning part (spec 04 §2: `providerMetadata.eharness.durationMs`). */
+    const reasoningStarted = new Map<string, number>()
+    for await (const rawChunk of ui) {
+      let chunk = rawChunk
+      if (chunk.type === 'reasoning-start') reasoningStarted.set(chunk.id, Date.now())
+      else if (chunk.type === 'reasoning-end')
+        chunk = withReasoningDuration(chunk, reasoningStarted)
       if (chunk.type === 'abort') {
         stepAborted = true
         continue // the core writes the single terminal abort

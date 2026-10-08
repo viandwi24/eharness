@@ -31,6 +31,7 @@ import { createKindMessage } from '../messages/kinds.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
+import { describeTools, instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
 import {
   addContribution,
   createStaticRegistry,
@@ -38,6 +39,7 @@ import {
   type HookEntry,
   type NormalizedInstruction,
 } from '../registry/static.ts'
+import { inspectRegistry, type RegistryInspection } from '../registry/turn.ts'
 import type { ToolInput, ToolSource } from '../registry/types.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import { buildSessionSkills } from '../skills/registry.ts'
@@ -509,15 +511,32 @@ export function createSessionHandle(args: {
 
   const compaction = createSessionCompaction({ rt, persist })
 
-  /** Uncalibrated tokens of the static instructions (+ session block) and static tools. */
-  async function staticTokens(open: OpenSession): Promise<{ instructions: number; tools: number }> {
-    const texts: string[] = []
-    for (const i of open.instructions) if (i.kind === 'static') texts.push(i.text)
-    if (open.sessionBlock) texts.push(open.sessionBlock)
-    const text = texts.join('\n\n')
+  /**
+   * The next request as an idle session sees it: instructions (turn-refresh ones evaluated),
+   * skills, tools in request order (spec 02 §3.4). Resolves tool sources like a turn would.
+   */
+  async function inspect(open: OpenSession): Promise<RegistryInspection> {
+    return inspectRegistry({
+      open,
+      toolOrder: config.toolOrder,
+      contextOf: rt.contextOf,
+      warn: rt.warn,
+    })
+  }
+
+  /** Uncalibrated tokens of the instructions and tools of the next request (and their split). */
+  async function staticTokens(open: OpenSession): Promise<{
+    instructions: number
+    tools: number
+    inspection: RegistryInspection
+  }> {
+    const inspection = await inspect(open)
+    const text = [inspection.block1, inspection.block2, inspection.turnReminder]
+      .filter((t): t is string => t !== undefined)
+      .join('\n\n')
     let tools = 0
-    for (const t of open.tools) tools += await toolTokens(t.name, t.tool, compaction.count)
-    return { instructions: text.length === 0 ? 0 : compaction.count(text), tools }
+    for (const e of inspection.entries) tools += await toolTokens(e.name, e.tool, compaction.count)
+    return { instructions: text.length === 0 ? 0 : compaction.count(text), tools, inspection }
   }
 
   /** `state.core.rewinds` read straight from the adapter (cold reads, spec 05 §2). */
@@ -1489,18 +1508,39 @@ export function createSessionHandle(args: {
       touch()
       const open = await ensureOpen()
       if (rt.view === undefined) await ensureContext()
-      const fixed = await staticTokens(open)
+      const { inspection, ...fixed } = await staticTokens(open)
       const core = rt.state.core()
       const measured = await compaction.measureView(rt.view ?? [])
       return {
         ...compaction.stats(
           config.model,
           { ...fixed, messages: measured.tokens },
-          { pruned: measured.pruned },
+          {
+            pruned: measured.pruned,
+            split: {
+              instructionBlocks: instructionBlockStats(
+                inspection.instructionBlocks,
+                compaction.count,
+                compaction.calibration.apply,
+              ),
+              toolSources: await toolSourceStats(
+                inspection.entries,
+                compaction.count,
+                compaction.calibration.apply,
+              ),
+            },
+          },
         ),
         pending: core.pending ?? null,
         activeTurn: core.activeTurn ?? null,
       }
+    },
+    async tools() {
+      assertOpen()
+      touch()
+      const open = await ensureOpen()
+      const inspection = await inspect(open)
+      return describeTools(inspection.entries, compaction.count, compaction.calibration.apply)
     },
     events() {
       assertOpen()

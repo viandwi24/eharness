@@ -320,6 +320,7 @@ export function buildStats(
   raw: { instructions: number; tools: number; messages: number },
   lastCompaction?: ContextStats['lastCompaction'],
   pruned?: ContextStats['pruned'],
+  split?: Pick<ContextStats, 'instructionBlocks' | 'toolSources'>,
 ): ContextStats {
   const instructions = calibration.apply(raw.instructions)
   const tools = calibration.apply(raw.tools)
@@ -335,5 +336,7 @@ export function buildStats(
   }
   if (lastCompaction !== undefined) stats.lastCompaction = lastCompaction
   if (pruned !== undefined) stats.pruned = pruned
+  if (split?.instructionBlocks !== undefined) stats.instructionBlocks = split.instructionBlocks
+  if (split?.toolSources !== undefined) stats.toolSources = split.toolSources
   return stats
 }

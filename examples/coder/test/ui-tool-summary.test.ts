@@ -118,6 +118,36 @@ describe('describeTool', () => {
     )
   })
 
+  test('edit_file with edits[]: the counts add up over all edits', () => {
+    const d = describeTool(
+      view(TOOL.edit, {
+        path: '/a.ts',
+        edits: [
+          { old_string: 'a\nb\n', new_string: 'a\nB\nC\n' },
+          { old_string: 'x\n', new_string: 'y\n' },
+        ],
+      }),
+    )
+    expect(d).toMatchObject({
+      label: 'Update',
+      target: 'a.ts',
+      summary: 'Updated a.ts with 3 additions and 2 removals',
+      status: 'ok',
+    })
+  })
+
+  test('glob: the cap line is not a file', () => {
+    expect(
+      describeTool(
+        view(
+          TOOL.glob,
+          { pattern: '*' },
+          { output: 'a\nb\n(Showing 200 of 205 matches; narrow the pattern.)' },
+        ),
+      ).summary,
+    ).toBe('Found 2 files')
+  })
+
   test('edit_file: Update(path) with addition and removal counts', () => {
     const d = describeTool(
       view(TOOL.edit, { path: '/a.ts', old_string: 'a\nb\n', new_string: 'a\nB\nC\n' }),

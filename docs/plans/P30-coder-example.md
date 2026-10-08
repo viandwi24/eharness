@@ -59,8 +59,9 @@ untouched code cannot be corrupted by a bad re-copy; (3) context — the result 
 reads are windowed (`offset` / `limit`, line numbers) plus `grep` / `glob`, so large files are
 never read whole. Read-before-edit and a staleness check prevent edits on outdated content.
 **eharness `filesystem()` already implements all of this** (spec 08 §3–4: smart replace cascade,
-`lastRead`, `STALE:`, `CONFLICT:`, windowed `read_file`). Missing: several edits in one call
-(Claude Code's former `MultiEdit`) and a `glob` tool.
+`lastRead`, `STALE:`, `CONFLICT:`, windowed `read_file`). Several edits in one call
+(Claude Code's former `MultiEdit`) and a `glob` tool were missing and were added in P31 (`edits[]`,
+`glob`).
 
 **Permissions** (Claude Code docs, "Configure permissions"):
 
@@ -115,7 +116,7 @@ Checked against the npm registry on 2026-10-08. Pin exact versions in `examples/
 | `ink` | 8.0.0 | 2026-10-03 | TUI | React ≥ 19.3, Node ≥ 22; `usePaste`, `useWindowSize`, `incrementalRendering`, `<Static>` fixes |
 | `react` / `@types/react` | 19.3.0 | 2026-09-09 | Ink peer | |
 | `ink-testing-library` | 4.0.0 | 2024-05-22 | UI tests | peer `@types/react` only; verify with Ink 8 in M1, else test the view model only |
-| `tinyglobby` | 0.2.17 | 2026-05-30 | `glob` tool | |
+| `tinyglobby` | 0.2.17 | 2026-05-30 | project memory file discovery | |
 | `ignore` | 7.0.12 | 2026-10-02 | `.gitignore` rules | |
 | `diff` | 9.0.0 | 2026-04-13 | diffs in approval prompts and edit cards | |
 | `shell-quote` | 1.12.0 | 2026-10-02 | tokenize shell commands for rule matching | parse only; never used to build commands |
@@ -244,7 +245,6 @@ examples/coder/
       disk-fs.ts          # FileSystem over a real directory, with the path guard
       mount-fs.ts         # composite FileSystem: / = project, /@dirs/<n>/, /.coder/tool-outputs/
       guard.ts            # realpath containment, ignore rules
-      glob-tool.ts        # glob tool (tinyglobby + ignore)
       dir-access.ts       # request_directory_access tool (always asks)
     shell/
       sandbox-local.ts    # Experimental_SandboxSession over child_process (own process group)
@@ -271,7 +271,7 @@ examples/coder/
       slash.ts            # slash command registry
       state.ts            # view model reducer over UI message chunks + session events
   test/                   # <name>.test.ts, plus helpers.ts and fake-controller.ts
-    disk-fs guard mount-fs glob-tool dir-access workspace bash-tool sandbox bash-match
+    disk-fs guard mount-fs dir-access workspace bash-tool sandbox bash-match
     rules engine permissions-plugin broker describe drive agent-tool agents-load config
     models prompt project-memory sessions controller print.e2e ui-render(.tsx) ui-state
     ui-slash ui-editor ui-mentions ui-tool-summary
@@ -369,8 +369,8 @@ The model never sees real paths. It sees a virtual tree: `/` is the project root
   `metadata.risk: 'external'` and **always** asks (no rule, mode or grant can auto-approve it); on
   approval the directory is mounted for the session and the tool returns its virtual path. It
   refuses `/`, the home directory and any parent of the project, and reports the real path when a
-  symlink was followed. `glob` rejects patterns with `..`, absolute or `~` paths and backslashes, and
-  re-checks every result with `realpath` against its mount.
+  symlink was followed. `glob` (the library tool since P31) lists through this guarded
+  `FileSystem`, so results outside the mount (symlinks) and ignored paths never appear.
 - **Project trust.** `<root>/.coder/settings.json`, `.coder/agents/` and `.coder/skills/` come with the
   repository. Until trusted, the project file's `allow`, `defaultMode`, `additionalDirectories` and
   `mcpServers` are ignored (`ask`, `deny`, `model`, `contextWindow` still apply), and project agents
@@ -389,15 +389,16 @@ The model never sees real paths. It sees a virtual tree: `/` is the project root
 ### 6.1 Tool set (stable order — prompt cache)
 
 Actual order (`app/agent.ts`; it differs from `TOOL_ORDER` in `contracts.ts` because the core has no
-per-agent `toolOrder`): the root `tools` config first (`glob`, `bash`, `agent` when depth allows,
+per-agent `toolOrder`): the root `tools` config first (`bash`, `agent` when depth allows,
 `request_directory_access` for the main agent), then the plugins in order (`filesystem()` tools,
+including the library `glob`,
 `todo_write`, MCP tools, `exit_plan_mode` last). It is identical for every session and turn.
 
 | Tool | From | Risk | Notes |
 |---|---|---|---|
 | `read_file`, `list_files`, `grep` | `eharness/filesystem` | read | windowed reads with line numbers |
-| `edit_file`, `write_file`, `delete_file` | `eharness/filesystem` | write / destructive | read-before-edit, `STALE:`, smart replace |
-| `glob` | app | read | `pattern`, optional `path`; newest first, max 200 |
+| `edit_file`, `write_file`, `delete_file` | `eharness/filesystem` | write / destructive | read-before-edit, `STALE:`, smart replace; `edits[]` for several changes in one call |
+| `glob` | `eharness/filesystem` | read | `pattern`, optional `path`; newest first, max 200; lists through `workspace.fs`, so the disk guard's containment and ignore rules apply |
 | `bash` | app | external | `command`, `description`, `timeoutMs` (default 120 000, max 600 000) |
 | `todo_write` | `eharness/todos` | read | |
 | `agent` | app | (per child) | §7 |
@@ -456,8 +457,8 @@ active before plan mode. `/permissions mode bypassPermissions` needs `--yes`.
   is deterministic for a given engine state and has no side effects. Bare-tool deny rules and plan
   mode remove tools through `step.prepare` `activeTools` (`turn.prepare` has no tool list in its
   event; accepted: a cache bust at mode changes). After an approved `exit_plan_mode` the first step
-  of the `respond()` continuation is prepared before the tool runs, so the plugin inspects the wire
-  (`endsWithApprovedPlan`) to offer the tools of the restored mode (library request R11).
+  of the `respond()` continuation is prepared before the tool runs; the plugin reads
+  `step.prepare` `continuing.approved` to offer the tools of the restored mode (R11, P31).
 - **Prompt answers:** *Yes* → `respond({ approvals: [{ id, approved: true }] })`; *Yes, and don't
   ask again* → the UI first adds a session allow rule, then approves (persisted to
   `settings.local.json` when the user picks "always for this project"). The suggestion is narrow:
@@ -600,7 +601,7 @@ at the end.
 - [x] `disk-fs.ts` + `guard.ts` passing `fileSystemConformance` on a temp dir; containment tests
       (`..`, absolute, symlink file, symlink dir, symlink swap) (`disk-fs.test.ts`, `guard.test.ts`)
 - [x] `mount-fs.ts` with `/@dirs/*` and `/.coder/tool-outputs/` (`mount-fs.test.ts`)
-- [x] `glob` tool; `rg` fast path for `grep` with fallback (`glob-tool.test.ts`; the fallback is
+- [x] `glob` tool (now the library tool, P31; `glob-tool.test.ts` runs it over the workspace); `rg` fast path for `grep` with fallback (`glob-tool.test.ts`; the fallback is
       tested, the `rg` path runs when `rg` is installed)
 - [x] Agent factory with `filesystem()`, static prompt, project memory, turn reminder, tool order
       (`prompt.test.ts`, `project-memory.test.ts`, `controller.test.ts`; order: §6.1, not `toolOrder`)
@@ -744,20 +745,22 @@ persisted.
 
 ### Implementation notes: UX batch (2026-10-08)
 
-- **Steer fallbacks** (`app/controller.ts`): `run()` and `steer()` share an `ActiveTurn`
-  (`started`, `seen`, `pending`, `deferred`). A steer is sent with `ifBusy: 'steer'`. If the turn had
-  just ended, the steer became a queued turn nobody drives; the drive loop picks it up through
-  `pending` or `session.attach()` so it never runs without its approvals being answered.
-- **Deferred steers during approvals.** While the turn waits for an approval (`session.attach()` is
-  `undefined`) a send would auto-deny it, so the text goes to `deferred`. Steers the core dropped
-  with `input-dropped` / `reason: 'tool-pending'` (read from `session.events()`) join `deferred` and
-  are sent as the next turn after the approval round.
+- **Steer outcome** (`app/controller.ts`): `run()` and `steer()` share an `ActiveTurn` (`started`,
+  `seen`, `pending`, `deferred`, `deliveries`). A steer is sent with `ifBusy: 'steer'` and its
+  outcome is read from `run.delivery` (P31): `'step'` needs nothing, `'turn'` hands the queued
+  turn's run to the drive loop (`pending`, or `session.attach()` when the run is still the first
+  turn's), `'dropped'` puts the text into `deferred`. The loop awaits the outstanding deliveries when
+  the turn ends, so a queued turn never runs without its approvals being answered.
+- **Deferred steers during approvals.** While the turn waits for an approval the session is not
+  running (`session.running` is `false`) and a send would auto-deny it, so the text goes straight to
+  `deferred`; so do steers the core dropped (`delivery` `'dropped'`). Deferred texts are sent as the
+  next turn after the approval round.
 - **Plan-exit mode.** The prompt's choice (`acceptEdits` / `default`) is passed to the engine with
   `setPlanExitMode` just before `respond()`; the `exit_plan_mode` tool switches to it instead of the
   previous mode.
 - **Steered input in the transcript.** `data-eh.input` parts render where they sit
   (`MessageView`): `source: 'user'` as a `> text` line with a dim marker, an approval note
-  (`Note from the user about the approved … call:`) as a dim `Note: …`, `source: 'event'` as a dim
+  (`approvalNote` set, P31) as a dim `Note: …` with the raw note, `source: 'event'` as a dim
   line, `plugin:*` hidden (model-only context).
 - **Web safety** (`app/web-tools.ts`): http upgraded to https; private/local hosts, resolved private
   addresses, credentials in the URL and odd ports refused unless `WebFetch(domain:host)` allows the
@@ -836,7 +839,7 @@ quality-of-life, P3 = nice to have. Effort: S < 1 day, M 1–3 days, L > 3 days.
 | LSP diagnostics | definitions, references, type errors | done: `lsp` tool over a JSON-RPC client; default TypeScript server | MCP or app tool | done | — |
 | Hooks | shell commands on tool/turn events | done: seven events, settings `hooks` (determinism deviation, see notes) | plugin hooks (spec 01 §5) | done | — |
 | Plan approval options | approve with auto-accept edits / approve manual / keep planning with feedback done: auto-accept edits / manual / keep planning (`setPlanExitMode`) | `exit_plan_mode` + mode switch | done | — |
-| Permission prompt notes | `Tab` adds a note to Yes/No | done; the note reaches the model one model call later than in the reference (R16); a bare No stops the main turn via a stream workaround (R17) | steer + denial reason | done | — |
+| Permission prompt notes | `Tab` adds a note to Yes/No | done: the note is `approvals[].note` (R16, P31) and the model reads it right after the tool result; a bare No ends the turn with `respond(…, { endTurn: 'if-denied' })` (R17, P31) | `approvals[].note` + denial reason | done | — |
 | Multiple-choice questions | `ask_user_question` dialog, radio/checkbox, Other, notes | done (client tool answered in process through the broker) | client tools (spec 11) | done | — |
 | Question timeout | optional auto-continue after idle | done: `askUserQuestionTimeout` seconds | client tool timeouts (spec 11 §7.1) | done | — |
 | Output styles | switchable response styles | done: built-ins and Markdown files; session instruction | instructions | done | — |
@@ -901,8 +904,8 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 | # | Request | Workaround in P30 |
 |---|---|---|
 | R1 | **Nested approvals across processes**: park the parent turn while a child session waits for an approval, resume both later from any instance | the `agent` tool awaits the child's approvals in process (§6.4) |
-| R2 | `edit_file` with several edits in one call (atomic, one read check) | the model calls `edit_file` several times |
-| R3 | `glob` tool in `eharness/filesystem` (uses `list`, adapter fast path) | app tool |
+| R2 | `edit_file` with several edits in one call (atomic, one read check) | **Done in the library (P31): `edit_file({ path, edits: [...] })`.** The app's approval diff, tool card and summary handle `edits[]` |
+| R3 | `glob` tool in `eharness/filesystem` (uses `list`, adapter fast path) | **Done in the library (P31): the `glob` tool.** The app's own tool was removed |
 | R4 | Node-only `eharness/filesystem/node` disk adapter with the containment rules of §5 (ADR: first Node-only module) | `examples/coder/src/workspace/disk-fs.ts` |
 | R5 | Pass `experimental_sandbox` through to `streamText` / tools; a shell plugin over `Experimental_SandboxSession` (roadmap "Sandbox plugin") | sandbox held in a closure |
 | R6 | `eharness/subagent` helper (child session, progress, usage, depth, cleanup) | `agents/agent-tool.ts` |
@@ -910,15 +913,15 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 | R8 | `addUsage` accepting the eharness `TurnResult.usage` shape directly | a conversion helper |
 | R9 | Binary files / images in `FileSystem` (screenshots, PDFs) | text only |
 | R10 | Subagent transcripts after a resume: the final tool output of a child carries no session id, so the UI cannot reopen runs of an earlier process (an output part or `providerMetadata` with the child session id, or a `parent` index in the session API) | the session id is only in the live preliminary outputs; `/agents` lists runs seen live |
-| R11 | `step.prepare` cannot see that an approved tool of the continuation will change the active tools (the first step of a `respond()` is prepared before the approved tool runs) | `endsWithApprovedPlan` inspects the wire messages in the permissions plugin |
+| R11 | `step.prepare` cannot see that an approved tool of the continuation will change the active tools (the first step of a `respond()` is prepared before the approved tool runs) | **Done in the library (P31): `StepPrepareEvent.continuing`.** The permissions plugin reads `e.continuing?.approved` |
 | R12 | Per-agent `toolOrder` (the core has one global order; plugin tools always come after root tools) | tool order is "root tools, then plugins" (§6.1) |
-| R13 | Adapter exceptions from `FileSystem` become `Error: ...` tool errors (spec 08 §3) instead of an `ERROR:` string; an option to catch and format them in the filesystem plugin (or a per-tool `toolErrorText`) | `disk-fs.ts` throws plain sentences (binary or too large file, read-only directory) |
+| R13 | Adapter exceptions from `FileSystem` become `Error: ...` tool errors (spec 08 §3) instead of an `ERROR:` string; an option to catch and format them in the filesystem plugin (or a per-tool `toolErrorText`) | **Done in the library (P31): adapter exceptions reach the model as `ERROR: …` (`onAdapterError`).** `disk-fs.ts` keeps throwing plain sentences |
 | R14 | A public API to list a session's resolved tools with their definitions (name, description, input schema), so a UI can itemise tool sizes | `/context` reads plugin internals (`~def`) through `pluginStaticTools` in `src/app/tool-inventory.ts`, called from `contextInfo()` in `src/app/agent.ts`, and skips dynamic tool sources |
 | R15 | Per-category context stats in `session.stats()`: split `instructions` into memory, skills and MCP (today `ContextStats` has `instructions`, `tools` and `messages` only, spec 06 §2) | memory and skill tokens are estimated by the app (`estimateTokens`, `skillIndexTokens`), MCP only flagged by `hasMcp` |
-| R16 | An approval answer that carries a note for the model, delivered on the continuation's first step (today `PendingResponse.approvals[].reason` only reaches the model for denials, and no steer is delivered before step 0 of a `respond()` continuation) | the note is a steer sent after `respond()`, so the model reads it one call later; undelivered notes are carried into the next `respond()` (`agents/drive.ts`) |
-| R17 | `respond()` option to end the turn after recording the answers (e.g. stop on a bare denial) without starting a model step | the drive tees the continuation stream and aborts the run right after the `tool-output-denied` chunk; one model request may already have started (`agents/drive.ts`) |
-| R18 | The tool input of a pending client-tool call in `PendingState.clientTools` (only `toolCallId` and `toolName` today) | `ask_user_question` input is read back from the stored tool part via `session.messages()` |
-| R19 | A steer API that reports what happened to the input: delivered at a step of the running turn, fell back to a queued turn, or was dropped because the turn waits for an approval (today `send({ ifBusy: 'steer' })` returns a run and the app infers the outcome from `session.attach()` and `input-dropped` session events) | `steer()` in `app/controller.ts` checks `attach()` first, tracks `ActiveTurn.pending` / `deferred` and watches `input-dropped` |
+| R16 | An approval answer that carries a note for the model, delivered on the continuation's first step (today `PendingResponse.approvals[].reason` only reaches the model for denials, and no steer is delivered before step 0 of a `respond()` continuation) | **Done in the library (P31): `respond({ approvals: [{ id, approved, note }] })`.** The steer and carry code in `agents/drive.ts` was removed |
+| R17 | `respond()` option to end the turn after recording the answers (e.g. stop on a bare denial) without starting a model step | **Done in the library (P31): `respond(…, { endTurn: 'after-answers' \| 'if-denied' })`.** The stream proxy in `agents/drive.ts` was removed |
+| R18 | The tool input of a pending client-tool call in `PendingState.clientTools` (only `toolCallId` and `toolName` today) | **Done in the library (P31): `PendingState.clientTools[].input` (`inputTruncated` above 16 KB).** The stored part is read only for a truncated input |
+| R19 | A steer API that reports what happened to the input: delivered at a step of the running turn, fell back to a queued turn, or was dropped because the turn waits for an approval (today `send({ ifBusy: 'steer' })` returns a run and the app infers the outcome from `session.attach()` and `input-dropped` session events) | **Done in the library (P31): `HarnessRun.delivery` (`'step' \| 'turn' \| 'dropped'`).** `steer()` reads it instead of watching `input-dropped`; it still checks `session.running` first, because a send while the turn waits for an approval would auto-deny it |
 | R20 | Duration of a reasoning part in UI messages (only the message-level `durationMs` exists; a part carries no start/end time) | the UI measures it for live parts and shows `Thought` without a time for stored ones (`partDuration` reads `providerMetadata.eharness.durationMs` if a future core writes it) |
 
 ## Open questions

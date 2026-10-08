@@ -28,8 +28,9 @@ export interface DriveOptions {
   /** Called with every run (the first one and every respond continuation) before it is awaited; must consume run.stream if it wants the chunks. */
   onRun?(run: HarnessRun<CoderMessage>): void
   /**
-   * A bare "No" (no feedback) on a prompt stops the turn: the continuation is aborted right after
-   * the denial is recorded. Main agent only; a subagent's denial lets the child continue.
+   * A bare "No" (no feedback) on a prompt stops the turn: `respond(…, { endTurn: 'if-denied' })`
+   * records the denial and ends the turn without a model call. Main agent only; a subagent's
+   * denial lets the child continue.
    */
   stopOnBareDeny?: boolean
   /**
@@ -40,8 +41,8 @@ export interface DriveOptions {
   questionTimeout?(): number | undefined
 }
 
-/** Input of a tool call: a pending client tool carries only its id, the call is in the messages. */
-async function inputOf(
+/** Input of a tool call from the stored messages (only for an input too large for the pending state). */
+async function storedInput(
   session: HarnessSession<CoderMessage>,
   toolCallId: string,
 ): Promise<unknown> {
@@ -53,51 +54,6 @@ async function inputOf(
     }
   }
   return undefined
-}
-
-/**
- * Lets the continuation run until its stream reports the denied tool call (so the denial is what
- * gets stored), then aborts it. The caller's `onRun` gets the run with the stream it expects.
- */
-async function stopAfterDenial(
-  run: HarnessRun<CoderMessage>,
-  onRun: DriveOptions['onRun'],
-): Promise<Awaited<HarnessRun<CoderMessage>['result']>> {
-  const [forCaller, forUs] = run.stream.tee()
-  const proxy = new Proxy(run, {
-    get(target, key) {
-      if (key === 'stream') return forCaller
-      const value = Reflect.get(target, key, target)
-      return typeof value === 'function' ? value.bind(target) : value
-    },
-  })
-  onRun?.(proxy)
-  const reader = forUs.getReader()
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if ((value as { type?: string }).type === 'tool-output-denied') break
-    }
-  } catch {
-    // the stream failed: the result below carries the error
-  } finally {
-    reader.cancel().catch(() => {})
-  }
-  run.abort('denied by user')
-  return run.result
-}
-
-/** Texts of the `data-eh.input` parts of the last assistant message (what steers delivered). */
-async function inputTexts(session: HarnessSession<CoderMessage>): Promise<Set<string>> {
-  const messages = await session.messages()
-  const last = [...messages].reverse().find((m) => m.role === 'assistant')
-  const texts = new Set<string>()
-  for (const part of last?.parts ?? []) {
-    const p = part as { type: string; data?: { text?: string } }
-    if (p.type === 'data-eh.input' && p.data?.text !== undefined) texts.add(p.data.text)
-  }
-  return texts
 }
 
 const DENIED = 'Denied by the user.'
@@ -120,13 +76,9 @@ export async function driveTurn(
   let run = first
   opts.onRun?.(run)
   let result = await run.result
-  // notes a continuation could not take (it stopped `tool-pending` before the next step boundary)
-  let carried: string[] = []
   while (result.stop === 'tool-pending' && result.pending !== undefined && !signal?.aborted) {
     const pending = result.pending
-    const approvals: Array<{ id: string; approved: boolean; reason?: string }> = []
-    const notes: string[] = [...carried]
-    carried = []
+    const approvals: Array<{ id: string; approved: boolean; reason?: string; note?: string }> = []
     let bareDeny = false
     for (const entry of pending.approvals) {
       if (entry.granted) continue
@@ -155,7 +107,7 @@ export async function driveTurn(
         if (answer.remember !== undefined && request.suggestedRule !== undefined) {
           await permissions.allow(request.suggestedRule, answer.remember)
         }
-        approvals.push({ id: entry.approvalId, approved: true })
+        const note = answer.note?.trim()
         if (entry.toolName === TOOL.exitPlan && opts.agent === undefined) {
           // the user chose the mode to continue in; the exit_plan_mode tool switches to it
           const chosen =
@@ -163,10 +115,7 @@ export async function driveTurn(
           const engine = permissions as Partial<PlanExitControl>
           engine.setPlanExitMode?.(chosen)
         }
-        const note = answer.note?.trim()
-        if (note) {
-          notes.push(`Note from the user about the approved ${entry.toolName} call: ${note}`)
-        }
+        approvals.push({ id: entry.approvalId, approved: true, ...(note ? { note } : {}) })
       } else {
         if (!answer.feedback) bareDeny = true
         approvals.push({ id: entry.approvalId, approved: false, reason: answer.feedback || DENIED })
@@ -183,7 +132,10 @@ export async function driveTurn(
         })
         continue
       }
-      const parsed = parseQuestions(await inputOf(session, call.toolCallId))
+      // the pending state carries the input; the stored part only when it was too large to copy
+      let input: unknown = call.input
+      if (call.inputTruncated) input = await storedInput(session, call.toolCallId)
+      const parsed = parseQuestions(input)
       if ('error' in parsed) {
         toolOutputs.push({ toolCallId: call.toolCallId, errorText: parsed.error })
         continue
@@ -204,33 +156,15 @@ export async function driveTurn(
         output: asked.timedOut ? `${text}\n\n${asked.note ?? QUESTION_TIMEOUT_NOTE}` : text,
       })
     }
-    run = session.respond({ approvals, toolOutputs }, { abortSignal: signal })
-    if (bareDeny && opts.stopOnBareDeny) {
-      result = await stopAfterDenial(run, opts.onRun)
-      break
-    }
+    run = session.respond(
+      { approvals, toolOutputs },
+      {
+        abortSignal: signal,
+        ...(bareDeny && opts.stopOnBareDeny ? { endTurn: 'if-denied' as const } : {}),
+      },
+    )
     opts.onRun?.(run)
-    // The notes reach the model at the next step boundary, after the tool result. A steer that
-    // misses the running continuation (it ended first) becomes a queued turn: it is followed here.
-    const steered: Array<HarnessRun<CoderMessage>> = []
-    for (const note of notes) {
-      steered.push(session.send(note, { ifBusy: 'steer', abortSignal: signal }))
-    }
-    const continuation = run
-    result = await continuation.result
-    if (result.stop === 'tool-pending' && notes.length > 0) {
-      // a steer is dropped when the turn stops pending: send what the model has not seen again
-      const seenTexts = await inputTexts(session)
-      carried = notes.filter((note) => !seenTexts.has(note))
-    }
-    const seen = new Set<string>([continuation.turnId])
-    for (const extra of steered) {
-      if (seen.has(extra.turnId)) continue
-      seen.add(extra.turnId)
-      run = extra
-      opts.onRun?.(extra)
-      result = await extra.result
-    }
+    result = await run.result
   }
   return result
 }

@@ -32,6 +32,10 @@ export interface OpenSession {
   instructions: NormalizedInstruction[]
   /** System block 2 (session-refresh instructions), computed at the first turn. */
   sessionBlock: string | undefined
+  /** The parts of `sessionBlock` by owner (same evaluation, for `ContextStats.instructionBlocks`). */
+  sessionParts?: Array<{ owner: string; text: string }>
+  /** Names of `config.toolOrder` already reported as unknown (`W_TOOL_ORDER`, once per session). */
+  toolOrderWarned?: Set<string>
   /** `list()` results of `refresh: 'session'` sources. */
   sourceCache: Map<ToolSource, Array<{ name: string; tool: Tool }>>
   /** Skill sources in registry order (static skills wrapped), `list()` cache, index limit. */

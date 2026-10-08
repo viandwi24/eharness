@@ -196,6 +196,10 @@ export function withOutputTool(
       registry.turnReminder === undefined
         ? instruction
         : `${registry.turnReminder}\n\n${instruction}`,
+    instructionBlocks: [
+      ...registry.instructionBlocks,
+      { owner: 'core:output', refresh: 'turn', text: instruction },
+    ],
     entries: [...registry.entries, { owner: 'eh', name, tool: outputTool }],
     tools,
     toolOrder: [...registry.toolOrder, name],

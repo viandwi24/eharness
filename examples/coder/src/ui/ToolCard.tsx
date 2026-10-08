@@ -1,5 +1,6 @@
 import { Box, Text, useAnimation } from 'ink'
 import type { ReactElement } from 'react'
+import { editsOf } from '../app/edits.ts'
 import { TOOL } from '../contracts.ts'
 import { Branch, Indent } from './Branch.tsx'
 import { DiffView } from './DiffView.tsx'
@@ -9,7 +10,7 @@ import { TodoList } from './TodoPanel.tsx'
 import { color, sym } from './theme.ts'
 import {
   bashBody,
-  countChanges,
+  countEditChanges,
   describeTool,
   displayPath,
   firstLine,
@@ -46,6 +47,8 @@ export function statusColor(status: ToolStatus): string | undefined {
 
 const BASH_LINES = 4
 const DIFF_LINES = 16
+/** Edits of one multi-edit call whose diff is drawn (the summary counts all of them). */
+const MAX_EDIT_DIFFS = 5
 
 function pretty(value: unknown): string {
   if (value === undefined) return ''
@@ -182,7 +185,8 @@ function Body({
       )
     }
     case TOOL.edit: {
-      const diffable = typeof input.old_string === 'string' && typeof input.new_string === 'string'
+      const edits = editsOf(input).slice(0, MAX_EDIT_DIFFS)
+      const keys = keyedLines(edits.map((e) => `${e.oldString}\u0000${e.newString}`))
       return (
         <>
           {desc.summary ? (
@@ -190,16 +194,18 @@ function Body({
               <Text dimColor>{desc.summary}</Text>
             </Branch>
           ) : null}
-          {diffable && desc.status === 'ok' ? (
-            <Indent>
-              <DiffView
-                oldText={input.old_string as string}
-                newText={input.new_string as string}
-                path={displayPath(String(input.path ?? ''))}
-                maxLines={expanded ? 400 : DIFF_LINES}
-              />
-            </Indent>
-          ) : null}
+          {desc.status === 'ok'
+            ? edits.map((edit, i) => (
+                <Indent key={keys[i]?.key}>
+                  <DiffView
+                    oldText={edit.oldString}
+                    newText={edit.newString}
+                    path={displayPath(String(input.path ?? ''))}
+                    maxLines={expanded ? 400 : DIFF_LINES}
+                  />
+                </Indent>
+              ))
+            : null}
         </>
       )
     }
@@ -241,10 +247,7 @@ export function ToolLine({
   const input = (view.input ?? {}) as Record<string, unknown>
   let stat = ''
   if (view.toolName === TOOL.edit && desc.status === 'ok') {
-    const { added, removed } = countChanges(
-      String(input.old_string ?? ''),
-      String(input.new_string ?? ''),
-    )
+    const { added, removed } = countEditChanges(input)
     stat = [added > 0 ? `+${added}` : '', removed > 0 ? `${sym.minus}${removed}` : '']
       .filter(Boolean)
       .join(' ')

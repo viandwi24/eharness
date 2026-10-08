@@ -12,6 +12,7 @@ import { project } from '../messages/project.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import type { ContextStats, HarnessUIMessage, PendingState } from '../messages/types.ts'
 import type { TurnInfo } from '../plugin/types.ts'
+import { instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
@@ -401,7 +402,22 @@ export function createTurnCompaction(args: {
           tools: (await fixed()) - instructionsRaw,
           messages: wireTokens(wire, engine.count),
         },
-        { maxOutputTokens, pruned },
+        {
+          maxOutputTokens,
+          pruned,
+          split: {
+            instructionBlocks: instructionBlockStats(
+              registry.instructionBlocks,
+              engine.count,
+              engine.calibration.apply,
+            ),
+            toolSources: await toolSourceStats(
+              registry.entries,
+              engine.count,
+              engine.calibration.apply,
+            ),
+          },
+        },
       )
     },
     isOverflow: (error) => isContextOverflow(error, config.isContextOverflow),

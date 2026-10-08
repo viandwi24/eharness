@@ -118,6 +118,7 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_LOOP_STUCK` | the progress guard found the turn stuck and reminded the model (`details: { kind, toolName?, count, stepIndex }`, spec 05 §3.2) |
 | `W_TOOL_OUTPUT_LIMITED` | a tool output exceeded `toolOutput.maxChars` and was truncated or evicted (spec 09 §4) |
 | `W_CACHE_BUST` | the cached prompt prefix changed within a session (instructions/tools changed, spec 02 §6); `details.reason: 'client-tools'` (0.5.0): the request-scoped client tool declarations differ from the previous turn (spec 11 §7.1 rule 4) |
+| `W_TOOL_ORDER` | `config.toolOrder` names tools that do not exist in the session (`details: { tools }`); ignored, reported once per session per name (spec 02 §6) |
 | `W_PAGE_CONTEXT_LIMITED` | (0.5.0) the page context of a request was cut to `maxChars` (`details: { maxChars, entries, limited }`, spec 11 §7.1 rule 6) |
 | `W_OVERFLOW_RETRY` | the provider rejected the context as too long; compacting and retrying once (spec 06 §7) |
 | `W_CONTEXT_THRASH` | a second automatic compaction within `compaction.thrash.withinSteps` steps of the previous one ran (or was skipped as no-gain) and left the context above `summarizeAt`; the turn stops with `'context-thrash'` (`details: { stepIndex, tokens, summarizeAt, lastCompaction }`, `tokens` = the context after the second compaction, `lastCompaction` = step index of the previous compaction, spec 06 §4) |

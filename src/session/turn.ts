@@ -34,6 +34,7 @@ import {
   emptyUsage,
   type LoopResult,
   mergeSettings,
+  normalizeUsage,
   runSteps,
   toolSearchNames,
   type UsageTotals,
@@ -417,14 +418,18 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     model: op.options.model ?? config.model,
     settings: mergeSettings(config.settings ?? {}, op.options.settings),
     abortSignal: controller.signal,
-    addUsage: (value, source) => {
+    addUsage: (input, source) => {
       const options = typeof source === 'object' && source !== null ? source : {}
+      const value = normalizeUsage(input)
+      const plainCost = (input as { costUsd?: unknown }).costUsd
       const cost =
         typeof options.costUsd === 'number'
           ? options.costUsd
-          : options.model === undefined
-            ? undefined
-            : costOf(config.models, options.model, value)
+          : typeof plainCost === 'number'
+            ? plainCost
+            : options.model === undefined
+              ? undefined
+              : costOf(config.models, options.model, value)
       addUsage(usage, value, true, cost)
       // priced nested usage reaches the ledger at the next step boundary (spec 12 §4.1 rule 3)
       if (cost !== undefined && turnState.active) ledger?.nested(cost)
@@ -818,6 +823,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         open,
         approval: config.approval,
         toolOutput: config.toolOutput,
+        toolOrder: config.toolOrder,
         toolErrorText: config.toolErrorText,
         contextOf: rt.contextOf,
         warn: rt.warn,

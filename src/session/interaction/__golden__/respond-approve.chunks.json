@@ -67,7 +67,15 @@
       "tools": 42,
       "messages": 36,
       "summarizeAt": 75000,
-      "hardLimit": 82000
+      "hardLimit": 82000,
+      "instructionBlocks": [],
+      "toolSources": [
+        {
+          "source": "app",
+          "tools": 1,
+          "tokens": 42
+        }
+      ]
     },
     "transient": true
   },

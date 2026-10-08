@@ -128,7 +128,12 @@ export interface SessionCompaction {
   stats(
     model: LanguageModel,
     raw: { instructions: number; tools: number; messages: number },
-    options?: { maxOutputTokens?: number | undefined; pruned?: PruneStats | undefined },
+    options?: {
+      maxOutputTokens?: number | undefined
+      pruned?: PruneStats | undefined
+      /** Calibrated split of `instructions` and `tools` (`ContextStats.instructionBlocks` / `toolSources`). */
+      split?: Pick<ContextStats, 'instructionBlocks' | 'toolSources'> | undefined
+    },
   ): ContextStats
   /** Run one compaction (never concurrently for the session). */
   compact(request: CompactRequest): Promise<CompactOutcome>
@@ -447,7 +452,14 @@ export function createSessionCompaction(deps: {
     measureView,
     lastCompaction,
     stats(model, raw, options = {}) {
-      return buildStats(calibration, limits(model, options), raw, lastCompaction(), options.pruned)
+      return buildStats(
+        calibration,
+        limits(model, options),
+        raw,
+        lastCompaction(),
+        options.pruned,
+        options.split,
+      )
     },
     async compact(request) {
       if (!enabled) return { status: 'skipped', reason: 'disabled' }

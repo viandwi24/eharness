@@ -5,6 +5,7 @@
 import { realpath } from 'node:fs/promises'
 import { createTwoFilesPatch } from 'diff'
 import type { FileSystem } from 'eharness/filesystem'
+import { editsOf } from '../app/edits.ts'
 import {
   type ApprovalRequest,
   type PermissionEngine,
@@ -89,17 +90,26 @@ async function readText(fs: FileSystem, path: string): Promise<string | null | u
 
 async function describeEdit(call: ToolCallInfo, fs: FileSystem): Promise<string | undefined> {
   const path = str(call.input, 'path') ?? ''
-  const oldString = str(call.input, 'old_string') ?? ''
-  const newString = str(call.input, 'new_string') ?? ''
-  const all = (call.input as { replace_all?: unknown } | null | undefined)?.replace_all === true
+  const edits = editsOf(call.input)
   const current = await readText(fs, path)
-  if (typeof current === 'string' && oldString !== '' && current.includes(oldString)) {
-    const next = all
-      ? current.split(oldString).join(newString)
-      : current.replace(oldString, () => newString)
-    return patch(path, current, next)
+  if (typeof current === 'string' && edits.length > 0) {
+    // every edit is applied in order to the result of the previous one (all or nothing)
+    let next: string | undefined = current
+    for (const edit of edits) {
+      if (edit.oldString === '' || !next.includes(edit.oldString)) {
+        next = undefined
+        break
+      }
+      next = edit.replaceAll
+        ? next.split(edit.oldString).join(edit.newString)
+        : next.replace(edit.oldString, () => edit.newString)
+    }
+    if (next !== undefined) return patch(path, current, next)
   }
-  return truncate(`--- old\n${oldString}\n+++ new\n${newString}`, MAX_DETAIL)
+  return truncate(
+    edits.map((e) => `--- old\n${e.oldString}\n+++ new\n${e.newString}`).join('\n\n'),
+    MAX_DETAIL,
+  )
 }
 
 async function describeWrite(call: ToolCallInfo, fs: FileSystem): Promise<string> {

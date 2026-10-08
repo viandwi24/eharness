@@ -33,6 +33,14 @@ finish                                  ← normal end
 abort { reason }                        ← instead of `finish` when aborted (user abort, turn timeout)
 ```
 
+Reasoning duration (P31 R20): the core writes `providerMetadata.eharness.durationMs` on every
+`reasoning-end` chunk (milliseconds from the step's `reasoning-start` to `reasoning-end`, measured
+with `Date.now()` in the core's step-chunk copy). It is merged into the chunk's existing
+`providerMetadata` (provider keys are never touched), so the UI reasoning part and the stored
+message carry it as `part.providerMetadata.eharness.durationMs`. A reasoning part that never ends
+(abort) has none. The key is UI-only: the projection removes `eharness` from reasoning parts
+before the provider wire is built, so the model request is unchanged.
+
 The transient `data-eh.status { state: 'tool' }` chunk is written by the core's execute wrapper
 when a tool starts; with recent AI SDK versions (observed with 7.0.127) a tool can start before its step's
 `start-step` chunk reaches the stream, so the status may precede `start-step` (transient: it never

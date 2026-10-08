@@ -104,6 +104,30 @@ Prompt-cache note: direct tool search changes the provider-visible tool list and
 cached prefix. Code mode (`@ai-sdk/code-mode`, `toolDiscovery: 'conversation'`) preserves it; it is
 **out of scope for v0** and tracked in the roadmap.
 
+### 3.4 Session tool listing
+
+```ts
+interface SessionToolInfo {
+  name: string
+  description?: string
+  inputSchema: JSONSchema7                 // AI SDK asSchema(...).jsonSchema; {} when a tool has none
+  source: 'app' | 'core' | `plugin:${string}` | `source:${string}`
+  deferred: boolean                        // hidden until found with tool_search (§3.3)
+  tokens: number                           // calibrated estimate of the definition (spec 06 §2)
+}
+session.tools(): Promise<SessionToolInfo[]>
+```
+
+`session.tools()` (P31 R14) resolves the registry the way the next turn would, without running a
+turn, and lists the tools **in request order** (§6 rule 1, `config.toolOrder` applied). `source` is
+`'app'` (agent config), `plugin:<name>`, `source:<tool source id>` (e.g. `source:mcp:github`) or
+`'core'` (`load_skill`, `read_skill_file`, `search_skills`, `tool_search`). Deferred tools are
+listed at their position with `deferred: true` although the provider only receives them after
+discovery. Static tools resolve once per session; `refresh: 'session'` sources are listed once and
+cached, `refresh: 'turn'` sources on **every** call (and `session.stats()` does the same), so avoid
+polling it with expensive turn-refresh sources. Request-scoped client tools (spec 11 §7.1) and the
+per-turn output tool are not part of the listing. It opens the session when needed.
+
 ## 4. Skills
 
 Static `Skill` objects and dynamic `SkillSource`s share one registry (spec 07). The registry
@@ -155,7 +179,12 @@ earlier in that order invalidates everything after it. Rules:
    (0.4.0, spec 05 §3.3; last, so turns without it keep the whole prefix). `activeTools` changes and tool-search discoveries change the tool list
    and therefore bust the whole cache; the core warns `W_CACHE_BUST` once per turn when
    `activeTools` differs from the previous step. Prefer `toolChoice` or `tool.approve` denials for
-   per-step restrictions. The core passes this order to AI SDK as `toolOrder` (otherwise AI SDK
+   per-step restrictions. `config.toolOrder: string[]` (P31 R12) overrides the order: the listed final
+   tool names come first in the listed order, every other tool follows in the default order above;
+   names that match no tool are ignored and reported once per session (`W_TOOL_ORDER`, spec 10 §2).
+   It applies to the final names of the whole set (including `tool_search` and request tools; the
+   output tool is always last). The prompt-cache breakpoint stays on the last tool that was part
+   of the static prefix. The core passes this order to AI SDK as `toolOrder` (otherwise AI SDK
    sorts unlisted tools alphabetically), so the order the provider sees is exactly this one.
 2. **Stable system prompt.** Blocks 1–2 stay identical for the whole session unless configuration
    or a session-refresh source changes. Volatile text goes to reminders (§5), which sit after the

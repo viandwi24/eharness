@@ -104,7 +104,7 @@ export async function project(
     // 4. split at data-eh.input
     for (const piece of splitAtInput(message)) {
       // 6. convert
-      const converted = await convertToModelMessages([piece], {
+      const converted = await convertToModelMessages([stripReasoningTiming(piece)], {
         ...(options.tools === undefined ? {} : { tools: options.tools }),
         ignoreIncompleteToolCalls: true,
         convertDataPart: (part) =>
@@ -233,6 +233,27 @@ function stripProviderSpecific(message: AnyUIMessage): AnyUIMessage {
     parts.push(part)
   }
   return { ...message, parts }
+}
+
+/**
+ * Drop `providerMetadata.eharness` (the reasoning duration, spec 04 §2) from reasoning parts: it
+ * is UI-only and must not reach the provider wire.
+ */
+function stripReasoningTiming(message: AnyUIMessage): AnyUIMessage {
+  if (message.role !== 'assistant') return message
+  let changed = false
+  const parts = message.parts.map((part): AnyPart => {
+    if (part.type !== 'reasoning') return part
+    const metadata = (part as { providerMetadata?: Record<string, unknown> }).providerMetadata
+    if (metadata === undefined || !('eharness' in metadata)) return part
+    changed = true
+    const { eharness: _e, ...rest } = metadata
+    const { providerMetadata: _p, ...without } = part as { providerMetadata?: unknown }
+    return (
+      Object.keys(rest).length === 0 ? without : { ...without, providerMetadata: rest }
+    ) as AnyPart
+  })
+  return changed ? { ...message, parts } : message
 }
 
 /** 4. Split an assistant message at every `data-eh.input` part. */

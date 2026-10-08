@@ -4,11 +4,11 @@
  *
  * Tool placement (decided here, it fixes the prompt-cache prefix):
  *
- * - `bash` and `glob` need the app data part `bashOutput` (UI part type `data-bashOutput`). A
+ * - `bash` needs the app data part `bashOutput` (UI part type `data-bashOutput`). A
  *   plugin's data parts are namespaced (`data-<plugin>.bashOutput`), so the part is registered on
  *   the agent config (`dataParts`) and the app tools sit in the agent `tools` config, which is
  *   also what types `ctx.stream.data('bashOutput', …)`.
- * - Tool order is `[root config tools] → [plugins in order]` (spec 02 §6): `glob`, `bash`,
+ * - Tool order is `[root config tools] → [plugins in order]` (spec 02 §6): `bash`,
  *   `agent` (depth permitting), `request_directory_access` (main only), then the `filesystem()`
  *   tools, `todo_write`, MCP tools (source tools, always after static tools) and last the
  *   permissions plugin's `exit_plan_mode`. The order is identical for every session and turn of
@@ -55,7 +55,7 @@ import {
   ruleToolMatches,
 } from '../permissions/index.ts'
 import { bashOutputPart, createBashTool, type LocalSandbox } from '../shell/index.ts'
-import { createDirAccessTool, createGlobTool } from '../workspace/index.ts'
+import { createDirAccessTool } from '../workspace/index.ts'
 import { createBackgroundBashTools, withBackgroundOption } from './background-bash.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
 import { loadProjectMemory } from './project-memory.ts'
@@ -319,7 +319,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     // typed loosely: the tools mix plain tools and tool factories
     const bash = withSandboxNote(createBashTool({ sandbox: deps.sandbox }), deps.sandbox)
     const appTools: Record<string, unknown> = {
-      [TOOL.glob]: createGlobTool(workspace),
       [TOOL.bash]: deps.background
         ? withBackgroundOption(bash as never, { sandbox: deps.sandbox, ...deps.background })
         : bash,
@@ -371,8 +370,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       filesystem({
         fs: workspace.fs,
         toolOutputs: { dir: '/.coder/tool-outputs' },
-        // the example registers its own disk-backed `glob` tool
-        tools: ['list_files', 'read_file', 'write_file', 'edit_file', 'delete_file', 'grep'],
         ...(hasSkills ? { skills: { root: '/.coder/skills' } } : {}),
       }),
       todos(),

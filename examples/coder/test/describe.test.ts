@@ -94,6 +94,38 @@ describe('describeApproval', () => {
     expect(all.detail).toContain('-x\n-x\n+y\n+y')
   })
 
+  test('edit: edits[] are applied in order into one patch', async () => {
+    const d = await describeApproval(
+      call(TOOL.edit, {
+        path: '/a.ts',
+        edits: [
+          { old_string: 'one', new_string: 'ONE' },
+          { old_string: 'ONE\ntwo', new_string: 'ONE\nTWO' }, // sees the result of the first edit
+        ],
+      }),
+      fs,
+      engine,
+    )
+    expect(d.title).toBe('Edit /a.ts')
+    expect(d.suggestedRule).toBe('Edit')
+    expect(d.detail).toContain('-one\n-two\n+ONE\n+TWO\n three')
+  })
+
+  test('edit: edits[] where one edit does not apply falls back to old/new pairs', async () => {
+    const d = await describeApproval(
+      call(TOOL.edit, {
+        path: '/a.ts',
+        edits: [
+          { old_string: 'one', new_string: 'ONE' },
+          { old_string: 'absent', new_string: 'n' },
+        ],
+      }),
+      fs,
+      engine,
+    )
+    expect(d.detail).toBe('--- old\none\n+++ new\nONE\n\n--- old\nabsent\n+++ new\nn')
+  })
+
   test('edit: a missing old_string or file falls back to old/new', async () => {
     for (const input of [
       { path: '/a.ts', old_string: 'absent', new_string: 'n' },

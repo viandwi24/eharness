@@ -22,7 +22,7 @@ export const STATIC_INSTRUCTIONS: string = `You are a coding agent working in th
 - Search before you read: use \`grep\` (content) and \`glob\` (file names) to find what matters, then read it.
 - Read files with \`offset\` and \`limit\` windows instead of whole files when they are large. Output that was too long is stored under \`/.coder/tool-outputs/\`; page through it with \`read_file\`.
 - Always read a file before you edit or overwrite it. If an edit reports a stale file or a non-unique match, read again and retry with more context.
-- Prefer \`edit_file\` with a unique \`old_string\` over rewriting a file with \`write_file\`. Use \`write_file\` for new files or total rewrites only.
+- Prefer \`edit_file\` with a unique \`old_string\` over rewriting a file with \`write_file\`. For several changes in one file, make one \`edit_file\` call with \`edits\` (applied in order, all or nothing) instead of several calls. Use \`write_file\` for new files or total rewrites only.
 - Never create files unless they are needed for the task. Prefer editing existing ones. Do not create documentation files unless asked.
 - Follow the conventions of the surrounding code: naming, formatting, structure, error handling. Check which libraries the project already uses (package manifest, neighbouring files) before adding a new dependency or assuming one exists.
 - Make the change that was asked, no more. Do not refactor unrelated code.
@@ -57,7 +57,7 @@ export function subagentInstructions(def: { prompt: string }): string {
 
 Paths: \`/\` is the project root and extra directories appear under \`/@dirs/<name>/\`. The bash tool runs in the project root; use relative paths there.
 
-Tool policy: search with \`grep\` and \`glob\` before reading; read large files in \`offset\`/\`limit\` windows; read a file before editing it and prefer \`edit_file\` over rewriting; batch independent tool calls in one step; never create files that were not asked for; never commit or push; never print secrets; use web_search / web_fetch only when the task needs outside information; if a tool call is denied, do not retry it, adapt instead.
+Tool policy: search with \`grep\` and \`glob\` before reading; read large files in \`offset\`/\`limit\` windows; read a file before editing it and prefer \`edit_file\` over rewriting (use \`edits\` for several changes in one file); batch independent tool calls in one step; never create files that were not asked for; never commit or push; never print secrets; use web_search / web_fetch only when the task needs outside information; if a tool call is denied, do not retry it, adapt instead.
 
 ${def.prompt}`
 }

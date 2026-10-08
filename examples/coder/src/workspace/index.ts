@@ -10,7 +10,6 @@ import { mountFs } from './mount-fs.ts'
 
 export { createDirAccessTool } from './dir-access.ts'
 export { diskFs } from './disk-fs.ts'
-export { createGlobTool } from './glob-tool.ts'
 export { mountFs } from './mount-fs.ts'
 
 const TOOL_OUTPUTS_VIRTUAL = '/.coder/tool-outputs/'

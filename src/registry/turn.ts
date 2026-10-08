@@ -14,9 +14,14 @@ import type { ApprovalConfig, ToolErrorTextFn, ToolOutputConfig } from '../agent
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
-import { resolveTurnSkills, type SkillIndexEntry } from '../skills/registry.ts'
-import { createSkillTools } from '../skills/tools.ts'
+import type { SkillIndexEntry } from '../skills/registry.ts'
 import { type ExternalToolMeta, externalOf } from './external.ts'
+import {
+  applyToolOrder,
+  collectToolEntries,
+  type InstructionBlock,
+  turnSkills,
+} from './inventory.ts'
 import type { ToolOutputSink } from './output-limits.ts'
 import {
   type BuiltRequestTools,
@@ -27,7 +32,7 @@ import {
   renderPageContext,
 } from './request-tools.ts'
 import type { NormalizedInstruction } from './static.ts'
-import { listSourceTools, type TurnToolEntry, withToolSearch } from './tools.ts'
+import type { TurnToolEntry } from './tools.ts'
 import {
   type ApprovalGrants,
   buildApproval,
@@ -44,6 +49,8 @@ export interface TurnRegistry {
   block2: string | undefined
   /** Turn-refresh instructions, sent as the turn reminder. */
   turnReminder: string | undefined
+  /** Instruction blocks by owner and refresh class, in prompt order (`ContextStats`). */
+  instructionBlocks: InstructionBlock[]
   /** Wrapped tools with owners, in stable order (spec 02 §6 rule 1). */
   entries: TurnToolEntry[]
   /** Number of leading static tools in `entries`. */
@@ -76,18 +83,101 @@ function appendBlock(block: string | undefined, text: string | undefined): strin
   return block === undefined ? text : `${block}\n\n${text}`
 }
 
-async function evaluate(
+/** The non-empty texts of the selected instructions, with their owners (prompt order). */
+async function evaluateParts(
   instructions: readonly NormalizedInstruction[],
   select: (entry: NormalizedInstruction) => boolean,
   contextOf: (owner: string) => HarnessContext,
-): Promise<string | undefined> {
-  const texts: string[] = []
+): Promise<Array<{ owner: string; text: string }>> {
+  const parts: Array<{ owner: string; text: string }> = []
   for (const entry of instructions) {
     if (!select(entry)) continue
     const text = entry.kind === 'static' ? entry.text : await entry.fn(contextOf(entry.owner))
-    if (typeof text === 'string' && text.trim().length > 0) texts.push(text)
+    if (typeof text === 'string' && text.trim().length > 0) parts.push({ owner: entry.owner, text })
   }
-  return texts.length === 0 ? undefined : texts.join('\n\n')
+  return parts
+}
+
+function joinParts(parts: ReadonlyArray<{ text: string }>): string | undefined {
+  return parts.length === 0 ? undefined : parts.map((p) => p.text).join('\n\n')
+}
+
+/**
+ * The session block (session-refresh instructions) of an open session, evaluated once and cached
+ * on the session (`sessionBlock` as one text, `sessionParts` by owner).
+ */
+export async function ensureSessionBlock(
+  open: OpenSession,
+  contextOf: (owner: string) => HarnessContext,
+): Promise<Array<{ owner: string; text: string }>> {
+  if (open.sessionBlock === undefined) {
+    const parts = await evaluateParts(
+      open.instructions,
+      (e) => e.kind === 'dynamic' && e.refresh === 'session',
+      contextOf,
+    )
+    open.sessionParts = parts
+    open.sessionBlock = joinParts(parts) ?? ''
+  }
+  return (
+    open.sessionParts ??
+    (open.sessionBlock === '' ? [] : [{ owner: 'app', text: open.sessionBlock }])
+  )
+}
+
+/** The model-visible context of an idle session, resolved like a turn would (no request tools). */
+export interface RegistryInspection {
+  /** The three instruction texts of a request (blocks 1–2 and the turn reminder). */
+  block1: string | undefined
+  block2: string | undefined
+  turnReminder: string | undefined
+  instructionBlocks: InstructionBlock[]
+  /** Unwrapped tool entries in request order (`config.toolOrder` applied). */
+  entries: TurnToolEntry[]
+}
+
+/**
+ * Resolve what the next request would carry — instructions (turn-refresh ones evaluated), skills,
+ * tools in request order — without running a turn (`session.tools()`, `session.stats()`). It lists
+ * tool sources like a turn does: `refresh: 'turn'` sources are listed again on every call.
+ */
+export async function inspectRegistry(args: {
+  open: OpenSession
+  toolOrder?: readonly string[] | undefined
+  contextOf: (owner: string) => HarnessContext
+  warn: (warning: HarnessWarning, key?: string) => void
+}): Promise<RegistryInspection> {
+  const { open, contextOf } = args
+  const staticParts = await evaluateParts(open.instructions, (e) => e.kind === 'static', contextOf)
+  const sessionParts = await ensureSessionBlock(open, contextOf)
+  const skills = await turnSkills(open, contextOf, args.warn)
+  const turnParts = await evaluateParts(
+    open.instructions,
+    (e) => e.kind === 'dynamic' && e.refresh === 'turn',
+    contextOf,
+  )
+  const collected = await collectToolEntries({ open, skills, contextOf, warn: args.warn })
+  open.toolOrderWarned ??= new Set()
+  return {
+    block1: appendBlock(joinParts(staticParts), skills.staticText),
+    block2: appendBlock(
+      open.sessionBlock === '' ? undefined : open.sessionBlock,
+      skills.dynamicText,
+    ),
+    turnReminder: joinParts(turnParts),
+    instructionBlocks: [
+      ...staticParts.map((p): InstructionBlock => ({ ...p, refresh: 'static' })),
+      ...(skills.staticText === undefined
+        ? []
+        : [{ owner: 'core:skills', refresh: 'static' as const, text: skills.staticText }]),
+      ...sessionParts.map((p): InstructionBlock => ({ ...p, refresh: 'session' })),
+      ...(skills.dynamicText === undefined
+        ? []
+        : [{ owner: 'core:skills', refresh: 'session' as const, text: skills.dynamicText }]),
+      ...turnParts.map((p): InstructionBlock => ({ ...p, refresh: 'turn' })),
+    ],
+    entries: applyToolOrder(collected.entries, args.toolOrder, args.warn, open.toolOrderWarned),
+  }
 }
 
 /**
@@ -99,6 +189,8 @@ export async function resolveTurnRegistry(args: {
   approval: ApprovalConfig | undefined
   /** `config.toolOutput` (spec 09 §4). */
   toolOutput?: ToolOutputConfig | undefined
+  /** `config.toolOrder` (spec 02 §6). */
+  toolOrder?: readonly string[] | undefined
   /** `config.toolErrorText` (spec 10 §1.1). */
   toolErrorText?: ToolErrorTextFn | undefined
   contextOf: (owner: string) => HarnessContext
@@ -116,29 +208,37 @@ export async function resolveTurnRegistry(args: {
   reservedNames?: readonly string[]
 }): Promise<TurnRegistry> {
   const { open, contextOf } = args
-  const instructions1 = await evaluate(open.instructions, (e) => e.kind === 'static', contextOf)
-  if (open.sessionBlock === undefined) {
-    open.sessionBlock =
-      (await evaluate(
-        open.instructions,
-        (e) => e.kind === 'dynamic' && e.refresh === 'session',
-        contextOf,
-      )) ?? ''
-  }
-  const skills = await resolveTurnSkills({ skills: open.skills, contextOf, warn: args.warn })
-  const block1 = appendBlock(instructions1, skills.staticText)
+  const staticParts = await evaluateParts(open.instructions, (e) => e.kind === 'static', contextOf)
+  const sessionParts = await ensureSessionBlock(open, contextOf)
+  const skills = await turnSkills(open, contextOf, args.warn)
+  const block1 = appendBlock(joinParts(staticParts), skills.staticText)
   const block2 = appendBlock(
     open.sessionBlock === '' ? undefined : open.sessionBlock,
     skills.dynamicText,
   )
-  const instructionReminder = await evaluate(
+  const turnParts = await evaluateParts(
     open.instructions,
     (e) => e.kind === 'dynamic' && e.refresh === 'turn',
     contextOf,
   )
+  const instructionReminder = joinParts(turnParts)
   // page context: data from the client, after the plugins' reminders, never stored (rule 6)
   const pageContext = renderPageContext(args.pageContext, args.pageContextOptions, args.warn)
   const turnReminder = appendBlock(instructionReminder, pageContext)
+  const instructionBlocks: InstructionBlock[] = [
+    ...staticParts.map((p): InstructionBlock => ({ ...p, refresh: 'static' })),
+    ...(skills.staticText === undefined
+      ? []
+      : [{ owner: 'core:skills', refresh: 'static' as const, text: skills.staticText }]),
+    ...sessionParts.map((p): InstructionBlock => ({ ...p, refresh: 'session' })),
+    ...(skills.dynamicText === undefined
+      ? []
+      : [{ owner: 'core:skills', refresh: 'session' as const, text: skills.dynamicText }]),
+    ...turnParts.map((p): InstructionBlock => ({ ...p, refresh: 'turn' })),
+    ...(pageContext === undefined
+      ? []
+      : [{ owner: 'core:page-context', refresh: 'turn' as const, text: pageContext }]),
+  ]
 
   const deps: ToolWrapDeps = {
     hooks: open.hooks,
@@ -152,29 +252,14 @@ export async function resolveTurnRegistry(args: {
       toolOutputs: open.services.get('toolOutputs') as ToolOutputSink | undefined,
     },
   }
-  let raw: TurnToolEntry[] = open.tools.map((t) => ({
-    owner: t.owner,
-    name: t.name,
-    tool: t.tool,
-  }))
-  const staticCount = raw.length
-  const skillTools = createSkillTools({
+  const collected = await collectToolEntries({
+    open,
     skills,
-    hooks: open.hooks,
     contextOf,
     warn: args.warn,
   })
-  for (const { name, tool } of skillTools) raw.push({ owner: 'eh', name, tool })
-  raw.push(
-    ...(await listSourceTools({
-      sources: open.toolSources,
-      cache: open.sourceCache,
-      taken: new Set(raw.map((t) => t.name)),
-      contextOf,
-      warn: args.warn,
-    })),
-  )
-  raw = withToolSearch(raw)
+  let raw: TurnToolEntry[] = collected.entries
+  let staticCount = collected.staticCount
   // request-scoped client tools come after `tool_search` (last of the static prefix) and before
   // the output tool, sorted by name (spec 02 §6 rule 1)
   const requestBuilt: BuiltRequestTools | undefined = buildRequestTools(
@@ -184,6 +269,17 @@ export async function resolveTurnRegistry(args: {
   )
   if (requestBuilt !== undefined) {
     for (const { name, tool } of requestBuilt.tools) raw.push({ owner: 'eh', name, tool })
+  }
+  // `config.toolOrder` (spec 02 §6): explicit names first, the rest in the default order
+  const configuredOrder = args.toolOrder
+  if (configuredOrder !== undefined && configuredOrder.length > 0) {
+    const staticNames = new Set(raw.slice(0, staticCount).map((entry) => entry.name))
+    open.toolOrderWarned ??= new Set()
+    raw = applyToolOrder(raw, configuredOrder, args.warn, open.toolOrderWarned, args.reservedNames)
+    // the cache breakpoint stays on the last tool of the (reordered) static prefix
+    let last = -1
+    for (const [i, entry] of raw.entries()) if (staticNames.has(entry.name)) last = i
+    staticCount = last + 1
   }
   for (const entry of raw) {
     if (entry.tool.needsApproval !== undefined) {
@@ -215,6 +311,7 @@ export async function resolveTurnRegistry(args: {
     block1,
     block2,
     turnReminder,
+    instructionBlocks,
     entries,
     staticCount,
     tools,

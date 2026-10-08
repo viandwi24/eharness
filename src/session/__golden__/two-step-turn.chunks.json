@@ -68,7 +68,21 @@
       "tools": 49,
       "messages": 27,
       "summarizeAt": 75000,
-      "hardLimit": 82000
+      "hardLimit": 82000,
+      "instructionBlocks": [
+        {
+          "owner": "app",
+          "refresh": "static",
+          "tokens": 4
+        }
+      ],
+      "toolSources": [
+        {
+          "source": "app",
+          "tools": 1,
+          "tokens": 49
+        }
+      ]
     },
     "transient": true
   },
@@ -118,7 +132,21 @@
       "tools": 43,
       "messages": 30,
       "summarizeAt": 75000,
-      "hardLimit": 82000
+      "hardLimit": 82000,
+      "instructionBlocks": [
+        {
+          "owner": "app",
+          "refresh": "static",
+          "tokens": 3
+        }
+      ],
+      "toolSources": [
+        {
+          "source": "app",
+          "tools": 1,
+          "tokens": 43
+        }
+      ]
     },
     "transient": true
   },

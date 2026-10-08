@@ -105,7 +105,7 @@ describe('controller', () => {
     expect(JSON.stringify(model.prompts.at(-1))).toContain('no thanks')
   })
 
-  test('default mode: a bare No stops the turn (aborted), a No with feedback continues', async () => {
+  test('default mode: a bare No ends the turn without a model call (endTurn), a No with feedback continues', async () => {
     const model = scriptedModel([
       { toolCalls: [read('/code.ts')] },
       { toolCalls: [edit('/code.ts', 'one', 'ONE')] },
@@ -117,7 +117,9 @@ describe('controller', () => {
     controller.broker.answer((await nextPending(controller.broker)).id, { approved: false })
     const result = await turn
     await Promise.all(h.done)
-    expect(result.stop).toBe('aborted')
+    expect(result.stop).toBe('complete')
+    expect(result.steps).toBe(0)
+    expect(model.calls).toHaveLength(2)
     expect(await readFile(join(root, 'code.ts'), 'utf8')).toBe('one\n')
     expect(JSON.stringify(await controller.messages())).not.toContain('must not run')
   })

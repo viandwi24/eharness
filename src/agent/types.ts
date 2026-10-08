@@ -430,6 +430,13 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   instructions?: InstructionInput | InstructionInput[]
   /** Tool functions get the app context: `ctx.stream.data` is typed with `dataParts`. */
   tools?: ToolsInput<DP>
+  /**
+   * Final tool names listed first in this order; every other tool follows in the default order
+   * (static → skill → source → `tool_search` → request tools, spec 02 §6). Unknown names are
+   * ignored and reported once per session (`W_TOOL_ORDER`). Keep it stable across turns: a
+   * changed order busts the prompt cache.
+   */
+  toolOrder?: string[]
   skills?: Array<Skill | SkillSource>
   mcp?: ToolSource[]
   /** App data parts (no namespace): part type `data-<key>`. */

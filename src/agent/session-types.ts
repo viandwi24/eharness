@@ -30,6 +30,7 @@ import type {
   TurnResult,
 } from '../messages/types.ts'
 import type { OutputSpec } from '../output/types.ts'
+import type { SessionToolInfo } from '../registry/inventory.ts'
 import type {
   ClientToolDeclaration,
   ClientToolsOptions,
@@ -706,6 +707,14 @@ export interface HarnessSession<
   messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
   /** Current context stats and pending state. */
   stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
+  /**
+   * The tools the model sees in the next request, in request order (spec 02 §3.4): static, skill,
+   * source and `tool_search` tools with their source, deferral and estimated tokens. Resolved the
+   * way a turn would resolve them, without running one: `refresh: 'session'` sources are listed
+   * once per session and cached, `refresh: 'turn'` sources on every call. Request-scoped client
+   * tools and the per-turn output tool are not included. Opens the session if needed.
+   */
+  tools(): Promise<SessionToolInfo[]>
   events(): ReadableStream<SessionEvent<M>>
   /**
    * Resolves when no turn runs and nothing is queued (also after `close()`). A queue held by

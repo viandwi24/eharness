@@ -1,38 +1,58 @@
-/** The `glob` and `request_directory_access` tools. */
-import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+/** The library `glob` tool over the coder workspace: containment holds through the guarded disk fs. */
+import { describe, expect, test } from 'bun:test'
+import { mkdir, symlink, utimes, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { CoderConfig, Workspace } from '../src/contracts.ts'
-import { createGlobTool, createWorkspace } from '../src/workspace/index.ts'
+import { type ScriptedStep, scriptedModel } from 'eharness/testing'
+import type { CoderMessage } from '../src/contracts.ts'
+import { makeAgentsEnv, tempDir } from './helpers.ts'
 
-const dirs: string[] = []
-afterEach(async () => {
-  await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
-})
+type Input = { pattern: string; path?: string }
 
-async function makeWorkspace(): Promise<{ ws: Workspace; root: string; base: string }> {
-  const base = await realpath(await mkdtemp(join(tmpdir(), 'coder-glob-')))
-  dirs.push(base)
-  const root = join(base, 'project')
-  const data = join(base, 'data')
-  await mkdir(root)
-  const ws = await createWorkspace({
-    root,
-    projectDataDir: data,
-    additionalDirectories: [],
-  } as unknown as CoderConfig)
-  return { ws, root, base }
+/** A project (real directory `root`) and a `run` that calls the library `glob` tool through an agent. */
+async function makeWorkspace() {
+  let armed: Input | undefined
+  const step = (): ScriptedStep =>
+    armed === undefined
+      ? { text: 'done' }
+      : {
+          toolCalls: [
+            {
+              toolName: 'glob',
+              input: (() => {
+                const i = armed
+                armed = undefined
+                return i
+              })(),
+            },
+          ],
+        }
+  const env = await makeAgentsEnv({
+    files: {},
+    model: scriptedModel(Array.from({ length: 80 }, () => step)),
+    flags: { permissionMode: 'bypassPermissions' },
+  })
+  let n = 0
+  const run = async (_ws: unknown, input: Input): Promise<string> => {
+    armed = input
+    const session = env.agents.main.session(
+      `g${n++}`,
+    ) as never as import('eharness').HarnessSession<CoderMessage>
+    await session.send('glob').result
+    const parts = (await session.messages()).flatMap((m) => m.parts) as Array<{
+      type: string
+      output?: unknown
+      errorText?: string
+    }>
+    const part = parts.find((p) => p.type === 'tool-glob')
+    return String(part?.output ?? part?.errorText ?? '')
+  }
+  const root = env.root
+  return { ws: undefined, root, base: await tempDir('coder-outside-'), run }
 }
 
-async function run(ws: Workspace, input: { pattern: string; path?: string }): Promise<string> {
-  const t = createGlobTool(ws)
-  return (await t.execute?.(input, { toolCallId: 't', messages: [], context: {} })) as string
-}
-
-describe('glob tool', () => {
+describe('glob tool (library)', () => {
   test('newest first, ignored paths excluded, virtual paths', async () => {
-    const { ws, root } = await makeWorkspace()
+    const { ws, root, run } = await makeWorkspace()
     await mkdir(join(root, 'src'))
     await mkdir(join(root, 'node_modules/p'), { recursive: true })
     await mkdir(join(root, 'dist'))
@@ -52,7 +72,7 @@ describe('glob tool', () => {
   })
 
   test('caps at 200 with a message', async () => {
-    const { ws, root } = await makeWorkspace()
+    const { ws, root, run } = await makeWorkspace()
     await Promise.all(
       Array.from({ length: 205 }, (_, i) =>
         writeFile(join(root, `f${String(i).padStart(3, '0')}.txt`), ''),
@@ -64,20 +84,21 @@ describe('glob tool', () => {
   })
 
   test('No files match., and ERROR for bad patterns or paths', async () => {
-    const { ws, root } = await makeWorkspace()
+    const { ws, root, run } = await makeWorkspace()
     await writeFile(join(root, 'a.txt'), '')
     expect(await run(ws, { pattern: '*.zzz' })).toBe('No files match.')
     expect(await run(ws, { pattern: '../*.txt' })).toStartWith('ERROR:')
     expect(await run(ws, { pattern: 'a/../../*.txt' })).toStartWith('ERROR:')
     expect(await run(ws, { pattern: '/etc/*' })).toStartWith('ERROR:')
     expect(await run(ws, { pattern: '*', path: '/../x' })).toStartWith('ERROR:')
-    expect(await run(ws, { pattern: '*', path: 'relative' })).toStartWith('ERROR:')
+    // a relative path is taken from the root, like every file tool path
+    expect(await run(ws, { pattern: '*', path: 'relative' })).toBe('No files match.')
   })
 })
 
 describe('glob containment', () => {
   test('rejects backslash, .., absolute and ~ patterns', async () => {
-    const { ws, root, base } = await makeWorkspace()
+    const { ws, root, base, run } = await makeWorkspace()
     await writeFile(join(base, 'secret.txt'), 's')
     await writeFile(join(root, 'a.txt'), 'a')
     for (const pattern of ['..\\/*', '..\\/..\\/*', '../*', 'a/../../*', '/etc/*', '~/x', 'a\\b']) {
@@ -87,7 +108,7 @@ describe('glob containment', () => {
   })
 
   test('symlinks leaving the mount are not listed', async () => {
-    const { ws, root, base } = await makeWorkspace()
+    const { ws, root, base, run } = await makeWorkspace()
     await mkdir(join(base, 'outside'))
     await writeFile(join(base, 'outside/leak.txt'), 'x')
     await symlink(join(base, 'outside'), join(root, 'link'))

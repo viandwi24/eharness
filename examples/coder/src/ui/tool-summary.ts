@@ -5,6 +5,7 @@
 import { getToolName, isToolUIPart } from 'ai'
 import { diffLines } from 'diff'
 import { classifyToolResult } from 'eharness/filesystem'
+import { editsOf } from '../app/edits.ts'
 import type { AgentProgress, CoderMessage } from '../contracts.ts'
 import { TOOL } from '../contracts.ts'
 
@@ -109,6 +110,18 @@ export function countChanges(oldText: string, newText: string): { added: number;
     const count = part.count ?? 0
     if (part.added) added += count
     else if (part.removed) removed += count
+  }
+  return { added, removed }
+}
+
+/** Additions and removals of an `edit_file` call, counted over all of its edits (`edits[]`). */
+export function countEditChanges(input: unknown): { added: number; removed: number } {
+  let added = 0
+  let removed = 0
+  for (const edit of editsOf(input)) {
+    const counts = countChanges(edit.oldString, edit.newString)
+    added += counts.added
+    removed += counts.removed
   }
   return { added, removed }
 }
@@ -340,7 +353,7 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       desc.label = 'Glob'
       desc.target = str(input.pattern)
       if (ok)
-        desc.summary = `Found ${plural(text.startsWith('No ') ? 0 : countLines(text), 'file')}`
+        desc.summary = `Found ${plural(text.startsWith('No ') ? 0 : countLines(text.replace(/\n\(Showing \d+ of \d+ matches[^\n]*$/, '')), 'file')}`
       break
     }
     case TOOL.grep: {
@@ -357,7 +370,7 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       desc.label = 'Update'
       desc.target = path
       if (ok) {
-        const { added, removed } = countChanges(str(input.old_string), str(input.new_string))
+        const { added, removed } = countEditChanges(input)
         const bits: string[] = []
         if (added > 0) bits.push(plural(added, 'addition'))
         if (removed > 0) bits.push(plural(removed, 'removal'))

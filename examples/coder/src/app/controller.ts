@@ -382,42 +382,20 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
   let controller: AbortController | undefined
 
-  /** The turn `run()` / `steer()` is driving: lets a steer that missed it join the drive loop. */
+  /** The turn `run()` / `steer()` is driving: lets a steer that became a turn join the drive loop. */
   interface ActiveTurn {
     /** Resolves once the first `send()` returned (a steer waits for it). */
     started: Promise<void>
     /** Turn ids already driven. */
     seen: Set<string>
-    /** Runs a steer started that nothing drives yet (it arrived as the turn ended). */
+    /** Runs of steers that became a turn of their own (`delivery` 'turn') that nothing drives yet. */
     pending: Array<HarnessRun<CoderMessage>>
-    /** Steers that found no running turn (it waits for an approval) or were dropped by one. */
+    /** Texts of steers that were not delivered (`delivery` 'dropped', or the turn waits for an approval). */
     deferred: string[]
+    /** `run.delivery` of the steers sent; they all settle when the turn ends. */
+    deliveries: Array<Promise<void>>
   }
   let active: ActiveTurn | undefined
-
-  /** Texts of steers the core dropped because the turn stopped `tool-pending`. */
-  const watchDropped = (s: HarnessSession<CoderMessage>, into: string[]): (() => void) => {
-    let reader: ReadableStreamDefaultReader<unknown> | undefined
-    try {
-      reader = (s.events() as ReadableStream<unknown>).getReader()
-    } catch {
-      return () => {}
-    }
-    const r = reader
-    void (async () => {
-      try {
-        for (;;) {
-          const { done, value } = await r.read()
-          if (done) return
-          const e = value as { type?: string; reason?: string; text?: string }
-          if (e.type === 'input-dropped' && e.reason === 'tool-pending' && e.text) into.push(e.text)
-        }
-      } catch {
-        // the stream was cancelled or the session closed
-      }
-    })()
-    return () => void r.cancel().catch(() => {})
-  }
 
   const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -458,6 +436,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       seen: new Set(),
       pending: [],
       deferred: [],
+      deliveries: [],
     }
     let markStarted: () => void = () => {}
     turn.started = new Promise<void>((resolve) => {
@@ -465,10 +444,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     })
     active = turn
     const began = Date.now()
-    let stopWatching: () => void = () => {}
     try {
       const s = await session()
-      stopWatching = watchDropped(s, turn.deferred)
       const driveOptions = {
         session: s,
         broker,
@@ -488,7 +465,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       let result = await driveTurn(first, driveOptions)
       for (;;) {
         if (abort.signal.aborted || result.stop === 'aborted') break
-        await tick()
+        // the turn ended: every steer of it has been delivered, queued as a turn or dropped
+        await Promise.all(turn.deliveries.splice(0))
         await tick()
         const next =
           turn.pending.shift() ??
@@ -505,7 +483,6 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       return result
     } finally {
       markStarted()
-      stopWatching()
       turnMs += Date.now() - began
       if (controller === abort) controller = undefined
       if (active === turn) active = undefined
@@ -592,14 +569,19 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         const s = await session()
         // still running (nothing awaits between this check and the send)
         if (active === turn && controller !== undefined) {
-          // no running turn = it stopped for an approval: a send would auto-deny that approval
-          if (s.attach() === undefined) {
+          // not running = the turn stopped for an approval: a send would auto-deny it
+          if (!s.running) {
             turn.deferred.push(text)
             return { delivered: 'step' }
           }
           const run = s.send(text, { ifBusy: 'steer' })
-          // a run of a turn nobody drives (the turn had just ended): the drive loop takes it over
-          if (!turn.seen.has(run.turnId)) turn.pending.push(run)
+          turn.deliveries.push(
+            (run.delivery ?? Promise.resolve('step' as const)).then((delivery) => {
+              if (delivery === 'dropped') turn.deferred.push(text)
+              // a turn of its own: the drive loop takes its run over (it may be the first turn's)
+              else if (delivery === 'turn' && !turn.seen.has(run.turnId)) turn.pending.push(run)
+            }),
+          )
           return { delivered: 'step' }
         }
       }

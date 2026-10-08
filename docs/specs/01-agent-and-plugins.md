@@ -38,6 +38,7 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
 
   instructions?: InstructionInput | InstructionInput[]          // spec 02 §2
   tools?: ToolsInput<DP>                                         // tool functions: ctx typed with DP
+  toolOrder?: string[]                                           // spec 02 §6: these final tool names first, the rest after
   skills?: Array<Skill | SkillSource>                            // spec 07
   mcp?: ToolSource[]                                             // spec 09 (e.g. mcpServer(...))
   dataParts?: DP                                                 // spec 03 §4 (app namespace)
@@ -342,8 +343,22 @@ export interface TurnInfo {
   settings: ModelSettings
   abortSignal: AbortSignal
   /** Add usage from nested work (subagents, tool-internal model calls) to this turn's totals, cost and caps (spec 12 §3). */
-  addUsage(usage: LanguageModelUsage, source?: string | { source?: string; model?: LanguageModel; costUsd?: number }): void
+  addUsage(usage: AddUsageInput, source?: string | { source?: string; model?: LanguageModel; costUsd?: number }): void
 }
+
+/** What `addUsage` accepts: AI SDK usage, or plain counts (the shape of `TurnResult['usage']`). */
+type AddUsageInput = LanguageModelUsage | PlainUsage
+interface PlainUsage {
+  inputTokens: number; outputTokens: number; totalTokens?: number
+  cachedInputTokens?: number; cacheWriteTokens?: number; reasoningTokens?: number
+  costUsd?: number   // counts like options.costUsd, which wins when both are set (spec 12 §3)
+}
+```
+
+Plain usage (P31 R8) lets a plugin pass a child run's `TurnResult.usage` directly. A missing
+`totalTokens` is `inputTokens + outputTokens`. Cost precedence: `options.costUsd`, then
+`usage.costUsd`, then `options.model` priced from `models`.
+```ts
 
 export interface HarnessLogger {
   debug(msg: string, data?: Record<string, unknown>): void

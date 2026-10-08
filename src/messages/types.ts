@@ -262,6 +262,32 @@ export interface ContextStats {
    * saved (original − placeholder). Present only when `compaction.prune` is on.
    */
   pruned?: { outputs: number; chars: number }
+  /**
+   * `instructions` split by owner and refresh class, in prompt order (spec 06 §2). The tokens are
+   * calibrated like the totals; their sum equals `instructions` within rounding.
+   */
+  instructionBlocks?: InstructionBlockStats[]
+  /**
+   * `tools` split by source, in order of first appearance (spec 06 §2); `source` is the label of
+   * `SessionToolInfo.source`. The sum of `tokens` equals `tools` within rounding.
+   */
+  toolSources?: ToolSourceStats[]
+}
+
+/** One entry of {@link ContextStats.instructionBlocks}. */
+export interface InstructionBlockStats {
+  /** `'app'`, a plugin name, or `'core:skills'` / `'core:page-context'` / `'core:output'`. */
+  owner: string
+  refresh: 'static' | 'session' | 'turn'
+  tokens: number
+}
+
+/** One entry of {@link ContextStats.toolSources}. */
+export interface ToolSourceStats {
+  /** `'app'`, `plugin:<name>`, `source:<id>` or `'core'`. */
+  source: string
+  tools: number
+  tokens: number
 }
 
 /**

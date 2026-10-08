@@ -128,6 +128,8 @@ export interface HarnessSession<
   pendingWaits(): Promise<PendingExternal[]>
   /** Current context stats (spec 06 §2) and pending state (spec 11 §2). */
   stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
+  /** The tools the model sees in the next request, in request order (spec 02 §3.4). */
+  tools(): Promise<SessionToolInfo[]>
 
   events(): ReadableStream<SessionEvent>
   /**

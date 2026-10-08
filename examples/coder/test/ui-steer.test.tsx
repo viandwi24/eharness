@@ -37,9 +37,17 @@ describe('steered input in an assistant message', () => {
 
   test('an approval note renders as a dim Note line', () => {
     const out = show([
-      input('user', 'Note from the user about the approved edit_file call: keep it small'),
+      {
+        type: 'data-eh.input',
+        data: {
+          source: 'user',
+          text: '<user-note tool="edit_file" call="c1">\nkeep it small\n</user-note>',
+          approvalNote: { toolCallId: 'c1', toolName: 'edit_file', text: 'keep it small' },
+        },
+      },
     ])
     expect(out).toContain('Note: keep it small')
+    expect(out).not.toContain('user-note')
     expect(out).not.toContain('sent while')
     expect(out).not.toContain('> ')
   })

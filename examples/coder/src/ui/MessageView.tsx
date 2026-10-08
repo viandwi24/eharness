@@ -43,26 +43,26 @@ export function UserMessage({ text }: { text: string }): ReactElement {
   )
 }
 
-const APPROVAL_NOTE = /^Note from the user about the approved \S+ call:\s*([\s\S]*)$/
-
 /**
  * A `data-eh.input` part: input delivered inside the running turn (ADR-0011). `source: 'user'` is a
- * steered message (or an approval note, shown as a dim `Note: ...`); `source: 'event'` is a
+ * steered message (or an approval note, `approvalNote` set, shown as a dim `Note: ...` with the raw
+ * note, not the framed `<user-note>` the model read); `source: 'event'` is a
  * next-step event (dim system line); `plugin:*` is hook context for the model and is hidden.
  */
 export function SteeredInput({
   source,
   text,
+  approvalNote,
 }: {
   source: string
   text: string
+  approvalNote?: { text: string }
 }): ReactElement | null {
   if (source === 'user') {
-    const note = APPROVAL_NOTE.exec(text)
-    if (note) {
+    if (approvalNote !== undefined) {
       return (
         <Box marginTop={1}>
-          <Text dimColor>Note: {note[1]}</Text>
+          <Text dimColor>Note: {approvalNote.text}</Text>
         </Box>
       )
     }
@@ -181,9 +181,21 @@ export function MessageView({
           )
         }
         if ((part.type as string) === 'data-eh.input') {
-          const data = (part as unknown as { data?: { source?: string; text?: string } }).data
+          const data = (
+            part as unknown as {
+              data?: { source?: string; text?: string; approvalNote?: { text?: string } }
+            }
+          ).data
           if (typeof data?.text !== 'string') return null
-          return <SteeredInput key={key} source={data.source ?? 'user'} text={data.text} />
+          const note = data.approvalNote
+          return (
+            <SteeredInput
+              key={key}
+              source={data.source ?? 'user'}
+              text={data.text}
+              {...(typeof note?.text === 'string' ? { approvalNote: { text: note.text } } : {})}
+            />
+          )
         }
         const view = toolView(part)
         if (view) {

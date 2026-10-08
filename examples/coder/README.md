@@ -211,7 +211,7 @@ under the transcript in gray with a `⧗` mark.
 - `Esc` interrupts the turn; whatever is still queued is then sent as the next prompt.
 - A steer arriving while the turn waits for a permission answer is kept and delivered after the
   answer (the core would otherwise deny the pending approval).
-- An approval note (Tab on Yes) is stored the same way and shows as a dim `Note: ...`.
+- An approval note (Tab on Yes) is stored as an input of the turn and shows as a dim `Note: ...`.
 
 ### Prompt history
 
@@ -307,11 +307,11 @@ once, `Enter` answers the focused option, `Esc` is "No" without a comment.
 - **Notes with Tab.** On **Yes** or **No**, `Tab` opens a one-line field. `Enter` sends the answer
   with the text, `Tab` or `Shift+Tab` closes the field and keeps the text for a later answer, `Esc`
   closes the field only. The "don't ask again" options take no note.
-- A note on **Yes** reaches the agent after the tool result, as a steer at the next step boundary.
-  Because the core delivers no steer before the first step of a continuation, the agent reads it on
-  its second model call after the result, not the first.
+- A note on **Yes** is passed as `approvals[].note`: the agent reads it right after the tool result,
+  in its first model call of the continuation.
 - A comment on **No** is the denial reason, and the agent keeps working. A bare **No** on a prompt of
-  the main agent stops the turn (`aborted`); in a subagent it is a plain denial.
+  the main agent ends the turn without another model call (`endTurn: 'if-denied'`); in a subagent it
+  is a plain denial.
 
 The agent can ask you multiple-choice questions with the `ask_user_question` tool (main agent only,
 allowed in every mode). One dialog holds 1–4 questions, one tab each (`☐`/`☒` marks answered ones),
@@ -596,8 +596,8 @@ Read this before pointing the agent at anything you care about.
 - **Read rules filter listings.** `grep`, `list_files` and `glob` are approved on a directory, but
   their output drops every path that a `Read` deny or ask rule (the built-in `.env*` included)
   matches, and ends with `(N results hidden by permission rules)`.
-- **`glob` containment.** Patterns with `..`, an absolute path, `~` or backslashes are rejected;
-  results are re-checked with `realpath` against the mount.
+- **`glob` containment.** The library `glob` lists through the guarded disk `FileSystem`, so symlinks
+  that leave the mount and ignored paths never show up; patterns cannot name a path outside `path`.
 
 **The shell is not sandboxed by default.** The `bash` tool runs `/bin/bash -c` with your user's
 privileges. The name of the local sandbox module is historical. Protection comes from the permission
@@ -832,14 +832,14 @@ Notes:
 |---|---|
 | `main.tsx`, `print.ts` | CLI (commander) and headless output; `HarnessRun` streams, `TurnResult.usage` |
 | `app/` | config (settings, trust), controller, agents, prompt, storage, models.dev catalog. `defineHarnessAgent`, `session.send` / `respond`, `compaction` (`summarizeAt`, `prune`), `toolOutput` eviction, turn reminders (mode, extra dirs), `dataParts`, cost and context window from the models.dev catalog, JSON-file `MessageAdapter` / `StateAdapter` |
-| `workspace/` | virtual tree over disk: a `FileSystem` for the `filesystem()` plugin (tool-output eviction, skills), `glob` and `request_directory_access` tools |
+| `workspace/` | virtual tree over disk: a `FileSystem` for the `filesystem()` plugin (tool-output eviction, skills), `request_directory_access` tool (`glob` is the library's, over this `FileSystem`) |
 | `shell/` | `bash` tool over the AI SDK sandbox shape (own process group per command, killed on abort, timeout and exit); streams stdout and stderr as a transient `data-bashOutput` part |
 | `permissions/` | rule engine, shell command parsing and read-only grammars, broker, audit; a plugin using `tool.approve`, `approval.decided`, `activeTools` and `exit_plan_mode`; approvals via `tool-pending` and `respond()` |
 | `agents/` | `agent` tool: child sessions, preliminary tool results for live progress, `addUsage` to roll child cost into the parent; `drive.ts` answers `tool-pending` stops for main and children |
 | `ui/` | Ink components: welcome box, transcript, tool cards, diffs, todo panel (`data-todos.list`), subagent tree, permission prompt, footer; `pages/` (alternate-screen pages) and `pickers/` (model, thinking) |
 
-Tool order is stable (prompt-cache prefix): `glob`, `bash`, `agent`, `request_directory_access`, the
-filesystem tools, `todo_write`, MCP tools, `exit_plan_mode` last.
+Tool order is stable (prompt-cache prefix): `bash`, `agent`, `request_directory_access`, the
+filesystem tools (`glob` included), `todo_write`, MCP tools, `exit_plan_mode` last.
 
 Layering: `workspace/`, `shell/`, `permissions/`, `agents/` and `app/` never import Ink or React.
 `ui/` and `print.ts` use a `CoderController` (`src/contracts.ts`).
@@ -852,8 +852,8 @@ The example works around these; each is a candidate roadmap item. Details in the
 | # | Gap | Workaround here |
 |---|---|---|
 | R1 | nested approvals across processes | the `agent` tool awaits child approvals in process |
-| R2 | several edits in one `edit_file` call | several calls |
-| R3 | `glob` tool in `eharness/filesystem` | app tool |
+| R2 | several edits in one `edit_file` call | done in the library (`edits[]`, P31) |
+| R3 | `glob` tool in `eharness/filesystem` | done in the library (`glob`, P31) |
 | R4 | Node-only disk adapter with containment rules | `workspace/disk-fs.ts` |
 | R5 | pass a sandbox to tools; shell plugin | sandbox in a closure |
 | R6 | `eharness/subagent` helper | `agents/agent-tool.ts` |
@@ -861,5 +861,6 @@ The example works around these; each is a candidate roadmap item. Details in the
 | R8 | `addUsage` accepting `TurnResult.usage` | conversion helper |
 | R9 | binary files and images in `FileSystem` | text only |
 
-More (per-agent `toolOrder`, error text for adapter exceptions, subagent transcripts after resume) are
+R11, R13 and R16 to R19 (step-prepare `continuing`, `ERROR:` adapter errors, approval notes, `endTurn`,
+pending client tool input, `run.delivery`) are done in the library (P31). More (per-agent `toolOrder`, error text for adapter exceptions, subagent transcripts after resume) are
 listed in the plan.
