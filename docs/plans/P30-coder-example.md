@@ -1,6 +1,6 @@
 # P30 — Coding agent example (`examples/coder`)
 
-Status: todo · Owner: — · Branch: `main` (direct commits, see the board)
+Status: review (implementation done, awaiting maintainer confirmation) · Owner: — · Branch: `main` (direct commits, see the board)
 
 ## Goal
 
@@ -227,47 +227,54 @@ library rule "runtime-neutral source" applies to `src/`, not to examples.
 examples/coder/
   package.json            # private workspace package `eharness-coder` (§2.1)
   tsconfig.json           # extends ../tsconfig.json (eharness → src/ via paths); jsx: react-jsx
-  README.md               # how to run, keys, settings, safety model
+  README.md               # how to run, keys, settings, safety model, known limits
   src/
-    main.tsx              # Commander program → interactive (Ink) or print mode
+    main.tsx              # Commander program → interactive (Ink) or print mode; signals, trust prompt
+    contracts.ts          # shared types: config, controller, engine, broker, tool names, TOOL_ORDER
+    print.ts              # headless mode: text | json | stream-json
     app/
-      agent.ts            # builds the main HarnessAgent and subagent agents from config
-      config.ts           # settings files + CLI flags → one resolved Config
-      prompt.ts           # static instructions; turn reminder (env, git status, date)
+      agent.ts            # builds the main HarnessAgent and subagent agents (cached per name:depth)
+      config.ts           # settings files + CLI flags + project trust → one resolved Config
+      controller.ts       # CoderController: session, run, shell, resume, setModel, stats
+      models.ts           # models.dev catalog: cache, refresh, offline
+      prompt.ts           # static instructions; turn reminder (date, platform, git, mode, dirs)
       project-memory.ts   # AGENTS.md (and CLAUDE.md fallback) loading
-      sessions.ts         # storage location, --continue / --resume, listing
+      sessions.ts         # storage location, listing, newest session
     workspace/
       disk-fs.ts          # FileSystem over a real directory, with the path guard
       mount-fs.ts         # composite FileSystem: / = project, /@dirs/<n>/, /.coder/tool-outputs/
-      guard.ts            # realpath containment, protected paths, ignore rules
+      guard.ts            # realpath containment, ignore rules
       glob-tool.ts        # glob tool (tinyglobby + ignore)
       dir-access.ts       # request_directory_access tool (always asks)
     shell/
-      sandbox-local.ts    # Experimental_SandboxSession over child_process (cwd = project root)
+      sandbox-local.ts    # Experimental_SandboxSession over child_process (own process group)
       bash-tool.ts        # bash tool: timeout, output cap, live output, abort
-      parse.ts            # split into subcommands, strip wrappers, detect unparseable forms
-      readonly-commands.ts# built-in read-only allowlist (ls, cat, rg, git status/log/diff, …)
     permissions/
-      modes.ts            # default | acceptEdits | plan | dontAsk | bypassPermissions
-      rules.ts            # parse + match Tool(spec) rules, deny → ask → allow
-      plugin.ts           # definePlugin: tool.approve, turn.prepare/step.prepare, exit_plan_mode
+      bash-match.ts       # split into subcommands, strip wrappers, redirects, complex detection
+      readonly-commands.ts# read-only commands with per-command argument allow-lists
+      rules.ts            # parse + match Tool(spec) rules
+      engine.ts           # modes, evaluation order, "don't ask again" suggestions, rule edits
+      plugin.ts           # definePlugin: tool.approve, step.prepare, tool.after, exit_plan_mode, audit
       broker.ts           # in-process question queue for the UI (main agent and subagents, §6.4)
+      describe.ts         # title, detail and suggested rule of a pending call
     agents/
       builtin.ts          # general-purpose, explore, plan
       load.ts             # .coder/agents/*.md, ~/.coder/agents/*.md, --agents JSON
       agent-tool.ts       # the `agent` tool: child sessions, parallel, progress, usage
+      drive.ts            # answers tool-pending stops through the broker (main agent and children)
     ui/
-      App.tsx             # layout: <Static> transcript + live turn + prompt + status bar
-      Transcript.tsx  MessageView.tsx  ToolCard.tsx  DiffView.tsx
-      PermissionPrompt.tsx  SubagentTree.tsx  TodoPanel.tsx
-      PromptInput.tsx     # multiline, paste, history, / and @ completion
-      StatusBar.tsx       # mode, model, context %, cost
+      App.tsx  run-interactive.tsx  driver.ts   # layout, entry, stream/session-event driver
+      Transcript.tsx  MessageView.tsx  ToolCard.tsx  DiffView.tsx  tool-summary.ts
+      PermissionPrompt.tsx  SubagentTree.tsx  TodoPanel.tsx  SessionPicker.tsx
+      PromptInput.tsx  editor.ts  mentions.ts   # multiline, paste, history, @ completion
+      StatusBar.tsx  Spinner.tsx  theme.ts  keys.ts  sanitize.ts
       slash.ts            # slash command registry
       state.ts            # view model reducer over UI message chunks + session events
-    print.ts              # headless mode: text | json | stream-json
-  test/
-    disk-fs.test.ts  guard.test.ts  rules.test.ts  parse.test.ts
-    agent-tool.test.ts  permissions.test.ts  print.e2e.test.ts  ui.test.tsx
+  test/                   # <name>.test.ts, plus helpers.ts and fake-controller.ts
+    disk-fs guard mount-fs glob-tool dir-access workspace bash-tool sandbox bash-match
+    rules engine permissions-plugin broker describe drive agent-tool agents-load config
+    models prompt project-memory sessions controller print.e2e ui-render(.tsx) ui-state
+    ui-slash ui-editor ui-mentions ui-tool-summary
 ```
 
 Rule: `app/`, `workspace/`, `shell/`, `permissions/` and `agents/` never import Ink or React. The UI
@@ -292,24 +299,29 @@ coder -p, --print <prompt>           headless: run one turn (and its continuatio
   -r, --resume [id]                  resume a session (picker without id)
   --max-steps <n>                    loop.maxSteps per turn
   --cwd <path>                       project root (default: process.cwd())
+  --trust-project                    trust this project's .coder/ settings, agents and skills
 ```
 
 Print mode never prompts: anything that would ask is denied (`dontAsk` semantics) unless
-`--permission-mode bypassPermissions` is given. Exit code 0 for `complete`, 1 otherwise; the
-`json` format prints `{ stop, text, usage, costUsd, sessionId }`.
+`--permission-mode bypassPermissions` is given. Exit code 0 for `complete`, 1 for any other stop,
+2 for usage and config errors (unknown flag, invalid settings, invalid `--agents`); a denied write
+does not change the code by itself. The `json` format prints `{ stop, text, usage, costUsd,
+sessionId }`. SIGINT/SIGTERM abort the turn and kill the process group of every running command.
+`--trust-project` trusts the project's `.coder/` content (§5).
 
 **Interactive keys:** `Enter` submit, `Shift+Enter` / `\` + `Enter` newline, `Esc` interrupt the
 running turn (`run.abort()`), `Shift+Tab` cycle permission mode, `Ctrl+C` twice exit, `↑`/`↓`
 history, `!cmd` run a shell command directly (shown in the transcript, sent as context), `@path`
 file mention with completion, `Ctrl+O` toggle expanded tool output.
 
-**Slash commands:** `/help`, `/clear` (new session), `/compact`, `/model`, `/permissions` (list and
-edit rules), `/agents` (list), `/resume`, `/cost`, `/todos`, `/init` (draft an `AGENTS.md`),
-`/exit`.
+**Slash commands:** `/help`, `/clear` (new session), `/compact`, `/model`, `/permissions` (list;
+`allow|ask|deny <rule> [--project]`, `remove <kind> <rule>`, `mode <mode>` edit), `/agents [n]` and
+`/transcript <n>` (list runs, open one read-only), `/resume [id]`, `/cost`, `/todos`, `/init` (draft
+an `AGENTS.md`), `/exit`.
 
 **Settings files** (JSON, merged in this order, later wins; rules concatenate):
-`~/.coder/settings.json` (user), `<root>/.coder/settings.json` (project, committed),
-`<root>/.coder/settings.local.json` (personal, add to `.gitignore`), then CLI flags.
+`~/.coder/settings.json` (user), `<root>/.coder/settings.json` (project, committed, subject to project
+trust §5), `<root>/.coder/settings.local.json` (personal, add to `.gitignore`), then CLI flags.
 
 ```json
 {
@@ -343,8 +355,11 @@ The model never sees real paths. It sees a virtual tree: `/` is the project root
 - **Ignore and protected paths.** `.git/`, `node_modules/` and `.gitignore` entries are hidden
   from `list_files`, `glob` and `grep` (still readable by explicit path, like Claude Code).
   `.git/**`, `.coder/settings*.json` and `.coder/agents/**` are **write-protected**: always ask,
-  in every mode, `bypassPermissions` included (protected actions). `deny` rules on `Read(…)` apply
-  to file tools; secrets such as `.env*` are denied by a default rule the user can override.
+  in every mode, `bypassPermissions` included (protected actions), for file tools and for shell
+  commands (textual detection of `.git` / `.coder` in a non-read-only command). `Read(…)` rules
+  apply to file tools and to read-only shell commands (directories and globs they cover included),
+  and they filter the output of `grep`, `list_files` and `glob` ("N results hidden"). Secrets such
+  as `.env*` ask by a built-in rule that an explicit allow rule overrides (decided: ask, not deny).
 - **Text only.** Files that are not valid UTF-8 or larger than 2 MB are reported as
   `ERROR: binary or too large` (binary file support is a library roadmap item).
 - **Outside the project.** `mountFs` composes: `/` → project, `/@dirs/<name>/` → each
@@ -352,7 +367,16 @@ The model never sees real paths. It sees a virtual tree: `/` is the project root
   `~/.coder/projects/<hash>/tool-outputs` (evicted tool outputs never land in the repo). A
   `request_directory_access({ path, reason })` tool lets the model ask for a new directory; it has
   `metadata.risk: 'external'` and **always** asks (no rule, mode or grant can auto-approve it); on
-  approval the directory is mounted for the session and the tool returns its virtual path.
+  approval the directory is mounted for the session and the tool returns its virtual path. It
+  refuses `/`, the home directory and any parent of the project, and reports the real path when a
+  symlink was followed. `glob` rejects patterns with `..`, absolute or `~` paths and backslashes, and
+  re-checks every result with `realpath` against its mount.
+- **Project trust.** `<root>/.coder/settings.json`, `.coder/agents/` and `.coder/skills/` come with the
+  repository. Until trusted, the project file's `allow`, `defaultMode`, `additionalDirectories` and
+  `mcpServers` are ignored (`ask`, `deny`, `model`, `contextWindow` still apply), and project agents
+  and skills are not loaded. Trust is recorded in `~/.coder/trusted.json` as a hash of that content,
+  per real root; a change revokes it. A TTY asks `Trust this project? [y/N]`; print mode warns and
+  needs `--trust-project`.
 - **The shell is not jailed.** Commands run with `cwd` = the real project root, but a shell can
   touch anything the user can. This is stated in the README and enforced by permissions (§6), not
   by the filesystem. OS sandboxing (`sandbox-exec` on macOS, `bubblewrap` on Linux) behind the same
@@ -362,7 +386,12 @@ The model never sees real paths. It sees a virtual tree: `/` is the project root
 
 ## 6. Tools and permissions
 
-### 6.1 Tool set (stable order, `toolOrder` — prompt cache)
+### 6.1 Tool set (stable order — prompt cache)
+
+Actual order (`app/agent.ts`; it differs from `TOOL_ORDER` in `contracts.ts` because the core has no
+per-agent `toolOrder`): the root `tools` config first (`glob`, `bash`, `agent` when depth allows,
+`request_directory_access` for the main agent), then the plugins in order (`filesystem()` tools,
+`todo_write`, MCP tools, `exit_plan_mode` last). It is identical for every session and turn.
 
 | Tool | From | Risk | Notes |
 |---|---|---|---|
@@ -375,7 +404,7 @@ The model never sees real paths. It sees a virtual tree: `/` is the project root
 | `exit_plan_mode` | app | external | only in plan mode; always asks; the plan is its input |
 | `request_directory_access` | app | external | always asks |
 | `load_skill`, `read_skill_file` | core | read | skills from `.coder/skills/` via `fsSkillSource` |
-| MCP tools | `eharness/mcp` | from settings | M5; `defer: 'auto'` |
+| MCP tools | `eharness/mcp` | from settings | M5; main agent only, project servers need trust; default `mcpServer()` options (no `defer`) |
 
 Tool output limits: `toolOutput: { maxChars: 30_000, strategy: 'evict' }` so a huge test log is
 stored under `/.coder/tool-outputs/` and the model pages through it with `read_file`. The `bash`
@@ -386,14 +415,17 @@ output (head + tail, exit code, duration) to the model.
 
 | Mode | Reads in working dirs | File edits | Shell | Ask-type actions |
 |---|---|---|---|---|
-| `default` | allowed | ask | read-only allowlist, else ask | ask |
+| `default` | allowed | ask | read-only commands, else ask | ask |
 | `acceptEdits` | allowed | allowed in working dirs | + `mkdir`, `touch`, `mv`, `cp` inside working dirs | ask |
-| `plan` | allowed | denied (tools inactive) | read-only allowlist only | `exit_plan_mode` asks |
+| `plan` | allowed | denied (tools inactive) | read-only commands only (argument allow-lists) | `exit_plan_mode` asks |
 | `dontAsk` | allowed | only via allow rules | only via allow rules | denied |
 | `bypassPermissions` | allowed | allowed | allowed | protected paths and `request_directory_access` still ask |
 
-`Shift+Tab` cycles `default → acceptEdits → plan → default`; the mode lives in plugin state
-(`ctx.state`) and is shown in the status bar. A mode change takes effect at the next step.
+`Shift+Tab` cycles `default → acceptEdits → plan → default`. The mode lives in the permission
+engine (in memory, shared by the main agent and the children), not in plugin state, and is not
+persisted: a restart starts in `defaultMode` again. It is shown in the status bar and in the turn
+reminder. A mode change takes effect at the next step. `exit_plan_mode` restores the mode that was
+active before plan mode. `/permissions mode bypassPermissions` needs `--yes`.
 
 ### 6.3 Rules and how they map onto eharness
 
@@ -402,24 +434,38 @@ output (head + tail, exit code, duration) to the model.
   `delete_file`, `Bash` → `bash`, `Agent(name)` → `agent` with that `subagent_type`).
 - Path specs use gitignore semantics via `ignore`, anchored as in the Claude Code table
   (`//abs`, `~/`, `/` = project root, relative = cwd).
-- Bash specs: `parse.ts` tokenizes with `shell-quote`, splits on `&&`, `||`, `;`, `|`, `|&`, `&`,
+- Bash specs: `bash-match.ts` tokenizes with `shell-quote`, splits on `&&`, `||`, `;`, `|`, `|&`, `&`,
   newline, strips `timeout`, `time`, `nice`, `nohup`, `stdbuf`, `command`, `builtin`, bare
   `xargs`, and safe leading env assignments. **Any** of `$(`, backticks, `<(`, subshell parens,
   heredocs, or a trailing operator makes the command *complex*: allow rules never match a complex
   command; deny/ask rules match any subcommand found. Redirect targets (`>`, `>>`, `tee`) are
   checked against `Edit` rules and the working directories.
-- Evaluation: deny → ask → allow → mode default. Result per call: `denied` (with a reason the
-  model reads), `user-approval` or `approved`.
+- Evaluation (as implemented): deny rules, always-ask tools, plan-mode gate, protected paths, covered
+  directories/globs, ask rules, allow rules, built-in `.env*` asks, mode default. Result per call:
+  `denied` (with a reason the model reads), `user-approval` or `approved`.
+- Read-only shell commands (`readonly-commands.ts`) are not matched by name alone: each command has
+  an argument allow-list (`sort -o`, `find -exec`, `rg --pre`, `uniq in out`, `tail -f` are refused;
+  `tree` is not on the list). Their path arguments must lie in a working directory. `$` expansions,
+  `~user`, brace expansion and `xargs` stdin ask. Recursive searches (`rg`, `grep -r`) and globs ask
+  when a `Read` ask/deny rule (built-in `.env*` included) could match below the target. An allow
+  rule never approves a redirect outside the working directories.
 - **eharness mapping.** The agent has **no** static `approval.policy`; the `permissions` plugin's
   `tool.approve` hook returns the decision for every call (most-restrictive-wins means a hook can
   only tighten what is otherwise allowed, and nothing else is configured, so the hook decides).
-  The hook reads rules, mode and session allowances from config + `ctx.state` only: deterministic
-  and side-effect free, as spec 01 §5 requires. Bare-tool deny rules and plan mode remove tools
-  through `turn.prepare` / `step.prepare` `activeTools` (accepting a cache bust at mode changes).
+  The hook reads rules, mode and session allowances from the in-memory permission engine only: it
+  is deterministic for a given engine state and has no side effects. Bare-tool deny rules and plan
+  mode remove tools through `step.prepare` `activeTools` (`turn.prepare` has no tool list in its
+  event; accepted: a cache bust at mode changes). After an approved `exit_plan_mode` the first step
+  of the `respond()` continuation is prepared before the tool runs, so the plugin inspects the wire
+  (`endsWithApprovedPlan`) to offer the tools of the restored mode (library request R11).
 - **Prompt answers:** *Yes* → `respond({ approvals: [{ id, approved: true }] })`; *Yes, and don't
-  ask again* → the UI first adds a session allow rule (edits: the tool; bash: the command prefix
-  up to the first argument, e.g. `Bash(bun test *)`; persisted to `settings.local.json` when the
-  user picks "always for this project"), then approves; *No* (+ optional feedback) → approved
+  ask again* → the UI first adds a session allow rule, then approves (persisted to
+  `settings.local.json` when the user picks "always for this project"). The suggestion is narrow:
+  edits → the `Edit` tool; bash → `Bash(prog sub *)` for ordinary programs (e.g. `Bash(bun test *)`),
+  the **exact** command for interpreters, shells and wrappers (`bash -c`, `python3 -c`, `node`,
+  `env`, `sudo`, `xargs`, `find`, `awk`, `sed`, `npx`, …), for a flag as second word and for
+  `git -c/-C/config`; none for compound or complex commands, commands with `*`, protected paths,
+  `exit_plan_mode` and `request_directory_access`; *No* (+ optional feedback) → approved
   `false` with `reason` = the feedback, which the model reads. Every decision is logged through
   `approval.decided` to `~/.coder/projects/<hash>/audit.jsonl`.
 - Several pending approvals of one step are answered together in one `respond()` (partial answers
@@ -448,8 +494,11 @@ question and the answer.
   for the UI. The tool's description lists the available types with their descriptions (built at
   session start, so the list is stable for the session).
 - **Definitions.** Built-in `general-purpose` (all tools except `agent` at the depth limit),
-  `explore` (read-only tools; prompt asks for a thoroughness level), `plan` (read-only, used from
-  plan mode). User-defined from `--agents` JSON, `<root>/.coder/agents/*.md`,
+  `explore` (read-only tools; prompt asks for a thoroughness level), `plan` (read-only). Both are
+  `permissionMode: plan`: write tools are removed and their `bash` is read-only in every session
+  mode, `bypassPermissions` included (a per-agent mode on their permissions plugin). Subagents never
+  get `exit_plan_mode` or `request_directory_access`; project definitions load only when the
+  project is trusted. User-defined from `--agents` JSON, `<root>/.coder/agents/*.md`,
   `~/.coder/agents/*.md` (priority in that order; built-ins lowest). Frontmatter subset: `name`,
   `description`, `tools`, `disallowedTools`, `model` (`inherit` default), `permissionMode`,
   `maxTurns`, `omitProjectMemory`. Parse with eharness `parseSkillMarkdown` (same YAML subset);
@@ -466,11 +515,13 @@ question and the answer.
   partial text). Child usage and cost go to the parent turn with `ctx.turn.addUsage()`.
 - **Parallel.** Several `agent` calls in one step run concurrently (AI SDK executes the step's
   tool calls in parallel); the instructions tell the model to batch independent delegations.
-  Concurrency cap: 8 running children per session (a semaphore in the tool).
+  Concurrency cap: 8 running children per nesting depth (one semaphore per depth, so parents
+  waiting for their children cannot fill the cap and deadlock).
 - **Nesting.** Depth limit 2 below the main agent (configurable); at the limit the child agent is
   built without the `agent` tool.
-- **Transcripts.** Child sessions are stored like any session; `/agents` and the tree can open a
-  child transcript (`messages()` of the child id). Children are closed after their final output.
+- **Transcripts.** Child sessions are stored like any session; `/agents <n>` (or `/transcript <n>`)
+  opens the stored messages of run `n`. Only runs seen live in this process are listed: the final
+  tool output carries no child session id (R10). Children are closed after their final output.
 
 ---
 
@@ -487,8 +538,10 @@ question and the answer.
 - **Turn reminder** (`refresh: 'turn'`, never stored): date, platform, git branch and short
   status, permission mode. Volatile values never go into `instructions` (ADR-0013).
 - **Loop:** `maxSteps` 200, `wrapUp` on, progress guard default, `compaction.summarizeAt` 0.8 with
-  `prune: {}`, `models` from a bundled models.dev snapshot via `modelsDevCatalog()` for windows and
-  cost (status bar shows context % and USD).
+  `prune: {}`, `models` from the models.dev catalog via `modelsDevCatalog()` (decided: fetched, not bundled):
+  `app/models.ts` caches it in `~/.coder/models.json`, refreshes a cache older than 24 h in the
+  background, waits at most 3 s for the first fetch, and `CODER_OFFLINE=1` disables fetching. An
+  explicit `contextWindow` setting beats the catalog. The status bar shows context % and USD.
 - **Sessions:** `examples/json-file-storage.ts` adapters (messages + state) under
   `~/.coder/projects/<sha256(realRoot)[0:16]>/sessions/`. `--continue` picks the newest;
   `--resume` lists sessions with their first user message. A crash mid-turn is recovered by the
@@ -541,69 +594,131 @@ at the end.
       (hoisted linker); `bun.lock` updated; `publint` / `attw` unchanged
 - [x] Test: `eharness` resolves to `src/`, one copy of `ai` (`test/workspace.test.ts`)
 - [x] Skeleton `src/main.tsx`: Commander program (`--version`, `-p`, `--cwd`) and an Ink splash
-- [ ] README skeleton
-- [ ] Commander program with print mode and the interactive entry; `config.ts` (settings + flags)
-- [ ] `disk-fs.ts` + `guard.ts` passing `fileSystemConformance` on a temp dir; containment tests
-      (`..`, absolute, symlink file, symlink dir, symlink swap)
-- [ ] `mount-fs.ts` with `/@dirs/*` and `/.coder/tool-outputs/`
-- [ ] `glob` tool; `rg` fast path for `grep` with fallback
-- [ ] Agent factory with `filesystem()`, static prompt, project memory, turn reminder, toolOrder
-- [ ] Ink app: transcript, tool cards, prompt input (multiline, paste, history), status bar, `Esc`
-- [ ] Sessions: JSON storage, `--continue`, `--resume`
-- [ ] Acceptance: with a real model, "rename function X across the project" works with partial
-      edits; scripted-model e2e in print mode passes offline
+- [x] README (rewritten for the final code; see Implementation notes)
+- [x] Commander program with print mode and the interactive entry; `config.ts` (settings + flags)
+      (`config.test.ts`, `print.e2e.test.ts`)
+- [x] `disk-fs.ts` + `guard.ts` passing `fileSystemConformance` on a temp dir; containment tests
+      (`..`, absolute, symlink file, symlink dir, symlink swap) (`disk-fs.test.ts`, `guard.test.ts`)
+- [x] `mount-fs.ts` with `/@dirs/*` and `/.coder/tool-outputs/` (`mount-fs.test.ts`)
+- [x] `glob` tool; `rg` fast path for `grep` with fallback (`glob-tool.test.ts`; the fallback is
+      tested, the `rg` path runs when `rg` is installed)
+- [x] Agent factory with `filesystem()`, static prompt, project memory, turn reminder, tool order
+      (`prompt.test.ts`, `project-memory.test.ts`, `controller.test.ts`; order: §6.1, not `toolOrder`)
+- [x] Ink app: transcript, tool cards, prompt input (multiline, paste, history), status bar, `Esc`
+      (`ui-render`, `ui-editor`, `ui-state`; paste and history have no dedicated test)
+- [x] Sessions: JSON storage, `--continue`, `--resume` (`sessions.test.ts`, `controller.test.ts`,
+      picker in `ui-render.test.tsx`)
+- [x] Acceptance: scripted-model e2e in print mode passes offline; "rename function X across the
+      project" with partial edits is tested with a scripted model (`controller.test.ts`). Not run
+      with a real model.
 
 ### M2 — Permissions, shell, plan mode, todos
 
-- [ ] `rules.ts` with the Claude Code example table as test cases; `parse.ts` tests
-      (operators, wrappers, complex forms, redirects)
-- [ ] `permissions` plugin: modes, `tool.approve`, `activeTools`, audit via `approval.decided`
-- [ ] Permission prompt UI + `respond()`; "don't ask again" (session and project)
-- [ ] `sandbox-local.ts` + `bash` tool (timeout, abort, live transient output, capped result,
-      read-only allowlist)
-- [ ] Plan mode + `exit_plan_mode`; `Shift+Tab` cycling; protected paths ask in every mode
-- [ ] `todos()` plugin + todo panel; `!cmd` direct shell
-- [ ] Acceptance: in `default` mode no write or non-allowlisted command runs without a prompt
-      (test matrix per mode); plan mode cannot modify a file by any tool
+- [x] `rules.ts` with the Claude Code example table as test cases; `bash-match.ts` tests
+      (operators, wrappers, complex forms, redirects) (`rules.test.ts`, `bash-match.test.ts`;
+      `parse.ts` became `bash-match.ts` + `readonly-commands.ts`)
+- [x] `permissions` plugin: modes, `tool.approve`, `activeTools`, audit via `approval.decided`
+      (`engine.test.ts`, `permissions-plugin.test.ts`)
+- [x] Permission prompt UI + `respond()`; "don't ask again" (session and project)
+      (`ui-render.test.tsx`, `drive.test.ts`, `engine.test.ts`; the project scope is tested at the
+      engine level)
+- [x] `sandbox-local.ts` + `bash` tool (timeout, abort, live transient output, capped result,
+      read-only commands) (`sandbox.test.ts`, `bash-tool.test.ts`)
+- [x] Plan mode + `exit_plan_mode`; `Shift+Tab` cycling; protected paths ask in every mode
+- [x] `todos()` plugin + todo panel; `!cmd` direct shell (`todos()` is wired; the panel is covered by
+      the `ui-state` reducer test only; `!cmd` in `ui-render` and `controller` tests)
+- [x] Acceptance: in `default` mode no write or non-allowlisted command runs without a prompt
+      (engine test matrix per mode); plan mode cannot modify a file by any tool
 
 ### M3 — Subagents
 
-- [ ] Built-in definitions; loader for `--agents`, project and user `agents/*.md`
-- [ ] `agent` tool: child session, parent link, abort, usage, progress generator, final output
-- [ ] Parallel execution with the concurrency cap; depth limit
-- [ ] Child approvals: the `agent` tool answers the child's `tool-pending` through the broker and `respond()` (§6.4); prompts labelled with the child name
-- [ ] Subagent tree UI; open a child transcript from `/agents`
-- [ ] Acceptance: "explore how X works in three areas" runs three `explore` children in parallel,
-      the parent's context gets only their reports; a user-defined `reviewer` agent with
-      `tools: read_file, grep` cannot call `bash` (test)
+- [x] Built-in definitions; loader for `--agents`, project and user `agents/*.md`
+      (`agents-load.test.ts`, `print.e2e.test.ts`)
+- [x] `agent` tool: child session, parent link, abort, usage, progress generator, final output
+      (`agent-tool.test.ts`)
+- [x] Parallel execution with the concurrency cap; depth limit (cap is per depth, §7)
+- [x] Child approvals: the `agent` tool answers the child's `tool-pending` through the broker and
+      `respond()` (§6.4); prompts labelled with the child name (`agent-tool.test.ts`,
+      `drive.test.ts`)
+- [x] Subagent tree UI; open a child transcript from `/agents <n>` (`ui-slash.test.ts`,
+      `ui-render.test.tsx`; the tree component has no render test)
+- [x] Acceptance: parallel children and the `reviewer` agent that cannot call `bash` are tested
+      (`agent-tool.test.ts`). "explore in three areas" is not tested with exactly three children.
 
 ### M4 — Long sessions and polish
 
 - [ ] Compaction + prune + evict tuned; `/compact`, `/cost`, `/clear`, `/model`, `/permissions`,
-      `/agents`, `/init`, `/todos`
-- [ ] `@path` completion; `Ctrl+O` expand; diff view in prompts and cards
-- [ ] Skills from `.coder/skills/` (`fsSkillSource` on the workspace fs)
-- [ ] Acceptance: a two-hour session survives compaction and a process kill (`--continue`)
+      `/agents`, `/init`, `/todos` (the slash commands are done and tested in `ui-slash.test.ts`;
+      compaction, prune and evict are configured (`summarizeAt` 0.8, `prune: {}`, evict at 30 000
+      chars) but not tuned or tested in the example)
+- [x] `@path` completion; `Ctrl+O` expand; diff view in prompts and cards (`ui-mentions.test.ts`,
+      `ui-tool-summary.test.ts`, `ui-render.test.tsx`; `Ctrl+O` has no test)
+- [ ] Skills from `.coder/skills/` (`fsSkillSource` on the workspace fs): wired in `app/agent.ts`
+      and gated by project trust (trust tested in `config.test.ts`); loading skills is not tested
+- [ ] Acceptance: a two-hour session survives compaction and a process kill (`--continue`):
+      not run; resume is tested, compaction is not
 
 ### M5 — Stretch
 
-- [ ] MCP servers from settings (`mcpServer`, risk per server)
-- [ ] OS sandbox driver for `bash` (macOS `sandbox-exec`, Linux `bubblewrap`) behind the sandbox
-      interface; network off by default
-- [ ] `bun run compile` single binary; smoke-run it outside the repo
-- [ ] Docs: guide page `docs/guides/coding-agent.md` walking through the example
+- [ ] MCP servers from settings (`mcpServer`, risk per server): implemented in `app/agent.ts`
+      (main agent only, project servers need trust); no automated test, and the security of this
+      path (MCP tools run with the user's privileges, they only ask by default) is untested
+- [ ] OS sandbox driver for `bash` (macOS `sandbox-exec`, Linux `bubblewrap`): not done
+- [ ] `bun run compile` single binary; smoke-run it outside the repo: script exists, smoke not done
+- [ ] Docs: guide page `docs/guides/coding-agent.md` walking through the example: not done
 
 ## Acceptance criteria
 
-- [ ] All milestone acceptance items above
-- [ ] `examples/coder` lint and typecheck clean; its tests run offline with `scriptedModel`
-- [ ] Root `bun run lint && bun run typecheck && bun test` stay green (the example does not break
-      the library gate)
-- [ ] No import from `src/**` internals: only `eharness`, `eharness/*` subpaths (same rule as
+- [ ] All milestone acceptance items above (M1 to M3 hold with scripted models; M4 and the real-model
+      checks are open)
+- [x] `examples/coder` lint and typecheck clean; its tests run offline with `scriptedModel`
+- [x] Root `bun run lint && bun run typecheck && bun test` stay green (1795 tests pass)
+- [x] No import from `src/**` internals: only `eharness`, `eharness/*` subpaths (same rule as
       shipped plugins)
-- [ ] Every library gap found is written under [Requests to the library](#requests-to-the-library)
-- [ ] Only one changeset, empty, for the root `workspaces` field (§2.1); nothing in `src/` changes
-- [ ] `bun install --frozen-lockfile` works from a clean clone (workspace and lockfile agree)
+- [x] Every library gap found is written under [Requests to the library](#requests-to-the-library)
+- [x] Only one changeset, empty, for the root `workspaces` field (§2.1); nothing in `src/` changes
+      (`.changeset/coder-workspace.md` is empty)
+- [ ] `bun install --frozen-lockfile` works from a clean clone (not re-verified in this review)
+
+## Implementation notes (2026-10-08)
+
+Review findings that were fixed after the first implementation:
+
+- The shell read-only list was a name list: now every command has an argument allow-list (`sort -o`,
+  `find -fprint`, `rg --pre`, `uniq in out`, `tail -f`, `git --output` are refused; `tree` removed).
+- Read rules did not reach the shell, directories or globs: recursive searches and globs now ask when
+  a `Read` ask/deny rule (built-in `.env*` included) could match below the target; `$` expansions ask.
+- `grep`, `list_files` and `glob` leaked paths hidden by `Read` rules: their output is filtered and
+  ends with a "results hidden" line. Bare `Read` patterns apply in every mount.
+- "Don't ask again" could offer `Bash(bash *)` or similar: it is exact for interpreters, wrappers,
+  flags as second word and `git -c/-C/config`.
+- Protected paths only guarded file tools: shell commands that mention `.git` or `.coder` ask in
+  every mode, `bypassPermissions` included (textual detection).
+- An allow rule could approve a redirect outside the project: it now asks.
+- `explore` and `plan` ran with the session mode: they now always run in plan mode (read-only bash).
+- One global concurrency cap could deadlock nested children: the cap is per depth.
+- `exit_plan_mode` always went to `default`: it restores the previous mode.
+- `request_directory_access` accepted `/`, home and parents of the project, and hid symlinked
+  targets: it refuses them and reports the real path.
+- Project `.coder/` content could widen permissions or start MCP servers: project trust (§5).
+- Context window and cost: the models.dev catalog replaced the fixed fallback (§8).
+- Process groups of shell commands outlived the CLI: SIGINT, SIGTERM and exit kill them.
+
+Decisions:
+
+| Decision | Choice |
+|---|---|
+| Mode storage | in the permission engine, in memory, not persisted across restarts (§6.2) |
+| `.env*` reads | ask by a built-in rule (an allow rule overrides it), not deny |
+| Catalog | models.dev fetched and cached (`~/.coder/models.json`, 24 h, `CODER_OFFLINE=1`), not bundled |
+| Tool order | root tools first, then plugins (§6.1); no per-agent `toolOrder` in the core |
+| Exit codes | 0 complete, 1 other stop, 2 usage or config error; a denied write alone is 0 |
+| Trust file | last writer wins; accepted for an example |
+
+Known limits (also in the README): lexical shell path checks and symlinks; git config drivers can run
+programs in auto-approved `git diff|log|show`; protected-path detection for shell is textual; `rg
+<path>` is treated as recursive; transcripts of subagents only for runs seen live; mode is not
+persisted.
 
 ## Requests to the library
 
@@ -620,6 +735,10 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 | R7 | Rule-based grants (`Bash(git *)`) in core approvals (roadmap row) | rules in the app plugin |
 | R8 | `addUsage` accepting the eharness `TurnResult.usage` shape directly | a conversion helper |
 | R9 | Binary files / images in `FileSystem` (screenshots, PDFs) | text only |
+| R10 | Subagent transcripts after a resume: the final tool output of a child carries no session id, so the UI cannot reopen runs of an earlier process (an output part or `providerMetadata` with the child session id, or a `parent` index in the session API) | the session id is only in the live preliminary outputs; `/agents` lists runs seen live |
+| R11 | `step.prepare` cannot see that an approved tool of the continuation will change the active tools (the first step of a `respond()` is prepared before the approved tool runs) | `endsWithApprovedPlan` inspects the wire messages in the permissions plugin |
+| R12 | Per-agent `toolOrder` (the core has one global order; plugin tools always come after root tools) | tool order is "root tools, then plugins" (§6.1) |
+| R13 | Adapter exceptions from `FileSystem` become `Error: ...` tool errors (spec 08 §3) instead of an `ERROR:` string; an option to catch and format them in the filesystem plugin (or a per-tool `toolErrorText`) | `disk-fs.ts` throws plain sentences (binary or too large file, read-only directory) |
 
 ## Open questions
 
