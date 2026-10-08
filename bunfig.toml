@@ -1,0 +1,6 @@
+# The repo used Bun's hoisted layout before `examples/coder` became a workspace; adding a
+# workspace switches Bun to the isolated linker, which hides transitive packages some library
+# tests import types from. Keep the layout the library was developed with.
+# docs/plans/P30-coder-example.md §2.1
+[install]
+linker = "hoisted"

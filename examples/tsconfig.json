@@ -7,5 +7,7 @@
     "declaration": false,
     "isolatedDeclarations": false
   },
-  "include": ["."]
+  "include": ["."],
+  // `coder/` is a workspace package with its own tsconfig (JSX); typechecked separately
+  "exclude": ["coder"]
 }

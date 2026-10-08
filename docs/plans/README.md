@@ -38,6 +38,7 @@ Update this table in the same commit that changes a phase's status.
 | P27 | [Group-chat plugin (`eharness/group`)](P27-group-chat.md) | done | P20 | P28 (W4) |
 | P28 | [OpenAPI → tools plugin (`eharness/openapi`)](P28-openapi-tools.md) | done | P21 | P27 (W4) |
 | P29 | [Docs, guides, 0.5.0 handoff](P29-docs-handoff-0.5.md) | done | P21–P28 | — (W5) |
+| P30 | [Coding agent example (`examples/coder`)](P30-coder-example.md) | todo | P29 | — |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

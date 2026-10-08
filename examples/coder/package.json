@@ -1,0 +1,32 @@
+{
+  "name": "eharness-coder",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Example: a terminal coding agent built on eharness (docs/plans/P30-coder-example.md).",
+  "type": "module",
+  "bin": {
+    "coder": "./src/main.tsx"
+  },
+  "scripts": {
+    "start": "bun src/main.tsx",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p .",
+    "compile": "bun build src/main.tsx --compile --outfile dist/coder"
+  },
+  "dependencies": {
+    "ai": "^7.0.127",
+    "commander": "15.0.0",
+    "diff": "9.0.0",
+    "ignore": "7.0.12",
+    "ink": "8.0.0",
+    "react": "19.3.0",
+    "shell-quote": "1.12.0",
+    "tinyglobby": "0.2.17",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/shell-quote": "1.7.5",
+    "ink-testing-library": "4.0.0"
+  }
+}

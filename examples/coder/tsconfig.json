@@ -1,0 +1,12 @@
+{
+  // Extends examples/tsconfig.json → the root tsconfig, whose `paths` map `eharness` and
+  // `eharness/*` to `src/`: the example always runs against the library source, no build step.
+  // The root package cannot be a workspace dependency (docs/plans/P30-coder-example.md §2.1).
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx"
+  },
+  "include": ["src", "test"],
+  // do not inherit examples/tsconfig.json's `exclude: ["coder"]`
+  "exclude": []
+}
