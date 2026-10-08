@@ -13,12 +13,11 @@
  *   tools, `todo_write`, MCP tools (source tools, always after static tools) and last the
  *   permissions plugin's `exit_plan_mode`. The order is identical for every session and turn of
  *   an agent, which is what the cache prefix needs; it differs slightly from `TOOL_ORDER` in
- *   contracts.ts, which the core cannot express (it has no per-agent `toolOrder` option).
+ *   contracts.ts, which the app does not apply yet (the core now has `config.toolOrder`).
  */
 import { existsSync } from 'node:fs'
-import { readdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { LanguageModel, Tool } from 'ai'
+import type { LanguageModel } from 'ai'
 import {
   defineHarnessAgent,
   type definePlugin,
@@ -66,7 +65,6 @@ import {
   turnReminder,
 } from './prompt.ts'
 import type { TaskInject, TaskManager } from './tasks.ts'
-import { buildTools, estimateTokens, estimateTool, pluginStaticTools } from './tool-inventory.ts'
 import {
   createWebFetchTool,
   createWebSearchTool,
@@ -144,42 +142,18 @@ export interface Agents {
   closeAll(): Promise<void>
 }
 
-/** Estimated context contributions of the main agent. */
+/**
+ * Memory text in the main agent's instructions. The core cannot tell the memory blocks from the
+ * rest of the `app` instruction block, so `/context` subtracts this estimate from it.
+ */
 export interface AgentContextInfo {
-  /** Static tool definitions (own tools and the static tools of plugins), by size. */
-  tools: Array<{ name: string; tokens: number }>
-  /** Project memory text in the instructions. */
+  /** Project and user memory text in the instructions (estimated). */
   memoryTokens: number
   memoryFiles: Array<{ path: string; tokens: number }>
-  /** Skill index in the instructions. */
-  skillsTokens: number
-  skillCount: number
-  /** Whether the main agent has MCP servers configured. */
-  hasMcp: boolean
 }
 
-/** Frontmatter `name` and `description` of the skills under `<root>/.coder/skills`. */
-async function skillIndexTokens(root: string): Promise<{ tokens: number; count: number }> {
-  let tokens = 0
-  let count = 0
-  try {
-    const base = join(root, '.coder', 'skills')
-    for (const entry of await readdir(base, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      try {
-        const text = await readFile(join(base, entry.name, 'SKILL.md'), 'utf8')
-        const front = /^---\n([\s\S]*?)\n---/.exec(text)?.[1] ?? ''
-        tokens += estimateTokens(`${entry.name}\n${front}`) + 4
-        count++
-      } catch {
-        // not a skill
-      }
-    }
-  } catch {
-    // no skills directory
-  }
-  return { tokens, count }
-}
+/** `ceil(chars / 4)`, the core's default counter. */
+const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
 
 type LooseTool = { description?: string } & Record<string, unknown>
 
@@ -259,10 +233,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     thinking: 'provider-default',
   }
   const resolveModel = deps.resolveModel ?? ((id: string): LanguageModel => id)
-  const contextInfo: { tools: Record<string, unknown>; plugins: unknown[] } = {
-    tools: {},
-    plugins: [],
-  }
 
   const cache = new Map<string, HarnessAgent>()
   const built: HarnessAgent[] = []
@@ -385,10 +355,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       ...(deps.extraPlugins?.({ main: isMain }) ?? []),
       ...(isMain ? (deps.mainPlugins ?? []) : []),
     ]
-    if (isMain) {
-      contextInfo.tools = appTools
-      contextInfo.plugins = plugins
-    }
 
     const agent = defineHarnessAgent({
       id: isMain ? 'coder' : `coder-${def.name}-${depth}`,
@@ -432,18 +398,9 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     main,
     agentFor,
     async contextInfo(): Promise<AgentContextInfo> {
-      const tools: AgentContextInfo['tools'] = []
-      const all: Record<string, Tool> = buildTools(contextInfo.tools)
-      for (const plugin of contextInfo.plugins) Object.assign(all, await pluginStaticTools(plugin))
-      for (const [name, tool] of Object.entries(all)) {
-        if (typeof tool !== 'object' || tool === null) continue
-        tools.push({ name, tokens: await estimateTool(name, tool) })
-      }
-      const skills = hasSkills ? await skillIndexTokens(config.root) : { tokens: 0, count: 0 }
       const userText = await deps.userMemory?.().catch(() => undefined)
       const memoryTokens = estimateTokens(projectText ?? '') + estimateTokens(userText ?? '')
       return {
-        tools,
         memoryTokens,
         memoryFiles: [
           ...(memory.file !== undefined && memory.text !== undefined
@@ -453,9 +410,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
             ? [{ path: '~/.coder/AGENTS.md', tokens: estimateTokens(userText) }]
             : []),
         ],
-        skillsTokens: skills.tokens,
-        skillCount: skills.count,
-        hasMcp: Object.keys(config.mcpServers).length > 0,
       }
     },
     closeAll: async () => {

@@ -275,7 +275,8 @@ more than 300 files are cut.
 
 Model reasoning shows as `✻ Thinking...` while it streams, then `∴ Thought for 12s` with its first
 line dim below. `Ctrl+O` opens the transcript viewer, where the whole text is shown. The duration is
-measured by the UI for live parts, so a message loaded from storage shows `Thought` without it.
+read from the part (`providerMetadata.eharness.durationMs`, written by the core), so stored and
+replayed messages show it too; the UI measures it only as a fallback for parts without it.
 
 ### Web tools
 

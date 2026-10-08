@@ -693,21 +693,44 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     async contextDetails(): Promise<ContextDetails> {
       const s = await session()
-      const [stats, info, messages] = await Promise.all([
+      const [stats, info, messages, listed] = await Promise.all([
         s.stats(),
         (await agentsReady).contextInfo(),
         s.messages(),
+        s.tools(),
       ])
-      const sorted = [...info.tools].sort((a, b) => b.tokens - a.tokens)
-      const builtinTokens = sorted.reduce((n, t) => n + t.tokens, 0)
-      // the core reports one calibrated tool total; what the app cannot itemise is MCP
-      const mcpTokens = info.hasMcp ? Math.max(0, stats.tools - builtinTokens) : 0
-      const toolTokens = stats.tools - mcpTokens
-      const scale = builtinTokens > 0 && toolTokens > 0 ? toolTokens / builtinTokens : 1
-      const memory = Math.min(info.memoryTokens, stats.instructions)
-      const skills = Math.min(info.skillsTokens, stats.instructions - memory)
+      // Per-tool sizes come from the core (`session.tools()`); `source:mcp:*` is MCP, skill tools
+      // and `tool_search` are `core`, everything else (`app`, `plugin:*`) is built in.
+      const tools = listed
+        .map((t) => ({
+          name: t.name,
+          tokens: t.tokens,
+          source: (t.source.startsWith('source:mcp:')
+            ? 'mcp'
+            : t.source === 'core'
+              ? 'skill'
+              : 'builtin') as 'builtin' | 'mcp' | 'skill',
+        }))
+        .sort((a, b) => b.tokens - a.tokens)
+      let mcpTokens = 0
+      let toolTokens = 0
+      for (const t of stats.toolSources ?? []) {
+        if (t.source.startsWith('source:mcp:')) mcpTokens += t.tokens
+        else toolTokens += t.tokens
+      }
+      // The core cannot tell the memory blocks from the rest of the `app` instruction block, so
+      // the app's own memory estimate is subtracted from it.
+      let app = 0
+      let skills = 0
+      let other = 0
+      for (const b of stats.instructionBlocks ?? []) {
+        if (b.owner === 'app') app += b.tokens
+        else if (b.owner === 'core:skills') skills += b.tokens
+        else other += b.tokens
+      }
+      const memory = Math.min(info.memoryTokens, app)
       const categories: ContextCategory[] = [
-        { key: 'system', label: 'System prompt', tokens: stats.instructions - memory - skills },
+        { key: 'system', label: 'System prompt', tokens: app - memory + other },
         { key: 'memory', label: 'Memory files', tokens: memory },
         { key: 'skills', label: 'Skills', tokens: skills },
         { key: 'tools', label: 'Tools', tokens: toolTokens },
@@ -733,11 +756,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         hardLimit: stats.hardLimit,
         autocompactBuffer: Math.max(0, stats.window - stats.summarizeAt),
         categories,
-        tools: sorted.map((t) => ({
-          name: t.name,
-          tokens: Math.round(t.tokens * scale),
-          source: 'builtin' as const,
-        })),
+        tools,
         memoryFiles: info.memoryFiles,
         messages: { count: user + assistant, user, assistant, toolCalls },
         ...(stats.lastCompaction

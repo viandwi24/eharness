@@ -1,6 +1,6 @@
 # P31 — Library improvements found by the coding-agent benchmark
 
-Status: todo · Owner: — · Branch: `main` (direct commits)
+Status: in progress (L1 done, L2 R2/R3 done; L2 R4–R7 and the other modules, and L3, remain) · Owner: — · Branch: `main` (direct commits)
 
 ## Goal
 
@@ -30,23 +30,23 @@ when it is product policy (the coder's permission UX, slash commands, settings f
 
 | # | Change | Why (example workaround today) | Spec |
 |---|---|---|---|
-| R16 | `PendingResponse.approvals[].note?: string`: delivered to the model on the continuation's first step, right after the tool results (a `<user-note>` framed text in the trailing tool/user message) | the app steers the note after `respond()`, so the model reads it one call late, and carries undelivered notes forward | 11 §4 |
-| R17 | `respond(…, { endTurn: 'after-answers' })` (or `stopOnDeny`): record the answers and end the turn without a model step | the app tees the stream and aborts on the first `tool-output-denied`; one model request may already start | 11 §4 |
-| R18 | `PendingState.clientTools[].input` (size-capped) | the app re-reads the stored tool part to get the question input | 11 §2 |
-| R19 | `send(input, { ifBusy: 'steer' })` reports the outcome: `run.delivery: Promise<'step' \| 'turn' \| 'dropped'>` (or a `steer-delivered` / `input-dropped` event with the input's client id) | the controller infers it from `attach()` and `input-dropped` events (`ActiveTurn` bookkeeping) | 05 §2, §12 |
-| R14 | `session.tools(): Promise<Array<{ name, description, inputSchema, source, deferred }>>` (resolved per session/turn, same order as the request) | `/context` reads plugin internals (`~def`) to itemise tool sizes | 02 §3 |
-| R15 | `ContextStats.instructionBlocks: Array<{ owner, tokens }>` (per plugin / app block) and `tools` per source | the app estimates memory/skills/MCP itself | 06 §2 |
-| R20 | Reasoning timing: `metadata.eharness.steps[i].reasoningMs` or a transient `data-eh.reasoning { ms }` per reasoning part | stored reasoning shows no duration | 04 §2 |
-| R8 | `ctx.turn.addUsage()` accepts `TurnResult['usage']` (plain token counts) | a conversion helper in the agent tool | 01 §4 |
-| R13 | `filesystem({ formatAdapterError })` / default: adapter exceptions become `ERROR: <message>` strings | binary/large-file reads reach the model as `Error: …` | 08 §3 |
-| R12 | `toolOrder` option (explicit order of final tool names; others after) | root tools always precede plugin tools | 02 §6 |
-| R11 | `step.prepare` event gains `continuing?: { approved: string[] }` for step 0 of a continuation | `endsWithApprovedPlan` inspects the wire | 01 §5 |
+| R16 | **Done** (`respond({ approvals: [{ id, approved, note }] })`): `PendingResponse.approvals[].note?: string`: delivered to the model on the continuation's first step, right after the tool results (a `<user-note>` framed text in the trailing tool/user message) | the app steers the note after `respond()`, so the model reads it one call late, and carries undelivered notes forward | 11 §4 |
+| R17 | **Done** (`respond(…, { endTurn: 'after-answers' | 'if-denied' })`): `respond(…, { endTurn: 'after-answers' })` (or `stopOnDeny`): record the answers and end the turn without a model step | the app tees the stream and aborts on the first `tool-output-denied`; one model request may already start | 11 §4 |
+| R18 | **Done** (`PendingState.clientTools[].input` (+ `inputTruncated`)): `PendingState.clientTools[].input` (size-capped) | the app re-reads the stored tool part to get the question input | 11 §2 |
+| R19 | **Done** (`run.delivery` (`'step' | 'turn' | 'dropped'`, type `SteerDelivery`)): `send(input, { ifBusy: 'steer' })` reports the outcome: `run.delivery: Promise<'step' \| 'turn' \| 'dropped'>` (or a `steer-delivered` / `input-dropped` event with the input's client id) | the controller infers it from `attach()` and `input-dropped` events (`ActiveTurn` bookkeeping) | 05 §2, §12 |
+| R14 | **Done** (`session.tools()` → `SessionToolInfo[]` (`name, description?, inputSchema, source, deferred, tokens`)): `session.tools(): Promise<Array<{ name, description, inputSchema, source, deferred }>>` (resolved per session/turn, same order as the request) | `/context` reads plugin internals (`~def`) to itemise tool sizes | 02 §3 |
+| R15 | **Done** (`ContextStats.instructionBlocks` and `ContextStats.toolSources`): `ContextStats.instructionBlocks: Array<{ owner, tokens }>` (per plugin / app block) and `tools` per source | the app estimates memory/skills/MCP itself | 06 §2 |
+| R20 | **Done** (`providerMetadata.eharness.durationMs` on every `reasoning-end` chunk): Reasoning timing: `metadata.eharness.steps[i].reasoningMs` or a transient `data-eh.reasoning { ms }` per reasoning part | stored reasoning shows no duration | 04 §2 |
+| R8 | **Done** (`TurnInfo.addUsage()` accepts `PlainUsage` (types `AddUsageInput`, `PlainUsage`)): `ctx.turn.addUsage()` accepts `TurnResult['usage']` (plain token counts) | a conversion helper in the agent tool | 01 §4 |
+| R13 | **Done** (`ERROR: <message>` adapter errors, option `onAdapterError`): `filesystem({ formatAdapterError })` / default: adapter exceptions become `ERROR: <message>` strings | binary/large-file reads reach the model as `Error: …` | 08 §3 |
+| R12 | **Done** (`config.toolOrder` (+ warning `W_TOOL_ORDER`)): `toolOrder` option (explicit order of final tool names; others after) | root tools always precede plugin tools | 02 §6 |
+| R11 | **Done** (`StepPrepareEvent.continuing?: { approved, denied }`): `step.prepare` event gains `continuing?: { approved: string[] }` for step 0 of a continuation | `endsWithApprovedPlan` inspects the wire | 01 §5 |
 
 ## L2 — promote proven example code to shipped modules
 
 | # | Module | From the example | Notes |
 |---|---|---|---|
-| R2, R3 | `eharness/filesystem`: `edit_file` with `edits: [{ old_string, new_string, replace_all? }]` (atomic, one read check) and a `glob` tool | `workspace/glob-tool.ts`; the model's repeated edits | spec 08 change, model-visible texts |
+| R2, R3 | **Done** (`edit_file` `edits[]`, `glob` tool, `compileGlob`): `eharness/filesystem`: `edit_file` with `edits: [{ old_string, new_string, replace_all? }]` (atomic, one read check) and a `glob` tool | `workspace/glob-tool.ts`; the model's repeated edits | spec 08 change, model-visible texts |
 | R4 | `eharness/filesystem/node`: `diskFs(root)` with realpath containment, ignore rules, mode-preserving atomic writes, `rg` grep fast path | `workspace/disk-fs.ts`, `guard.ts`, `mount-fs.ts` | first Node-only module: ADR (runtime rule 3) |
 | R5 | `eharness/shell`: bash tool over AI SDK `Experimental_SandboxSession` (local driver, OS sandbox driver: Seatbelt / bubblewrap), process-group cleanup, background shells | `shell/**`, `app/background-bash.ts` | Node-only; "Sandbox plugin" roadmap row; ADR |
 | R6 | `eharness/subagent`: `subagentTool({ agents, depth, concurrency, background? })` with progress, usage, approvals driven through a caller-supplied answerer | `agents/agent-tool.ts`, `agents/drive.ts` | roadmap "Subagents plugin" |
