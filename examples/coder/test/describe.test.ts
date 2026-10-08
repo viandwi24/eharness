@@ -1,5 +1,8 @@
 /** `describeApproval`: titles, details and diffs shown in the approval prompt. */
 import { describe, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { memoryFs } from 'eharness/filesystem/memory'
 import {
   type CoderConfig,
@@ -37,20 +40,21 @@ describe('describeApproval', () => {
     })
   })
 
-  test('bash: the description wins the title; long and multiline commands are shortened', async () => {
+  test('bash: the command is the title, the description only goes into the detail; long commands are shortened', async () => {
     const d = await describeApproval(
       call(TOOL.bash, { command: 'rm -rf dist', description: 'Clean the build' }),
       fs,
       engine,
     )
-    expect(d.title).toBe('Bash: Clean the build')
-    expect(d.detail).toBe('rm -rf dist')
+    expect(d.title).toBe('Bash: rm -rf dist')
+    expect(d.detail?.startsWith('rm -rf dist\n\n')).toBe(true)
+    expect(d.detail).toContain('Clean the build')
     const long = await describeApproval(
       call(TOOL.bash, { command: `echo ${'x'.repeat(300)}\nsecond line` }),
       fs,
       engine,
     )
-    expect(long.title.length).toBeLessThanOrEqual('Bash: '.length + 120)
+    expect(long.title.length).toBeLessThanOrEqual('Bash: '.length + 100)
     expect(long.title).not.toContain('\n')
     expect(long.title.endsWith('…')).toBe(true)
     expect(long.detail).toContain('second line')
@@ -218,5 +222,62 @@ describe('describeApproval', () => {
       engine,
     )
     expect(e.detail).toBe('--- old\no\n+++ new\nn')
+  })
+
+  test('finding 10: control characters and ANSI escapes are stripped from title and detail', async () => {
+    const d = await describeApproval(
+      call(TOOL.bash, {
+        command: 'echo \u001b[2J\u001b[31mred\u001b[0m \u001b]0;pwned\u0007x\u0000y\rz\nline2\tok',
+        description: 'a\u001b[1mb',
+      }),
+      fs,
+      engine,
+    )
+    expect(d.title).toBe('Bash: echo red xyz')
+    expect(d.detail).toContain('line2\tok')
+    const codes = [...`${d.title}${d.detail}`].map((ch) => ch.charCodeAt(0))
+    expect(codes.filter((c) => (c < 0x20 && c !== 0x0a && c !== 0x09) || c === 0x7f)).toEqual([])
+  })
+
+  test('finding 10: the bash title is the first line of the command, 100 characters at most', async () => {
+    const d = await describeApproval(
+      call(TOOL.bash, { command: `${'x'.repeat(250)}\nsecond`, description: 'harmless' }),
+      fs,
+      engine,
+    )
+    expect(d.title.length).toBe('Bash: '.length + 100)
+    expect(d.title).not.toContain('harmless')
+  })
+
+  test('finding 10: request_directory_access shows the real path of a symlink', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'coder-describe-')))
+    try {
+      mkdirSync(join(dir, 'real'))
+      symlinkSync(join(dir, 'real'), join(dir, 'link'))
+      const viaLink = await describeApproval(
+        call(TOOL.dirAccess, { path: join(dir, 'link'), reason: 'need it' }),
+        fs,
+        engine,
+      )
+      expect(viaLink.title).toBe(`Access directory ${join(dir, 'real')}`)
+      expect(viaLink.detail).toContain(`requested ${join(dir, 'link')}`)
+      expect(viaLink.detail).toContain('symlink')
+      expect(viaLink.detail).toContain('need it')
+      const plain = await describeApproval(
+        call(TOOL.dirAccess, { path: join(dir, 'real') }),
+        fs,
+        engine,
+      )
+      expect(plain.title).toBe(`Access directory ${join(dir, 'real')}`)
+      expect(plain.detail).not.toContain('symlink')
+      const missing = await describeApproval(
+        call(TOOL.dirAccess, { path: join(dir, 'nope') }),
+        fs,
+        engine,
+      )
+      expect(missing.title).toBe(`Access directory ${join(dir, 'nope')}`)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

@@ -1,6 +1,16 @@
 /** `diskFs`: conformance, containment, binary/large files, ignore rules and grep. */
 import { afterAll, afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileSystemConformance } from 'eharness/testing'
@@ -182,5 +192,23 @@ describe('diskFs', () => {
     }
     expect(withRg).toEqual(without)
     expect(withRg?.map((h) => h.path)).toEqual(['/multi.txt', '/multi.txt', '/src.ts'])
+  })
+})
+
+describe('diskFs file mode', () => {
+  afterEach(cleanup)
+  test('an executable script stays executable after write', async () => {
+    const root = await temp()
+    await writeFile(join(root, 'run.sh'), '#!/bin/sh\n')
+    await chmod(join(root, 'run.sh'), 0o755)
+    const fs = diskFs(root)
+    expect((await fs.write('/run.sh', '#!/bin/sh\necho hi\n')).ok).toBe(true)
+    expect((await stat(join(root, 'run.sh'))).mode & 0o777).toBe(0o755)
+  })
+
+  test('binary read error names the limit', async () => {
+    const root = await temp()
+    await writeFile(join(root, 'b.dat'), new Uint8Array([0xff, 0xfe, 0x00, 0xc3]))
+    await expect(diskFs(root).read('/b.dat')).rejects.toThrow('text files up to 2 MB only')
   })
 })

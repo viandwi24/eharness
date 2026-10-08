@@ -35,6 +35,7 @@ async function coder(
   const env: Record<string, string> = {
     ...(process.env as Record<string, string>),
     CODER_HOME: home,
+    CODER_OFFLINE: '1',
   }
   delete env.CODER_MODEL
   if (opts.steps !== undefined) {
@@ -217,5 +218,27 @@ describe('print mode e2e', () => {
     const r = await coder(['-p', 'x', '--add-dir', '/no/such/dir'], { steps: [{ text: 'fine' }] })
     expect(r.code).toBe(0)
     expect(r.stderr).toContain('warning: Ignoring missing directory /no/such/dir')
+  })
+
+  test('unknown flags and invalid values exit 2', async () => {
+    expect((await coder(['--bogus'])).code).toBe(2)
+    expect((await coder(['--max-steps', 'abc', '-p', 'x'])).code).toBe(2)
+    expect((await coder(['--help'])).code).toBe(0)
+  })
+
+  test('print mode warns about untrusted project settings; --trust-project applies them', async () => {
+    const files = {
+      '.coder/settings.json': JSON.stringify({ permissions: { allow: ['Write'] } }),
+    }
+    const steps: ScriptedStep[] = [
+      { toolCalls: [{ toolName: 'write_file', input: { path: '/new.txt', content: 'ok' } }] },
+      { text: 'done' },
+    ]
+    const untrusted = await coder(['-p', 'go'], { files, steps })
+    expect(untrusted.stderr).toContain('untrusted project settings (allow)')
+    expect(await exists(join(untrusted.root, 'new.txt'))).toBe(false)
+    const trusted = await coder(['-p', 'go', '--trust-project'], { files, steps })
+    expect(trusted.stderr).not.toContain('untrusted')
+    expect(await readFile(join(trusted.root, 'new.txt'), 'utf8')).toBe('ok')
   })
 })

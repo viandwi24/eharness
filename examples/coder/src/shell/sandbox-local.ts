@@ -17,6 +17,36 @@ import type { Sandbox } from '../contracts.ts'
 type ProcessOptions = Parameters<SandboxSession['spawn']>[0]
 
 const KILL_GRACE_MS = 2000
+/** Pids (= process group ids) of live commands, across all sandboxes in this process. */
+const liveGroups = new Set<number>()
+
+function signalGroupPid(pid: number, name: NodeJS.Signals): void {
+  try {
+    process.kill(-pid, name)
+  } catch {
+    try {
+      process.kill(pid, name)
+    } catch {
+      // already gone
+    }
+  }
+}
+
+/**
+ * Terminate every command still running in a local sandbox (call it from SIGINT/SIGTERM/exit
+ * handlers). Sends `signal` (default SIGTERM) synchronously to each process group, then SIGKILL
+ * after 2 s via an unref'd timer; the timer cannot run during `process.exit`, so a handler that
+ * exits right away should call this with `'SIGKILL'` or wait ~2 s.
+ */
+export function killAllSandboxProcesses(signal: NodeJS.Signals = 'SIGTERM'): void {
+  const pids = [...liveGroups]
+  for (const pid of pids) signalGroupPid(pid, signal)
+  if (signal === 'SIGKILL' || pids.length === 0) return
+  setTimeout(() => {
+    for (const pid of pids) if (liveGroups.has(pid)) signalGroupPid(pid, 'SIGKILL')
+  }, KILL_GRACE_MS).unref()
+}
+
 const SIGNAL_NUMBERS: Record<string, number> = { SIGHUP: 1, SIGINT: 2, SIGTERM: 15, SIGKILL: 9 }
 
 function shellFor(): { file: string; flag: string } {
@@ -98,6 +128,8 @@ export function createLocalSandbox(root: string): Sandbox {
       child.once('error', fail)
     })
 
+    const groupPid = child.pid
+    if (groupPid !== undefined) liveGroups.add(groupPid)
     let exited = false
     let killTimer: ReturnType<typeof setTimeout> | undefined
     const signalGroup = (name: NodeJS.Signals): void => {
@@ -127,9 +159,13 @@ export function createLocalSandbox(root: string): Sandbox {
     signal?.addEventListener('abort', onAbort, { once: true })
 
     const waited = new Promise<{ exitCode: number }>((ok, fail) => {
-      child.once('error', fail)
+      child.once('error', (e) => {
+        if (groupPid !== undefined) liveGroups.delete(groupPid)
+        fail(e)
+      })
       child.once('close', (code, sig) => {
         exited = true
+        if (groupPid !== undefined) liveGroups.delete(groupPid)
         if (killTimer) clearTimeout(killTimer)
         signal?.removeEventListener('abort', onAbort)
         if (aborted) fail(signal?.reason ?? new Error('Aborted'))

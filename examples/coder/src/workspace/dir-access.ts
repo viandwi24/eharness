@@ -1,10 +1,11 @@
 /** The `request_directory_access` tool: mount a directory outside the project (after approval). */
 import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, resolve } from 'node:path'
+import { isAbsolute, join, parse, resolve } from 'node:path'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import type { Workspace } from '../contracts.ts'
+import { isInside } from './guard.ts'
 
 /**
  * Build the `request_directory_access` tool. Approval is enforced by the permissions plugin
@@ -34,8 +35,20 @@ function makeDirAccessTool(workspace: Workspace) {
         const real = await realpath(resolve(expanded)).catch(() => null)
         if (real === null) return `ERROR: no such directory: ${path}`
         if (!(await stat(real)).isDirectory()) return `ERROR: not a directory: ${real}`
+        const root = workspace.mounts().find((m) => m.virtual === '/')?.real
+        const tooBroad =
+          real === parse(real).root ||
+          real === (await realpath(homedir()).catch(() => homedir())) ||
+          (root !== undefined && isInside(real, root))
+        if (tooBroad) {
+          return `ERROR: ${real} is too broad (it is the filesystem root, your home directory, or contains the project). Ask for a narrower directory.`
+        }
         const virtual = await workspace.addDirectory(real)
-        return `Mounted ${real} at ${virtual}. Use that prefix with the file tools.`
+        const note =
+          real === resolve(expanded)
+            ? ''
+            : ` (requested ${path}, which resolves through a symlink to ${real})`
+        return `Mounted ${real}${note} at ${virtual} (writable). Use that prefix with the file tools.`
       } catch (error) {
         return `ERROR: ${error instanceof Error ? error.message : String(error)}`
       }

@@ -22,7 +22,9 @@ import {
   defineHarnessAgent,
   type HarnessAgent,
   type HarnessWarning,
+  lookupModel,
   type MessageAdapter,
+  type ModelCatalog,
   type StateAdapter,
 } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
@@ -68,6 +70,12 @@ export interface CreateAgentsDeps {
   storage: { messages: MessageAdapter; state: StateAdapter }
   /** Model override for offline tests; wins over `config.model` and every definition. */
   model?: LanguageModel
+  /** models.dev (or custom) catalog: context window and cost of the models it lists. */
+  models?: ModelCatalog
+  /** `config.contextWindow` was set in a settings file: it then beats the catalog. */
+  contextWindowExplicit?: boolean
+  /** Cap of concurrent subagents per nesting depth (default 8). */
+  maxConcurrentAgents?: number
   onWarning?: (warning: HarnessWarning) => void
 }
 
@@ -79,8 +87,9 @@ export interface Agents {
   closeAll(): Promise<void>
 }
 
+/** Removed from `plan` subagents; `bash` stays, its commands are restricted to read-only ones. */
 const NON_READ_ONLY_TOOLS: string[] = Object.values(TOOL).filter(
-  (name) => !READ_ONLY_TOOLS.includes(name),
+  (name) => !READ_ONLY_TOOLS.includes(name) && name !== TOOL.bash,
 )
 
 /**
@@ -88,14 +97,16 @@ const NON_READ_ONLY_TOOLS: string[] = Object.values(TOOL).filter(
  *
  * Subagent `permissionMode` is deliberately weak: the permission engine has one global mode, so a
  * definition can only make its agent stricter. `plan` removes every non-read-only tool from that
- * agent (added to its `disallowedTools`); any other value is ignored. Subagents never get
+ * agent (added to its `disallowedTools`) and runs its bash read-only whatever the session's mode
+ * is (a per-agent `mode: 'plan'` on its permissions plugin); any other value is ignored. Subagents never get
  * `exit_plan_mode` (plan approval is the main agent's job) nor `request_directory_access`.
  */
 export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
   const { config, workspace, permissions } = deps
   const memory = await loadProjectMemory(config.root)
   const projectText = projectInstructions(memory)
-  const hasSkills = existsSync(join(config.root, '.coder', 'skills'))
+  // project skills are repo content: only loaded once the project is trusted
+  const hasSkills = config.trusted && existsSync(join(config.root, '.coder', 'skills'))
   const auditFile = join(config.projectDataDir, 'audit.jsonl')
   const reminder = {
     text: turnReminder({
@@ -119,6 +130,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     broker: deps.broker,
     permissions: deps.permissions,
     describe: deps.describe,
+    ...(deps.maxConcurrentAgents !== undefined ? { maxConcurrent: deps.maxConcurrentAgents } : {}),
   }
 
   const warnMcp = (message: string): void => {
@@ -168,7 +180,11 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     const agent = defineHarnessAgent({
       id: isMain ? 'coder' : `coder-${def.name}-${depth}`,
       model,
-      contextWindow: config.contextWindow,
+      // an explicit setting wins; otherwise the catalog, with the config default as fallback
+      contextWindow: deps.contextWindowExplicit
+        ? config.contextWindow
+        : (m: LanguageModel) => lookupModel(deps.models, m)?.contextWindow ?? config.contextWindow,
+      ...(deps.models ? { models: deps.models } : {}),
       instructions,
       dataParts: { bashOutput: bashOutputPart },
       tools: appTools as never,
@@ -183,6 +199,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         permissionsPlugin({
           engine: permissions,
           ...(def ? { agent: def.name } : {}),
+          ...(def?.permissionMode === 'plan' ? { mode: 'plan' as const } : {}),
           ...(def?.tools ? { allowedTools: def.tools } : {}),
           ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
           auditFile,

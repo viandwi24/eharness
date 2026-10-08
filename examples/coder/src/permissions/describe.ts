@@ -2,6 +2,7 @@
  * Human-readable descriptions of tool calls for the approval prompt: a one-line title, a detail
  * (command, unified diff or plan) and the rule offered for "don't ask again".
  */
+import { realpath } from 'node:fs/promises'
 import { createTwoFilesPatch } from 'diff'
 import type { FileSystem } from 'eharness/filesystem'
 import {
@@ -21,6 +22,45 @@ function truncate(text: string, max: number): string {
   return text.length <= max
     ? text
     : `${text.slice(0, max)}\n… (${text.length - max} more characters)`
+}
+
+/**
+ * Remove terminal control sequences (CSI and OSC escapes, other escapes, control characters except
+ * newline and tab): a prompt must not be able to redraw itself or hide what it asks.
+ */
+function clean(text: string): string {
+  let out = ''
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code === 0x1b) {
+      const next = text[i + 1]
+      if (next === '[') {
+        i += 2
+        while (i < text.length && (text.charCodeAt(i) < 0x40 || text.charCodeAt(i) > 0x7e)) i++
+      } else if (next === ']') {
+        i += 2
+        while (i < text.length && text[i] !== '\u0007') {
+          if (text.charCodeAt(i) === 0x1b && text[i + 1] === '\\') {
+            i++
+            break
+          }
+          i++
+        }
+      } else {
+        i++
+      }
+      continue
+    }
+    if ((code < 0x20 && code !== 0x0a && code !== 0x09) || (code >= 0x7f && code <= 0x9f)) continue
+    out += text[i]
+  }
+  return out
+}
+
+/** First line of a text, cut to `max` characters. */
+function firstLine(text: string, max: number): string {
+  const line = (text.split('\n')[0] ?? '').trim()
+  return line.length <= max ? line : `${line.slice(0, max - 1)}…`
 }
 
 function oneLine(text: string, max = MAX_TITLE): string {
@@ -84,8 +124,8 @@ export async function describeApproval(
 ): Promise<ApprovalDescription> {
   const suggestedRule = engine.suggestRule(call)
   const out = (title: string, detail?: string): ApprovalDescription => {
-    const result: ApprovalDescription = { title }
-    if (detail !== undefined) result.detail = detail
+    const result: ApprovalDescription = { title: clean(title) }
+    if (detail !== undefined) result.detail = clean(detail)
     if (suggestedRule !== undefined) result.suggestedRule = suggestedRule
     return result
   }
@@ -93,9 +133,15 @@ export async function describeApproval(
   const path = str(input, 'path') ?? ''
   switch (call.toolName) {
     case TOOL.bash: {
-      const command = str(input, 'command') ?? ''
+      const command = clean(str(input, 'command') ?? '')
       const description = str(input, 'description')
-      return out(`Bash: ${oneLine(description ?? command)}`, command)
+      // the title shows the command, never the model's own description of it
+      return out(
+        `Bash: ${firstLine(command, 100)}`,
+        description === undefined || description === ''
+          ? command
+          : `${command}\n\nDescription (written by the model): ${description}`,
+      )
     }
     case TOOL.edit:
       return out(`Edit ${path}`, await describeEdit(call, fs))
@@ -112,7 +158,15 @@ export async function describeApproval(
       return out('Plan ready: start implementing?', str(input, 'plan'))
     case TOOL.dirAccess: {
       const reason = str(input, 'reason')
-      return out(`Access directory ${path}`, reason === undefined ? path : `${path}\n\n${reason}`)
+      let real = path
+      try {
+        real = await realpath(path)
+      } catch {
+        // missing path: show it as requested
+      }
+      const shown =
+        real === path ? path : `${real}\n(requested ${path}, which is a symlink to ${real})`
+      return out(`Access directory ${real}`, reason === undefined ? shown : `${shown}\n\n${reason}`)
     }
     default: {
       let json: string

@@ -45,7 +45,13 @@ function EntryView({
         <Box marginTop={0}>
           <Text
             dimColor={entry.tone === 'info'}
-            color={entry.tone === 'error' ? color.error : undefined}
+            color={
+              entry.tone === 'error'
+                ? color.error
+                : entry.tone === 'warn'
+                  ? color.running
+                  : undefined
+            }
           >
             {entry.text}
           </Text>
@@ -62,6 +68,33 @@ function EntryView({
           <Text dimColor color={entry.exitCode === 0 ? undefined : color.error}>
             {entry.exitCode === null ? 'aborted' : `exit ${entry.exitCode}`}
           </Text>
+        </Box>
+      )
+    case 'transcript':
+      return (
+        <Box flexDirection="column" marginTop={1} paddingLeft={2}>
+          <Text dimColor>── transcript: {entry.title} (read-only) ──</Text>
+          <Box
+            flexDirection="column"
+            borderStyle="single"
+            borderDimColor
+            borderTop={false}
+            borderRight={false}
+            borderBottom={false}
+            paddingLeft={1}
+          >
+            {entry.messages.length === 0 ? <Text dimColor>(empty)</Text> : null}
+            {entry.messages.map((message) => (
+              <MessageView
+                key={message.id}
+                message={message}
+                expanded={false}
+                bash={{}}
+                timing={{}}
+              />
+            ))}
+          </Box>
+          <Text dimColor>── end of transcript ──</Text>
         </Box>
       )
     case 'message':

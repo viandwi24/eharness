@@ -22,7 +22,7 @@ export interface AgentToolDeps {
   broker: ApprovalBroker
   permissions: PermissionEngine
   describe(call: ToolCallInfo): Promise<{ title: string; detail?: string; suggestedRule?: string }>
-  /** Default 8 concurrent children per process. */
+  /** Default 8 concurrent children per nesting depth. */
   maxConcurrent?: number
 }
 
@@ -64,13 +64,22 @@ function createSemaphore(max: number): Semaphore {
   }
 }
 
-const semaphores = new WeakMap<AgentToolDeps, Semaphore>()
+const semaphores = new WeakMap<AgentToolDeps, Map<number, Semaphore>>()
 
-function semaphoreFor(deps: AgentToolDeps): Semaphore {
-  let s = semaphores.get(deps)
+/**
+ * One semaphore per nesting depth: a child holds its slot while it waits for its own children,
+ * so a single shared cap could be filled by waiting parents and starve their children (deadlock).
+ */
+function semaphoreFor(deps: AgentToolDeps, depth: number): Semaphore {
+  let byDepth = semaphores.get(deps)
+  if (byDepth === undefined) {
+    byDepth = new Map()
+    semaphores.set(deps, byDepth)
+  }
+  let s = byDepth.get(depth)
   if (s === undefined) {
     s = createSemaphore(deps.maxConcurrent ?? 8)
-    semaphores.set(deps, s)
+    byDepth.set(depth, s)
   }
   return s
 }
@@ -190,15 +199,18 @@ Usage:
           text: '',
           ...over,
         })
-        const sem = semaphoreFor(deps)
+        const sem = semaphoreFor(deps, depth)
         yield progress({ text: 'Waiting for a free subagent slot…' })
         if (!(await sem.acquire(abortSignal))) {
           yield progress({ status: 'failed' })
           yield '[subagent stopped: aborted] '
           return
         }
-        const agent = deps.agentFor(def, depth + 1)
+        let opened = false
+        // biome-ignore lint/suspicious/noExplicitAny: same loose agent type as AgentToolDeps.agentFor
+        let agent: HarnessAgent<any> | undefined
         try {
+          agent = deps.agentFor(def, depth + 1)
           const child = agent.session(sessionId, {
             parent: {
               sessionId: ctx.session.id,
@@ -207,6 +219,7 @@ Usage:
               depth: (ctx.session.parent?.depth ?? depth) + 1,
             },
           })
+          opened = true
           // latest-value mailbox between the stream consumers (callbacks) and this generator
           let latest = progress({})
           let dirty = true
@@ -257,6 +270,8 @@ Usage:
             finished = true
             notify()
           })
+          // observed below; this keeps an early exit of the generator from leaving it unhandled
+          driven.catch(() => {})
           while (!finished || dirty) {
             if (!dirty) {
               await new Promise<void>((resolve) => {
@@ -275,7 +290,6 @@ Usage:
             costUsd: result.usage.costUsd,
             source: `subagent:${def.name}`,
           })
-          await agent.closeSession(sessionId).catch(() => {})
           const assistant =
             result.messages.findLast((m) => m.id === result.messageId) ??
             result.messages.findLast((m) => m.role === 'assistant')
@@ -290,7 +304,12 @@ Usage:
           yield complete
             ? text || '(the subagent returned no text)'
             : `[subagent stopped: ${result.stop}] ${text}`
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          yield progress({ status: 'failed', text: message })
+          yield `ERROR: subagent failed: ${message}`
         } finally {
+          if (opened) await agent?.closeSession(sessionId).catch(() => {})
           sem.release()
         }
       },

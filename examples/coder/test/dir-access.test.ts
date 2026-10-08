@@ -1,6 +1,6 @@
 /** The `request_directory_access` tool. */
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CoderConfig, Workspace } from '../src/contracts.ts'
@@ -49,5 +49,24 @@ describe('request_directory_access', () => {
     expect(await call(ws, join(base, 'file.txt'))).toStartWith('ERROR: not a directory')
     expect(await call(ws, 'relative/dir')).toStartWith('ERROR: the path must be absolute')
     expect(ws.mounts().some((m) => m.virtual.startsWith('/@dirs/'))).toBe(false)
+  })
+})
+
+describe('request_directory_access safety', () => {
+  test('rejects the root, home and a parent of the project', async () => {
+    const { ws, base } = await setup()
+    expect(await call(ws, '/')).toStartWith('ERROR:')
+    expect(await call(ws, '~')).toStartWith('ERROR:')
+    expect(await call(ws, base)).toStartWith('ERROR:') // contains the project root
+    expect(ws.mounts().some((m) => m.real === base)).toBe(false)
+  })
+
+  test('reports the real path when a symlink was followed', async () => {
+    const { ws, base } = await setup()
+    await mkdir(join(base, 'real'))
+    await symlink(join(base, 'real'), join(base, 'alias'))
+    const out = await call(ws, join(base, 'alias'))
+    expect(out).toContain(`Mounted ${join(base, 'real')}`)
+    expect(out).toContain('symlink')
   })
 })

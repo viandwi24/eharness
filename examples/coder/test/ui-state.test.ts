@@ -174,3 +174,56 @@ describe('ui state reducer', () => {
     expect(hasOpenTodos(null)).toBe(false)
   })
 })
+
+describe('subagent run tracking', () => {
+  const agentPart = (state: string, output?: unknown, preliminary = false): unknown => ({
+    type: 'tool-agent',
+    toolCallId: 'a1',
+    state,
+    input: { description: 'look', subagent_type: 'explore' },
+    output,
+    preliminary,
+  })
+  const progress = (status: string) => ({
+    status,
+    agent: 'explore',
+    description: 'look',
+    sessionId: 'child-1',
+    steps: 2,
+    text: '',
+  })
+  const live = (s: ViewState, part: unknown): ViewState =>
+    reduce(s, { type: 'live', message: assistant('m1', [part]), now: 1 })
+
+  test('records progress, then marks done on the final string output', () => {
+    let s = live(initialState(), agentPart('output-available', progress('running'), true))
+    expect(s.subagents).toEqual([
+      {
+        toolCallId: 'a1',
+        name: 'explore',
+        description: 'look',
+        sessionId: 'child-1',
+        status: 'running',
+      },
+    ])
+    s = live(s, agentPart('output-available', 'final answer'))
+    expect(s.subagents).toHaveLength(1)
+    expect(s.subagents[0]?.status).toBe('done')
+    expect(s.subagents[0]?.sessionId).toBe('child-1')
+  })
+
+  test('a tool error marks failed; an interrupted turn fails running runs; reset clears', () => {
+    let s = live(initialState(), agentPart('output-available', progress('running'), true))
+    s = live(s, agentPart('output-error'))
+    expect(s.subagents[0]?.status).toBe('failed')
+    let t = live(initialState(), agentPart('output-available', progress('running'), true))
+    t = reduce(t, { type: 'turn-finished' })
+    expect(t.subagents[0]?.status).toBe('failed')
+    expect(reduce(t, { type: 'reset' }).subagents).toEqual([])
+  })
+
+  test('the transcript action adds a read-only entry', () => {
+    const s = reduce(initialState(), { type: 'transcript', title: 't', messages: [] })
+    expect(s.entries.at(-1)).toMatchObject({ kind: 'transcript', title: 't' })
+  })
+})

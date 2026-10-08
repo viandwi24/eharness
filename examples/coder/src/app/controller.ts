@@ -3,7 +3,7 @@
  * {@link CoderController} contract that the Ink UI and print mode consume.
  */
 import type { LanguageModel } from 'ai'
-import type { HarnessSession, TurnResult } from 'eharness'
+import type { HarnessSession, ModelCatalog, TurnResult } from 'eharness'
 import { driveTurn, loadAgentDefinitions } from '../agents/index.ts'
 import type {
   AgentDefinition,
@@ -19,11 +19,14 @@ import { createBroker, createPermissionEngine, describeApproval } from '../permi
 import { capOutput, createLocalSandbox } from '../shell/index.ts'
 import { createWorkspace } from '../workspace/index.ts'
 import { type Agents, createAgents } from './agent.ts'
+import { loadModelCatalog } from './models.ts'
 import { createStorage, latestSessionId, listSessions, newSessionId } from './sessions.ts'
 
 /** Options of {@link createController}. */
 export interface CreateControllerOptions {
-  config: CoderConfig & { warnings?: string[] }
+  config: CoderConfig & { warnings?: string[]; contextWindowExplicit?: boolean }
+  /** Model catalog override (tests). Default: the cached models.dev catalog (`app/models.ts`). */
+  models?: ModelCatalog
   /** Model override (offline tests); a later `setModel()` replaces it. */
   model?: LanguageModel
   /** Default: an interactive broker. Print mode passes `createDenyingBroker()`. */
@@ -49,7 +52,9 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     root: config.root,
     userDir: config.userDir,
     cliAgents: config.cliAgents,
+    loadProject: config.trusted,
   })
+  const catalog = opts.models ?? (await loadModelCatalog(config.userDir)).catalog
 
   // invalid agent files: reported next to the config warnings
   opts.config.warnings?.push(...warnings)
@@ -66,6 +71,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       definitions,
       storage,
       model: modelOverride,
+      ...(catalog ? { models: catalog } : {}),
+      contextWindowExplicit: opts.config.contextWindowExplicit === true,
     })
   // a promise: `setModel` is synchronous but rebuilding reads the project memory file
   let agentsReady: Promise<Agents> = makeAgents()
@@ -78,6 +85,12 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     newSessionId()
 
   let controller: AbortController | undefined
+
+  /** Close the handle of a session we leave (never while its turn runs). */
+  const closeSessionHandle = async (id: string): Promise<void> => {
+    if (controller !== undefined) return
+    await (await agentsReady).main.closeSession(id).catch(() => {})
+  }
 
   const session = async (): Promise<HarnessSession<CoderMessage>> =>
     (await agentsReady).main.session(sessionId) as unknown as HarnessSession<CoderMessage>
@@ -116,16 +129,27 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     messages: async () => (await session()).messages(),
 
+    async messagesOf(id: string): Promise<CoderMessage[]> {
+      return (await storage.messages.load({ sessionId: id })) as CoderMessage[]
+    },
+
     async compact(): Promise<void> {
       await (await session()).compact()
     },
 
     async clear(): Promise<void> {
+      const old = sessionId
       sessionId = newSessionId()
+      await closeSessionHandle(old)
     },
 
     async resume(id: string): Promise<void> {
+      if (id.includes(':agent:')) throw new Error(`cannot resume a subagent session: ${id}`)
+      if ((await storage.messages.load({ sessionId: id, limit: 1 })).length === 0)
+        throw new Error(`unknown session: ${id}`)
+      const old = sessionId
       sessionId = id
+      if (old !== id) await closeSessionHandle(old)
     },
 
     sessions: (): Promise<SessionSummary[]> => listSessions(config),
@@ -175,11 +199,36 @@ export async function createController(opts: CreateControllerOptions): Promise<C
      * it while idle; the session itself lives in storage and is reopened on the new agent.
      */
     setModel(model: string): void {
+      if (typeof model !== 'string' || model.trim() === '') {
+        throw new Error('setModel: the model id must be a non-empty string')
+      }
+      const previousModel = config.model
+      const previousOverride = modelOverride
       config.model = model
       modelOverride = undefined
       const old = agentsReady
-      agentsReady = makeAgents()
-      void old.then((previous) => previous.closeAll())
+      const next = makeAgents()
+      // swap only once the new agents exist; on failure keep the old ones
+      const settled = next.then(
+        async () => {
+          await old.then((previous) => previous.closeAll()).catch(() => {})
+          return next
+        },
+        (error: unknown) => {
+          opts.config.warnings?.push(
+            `Could not switch to model "${model}": ${error instanceof Error ? error.message : String(error)}`,
+          )
+          if (agentsReady === pending) {
+            config.model = previousModel
+            modelOverride = previousOverride
+            agentsReady = old
+          }
+          return old
+        },
+      )
+      const pending: Promise<Agents> = settled
+      agentsReady = pending
+      next.catch(() => {})
     },
 
     agents: (): AgentDefinition[] => definitions,

@@ -6,7 +6,17 @@
  */
 import { spawn } from 'node:child_process'
 import type { BigIntStats, Dirent } from 'node:fs'
-import { mkdir, readdir, readFile, rename, rm, stat, unlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import {
   contentVersion,
@@ -24,6 +34,16 @@ import { createGuard, isInside, loadIgnoreRules } from './guard.ts'
 const MAX_BYTES = 2 * 1024 * 1024
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true })
 const lenientUtf8 = new TextDecoder('utf-8')
+
+/**
+ * Message of the exception `read` throws for binary or oversized files. The `FileSystem.read`
+ * contract cannot return a string, and adapter exceptions are not caught by the filesystem
+ * plugin (spec 08 §3), so the model sees this text behind the runtime's tool-error prefix
+ * (`Error: ...`). It is therefore a plain sentence, not an `ERROR:` string; an app may map it
+ * with `config.toolErrorText` if it wants different wording.
+ */
+const binaryMessage = (path: string): string =>
+  `binary or too large file: ${path} (text files up to 2 MB only)`
 
 const byPath = (a: { path: string }, b: { path: string }): number =>
   a.path < b.path ? -1 : a.path > b.path ? 1 : 0
@@ -67,8 +87,13 @@ export function diskFs(root: string, opts: { readonly?: boolean } = {}): FileSys
   const atomicWrite = async (real: string, content: string): Promise<void> => {
     await mkdir(dirname(real), { recursive: true })
     const temp = join(dirname(real), `.${basename(real)}.${crypto.randomUUID().slice(0, 8)}.tmp`)
+    // `rename` would replace the target's inode and lose its mode (e.g. `+x`): carry it over.
+    const mode = await stat(real)
+      .then((info) => (info.isFile() ? info.mode & 0o7777 : null))
+      .catch(() => null)
     try {
       await writeFile(temp, content, 'utf8')
+      if (mode !== null) await chmod(temp, mode).catch(() => {}) // best effort
       await rename(temp, real)
     } catch (error) {
       await rm(temp, { force: true }).catch(() => {})
@@ -241,14 +266,13 @@ export function diskFs(root: string, opts: { readonly?: boolean } = {}): FileSys
         throw error
       }
       if (info.isDirectory()) return null
-      if (!info.isFile() || info.size > MAX_BYTES)
-        throw new Error(`binary or too large file: ${path}`)
+      if (!info.isFile() || info.size > MAX_BYTES) throw new Error(binaryMessage(path))
       const bytes = await readFile(real)
       let content: string
       try {
         content = strictUtf8.decode(bytes)
       } catch {
-        throw new Error(`binary or too large file: ${path}`)
+        throw new Error(binaryMessage(path))
       }
       return {
         path,

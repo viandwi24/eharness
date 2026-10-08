@@ -272,3 +272,110 @@ describe('session picker', () => {
     await until(() => !frame().includes('Resume a session'), 'closed')
   })
 })
+
+describe('review fixes', () => {
+  const request = {
+    id: 'ap1',
+    toolName: 'bash',
+    input: {},
+    title: 'Bash: bun test',
+    suggestedRule: 'Bash(bun test *)',
+  }
+
+  test('Shift+Tab is ignored while a permission prompt is open', async () => {
+    const { frame, broker, type, calls } = mount()
+    broker.push(request)
+    await until(() => frame().includes('Bash: bun test'), 'prompt')
+    await type(SHIFT_TAB)
+    await tick(50)
+    expect(calls).not.toContain('cycleMode')
+    expect(frame()).toContain('❯ 1. Yes')
+    await type('1')
+    await until(() => broker.answers.length === 1, 'answer')
+    await type(SHIFT_TAB)
+    await until(() => calls.includes('cycleMode'), 'cycle after prompt')
+  })
+
+  test('Shift+Tab is ignored while the session picker is open', async () => {
+    const { frame, type, calls } = mount({
+      resume: true,
+      sessions: [{ id: 'a', updatedAt: 0, firstPrompt: 'x' }],
+    })
+    await until(() => frame().includes('Resume a session'), 'picker')
+    await type(SHIFT_TAB)
+    await tick(50)
+    expect(calls).not.toContain('cycleMode')
+  })
+
+  test('control characters are stripped from title and detail', async () => {
+    const { frame, broker } = mount()
+    broker.push({
+      ...request,
+      title: 'Bash: \x1b[31mred\x1b[0m\x07 cmd',
+      detail: 'line \x1b]0;pwned\x07one\x1b[2J\r\ntwo',
+    })
+    await until(() => frame().includes('Bash: red cmd'), 'prompt')
+    expect(frame()).toContain('line one')
+    expect(frame()).toContain('two')
+    expect(frame()).not.toContain('pwned')
+    expect(frame()).not.toContain('\x07')
+  })
+
+  test('detail shows 20 lines and a "more lines" note', async () => {
+    const { frame, broker } = mount()
+    broker.push({
+      ...request,
+      detail: Array.from({ length: 30 }, (_, i) => `row${i}`).join('\n'),
+    })
+    await until(() => frame().includes('row19'), 'detail')
+    expect(frame()).not.toContain('row20')
+    expect(frame()).toContain('… 10 more lines')
+  })
+
+  test('untrusted project settings show one notice at start', async () => {
+    const { frame } = mount({ untrusted: ['allow', 'mcpServers'] })
+    await until(() => frame().includes('Project settings ignored until trusted'), 'notice')
+    expect(frame()).toContain('allow, mcpServers')
+    expect(frame()).toContain('--trust-project')
+  })
+
+  test('no notice when trusted', async () => {
+    const { frame } = mount()
+    await until(() => frame().includes('context 5%'), 'stats')
+    expect(frame()).not.toContain('Project settings ignored')
+  })
+
+  test('/permissions allow edits rules and /permissions lists them', async () => {
+    const { frame, type, calls } = mount()
+    await type('/permissions allow Bash(ls) --project')
+    await type(ENTER)
+    await until(() => frame().includes('Added allow rule Bash(ls)'), 'added')
+    expect(calls).toContain('addRule:allow:Bash(ls):project')
+    await type('/permissions')
+    await type(ENTER)
+    await until(() => frame().includes('allow: Bash(ls)'), 'list')
+  })
+
+  test('/permissions mode refuses bypassPermissions without --yes', async () => {
+    const { frame, type, calls } = mount()
+    await type('/permissions mode bypassPermissions')
+    await type(ENTER)
+    await until(() => frame().includes('Confirm with'), 'refused')
+    expect(calls).not.toContain('setMode:bypassPermissions')
+  })
+
+  test('/resume unknown shows the controller error', async () => {
+    const { frame, type } = mount()
+    await type('/resume unknown')
+    await type(ENTER)
+    await until(() => frame().includes('unknown session'), 'error')
+    expect(frame()).not.toContain('Resumed session')
+  })
+
+  test('/agents with no runs lists nothing to open', async () => {
+    const { frame, type } = mount()
+    await type('/agents 1')
+    await type(ENTER)
+    await until(() => frame().includes('No subagent runs'), 'no runs')
+  })
+})

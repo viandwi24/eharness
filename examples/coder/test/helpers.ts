@@ -58,11 +58,15 @@ export async function isolateHome(): Promise<string> {
   const home = await tempDir('coder-home-')
   const previous = process.env.CODER_HOME
   const previousModel = process.env.CODER_MODEL
+  const previousOffline = process.env.CODER_OFFLINE
   process.env.CODER_HOME = home
+  process.env.CODER_OFFLINE = '1'
   delete process.env.CODER_MODEL
   onCleanup(async () => {
     if (previous === undefined) delete process.env.CODER_HOME
     else process.env.CODER_HOME = previous
+    if (previousOffline === undefined) delete process.env.CODER_OFFLINE
+    else process.env.CODER_OFFLINE = previousOffline
     if (previousModel !== undefined) process.env.CODER_MODEL = previousModel
   })
   return home
@@ -124,6 +128,7 @@ export async function makeAgentsEnv(opts: {
   model: LanguageModel
   broker?: ApprovalBroker
   definitions?: AgentDefinition[]
+  maxConcurrentAgents?: number
 }) {
   const { root, home, config } = await setup(opts.files, opts.flags)
   const workspace = await createWorkspace(config)
@@ -137,6 +142,7 @@ export async function makeAgentsEnv(opts: {
         root: config.root,
         userDir: config.userDir,
         cliAgents: config.cliAgents,
+        loadProject: config.trusted,
       })
     ).definitions
   const warnings: unknown[] = []
@@ -150,6 +156,9 @@ export async function makeAgentsEnv(opts: {
     definitions,
     storage: createStorage(config),
     model: opts.model,
+    ...(opts.maxConcurrentAgents !== undefined
+      ? { maxConcurrentAgents: opts.maxConcurrentAgents }
+      : {}),
     onWarning: (w) => warnings.push(w),
   })
   onCleanup(() => agents.closeAll())

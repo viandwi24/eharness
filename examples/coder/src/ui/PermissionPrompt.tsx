@@ -4,6 +4,7 @@ import type { ApprovalAnswer, ApprovalBroker, ApprovalRequest } from '../contrac
 import { DiffView } from './DiffView.tsx'
 import { type Buffer, backspace, deleteForward, emptyBuffer, insert, move } from './editor.ts'
 import { keyedLines } from './keys.ts'
+import { stripControl } from './sanitize.ts'
 import { color, sym } from './theme.ts'
 
 /** One selectable answer. */
@@ -17,7 +18,7 @@ export function optionsFor(request: ApprovalRequest): PromptOption[] {
   const options: PromptOption[] = [{ label: 'Yes', answer: { approved: true } }]
   if (request.suggestedRule) {
     options.push({
-      label: `Yes, and don't ask again for ${request.suggestedRule} (this session)`,
+      label: `Yes, and don't ask again for ${stripControl(request.suggestedRule)} (this session)`,
       answer: { approved: true, remember: 'session' },
     })
     options.push({
@@ -41,10 +42,11 @@ export function usePending(broker: ApprovalBroker): ApprovalRequest[] {
 
 function Detail({ request }: { request: ApprovalRequest }): ReactElement | null {
   if (!request.detail) return null
-  if (/^(--- |@@ |Index: )/m.test(request.detail)) {
-    return <DiffView patch={request.detail} maxLines={20} />
+  const detail = stripControl(request.detail)
+  if (/^(--- |@@ |Index: )/m.test(detail)) {
+    return <DiffView patch={detail} maxLines={20} />
   }
-  const lines = request.detail.split('\n')
+  const lines = detail.split('\n')
   return (
     <Box flexDirection="column">
       {keyedLines(lines.slice(0, 20)).map(({ key, line }) => (
@@ -105,7 +107,7 @@ export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactE
       if (key.escape) {
         broker.answer(request.id, { approved: false })
       } else if (key.upArrow) setIndex((i) => (i + options.length - 1) % options.length)
-      else if (key.downArrow || key.tab) setIndex((i) => (i + 1) % options.length)
+      else if (key.downArrow || (key.tab && !key.shift)) setIndex((i) => (i + 1) % options.length)
       else if (key.return) choose(options[index])
       else if (/^[1-9]$/.test(input) && Number(input) <= options.length) {
         choose(options[Number(input) - 1])
@@ -115,7 +117,7 @@ export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactE
   )
 
   if (!request) return null
-  const who = request.agent ? `${request.agent} wants to` : 'The agent wants to'
+  const who = request.agent ? `${stripControl(request.agent)} wants to` : 'The agent wants to'
   return (
     <Box
       flexDirection="column"
@@ -128,7 +130,7 @@ export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactE
         <Text color={color.running} bold>
           {who}:{' '}
         </Text>
-        <Text bold>{request.title}</Text>
+        <Text bold>{stripControl(request.title).replace(/\s*\n\s*/g, ' ')}</Text>
         {pending.length > 1 ? <Text dimColor> (+{pending.length - 1} more)</Text> : null}
       </Text>
       <Detail request={request} />

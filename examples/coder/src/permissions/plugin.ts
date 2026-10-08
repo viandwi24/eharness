@@ -1,14 +1,16 @@
 /**
  * The `permissions` plugin: maps the permission engine onto eharness hooks. `tool.approve`
- * decides every call, `step.prepare` hides tools a mode or rule removes, and `exit_plan_mode`
- * lets the model leave plan mode once the user approved its plan.
+ * decides every call, `step.prepare` hides tools a mode or rule removes, `tool.after` hides the
+ * paths a `Read` rule protects from `grep`/`list_files`/`glob` output, and `exit_plan_mode` lets
+ * the model leave plan mode (back to the mode it came from) once the user approved its plan.
  */
 import { appendFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { tool } from 'ai'
 import { definePlugin } from 'eharness'
 import { z } from 'zod/v4'
-import { type PermissionEngine, TOOL } from '../contracts.ts'
+import { type PermissionEngine, type PermissionMode, TOOL } from '../contracts.ts'
+import type { PermissionEngineExtras } from './engine.ts'
 import { toolsForRuleTool } from './rules.ts'
 
 /** Options of {@link permissionsPlugin}. */
@@ -22,6 +24,52 @@ export interface PermissionsPluginOptions {
   disallowedTools?: string[]
   /** JSON-lines audit log of every approval decision. */
   auditFile?: string
+  /**
+   * Per-agent mode: every `decide` and `inactiveTools` call of this plugin instance uses it
+   * instead of the engine's global mode (`plan` makes a subagent's bash read-only whatever the
+   * main session runs in). The global `dontAsk` still turns asks into denials and protected paths
+   * still ask. The plugin registers no `exit_plan_mode` tool then: only the main session leaves
+   * plan mode.
+   */
+  mode?: PermissionMode
+}
+
+/** Tools whose output lists paths (and so can leak the names/lines of files a rule hides). */
+const LISTING_TOOLS = new Set<string>([TOOL.grep, TOOL.list, TOOL.glob])
+
+const GREP_LINE = /^(.*?):\d+: /
+const LIST_LINE = /^(.*) \(\d+ bytes\)$/
+
+function isExtras(engine: PermissionEngine): engine is PermissionEngineExtras {
+  return typeof (engine as Partial<PermissionEngineExtras>).readBlocked === 'function'
+}
+
+/** Path of one output line of `grep`, `list_files` or `glob` (undefined for notes). */
+function linePath(toolName: string, line: string): string | undefined {
+  if (toolName === TOOL.grep) return GREP_LINE.exec(line)?.[1]
+  if (toolName === TOOL.list) return LIST_LINE.exec(line)?.[1]
+  return line.startsWith('/') ? line : undefined
+}
+
+/**
+ * Drop the lines of a `grep` / `list_files` / `glob` output whose path a `Read` deny or ask rule
+ * (the built-in `.env*` included) matches, and say how many were hidden.
+ */
+function filterListing(
+  engine: PermissionEngineExtras,
+  toolName: string,
+  output: string,
+): string | undefined {
+  let hidden = 0
+  const kept: string[] = []
+  for (const line of output.split('\n')) {
+    const path = linePath(toolName, line)
+    if (path !== undefined && engine.readBlocked(path)) hidden++
+    else kept.push(line)
+  }
+  if (hidden === 0) return undefined
+  kept.push(`(${hidden} results hidden by permission rules)`)
+  return kept.join('\n')
 }
 
 const EXIT_PLAN_DESCRIPTION =
@@ -81,28 +129,33 @@ function expand(names: readonly string[]): string[] {
  * next step).
  */
 export function permissionsPlugin(opts: PermissionsPluginOptions): ReturnType<typeof definePlugin> {
-  const { engine } = opts
+  const { engine, mode } = opts
   const allowed = opts.allowedTools === undefined ? undefined : new Set(expand(opts.allowedTools))
   const disallowed = new Set(expand(opts.disallowedTools ?? []))
   const auditFile = opts.auditFile
 
+  const exitPlanTools =
+    mode !== undefined
+      ? undefined
+      : {
+          [TOOL.exitPlan]: tool({
+            description: EXIT_PLAN_DESCRIPTION,
+            inputSchema: z.object({
+              plan: z.string().describe('The complete implementation plan, in markdown'),
+            }),
+            metadata: { risk: 'external' },
+            // runs only after the user approved the call: back to the mode before plan mode
+            execute: async (): Promise<string> => {
+              engine.setMode(isExtras(engine) ? engine.modeBeforePlan() : 'default')
+              return 'The user approved the plan. Plan mode is off; start implementing it now.'
+            },
+          }),
+        }
+
   return definePlugin({
     name: 'permissions',
     setup: () => ({
-      tools: {
-        [TOOL.exitPlan]: tool({
-          description: EXIT_PLAN_DESCRIPTION,
-          inputSchema: z.object({
-            plan: z.string().describe('The complete implementation plan, in markdown'),
-          }),
-          metadata: { risk: 'external' },
-          // runs only after the user approved the call
-          execute: async (): Promise<string> => {
-            engine.setMode('default')
-            return 'The user approved the plan. Plan mode is off; start implementing it now.'
-          },
-        }),
-      },
+      tools: exitPlanTools,
       hooks: {
         'tool.approve': (_ctx, e) => {
           const call: { toolName: string; input: unknown; agent?: string } = {
@@ -110,7 +163,7 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): ReturnType<ty
             input: e.input,
           }
           if (opts.agent !== undefined) call.agent = opts.agent
-          const decision = engine.decide(call)
+          const decision = engine.decide(call, mode)
           switch (decision.status) {
             case 'approved':
               return { type: 'approved' as const }
@@ -123,8 +176,13 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): ReturnType<ty
           }
         },
         'step.prepare': (_ctx, e) => {
-          const leavingPlan = engine.mode === 'plan' && endsWithApprovedPlan(e.messages)
-          const inactive = new Set(engine.inactiveTools(leavingPlan ? 'default' : undefined))
+          const leavingPlan =
+            mode === undefined && engine.mode === 'plan' && endsWithApprovedPlan(e.messages)
+          const inactive = new Set(
+            engine.inactiveTools(
+              leavingPlan ? (isExtras(engine) ? engine.modeBeforePlan() : 'default') : mode,
+            ),
+          )
           const active = e.toolNames.filter(
             (name) =>
               !inactive.has(name) &&
@@ -132,6 +190,12 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): ReturnType<ty
               (allowed === undefined || allowed.has(name)),
           )
           return active.length === e.toolNames.length ? undefined : { activeTools: active }
+        },
+        'tool.after': (_ctx, e) => {
+          if (!LISTING_TOOLS.has(e.toolName) || typeof e.output !== 'string') return
+          if (!isExtras(engine)) return
+          const output = filterListing(engine, e.toolName, e.output)
+          return output === undefined ? undefined : { output }
         },
         'approval.decided': async (_ctx, e) => {
           if (auditFile === undefined) return

@@ -19,6 +19,7 @@ import {
   DONT_ASK_REASON,
   PLAN_MODE_REASON,
 } from '../src/permissions/engine.ts'
+import { isReadOnlyCommand } from '../src/permissions/readonly-commands.ts'
 
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'coder-engine-')))
 afterAll(() => rmSync(tmp, { recursive: true, force: true }))
@@ -267,8 +268,8 @@ describe('bash in each mode', () => {
       'git status',
       'git log --oneline -5',
       'cat src/a.ts',
-      'rg foo src',
-      'grep -rn x .',
+      'sort src/a.ts',
+      'grep -n x src/a.ts',
       'echo hi',
       'cat src/a.ts | wc -l',
       'ls 2>/dev/null',
@@ -305,7 +306,6 @@ describe('bash in each mode', () => {
       'ls /',
       `ls ${tmp}`,
       'cat -- /etc/hosts',
-      'head -n1 --file=/etc/hosts',
       'cat src/../../etc/hosts',
     ]
     for (const c of cmds) {
@@ -549,7 +549,9 @@ describe('rules and precedence', () => {
     expect(status(engine.decide(bash('echo hi')))).toBe('approved')
     expect(status(engine.decide(bash('echo $(rm x)')))).toBe('user-approval')
     expect(status(engine.decide(bash('echo hi && rm x')))).toBe('user-approval')
-    expect(status(engine.decide(bash('echo hi > /etc/x')))).toBe('approved') // spec: rules only see subcommands
+    // an allow rule never approves a write outside the working directories
+    expect(status(engine.decide(bash('echo hi > /etc/x')))).toBe('user-approval')
+    expect(status(engine.decide(bash('echo hi > out.txt')))).toBe('approved')
   })
 
   test('a deny or ask rule catches a command inside $(...)', () => {
@@ -751,6 +753,36 @@ describe('suggestRule', () => {
     expect(engine.suggestRule(bash('timeout 30 bun test'))).toBe('Bash(bun test *)')
   })
 
+  test('finding 5: interpreters, wrappers and flags get the exact command, never a wildcard', () => {
+    for (const c of [
+      'bash -c "echo hi"',
+      'sh -c ls',
+      'python3 -c print',
+      'python script.py',
+      'node -e 1',
+      'bun x foo',
+      'git -c core.pager=x log',
+      'git -C /tmp log',
+      'git config alias.x y',
+      'env FOO=1 make',
+      'sudo rm file',
+      'xargs rm',
+      'ssh host ls',
+      'find . -name x',
+      'rm -rf build',
+      'ls -la',
+    ]) {
+      const rule = engine.suggestRule(bash(c))
+      expect([c, rule === undefined || !rule.includes('*')]).toEqual([c, true])
+    }
+    expect(engine.suggestRule(bash('bash -c ls'))).toBe('Bash(bash -c ls)')
+    expect(engine.suggestRule(bash('ls -la'))).toBe('Bash(ls -la)')
+    expect(engine.suggestRule(bash('git push origin main'))).toBe('Bash(git push *)')
+    // compound commands and commands with a wildcard get no rule
+    expect(engine.suggestRule(bash('bun test && rm x'))).toBeUndefined()
+    expect(engine.suggestRule(bash('ls *.ts'))).toBeUndefined()
+  })
+
   test('bash: none for complex commands', () => {
     expect(engine.suggestRule(bash('echo $(date)'))).toBeUndefined()
     expect(engine.suggestRule(bash('cat <<EOF\nx\nEOF'))).toBeUndefined()
@@ -836,5 +868,374 @@ describe('allow()', () => {
       await engine.allow('Read', 'project')
       expect(JSON.parse(readFileSync(local, 'utf8'))).toEqual({ permissions: { allow: ['Read'] } })
     }
+  })
+})
+
+describe('finding 1: read-only commands are argument grammars (allow-lists)', () => {
+  const writers = [
+    'uniq a.txt victim.txt',
+    'sort -oREADME.md a',
+    'sort -o README.md a',
+    'sort --ou=README.md a',
+    'sort --output=README.md a',
+    'sort --output README.md a',
+    'sort --compress-program=sh a',
+    'sort -T /tmp a',
+    'tree -ofoo',
+    'tree',
+    'find . -fprint0 x',
+    'find . -fprint x',
+    'find . -fls x',
+    'find . -fprintf x %p',
+    'find . -exec rm {} ;',
+    'find . -execdir rm {} ;',
+    'find . -ok rm {} ;',
+    'find . -okdir rm {} ;',
+    'find . -delete',
+    'find . -files0-from list',
+    'rg --pre sh x',
+    'rg --pre=sh x',
+    'rg --pre-glob=x y',
+    'rg --hostname-bin=sh x',
+    'rg -z x',
+    'rg -f patterns x',
+    'grep -f patterns x',
+    'grep --exclude-from=x y',
+    'git blame --contents /etc/passwd src/a.ts',
+    'git diff --output=x',
+    'git log --output=x',
+    'git diff --ext-diff',
+    'git show --textconv HEAD',
+    'git -c core.pager=sh log',
+    'git -C /tmp log',
+    'tail -f log',
+    'tail --follow log',
+    'file -C',
+    'wc --files0-from=x',
+    'cat --unknown',
+  ]
+  for (const c of writers) {
+    test(`not read-only, plan mode denies: ${c}`, () => {
+      expect(isReadOnlyCommand(c)).toBe(false)
+      expect(make('plan').decide(bash(c))).toMatchObject({
+        status: 'denied',
+        reason: PLAN_MODE_REASON,
+      })
+    })
+  }
+
+  test('legitimate read-only uses are still accepted', () => {
+    for (const c of [
+      'uniq a.txt',
+      'uniq -c a.txt',
+      'sort -n -k2 -t, a b',
+      'sort -r a',
+      'find . -name "*.ts" -type f -print',
+      'find src -maxdepth 2 \\( -name a -o -name b \\) -print0',
+      'rg -n -i --glob *.ts foo src',
+      'rg --files',
+      'grep -rn -e foo -A 3 src',
+      'head -n 5 a',
+      'head -5 a',
+      'tail -n +3 a',
+      'cut -d, -f1 a',
+      'git log --oneline -5 -- src',
+      'git diff --stat --cached',
+      'git blame -L 1,5 src/a.ts',
+      'git status --porcelain',
+      'git ls-files -o --exclude-standard',
+      'wc -l a',
+    ]) {
+      expect([c, isReadOnlyCommand(c)]).toEqual([c, true])
+    }
+  })
+})
+
+describe('finding 2: Read rules cover directories, globs and mounts', () => {
+  const rules = { deny: ['Read(secrets/**)'] }
+
+  test('shell reads of a directory or glob that a rule could match ask', () => {
+    const engine = make('default', rules)
+    for (const c of [
+      'grep -r KEY .',
+      'grep -rn KEY',
+      'rg KEY',
+      'rg KEY .',
+      'cat .e*',
+      'cat .en?',
+      'cat .e[n]v',
+      'cat sec*/a',
+      'cat < .e*',
+      `grep -r KEY ${extra}`,
+    ]) {
+      const d = engine.decide(bash(c))
+      expect([c, d.status]).toEqual([c, 'user-approval'])
+      expect(d).toMatchObject({ reason: expect.stringContaining('may read files matched by') })
+    }
+    // dontAsk turns the ask into a denial
+    expect(status(make('dontAsk', rules).decide(bash('cat .e*')))).toBe('denied')
+  })
+
+  test('a deny rule that could match still asks in bypassPermissions', () => {
+    const d = make('bypassPermissions', rules).decide(bash('grep -r KEY .'))
+    expect(d).toMatchObject({ status: 'user-approval', rule: 'Read(secrets/**)' })
+    // the built-in .env ask is ignored in bypass
+    expect(status(make('bypassPermissions').decide(bash('grep -r KEY .')))).toBe('approved')
+  })
+
+  test('harmless globs and files are not covered', () => {
+    const engine = make('default', rules)
+    for (const c of [
+      'cat src/*.ts',
+      'cat a.txt b.txt',
+      'grep KEY src/a.ts',
+      'ls -R',
+      'wc -l *.md',
+    ]) {
+      expect([c, status(engine.decide(bash(c)))]).toEqual([c, 'approved'])
+    }
+  })
+
+  test('an exact match still denies', () => {
+    expect(status(make('default', rules).decide(bash('cat secrets/*')))).toBe('denied')
+    expect(
+      status(make('default', { deny: ['Read(secrets/a)'] }).decide(bash('cat secrets/a'))),
+    ).toBe('denied')
+  })
+
+  test('the built-in .env ask applies in every mount', () => {
+    const engine = make('default')
+    for (const path of [
+      '/@dirs/shared-lib/.env',
+      '/@dirs/shared-lib/sub/.env.local',
+      '/sub/.env',
+    ]) {
+      expect([path, status(engine.decide(fileCall(TOOL.read, path)))]).toEqual([
+        path,
+        'user-approval',
+      ])
+    }
+    expect(status(engine.decide(bash(`cat ${extra}/.env`)))).toBe('user-approval')
+    expect(status(engine.decide(fileCall(TOOL.read, '/@dirs/shared-lib/a.ts')))).toBe('approved')
+  })
+
+  test('a root-relative rule applies to the root, a bare rule also inside mounts', () => {
+    const engine = make('default', { deny: ['Read(./private/**)', 'Read(*.pem)'] })
+    expect(status(engine.decide(fileCall(TOOL.read, '/private/a')))).toBe('denied')
+    expect(status(engine.decide(fileCall(TOOL.read, '/@dirs/shared-lib/private/a')))).toBe(
+      'approved',
+    )
+    expect(status(engine.decide(fileCall(TOOL.read, '/@dirs/shared-lib/k.pem')))).toBe('denied')
+  })
+
+  test('file tools on a directory are approved (the plugin filters the output)', () => {
+    const engine = make('default', rules)
+    expect(status(engine.decide(call(TOOL.grep, { pattern: 'x' })))).toBe('approved')
+    expect(status(engine.decide(fileCall(TOOL.list, '/')))).toBe('approved')
+    expect(status(engine.decide(call(TOOL.glob, { pattern: '**' })))).toBe('approved')
+  })
+
+  test('readBlocked: deny, ask and built-in rules; an allow rule lifts the built-in ask', () => {
+    const engine = make('default', { deny: ['Read(secrets/**)'], ask: ['Read(*.key)'] })
+    for (const path of [
+      '/secrets/a',
+      '/x/y.key',
+      '/.env',
+      '/sub/.env.local',
+      '/@dirs/shared-lib/.env',
+    ]) {
+      expect([path, engine.readBlocked(path)]).toEqual([path, true])
+    }
+    for (const path of ['/src/a.ts', '/@dirs/shared-lib/a.ts', '/nowhere/../src/a']) {
+      expect([path, engine.readBlocked(path)]).toEqual([path, false])
+    }
+    expect(make('default', { allow: ['Read(.env.example)'] }).readBlocked('/.env.example')).toBe(
+      false,
+    )
+  })
+})
+
+describe('finding 4: expansions in any argument of a read-only command', () => {
+  test('echo, printf-like and path-less commands with $ or backticks are not auto-approved', () => {
+    for (const c of [
+      'echo $SECRET',
+      'echo $' + '{HOME}',
+      'echo "$X"',
+      'echo $1',
+      'echo `id`',
+      'basename $P',
+      'which $X',
+    ]) {
+      const d = make('default').decide(bash(c))
+      expect([c, d.status]).toEqual([c, 'user-approval'])
+    }
+    expect(status(make('default').decide(bash('printf "$X"')))).toBe('user-approval')
+    expect(status(make('default').decide(bash('echo hi')))).toBe('approved')
+    // a regex anchor is not an expansion
+    expect(status(make('default').decide(bash("grep -E 'a$|b' src/a.ts")))).toBe('approved')
+  })
+})
+
+describe('finding 6: protected paths and shell writes', () => {
+  test('a non-read-only bash command that mentions a protected path asks in every mode', () => {
+    for (const c of [
+      'cp evil .coder/settings.local.json',
+      'sed -i s/a/b/ .git/config',
+      'rm -rf .git',
+      `python3 -c "open('.coder/settings.json','w')"`,
+      'echo x > ./.coder/agents/a.md',
+      'cd .coder && cp x y',
+      'rm -rf sub/.git/hooks',
+    ]) {
+      for (const mode of ['default', 'acceptEdits', 'bypassPermissions'] as const) {
+        expect([c, mode, make(mode).decide(bash(c))]).toEqual([
+          c,
+          mode,
+          { status: 'user-approval', reason: expect.any(String) },
+        ])
+      }
+      expect(make('bypassPermissions').decide(bash(c))).toMatchObject({ status: 'user-approval' })
+      expect(status(make('dontAsk').decide(bash(c)))).toBe('denied')
+    }
+    expect(make('bypassPermissions').decide(bash('rm -rf .git'))).toEqual({
+      status: 'user-approval',
+      reason: 'touches a protected path',
+    })
+  })
+
+  test('a protected path is not unprotected by an allow rule', () => {
+    expect(status(make('default', { allow: ['Bash(rm *)'] }).decide(bash('rm -rf .git')))).toBe(
+      'user-approval',
+    )
+  })
+
+  test('look-alikes and read-only reads of .git are fine', () => {
+    for (const c of [
+      'git add .gitignore',
+      'rm -rf .github',
+      'rm foo.git',
+      'cat .git/config',
+      'git status',
+    ]) {
+      const d = make('bypassPermissions').decide(bash(c))
+      expect([c, d.status]).toEqual([c, 'approved'])
+    }
+  })
+
+  test('an allow rule does not approve a redirect or tee outside the working directories', () => {
+    const engine = make('default', { allow: ['Bash(echo *)', 'Bash(cat *)'] })
+    for (const c of [
+      'echo hi > /etc/x',
+      'echo hi >> ~/.bashrc',
+      'echo hi > $HOME/x',
+      'echo a > ../x',
+    ]) {
+      expect([c, status(engine.decide(bash(c)))]).toEqual([c, 'user-approval'])
+    }
+    expect(status(engine.decide(bash('echo hi > out.txt')))).toBe('approved')
+    expect(status(engine.decide(bash('echo hi > /dev/null')))).toBe('approved')
+    expect(status(engine.decide(bash(`echo hi > ${extra}/a`)))).toBe('approved')
+    const tee = make('default', { allow: ['Bash(cat *)', 'Bash(tee *)'] })
+    expect(status(tee.decide(bash('tee /etc/x')))).toBe('user-approval')
+    expect(status(tee.decide(bash('tee out.txt')))).toBe('approved')
+  })
+})
+
+describe('finding 7: mode override', () => {
+  test('decide(call, plan) keeps bash read-only whatever the global mode', () => {
+    for (const global of ['bypassPermissions', 'acceptEdits', 'default'] as const) {
+      const engine = make(global)
+      expect(engine.decide(bash('rm -rf x'), 'plan')).toEqual({
+        status: 'denied',
+        reason: PLAN_MODE_REASON,
+      })
+      expect(status(engine.decide(bash('ls'), 'plan'))).toBe('approved')
+      expect(status(engine.decide(fileCall(TOOL.write, '/a'), 'plan'))).toBe('denied')
+    }
+  })
+
+  test('the global dontAsk still converts asks to denials, protected paths still ask', () => {
+    const dont = make('dontAsk')
+    expect(status(dont.decide(call(TOOL.dirAccess, { path: '/x' }), 'plan'))).toBe('denied')
+    expect(status(dont.decide(fileCall(TOOL.read, '/.env'), 'default'))).toBe('denied')
+    expect(
+      make('bypassPermissions').decide(fileCall(TOOL.write, '/.git/config'), 'plan'),
+    ).toMatchObject({
+      status: 'denied',
+    })
+    expect(
+      make('bypassPermissions').decide(fileCall(TOOL.write, '/.git/config'), 'acceptEdits'),
+    ).toMatchObject({
+      status: 'user-approval',
+    })
+  })
+})
+
+describe('finding 8: plan mode remembers the previous mode', () => {
+  test('setMode(plan) and cycleMode record the mode to restore', () => {
+    const engine = make('bypassPermissions')
+    expect(engine.modeBeforePlan()).toBe('default')
+    engine.setMode('plan')
+    expect(engine.modeBeforePlan()).toBe('bypassPermissions')
+    engine.setMode('default')
+    engine.cycleMode() // acceptEdits
+    engine.cycleMode() // plan
+    expect(engine.mode).toBe('plan')
+    expect(engine.modeBeforePlan()).toBe('acceptEdits')
+    // starting in plan: nothing to restore but default
+    expect(make('plan').modeBeforePlan()).toBe('default')
+  })
+})
+
+describe('finding 9: addRule / removeRule', () => {
+  test('addRule: any kind, validated, session scope writes nothing', async () => {
+    const file = join(tmp, 'ar1', 'settings.local.json')
+    const engine = make('default', {}, file)
+    await engine.addRule('deny', 'Bash(rm *)', 'session')
+    await engine.addRule('ask', 'Read(x)', 'session')
+    expect(engine.rules()).toEqual({ allow: [], ask: ['Read(x)'], deny: ['Bash(rm *)'] })
+    expect(() => readFileSync(file, 'utf8')).toThrow()
+    await expect(engine.addRule('deny', 'not a rule(', 'session')).rejects.toThrow('Invalid')
+    expect(status(engine.decide(bash('rm x')))).toBe('denied')
+  })
+
+  test('addRule project: read-modify-write keeps other keys, no duplicates', async () => {
+    const file = join(tmp, 'ar2', 'settings.local.json')
+    mkdirSync(join(tmp, 'ar2'), { recursive: true })
+    writeFileSync(
+      file,
+      JSON.stringify({ model: 'm', permissions: { allow: ['A'], defaultMode: 'plan' } }),
+    )
+    const engine = make('default', {}, file)
+    await engine.addRule('deny', 'Edit(secrets/**)', 'project')
+    await engine.addRule('deny', 'Edit(secrets/**)', 'project')
+    await engine.addRule('allow', 'Bash(ls)', 'project')
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+      model: 'm',
+      permissions: { allow: ['A', 'Bash(ls)'], defaultMode: 'plan', deny: ['Edit(secrets/**)'] },
+    })
+  })
+
+  test('removeRule: memory and file, returns whether it existed', async () => {
+    const file = join(tmp, 'ar3', 'settings.local.json')
+    mkdirSync(join(tmp, 'ar3'), { recursive: true })
+    writeFileSync(
+      file,
+      JSON.stringify({ model: 'm', permissions: { deny: ['Edit(x)', 'Edit(y)'] } }),
+    )
+    const engine = make('default', { deny: ['Edit(x)'] }, file)
+    expect(await engine.removeRule('deny', 'Edit(x)')).toBe(true)
+    expect(engine.rules().deny).toEqual([])
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toEqual({
+      model: 'm',
+      permissions: { deny: ['Edit(y)'] },
+    })
+    expect(await engine.removeRule('deny', 'Edit(x)')).toBe(false)
+    // only in the file
+    expect(await engine.removeRule('deny', 'Edit(y)')).toBe(true)
+    // only in memory, no file at all
+    const lone = make('default', { ask: ['Read(z)'] })
+    expect(await lone.removeRule('ask', 'Read(z)')).toBe(true)
+    expect(await lone.removeRule('ask', 'Read(z)')).toBe(false)
   })
 })

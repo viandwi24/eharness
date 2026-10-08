@@ -120,6 +120,14 @@ export interface CoderConfig {
   /** `--continue` / `--resume [id]`. `resume: true` = show a picker. */
   continueLast: boolean
   resume?: string | true
+  /**
+   * Project settings keys that were ignored because the project is not trusted yet
+   * (`defaultMode`, `allow`, `additionalDirectories`, `mcpServers`, project agents and skills).
+   * Empty when trusted or when the project file sets none of them.
+   */
+  untrusted: string[]
+  /** Whether the project's `.coder/` content (settings, agents, skills) is trusted. */
+  trusted: boolean
 }
 
 // ─── Workspace (workspace/) ──────────────────────────────────────────────────────────────────
@@ -184,6 +192,10 @@ export interface PermissionEngine {
   suggestRule(call: ToolCallInfo): string | undefined
   /** Add an allow rule for this process (`session`) or persist it to settings.local.json (`project`). */
   allow(rule: string, scope: 'session' | 'project'): Promise<void>
+  /** Add a rule of any kind (`/permissions allow|ask|deny <rule>`); `project` persists to settings.local.json. */
+  addRule(kind: keyof PermissionRules, rule: string, scope: 'session' | 'project'): Promise<void>
+  /** Remove a rule from the in-memory rules and, when present, from settings.local.json. Returns whether it existed. */
+  removeRule(kind: keyof PermissionRules, rule: string): Promise<boolean>
   rules(): PermissionRules
   /** Tools a mode makes unavailable (plan mode: everything not read-only except exit_plan_mode). */
   inactiveTools(mode?: PermissionMode): string[]
@@ -280,6 +292,8 @@ export interface CoderController {
   /** Abort the running turn (Esc). */
   abort(): void
   messages(): Promise<CoderMessage[]>
+  /** Stored messages of another session of this project, e.g. a subagent child (`AgentProgress.sessionId`). */
+  messagesOf(sessionId: string): Promise<CoderMessage[]>
   compact(): Promise<void>
   /** Start a fresh session (`/clear`). */
   clear(): Promise<void>

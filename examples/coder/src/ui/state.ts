@@ -3,16 +3,27 @@
  * tested. {@link driver.ts} feeds it from a controller run.
  */
 import type { Todo, TodoListData } from 'eharness/todos'
-import type { BashOutputData, CoderMessage } from '../contracts.ts'
-import { toolView } from './tool-summary.ts'
+import type { AgentProgress, BashOutputData, CoderMessage } from '../contracts.ts'
+import { TOOL } from '../contracts.ts'
+import { isAgentProgress, toolView } from './tool-summary.ts'
 
 /** One transcript line group. Finished entries are rendered once, in `<Static>`. */
 export type Entry =
   | { kind: 'header'; id: string }
   | { kind: 'user'; id: string; text: string }
   | { kind: 'message'; id: string; message: CoderMessage }
-  | { kind: 'system'; id: string; text: string; tone: 'info' | 'error' }
+  | { kind: 'system'; id: string; text: string; tone: 'info' | 'warn' | 'error' }
   | { kind: 'shell'; id: string; command: string; output: string; exitCode: number | null }
+  | { kind: 'transcript'; id: string; title: string; messages: CoderMessage[] }
+
+/** A subagent run seen in this session (from `AgentProgress` preliminary outputs). */
+export interface SubagentRun {
+  toolCallId: string
+  name: string
+  description: string
+  sessionId: string
+  status: AgentProgress['status']
+}
 
 /** Wall-clock timing of a tool call, as observed by the UI. */
 export interface ToolTiming {
@@ -29,6 +40,8 @@ export interface ViewState {
   /** Live bash output per tool call id (tail only). */
   bash: Record<string, string>
   timing: Record<string, ToolTiming>
+  /** Subagent runs seen in this session, oldest first (`/agents <n>` opens one). */
+  subagents: SubagentRun[]
   /** Last prompts, oldest first. */
   history: string[]
   expanded: boolean
@@ -44,8 +57,9 @@ export type ViewAction =
   | { type: 'live'; message: CoderMessage; now: number }
   | { type: 'bash-output'; chunks: BashOutputData[] }
   | { type: 'turn-finished'; note?: { text: string; tone: 'info' | 'error' } }
-  | { type: 'system'; text: string; tone?: 'info' | 'error' }
+  | { type: 'system'; text: string; tone?: 'info' | 'warn' | 'error' }
   | { type: 'shell-result'; command: string; output: string; exitCode: number | null }
+  | { type: 'transcript'; title: string; messages: CoderMessage[] }
   | { type: 'reset' }
   | { type: 'load'; messages: CoderMessage[] }
   | { type: 'toggle-expand' }
@@ -61,6 +75,7 @@ export function initialState(): ViewState {
     running: false,
     bash: {},
     timing: {},
+    subagents: [],
     history: [],
     expanded: false,
     epoch: 0,
@@ -93,6 +108,37 @@ function withTiming(
   return next
 }
 
+/** Record the subagent runs of a message snapshot; returns the same array when nothing changed. */
+function withSubagents(runs: SubagentRun[], message: CoderMessage): SubagentRun[] {
+  let next = runs
+  for (const part of message.parts) {
+    const view = toolView(part)
+    if (!view || view.toolName !== TOOL.agent) continue
+    const index = next.findIndex((r) => r.toolCallId === view.toolCallId)
+    const known = index >= 0 ? next[index] : undefined
+    let run: SubagentRun | undefined
+    if (isAgentProgress(view.output)) {
+      run = {
+        toolCallId: view.toolCallId,
+        name: view.output.agent,
+        description: view.output.description,
+        sessionId: view.output.sessionId,
+        // a finished tool call with a progress record as output (non-preliminary) is done
+        status: view.preliminary || view.state !== 'output-available' ? view.output.status : 'done',
+      }
+    } else if (known && view.state === 'output-available' && !view.preliminary) {
+      run = { ...known, status: known.status === 'failed' ? 'failed' : 'done' }
+    } else if (known && (view.state === 'output-error' || view.state === 'output-denied')) {
+      run = { ...known, status: 'failed' }
+    }
+    if (!run || (known && JSON.stringify(known) === JSON.stringify(run))) continue
+    if (next === runs) next = [...runs]
+    if (index >= 0) next[index] = run
+    else next.push(run)
+  }
+  return next
+}
+
 /** The pure reducer. */
 export function reduce(state: ViewState, action: ViewAction): ViewState {
   const seq = state.seq + 1
@@ -116,6 +162,7 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
         ...state,
         live: action.message,
         timing: withTiming(state.timing, action.message, action.now),
+        subagents: withSubagents(state.subagents, action.message),
       }
     case 'bash-output': {
       const bash = { ...state.bash }
@@ -138,7 +185,13 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
           tone: action.note.tone,
         })
       }
-      return { ...state, seq, entries, live: null, running: false }
+      // a run still "running" when the turn ends was interrupted
+      const subagents = state.subagents.some((r) => r.status === 'running')
+        ? state.subagents.map(
+            (r): SubagentRun => (r.status === 'running' ? { ...r, status: 'failed' } : r),
+          )
+        : state.subagents
+      return { ...state, seq, entries, subagents, live: null, running: false }
     }
     case 'system':
       return {
@@ -163,6 +216,15 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
             output: action.output,
             exitCode: action.exitCode,
           },
+        ],
+      }
+    case 'transcript':
+      return {
+        ...state,
+        seq,
+        entries: [
+          ...state.entries,
+          { kind: 'transcript', id: `t${seq}`, title: action.title, messages: action.messages },
         ],
       }
     case 'reset':

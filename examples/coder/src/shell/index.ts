@@ -5,4 +5,4 @@ export {
   capOutput,
   createBashTool,
 } from './bash-tool.ts'
-export { createLocalSandbox } from './sandbox-local.ts'
+export { createLocalSandbox, killAllSandboxProcesses } from './sandbox-local.ts'

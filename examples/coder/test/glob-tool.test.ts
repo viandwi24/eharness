@@ -1,6 +1,6 @@
 /** The `glob` and `request_directory_access` tools. */
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdir, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CoderConfig, Workspace } from '../src/contracts.ts'
@@ -72,5 +72,29 @@ describe('glob tool', () => {
     expect(await run(ws, { pattern: '/etc/*' })).toStartWith('ERROR:')
     expect(await run(ws, { pattern: '*', path: '/../x' })).toStartWith('ERROR:')
     expect(await run(ws, { pattern: '*', path: 'relative' })).toStartWith('ERROR:')
+  })
+})
+
+describe('glob containment', () => {
+  test('rejects backslash, .., absolute and ~ patterns', async () => {
+    const { ws, root, base } = await makeWorkspace()
+    await writeFile(join(base, 'secret.txt'), 's')
+    await writeFile(join(root, 'a.txt'), 'a')
+    for (const pattern of ['..\\/*', '..\\/..\\/*', '../*', 'a/../../*', '/etc/*', '~/x', 'a\\b']) {
+      expect(await run(ws, { pattern })).toStartWith('ERROR:')
+    }
+    expect(await run(ws, { pattern: '*.txt' })).toBe('/a.txt')
+  })
+
+  test('symlinks leaving the mount are not listed', async () => {
+    const { ws, root, base } = await makeWorkspace()
+    await mkdir(join(base, 'outside'))
+    await writeFile(join(base, 'outside/leak.txt'), 'x')
+    await symlink(join(base, 'outside'), join(root, 'link'))
+    await symlink(join(base, 'outside/leak.txt'), join(root, 'leak-link.txt'))
+    await writeFile(join(root, 'ok.txt'), 'ok')
+    const out = await run(ws, { pattern: '**/*.txt' })
+    expect(out).toContain('/ok.txt')
+    expect(out).not.toContain('leak')
   })
 })

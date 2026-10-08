@@ -8,15 +8,29 @@ import {
   type SlashContext,
   slashCommands,
 } from '../src/ui/slash.ts'
+import type { SubagentRun } from '../src/ui/state.ts'
 
 function harness(over: Record<string, unknown> = {}) {
   const calls: string[] = []
   const printed: Array<{ text: string; tone?: string }> = []
+  const rules = { allow: ['Bash(ls)'], ask: [] as string[], deny: ['Read(./.env)'] }
+  const runs: SubagentRun[] = []
+  const transcripts: Array<{ title: string; messages: unknown[] }> = []
   const controller = {
     permissions: {
       mode: 'plan',
-      rules: () => ({ allow: ['Bash(ls)'], ask: [], deny: ['Read(./.env)'] }),
+      rules: () => rules,
+      setMode: (m: string) => void calls.push(`setMode:${m}`),
+      addRule: async (k: string, r: string, scope: string) => {
+        if (r === 'bad') throw new Error('invalid rule')
+        calls.push(`addRule:${k}:${r}:${scope}`)
+      },
+      removeRule: async (k: string, r: string) => {
+        calls.push(`removeRule:${k}:${r}`)
+        return r !== 'missing'
+      },
     },
+    messagesOf: async (id: string) => [{ id: `m-${id}`, role: 'assistant', parts: [] }],
     clear: async () => void calls.push('clear'),
     compact: async () => void calls.push('compact'),
     setModel: (m: string) => void calls.push(`setModel:${m}`),
@@ -33,13 +47,15 @@ function harness(over: Record<string, unknown> = {}) {
     reset: () => void calls.push('reset'),
     load: () => void calls.push('load'),
     pickSession: () => void calls.push('pick'),
+    subagents: () => runs,
+    showTranscript: (title, messages) => void transcripts.push({ title, messages }),
     submit: (p) => void calls.push(`submit:${p}`),
     todos: () => [{ id: '1', content: 'do it', status: 'in_progress' }] as never,
     setModelLabel: (m) => void calls.push(`label:${m}`),
     refreshStats: () => void calls.push('refresh'),
     exit: () => void calls.push('exit'),
   }
-  return { ctx, calls, printed }
+  return { ctx, calls, printed, runs, transcripts }
 }
 
 describe('slash parsing', () => {
@@ -68,6 +84,7 @@ describe('slash parsing', () => {
       'model',
       'permissions',
       'agents',
+      'transcript',
       'resume',
       'cost',
       'todos',
@@ -162,6 +179,20 @@ describe('slash effects', () => {
     expect(bad.printed[0]).toMatchObject({ tone: 'error' })
   })
 
+  test('/resume <id> surfaces the controller error instead of claiming success', async () => {
+    const h = harness({
+      resume: async () => {
+        throw new Error('unknown session')
+      },
+    })
+    await runSlash('/resume nope', h.ctx)
+    expect(h.printed).toHaveLength(1)
+    expect(h.printed[0]).toMatchObject({ tone: 'error' })
+    expect(h.printed[0]?.text).toContain('unknown session')
+    expect(h.calls).not.toContain('load')
+    expect(slashCommands.find((c) => c.name === 'resume')?.usage).toBe('[id]')
+  })
+
   test('/init submits the fixed prompt and /exit exits', async () => {
     const h = harness()
     await runSlash('/init', h.ctx)
@@ -177,5 +208,99 @@ describe('slash effects', () => {
     })
     expect(await runSlash('/clear', h.ctx)).toBe(true)
     expect(h.printed[0]).toMatchObject({ tone: 'error' })
+  })
+})
+
+describe('/permissions editing', () => {
+  test('addRule: session by default, project with --project', async () => {
+    const h = harness()
+    await runSlash('/permissions allow Bash(bun test *)', h.ctx)
+    await runSlash('/permissions deny Read(./.env) --project', h.ctx)
+    await runSlash('/permissions ask Edit(src/**)', h.ctx)
+    expect(h.calls).toEqual([
+      'addRule:allow:Bash(bun test *):session',
+      'addRule:deny:Read(./.env):project',
+      'addRule:ask:Edit(src/**):session',
+    ])
+    expect(h.printed[1]?.text).toContain('project')
+  })
+
+  test('remove calls removeRule and reports a missing rule', async () => {
+    const h = harness()
+    await runSlash('/permissions remove allow Bash(ls)', h.ctx)
+    await runSlash('/permissions remove deny missing', h.ctx)
+    expect(h.calls).toEqual(['removeRule:allow:Bash(ls)', 'removeRule:deny:missing'])
+    expect(h.printed[0]).toMatchObject({ tone: 'info' })
+    expect(h.printed[1]).toMatchObject({ tone: 'error' })
+  })
+
+  test('an engine error becomes a system error line', async () => {
+    const h = harness()
+    await runSlash('/permissions allow bad', h.ctx)
+    expect(h.printed[0]).toMatchObject({ tone: 'error' })
+    expect(h.printed[0]?.text).toContain('invalid rule')
+  })
+
+  test('usage errors', async () => {
+    const h = harness()
+    await runSlash('/permissions allow', h.ctx)
+    await runSlash('/permissions remove nope x', h.ctx)
+    await runSlash('/permissions wat', h.ctx)
+    expect(h.calls).toEqual([])
+    for (const p of h.printed) expect(p.tone).toBe('error')
+  })
+
+  test('mode sets a mode; bypassPermissions needs --yes', async () => {
+    const h = harness()
+    await runSlash('/permissions mode acceptEdits', h.ctx)
+    await runSlash('/permissions mode bypassPermissions', h.ctx)
+    await runSlash('/permissions mode nonsense', h.ctx)
+    expect(h.calls).toEqual(['setMode:acceptEdits'])
+    expect(h.printed[1]).toMatchObject({ tone: 'error' })
+    expect(h.printed[1]?.text).toContain('--yes')
+    expect(h.printed[2]).toMatchObject({ tone: 'error' })
+    await runSlash('/permissions mode bypassPermissions --yes', h.ctx)
+    expect(h.calls).toEqual(['setMode:acceptEdits', 'setMode:bypassPermissions'])
+  })
+})
+
+describe('/agents runs and transcripts', () => {
+  const run = (n: number): SubagentRun => ({
+    toolCallId: `c${n}`,
+    name: 'explore',
+    description: `task ${n}`,
+    sessionId: `child-${n}`,
+    status: n === 2 ? 'running' : 'done',
+  })
+
+  test('lists definitions and numbered runs', async () => {
+    const h = harness()
+    h.runs.push(run(1), run(2))
+    await runSlash('/agents', h.ctx)
+    const text = h.printed[0]?.text ?? ''
+    expect(text).toContain('explore (builtin): finds things')
+    expect(text).toContain('1. explore [done]: task 1')
+    expect(text).toContain('2. explore [running]: task 2')
+  })
+
+  test('/agents <n> and /transcript <n> load the child messages', async () => {
+    const h = harness()
+    h.runs.push(run(1), run(2))
+    await runSlash('/agents 2', h.ctx)
+    await runSlash('/transcript 1', h.ctx)
+    expect(h.transcripts.map((t) => t.title)).toEqual(['explore: task 2', 'explore: task 1'])
+    expect(h.transcripts[0]?.messages[0]).toMatchObject({ id: 'm-child-2' })
+  })
+
+  test('bad numbers print an error', async () => {
+    const h = harness()
+    await runSlash('/agents 1', h.ctx)
+    expect(h.printed[0]).toMatchObject({ tone: 'error' })
+    h.runs.push(run(1))
+    await runSlash('/agents 9', h.ctx)
+    await runSlash('/agents x', h.ctx)
+    expect(h.printed[1]?.text).toContain('1-1')
+    expect(h.printed[2]).toMatchObject({ tone: 'error' })
+    expect(h.transcripts).toEqual([])
   })
 })

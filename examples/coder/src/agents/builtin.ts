@@ -41,6 +41,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     prompt: EXPLORE_PROMPT,
     tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash],
     disallowedTools: [...WRITE_TOOLS, TOOL.agent],
+    permissionMode: 'plan',
     source: 'builtin',
   },
   {
@@ -50,6 +51,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     prompt: PLAN_PROMPT,
     tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash],
     disallowedTools: [...WRITE_TOOLS, TOOL.agent],
+    permissionMode: 'plan',
     source: 'builtin',
   },
 ]

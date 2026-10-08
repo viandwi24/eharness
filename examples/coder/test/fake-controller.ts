@@ -10,8 +10,10 @@ import type {
   ApprovalRequest,
   CoderConfig,
   CoderController,
+  CoderMessage,
   PermissionEngine,
   PermissionMode,
+  PermissionRules,
   SessionSummary,
 } from '../src/contracts.ts'
 import { MODE_CYCLE } from '../src/contracts.ts'
@@ -48,6 +50,9 @@ export interface FakeOptions {
   resume?: true
   sessions?: SessionSummary[]
   mode?: PermissionMode
+  untrusted?: string[]
+  /** Stored messages by session id for `messagesOf`. */
+  childMessages?: Record<string, CoderMessage[]>
 }
 
 export function fakeController(opts: FakeOptions = {}) {
@@ -56,12 +61,15 @@ export function fakeController(opts: FakeOptions = {}) {
   const shellCalls: string[] = []
   let mode: PermissionMode = opts.mode ?? 'default'
   const listeners = new Set<(m: PermissionMode) => void>()
+  const rules: PermissionRules = { allow: [], ask: [], deny: [] }
   const permissions: PermissionEngine = {
     get mode() {
       return mode
     },
     setMode(m) {
+      calls.push(`setMode:${m}`)
       mode = m
+      for (const l of listeners) l(mode)
     },
     cycleMode() {
       calls.push('cycleMode')
@@ -73,7 +81,18 @@ export function fakeController(opts: FakeOptions = {}) {
     decide: () => ({ status: 'approved' }),
     suggestRule: () => undefined,
     allow: async () => {},
-    rules: () => ({ allow: [], ask: [], deny: [] }),
+    async addRule(kind, rule, scope) {
+      if (rule === 'bad') throw new Error('invalid rule: bad')
+      calls.push(`addRule:${kind}:${rule}:${scope}`)
+      rules[kind].push(rule)
+    },
+    async removeRule(kind, rule) {
+      calls.push(`removeRule:${kind}:${rule}`)
+      const i = rules[kind].indexOf(rule)
+      if (i >= 0) rules[kind].splice(i, 1)
+      return i >= 0
+    },
+    rules: () => rules,
     inactiveTools: () => [],
     subscribe(l) {
       listeners.add(l)
@@ -100,6 +119,8 @@ export function fakeController(opts: FakeOptions = {}) {
     mode,
     contextWindow: 100_000,
     resume: opts.resume,
+    untrusted: opts.untrusted ?? [],
+    trusted: (opts.untrusted ?? []).length === 0,
   } as unknown as CoderConfig
   const controller: CoderController & { calls: string[]; shellCalls: string[] } = {
     calls,
@@ -119,9 +140,13 @@ export function fakeController(opts: FakeOptions = {}) {
     },
     abort: () => void calls.push('abort'),
     messages: async () => [],
+    messagesOf: async (id) => opts.childMessages?.[id] ?? [],
     compact: async () => {},
     clear: async () => {},
-    resume: async (id) => void calls.push(`resume:${id}`),
+    resume: async (id) => {
+      calls.push(`resume:${id}`)
+      if (id === 'unknown') throw new Error('unknown session')
+    },
     sessions: async () => opts.sessions ?? [],
     shell: async (command) => {
       shellCalls.push(command)

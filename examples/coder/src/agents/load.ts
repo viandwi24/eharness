@@ -126,6 +126,8 @@ export async function loadAgentDefinitions(opts: {
   root: string
   userDir: string
   cliAgents: Record<string, AgentDefinitionInput>
+  /** Load `<root>/.coder/agents`; false while the project is untrusted. Default true. */
+  loadProject?: boolean
 }): Promise<{ definitions: AgentDefinition[]; warnings: string[] }> {
   const warnings: string[] = []
   const cli: AgentDefinition[] = []
@@ -142,7 +144,10 @@ export async function loadAgentDefinitions(opts: {
       cli.push({ ...normalize(input), name, source: 'cli' })
     }
   }
-  const project = await loadDir(join(opts.root, '.coder', 'agents'), 'project', warnings)
+  const project =
+    opts.loadProject === false
+      ? []
+      : await loadDir(join(opts.root, '.coder', 'agents'), 'project', warnings)
   const user = await loadDir(join(opts.userDir, 'agents'), 'user', warnings)
   const byName = new Map<string, AgentDefinition>()
   for (const def of [...cli, ...project, ...user, ...BUILTIN_AGENTS]) {

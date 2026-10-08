@@ -1,6 +1,8 @@
 /** Slash commands of the interactive UI: registry, parsing and the commands themselves. */
 import type { Todo } from 'eharness/todos'
-import type { CoderController, CoderMessage } from '../contracts.ts'
+import type { CoderController, CoderMessage, PermissionRules } from '../contracts.ts'
+import { PERMISSION_MODES, type PermissionMode } from '../contracts.ts'
+import type { SubagentRun } from './state.ts'
 
 /** What a command may do to the UI. */
 export interface SlashContext {
@@ -15,6 +17,10 @@ export interface SlashContext {
   reset(): void
   /** Replace the transcript with these stored messages. */
   load(messages: CoderMessage[]): void
+  /** Show a read-only, indented transcript block (a subagent's messages). */
+  showTranscript(title: string, messages: CoderMessage[]): void
+  /** Subagent runs seen in this session, oldest first. */
+  subagents(): SubagentRun[]
   /** Open the session picker. */
   pickSession(): void
   /** Start a turn with this prompt. */
@@ -42,6 +48,110 @@ export const INIT_PROMPT =
 
 function formatTokens(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
+}
+
+const RULE_KINDS: readonly (keyof PermissionRules)[] = ['allow', 'ask', 'deny']
+
+function isRuleKind(value: string | undefined): value is keyof PermissionRules {
+  return RULE_KINDS.includes(value as keyof PermissionRules)
+}
+
+const PERMISSIONS_USAGE =
+  'Usage: /permissions [allow|ask|deny <rule> [--project] | remove allow|ask|deny <rule> | mode <mode> [--yes]]'
+
+/** Split `<word> <rest>`; the rest keeps its inner spaces (rules like `Bash(bun test *)`). */
+function splitWord(text: string): [string, string] {
+  const match = /^(\S+)\s*([\s\S]*)$/.exec(text.trim())
+  return match ? [match[1] as string, (match[2] as string).trim()] : ['', '']
+}
+
+async function runPermissions(ctx: SlashContext): Promise<void> {
+  const engine = ctx.controller.permissions
+  if (!ctx.args) {
+    const rules = engine.rules()
+    const list = (name: string, items: string[]): string =>
+      `  ${name}: ${items.length > 0 ? items.join(', ') : '(none)'}`
+    ctx.print(
+      [
+        `Mode: ${engine.mode}`,
+        list('allow', rules.allow),
+        list('ask', rules.ask),
+        list('deny', rules.deny),
+        'Edit: /permissions allow|ask|deny <rule> [--project] · remove <kind> <rule> · mode <mode>',
+      ].join('\n'),
+    )
+    return
+  }
+  const [sub, rest] = splitWord(ctx.args)
+  try {
+    if (isRuleKind(sub)) {
+      const project = /(^|\s)--project$/.test(rest)
+      const rule = rest.replace(/\s*--project$/, '').trim()
+      if (!rule) return ctx.print(PERMISSIONS_USAGE, 'error')
+      await engine.addRule(sub, rule, project ? 'project' : 'session')
+      ctx.print(`Added ${sub} rule ${rule} (${project ? 'project' : 'this session'}).`)
+    } else if (sub === 'remove') {
+      const [kind, rule] = splitWord(rest)
+      if (!isRuleKind(kind) || !rule) return ctx.print(PERMISSIONS_USAGE, 'error')
+      const removed = await engine.removeRule(kind, rule)
+      ctx.print(
+        removed ? `Removed ${kind} rule ${rule}.` : `No ${kind} rule ${rule}.`,
+        removed ? 'info' : 'error',
+      )
+    } else if (sub === 'mode') {
+      const confirmed = /(^|\s)--yes$/.test(rest)
+      const name = rest.replace(/\s*--yes$/, '').trim()
+      if (!PERMISSION_MODES.includes(name as PermissionMode)) {
+        return ctx.print(`Unknown mode "${name}". Modes: ${PERMISSION_MODES.join(', ')}.`, 'error')
+      }
+      if (name === 'bypassPermissions' && !confirmed) {
+        return ctx.print(
+          'bypassPermissions disables every approval prompt. Confirm with: /permissions mode bypassPermissions --yes',
+          'error',
+        )
+      }
+      engine.setMode(name as PermissionMode)
+      ctx.print(`Mode set to ${name}.`)
+    } else {
+      ctx.print(PERMISSIONS_USAGE, 'error')
+    }
+  } catch (error) {
+    ctx.print(`Permissions: ${error instanceof Error ? error.message : error}`, 'error')
+  }
+}
+
+function listAgents(ctx: SlashContext): void {
+  const agents = ctx.controller.agents()
+  const runs = ctx.subagents()
+  const lines = [
+    agents.length === 0
+      ? 'No subagents defined.'
+      : agents.map((a) => `  ${a.name} (${a.source}): ${a.description}`).join('\n'),
+  ]
+  if (runs.length > 0) {
+    lines.push('', 'Runs this session (open one with /agents <n>):')
+    runs.forEach((r, i) => {
+      lines.push(`  ${i + 1}. ${r.name} [${r.status}]: ${r.description}`)
+    })
+  }
+  ctx.print(lines.join('\n'))
+}
+
+async function openTranscript(ctx: SlashContext): Promise<void> {
+  const runs = ctx.subagents()
+  const n = Number(ctx.args)
+  const run = Number.isInteger(n) ? runs[n - 1] : undefined
+  if (!run) {
+    ctx.print(
+      runs.length === 0
+        ? 'No subagent runs in this session yet.'
+        : `No run "${ctx.args}". Pick 1-${runs.length} (see /agents).`,
+      'error',
+    )
+    return
+  }
+  const messages = await ctx.controller.messagesOf(run.sessionId)
+  ctx.showTranscript(`${run.name}: ${run.description}`, messages)
 }
 
 /** All commands, in `/help` order. */
@@ -104,32 +214,21 @@ export const slashCommands: SlashCommand[] = [
   },
   {
     name: 'permissions',
-    description: 'Show the permission mode and rules',
-    run: (ctx) => {
-      const rules = ctx.controller.permissions.rules()
-      const list = (name: string, items: string[]): string =>
-        `  ${name}: ${items.length > 0 ? items.join(', ') : '(none)'}`
-      ctx.print(
-        [
-          `Mode: ${ctx.controller.permissions.mode}`,
-          list('allow', rules.allow),
-          list('ask', rules.ask),
-          list('deny', rules.deny),
-        ].join('\n'),
-      )
-    },
+    usage: '[allow|ask|deny <rule> [--project] | remove <kind> <rule> | mode <mode>]',
+    description: 'Show or edit the permission mode and rules',
+    run: (ctx) => runPermissions(ctx),
   },
   {
     name: 'agents',
-    description: 'List the available subagents',
-    run: (ctx) => {
-      const agents = ctx.controller.agents()
-      ctx.print(
-        agents.length === 0
-          ? 'No subagents defined.'
-          : agents.map((a) => `  ${a.name} (${a.source}): ${a.description}`).join('\n'),
-      )
-    },
+    usage: '[n]',
+    description: 'List subagents and their runs; /agents <n> opens a run transcript',
+    run: (ctx) => (ctx.args ? openTranscript(ctx) : listAgents(ctx)),
+  },
+  {
+    name: 'transcript',
+    usage: '<n>',
+    description: 'Open the transcript of subagent run n (see /agents)',
+    run: (ctx) => openTranscript(ctx),
   },
   {
     name: 'resume',

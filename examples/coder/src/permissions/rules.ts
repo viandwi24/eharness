@@ -172,20 +172,168 @@ function resolveSpecifier(specifier: string, ctx: MatchContext): { base: string;
   return { base: ctx.root, pattern: specifier }
 }
 
-/** Match an absolute real path against a path specifier (gitignore semantics). */
+/** True for a gitignore pattern without a slash (except a trailing one): it matches at any depth. */
+function isAnyDepth(specifier: string): boolean {
+  if (/^(\/\/|~\/|\/|\.\/|!)/.test(specifier)) return false
+  return !specifier.replace(/\/+$/, '').includes('/')
+}
+
+/** Real directories a rule can be anchored in: the project root and every mount. */
+function anchorDirs(ctx: MatchContext): string[] {
+  return [...new Set([ctx.root, ...ctx.mounts.map((m) => m.real)])]
+}
+
+/**
+ * Match an absolute real path against a path specifier (gitignore semantics). `//abs` and `~/x`
+ * are absolute, `/x`, `./x` and `a/b` are anchored at the project root, and a bare pattern
+ * (`.env*`, no slash) applies at any depth in the project root AND inside every mount.
+ */
 export function pathMatchesSpecifier(
   specifier: string,
   realPath: string,
   ctx: MatchContext,
 ): boolean {
   const { base, pattern } = resolveSpecifier(specifier, ctx)
-  const rel = relative(base, realPath)
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return false
-  try {
-    return compiled(pattern).ignores(rel.split('\\').join('/'))
-  } catch {
-    return false
+  const bases = isAnyDepth(specifier) ? [base, ...anchorDirs(ctx)] : [base]
+  for (const dir of new Set(bases)) {
+    const rel = relative(dir, realPath)
+    if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) continue
+    try {
+      if (compiled(pattern).ignores(rel.split('\\').join('/'))) return true
+    } catch {
+      // not a valid relative path
+    }
   }
+  return false
+}
+
+// ─── could a rule match something under / matched by a path? ────────────────────────────────
+
+/**
+ * Tokens of a single path segment pattern: `?` and `*` are wildcards, `[…]` is over-approximated
+ * as `?`. With `shell`, the segment is a shell glob: a leading wildcard never matches a leading
+ * dot (`*.ts` does not match `.env.ts`), written as the token `N` (any character but a dot).
+ */
+function segmentTokens(segment: string, shell = false): string[] {
+  const out: string[] = []
+  for (let i = 0; i < segment.length; i++) {
+    const ch = segment[i] as string
+    if (ch === '*') {
+      if (out[out.length - 1] !== '*') out.push('*')
+    } else if (ch === '?') {
+      out.push('?')
+    } else if (ch === '[') {
+      const end = segment.indexOf(']', i + 2)
+      if (end === -1) {
+        out.push('[')
+      } else {
+        out.push('?')
+        i = end
+      }
+    } else if (ch === '\\' && i + 1 < segment.length) {
+      out.push(`=${segment[++i]}`)
+    } else {
+      out.push(`=${ch}`)
+    }
+  }
+  if (shell && (out[0] === '*' || out[0] === '?'))
+    out.splice(0, 1, 'N', ...(out[0] === '*' ? ['*'] : []))
+  return out
+}
+
+/** Do two single-segment glob patterns have a common string? (`*` any run, `?` any char.) */
+function segmentsIntersect(a: string, b: string): boolean {
+  const A = segmentTokens(a)
+  const B = segmentTokens(b, true)
+  const seen = new Map<number, boolean>()
+  const reach = (i: number, j: number): boolean => {
+    const key = i * (B.length + 1) + j
+    const cached = seen.get(key)
+    if (cached !== undefined) return cached
+    seen.set(key, false)
+    let result = false
+    if (i === A.length && j === B.length) {
+      result = true
+    } else {
+      const x = A[i]
+      const y = B[j]
+      if (x === '*') result = reach(i + 1, j) || (y !== undefined && reach(i, j + 1))
+      if (!result && y === '*') result = reach(i, j + 1) || (x !== undefined && reach(i + 1, j))
+      if (!result && x !== undefined && y !== undefined && x !== '*' && y !== '*') {
+        const compatible =
+          x === y ||
+          x === '?' ||
+          y === '?' ||
+          (x === 'N' && y !== '=.') ||
+          (y === 'N' && x !== '=.')
+        result = compatible && reach(i + 1, j + 1)
+      }
+    }
+    seen.set(key, result)
+    return result
+  }
+  return reach(0, 0)
+}
+
+/** Do two segment lists (`**` = any number of segments) have a common path? */
+function pathsIntersect(rule: readonly string[], target: readonly string[]): boolean {
+  const seen = new Map<number, boolean>()
+  const reach = (i: number, j: number): boolean => {
+    const key = i * (target.length + 1) + j
+    const cached = seen.get(key)
+    if (cached !== undefined) return cached
+    seen.set(key, false)
+    let result = false
+    const r = rule[i]
+    const t = target[j]
+    if (r === undefined && t === undefined) {
+      result = true
+    } else if (r === '**') {
+      result = reach(i + 1, j) || (t !== undefined && reach(i, j + 1))
+    } else if (t === '**') {
+      result = reach(i, j + 1) || (r !== undefined && reach(i + 1, j))
+    } else if (r !== undefined && t !== undefined) {
+      result = segmentsIntersect(r, t) && reach(i + 1, j + 1)
+    }
+    seen.set(key, result)
+    return result
+  }
+  return reach(0, 0)
+}
+
+const splitSegments = (path: string): string[] => path.split('/').filter((s) => s !== '')
+
+/** Absolute segment patterns a path specifier stands for (a rule covers the subtree it matches). */
+function ruleSegments(specifier: string, ctx: MatchContext): string[][] {
+  if (specifier.startsWith('!')) return []
+  const trimmed = specifier.replace(/\/+$/, '')
+  if (isAnyDepth(specifier)) {
+    return anchorDirs(ctx).map((dir) => [
+      ...splitSegments(dir),
+      '**',
+      ...splitSegments(trimmed),
+      '**',
+    ])
+  }
+  const { base, pattern } = resolveSpecifier(trimmed, ctx)
+  return [[...splitSegments(base), ...splitSegments(pattern), '**']]
+}
+
+/**
+ * Whether a path specifier could match something that `target` stands for: the path itself, or
+ * (with `subtree`) anything below it. `target` is an absolute real path whose segments may be
+ * glob patterns (`/proj/.e*`). Conservative: character classes count as `?`, and an unparsable
+ * pattern counts as a match.
+ */
+export function specifierCouldMatch(
+  specifier: string,
+  target: string,
+  subtree: boolean,
+  ctx: MatchContext,
+): boolean {
+  const segments = splitSegments(target)
+  if (subtree) segments.push('**')
+  return ruleSegments(specifier, ctx).some((rule) => pathsIntersect(rule, segments))
 }
 
 /**

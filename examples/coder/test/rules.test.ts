@@ -10,6 +10,7 @@ import {
   pathMatchesSpecifier,
   ruleMatchesCall,
   ruleToolMatches,
+  specifierCouldMatch,
   toolsForRuleTool,
   toRealPath,
 } from '../src/permissions/rules.ts'
@@ -328,5 +329,59 @@ describe('virtual paths', () => {
 
   test('tool rules for unknown tools with a specifier never match', () => {
     expect(allows('mcp__a__b(x)', { toolName: 'mcp__a__b', input: {} })).toBe(false)
+  })
+})
+
+describe('mount anchoring (finding 2c)', () => {
+  test('a bare pattern applies in the root and in every mount, anchored ones in the root only', () => {
+    expect(pathMatchesSpecifier('.env*', '/proj/a/.env', ctx)).toBe(true)
+    expect(pathMatchesSpecifier('.env*', '/ext/lib/.env', ctx)).toBe(true)
+    expect(pathMatchesSpecifier('.env*', '/ext/lib/sub/.env.local', ctx)).toBe(true)
+    expect(pathMatchesSpecifier('.env*', '/elsewhere/.env', ctx)).toBe(false)
+    expect(pathMatchesSpecifier('./secret/**', '/proj/secret/a', ctx)).toBe(true)
+    expect(pathMatchesSpecifier('./secret/**', '/ext/lib/secret/a', ctx)).toBe(false)
+    expect(pathMatchesSpecifier('/secret/**', '/ext/lib/secret/a', ctx)).toBe(false)
+    expect(pathMatchesSpecifier('//ext/lib/secret/**', '/ext/lib/secret/a', ctx)).toBe(true)
+  })
+})
+
+describe('specifierCouldMatch (directory and glob coverage)', () => {
+  const could = (spec: string, target: string, subtree = false): boolean =>
+    specifierCouldMatch(spec, target, subtree, ctx)
+
+  test('a directory read recursively covers what is below it', () => {
+    expect(could('.env*', '/proj', true)).toBe(true)
+    expect(could('.env*', '/proj/src', true)).toBe(true)
+    expect(could('.env*', '/ext/lib', true)).toBe(true)
+    expect(could('secrets/**', '/proj', true)).toBe(true)
+    expect(could('secrets/**', '/proj/src', true)).toBe(false)
+    expect(could('./a/b/c', '/proj/a', true)).toBe(true)
+    expect(could('./a/b/c', '/proj/x', true)).toBe(false)
+    expect(could('//etc/x', '/proj', true)).toBe(false)
+    expect(could('~/.ssh/**', '/home/u', true)).toBe(true)
+    // without recursion a directory itself is not a file read
+    expect(could('.env*', '/proj/src')).toBe(false)
+  })
+
+  test('globs: wildcards on both sides', () => {
+    expect(could('.env*', '/proj/.e*')).toBe(true)
+    expect(could('.env*', '/proj/.en?')).toBe(true)
+    expect(could('.env*', '/proj/.e[n]v')).toBe(true)
+    expect(could('secrets/a', '/proj/sec*/a')).toBe(true)
+    expect(could('secrets/**', '/proj/sec*/a')).toBe(true)
+    expect(could('*.pem', '/proj/k*')).toBe(true)
+    expect(could('.env*', '/proj/src/*.ts')).toBe(false)
+    expect(could('*.pem', '/proj/*.ts')).toBe(false)
+    expect(could('a/b', '/proj/x*/b')).toBe(false)
+  })
+
+  test('a shell glob never matches a leading dot with a leading wildcard', () => {
+    expect(could('.env*', '/proj/*')).toBe(false)
+    expect(could('.env*', '/proj/*.local')).toBe(false)
+    expect(could('.env*', '/proj/.*')).toBe(true)
+  })
+
+  test('negations are ignored', () => {
+    expect(could('!keep', '/proj', true)).toBe(false)
   })
 })

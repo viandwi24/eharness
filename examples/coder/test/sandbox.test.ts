@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createLocalSandbox } from '../src/shell/sandbox-local.ts'
+import { createLocalSandbox, killAllSandboxProcesses } from '../src/shell/sandbox-local.ts'
 
 const dirs: string[] = []
 async function temp(): Promise<string> {
@@ -110,5 +110,20 @@ describe('local sandbox abort', () => {
     await proc.kill()
     const { exitCode } = await proc.wait()
     expect(exitCode).toBe(143)
+  })
+})
+
+describe('killAllSandboxProcesses', () => {
+  test('terminates live process groups and forgets finished ones', async () => {
+    const dir = await temp()
+    const sb = createLocalSandbox(dir)
+    const proc = await sb.spawn({ command: 'sleep 30 & wait' })
+    const pid = proc.pid as number
+    expect(alive(pid)).toBe(true)
+    killAllSandboxProcesses()
+    const { exitCode } = await proc.wait()
+    expect(exitCode).toBe(143)
+    expect(alive(pid)).toBe(false)
+    killAllSandboxProcesses('SIGKILL') // registry is empty: no-op, must not throw
   })
 })

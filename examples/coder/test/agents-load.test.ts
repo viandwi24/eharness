@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { BUILTIN_AGENTS, expandToolNames, loadAgentDefinitions } from '../src/agents/index.ts'
-import { isolateHome, tempDir, writeFiles } from './helpers.ts'
+import { isolateHome, setup, tempDir, writeFiles } from './helpers.ts'
 
 const md = (front: string, body = 'Do the thing.'): string => `---\n${front}\n---\n${body}\n`
 
@@ -132,5 +132,24 @@ describe('loadAgentDefinitions', () => {
     expect(byName.size).toBe(4) // 3 built-ins + ok
     expect(warnings).toHaveLength(3)
     expect(warnings.some((w) => w.includes('Bad Name'))).toBe(true)
+  })
+
+  test('loadProject: false skips the project agents', async () => {
+    const { root, home } = await setup({
+      '.coder/agents/helper.md': '---\nname: helper\ndescription: d\n---\nHelp.\n',
+    })
+    const result = await loadAgentDefinitions({
+      root,
+      userDir: home,
+      cliAgents: {},
+      loadProject: false,
+    })
+    expect(result.definitions.map((d) => d.name)).not.toContain('helper')
+  })
+
+  test('explore and plan are plan-mode agents (read-only bash)', () => {
+    for (const name of ['explore', 'plan']) {
+      expect(BUILTIN_AGENTS.find((d) => d.name === name)?.permissionMode).toBe('plan')
+    }
   })
 })

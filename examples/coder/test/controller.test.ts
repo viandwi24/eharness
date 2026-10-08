@@ -205,6 +205,7 @@ describe('controller', () => {
     const model = scriptedModel([{ text: 'hi' }])
     const { controller } = await makeController({
       files: { '.coder/agents/helper.md': '---\nname: helper\ndescription: Helps\n---\nHelp.\n' },
+      flags: { trustProject: true },
       model,
     })
     expect(controller.agents().map((a) => a.name)).toEqual([
@@ -269,5 +270,31 @@ describe('controller', () => {
     const stored = JSON.stringify(await controller.messages())
     expect(stored).not.toContain('tool-write_file')
     expect(stored.match(/tool-edit_file/g)?.length).toBeGreaterThanOrEqual(5)
+  })
+
+  test('resume rejects unknown and subagent ids, accepts a stored one; messagesOf reads any session', async () => {
+    const model = scriptedModel([{ text: 'hi' }])
+    const { controller } = await makeController({ model })
+    await run(controller, 'first')
+    const first = controller.sessionId
+    await controller.clear()
+    expect(controller.sessionId).not.toBe(first)
+    await expect(controller.resume('nope')).rejects.toThrow('unknown session: nope')
+    await expect(controller.resume(`${first}:agent:x`)).rejects.toThrow(/subagent/)
+    const current = controller.sessionId
+    expect(controller.sessionId).toBe(current)
+    await controller.resume(first)
+    expect(controller.sessionId).toBe(first)
+    const stored = await controller.messagesOf(first)
+    expect(stored.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(await controller.messagesOf('missing')).toEqual([])
+  })
+
+  test('setModel rejects an empty id and leaves the controller working', async () => {
+    const model = scriptedModel([{ text: 'still works' }])
+    const { controller } = await makeController({ model })
+    expect(() => controller.setModel('')).toThrow(/non-empty/)
+    const { result } = await run(controller, 'hello')
+    expect(result.stop).toBe('complete')
   })
 })

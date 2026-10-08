@@ -335,6 +335,7 @@ describe('agent tool', () => {
         '.coder/agents/reviewer.md':
           '---\nname: reviewer\ndescription: Reviews\ntools: read_file, grep\n---\nReview.\n',
       },
+      flags: { trustProject: true },
       model,
     })
     const session = env.agents.main.session('m') as never as HarnessSession<CoderMessage>
@@ -347,5 +348,96 @@ describe('agent tool', () => {
     expect(result.stop).toBe('complete')
     const child = model.routes.find((r) => r.isChild)
     expect(child?.tools.sort()).toEqual(['grep', 'read_file'])
+  })
+
+  test('nested children do not deadlock with maxConcurrent 2 (cap is per depth)', async () => {
+    const model = routerModel((r) => {
+      if (!r.isChild) {
+        return r.toolResults === 0
+          ? {
+              toolCalls: [1, 2, 3].map((i) => spawn('general-purpose', `L1-${i}`, `c${i}`)),
+            }
+          : { text: 'main done' }
+      }
+      if (r.firstUser.startsWith('L1-')) {
+        return r.toolResults === 0
+          ? { toolCalls: [spawn('explore', `L2-${r.firstUser}`)], delayMs: 20 }
+          : { text: `done ${r.firstUser}` }
+      }
+      return { text: 'grandchild ok', delayMs: 20 }
+    })
+    const env = await makeAgentsEnv({
+      files: { 'a.txt': 'x' },
+      model,
+      maxConcurrentAgents: 2,
+    })
+    const session = env.agents.main.session('m') as never as HarnessSession<CoderMessage>
+    const result = await Promise.race([
+      driveTurn(session.send('go'), {
+        session,
+        broker: env.broker,
+        permissions: env.permissions,
+        describe: env.describe,
+      }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('deadlock')), 10_000)),
+    ])
+    expect(result.stop).toBe('complete')
+    expect(model.routes.filter((r) => r.firstUser.startsWith('L2-')).length).toBeGreaterThan(0)
+  })
+
+  test('a failure inside the child becomes an ERROR string, the slot is released', async () => {
+    const { env } = await setupAgents(routerModel(() => ({ text: 'x' })))
+    const failing = {
+      definitions: () => env.definitions,
+      agentFor: () => {
+        throw new Error('boom')
+      },
+      broker: env.broker,
+      permissions: env.permissions,
+      describe: env.describe,
+      maxConcurrent: 1,
+    }
+    const make = createAgentTool(failing as never, 0) as unknown as (ctx: unknown) => {
+      execute: (input: unknown, opts: unknown) => AsyncGenerator<unknown>
+    }
+    const tool = make({ session: { id: 'main-x' }, turn: { id: 't', addUsage: () => {} } })
+    for (const id of ['a', 'b']) {
+      // twice with a cap of 1: a leaked slot would hang the second call
+      let last: unknown
+      for await (const o of tool.execute(
+        { subagent_type: 'explore', description: 'd', prompt: 'p' },
+        { toolCallId: id, abortSignal: undefined },
+      )) {
+        last = o
+      }
+      expect(last).toBe('ERROR: subagent failed: boom')
+    }
+  })
+
+  test('explore runs its bash read-only even when the session is in bypassPermissions', async () => {
+    const model = routerModel((r) => {
+      if (!r.isChild) {
+        return r.toolResults === 0
+          ? { toolCalls: [spawn('explore', 'CHILD')] }
+          : { text: 'main done' }
+      }
+      return r.toolResults === 0
+        ? { toolCalls: [{ toolName: 'bash', input: { command: 'touch evil.txt' } }] }
+        : { text: 'REPORT' }
+    })
+    const env = await makeAgentsEnv({
+      files: { 'a.txt': 'x' },
+      flags: { permissionMode: 'bypassPermissions' },
+      model,
+    })
+    const session = env.agents.main.session('m') as never as HarnessSession<CoderMessage>
+    const result = await driveTurn(session.send('go'), {
+      session,
+      broker: env.broker,
+      permissions: env.permissions,
+      describe: env.describe,
+    })
+    expect(result.stop).toBe('complete')
+    expect(await exists(join(env.root, 'evil.txt'))).toBe(false)
   })
 })

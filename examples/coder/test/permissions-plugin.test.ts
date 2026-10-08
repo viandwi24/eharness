@@ -303,4 +303,83 @@ describe('permissions plugin', () => {
     expect((await agent.session('s').send('go').result).stop).toBe('complete')
     await agent.close()
   })
+
+  test('finding 3: grep, list_files and glob outputs hide Read-protected paths', async () => {
+    const seed = {
+      '/a.txt': 'SECRET plain\n',
+      '/.env': 'SECRET=1\n',
+      '/sub/.env.local': 'SECRET=2\n',
+      '/private/k.txt': 'SECRET key\n',
+    }
+    const { agent, model } = setup(
+      [
+        { toolCalls: [{ toolName: TOOL.grep, input: { pattern: 'SECRET' } }] },
+        { toolCalls: [{ toolName: TOOL.list, input: { prefix: '/' } }] },
+        { text: 'done' },
+      ],
+      'default',
+      { seed, rules: { deny: ['Read(private/**)'] } },
+    )
+    expect((await agent.session('s').send('go').result).stop).toBe('complete')
+    const wire = JSON.stringify(model.prompts)
+    expect(wire).toContain('/a.txt:1: SECRET plain')
+    expect(wire).not.toContain('SECRET=1')
+    expect(wire).not.toContain('SECRET=2')
+    expect(wire).not.toContain('SECRET key')
+    expect(wire).not.toContain('/sub/.env.local')
+    expect(wire).toContain('(3 results hidden by permission rules)')
+    await agent.close()
+  })
+
+  test('finding 3: read_file of a Read-ask path in a mount still asks', async () => {
+    const { agent } = setup(
+      [{ toolCalls: [{ toolName: TOOL.read, input: { path: '/.env' } }] }, { text: 'x' }],
+      'default',
+      { seed: { '/.env': 'A=1\n' } },
+    )
+    expect((await agent.session('s').send('go').result).stop).toBe('tool-pending')
+    await agent.close()
+  })
+
+  test('finding 7: the mode option applies to decide and to the tool list', async () => {
+    const { agent, engine, fs, model } = setup(
+      [write('/new.txt', 'hi'), { text: 'ok' }],
+      'bypassPermissions',
+      { plugin: { mode: 'plan' } },
+    )
+    expect(engine.mode).toBe('bypassPermissions')
+    const result = await agent.session('s').send('go').result
+    expect(result.stop).toBe('complete')
+    const offered = toolNamesOf(model.calls[0] as never)
+    for (const name of [TOOL.write, TOOL.edit, TOOL.delete, TOOL.exitPlan]) {
+      expect(offered).not.toContain(name)
+    }
+    expect(offered).toContain(TOOL.read)
+    expect(JSON.stringify(model.prompts.at(-1))).toContain('unavailable tool')
+    expect(await fs.read('/new.txt')).toBeNull()
+    await agent.close()
+    // without the option the same session writes
+    const plain = setup([write('/new.txt', 'hi'), { text: 'ok' }], 'bypassPermissions')
+    await plain.agent.session('s').send('go').result
+    expect((await plain.fs.read('/new.txt'))?.content).toBe('hi')
+    await plain.agent.close()
+  })
+
+  test('finding 8: approving the plan restores the mode that was active before plan mode', async () => {
+    const { agent, engine } = setup(
+      [
+        { toolCalls: [{ toolName: TOOL.exitPlan, input: { plan: 'do it' } }] },
+        { text: 'Implementing.' },
+      ],
+      'acceptEdits',
+    )
+    engine.setMode('plan')
+    const session = agent.session('s')
+    const pending = await session.send('plan it').result
+    expect(pending.stop).toBe('tool-pending')
+    const id = pending.pending?.approvals[0]?.approvalId as string
+    await session.respond({ approvals: [{ id, approved: true }] }).result
+    expect(engine.mode).toBe('acceptEdits')
+    await agent.close()
+  })
 })

@@ -39,15 +39,26 @@ const EXIT_WINDOW_MS = 2000
 const HINT_MS = 3000
 const CLEAR_SCREEN = '\x1b[2J\x1b[3J\x1b[H'
 
+/** The one-line notice shown when project settings were ignored. */
+export function untrustedNotice(keys: string[]): string {
+  return `Project settings ignored until trusted: ${keys.join(', ')}. Restart and answer the trust question, or pass --trust-project.`
+}
+
 /** The interactive coding agent UI. */
 export function App({ controller, initialPrompt, initialMessages }: AppProps): ReactElement {
   const { exit } = useApp()
   const { stdout } = useStdout()
-  const [state, dispatch] = useReducer(reduce, initialMessages, (messages) =>
-    messages && messages.length > 0
-      ? reduce(initialState(), { type: 'load', messages })
-      : initialState(),
-  )
+  const [state, dispatch] = useReducer(reduce, initialMessages, (messages) => {
+    let initial =
+      messages && messages.length > 0
+        ? reduce(initialState(), { type: 'load', messages })
+        : initialState()
+    const untrusted = controller.config.untrusted ?? []
+    if (untrusted.length > 0) {
+      initial = reduce(initial, { type: 'system', tone: 'warn', text: untrustedNotice(untrusted) })
+    }
+    return initial
+  })
   const [mode, setMode] = useState<PermissionMode>(controller.permissions.mode)
   const [model, setModel] = useState(controller.config.model)
   const [statsVersion, setStatsVersion] = useState(0)
@@ -61,6 +72,8 @@ export function App({ controller, initialPrompt, initialMessages }: AppProps): R
   stateRef.current = state
   const modelRef = useRef(model)
   modelRef.current = model
+  const pickingRef = useRef(picking)
+  pickingRef.current = picking
   const busy = useRef(false)
   const lastCtrlC = useRef(0)
   const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -151,6 +164,8 @@ export function App({ controller, initialPrompt, initialMessages }: AppProps): R
           stdout.write(CLEAR_SCREEN)
           dispatch({ type: 'load', messages })
         },
+        showTranscript: (title, messages) => dispatch({ type: 'transcript', title, messages }),
+        subagents: () => stateRef.current.subagents,
         pickSession: () => setPicking(true),
         submit: (prompt) => {
           busy.current = false
@@ -190,6 +205,8 @@ export function App({ controller, initialPrompt, initialMessages }: AppProps): R
       return
     }
     if (key.tab && key.shift) {
+      // a prompt or the picker is open: only it may react to keys
+      if (controller.broker.pending().length > 0 || pickingRef.current) return
       setMode(controller.permissions.cycleMode())
       return
     }

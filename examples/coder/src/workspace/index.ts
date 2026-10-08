@@ -14,6 +14,7 @@ export { createGlobTool } from './glob-tool.ts'
 export { mountFs } from './mount-fs.ts'
 
 const TOOL_OUTPUTS_VIRTUAL = '/.coder/tool-outputs/'
+// The tool-outputs mount is writable (`readonly: false`) because output eviction writes there.
 
 /**
  * Build the workspace from the configuration. Creates `<projectDataDir>/tool-outputs`.

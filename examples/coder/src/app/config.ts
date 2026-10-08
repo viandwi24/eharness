@@ -3,7 +3,7 @@
  * (docs/plans/P30-coder-example.md §4).
  */
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, realpath } from 'node:fs/promises'
+import { mkdir, readdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { z } from 'zod/v4'
@@ -32,6 +32,8 @@ export interface CliFlags {
   maxSteps?: number
   print?: string
   outputFormat?: string
+  /** Trust this project's `.coder/` content before loading (`--trust-project`). */
+  trustProject?: boolean
 }
 
 const modeSchema = z.enum(PERMISSION_MODES as [PermissionMode, ...PermissionMode[]])
@@ -114,8 +116,131 @@ async function resolveDirs(
   return out
 }
 
+// ─── Project trust ───────────────────────────────────────────────────────────────────────────
+// `<root>/.coder/settings.json`, `.coder/agents` and `.coder/skills` come with the repository, so
+// a cloned repo could widen permissions or spawn MCP servers. They only take effect once the user
+// trusted exactly this content: `<userDir>/trusted.json` maps the real root to a content hash.
+
+async function walkFiles(dir: string, base = ''): Promise<string[]> {
+  let entries: import('node:fs').Dirent[]
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const out: string[] = []
+  for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    const rel = base === '' ? entry.name : `${base}/${entry.name}`
+    if (entry.isDirectory()) out.push(...(await walkFiles(join(dir, entry.name), rel)))
+    else out.push(rel)
+  }
+  return out
+}
+
+/** Names of the project agent and skill files (empty lists when the directories do not exist). */
+async function projectContentFiles(root: string): Promise<{ agents: string[]; skills: string[] }> {
+  const agents = (await walkFiles(join(root, '.coder', 'agents'))).filter(
+    (f) => f.endsWith('.md') && !f.includes('/'),
+  )
+  const skills = await walkFiles(join(root, '.coder', 'skills'))
+  return { agents, skills }
+}
+
+/** Hash of the project settings file content plus every project agent and skill file. */
+async function projectHash(root: string): Promise<string> {
+  const hash = createHash('sha256')
+  const feed = async (label: string, file: string): Promise<void> => {
+    let content: Buffer | string = ''
+    try {
+      content = await readFile(file)
+    } catch {
+      // missing or unreadable: hashed as empty
+    }
+    hash.update(`${label}\0`).update(content).update('\0')
+  }
+  await feed('settings', join(root, '.coder', 'settings.json'))
+  const { agents, skills } = await projectContentFiles(root)
+  for (const f of agents) await feed(`agent:${f}`, join(root, '.coder', 'agents', f))
+  for (const f of skills) await feed(`skill:${f}`, join(root, '.coder', 'skills', f))
+  return hash.digest('hex')
+}
+
+async function readTrusted(userDir: string): Promise<Record<string, string>> {
+  try {
+    const json = JSON.parse(await readFile(join(userDir, 'trusted.json'), 'utf8')) as unknown
+    if (json !== null && typeof json === 'object' && !Array.isArray(json)) {
+      return json as Record<string, string>
+    }
+  } catch {
+    // missing or corrupt: nothing is trusted
+  }
+  return {}
+}
+
+async function writeTrusted(userDir: string, root: string, hash: string): Promise<void> {
+  await mkdir(userDir, { recursive: true })
+  const all = { ...(await readTrusted(userDir)), [root]: hash }
+  const file = join(userDir, 'trusted.json')
+  const temp = `${file}.${process.pid}.tmp`
+  await writeFile(temp, `${JSON.stringify(all, null, 2)}\n`)
+  await rename(temp, file)
+}
+
+/**
+ * Trust the current content of this project's `.coder/` settings, agents and skills: records its
+ * hash in `<userDir>/trusted.json`. Any later change of that content makes the project untrusted
+ * again. Reload the config (`loadConfig`) afterwards to pick the trusted settings up.
+ */
+export async function trustProject(config: Pick<CoderConfig, 'root' | 'userDir'>): Promise<void> {
+  await writeTrusted(config.userDir, config.root, await projectHash(config.root))
+}
+
+/** The risky keys of a project settings file that are set. */
+function riskyKeys(settings: CoderSettings): string[] {
+  const p = settings.permissions
+  const keys: string[] = []
+  if (p?.defaultMode !== undefined) keys.push('defaultMode')
+  if (p?.allow !== undefined && p.allow.length > 0) keys.push('allow')
+  if (p?.additionalDirectories !== undefined && p.additionalDirectories.length > 0) {
+    keys.push('additionalDirectories')
+  }
+  if (settings.mcpServers !== undefined && Object.keys(settings.mcpServers).length > 0) {
+    keys.push('mcpServers')
+  }
+  return keys
+}
+
+/** Settings without the keys that need trust (`ask` and `deny` only tighten, so they stay). */
+function withoutRisky(settings: CoderSettings): CoderSettings {
+  const { mcpServers: _mcp, permissions, ...rest } = settings
+  if (permissions === undefined) return rest
+  const { defaultMode: _m, allow: _a, additionalDirectories: _d, ...safe } = permissions
+  return { ...rest, permissions: safe }
+}
+
+/** No project settings file: only project agents and skills can need trust. */
+async function projectAgentsSkillsTrusted(
+  root: string,
+  userDir: string,
+  untrusted: string[],
+): Promise<boolean> {
+  const { agents, skills } = await projectContentFiles(root)
+  const risky = [...(agents.length > 0 ? ['agents'] : []), ...(skills.length > 0 ? ['skills'] : [])]
+  if (risky.length === 0) return true
+  if ((await readTrusted(userDir))[root] === (await projectHash(root))) return true
+  untrusted.push(...risky)
+  return false
+}
+
+/** What {@link loadConfig} returns. */
+export type LoadedConfig = CoderConfig & {
+  warnings: string[]
+  /** A settings file set `contextWindow` (it then beats the models.dev catalog). */
+  contextWindowExplicit: boolean
+}
+
 /** Load settings files, merge them with the flags and prepare the data directories. */
-export async function loadConfig(flags: CliFlags): Promise<CoderConfig & { warnings: string[] }> {
+export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
   const warnings: string[] = []
   const root = await realpath(resolve(flags.cwd ?? process.cwd()))
   const userDir = process.env.CODER_HOME ?? join(homedir(), '.coder')
@@ -137,9 +262,28 @@ export async function loadConfig(flags: CliFlags): Promise<CoderConfig & { warni
   const dirs: string[] = []
   const mcpServers: Record<string, unknown> = {}
 
+  if (flags.trustProject) await trustProject({ root, userDir })
+  const untrusted: string[] = []
+  let trusted = true
+
   for (const file of [settingsFiles.user, settingsFiles.project, settingsFiles.local]) {
-    const settings = await readSettings(file)
-    if (!settings) continue
+    let settings = await readSettings(file)
+    if (!settings) {
+      if (file === settingsFiles.project)
+        trusted = await projectAgentsSkillsTrusted(root, userDir, untrusted)
+      continue
+    }
+    if (file === settingsFiles.project) {
+      const risky = riskyKeys(settings)
+      const { agents, skills } = await projectContentFiles(root)
+      if (agents.length > 0) risky.push('agents')
+      if (skills.length > 0) risky.push('skills')
+      if (risky.length > 0 && (await readTrusted(userDir))[root] !== (await projectHash(root))) {
+        trusted = false
+        untrusted.push(...risky)
+        settings = withoutRisky(settings)
+      }
+    }
     model = settings.model ?? model
     contextWindow = settings.contextWindow ?? contextWindow
     const p = settings.permissions
@@ -215,6 +359,9 @@ export async function loadConfig(flags: CliFlags): Promise<CoderConfig & { warni
     print,
     continueLast: flags.continue ?? false,
     resume: flags.resume,
+    untrusted,
+    trusted,
     warnings,
+    contextWindowExplicit: contextWindow !== undefined,
   }
 }

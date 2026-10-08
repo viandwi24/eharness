@@ -77,9 +77,9 @@ move the user directory (default `~/.coder`), for example to a temp folder.
 | `/clear` | start a new session |
 | `/compact` | summarise the conversation to free context |
 | `/model [id]` | show or switch the model |
-| `/permissions` | show the mode and the allow / ask / deny rules |
-| `/agents` | list the available subagents and where they come from |
-| `/resume [number or id]` | list stored sessions, or resume one |
+| `/permissions` | show the mode and rules; `allow\|ask\|deny <rule> [--project]`, `remove <kind> <rule>`, `mode <mode>` edit them |
+| `/agents [n]` | list the subagents and this session's runs; `/agents <n>` (or `/transcript <n>`) opens a run read-only |
+| `/resume [id]` | pick a stored session, or resume one by id |
 | `/cost` | context usage and cost |
 | `/todos` | show the current todo list |
 | `/init` | ask the agent to write an `AGENTS.md` for the project |
