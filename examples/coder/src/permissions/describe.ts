@@ -51,7 +51,7 @@ async function describeEdit(call: ToolCallInfo, fs: FileSystem): Promise<string 
   const path = str(call.input, 'path') ?? ''
   const oldString = str(call.input, 'old_string') ?? ''
   const newString = str(call.input, 'new_string') ?? ''
-  const all = (call.input as { replace_all?: unknown }).replace_all === true
+  const all = (call.input as { replace_all?: unknown } | null | undefined)?.replace_all === true
   const current = await readText(fs, path)
   if (typeof current === 'string' && oldString !== '' && current.includes(oldString)) {
     const next = all

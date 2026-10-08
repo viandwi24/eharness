@@ -29,6 +29,46 @@ const EXIT_PLAN_DESCRIPTION =
   '(markdown). The user reviews it; when they approve, plan mode ends and you can edit files and ' +
   'run commands. If they reject it, revise the plan from their feedback and call this again.'
 
+interface WirePart {
+  type?: string
+  approvalId?: string
+  toolCallId?: string
+  toolName?: string
+  approved?: boolean
+}
+
+/**
+ * True when the wire ends with the user's approval of an `exit_plan_mode` call: the first step of a
+ * `respond()` continuation is prepared before the approved tool runs, so the tool list must
+ * already follow the mode that the call is about to switch to.
+ */
+function endsWithApprovedPlan(
+  messages: ReadonlyArray<{ role?: string; content?: unknown }>,
+): boolean {
+  const last = messages.at(-1)
+  const before = messages.at(-2)
+  if (last?.role !== 'tool' || before?.role !== 'assistant') return false
+  if (!Array.isArray(last.content) || !Array.isArray(before.content)) return false
+  const calls = new Map<string, string>()
+  const requests = new Map<string, string>()
+  for (const part of before.content as WirePart[]) {
+    if (part.type === 'tool-call' && part.toolCallId !== undefined && part.toolName !== undefined) {
+      calls.set(part.toolCallId, part.toolName)
+    } else if (
+      part.type === 'tool-approval-request' &&
+      part.approvalId !== undefined &&
+      part.toolCallId !== undefined
+    ) {
+      requests.set(part.approvalId, part.toolCallId)
+    }
+  }
+  return (last.content as WirePart[]).some((part) => {
+    if (part.type !== 'tool-approval-response' || part.approved !== true) return false
+    const callId = requests.get(part.approvalId ?? '')
+    return callId !== undefined && calls.get(callId) === TOOL.exitPlan
+  })
+}
+
 function expand(names: readonly string[]): string[] {
   return names.flatMap((name) => [...toolsForRuleTool(name)])
 }
@@ -83,7 +123,8 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): ReturnType<ty
           }
         },
         'step.prepare': (_ctx, e) => {
-          const inactive = new Set(engine.inactiveTools())
+          const leavingPlan = engine.mode === 'plan' && endsWithApprovedPlan(e.messages)
+          const inactive = new Set(engine.inactiveTools(leavingPlan ? 'default' : undefined))
           const active = e.toolNames.filter(
             (name) =>
               !inactive.has(name) &&

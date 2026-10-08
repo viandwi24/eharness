@@ -1,0 +1,273 @@
+import { describe, expect, test } from 'bun:test'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { scriptedModel } from 'eharness/testing'
+import type { CoderController, RunHooks } from '../src/contracts.ts'
+import { makeController, nextPending } from './helpers.ts'
+
+/** Hooks that consume every run's stream and record the chunk types. */
+function hooks(): RunHooks & {
+  chunks: Array<{ type: string; [k: string]: unknown }>
+  done: Promise<void>[]
+} {
+  const chunks: Array<{ type: string; [k: string]: unknown }> = []
+  const done: Promise<void>[] = []
+  return {
+    chunks,
+    done,
+    onRun(run) {
+      done.push(
+        (async () => {
+          const reader = (run.stream as ReadableStream<{ type: string }>).getReader()
+          for (;;) {
+            const r = await reader.read()
+            if (r.done) return
+            chunks.push(r.value)
+          }
+        })(),
+      )
+    },
+  }
+}
+
+const run = async (c: CoderController, text: string) => {
+  const h = hooks()
+  const result = await c.run(text, h)
+  await Promise.all(h.done)
+  return { result, ...h }
+}
+
+const read = (path: string) => ({ toolName: 'read_file', input: { path } })
+const edit = (path: string, old: string, next: string) => ({
+  toolName: 'edit_file',
+  input: { path, old_string: old, new_string: next },
+})
+
+describe('controller', () => {
+  test('run end to end: read then partial edit_file changes the file on disk (acceptEdits)', async () => {
+    const original = 'line one\nconst answer = 41\nline three\n'
+    const model = scriptedModel([
+      { toolCalls: [read('/code.ts')] },
+      { toolCalls: [edit('/code.ts', 'answer = 41', 'answer = 42')] },
+      { text: 'Updated.' },
+    ])
+    const { controller, root } = await makeController({
+      files: { 'code.ts': original },
+      flags: { permissionMode: 'acceptEdits' },
+      model,
+    })
+    const { result, chunks } = await run(controller, 'bump the answer')
+    expect(result.stop).toBe('complete')
+    expect(await readFile(join(root, 'code.ts'), 'utf8')).toBe(
+      'line one\nconst answer = 42\nline three\n',
+    )
+    expect(chunks.some((c) => c.type === 'text-delta')).toBe(true)
+    const messages = await controller.messages()
+    expect(messages.map((m) => m.role)).toEqual(['user', 'assistant'])
+    expect(JSON.stringify(messages)).toContain('tool-edit_file')
+  })
+
+  test('default mode: the approval round trip goes through the broker', async () => {
+    const model = scriptedModel([
+      { toolCalls: [read('/code.ts')] },
+      { toolCalls: [edit('/code.ts', 'one', 'ONE')] },
+      { text: 'Done.' },
+    ])
+    const { controller, root } = await makeController({ files: { 'code.ts': 'one\n' }, model })
+    const h = hooks()
+    const turn = controller.run('edit', h)
+    const request = await nextPending(controller.broker)
+    expect(request.toolName).toBe('edit_file')
+    expect(await readFile(join(root, 'code.ts'), 'utf8')).toBe('one\n')
+    controller.broker.answer(request.id, { approved: true })
+    const result = await turn
+    await Promise.all(h.done)
+    expect(result.stop).toBe('complete')
+    expect(await readFile(join(root, 'code.ts'), 'utf8')).toBe('ONE\n')
+  })
+
+  test('default mode: a denial leaves the file alone and the turn completes', async () => {
+    const model = scriptedModel([
+      { toolCalls: [read('/code.ts')] },
+      { toolCalls: [edit('/code.ts', 'one', 'ONE')] },
+      { text: 'Understood.' },
+    ])
+    const { controller, root } = await makeController({ files: { 'code.ts': 'one\n' }, model })
+    const h = hooks()
+    const turn = controller.run('edit', h)
+    controller.broker.answer((await nextPending(controller.broker)).id, {
+      approved: false,
+      feedback: 'no thanks',
+    })
+    expect((await turn).stop).toBe('complete')
+    await Promise.all(h.done)
+    expect(await readFile(join(root, 'code.ts'), 'utf8')).toBe('one\n')
+    expect(JSON.stringify(model.prompts.at(-1))).toContain('no thanks')
+  })
+
+  test('messages, clear, resume, sessions and stats', async () => {
+    const model = scriptedModel([
+      { text: 'first answer', usage: { inputTokens: 500, outputTokens: 20 } },
+      { text: 'second answer' },
+    ])
+    const { controller } = await makeController({ files: { 'a.txt': 'a' }, model })
+    expect(await controller.messages()).toEqual([])
+    expect(await controller.sessions()).toEqual([])
+
+    const firstId = controller.sessionId
+    await run(controller, 'first question')
+    const first = await controller.messages()
+    expect(first).toHaveLength(2)
+    const stats = await controller.stats()
+    expect(stats.contextWindow).toBe(200_000)
+    expect(stats.contextTokens).toBeGreaterThan(0)
+
+    await controller.clear()
+    expect(controller.sessionId).not.toBe(firstId)
+    expect(await controller.messages()).toEqual([])
+    await run(controller, 'second question')
+    const secondId = controller.sessionId
+
+    const sessions = await controller.sessions()
+    expect(sessions.map((s) => s.id).sort()).toEqual([firstId, secondId].sort())
+    expect(sessions[0]?.id).toBe(secondId)
+    expect(sessions.find((s) => s.id === firstId)?.firstPrompt).toBe('first question')
+    expect(sessions.find((s) => s.id === secondId)?.firstPrompt).toBe('second question')
+
+    await controller.resume(firstId)
+    expect(controller.sessionId).toBe(firstId)
+    const resumed = await controller.messages()
+    expect(resumed.map((m) => m.id)).toEqual(first.map((m) => m.id))
+    expect(JSON.stringify(resumed)).toContain('first answer')
+  })
+
+  test('resume with config.resume / continueLast starts on that session', async () => {
+    const model = scriptedModel([{ text: 'one' }])
+    const a = await makeController({ model })
+    await run(a.controller, 'remember me')
+    const id = a.controller.sessionId
+    await a.controller.close()
+
+    const { loadConfig } = await import('../src/app/config.ts')
+    const { createController } = await import('../src/app/controller.ts')
+    const cfg = await loadConfig({ cwd: a.root, continue: true })
+    const c = await createController({ config: cfg, model: scriptedModel([]) })
+    try {
+      expect(c.sessionId).toBe(id)
+      expect(JSON.stringify(await c.messages())).toContain('remember me')
+    } finally {
+      await c.close()
+    }
+    const cfg2 = await loadConfig({ cwd: a.root, resume: id })
+    const c2 = await createController({ config: cfg2, model: scriptedModel([]) })
+    try {
+      expect(c2.sessionId).toBe(id)
+    } finally {
+      await c2.close()
+    }
+  })
+
+  test('shell runs in the project root, returns output and exit codes, no model involved', async () => {
+    const model = scriptedModel([])
+    const { controller, root } = await makeController({ files: { 'marker.txt': 'm' }, model })
+    const pwd = await controller.shell('pwd')
+    expect(pwd.exitCode).toBe(0)
+    expect(pwd.output.trim()).toBe(root)
+    const ls = await controller.shell('ls')
+    expect(ls.output).toContain('marker.txt')
+    const fail = await controller.shell('echo oops >&2; exit 3')
+    expect(fail.exitCode).toBe(3)
+    expect(fail.output).toContain('oops')
+    expect(model.calls).toHaveLength(0)
+  })
+
+  test('shell abort: exitCode is null', async () => {
+    const { controller } = await makeController({ model: scriptedModel([]) })
+    const abort = new AbortController()
+    const pending = controller.shell('sleep 5', abort.signal)
+    setTimeout(() => abort.abort(), 100)
+    const result = await pending
+    expect(result.exitCode).toBeNull()
+  })
+
+  test('abort ends a running turn', async () => {
+    const model = scriptedModel([{ text: 'a long answer', delayMs: 100 }])
+    const { controller } = await makeController({ model })
+    const h = hooks()
+    const turn = controller.run('go', h)
+    setTimeout(() => controller.abort(), 150)
+    const result = await turn
+    await Promise.all(h.done)
+    expect(result.stop).not.toBe('complete')
+  })
+
+  test('agents() lists the built-ins and a project agent; setModel keeps working', async () => {
+    const model = scriptedModel([{ text: 'hi' }])
+    const { controller } = await makeController({
+      files: { '.coder/agents/helper.md': '---\nname: helper\ndescription: Helps\n---\nHelp.\n' },
+      model,
+    })
+    expect(controller.agents().map((a) => a.name)).toEqual([
+      'helper',
+      'general-purpose',
+      'explore',
+      'plan',
+    ])
+    controller.setModel('anthropic/claude-haiku-4.5')
+    expect(controller.config.model).toBe('anthropic/claude-haiku-4.5')
+  })
+
+  test('acceptance M1: rename a function across the project with partial edits, no write_file', async () => {
+    const files = {
+      'src/math.ts':
+        'export function addNumbers(a: number, b: number) {\n  return a + b\n}\n\nexport const unrelated = 1\n',
+      'src/use.ts':
+        "import { addNumbers } from './math.ts'\n\nexport const total = addNumbers(1, 2)\n",
+      'src/other.ts': "import { addNumbers } from './math.ts'\n\nconsole.log(addNumbers(3, 4))\n",
+    }
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'grep', input: { pattern: 'addNumbers' } }] },
+      {
+        toolCalls: ['/src/math.ts', '/src/use.ts', '/src/other.ts'].map((p) => ({
+          toolName: 'read_file',
+          input: { path: p },
+        })),
+      },
+      // one edit per file per step: two parallel edits of one file would race on its version
+      {
+        toolCalls: [
+          edit('/src/math.ts', 'function addNumbers', 'function sum'),
+          edit('/src/use.ts', 'import { addNumbers }', 'import { sum }'),
+          edit('/src/other.ts', 'import { addNumbers }', 'import { sum }'),
+        ],
+      },
+      {
+        toolCalls: [
+          edit('/src/use.ts', '= addNumbers(', '= sum('),
+          edit('/src/other.ts', 'log(addNumbers(', 'log(sum('),
+        ],
+      },
+      { text: 'Renamed addNumbers to sum in 3 files.' },
+    ])
+    const { controller, root } = await makeController({
+      files,
+      flags: { permissionMode: 'acceptEdits' },
+      model,
+    })
+    const { result } = await run(controller, 'rename addNumbers to sum everywhere')
+    expect(result.stop).toBe('complete')
+    expect(JSON.stringify(model.prompts[1])).toContain('src/use.ts') // grep found the usages
+    expect(await readFile(join(root, 'src/math.ts'), 'utf8')).toBe(
+      'export function sum(a: number, b: number) {\n  return a + b\n}\n\nexport const unrelated = 1\n',
+    )
+    expect(await readFile(join(root, 'src/use.ts'), 'utf8')).toBe(
+      "import { sum } from './math.ts'\n\nexport const total = sum(1, 2)\n",
+    )
+    expect(await readFile(join(root, 'src/other.ts'), 'utf8')).toBe(
+      "import { sum } from './math.ts'\n\nconsole.log(sum(3, 4))\n",
+    )
+    const stored = JSON.stringify(await controller.messages())
+    expect(stored).not.toContain('tool-write_file')
+    expect(stored.match(/tool-edit_file/g)?.length).toBeGreaterThanOrEqual(5)
+  })
+})
