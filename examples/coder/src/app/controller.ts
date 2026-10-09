@@ -50,7 +50,6 @@ import { createWorkspace } from '../workspace/index.ts'
 import { type Agents, type CreateAgentsDeps, createAgents } from './agent.ts'
 import { createCheckpoints } from './checkpoints.ts'
 import { expandBody, expandSkill, type LoadedCommand, loadCommands } from './commands.ts'
-import { compactWithFocus, createCompactFocus } from './compact-focus.ts'
 import { mergeSettings, readSettingsLayers } from './config.ts'
 import { computeDiff } from './diff.ts'
 import { runDoctor } from './doctor.ts'
@@ -302,7 +301,6 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     fs: workspace.fs,
     session: () => session(),
   })
-  const focus = createCompactFocus()
   const sideQuestion = createSideQuestion({
     storage,
     sessionId: () => sessionId,
@@ -346,7 +344,6 @@ export async function createController(opts: CreateControllerOptions): Promise<C
           ]
         : []),
     ],
-    mainPlugins: [focus.plugin],
     userMemory: () => loadUserMemory(config.userDir),
     outputStyle: () => outputStyles.instruction(settingsMgr.setting('outputStyle')),
     taskHub,
@@ -623,7 +620,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     async compact(instructions?: string): Promise<CompactSummary | null> {
       const s = await session()
-      const message = await compactWithFocus(focus, () => s.compact(), instructions)
+      // like Claude Code: summarize the whole conversation, optionally with focus text
+      const message = await s.compact({ keepLast: 0, ...(instructions ? { instructions } : {}) })
       if (!message) return null
       const part = message.parts.find((p) => p.type === 'data-eh.compaction') as
         | { data?: { tokens?: { before?: unknown; after?: unknown } } }

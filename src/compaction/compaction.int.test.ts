@@ -545,6 +545,102 @@ describe('manual compaction', () => {
     expect(wire).not.toContain('Q2 ')
   })
 
+  test('compact({ keepLast: 0 }) summarizes a single turn; the default keeps it', async () => {
+    const { agent, model, summarizer } = setup([answer('A1'), answer('A2')])
+    const session = agent.session('s1')
+    expect(await session.compact({ keepLast: 0 })).toBeNull() // empty conversation
+    await session.send('Q1 hello').result
+    expect(await session.compact()).toBeNull() // keepLast 1 from config
+    const marker = (await session.compact({ keepLast: 0 })) as HarnessUIMessage
+    expect(payload(marker)).toMatchObject({ trigger: 'manual', summary: 'SUMMARY-1' })
+    expect(payload(marker).resumeFromId).toBeNull()
+    expect(summarizerPromptText(summarizer.calls[0] as never)).toContain('Q1 hello')
+    await session.send('Q2').result
+    const wire = promptText(model.prompts[1])
+    expect(wire).toContain('SUMMARY-1')
+    expect(wire).not.toContain('Q1 hello')
+  })
+
+  test('compact({ keepLast }) overrides the config for one call only', async () => {
+    const { agent } = setup([answer('A1'), answer('A2'), answer('A3')], {
+      compaction: { model: summarizerModel(['S']), keepLast: 1, maxSummaryTokens: 100 },
+    })
+    const session = agent.session('s1')
+    await fillTurns(session, 3)
+    const marker = (await session.compact({ keepLast: 0 })) as HarnessUIMessage
+    expect(payload(marker).resumeFromId).toBeNull()
+    await session.send('Q4').result
+    await session.send('Q5').result
+    const next = (await session.compact()) as HarnessUIMessage
+    expect(payload(next).resumeFromId).not.toBeNull() // config keepLast 1 applies again
+  })
+
+  test('compact() rejects an invalid keepLast or instructions with EH_INVALID_INPUT', async () => {
+    const { agent } = setup([answer('A1')])
+    const session = agent.session('s1')
+    for (const keepLast of [-1, 1.5, Number.NaN]) {
+      await expect(session.compact({ keepLast })).rejects.toMatchObject({
+        code: 'EH_INVALID_INPUT',
+      })
+    }
+    await expect(session.compact({ instructions: 5 as never })).rejects.toMatchObject({
+      code: 'EH_INVALID_INPUT',
+    })
+    // the session is not left busy
+    await session.send('Q1').result
+  })
+
+  test('compact({ instructions }) reaches the summarizer after plugin context, for that call only', async () => {
+    const hint = definePlugin({
+      name: 'hint',
+      setup: () => ({
+        hooks: {
+          'compaction.prompt': (_ctx, out) => {
+            out.context.push('PLUGIN-LINE')
+            seen.push(out.instructions)
+          },
+        },
+      }),
+    })
+    const seen: Array<string | undefined> = []
+    const { agent, summarizer } = setup([answer('A1'), answer('A2')], { plugins: [hint] })
+    const session = agent.session('s1')
+    await fillTurns(session, 2)
+    await session.compact({ keepLast: 0, instructions: '  the parser  ' })
+    const text = summarizerPromptText(summarizer.calls[0] as never)
+    expect(text).toContain('The user asked the summary to focus on: the parser')
+    expect(text.indexOf('PLUGIN-LINE')).toBeLessThan(text.indexOf('focus on'))
+    await session.send('Q3').result
+    await session.compact({ keepLast: 0 })
+    expect(summarizerPromptText(summarizer.calls[1] as never)).not.toContain('focus on')
+    expect(seen).toEqual(['the parser', undefined])
+  })
+
+  test('compact({ keepLast: 0 }) keeps the turn of a pending message', async () => {
+    const client = tool({ description: 'client', inputSchema: z.object({}) })
+    const model = scriptedModel([
+      answer('A1'),
+      { toolCalls: [{ toolName: 'client', input: {} }] },
+      { text: 'done' },
+    ])
+    const { agent, state } = setup([], {
+      model,
+      tools: { client },
+    })
+    const session = agent.session('s1')
+    await session.send('Q1 first').result
+    const waiting = await session.send('Q2 ask').result
+    expect(waiting.stop).toBe('tool-pending')
+    const marker = (await session.compact({ keepLast: 0 })) as HarnessUIMessage
+    expect(marker).not.toBeNull()
+    const pending = (await state.get('s1'))?.core.pending
+    expect(pending).toBeDefined()
+    const toolCallId = waiting.pending?.clientTools[0]?.toolCallId as string
+    const answered = await session.respond({ toolOutputs: [{ toolCallId, output: 'ok' }] }).result
+    expect(answered.stop).toBe('complete')
+    expect(promptText(model.prompts[2])).toContain('Q2 ask')
+  })
+
   test('busy while a turn runs; EH_COMPACTION_FAILED on summarizer failure; null when disabled or nothing to do', async () => {
     const { agent } = setup([{ text: 'slow', delayMs: 20 }])
     const session = agent.session('s1')

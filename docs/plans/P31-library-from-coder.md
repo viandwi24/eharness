@@ -17,6 +17,7 @@ in real use (2026-10-08).
 
 | Item | Shipped as |
 |---|---|
+| R21: `session.compact()` had no options, so a short conversation never compacted and `/compact <focus>` needed a `compaction.prompt` plugin workaround | `compact({ keepLast?, instructions? })` (type `CompactOptions`; spec 05 §2, spec 06 §4); the coder's `/compact` uses `keepLast: 0` and drops `compact-focus.ts` |
 | Continuation streams kept answered calls in `approval-requested` (real-use bug: an approved long-running tool looked like it still waited) | 0.6.1 patch: `tool-approval-response` chunks at the start of a `respond()` continuation (spec 04 §2, spec 11 §4) |
 
 ## Classification rule

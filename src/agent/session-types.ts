@@ -80,6 +80,14 @@ export interface MessageAdapter<M extends UIMessage = UIMessage> {
   lastId?(sessionId: string): Promise<string | null>
 }
 
+/** Options of {@link HarnessSession.compact} (this call only). */
+export interface CompactOptions {
+  /** Completed turns kept verbatim; overrides `compaction.keepLast`. `0` summarizes everything. */
+  keepLast?: number
+  /** Extra focus text for the summarizer. */
+  instructions?: string
+}
+
 /**
  * The turn currently running somewhere (crash recovery).
  *
@@ -748,8 +756,11 @@ export interface HarnessSession<
     data: KindData<Kinds, K>,
     options?: InjectOptions,
   ): Promise<{ message: M; run?: HarnessRun<M> }>
-  /** Manual compaction. */
-  compact(): Promise<M | null>
+  /**
+   * Manual compaction (spec 06 §4). `options.keepLast` / `options.instructions` apply to this
+   * call only. Rejects `EH_INVALID_INPUT` for an invalid option.
+   */
+  compact(options?: CompactOptions): Promise<M | null>
   /** Forget session approval grants. */
   clearGrants(): Promise<void>
   /**

@@ -182,6 +182,19 @@ run; dangling calls are answered as usual; an `eh.notice` (level `warning`, code
 going after the second compaction; the failed-compaction rule above still applies). `thrash.withinSteps` must be a positive
 integer.
 
+**Manual** `compact(options?: CompactOptions)` takes `CompactOptions = { keepLast?: number;
+instructions?: string }`, both for this call only:
+
+- `keepLast` replaces `compaction.keepLast` (default 4). A non-negative integer; `0` summarizes
+  every completed turn, so a one-turn conversation compacts (like Claude Code's `/compact`).
+  Anything else rejects `EH_INVALID_INPUT` before the session is touched. The rest of §5 is
+  unchanged: auto-shrink (§5.2), the skip rule, the budget check, turn boundaries and the pending
+  message's turn (kept even with `keepLast: 0`) all apply.
+- `instructions` is focus text for the summarizer. After all `compaction.prompt` hooks ran, the
+  core appends the context line `The user asked the summary to focus on: <trimmed text>` (so it is
+  last); empty or blank text is ignored. Hooks see it as `out.instructions` (read-only) to adapt
+  a replaced prompt. It is not stored in the marker.
+
 **Manual** `compact()` is exclusive like a turn: it sets the running flag (a `send()` meanwhile
 throws `EH_SESSION_BUSY`), acquires the `SessionLock` when configured, validates the hot cache like
 a turn, and rejects `EH_SESSION_BUSY` when a live turn of another instance owns the session
@@ -253,7 +266,8 @@ drop = previous marker's summary + every earlier message
 resumeFromId = id of the first message in keep            (never null for pre-turn)
 ```
 
-**Manual** (idle): same as pre-turn without T; if `keepLast` shrinks to 0, `resumeFromId = null`.
+**Manual** (idle): same as pre-turn without T; if `keepLast` (config or `compact({ keepLast })`)
+shrinks to 0, `resumeFromId = null`.
 When the session is pending (spec 11 §2), the turn of the pending message is kept like a current
 turn (never summarized, so `respond()` still finds its parts).
 
@@ -373,7 +387,8 @@ save facts — typically into memory files (spec 14 §9) — through the `compac
 2. Hooks `compaction.prompt` add `context` lines (e.g. files in progress) or replace the prompt
    (`out.prompt` starts as `config.prompt`; the default prompt applies when it is empty).
    `out.messages` holds copies of the messages being summarized (read-only input, e.g. to carry
-   state that lives in them across the compaction).
+   state that lives in them across the compaction). `out.instructions` is the focus text of a
+   manual `compact({ instructions })`; the core appends it to `context` after the hooks.
 3. `generateText({ model, instructions: prompt, prompt: transcript + context, maxOutputTokens: maxSummaryTokens })`;
    the prompt wraps the transcript in `<transcript>…</transcript>` and lists the context lines
    after it. The summarizer window is `config.contextWindow` of `CompactionConfig`, else the agent

@@ -437,6 +437,11 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
       prompt?: string
       /** The messages being summarized (copies, id order; read-only input). */
       readonly messages: readonly HarnessUIMessage[]
+      /**
+       * The focus text of a manual `compact({ instructions })`, if any. The core appends it to
+       * `context` after all hooks ran; read it to adapt a replaced `prompt`.
+       */
+      readonly instructions?: string
     },
   ): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>

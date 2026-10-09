@@ -111,8 +111,11 @@ export interface HarnessSession<
   /** Save a kind message; optionally deliver it into the running turn or wake the agent (spec 11 §6.3). */
   inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, options?: InjectOptions)
     : Promise<{ message: M; run?: HarnessRun<M> }>
-  /** Manual compaction (spec 06). Rejects EH_SESSION_BUSY while a turn runs. */
-  compact(): Promise<M | null>
+  /**
+   * Manual compaction (spec 06 §4). Rejects EH_SESSION_BUSY while a turn runs and
+   * EH_INVALID_INPUT for an invalid option (turn operations are unaffected, §2).
+   */
+  compact(options?: CompactOptions): Promise<M | null>
   /** Forget session approval grants (spec 11 §3.1). */
   clearGrants(): Promise<void>
   /** Create a new session from (a prefix of) this one (P31, §14). */

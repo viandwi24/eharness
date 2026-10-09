@@ -15,6 +15,7 @@ export type {
   ApprovalActor,
   ChildSessionInfo,
   CollectOptions,
+  CompactOptions,
   DeadInboxItem,
   EnqueueOptions,
   EnqueueResult,

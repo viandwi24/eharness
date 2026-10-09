@@ -53,10 +53,19 @@ export async function resolveSummarizerPrompt(args: {
   onError: (owner: string, error: unknown) => void
   /** The messages being summarized (handed to the hooks as copies). */
   messages: readonly HarnessUIMessage[]
+  /** Focus text of a manual `compact({ instructions })`. */
+  instructions?: string | undefined
 }): Promise<{ prompt: string; context: string[] }> {
-  const out: { context: string[]; prompt?: string; readonly messages: HarnessUIMessage[] } = {
+  const instructions = args.instructions?.trim()
+  const out: {
+    context: string[]
+    prompt?: string
+    readonly messages: HarnessUIMessage[]
+    readonly instructions?: string
+  } = {
     context: [],
     messages: structuredClone([...args.messages]),
+    ...(instructions ? { instructions } : {}),
   }
   if (args.configured !== undefined) out.prompt = args.configured
   for (const hook of args.hooks?.list('compaction.prompt') ?? []) {
@@ -73,5 +82,7 @@ export async function resolveSummarizerPrompt(args: {
   const context = Array.isArray(out.context)
     ? out.context.filter((c): c is string => typeof c === 'string')
     : []
+  // the caller's focus text comes last, after every plugin line
+  if (instructions) context.push(`The user asked the summary to focus on: ${instructions}`)
   return { prompt, context }
 }

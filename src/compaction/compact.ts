@@ -72,6 +72,10 @@ export interface CompactRequest {
   overflow?: boolean | undefined
   /** The environment of a pre-compaction flush (current wire, turn tools), built on demand. */
   flushEnv?: (() => Promise<FlushEnv>) | undefined
+  /** Manual `compact({ keepLast })`: overrides `compaction.keepLast` for this call. */
+  keepLast?: number | undefined
+  /** Manual `compact({ instructions })`: focus text for the summarizer. */
+  instructions?: string | undefined
   /** The USD budget that is used up, if any: the compaction is skipped before summarizing. */
   overBudget?: (() => BudgetOverrun | undefined) | undefined
 }
@@ -261,7 +265,7 @@ export function createSessionCompaction(deps: {
       mode: request.mode,
       currentStartId: request.currentStartId,
       ...(request.assistantId === undefined ? {} : { assistantId: request.assistantId }),
-      keepLast: settings.keepLast ?? DEFAULT_KEEP_LAST,
+      keepLast: request.keepLast ?? settings.keepLast ?? DEFAULT_KEEP_LAST,
       maxKeptTokens: Math.floor(limit.window * KEEP_SHARE),
       tokensOf: async (m) =>
         calibration.apply(
@@ -338,6 +342,7 @@ export function createSessionCompaction(deps: {
       configured: settings.prompt,
       onError: (owner, error) => hookFailed(rt, 'compaction.prompt', owner, error),
       messages: plan.drop,
+      instructions: request.instructions,
     })
     const summarizer = settings.model ?? config.model
     let summary: string

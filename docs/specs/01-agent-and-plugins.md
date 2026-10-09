@@ -463,7 +463,8 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   /** Contribute context to / replace the summarizer prompt (spec 06 §5). */
   /** `out.messages`: the messages being summarized (copies, read-only input). */
   'compaction.prompt'?(ctx: HarnessContext<DP>, out: { context: string[]; prompt?: string
-                                                       readonly messages: readonly HarnessUIMessage[] }): Awaitable<void>
+                                                       readonly messages: readonly HarnessUIMessage[]
+                                                       readonly instructions?: string /* manual compact({ instructions }), spec 06 §4 */ }): Awaitable<void>
   'compaction.after'?(ctx: HarnessContext<DP>, e: { marker: HarnessUIMessage }): Awaitable<void>
 
   /** Chainable. Adjust a loaded skill doc (e.g. add an executable path, spec 07 §7). `location` = `SkillSource.locate(name)`, omitted when absent/null. */

@@ -1343,8 +1343,20 @@ export function createSessionHandle(args: {
       }
       return { ...result, run: enqueue({ kind: 'wake', input: undefined, options: {} }) as never }
     },
-    async compact() {
+    async compact(options) {
       assertOpen()
+      const keepLast = options?.keepLast
+      if (keepLast !== undefined && !(Number.isInteger(keepLast) && keepLast >= 0)) {
+        throw new HarnessError(
+          'EH_INVALID_INPUT',
+          'compact({ keepLast }) must be a non-negative integer.',
+          { details: { keepLast } },
+        )
+      }
+      const instructions = options?.instructions
+      if (instructions !== undefined && typeof instructions !== 'string') {
+        throw new HarnessError('EH_INVALID_INPUT', 'compact({ instructions }) must be a string.')
+      }
       if (rt.running) throw busyError(id)
       // exclusive like a turn (spec 05 §8): send() throws EH_SESSION_BUSY meanwhile
       rt.running = true
@@ -1391,6 +1403,8 @@ export function createSessionHandle(args: {
         const outcome = await compaction.compact({
           mode: 'manual',
           trigger: 'manual',
+          keepLast,
+          instructions,
           // the pending message's turn is kept like a current turn (spec 06 §5.1)
           currentStartId:
             pending === undefined
