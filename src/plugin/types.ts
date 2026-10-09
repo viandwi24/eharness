@@ -17,7 +17,7 @@ import type {
   ToolChoice,
   ToolSet,
 } from 'ai'
-import type { ApprovalActor } from '../agent/session-types.ts'
+import type { ApprovalActor, HarnessRun, InjectOptions } from '../agent/session-types.ts'
 import type { ModelSettings } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { Awaitable, ProviderOptions } from '../internal/ai-types.ts'
@@ -172,8 +172,23 @@ export interface HarnessContext<DP extends DataPartMap = Record<never, never>> {
   readonly agent: { id: string }
   readonly session: {
     id: string
-    /** Set for child sessions (subagents). */
-    parent?: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+    /**
+     * Set for child sessions (subagents): the options' `parent`, else the link stored in the
+     * session state (so it is set in any instance that opens an existing child).
+     */
+    readonly parent?: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+    /**
+     * `session.inject()` of this plugin's own session (spec 05, spec 11 §6.3), usable from tools,
+     * hooks and background work: `deliver: 'next-step'` lands at the next step boundary of the
+     * running turn, `wake: true` on an idle session starts a turn (`run` is set). Rejects like
+     * `session.inject()` (`EH_INVALID_INPUT`, `EH_SESSION_CLOSED`). Do not await it from the
+     * plugin's `session()` phase: the session is still opening.
+     */
+    inject(
+      kind: string,
+      data: unknown,
+      options?: InjectOptions,
+    ): Promise<{ message: HarnessUIMessage; run?: HarnessRun<HarnessUIMessage> }>
   }
   /** The plugin this ctx belongs to (`'app'` for the root plugin). */
   readonly plugin: { name: string }

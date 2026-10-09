@@ -14,10 +14,11 @@ import {
   type HarnessPlugin,
   type SessionContribution,
 } from '../index.ts'
+import { checkpointedFs, checkpointTurnKey } from './checkpoints.ts'
 import { lastReadOf } from './last-read.ts'
 import { joinPath, normalizePath, normalizePrefixes } from './paths.ts'
 import { fsSkillSource } from './skill-source.ts'
-import { createFileTools } from './tools.ts'
+import { createFileTools, DEFAULT_MEDIA_MAX_BYTES } from './tools.ts'
 import type {
   FileChangeData,
   FileSystem,
@@ -162,8 +163,28 @@ export function filesystem(
       return (ext.startsWith('.') ? ext : `.${ext}`).toLowerCase()
     })
   }
+  if (
+    opts.checkpoints !== undefined &&
+    ['save', 'load', 'list', 'delete'].some(
+      (key) =>
+        typeof (opts.checkpoints as unknown as Record<string, unknown>)?.[key] !== 'function',
+    )
+  ) {
+    invalid('`checkpoints` must be a CheckpointStore (save, load, list, delete).')
+  }
   if (opts.onAdapterError !== undefined && typeof opts.onAdapterError !== 'function') {
     invalid('`onAdapterError` must be a function.')
+  }
+  if (opts.media !== undefined && (typeof opts.media !== 'object' || opts.media === null)) {
+    invalid('`media` must be { images?, pdf?, maxBytes? }.')
+  }
+  const media = {
+    images: opts.media?.images ?? true,
+    pdf: opts.media?.pdf ?? false,
+    maxBytes: opts.media?.maxBytes ?? DEFAULT_MEDIA_MAX_BYTES,
+  }
+  if (!Number.isInteger(media.maxBytes) || media.maxBytes < 1) {
+    invalid('`media.maxBytes` must be a positive integer.')
   }
   const hidden = prefixes(opts.hiddenPrefixes, 'hiddenPrefixes')
   const readonly = prefixes(opts.readonlyPrefixes, 'readonlyPrefixes')
@@ -202,12 +223,28 @@ export function filesystem(
       if (!isFileSystem(fs)) {
         invalid('the `fs` resolver must return a FileSystem (read, write, delete, list).')
       }
+      const visible =
+        opts.checkpoints === undefined
+          ? fs
+          : checkpointedFs({
+              fs,
+              store: opts.checkpoints,
+              sessionId: ctx.session.id,
+              turnKey: () => (ctx.turn === undefined ? undefined : checkpointTurnKey(ctx.turn)),
+              skip: (path) =>
+                outputsDir !== undefined &&
+                (path === outputsDir || path.startsWith(`${outputsDir}/`)),
+              onError: (path, error) =>
+                ctx.log.warn(`checkpoint of ${path} failed: ${String(error)}`),
+            })
       const contribution: SessionContribution<FilesystemDataParts> = {
         services:
-          outputsDir === undefined ? { fs } : { fs, toolOutputs: toolOutputStore(fs, outputsDir) },
+          outputsDir === undefined
+            ? { fs: visible }
+            : { fs: visible, toolOutputs: toolOutputStore(fs, outputsDir) },
         tools: createFileTools(
           {
-            fs,
+            fs: visible,
             lastRead: lastReadOf(ctx.state),
             change: (data) => ctx.stream.data('change', data, { id: data.path }),
             hidden,
@@ -216,6 +253,7 @@ export function filesystem(
             allowedExtensions,
             isUndeletable: opts.isUndeletable,
             maxReadChars,
+            media,
             onAdapterError: opts.onAdapterError,
           },
           tools,

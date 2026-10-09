@@ -13,6 +13,7 @@ interface MetaUnderTest {
   version: string
   size: number
   updatedAt?: number
+  binary?: boolean
 }
 
 /**
@@ -40,6 +41,17 @@ export interface FileSystemUnderTest {
     opts?: { prefix?: string; maxHits?: number },
   ): Promise<Array<{ path: string; line: number; text: string }>>
   glob?(pattern: string, opts: { prefix: string; limit: number }): Promise<MetaUnderTest[]>
+  readBytes?(
+    path: string,
+  ): Promise<{ bytes: Uint8Array; meta: MetaUnderTest; mediaType?: string } | null>
+  writeBytes?(
+    path: string,
+    bytes: Uint8Array,
+    opts?: { ifVersion?: string | null },
+  ): Promise<
+    | { ok: true; version: string }
+    | { ok: false; reason: 'conflict' | 'exists'; currentVersion?: string }
+  >
   move?(
     from: string,
     to: string,
@@ -59,6 +71,8 @@ export interface FileSystemConformanceOptions {
   requireGlob?: boolean
   /** Require the optional `move`. Default false: the case runs only when the adapter has it. */
   requireMove?: boolean
+  /** Require the optional `readBytes` and `writeBytes` (binary files). Default false: runs only when present. */
+  requireBytes?: boolean
 }
 
 const encoder = new TextEncoder()
@@ -432,6 +446,91 @@ export function fileSystemConformance(
         assertJsonEqual(await paths('**', '/docs/'), ['/docs/x.md'], 'glob ** under a prefix')
         assertJsonEqual(await paths('*.rs', '/'), [], 'glob without matches')
         assertTrue((await paths('**', '/', 2))?.length === 2, 'glob honours limit')
+      },
+    },
+    {
+      name: 'readBytes / writeBytes round-trip binary files with versions and ifVersion',
+      run: async () => {
+        const fs = await factory()
+        if (fs.readBytes === undefined || fs.writeBytes === undefined) {
+          assertTrue(!options.requireBytes, 'readBytes and writeBytes are required but missing')
+          return
+        }
+        assertTrue((await fs.readBytes('/a.bin')) === null, 'readBytes of a missing file is null')
+        const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x80])
+        const created = await fs.writeBytes('/img/a.bin', bytes, { ifVersion: null })
+        assertTrue(created.ok, `create with ifVersion null failed: ${JSON.stringify(created)}`)
+        const version = (created as { version: string }).version
+        const file = await fs.readBytes('/img/a.bin')
+        assertTrue(file !== null, 'readBytes after writeBytes returned null')
+        assertJsonEqual(Array.from(file?.bytes ?? []), Array.from(bytes), 'bytes round trip')
+        assertJsonEqual(
+          { path: file?.meta.path, version: file?.meta.version, size: file?.meta.size },
+          { path: '/img/a.bin', version, size: bytes.length },
+          'meta of readBytes',
+        )
+        assertTrue(file?.meta.binary === true, 'meta.binary must be true for binary bytes')
+        // copies
+        if (file !== null) file.bytes[0] = 0
+        assertTrue(
+          (await fs.readBytes('/img/a.bin'))?.bytes[0] === 0x89,
+          'readBytes must return a copy',
+        )
+        const listed = (await fs.list()).find((m) => m.path === '/img/a.bin')
+        assertTrue(
+          listed?.binary === true && listed.size === bytes.length && listed.version === version,
+          `list must show the binary file with its size and version, got ${JSON.stringify(listed)}`,
+        )
+        // version follows content
+        const same = await fs.writeBytes('/img/b.bin', bytes)
+        assertTrue(same.ok && same.version === version, 'equal bytes must give an equal version')
+        const other = await fs.writeBytes('/img/c.bin', new Uint8Array([0, 1, 2]))
+        assertTrue(other.ok && other.version !== version, 'other bytes must give another version')
+        // ifVersion
+        const exists = await fs.writeBytes('/img/a.bin', bytes, { ifVersion: null })
+        assertTrue(!exists.ok && exists.reason === 'exists', 'ifVersion null on a file: exists')
+        const stale = await fs.writeBytes('/img/a.bin', bytes, { ifVersion: 'stale' })
+        assertTrue(!stale.ok && stale.reason === 'conflict', 'a stale ifVersion: conflict')
+        const next = new Uint8Array([9, 0, 9])
+        const swapped = await fs.writeBytes('/img/a.bin', next, { ifVersion: version })
+        assertTrue(swapped.ok, `matching ifVersion must write: ${JSON.stringify(swapped)}`)
+        const missing = await fs.writeBytes('/img/none.bin', next, { ifVersion: version })
+        assertTrue(!missing.ok && missing.reason === 'conflict', 'ifVersion on a missing file')
+        const race = await Promise.all(
+          [1, 2, 3].map((n) =>
+            (fs.writeBytes as NonNullable<typeof fs.writeBytes>)(
+              '/img/race.bin',
+              new Uint8Array([0, n]),
+              {
+                ifVersion: null,
+              },
+            ),
+          ),
+        )
+        assertTrue(
+          race.filter((r) => r.ok).length === 1,
+          `concurrent creates: expected one winner, got ${JSON.stringify(race)}`,
+        )
+        // text bytes are text: same version as write(), readable with read()
+        const textVersion = await written(fs, '/t.md', 'ø text')
+        const asBytes = await fs.readBytes('/t.md')
+        assertTrue(
+          asBytes !== null &&
+            asBytes.meta.version === textVersion &&
+            asBytes.meta.binary !== true &&
+            new TextDecoder().decode(asBytes.bytes) === 'ø text',
+          'readBytes of a text file returns its UTF-8 bytes and the text version',
+        )
+        const viaBytes = await fs.writeBytes('/t2.md', new TextEncoder().encode('ø text'))
+        assertTrue(
+          viaBytes.ok && viaBytes.version === textVersion,
+          'writeBytes of UTF-8 text gives the version of write()',
+        )
+        assertTrue((await contentOf(fs, '/t2.md')) === 'ø text', 'UTF-8 bytes are readable as text')
+        // a text write replaces a binary file
+        const replaced = await fs.write('/img/a.bin', 'now text')
+        assertTrue(replaced.ok, 'a text write over a binary file must work')
+        assertTrue((await contentOf(fs, '/img/a.bin')) === 'now text', 'replaced content')
       },
     },
     {

@@ -27,6 +27,12 @@ Status: **Accepted** (v0).
 ┌──────────────▼───────── shipped extensions (same package, subpaths) ──────────────┐
 │ eharness/filesystem         FileSystem contract, filesystem() plugin, file tools │
 │ eharness/filesystem/memory  memoryFs()                                           │
+│ eharness/filesystem/node    diskFs(): real disk (Node-only)                      │
+│ eharness/shell              bash tool over sandbox sessions (Node-only)          │
+│ eharness/permissions        permission rules and modes as a plugin               │
+│ eharness/subagent           subagentTool(): child sessions, nested approvals     │
+│ eharness/ask                askUserQuestionTool(): client-tool questions         │
+│ eharness/web                webFetchTool(): guarded fetch to Markdown            │
 │ eharness/storage/memory     memoryMessages(), memoryState(), memoryInbox(),      │
 │                             memoryBudgetLedger()                                 │
 │ eharness/mcp                mcpServer() tool source over @ai-sdk/mcp             │
@@ -49,6 +55,11 @@ import core only through `src/index.ts`.
 
 ## 2. Package & exports
 
+`eharness/filesystem/node` and `eharness/shell` are **Node-only**: they import `node:` built-ins,
+run on Node >= 22 and Bun, and are the only paths allowed to (`scripts/check-imports.ts`
+`nodeOnly`, ADR-0036). The core and every other subpath stay runtime-neutral. All shipped modules
+must serve the three deployment profiles (ADR-0034).
+
 One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 
 | Import | Source | Contents |
@@ -56,6 +67,12 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness` | `src/index.ts` | core API and types |
 | `eharness/filesystem` | `src/filesystem/index.ts` | `FileSystem` contract, `filesystem()` plugin, `fsSkillSource()`, helpers |
 | `eharness/filesystem/memory` | `src/filesystem/memory.ts` | `memoryFs()` |
+| `eharness/filesystem/node` | `src/filesystem/node.ts` | `diskFs()` (Node-only, ADR-0036) |
+| `eharness/shell` | `src/shell/index.ts` | bash tool, sandbox drivers (Node-only, ADR-0036) |
+| `eharness/permissions` | `src/permissions/index.ts` | permission rule engine and modes plugin |
+| `eharness/subagent` | `src/subagent/index.ts` | `subagentTool()`, approval strategies `inline` / `park` / `deny` (ADR-0035) |
+| `eharness/ask` | `src/ask/index.ts` | `askUserQuestionTool()` |
+| `eharness/web` | `src/web/index.ts` | `webFetchTool()` |
 | `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, fixed texts |

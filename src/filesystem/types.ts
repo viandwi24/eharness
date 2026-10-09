@@ -5,6 +5,7 @@
  * @see docs/specs/08-filesystem-plugin.md
  */
 import type { HarnessContext } from '../index.ts'
+import type { CheckpointStore } from './checkpoints.ts'
 
 /**
  * Metadata of one file.
@@ -20,6 +21,13 @@ export interface FileMeta {
   size: number
   /** Last modification time (ms since epoch), when the adapter knows it. */
   updatedAt?: number
+  /**
+   * `true` for a binary file (not valid UTF-8 text): `read` does not handle it, use
+   * {@link FileSystem.readBytes}. `size` is then the length in bytes. Absent for text.
+   */
+  binary?: boolean
+  /** IANA media type when the adapter knows it (e.g. an object store); the plugin detects it otherwise. */
+  mediaType?: string
 }
 
 /**
@@ -30,6 +38,18 @@ export interface FileMeta {
 export interface FileEntry extends FileMeta {
   /** UTF-8 text. */
   content: string
+}
+
+/**
+ * A file with its raw bytes ({@link FileSystem.readBytes}).
+ *
+ * @see docs/specs/08-filesystem-plugin.md#12-binary-files-and-images
+ */
+export interface BinaryFile {
+  bytes: Uint8Array
+  meta: FileMeta
+  /** IANA media type when the adapter knows it. */
+  mediaType?: string
 }
 
 /**
@@ -126,6 +146,22 @@ export interface FileSystem {
    * does, spec 14 §6).
    */
   move?(from: string, to: string, opts?: { ifVersion?: string }): Promise<MoveResult>
+  /**
+   * Optional (binary files, spec 08 §12): the raw bytes of a file, text or binary. `null` if
+   * missing. `meta.version` follows the same rules as for text (`bytesVersion`; for valid UTF-8
+   * text it equals `contentVersion` of the text). Without it the plugin handles text only.
+   */
+  readBytes?(path: string): Promise<BinaryFile | null>
+  /**
+   * Optional (binary files): write raw bytes with the same `ifVersion` rules and results as
+   * {@link FileSystem.write}; the version is computed from the bytes. Bytes that are valid UTF-8
+   * text are stored as a text file.
+   */
+  writeBytes?(
+    path: string,
+    bytes: Uint8Array,
+    opts?: { ifVersion?: string | null },
+  ): Promise<WriteResult>
 }
 
 /**
@@ -186,6 +222,18 @@ export interface FilesystemOptions {
   isUndeletable?: (path: string) => boolean
   /** Max characters returned by `read_file` per call. Default 50_000. */
   maxReadChars?: number
+  /**
+   * What `read_file` shows the model for binary files (spec 08 §12); needs an adapter with
+   * `readBytes`. Other binaries give an `ERROR:` text.
+   */
+  media?: {
+    /** Show PNG/JPEG/GIF/WebP images to the model. Default true. */
+    images?: boolean
+    /** Send PDFs as file parts (the provider must accept them). Default false. */
+    pdf?: boolean
+    /** Largest image/PDF in bytes. Default 5 MB (5_242_880). */
+    maxBytes?: number
+  }
   /** Which tools to expose. Default all. */
   tools?: FileToolName[]
   /**
@@ -202,4 +250,11 @@ export interface FilesystemOptions {
    * `{ dir: '/.eharness/tool-outputs' }`; `false` disables the service.
    */
   toolOutputs?: false | { dir?: string }
+  /**
+   * Record the content of a file before the first change of each turn (`write_file`,
+   * `edit_file`, `delete_file`, and any other writer going through the `fs` service) so the app
+   * can undo it with `rewindFiles` (spec 08 §11). The turn key is the id of the turn's user
+   * message, or the turn id when the turn has none. Default: off.
+   */
+  checkpoints?: CheckpointStore
 }

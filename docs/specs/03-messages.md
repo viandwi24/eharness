@@ -367,6 +367,8 @@ Validation runs on cold loads only (spec 05 §6), never on hot-path turns.
   by `src/messages/ids.ts` with a monotonic counter so ids created in the same millisecond still
   sort in creation order.
 - Lexicographic string order == creation order. `MessageAdapter`s rely on this (spec 05 §4).
+- A fork (`session.fork()`, spec 05 §14) keeps the ids of the copied messages: ids are unique per
+  session (storage is keyed by session) and the copy is a prefix, so the floor property holds.
 - `config.generateId` may replace the generator; it must keep this property (a conformance test
   checks 10k ids in a tight loop).
 - **Per-session floor:** a new id must sort after the newest id the session knows (cache or last

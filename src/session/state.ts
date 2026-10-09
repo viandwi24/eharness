@@ -78,6 +78,20 @@ function empty(): SessionStateSnapshot {
   return { v: 1, rev: 0, core: {}, plugins: {} }
 }
 
+function stable(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    typeof v === 'object' && v !== null && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      : v,
+  )
+}
+
+/** Signature of a snapshot without the foreign-writable `core.children` and the rev. */
+function signature(snapshot: SessionStateSnapshot): string {
+  const { children: _children, ...core } = snapshot.core ?? {}
+  return stable([core, snapshot.plugins ?? {}])
+}
+
 function storageError(what: string, cause: unknown): HarnessError {
   if (isHarnessError(cause)) return cause
   return new HarnessError('EH_STORAGE', `State storage failed (${what}).`, { cause })
@@ -88,6 +102,8 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
   let snapshot = empty()
   /** rev of the stored snapshot (`null` = nothing stored yet). */
   let persistedRev: number | null = null
+  /** {@link signature} of the stored snapshot as last read or written by this store. */
+  let baseline = signature(empty())
   let loaded = false
   let version = 0
   let writtenVersion = 0
@@ -141,6 +157,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
         }
         persistedRev = snapshot.rev
       }
+      baseline = signature(snapshot)
       version = 0
       writtenVersion = 0
       loaded = true
@@ -183,11 +200,25 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
           const capturedVersion = version
           const next: SessionStateSnapshot = structuredClone({ ...snapshot, rev: snapshot.rev + 1 })
           try {
-            if ((options.cas === true || guarded) && adapter.setIf !== undefined) {
+            if (adapter.setIf !== undefined) {
               const ok = await adapter.setIf(sessionId, next, persistedRev)
               if (!ok) {
-                if (!guarded || attempt >= GUARD_RETRIES || !(await mergeForeign())) return false
-                continue
+                if (options.cas === true) {
+                  // only `core.children` changed (a child registered, spec 05 §13): not a conflict
+                  if (attempt < GUARD_RETRIES && (await mergeChildrenOnly())) continue
+                  return false
+                }
+                if (guarded) {
+                  if (attempt >= GUARD_RETRIES || !(await mergeForeign())) return false
+                  continue
+                }
+                // another writer changed the state: take over what foreign instances may write
+                // (`core.children`, spec 05 §13) and retry; plain `set` as the last resort
+                if (attempt < GUARD_RETRIES) {
+                  await mergeChildren()
+                  continue
+                }
+                await adapter.set(sessionId, next)
               }
             } else {
               await adapter.set(sessionId, next)
@@ -197,14 +228,16 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
           }
           snapshot.rev = next.rev
           persistedRev = next.rev
+          baseline = signature(next)
           writtenVersion = capturedVersion
           lastWriteAt = Date.now()
           return true
         }
       }
       /**
-       * A guarded write conflicted: re-read, take over the foreign `core.abortRequest` (the only
-       * field another instance may write during a live turn) and the stored rev. False when the
+       * A guarded write conflicted: re-read, take over the foreign `core.abortRequest` and
+       * `core.children` (the only fields another instance may write during a live turn) and the
+       * stored rev. False when the
        * stored state no longer names the guarded turn as active (another instance owns it now).
        */
       const mergeForeign = async (): Promise<boolean> => {
@@ -224,9 +257,40 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
         } else {
           delete snapshot.core.abortRequest
         }
+        takeChildren(stored)
         snapshot.rev = typeof stored.rev === 'number' ? stored.rev : 0
         persistedRev = snapshot.rev
         return true
+      }
+      /** `core.children` is written by children (foreign-writable): the stored list wins. */
+      const takeChildren = (stored: SessionStateSnapshot): void => {
+        const children = stored.core?.children
+        if (children === undefined) delete snapshot.core.children
+        else snapshot.core.children = structuredClone(children)
+      }
+      /** A compare-and-set conflicted: true when the stored state differs only in `children`. */
+      const mergeChildrenOnly = async (): Promise<boolean> => {
+        const stored = await adapter.get(sessionId)
+        if (stored === null || signature(stored) !== baseline) return false
+        // a rev bump without a new child is a real conflict
+        if (stable(stored.core?.children ?? null) === stable(snapshot.core.children ?? null)) {
+          return false
+        }
+        takeChildren(stored)
+        snapshot.rev = typeof stored.rev === 'number' ? stored.rev : 0
+        persistedRev = snapshot.rev
+        return true
+      }
+      /** A plain (unguarded) write conflicted: re-read the stored rev and children. */
+      const mergeChildren = async (): Promise<void> => {
+        const stored = await adapter.get(sessionId)
+        if (stored === null) {
+          persistedRev = null
+          return
+        }
+        takeChildren(stored)
+        snapshot.rev = typeof stored.rev === 'number' ? stored.rev : 0
+        persistedRev = snapshot.rev
       }
       const result = queue.then(run, run)
       queue = result.catch(() => undefined)

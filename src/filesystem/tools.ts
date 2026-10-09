@@ -12,6 +12,7 @@ import { type Tool, tool } from 'ai'
 import { z } from 'zod/v4'
 import { compileGlob } from './glob.ts'
 import type { LastRead } from './last-read.ts'
+import { bytesToBase64, detectMediaType, imageDimensions, MODEL_IMAGE_TYPES } from './media.ts'
 import { dirPrefix, isUnder, isUnderAny, normalizePath } from './paths.ts'
 import { smartReplace } from './smart-replace.ts'
 import {
@@ -46,6 +47,51 @@ export const GLOB_FAST_PATH_LIMIT = 5000
 /** Maximum characters of one grep line in the result. */
 export const GREP_LINE_CHARS = 300
 
+/**
+ * What `read_file` returns for an image or PDF (spec 08 §12): a small reference that is stored in
+ * the UI tool part. The bytes are read again by `toModelOutput` when the history is projected.
+ */
+export interface FileMediaRef {
+  type: 'media-ref'
+  path: string
+  /** Version of the file when it was read; the bytes are only sent while it still matches. */
+  version: string
+  mediaType: string
+  bytes: number
+  /** The text the model reads next to the media (`Image /a.png (…)`). */
+  text: string
+}
+
+/** True for the output `read_file` returns for an image or PDF. */
+export function isFileMediaRef(value: unknown): value is FileMediaRef {
+  if (typeof value !== 'object' || value === null) return false
+  const v = value as Partial<FileMediaRef>
+  return (
+    v.type === 'media-ref' &&
+    typeof v.path === 'string' &&
+    typeof v.version === 'string' &&
+    typeof v.mediaType === 'string' &&
+    typeof v.text === 'string'
+  )
+}
+
+/** Resolved `media` option. */
+export interface MediaConfig {
+  images: boolean
+  pdf: boolean
+  maxBytes: number
+}
+
+/** Default `media.maxBytes`: 5 MB. */
+export const DEFAULT_MEDIA_MAX_BYTES: number = 5 * 1024 * 1024
+
+/** Budget of the per-session cache of media bytes used by `toModelOutput`. */
+const MEDIA_CACHE_BYTES = 32 * 1024 * 1024
+
+/** Model-visible note when the bytes of an earlier read are gone (changed or deleted file). */
+export const MEDIA_UNAVAILABLE = (path: string): string =>
+  `[The content of ${path} is no longer available: the file changed or was removed after it was read.]`
+
 /** Everything the tools need, resolved at session open. */
 export interface FileToolsEnv {
   fs: FileSystem
@@ -62,6 +108,8 @@ export interface FileToolsEnv {
   allowedExtensions: readonly string[] | undefined
   isUndeletable: ((path: string) => boolean) | undefined
   maxReadChars: number
+  /** Binary file handling of `read_file` (spec 08 §12); default images only, 5 MB. */
+  media?: MediaConfig
   /** Maps adapter exceptions to model text; see `FilesystemOptions.onAdapterError`. */
   onAdapterError?: FilesystemOptions['onAdapterError']
 }
@@ -168,6 +216,136 @@ export function createFileTools(
   names: readonly FileToolName[],
 ): Record<string, Tool> {
   const { fs, lastRead } = env
+  const media: MediaConfig = env.media ?? {
+    images: true,
+    pdf: false,
+    maxBytes: DEFAULT_MEDIA_MAX_BYTES,
+  }
+
+  /** Metadata of `path`; `undefined` when the adapter has no binary support (text only). */
+  const metaOf = async (path: string): Promise<FileMeta | null | undefined> => {
+    if (fs.readBytes === undefined) return undefined
+    if (fs.stat !== undefined) return fs.stat(path)
+    return (await fs.list(path)).find((file) => file.path === path) ?? null
+  }
+  /** The metadata of `path` when it is a binary file. */
+  const binaryMeta = async (path: string): Promise<FileMeta | undefined> => {
+    const meta = await metaOf(path)
+    return meta?.binary === true ? meta : undefined
+  }
+  const binaryText = (path: string, tool: string): string =>
+    `ERROR: ${path} is a binary file; ${tool} only handles text files. Delete it first to replace it.`
+
+  /** Bytes of recently read media, so projecting a long history does not re-read every file. */
+  const mediaCache = new Map<string, Uint8Array>()
+  let mediaCached = 0
+  const remember = (key: string, bytes: Uint8Array): void => {
+    if (bytes.length > MEDIA_CACHE_BYTES) return
+    const old = mediaCache.get(key)
+    if (old !== undefined) {
+      mediaCached -= old.length
+      mediaCache.delete(key)
+    }
+    mediaCache.set(key, bytes)
+    mediaCached += bytes.length
+    for (const [oldest, value] of mediaCache) {
+      if (mediaCached <= MEDIA_CACHE_BYTES) break
+      mediaCache.delete(oldest)
+      mediaCached -= value.length
+    }
+  }
+
+  /** `read_file` of a binary file: a media reference, or an `ERROR:` text. */
+  const readBinary = async (path: string, meta: FileMeta): Promise<string | FileMediaRef> => {
+    const known = meta.mediaType ?? detectMediaType(new Uint8Array(0), path)
+    const tooLarge = (kind: string, size: number): string =>
+      `ERROR: ${kind} ${path} is too large (${size} bytes; the limit is ${media.maxBytes} bytes).`
+    // a size check before reading when the extension already says it is an image or a PDF
+    if (known !== undefined && meta.size > media.maxBytes) {
+      if (MODEL_IMAGE_TYPES.includes(known) && media.images) return tooLarge('image', meta.size)
+      if (known === 'application/pdf' && media.pdf) return tooLarge('PDF', meta.size)
+    }
+    const file = await (fs.readBytes as NonNullable<FileSystem['readBytes']>)(path)
+    if (file === null) return `ERROR: file not found: ${path}`
+    const bytes = file.bytes
+    const mediaType = file.mediaType ?? file.meta.mediaType ?? detectMediaType(bytes, path)
+    lastRead.set(path, file.meta.version)
+    const isImage = mediaType !== undefined && MODEL_IMAGE_TYPES.includes(mediaType)
+    const isPdf = mediaType === 'application/pdf'
+    if (!((isImage && media.images) || (isPdf && media.pdf)) || mediaType === undefined) {
+      return `ERROR: binary file ${path} (${mediaType ?? 'unknown'}, ${bytes.length} bytes); it cannot be shown as text.`
+    }
+    if (bytes.length > media.maxBytes) return tooLarge(isImage ? 'image' : 'PDF', bytes.length)
+    let text: string
+    if (isImage) {
+      const size = imageDimensions(bytes, mediaType)
+      const dimensions = size === undefined ? '' : `${size.width}x${size.height}, `
+      text = `Image ${path} (${dimensions}${bytes.length} bytes, ${mediaType})`
+    } else {
+      text = `PDF ${path} (${bytes.length} bytes, ${mediaType})`
+    }
+    remember(`${path}\0${file.meta.version}`, bytes)
+    return {
+      type: 'media-ref',
+      path,
+      version: file.meta.version,
+      mediaType,
+      bytes: bytes.length,
+      text,
+    }
+  }
+
+  /**
+   * `toModelOutput` of `read_file`: strings stay text; a media reference becomes the text line
+   * plus the image / file part, read again from the file system when it is not cached. A file
+   * that changed or vanished since the read, or a failing adapter, gives text only (never
+   * throws: it runs while the history is projected).
+   */
+  const mediaOutput = async (
+    ref: FileMediaRef,
+  ): Promise<
+    | { type: 'text'; value: string }
+    | {
+        type: 'content'
+        value: Array<
+          | { type: 'text'; text: string }
+          | {
+              type: 'file'
+              mediaType: string
+              data: { type: 'data'; data: string }
+              filename?: string
+            }
+        >
+      }
+  > => {
+    const unavailable = {
+      type: 'text' as const,
+      value: `${ref.text}\n${MEDIA_UNAVAILABLE(ref.path)}`,
+    }
+    try {
+      const key = `${ref.path}\0${ref.version}`
+      let bytes = mediaCache.get(key)
+      if (bytes === undefined) {
+        const meta = await metaOf(ref.path)
+        if (meta === undefined || meta === null || meta.version !== ref.version) return unavailable
+        const file = await (fs.readBytes as NonNullable<FileSystem['readBytes']>)(ref.path)
+        if (file === null || file.meta.version !== ref.version) return unavailable
+        bytes = file.bytes
+        remember(key, bytes)
+      }
+      const part = {
+        type: 'file' as const,
+        mediaType: ref.mediaType,
+        data: { type: 'data' as const, data: bytesToBase64(bytes) },
+        ...(ref.mediaType === 'application/pdf'
+          ? { filename: ref.path.slice(ref.path.lastIndexOf('/') + 1) }
+          : {}),
+      }
+      return { type: 'content', value: [{ type: 'text', text: ref.text }, part] }
+    } catch {
+      return unavailable
+    }
+  }
 
   const hiddenText = (path: string): string => `ERROR: file not found: ${path}`
   const policy = (path: string, what: 'write' | 'delete'): string | undefined => {
@@ -232,7 +410,7 @@ export function createFileTools(
     }),
 
     read_file: tool({
-      description: `Read a text file. Returns numbered lines (at most ${READ_LINE_LIMIT} per call); use offset/limit to page through long files and charOffset to continue a very long line. Read a file before editing, overwriting or deleting it.`,
+      description: `Read a text file. Returns numbered lines (at most ${READ_LINE_LIMIT} per call); use offset/limit to page through long files and charOffset to continue a very long line.${media.images ? ` Images${media.pdf ? ' and PDFs' : ''} are shown to you as such.` : media.pdf ? ' PDFs are shown to you as such.' : ''} Read a file before editing, overwriting or deleting it.`,
       inputSchema: z.object({
         path: pathSchema,
         offset: z.number().int().min(1).optional().describe('First line to read (1-based)'),
@@ -249,11 +427,22 @@ export function createFileTools(
           .optional()
           .describe('Character offset inside the first line (to continue a very long line)'),
       }),
-      execute: async ({ path: input, offset, limit, charOffset }): Promise<string> => {
+      toModelOutput: async ({ output }) =>
+        isFileMediaRef(output)
+          ? mediaOutput(output)
+          : { type: 'text', value: typeof output === 'string' ? output : JSON.stringify(output) },
+      execute: async ({
+        path: input,
+        offset,
+        limit,
+        charOffset,
+      }): Promise<string | FileMediaRef> => {
         const resolved = resolvePath(input)
         if (!resolved.ok) return resolved.text
         const path = resolved.path
         if (isUnderAny(path, env.hidden)) return hiddenText(path)
+        const binary = await binaryMeta(path)
+        if (binary !== undefined) return readBinary(path, binary)
         const entry = await fs.read(path)
         if (entry === null) return `ERROR: file not found: ${path}`
         const window = renderWindow(
@@ -283,6 +472,7 @@ export function createFileTools(
         if (path === '/') return 'ERROR: invalid path: the path does not name a file'
         const denied = policy(path, 'write')
         if (denied !== undefined) return denied
+        if ((await binaryMeta(path)) !== undefined) return binaryText(path, 'write_file')
         const current = await fs.read(path)
         if (current !== null) {
           const problem = freshness(current, 'overwriting')
@@ -349,6 +539,7 @@ export function createFileTools(
           ]
         const denied = policy(path, 'write')
         if (denied !== undefined) return denied
+        if ((await binaryMeta(path)) !== undefined) return binaryText(path, 'edit_file')
         const current = await fs.read(path)
         if (current === null) return `ERROR: file not found: ${path} (use write_file to create it)`
         const problem = freshness(current, 'editing')
@@ -392,10 +583,20 @@ export function createFileTools(
         const path = resolved.path
         const denied = policy(path, 'delete')
         if (denied !== undefined) return denied
-        const current = await fs.read(path)
+        const binary = await binaryMeta(path)
+        const current: { path: string; version: string } | null = binary ?? (await fs.read(path))
         if (current === null) return `ERROR: file not found: ${path}`
-        const problem = freshness(current, 'deleting')
-        if (problem !== undefined) return problem
+        if (binary !== undefined) {
+          const known = lastRead.get(path)
+          if (known === undefined) return `ERROR: read ${path} with read_file before deleting it.`
+          if (known !== binary.version) {
+            lastRead.set(path, binary.version)
+            return `STALE: ${path} changed since you last read it; read it again before deleting it.`
+          }
+        } else {
+          const problem = freshness(current as FileEntry, 'deleting')
+          if (problem !== undefined) return problem
+        }
         const result = await fs.delete(path, { ifVersion: current.version })
         if (!result.ok) {
           if (result.reason === 'missing') {
@@ -525,6 +726,7 @@ export function createFileTools(
       (file) => isUnder(file.path, root) && listed(file.path, root),
     )
     for (const file of files) {
+      if (file.binary === true) continue
       const entry = await fs.read(file.path)
       if (entry === null) continue
       const lines = splitLines(entry.content)

@@ -1,11 +1,108 @@
 # Subagents
 
-A subagent is a second agent that a tool runs for one delegated task. eharness has no special
-subagent runtime: the tool opens a **child session**, streams its progress into the parent
-message as **preliminary tool results**, and reports the child's token usage to the parent turn
-with **`ctx.turn.addUsage()`** so token caps and USD budgets count it. Runnable:
-[`examples/subagent-tool.ts`](../../examples/subagent-tool.ts). A ready-made `subagent()` plugin
-is on the [roadmap](../plans/roadmap.md).
+`eharness/subagent` adds the `agent` tool: the model delegates a self-contained task to another
+agent, which runs as a **child session** with its own history, tools and plugins, and gets back a
+final report. Contract: [spec 20](../specs/20-subagent-plugin.md). Design:
+[ADR-0034](../decisions/0034-deployment-profiles.md) (three deployment profiles),
+[ADR-0035](../decisions/0035-nested-approvals-park-the-parent.md) (nested approvals).
+
+```ts
+import { defineHarnessAgent } from 'eharness'
+import { subagents } from 'eharness/subagent'
+
+const explorer = defineHarnessAgent({ model, storage, instructions: 'Read and report. Be brief.', tools: { read_file } })
+
+const main = defineHarnessAgent({
+  model,
+  storage, // the same storage: the child registers in the parent's state
+  plugins: [
+    subagents({
+      agents: { explore: { agent: explorer, description: 'Reads the codebase and reports', maxTurns: 12 } },
+      approvals: 'policy', // see "The three strategies"
+    }),
+  ],
+})
+```
+
+What you get: progress of the child as **preliminary tool outputs** (`SubagentProgress`: status,
+steps, last tool, latest text; UI only), the child's tokens and cost added to the parent turn
+(`ctx.turn.addUsage`, so budgets count them), abort propagation (aborting the parent turn aborts
+the child), a depth limit (`maxDepth`, default 2), a per-depth concurrency cap (`maxConcurrent`,
+default 8) and a persisted data part `data-subagent.run` `{ toolCallId, sessionId, agent, status }`
+so a UI can open the child transcript (`explorer.session(sessionId).messages()`) after a reload.
+Children are found again with `parentSession.children()`.
+
+## The three strategies for the child's approvals
+
+A child can stop `tool-pending` (an approval, or a client tool such as `ask_user_question`).
+`approvals` decides who answers.
+
+| `approvals` | Profile | What happens |
+|---|---|---|
+| `'policy'` | (a) autonomous server | answered automatically: `policy: 'deny'` (default; the child reads "No user is available; this action is not allowed in autonomous mode.") or `'approve'`. Client tool calls get an error text. Nothing ever waits. |
+| `'inline'` | (b) CLI, one process | `answer(request, signal)` is awaited in process; the child continues with `respond()`. Return `{ approved, reason?, note?, remember? }` for approvals and `{ output }` / `{ errorText }` for client tools. |
+| `'park'` | (c) web + server, restarts, several instances | the parent parks as an external wait; you answer the **child** session later, from any instance. |
+
+### Inline
+
+```ts
+subagents({
+  agents,
+  approvals: 'inline',
+  answer: async (request, signal) => {
+    if (request.type === 'client-tool') return { errorText: 'Not supported here.' }
+    const ok = await ui.confirm(`${request.agent} wants to run ${request.toolName}`, signal)
+    return ok ? { approved: true } : { approved: false, reason: 'Not now; try another way.' }
+  },
+})
+```
+
+### Park
+
+```ts
+const holder: { main?: HarnessAgent } = {}
+const worker = defineHarnessAgent({
+  model, storage,
+  tools: { deploy },
+  approval: { policy: { deploy: 'user-approval' } },
+  plugins: [subagentChild({ parent: () => holder.main! })],   // resolves the parent's wait when the child finishes
+})
+const main = (holder.main = defineHarnessAgent({
+  model, storage,
+  plugins: [subagents({ agents: { worker: { agent: worker, description: '...' } }, approvals: 'park', timeoutMs: 3_600_000 })],
+}))
+```
+
+1. The parent turn calls `agent`; the child runs. When it stops `tool-pending`, the **parent stops
+   `tool-pending` too**, with an external wait whose payload names the child and its pending items
+   (`await session.pendingWaits()`). Nothing is held in memory.
+2. Show the question to the user. List what waits, from any instance:
+   `await pendingSubagentApprovals(main.session(parentId), worker)`.
+3. Answer the child: `worker.session(childId).respond({ approvals: [{ id, approved: true }] })`.
+   It may stop `tool-pending` again; repeat.
+4. When the child's turn completes, in whichever instance, its `turn.end` hook (from
+   `subagentChild`) resolves the parent's wait with the final report and the parent continues by
+   itself, in the same assistant message. A child error or abort resolves it with an `ERROR:` text.
+
+Rules: install `subagentChild()` (or `subagents({ parentAgent })`) on every instance that can
+complete a child turn, use storage with `setIf` or a lock (as for any external wait), and set
+`timeoutMs` so a forgotten approval does not park the parent forever. A restart between the park
+and the answer loses nothing. There is no live progress and no `run_in_background` in this
+strategy. The continuation run that the child's completion starts on the parent is drained and
+stored; pass `onParentRun` to stream it to the user.
+
+## Background children
+
+`background: true` (inline and policy only) adds `run_in_background`. The call returns at once; when
+the child finishes, the plugin injects an `eh.event` into the parent with `ctx.session.inject`
+(`deliver: 'next-step'`, `wake: true`): a running parent sees it at its next step, an idle one
+wakes. The report is stored in the history, so it survives a UI restart.
+
+## Appendix: the manual pattern
+
+The plugin is a convenience; a subagent is just a tool that opens a child session. If you need
+something the plugin does not offer, this is the whole mechanism. Runnable:
+[`examples/subagent-tool.ts`](../../examples/subagent-tool.ts).
 
 ```ts
 import { type LanguageModelUsage, readUIMessageStream, tool } from 'ai'

@@ -48,8 +48,19 @@ export const pendingServices: WeakMap<SessionRuntime, Map<string, unknown>> = ne
 
 /** Create the context object of `plugin` in session `rt`. */
 export function createContext(rt: SessionRuntime, plugin: string): HarnessContext {
-  const parent = rt.options.parent
-  const session = parent === undefined ? { id: rt.id } : { id: rt.id, parent: { ...parent } }
+  const session: HarnessContext['session'] = {
+    id: rt.id,
+    get parent() {
+      const parent = rt.options.parent ?? rt.state.core().parent
+      return parent === undefined ? undefined : { ...parent }
+    },
+    inject: async (kind, data, options) => {
+      if (rt.inject === undefined) {
+        throw new HarnessError('EH_SESSION_CLOSED', `Session '${rt.id}' is not available.`)
+      }
+      return (await rt.inject(kind, data, options)) as never
+    },
+  }
   const services = createServices(rt, plugin)
   const stream = createPluginWriter(rt, plugin)
   const state = rt.state.plugin(plugin)

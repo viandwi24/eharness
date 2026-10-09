@@ -10,6 +10,7 @@ describe('memoryFs() conformance', () => {
     requireStat: true,
     requireGrep: true,
     requireMove: true,
+    requireBytes: true,
   })) {
     test(c.name, c.run)
   }

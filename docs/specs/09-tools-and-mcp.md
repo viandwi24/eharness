@@ -175,6 +175,9 @@ toolOutput?: {
 - A tool's own `toModelOutput` is bypassed for the `{ truncated: true, … }` form (it is sent as
   a `json` output), because that form no longer has the shape the converter expects (e.g. MCP
   `CallToolResult`s).
+- Media outputs (spec 08 §12) are not limited: `read_file` stores a small `media-ref` object and its
+  `toModelOutput` produces the image; a custom tool that returns base64 inside its output is limited
+  like any structured output (return a reference and read the bytes in `toModelOutput` instead).
 - Every limited result raises `W_TOOL_OUTPUT_LIMITED` (details: `tool`, `toolCallId`,
   `originalChars`, `maxChars`, `strategy`).
 - The guard (spec 06 §6) and the compaction transcript use the same truncation helper.

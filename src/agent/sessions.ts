@@ -99,6 +99,11 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
         owner,
         id,
         options: { ...options },
+        openSession: (sessionId, sessionOptions) => agent.session(sessionId, sessionOptions),
+        isLive: (sessionId) => {
+          const live = sessions.get(sessionId)
+          return live !== undefined && !live.rt.closed
+        },
         messages: storage.messages,
         state: storage.state,
         ...(storage.inbox === undefined ? {} : { inbox: storage.inbox }),

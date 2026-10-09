@@ -39,13 +39,27 @@ Code, Codex, OpenCode, Pi, …) behind one surface. eharness is for building **y
 
 - A **library** (`eharness` on npm), ESM-only, runs on Node ≥ 22 and Bun.
 - A **skeleton**: core runtime + contracts + small reference plugins (`filesystem` with a memory
-  adapter, `todos`, `memory`, `guard`, `group`) + tool sources (MCP, OpenAPI) + memory storage
+  adapter, `todos`, `memory`, `guard`, `group`, `permissions`, `subagent`, `ask`, `web`) + Node-only modules
+  (`filesystem/node`, `shell`) + tool sources (MCP, OpenAPI) + memory storage
   adapters (messages, state, inbox, budget ledger) + conformance test suites.
 - **Idiomatic AI SDK**: the stream is the AI SDK UI message stream; messages are `UIMessage`;
   tools are `tool()`; models are `LanguageModel`.
 - **Adapter-driven where it matters**: message storage, session state, the optional durable
   inbox, the optional budget ledger, filesystems and skill sources are small contracts the developer implements for their own
   infrastructure.
+
+## Deployment profiles
+
+Three product shapes are first-class, and every module must work in all of them (ADR-0034):
+
+1. **Autonomous server**: no human, no approvals; policy bypass plus budgets, progress guard and
+   sandboxing.
+2. **Single-process interactive**: a CLI/TUI; approvals answered in process, user-selected mode.
+3. **Split web/server**: the browser is only a UI; pending state lives in storage and answers can
+   reach any instance (external waits, parked parents, ADR-0027, ADR-0035).
+
+Human interaction is an optional hook, never a requirement; Node-only capabilities live in
+separate subpaths (ADR-0036).
 
 ## What eharness is not
 
@@ -55,7 +69,7 @@ Code, Codex, OpenCode, Pi, …) behind one surface. eharness is for building **y
   developer's code (the contracts are two or three methods).
 - Not a pricing service. It computes cost estimates from prices the application supplies (a record,
   a function or the models.dev database the app fetched); it never fetches anything itself.
-- Not a sandbox/shell runtime (v0). Sandboxing is a future plugin built on the same service model.
+- Not a sandbox product. `eharness/shell` drives a sandbox (AI SDK sandbox sessions, optional OS tools) but ships no isolation technology of its own.
 - Not a replacement for AI SDK Harnesses or for eve.
 
 ## Principles

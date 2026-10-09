@@ -17,16 +17,20 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Context and compaction](compaction.md) | summarization, markers, context stats, the guard, overflow recovery |
 | [Approvals and interaction](approvals-and-interaction.md) | tool approval by policy or risk, audit hook, approval inbox, client tools, regenerate/edit, steer, queue, wake |
 | [Approval guard](guard.md) | `approvalGuard()`: an LLM judge that can only tighten, the restricted transcript, cache, circuit breaker, cost |
+| [Permissions](permissions.md) | `eharness/permissions`: rules, modes, plan mode, shell analysis, protected paths; autonomous, CLI and web/server setups |
 | [Frontend tools and page context](client-tools.md) | request-declared client tools and page context: opt-in, validation, approval, timeouts, the cache cost |
 | [External waits](external-waits.md) | `externalTool()`: park a turn on a webhook / job / person, `resolveWait()` from any instance, timeouts, `expireWaits()` |
 | [Structured output](structured-output.md) | typed final answers: `output: { schema }`, tool vs native mode, retries, `'output-invalid'`, storage |
 | [Long-running turns](long-running-turns.md) | step budget, wrap-up, progress guard (`'stuck'`), continuations, stop reasons |
 | [Models and cost](models-and-cost.md) | model catalog, models.dev, `costUsd`, nested usage, USD budgets, [budgets across sessions](models-and-cost.md#budgets-across-sessions) (`budget.ledger`) |
+| [Shell](shell.md) | the `shell()` plugin: `bash` with live output, background tasks and wake-ups, the local sandbox and OS isolation, profiles (server, CLI, web) |
 | [Todos](todos.md) | the `todos()` plugin: checklist tool, rendering, reminders, enforcement |
 | [Memory](memory.md) | the `memory()` plugin: per-user memory files, read-only roots, pinned files, audit, provider memory tools |
 | [OpenAPI tools](openapi-tools.md) | `openApiTools()`: curate operations, base URL and auth, risk and approval, limits |
 | [Group chat](group-chat.md) | `groupChat()`: answer only when addressed, history of missed messages, bot-to-bot loop limit |
-| [Subagents](subagents.md) | a tool that runs a child session with live progress, usage and cost |
+| [Ask the user](ask.md) | `askUser()`: multiple-choice questions, answering through the pending state, non-interactive fallback |
+| [Web fetch and search](web.md) | `webFetch()` safety rules and `webSearch()` provider recipes |
+| [Subagents](subagents.md) | the `subagents()` plugin: child sessions, approvals inline / parked / by policy, background children, the manual pattern |
 | [Testing](testing.md) | `scriptedModel`, asserting on prompts and results, conformance suites |
 | [Coding agent example](../../examples/coder/README.md) | a terminal coding agent built only on the public API: virtual workspace, permission rules, subagents, Ink UI |
 | [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |

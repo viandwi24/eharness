@@ -147,8 +147,60 @@ export interface SessionStateSnapshot {
      * items and steers are deduped by the `inboxId` of their stored messages).
      */
     inboxDelivered?: string[]
+    /** Set when this session is a child session (`SessionOptions.parent`, spec 05 §13). */
+    parent?: ParentInfo
+    /**
+     * Child sessions opened with this session as `parent` (spec 05 §13): append-only, capped at
+     * 500 (oldest dropped), written by the children themselves (foreign-writable like
+     * `abortRequest`), never by the owner of this session.
+     */
+    children?: ChildSessionInfo[]
+    /** Set when this session was created by `session.fork()` (spec 05 §14). */
+    forkedFrom?: { sessionId: string; beforeMessageId?: string; at: number }
   }
   plugins: Record<string, Record<string, JSONValue>>
+}
+
+/**
+ * The parent of a child session (`SessionOptions.parent`), as stored in the child's state and
+ * returned by `session.parentInfo()`.
+ *
+ * @see docs/specs/05-session-and-storage.md#13-parent-and-child-sessions
+ */
+export interface ParentInfo {
+  sessionId: string
+  turnId: string
+  toolCallId?: string
+  depth: number
+}
+
+/**
+ * A child session of a parent, as stored in the parent's state and returned by
+ * `session.children()` (`createdAt` is epoch ms of the registration).
+ *
+ * @see docs/specs/05-session-and-storage.md#13-parent-and-child-sessions
+ */
+export interface ChildSessionInfo {
+  sessionId: string
+  turnId: string
+  toolCallId?: string
+  createdAt: number
+}
+
+/**
+ * Options of `session.fork()`.
+ *
+ * @see docs/specs/05-session-and-storage.md#14-fork
+ */
+export interface ForkOptions {
+  /** Copy the messages with an id strictly before this one (default: all messages). */
+  beforeMessageId?: string
+  /** Id of the new session (default: a generated UUIDv7). Must not exist yet. */
+  id?: string
+  /** `SessionOptions.runtime` of the new session. */
+  runtime?: Record<string, unknown>
+  /** `'all'` (default): copy usage, grants, plugin state and the compaction/rewind pointers; `'none'`: copy no state. */
+  copyState?: 'all' | 'none'
 }
 
 /**
@@ -380,7 +432,7 @@ export interface SessionOptions {
   /** Keep app-level metadata keys sent by the client on user messages. Default false. */
   acceptClientMetadata?: boolean
   /** Marks a child session (subagent). Depth > 8 is rejected. */
-  parent?: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+  parent?: ParentInfo
 }
 
 /**
@@ -682,6 +734,26 @@ export interface HarnessSession<
   compact(): Promise<M | null>
   /** Forget session approval grants. */
   clearGrants(): Promise<void>
+  /**
+   * Create a new session from the messages of this one (before `beforeMessageId`, default all) and
+   * the state that stays valid for them; the lineage is stored in the new state's
+   * `core.forkedFrom`. Message ids are kept. Rejects with `EH_SESSION_BUSY` while a turn of this
+   * session runs (here or in another instance), `EH_INVALID_INPUT` when the copy would include a
+   * pending message, the new id exists, or `id` is this session's, `EH_STORAGE`, or
+   * `EH_SESSION_CLOSED`. Returns the opened handle of the new session (cached in the agent).
+   *
+   * @see docs/specs/05-session-and-storage.md#14-fork
+   */
+  fork(options?: ForkOptions): Promise<HarnessSession<M, Kinds>>
+  /**
+   * Child sessions that registered with this session as their `parent`, oldest first, read from
+   * the stored state (works in any instance, after restarts).
+   *
+   * @see docs/specs/05-session-and-storage.md#13-parent-and-child-sessions
+   */
+  children(): Promise<ChildSessionInfo[]>
+  /** The stored `parent` of this session, `undefined` for a root session. */
+  parentInfo(): Promise<ParentInfo | undefined>
   /**
    * Record the result of an external wait (`externalTool()`, spec 11 §4.2) from any instance:
    * validated against the tool's `outputSchema`, passed through `tool.after` and the output

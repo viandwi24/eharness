@@ -57,7 +57,7 @@ The rules that make them safe for a model:
   lost race answers `CONFLICT:`.
 - **Smart replace.** `edit_file` tries an exact match, then a line-trimmed match, then a
   whitespace-normalized match; an ambiguous match is an error, never a guess.
-- **Adapter errors are text too.** An exception thrown by the adapter (a binary or oversized file,
+- **Adapter errors are text too.** An exception thrown by the adapter (an oversized file,
   an I/O failure) reaches the model as `ERROR: <message>`; map or rethrow it with
   `filesystem({ onAdapterError: (error, { tool, path }) => string | undefined })`.
 - **Errors are text.** Results start with `ERROR:`, `STALE:`, `CONFLICT:` or `REJECTED:` (policy).
@@ -106,6 +106,80 @@ With `skills: { root }`, every `<root>/<name>/SKILL.md` becomes a skill, and the
 hidden from the file tools (`hideSkillsRoot`, default `true`) so the model uses the skill tools
 instead. Without the plugin, `fsSkillSource(fs, { root, refresh })` is the same skill source on its
 own. See [skills](skills.md).
+
+## Images and binary files
+
+With an adapter that has `readBytes` / `writeBytes` (`memoryFs`, `diskFs`, `mountFs`),
+`read_file` on a PNG, JPEG, GIF or WebP shows the image to the model, next to a line like
+`Image /shots/a.png (640x480, 18231 bytes, image/png)`. PDFs are off by default (not every
+provider takes them): `filesystem({ fs, media: { pdf: true } })`. Other binary files answer
+`ERROR: binary file …; it cannot be shown as text.`, `write_file` / `edit_file` refuse them, and
+`grep` skips them.
+
+```ts
+filesystem({ fs: memoryFs({ '/shots/a.png': pngBytes }), media: { images: true, maxBytes: 2_000_000 } })
+```
+
+The stored message keeps only a small reference (`{ type: 'media-ref', path, version, … }`); the
+bytes are read again from the file system whenever the history is sent to the model. If the file
+changed or was deleted since, the model reads a text note instead of the image. Write binary
+files from your app with `fs.writeBytes(path, bytes)`. A custom adapter adds `readBytes`,
+`writeBytes` and `FileMeta.binary` and checks them with
+`fileSystemConformance(factory, { requireBytes: true })`. See spec 08 §12.
+
+## Real directories: `eharness/filesystem/node`
+
+For an agent that works on files on disk (a CLI, a server with a checkout), `diskFs(root)` is a
+ready adapter. It refuses symlink escapes, hides `.git`, `node_modules` and the root `.gitignore`
+from listings (a documented subset of the syntax, no nested files), keeps file modes on write,
+lists binary files (and shows images to the model), rejects oversized text files with a readable error, and uses ripgrep for `grep` when it is
+on `PATH` (JavaScript otherwise). Node-only: the subpath imports `node:` built-ins.
+
+```ts
+import { filesystem } from 'eharness/filesystem'
+import { diskFs, nodeWorkspace } from 'eharness/filesystem/node'
+
+filesystem({ fs: diskFs(process.cwd(), { ignore: { hidden: ['dist/'] } }) })
+
+// a project plus extra directories and a folder for evicted tool outputs
+const ws = await nodeWorkspace({
+  root: process.cwd(),
+  extraDirs: ['/home/me/shared-lib'], // visible at /@dirs/shared-lib/
+  toolOutputsDir: '.agent/tool-outputs', // visible at /.eharness/tool-outputs/
+})
+filesystem({ fs: ws.fs })
+await ws.addDirectory('/home/me/another') // mounted at runtime, visible immediately
+ws.toReal('/@dirs/shared-lib/a.ts') // → real path, or null
+```
+
+`mountFs(() => [{ virtual: '/', fs }, { virtual: '/docs/', fs: otherFs, readonly: true }])`
+composes any adapters by longest prefix. A move across mounts is copy-then-delete, not atomic.
+
+## Undo the agent's edits: checkpoints
+
+`filesystem({ checkpoints: store })` saves what a file held before the first change of each turn.
+Later, `rewindFiles` puts the files back:
+
+```ts
+import { checkpointsSince, filesystem, rewindFiles } from 'eharness/filesystem'
+import { diskFs, nodeCheckpointStore } from 'eharness/filesystem/node'
+
+const fs = diskFs(root)
+const store = nodeCheckpointStore('.agent/checkpoints') // JSON files; survives restarts
+const agent = defineHarnessAgent({ model, plugins: [filesystem({ fs, checkpoints: store })] })
+
+// "rewind code to just before this message"
+const point = userMessage.id // the turn key of a turn with input
+const preview = await checkpointsSince({ store, sessionId, fromTurnKey: point, fs })
+const { restored, deleted, failed } = await rewindFiles({ fs, store, sessionId, fromTurnKey: point })
+```
+
+Only changes made through the file tools (and other writers of the `fs` service) are tracked, not
+shell commands or edits made outside the agent. Turns without a user message (`respond`,
+`regenerate`, wake) are keyed by the turn id. Rewinding files does not touch the conversation;
+combine it with a session fork if you also want that. `memoryCheckpointStore()` is for tests; for
+a web app with separate server processes implement the four-method `CheckpointStore` over your
+database.
 
 ## Your own adapter
 

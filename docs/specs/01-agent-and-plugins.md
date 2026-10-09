@@ -298,8 +298,20 @@ export interface HarnessContext<DP extends DataPartMap = {}> {
   readonly agent: { id: string }
   readonly session: {
     id: string
-    /** Set for child sessions (subagents), spec 05 §1. */
-    parent?: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+    /**
+     * Set for child sessions (subagents), spec 05 §13: the `SessionOptions.parent`, else the link
+     * stored in the session state, so it is also set when another instance opens an existing child.
+     */
+    readonly parent?: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+    /**
+     * `session.inject()` of THIS session (spec 05 §2, spec 11 §6.3), for tools, hooks and background
+     * work. `deliver: 'next-step'` lands at the next step boundary of the running turn;
+     * `wake: true` on an idle session starts a turn and returns its `run` (the caller drives it).
+     * Same validation and errors as `session.inject()` (`EH_INVALID_INPUT`, `EH_SESSION_CLOSED`).
+     * Never await it from the plugin's `session()` phase: the session is still opening.
+     */
+    inject(kind: string, data: unknown, options?: InjectOptions):
+      Promise<{ message: HarnessUIMessage; run?: HarnessRun }>
   }
   readonly plugin: { name: string }            // the plugin this ctx belongs to ('app' for root)
 

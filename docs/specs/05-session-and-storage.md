@@ -23,11 +23,12 @@ export interface SessionOptions {
   acceptClientMetadata?: boolean
   /**
    * Marks a child session (e.g. a subagent run by a tool). Exposed as ctx.session.parent.
-   * The core only records it (message metadata `parentId` is unrelated, spec 03 §3) and rejects
+   * The core records it durably (state `core.parent`, and an entry in the parent's
+   * `core.children`, §13; message metadata `parentId` is unrelated, spec 03 §3) and rejects
    * depth > 8 with EH_CONFIG_INVALID when the session opens (ready() / run error). Child usage is
    * reported to the parent turn with ctx.turn.addUsage() by the plugin that runs the child.
    */
-  parent?: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+  parent?: ParentInfo   // { sessionId: string; turnId: string; toolCallId?: string; depth: number }
 }
 ```
 
@@ -109,6 +110,12 @@ export interface HarnessSession<
   compact(): Promise<M | null>
   /** Forget session approval grants (spec 11 §3.1). */
   clearGrants(): Promise<void>
+  /** Create a new session from (a prefix of) this one (P31, §14). */
+  fork(options?: ForkOptions): Promise<HarnessSession<M, Kinds>>
+  /** Child sessions registered with this session as `parent`, from the stored state (P31, §13). */
+  children(): Promise<ChildSessionInfo[]>
+  /** The stored `parent` of this session (P31, §13). */
+  parentInfo(): Promise<ParentInfo | undefined>
 
   /**
    * Read history for UIs: newest `limit` (default 50) before `beforeId`, chronological. Never
@@ -666,6 +673,12 @@ export interface SessionStateSnapshot {
     abortRequest?: { turnId: string; at: number; reason?: string; by?: string }
     /** Ids of the last 100 `wake` inbox items applied to this session (§12 rule 5, dedupe). */
     inboxDelivered?: string[]
+    /** This session is a child session (P31, §13). */
+    parent?: ParentInfo
+    /** Child sessions opened with this session as `parent`; append-only, capped at 500, written by the children (P31, §13). */
+    children?: ChildSessionInfo[]
+    /** This session was created by `session.fork()` (P31, §14). */
+    forkedFrom?: { sessionId: string; beforeMessageId?: string; at: number }
   }
   plugins: Record<string, Record<string, JSONValue>>    // plugins[<plugin name>][key]
 }
@@ -681,14 +694,21 @@ export interface PluginState {
   turn as an early failure with `EH_SESSION_BUSY` (another instance changed the session: e.g.
   consumed the same pending answers). `stateAdapterConformance()` checks `setIf` when present;
   an atomic `setIf` also enables cross-process abort (§9.1).
-- **One foreign-writable field.** While a turn runs, the owner is the only writer of the state,
-  except `core.abortRequest`, which another instance may write (§9.1). So every owner write
+- **Foreign-writable fields.** While a turn runs, the owner is the only writer of the state,
+  except `core.abortRequest`, which another instance may write (§9.1), and `core.children`, which
+  child sessions append to (§13; the same precedent: a field with exactly one kind of foreign
+  write, a CAS-guarded append). So every owner write
   during a turn (heartbeat, step-time writes such as compaction, the end-of-turn write) uses
   `setIf` when the adapter has it; on conflict the owner re-reads, takes over the stored
-  `abortRequest` (a request for another turn id is dropped) and the stored `rev`, and retries
-  (at most 5 times). If the stored state no longer names the turn as active (another instance
-  recovered it as stale, §9), the write is skipped; at the end of the turn the owner then reloads
-  the stored state (theirs wins). Without `setIf` the writes stay plain `set`s.
+  `abortRequest` (a request for another turn id is dropped), the stored `children` and the stored
+  `rev`, and retries (at most 5 times). If the stored state no longer names the turn as active
+  (another instance recovered it as stale, §9), the write is skipped; at the end of the turn the
+  owner then reloads the stored state (theirs wins). Writes outside a turn (close, `clearGrants()`)
+  with `setIf` are compare-and-sets too: on conflict they take over the stored `children` and
+  `rev` and retry (then fall back to a plain `set`), so an idle owner never erases children. The
+  commit-point write treats a conflict that only added `children` as no conflict (re-read, retry),
+  so a child registering while the parent is idle never fails the parent's next turn. Without
+  `setIf` the writes stay plain `set`s (a registration racing an owner write may be lost, §13).
 - Loaded once at session open (and on cache invalidation); written at the commit point
   (`activeTurn`), during the turn only for heartbeats (§9), at the end of each turn, after
   compaction, after `respond()` consumes pending state, and on `close()` — only if something
@@ -1121,3 +1141,77 @@ acked after `onDeadLetter` ran ("bring a dead table").
 The poll interval is the latency without `subscribe` and the safety net for lost notifications
 with it; the core never claims from a session that is not live in its process. `wake` items are
 written by `inject(…, { wake: true })` when a live foreign turn runs (spec 11 §6.3).
+
+## 13. Parent and child sessions (P31)
+
+`SessionOptions.parent` is durable and indexed (R10), so that a UI or an operator can list the
+child sessions of a turn from **any** instance, after restarts (ADR-0034 profiles: no in-memory
+index).
+
+1. **Child side.** When a session with `options.parent` opens, it registers in the parent's state
+   (rule 2) and then records `state.core.parent = ParentInfo` in its own state (written at once).
+   A child whose state already holds the same `parent` does nothing (reopening is idempotent). A
+   failing registration is logged (`log.warn`) and never fails the open; `core.parent` is not
+   recorded then, so the next open retries.
+2. **Parent side: `core.children`.** `{ sessionId, turnId, toolCallId?, createdAt }[]`,
+   append-only, capped at 500 (the oldest are dropped), deduplicated by `sessionId`. It is a
+   **foreign-writable** field (§7, like `abortRequest`, §9.1): the child's runtime writes the
+   parent's state **directly through its own `StateAdapter`** — read, append, `setIf(rev)`, re-read
+   and retry on conflict (at most 12 times, with a short random backoff). The parent may be a
+   session of another agent in another process, as long as both use the same state storage; the
+   owner of the parent never writes the list itself (it only takes over the stored one on
+   conflict, §7). A parent without stored state is **not created** (nothing to attach to; it also
+   keeps a child using a different state store from creating phantom parent states) — the child
+   still opens normally. Without `setIf` the registration is a plain read-modify-write: a race
+   with another registration or with an owner write may lose an entry (the `core.parent` of the
+   child stays the source of truth; `children()` is an index).
+3. **Reads.** `session.children()` returns `core.children` of the **stored** state (oldest first,
+   always fresh: no cache), `session.parentInfo()` the stored `core.parent` (falling back to
+   `options.parent` before the first write). Both reject with `EH_SESSION_CLOSED` after `close()`
+   and `EH_STORAGE` when the adapter fails; they work without opening the session.
+4. Message metadata `parentId` (spec 03 §3) is unrelated to this.
+
+## 14. Fork (P31)
+
+```ts
+export interface ForkOptions {
+  beforeMessageId?: string            // copy the messages with id < beforeMessageId (default: all)
+  id?: string                         // id of the new session (default: generated UUIDv7)
+  runtime?: Record<string, unknown>   // SessionOptions.runtime of the new session (default: this session's)
+  copyState?: 'all' | 'none'          // default 'all'
+}
+session.fork(options?): Promise<HarnessSession<M, Kinds>>
+```
+
+Creates a new session from a **prefix** of this one (rewind the conversation, branch). Storage is
+the same as this session's (messages, state, inbox) so it works in every deployment profile
+(ADR-0034): no in-memory index, any instance can fork a session another instance wrote.
+
+1. **Refusals** (nothing is written): `EH_SESSION_BUSY` while a turn of this session runs here or
+   a live turn of another instance owns the stored `activeTurn` (§9); `EH_INVALID_INPUT`
+   (`details.reason`): `'pending'` when the copy would include the pending message (the message
+   in `state.core.pending`; fork before it, or answer first), `'active-turn'` when it would
+   include the message of an unfinished (stale) `activeTurn` (send a message to recover the
+   session first), `'exists'` when the new id is stored or open in this agent, `'same-id'`,
+   `'id'`, `'before-message-id'` or `'copy-state'` for bad options; `EH_STORAGE`;
+   `EH_SESSION_CLOSED`.
+2. **Messages.** Copied with the `MessageAdapter` in batches of 200, newest first, with
+   `load({ beforeId, limit })` and `save()`; **ids are kept** (they stay time-sortable and storage
+   is keyed by session, so they cannot collide; `messages.parentId` references and rewind /
+   compaction marker ids stay valid). Kind messages are copied as they are. The copy is a strict
+   prefix, so a marker never points past the cut: a rewind or compaction marker **after** the
+   cut is simply not copied (and a rewind that hid messages before the cut does not hide them in
+   the fork). Messages hidden by a copied rewind stay stored and hidden.
+3. **State** (`copyState: 'all'`, written once after the messages with `setIf(…, null)` or
+   `set`): `usage` and `grants` (copied), `plugins` (copied, deep), `compaction` (computed from
+   the copied messages: the newest copied `eh.compaction` marker with its `resumeFromId`; absent
+   when no marker was copied) and `rewinds` (the copied `eh.rewind` markers). Never copied:
+   `activeTurn`, `pending`, `abortRequest`, `inboxDelivered`, `parent`, `children`.
+   `copyState: 'none'` copies none of it (the pointers are healed from the copied messages at
+   load, §5).
+4. **Lineage.** Always: `core.forkedFrom = { sessionId, beforeMessageId?, at }` (epoch ms).
+5. The new session is opened through the agent (`agent.session(newId, …)`, options inherited from
+   this session except `parent` and `runtime`) and returned **after `ready()`**; the handle is
+   the cached one. Commit point: the state write. A failure while copying leaves orphaned
+   messages under the new id (`'exists'` on a retry with the same id: pick another).
+

@@ -23,9 +23,9 @@ export interface LoadedContext {
   warnings: HarnessWarning[]
 }
 
-type Loose = { id?: unknown; metadata?: unknown; parts?: unknown }
+export type Loose = { id?: unknown; metadata?: unknown; parts?: unknown }
 
-function isBoundary(message: Loose, registry: MessageRegistry): boolean {
+export function isBoundary(message: Loose, registry: MessageRegistry): boolean {
   const kind = kindOf(message)
   return kind !== undefined && registry.kind(kind)?.def.boundary === true
 }

@@ -4,7 +4,12 @@
  */
 import type { LanguageModel, Tool, UIMessageChunk } from 'ai'
 import type { AgentInternals } from '../agent/internals.ts'
-import type { MessageAdapter, SessionEvent, SessionOptions } from '../agent/session-types.ts'
+import type {
+  InjectOptions,
+  MessageAdapter,
+  SessionEvent,
+  SessionOptions,
+} from '../agent/session-types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import type { HarnessContext, HarnessLogger, TurnInfo } from '../plugin/types.ts'
@@ -93,6 +98,12 @@ export interface SessionRuntime {
   warn(warning: HarnessWarning, key?: string): void
   /** Next message id respecting the per-session floor. */
   nextId(): string
+  /** `session.inject` of the session handle (set once the handle exists), for `ctx.session.inject`. */
+  inject?: (
+    kind: string,
+    data: unknown,
+    options?: InjectOptions,
+  ) => Promise<{ message: unknown; run?: unknown }>
   /** Context object of one plugin (`'app'` for the root plugin). */
   contextOf(plugin: string): HarnessContext
   /** Insert or replace a message in the hot cache (id order) and track the newest id. */

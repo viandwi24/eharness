@@ -8,8 +8,24 @@
  */
 import type { FileSystem, ToolOutputStore } from './types.ts'
 
+export {
+  type CheckpointKey,
+  type CheckpointRecord,
+  type CheckpointStore,
+  checkpointedFs,
+  checkpointsSince,
+  checkpointTurnKey,
+  DEFAULT_CHECKPOINT_KEEP_TURNS,
+  type FileCheckpoint,
+  type FileSnapshot,
+  type MemoryCheckpointStoreOptions,
+  memoryCheckpointStore,
+  type RewindFilesResult,
+  rewindFiles,
+} from './checkpoints.ts'
 export { classifyToolResult, type FileToolResultKind } from './classify.ts'
 export { type CompiledGlob, compileGlob } from './glob.ts'
+export { bytesToBase64, detectMediaType, imageDimensions, looksBinary } from './media.ts'
 export { normalizePath } from './paths.ts'
 export {
   DEFAULT_MAX_READ_CHARS,
@@ -18,7 +34,9 @@ export {
   filesystem,
 } from './plugin.ts'
 export { type FsSkillSourceOptions, fsSkillSource } from './skill-source.ts'
+export { type FileMediaRef, isFileMediaRef } from './tools.ts'
 export type {
+  BinaryFile,
   DeleteResult,
   FileChangeData,
   FileEntry,
@@ -31,7 +49,7 @@ export type {
   ToolOutputStore,
   WriteResult,
 } from './types.ts'
-export { contentVersion } from './version.ts'
+export { bytesVersion, contentVersion } from './version.ts'
 
 declare module 'eharness' {
   interface HarnessServices {

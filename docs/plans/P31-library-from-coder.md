@@ -61,8 +61,8 @@ when it is product policy (the coder's permission UX, slash commands, settings f
 |---|---|
 | R1 | Nested approvals across processes: park a parent turn while a child session waits for a person |
 | R9 | Binary files / images in `FileSystem` and file parts to the model |
-| R10 | Parent/child session index (`session.children()`), child session id on the agent tool's final output |
-| — | `session.fork(beforeMessageId?)` in core (rewind conversation, branch) |
+| R10 | Parent/child session index (`session.children()`), child session id on the agent tool's final output — **core done** (`children()`, `parentInfo()`, spec 05 §13, ADR-0037); the child id on the agent tool's output is example/subagent work |
+| — | `session.fork(beforeMessageId?)` in core (rewind conversation, branch) — **done** (spec 05 §14, ADR-0037) |
 
 ## Order
 

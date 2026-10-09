@@ -10,14 +10,17 @@ import type {
   AbortRequestResult,
   CollectOptions,
   EnqueueResult,
+  ForkOptions,
   HarnessRun,
   HarnessSession,
   InboxAdapter,
   MessageAdapter,
+  ParentInfo,
   PendingResponse,
   SendInput,
   SendOptions,
   SessionOptions,
+  SessionStateSnapshot,
   StateAdapter,
   SteerDelivery,
 } from '../agent/session-types.ts'
@@ -46,6 +49,7 @@ import { buildSessionSkills } from '../skills/registry.ts'
 import { createRun, failedRun } from '../stream/run.ts'
 import { createContext, defaultLogger, pendingServices } from './context.ts'
 import { createEventHub } from './events.ts'
+import { copyMessages, registerChild } from './family.ts'
 import { createHookRunner } from './hooks.ts'
 import { collectDue, mergeInputs, resolveCollect } from './inbox/collect.ts'
 import {
@@ -114,6 +118,13 @@ export function createSessionHandle(args: {
   owner: string
   id: string
   options: SessionOptions
+  /** Open another session of the agent (`agent.session`), for `fork()`. */
+  openSession(
+    id: string,
+    options: SessionOptions,
+  ): HarnessSession<UIMessage, Record<string, unknown>>
+  /** A live handle of `id` is cached in the agent. */
+  isLive(id: string): boolean
   messages: MessageAdapter
   state: StateAdapter
   /** Optional durable inbox (spec 05 §12). */
@@ -224,6 +235,7 @@ export function createSessionHandle(args: {
     }
     await rt.state.load()
     stateFresh = true
+    if (parent !== undefined) await linkParent(parent)
     const services = new Map<string, unknown>()
     pendingServices.set(rt, services)
     const disposers: OpenSession['disposers'] = []
@@ -370,6 +382,40 @@ export function createSessionHandle(args: {
         } catch {}
       }
       throw error
+    }
+  }
+
+  /**
+   * A child session records its parent in its own state and registers in the parent's
+   * `core.children` (a foreign write through the state adapter, spec 05 §13). Best effort: a
+   * failure is logged and retried by the next open (the child's `core.parent` is only recorded
+   * after the registration went through).
+   */
+  async function linkParent(parent: ParentInfo): Promise<void> {
+    const core = rt.state.core()
+    const known = core.parent
+    if (
+      known !== undefined &&
+      known.sessionId === parent.sessionId &&
+      known.turnId === parent.turnId &&
+      known.toolCallId === parent.toolCallId
+    ) {
+      return
+    }
+    try {
+      await registerChild(args.state, parent.sessionId, {
+        sessionId: id,
+        turnId: parent.turnId,
+        ...(parent.toolCallId === undefined ? {} : { toolCallId: parent.toolCallId }),
+        createdAt: Date.now(),
+      })
+      core.parent = { ...parent }
+      rt.state.markDirty()
+      await rt.state.writeIfDirty()
+    } catch (error) {
+      log.warn(`eharness: could not register session '${id}' as a child of '${parent.sessionId}'`, {
+        error,
+      })
     }
   }
 
@@ -1454,6 +1500,118 @@ export function createSessionHandle(args: {
       touch()
       return waits.pendingWaits()
     },
+    async fork(options: ForkOptions = {}) {
+      assertOpen()
+      touch()
+      const { beforeMessageId, copyState = 'all' } = options
+      const invalid = (message: string, reason: string): HarnessError =>
+        new HarnessError('EH_INVALID_INPUT', message, { details: { reason, sessionId: id } })
+      if (options.id !== undefined && (typeof options.id !== 'string' || options.id === '')) {
+        throw invalid('fork({ id }) must be a non-empty string.', 'id')
+      }
+      if (beforeMessageId !== undefined && beforeMessageId === '') {
+        throw invalid('fork({ beforeMessageId }) must be a non-empty string.', 'before-message-id')
+      }
+      if (copyState !== 'all' && copyState !== 'none') {
+        throw invalid("fork({ copyState }) must be 'all' or 'none'.", 'copy-state')
+      }
+      const newId = options.id ?? internals.generateId()
+      if (newId === id) throw invalid('A session cannot fork into itself.', 'same-id')
+      if (rt.running) throw busyError(id)
+      // a turn of this session may not be mid-flight: flush our state, then read the stored one
+      if (rt.state.loaded) await rt.state.writeIfDirty()
+      const stored = await rt.state.peek()
+      if (rt.running) throw busyError(id)
+      if (liveForeignTurn(stored, rt.owner, staleForDrain) !== undefined) throw busyError(id)
+      const included = (messageId: string): boolean =>
+        beforeMessageId === undefined || messageId < beforeMessageId
+      const unfinished = stored?.core.activeTurn
+      if (unfinished !== undefined && included(unfinished.messageId)) {
+        throw invalid(
+          'The history to copy ends with a turn that did not finish; recover the session (send a message) first.',
+          'active-turn',
+        )
+      }
+      const pending = stored?.core.pending
+      if (pending !== undefined && pending !== null && included(pending.messageId)) {
+        throw invalid(
+          'The history to copy includes a message that waits for answers (pending approvals); respond first or fork before it.',
+          'pending',
+        )
+      }
+      if (args.isLive(newId)) throw invalid(`Session '${newId}' is already open.`, 'exists')
+      try {
+        const taken =
+          (await args.state.get(newId)) !== null ||
+          (await args.messages.load({ sessionId: newId, limit: 1 })).length > 0
+        if (taken) throw invalid(`Session '${newId}' already exists.`, 'exists')
+      } catch (error) {
+        throw storageError('fork', error)
+      }
+      const copied = await copyMessages({
+        adapter: args.messages,
+        from: id,
+        to: newId,
+        ...(beforeMessageId === undefined ? {} : { beforeId: beforeMessageId }),
+        registry: internals.messages,
+      })
+      const all = copyState === 'all'
+      const core = stored?.core
+      const snapshot: SessionStateSnapshot = {
+        v: 1,
+        rev: 1,
+        core: {
+          ...(all && copied.compaction !== undefined ? { compaction: copied.compaction } : {}),
+          ...(all && core?.usage !== undefined ? { usage: { ...core.usage } } : {}),
+          ...(all && core?.grants !== undefined ? { grants: { ...core.grants } } : {}),
+          ...(all && copied.rewinds.length > 0 ? { rewinds: copied.rewinds } : {}),
+          forkedFrom: {
+            sessionId: id,
+            ...(beforeMessageId === undefined ? {} : { beforeMessageId }),
+            at: Date.now(),
+          },
+        },
+        plugins: all ? structuredClone(stored?.plugins ?? {}) : {},
+      }
+      try {
+        if (args.state.setIf !== undefined) {
+          if (!(await args.state.setIf(newId, snapshot, null))) {
+            throw invalid(`Session '${newId}' already exists.`, 'exists')
+          }
+        } else {
+          await args.state.set(newId, snapshot)
+        }
+      } catch (error) {
+        throw storageError('fork', error)
+      }
+      const { parent: _parent, runtime, ...inherited } = rt.options
+      const forked = args.openSession(newId, {
+        ...inherited,
+        storage: {
+          messages: args.messages,
+          state: args.state,
+          ...(args.inbox === undefined ? {} : { inbox: args.inbox }),
+        },
+        ...((options.runtime ?? runtime) === undefined
+          ? {}
+          : { runtime: (options.runtime ?? runtime) as Record<string, unknown> }),
+      })
+      await forked.ready()
+      return forked as never
+    },
+    async children() {
+      assertOpen()
+      touch()
+      const stored = await rt.state.peek()
+      return structuredClone(stored?.core?.children ?? [])
+    },
+    async parentInfo() {
+      assertOpen()
+      touch()
+      const stored = await rt.state.peek()
+      const parent = stored?.core?.parent ?? rt.options.parent
+      return parent === undefined ? undefined : { ...parent }
+    },
     async clearGrants() {
       assertOpen()
       await ensureOpen()
@@ -1642,6 +1800,7 @@ export function createSessionHandle(args: {
           },
           settled: () => checkIdle(),
         })
+  rt.inject = (kind, data, options) => session.inject(kind as never, data as never, options)
   touch()
   return { session, rt, close }
 }
