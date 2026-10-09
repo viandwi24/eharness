@@ -100,9 +100,11 @@ The call returns at once with `Started background subagent <task id> (<type>): <
 be notified when it finishes.` The task id is the `subagentTasks` registry id (`agent-1`, …), the
 same id the UI and the completion notice use. The child runs detached (concurrency cap applies, aborted when the
 parent session closes) and on completion the plugin calls `ctx.session.inject('eh.event', { name:
-'subagent', text, data: { sessionId, agent, status } }, { deliver: 'next-step', wake: true })`: a
+'subagent', text, data: { sessionId, agent, status, taskId, name? } }, { deliver: 'next-step', wake: true })`: a
 running parent sees it at its next step boundary, an idle one wakes. The event is a stored message,
-so it survives restarts of the UI process. The report is capped at 4 000 characters. An inject that
+so it survives restarts of the UI process. `text` starts `Background subagent <task id> ["<name>"] (<type>:
+<description>) finished.` (`Resumed subagent …` after a resume, `failed` / `was stopped`), then the report; it
+names the task id and agent name, never the child session id (that stays in `data`). The report is capped at 4 000 characters. An inject that
 fails (parent closed) is logged. Approvals follow the configured strategy; a wake run is not driven
 by anyone — observe it with `session.onRun()` (in process, spec 05 §2.1) or `session.events()`.
 

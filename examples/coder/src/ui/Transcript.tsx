@@ -169,6 +169,9 @@ function useRunStart(running: boolean): number {
   return started.current
 }
 
+/** Terminal rows kept free for what renders below the live tail (indicator, dialog, prompt, footer). */
+const LIVE_RESERVE = 12
+
 /** Finished entries once in `<Static>`, then the live assistant message. */
 export function Transcript({
   state,
@@ -187,7 +190,14 @@ export function Transcript({
   // <Static> lays its items out absolutely, without the terminal width: give each entry the width
   // explicitly, or a row like `⏺ text` wraps its text at the full width plus the bullet column and
   // the terminal hard-wraps the overflow mid-word.
-  const { columns } = useWindowSize()
+  const { columns, rows } = useWindowSize()
+  // Only the uncommitted tail of the live message is rendered live (see `committableCount`).
+  const tail: CoderMessage | null =
+    live && live.parts.length > state.committed
+      ? state.committed === 0
+        ? live
+        : { ...live, parts: live.parts.slice(state.committed) }
+      : null
   return (
     <>
       <Static key={state.epoch} items={state.entries}>
@@ -203,14 +213,27 @@ export function Transcript({
           </Box>
         )}
       </Static>
-      {live ? (
-        <MessageView
-          message={live}
-          expanded={state.expanded}
-          bash={state.bash}
-          timing={state.timing}
-          focus={focus}
-        />
+      {tail ? (
+        // Defensive cap: a tail taller than the terminal would be repainted into the scrollback
+        // on every frame. Clip it to the last `rows - LIVE_RESERVE` lines (the prompt, footer and
+        // dialogs live below), like Claude Code showing the tail of long streaming output.
+        <Box
+          flexDirection="column"
+          justifyContent="flex-end"
+          overflowY="hidden"
+          maxHeight={Math.max(4, rows - LIVE_RESERVE)}
+          flexShrink={0}
+        >
+          <Box flexDirection="column" flexShrink={0}>
+            <MessageView
+              message={tail}
+              expanded={state.expanded}
+              bash={state.bash}
+              timing={state.timing}
+              focus={focus}
+            />
+          </Box>
+        </Box>
       ) : null}
       {waiting ? (
         <ThinkingIndicator startedAt={startedAt} {...(tokens !== undefined ? { tokens } : {})} />

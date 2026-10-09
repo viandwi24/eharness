@@ -170,3 +170,49 @@ describe('session.onRun', () => {
     await agent.close()
   })
 })
+
+describe('wake turn with an approval', () => {
+  test('wake, approval, respond: the continuation stream answers the approval before the tool runs', async () => {
+    const capture: { ctx?: HarnessContext } = {}
+    const agent = setup(
+      [{ text: 'first' }, { toolCalls: [{ toolName: 'danger', input: {} }] }, { text: 'after' }],
+      capture,
+    )
+    const session = agent.session('s1')
+    const seen: AnyRun[] = []
+    session.onRun((run) => seen.push(run))
+    await session.send('hi').result
+    await (capture.ctx as HarnessContext).session.inject(
+      'eh.event',
+      { name: 'job', text: 'job finished' },
+      { deliver: 'next-step', wake: true },
+    )
+    await until('wake announced', () => seen.length === 2)
+    const wake = seen[1] as AnyRun
+    const parked = await wake.result
+    expect(parked.stop).toBe('tool-pending')
+    const wakeChunks = await collect(wake.stream)
+    const request = wakeChunks.find((c) => c.type === 'tool-approval-request') as
+      | { approvalId: string }
+      | undefined
+    expect(request).toBeDefined()
+    const run = session.respond({
+      approvals: [{ id: parked.pending?.approvals[0]?.approvalId as string, approved: true }],
+    })
+    const chunks = await collect(run.stream)
+    expect((await run.result).stop).toBe('complete')
+    const types = chunks.map((c) => c.type)
+    expect(types.indexOf('tool-approval-response')).toBeGreaterThan(-1)
+    expect(types.indexOf('tool-approval-response')).toBeLessThan(
+      types.indexOf('tool-output-available'),
+    )
+    expect(chunks.find((c) => c.type === 'tool-approval-response')).toMatchObject({
+      approvalId: request?.approvalId,
+      approved: true,
+    })
+    expect((chunks[0] as { messageId?: string }).messageId).toBe(
+      (wakeChunks[0] as { messageId?: string }).messageId,
+    )
+    await agent.close()
+  })
+})

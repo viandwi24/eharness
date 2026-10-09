@@ -50,10 +50,45 @@ const AGENT_FRAME = /^<agent-message from="([^"]*)"[^>]*>\n?([\s\S]*?)\n?<\/agen
  * `← reviewer: text` line; `undefined` when the text is not one.
  */
 export function agentMessageLine(text: string): string | undefined {
-  const match = AGENT_FRAME.exec(text.trim())
+  const frame = EVENT_FRAME.exec(text.trim())
+  const match = AGENT_FRAME.exec(
+    frame !== null && frame[1] === 'agent-message' ? (frame[2] ?? '').trim() : text.trim(),
+  )
   if (match === null) return undefined
   const body = (match[2] ?? '').replace(/\s+/g, ' ').trim()
   return `← ${match[1]}: ${body.length > 200 ? `${body.slice(0, 199)}…` : body}`
+}
+
+const EVENT_FRAME = /^<event name="([^"]*)">([\s\S]*?)<\/event>\s*$/
+const SUBAGENT_HEAD =
+  /^(Background|Resumed) subagent (\S+)(?: "([^"]*)")? \(([^:)]*?)(?:: ([\s\S]*?))?\) (finished|failed|was stopped)\.(?:\n\n([\s\S]*))?$/
+
+/**
+ * A subagent completion event (`eh.event` name `subagent`) as a dim `⏺ writer finished · type ·
+ * first line of the report` line plus, expanded, the full report. `text` is the event text (the
+ * data-eh.input part only carries the model framing `<event name="subagent">…</event>`, which is
+ * unwrapped here); `undefined` when it is not a subagent report.
+ */
+export function subagentEventLine(
+  text: string,
+  data?: { name?: unknown; agent?: unknown; taskId?: unknown; status?: unknown },
+): { head: string; report: string[] } | undefined {
+  const frame = EVENT_FRAME.exec(text.trim())
+  if (frame !== null && frame[1] !== 'subagent') return undefined
+  const body = frame === null ? text.trim() : (frame[2] ?? '')
+  const m = SUBAGENT_HEAD.exec(body)
+  if (m === null) return undefined
+  const who =
+    (typeof data?.name === 'string' && data.name !== '' ? data.name : undefined) ?? m[3] ?? m[2]
+  const verb = m[1] === 'Resumed' ? `${m[6]} (resumed)` : m[6]
+  const type = typeof data?.agent === 'string' ? data.agent : m[4]
+  const lines = (m[7] ?? '').split('\n').filter((l) => l.trim() !== '')
+  const first = (lines[0] ?? '').replace(/\s+/g, ' ').trim()
+  const clipped = first.length > 160 ? `${first.slice(0, 159)}…` : first
+  return {
+    head: `${sym.bullet} ${who} ${verb} · ${type}${clipped === '' ? '' : ` · ${clipped}`}`,
+    report: lines,
+  }
 }
 
 /**
@@ -66,10 +101,12 @@ export function SteeredInput({
   source,
   text,
   approvalNote,
+  expanded = false,
 }: {
   source: string
   text: string
   approvalNote?: { text: string }
+  expanded?: boolean
 }): ReactElement | null {
   if (source === 'user') {
     if (approvalNote !== undefined) {
@@ -87,6 +124,29 @@ export function SteeredInput({
     )
   }
   if (source === 'event') {
+    const sub = subagentEventLine(text)
+    if (sub !== undefined) {
+      const rest = sub.report.slice(1)
+      return (
+        <Box marginTop={1} flexDirection="column">
+          <Text dimColor>{sub.head}</Text>
+          {expanded ? (
+            rest.map((line, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: static report lines
+              <Text key={i} dimColor>
+                {'  '}
+                {line}
+              </Text>
+            ))
+          ) : rest.length > 0 ? (
+            <Text dimColor>
+              {'  '}
+              {sym.ellipsis} +{rest.length} lines (ctrl+o to expand)
+            </Text>
+          ) : null}
+        </Box>
+      )
+    }
     return (
       <Box marginTop={1}>
         <Text dimColor>{agentMessageLine(text) ?? `· ${text}`}</Text>
@@ -127,6 +187,11 @@ function kindLine(message: CoderMessage): string {
     const line = agentMessageLine(String(part.data.text ?? ''))
     if (line !== undefined) return line
   }
+  if (kind === 'eh.event' && part?.data?.name === 'subagent') {
+    const data = (part.data.data ?? undefined) as Parameters<typeof subagentEventLine>[1]
+    const sub = subagentEventLine(String(part.data.text ?? ''), data)
+    if (sub !== undefined) return sub.head
+  }
   const text = part?.data && typeof part.data.message === 'string' ? `: ${part.data.message}` : ''
   return `${kind.replace(/^eh\./, '')}${text}`
 }
@@ -153,7 +218,9 @@ export function MessageView({
     const line = kindLine(message)
     return (
       <Box marginTop={1}>
-        <Text dimColor>{line.startsWith('← ') ? line : `── ${line} ──`}</Text>
+        <Text dimColor>
+          {line.startsWith('← ') || line.startsWith(`${sym.bullet} `) ? line : `── ${line} ──`}
+        </Text>
       </Box>
     )
   }
@@ -211,6 +278,7 @@ export function MessageView({
               key={key}
               source={data.source ?? 'user'}
               text={data.text}
+              expanded={expanded}
               {...(typeof note?.text === 'string' ? { approvalNote: { text: note.text } } : {})}
             />
           )

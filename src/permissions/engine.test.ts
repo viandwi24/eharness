@@ -996,7 +996,6 @@ describe('finding 2: Read rules cover directories, globs and mounts', () => {
       'cat .e[n]v',
       'cat sec*/a',
       'cat < .e*',
-      `grep -r KEY ${extra}`,
     ]) {
       const d = engine.decide(bash(c))
       expect([c, d.status]).toEqual([c, 'user-approval'])
@@ -1004,6 +1003,29 @@ describe('finding 2: Read rules cover directories, globs and mounts', () => {
     }
     // dontAsk turns the ask into a denial
     expect(status(make('dontAsk', rules).decide(bash('cat .e*')))).toBe('denied')
+  })
+
+  test('a recursive directory read is not covered by the built-in .env ask', () => {
+    for (const mode of ['default', 'acceptEdits', 'plan'] as const) {
+      const engine = make(mode)
+      for (const c of [
+        'grep -rn "export" src',
+        'grep -rn export src',
+        'grep -r KEY .',
+        'grep -rn KEY',
+        'rg KEY',
+        `grep -r KEY ${extra}`,
+      ]) {
+        expect([mode, c, status(engine.decide(bash(c)))]).toEqual([mode, c, 'approved'])
+      }
+    }
+    // a glob that names env files and an explicit file still ask
+    expect(status(make('default').decide(bash('cat .e*')))).toBe('user-approval')
+    expect(status(make('default').decide(bash('grep KEY .env')))).toBe('user-approval')
+    // a user rule still covers the subtree of a recursive read
+    expect(status(make('default', { ask: ['Read(.env*)'] }).decide(bash('grep -rn x src')))).toBe(
+      'user-approval',
+    )
   })
 
   test('a deny rule that could match still asks in bypassPermissions', () => {

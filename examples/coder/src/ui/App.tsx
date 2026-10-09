@@ -443,8 +443,12 @@ export function App({
   const openTranscript = useCallback(() => {
     const current = stateRef.current
     const entries: Entry[] = [...current.entries]
-    if (current.live && current.live.parts.length > 0) {
-      entries.push({ kind: 'message', id: `live:${current.live.id}`, message: current.live })
+    if (current.live && current.live.parts.length > current.committed) {
+      entries.push({
+        kind: 'message',
+        id: `live:${current.live.id}`,
+        message: { ...current.live, parts: current.live.parts.slice(current.committed) },
+      })
     }
     openPage({ kind: 'transcript', title: 'Transcript', entries })
   }, [openPage])
@@ -593,6 +597,7 @@ export function App({
         applyEditorMode: setEditorMode,
         toggleFocus: () => {
           setFocus((f) => {
+            dispatch({ type: 'set-focus', focus: !f })
             dispatch({ type: 'system', text: `Focus view ${f ? 'off' : 'on'}.` })
             return !f
           })

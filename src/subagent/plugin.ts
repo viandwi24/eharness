@@ -1683,7 +1683,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       finishEntry(extra.entry, stopped ? 'stopped' : status)
       marker(status === 'completed' ? 'done' : 'failed')
       const outcome = stopped ? 'stopped' : status
-      const head = `${extra.resumed === true ? 'Resumed subagent' : 'Background subagent'} ${sessionId} (${agentName}: ${label}) ${
+      const who = `${taskId}${extra.name === undefined ? '' : ` "${extra.name}"`}`
+      const head = `${extra.resumed === true ? 'Resumed subagent' : 'Background subagent'} ${who} (${agentName}: ${label}) ${
         stopped ? 'was stopped' : status === 'completed' ? 'finished' : 'failed'
       }.`
       try {

@@ -11,7 +11,7 @@
  * matches a `Read` rule. A `Read` deny match denies the command, a `Read` ask match (including the
  * built-in `Read(.env*)`) or an outside path asks. A directory read recursively (`grep -r KEY .`)
  * or a glob (`cat .e*`) "covers its subtree": when any `Read` deny/ask rule could match something
- * in it the command asks. This holds in default, plan and acceptEdits mode; bypassPermissions skips
+ * in it the command asks (the built-in `.env*` ask covers globs only, so `grep -rn x src` runs). This holds in default, plan and acceptEdits mode; bypassPermissions skips
  * the containment and ask checks (deny rules still apply, and a deny rule that could match asks).
  *
  * File tools of kind `read` that list directories are approved on a directory and their output
@@ -334,8 +334,9 @@ function readRuleCovering(
   rules: readonly ParsedRule[],
   command: string,
   env: Env,
+  globsOnly = false,
 ): ParsedRule | undefined {
-  const cover = bashReadAccess(command, env).cover
+  const cover = bashReadAccess(command, env).cover.filter((c) => !globsOnly || !c.subtree)
   if (cover.length === 0) return undefined
   return readRulesOf(rules, env).find(
     (rule) =>
@@ -663,8 +664,8 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     const bash = kind === 'shell' ? commandOf(call, tools.spec(name)) : undefined
     const readRule = (list: ParsedRule[]): ParsedRule | undefined =>
       bash === undefined ? undefined : readRuleForCommand(list, bash, e)
-    const coverRule = (list: ParsedRule[]): ParsedRule | undefined =>
-      bash === undefined ? undefined : readRuleCovering(list, bash, e)
+    const coverRule = (list: ParsedRule[], globsOnly = false): ParsedRule | undefined =>
+      bash === undefined ? undefined : readRuleCovering(list, bash, e, globsOnly)
     const editRules = (list: ParsedRule[]): ParsedRule | undefined =>
       list.find((rule) => targets.some((real) => editRuleMatchesPath(rule, real, e)))
     const readOnly = bash !== undefined && isReadOnlyCommand(bash, e.ro)
@@ -759,7 +760,9 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
           reason: 'Environment files may hold secrets: asks first.',
         }
       }
-      const coveredSoft = coverRule(e.builtinAsk)
+      // a recursive directory read (`grep -rn export src`) is not "reading .env": only a glob
+      // that names such files (`cat .e*`) asks; user deny/ask rules above still cover subtrees
+      const coveredSoft = coverRule(e.builtinAsk, true)
       if (coveredSoft !== undefined) {
         return {
           status: 'user-approval',

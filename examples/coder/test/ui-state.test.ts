@@ -276,3 +276,138 @@ describe('turn clock and redraw', () => {
     expect(after.entries).toEqual(before.entries)
   })
 })
+
+describe('progressive commit (committableCount)', () => {
+  const tool = (id: string, state: string, extra: Record<string, unknown> = {}): unknown => ({
+    type: 'tool-read_file',
+    toolCallId: id,
+    state,
+    input: { path: `/${id}.ts` },
+    ...extra,
+  })
+  const live = (s: ViewState, message: CoderMessage): ViewState =>
+    reduce(s, { type: 'live', message, now: 1 })
+  const sendMessage = (id: string, state: string, preliminary?: boolean): unknown => ({
+    type: 'tool-agent',
+    toolCallId: id,
+    state,
+    input: { description: 'd', prompt: 'p' },
+    output: {
+      type: 'agent-progress',
+      agent: 'writer',
+      description: 'd',
+      sessionId: 's',
+      status: 'running',
+    },
+    ...(preliminary === undefined ? {} : { preliminary }),
+  })
+
+  test('finished parts move to entries in order; the streaming tail stays live', () => {
+    let s = reduce(initialState(), { type: 'turn-started' })
+    s = live(
+      s,
+      assistant('m1', [
+        { type: 'step-start' },
+        { type: 'text', text: 'first', state: 'done' },
+        tool('a', 'output-available', { output: 'x' }),
+        tool('b', 'output-error', { errorText: 'e' }),
+        tool('c', 'input-available'),
+        tool('d', 'output-available', { output: 'y' }),
+      ]),
+    )
+    // d is final but follows a part that can still change: stays live (order)
+    expect(s.committed).toBe(4)
+    const chunk = s.entries.at(-1)
+    expect(chunk?.kind === 'message' && chunk.message.parts.length).toBe(4)
+    expect(chunk?.id).toBe('m:m1')
+    // the tool finishes: the rest commits, as a second chunk with a distinct id
+    s = live(
+      s,
+      assistant('m1', [
+        { type: 'step-start' },
+        { type: 'text', text: 'first', state: 'done' },
+        tool('a', 'output-available', { output: 'x' }),
+        tool('b', 'output-error', { errorText: 'e' }),
+        tool('c', 'output-available', { output: 'z' }),
+        tool('d', 'output-available', { output: 'y' }),
+        { type: 'text', text: 'tail', state: 'streaming' },
+      ]),
+    )
+    expect(s.committed).toBe(6)
+    expect(new Set(s.entries.map((e) => e.id)).size).toBe(s.entries.length)
+    s = reduce(s, { type: 'turn-finished' })
+    const messages = s.entries.filter((e) => e.kind === 'message')
+    expect(messages.flatMap((e) => (e.kind === 'message' ? e.message.parts : [])).length).toBe(7)
+    expect(s.committed).toBe(0)
+    expect(s.live).toBeNull()
+  })
+
+  test('never commits streaming text, reasoning, approvals, preliminary or trailing text', () => {
+    let s = reduce(initialState(), { type: 'turn-started' })
+    for (const parts of [
+      [{ type: 'text', text: 'a', state: 'streaming' }],
+      [{ type: 'text', text: 'a', state: 'done' }],
+      [{ type: 'reasoning', text: 'r', state: 'streaming' }],
+      [tool('a', 'approval-requested')],
+      [tool('a', 'input-streaming')],
+      [sendMessage('a', 'output-available', true)],
+    ]) {
+      s = live(s, assistant('m1', parts))
+      expect(s.committed).toBe(0)
+    }
+    s = live(s, assistant('m1', [{ type: 'reasoning', text: 'r', state: 'done' }]))
+    expect(s.committed).toBe(1)
+  })
+
+  test('a committed part is never printed again, and the tail is not duplicated', () => {
+    let s = reduce(initialState(), { type: 'turn-started' })
+    const parts = [tool('a', 'output-available', { output: 'x' }), tool('b', 'input-available')]
+    s = live(s, assistant('m1', parts))
+    s = live(s, assistant('m1', parts))
+    s = live(s, assistant('m1', [parts[0], tool('b', 'output-available', { output: 'y' })]))
+    s = reduce(s, { type: 'turn-finished' })
+    const ids = s.entries.filter((e) => e.kind === 'message').map((e) => e.id)
+    expect(ids).toEqual(['m:m1', 'm:m1:1'])
+  })
+
+  test('a committed chunk is a copy: later mutation of the snapshot does not change it', () => {
+    let s = reduce(initialState(), { type: 'turn-started' })
+    const message = assistant('m1', [
+      tool('a', 'output-available', { output: 'x' }),
+      tool('b', 'input-available'),
+    ])
+    s = live(s, message)
+    ;(message.parts[0] as { output: string }).output = 'mutated'
+    const chunk = s.entries.at(-1)
+    expect(chunk?.kind === 'message' && JSON.stringify(chunk.message.parts)).toContain('"x"')
+  })
+
+  test('focus view and a replaced live message', () => {
+    let s = reduce(initialState(), { type: 'set-focus', focus: true })
+    s = reduce(s, { type: 'turn-started' })
+    s = live(
+      s,
+      assistant('m1', [
+        tool('a', 'output-available', { output: 'x' }),
+        tool('b', 'input-available'),
+      ]),
+    )
+    expect(s.committed).toBe(0)
+    s = reduce(s, { type: 'set-focus', focus: false })
+    s = live(
+      s,
+      assistant('m1', [
+        tool('a', 'output-available', { output: 'x' }),
+        tool('b', 'input-available'),
+      ]),
+    )
+    expect(s.committed).toBe(1)
+    // another message id: what the old one still had is printed, not lost
+    s = live(s, assistant('m2', [{ type: 'text', text: 'new', state: 'streaming' }]))
+    expect(s.committed).toBe(0)
+    expect(s.entries.filter((e) => e.kind === 'message').map((e) => e.id)).toEqual([
+      'm:m1',
+      'm:m1:1',
+    ])
+  })
+})

@@ -191,7 +191,9 @@ servers (profile a) run in `dontAsk`, so such tools are denied there.
 7. **allow rules**. An allow rule never approves a shell command that redirects or `tee`s outside the
    writable roots or to a path it cannot resolve; it asks instead.
 8. **built-in ask rules** (`builtinAsk`, default `Read(.env*)`): asks unless an allow rule names the
-   path. Not in bypass.
+   path. Not in bypass. A directory read recursively (`grep -rn x src`) is **not** covered by the
+   built-in ask (it would make every recursive grep prompt); a glob that could name env files
+   (`cat .e*`) and explicit paths are. User `Read` rules cover subtrees (steps 5, 6).
 9. **mode default** (§3).
 
 A per-call mode (`decide(call, 'plan')`) replaces the engine's mode; the engine's own `dontAsk`

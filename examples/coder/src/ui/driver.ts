@@ -91,6 +91,10 @@ async function drive(
   const batcher = createBatcher(dispatch)
   const consumers: Promise<void>[] = []
   let last: CoderMessage | null = null
+  /** The prompt this drive started is over; runs that arrive now are woken turns (see `late`). */
+  let over = false
+  /** A woken turn (the session started it by itself while idle) is on screen and not finished. */
+  let lateOpen = false
   const consume = async (run: HarnessRun<CoderMessage>): Promise<void> => {
     const reader = run.stream.getReader()
     try {
@@ -135,10 +139,37 @@ async function drive(
     }
   }
 
+  /**
+   * A run that arrives after the prompt ended: the session woke itself (a background task
+   * finished while idle). It is a turn of its own for the view: `turn-started` (so the indicator
+   * and Esc work), the live message, and `turn-finished` (so it lands in the transcript instead
+   * of staying in the live region until the next prompt wipes it). A run that stops for an
+   * approval keeps the turn open: the `respond()` continuation arrives here as the next run.
+   */
+  const late = (run: HarnessRun<CoderMessage>): void => {
+    if (!lateOpen) {
+      lateOpen = true
+      dispatch({ type: 'turn-started', now: Date.now() })
+    }
+    void (async () => {
+      await consume(run)
+      const result = await run.result.catch(() => undefined)
+      if (result?.stop === 'tool-pending') return
+      lateOpen = false
+      batcher.flush()
+      let note: { text: string; tone: 'info' | 'error' } | undefined
+      if (result?.stop === 'error') {
+        note = { text: result.error?.message ?? 'The turn failed.', tone: 'error' }
+      } else if (result?.stop === 'aborted') note = { text: 'Interrupted.', tone: 'info' }
+      dispatch({ type: 'turn-finished', note })
+    })()
+  }
+
   let note: { text: string; tone: 'info' | 'error' } | undefined
   try {
     const result = await start({
       onRun(run) {
+        if (over) return late(run)
         begin()
         consumers.push(consume(run))
       },
@@ -158,6 +189,7 @@ async function drive(
     begin()
     note = { text: error instanceof Error ? error.message : String(error), tone: 'error' }
   }
+  over = true
   if (!started) return false
   batcher.flush()
   dispatch({ type: 'turn-finished', note })

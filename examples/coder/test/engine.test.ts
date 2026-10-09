@@ -539,3 +539,28 @@ describe('auto mode and the mode cycle', () => {
     expect(status(await engine.decideAsync(fileCall(TOOL.edit, '/src/a.ts')))).toBe('approved')
   })
 })
+
+describe('read-only shell reads as the coder configures the engine', () => {
+  // regression: `grep -rn "export" src` asked in acceptEdits (the built-in `.env*` ask covered
+  // the whole subtree of a recursive read)
+  test('a recursive grep over a directory runs without a prompt in every mode', () => {
+    for (const mode of ['default', 'acceptEdits', 'plan'] as const) {
+      for (const command of [
+        'grep -rn "export" src',
+        'grep -rn export src',
+        'grep -rn "export" src | head -20',
+      ]) {
+        expect([mode, command, make(mode).decide(bash(command)).status]).toEqual([
+          mode,
+          command,
+          'approved',
+        ])
+      }
+    }
+  })
+
+  test('naming an env file still asks', () => {
+    expect(make('acceptEdits').decide(bash('grep KEY .env')).status).toBe('user-approval')
+    expect(make('acceptEdits').decide(bash('cat .e*')).status).toBe('user-approval')
+  })
+})

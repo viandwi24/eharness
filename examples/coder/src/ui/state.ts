@@ -35,8 +35,15 @@ export interface ToolTiming {
 /** Everything the UI renders. */
 export interface ViewState {
   entries: Entry[]
-  /** The assistant message of the running turn. */
+  /** The assistant message of the running turn (all parts, committed ones included). */
   live: CoderMessage | null
+  /**
+   * How many leading parts of `live` were already committed to `entries` (progressive commit,
+   * see {@link committableCount}). The live region renders `live.parts.slice(committed)` only.
+   */
+  committed: number
+  /** Focus view is on: nothing is committed early (text is shown only for the final part). */
+  focus: boolean
   running: boolean
   /** Epoch ms the running turn started at (for the elapsed time), when the driver reported it. */
   startedAt?: number
@@ -66,6 +73,8 @@ export type ViewAction =
   | { type: 'reset' }
   | { type: 'load'; messages: CoderMessage[] }
   | { type: 'toggle-expand' }
+  /** Focus view on/off: it disables the progressive commit. */
+  | { type: 'set-focus'; focus: boolean }
   /** Re-print the whole transcript (after the screen was cleared by Ctrl+L). */
   | { type: 'redraw' }
 
@@ -77,6 +86,8 @@ export function initialState(): ViewState {
   return {
     entries: [{ kind: 'header', id: 'header' }],
     live: null,
+    committed: 0,
+    focus: false,
     running: false,
     bash: {},
     timing: {},
@@ -173,6 +184,57 @@ function withSubagents(runs: SubagentRun[], message: CoderMessage): SubagentRun[
   return next
 }
 
+const TERMINAL_TOOL_STATES = new Set(['output-available', 'output-error', 'output-denied'])
+
+/**
+ * Progressive commit rule: how many leading parts of `message` are final and can move from the
+ * live region into `<Static>` (which prints an entry exactly once, so a committed part must never
+ * change again). Parts are committed strictly in order and the scan stops at the first part that
+ * may still change, so stored order = rendered order:
+ *
+ * - `text` and `reasoning`: only when no longer `streaming`; text additionally only when a later
+ *   part follows it (the trailing text stays live until the turn ends);
+ * - tool parts: only in a terminal state (`output-available` / `output-error` / `output-denied`)
+ *   and not a preliminary output (a subagent whose progress is still updating);
+ * - `step-start` and every other part (data parts, files, sources): only when a later part follows.
+ *   The AI SDK reconciles data parts in place by id, but no committed data part is rendered
+ *   (only `data-eh.input` is, and that one is never rewritten), so a stale copy cannot show.
+ *
+ * Indices are stable because chunks only ever append parts (a `respond()` continuation is seeded
+ * with the same message). `structuredClone` of the slice protects the entry from later mutation.
+ */
+export function committableCount(message: CoderMessage, from: number): number {
+  const parts = message.parts
+  let n = from
+  while (n < parts.length) {
+    const part = parts[n]
+    if (part === undefined) break
+    const hasLater = n < parts.length - 1
+    let ok: boolean
+    if (part.type === 'text') {
+      ok = (part as { state?: string }).state !== 'streaming' && hasLater
+    } else if (part.type === 'reasoning') {
+      ok = (part as { state?: string }).state !== 'streaming'
+    } else {
+      const view = toolView(part)
+      if (view) ok = TERMINAL_TOOL_STATES.has(view.state) && !view.preliminary
+      else ok = hasLater
+    }
+    if (!ok) break
+    n++
+  }
+  return n
+}
+
+/** The entry holding `message.parts[from..to)` (a slice of the live message). */
+function chunkEntry(message: CoderMessage, from: number, to: number): Entry {
+  return {
+    kind: 'message',
+    id: from === 0 ? `m:${message.id}` : `m:${message.id}:${from}`,
+    message: { ...message, parts: structuredClone(message.parts.slice(from, to)) },
+  }
+}
+
 /** The pure reducer. */
 export function reduce(state: ViewState, action: ViewAction): ViewState {
   const seq = state.seq + 1
@@ -190,14 +252,31 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
       }
     }
     case 'turn-started':
-      return { ...state, running: true, live: null, startedAt: action.now }
-    case 'live':
-      return {
-        ...state,
-        live: action.message,
-        timing: withTiming(state.timing, action.message, action.now),
-        subagents: withSubagents(state.subagents, action.message),
+      return { ...state, running: true, live: null, committed: 0, startedAt: action.now }
+    case 'live': {
+      const timing = withTiming(state.timing, action.message, action.now)
+      const subagents = withSubagents(state.subagents, action.message)
+      let entries = state.entries
+      let committed = state.committed
+      // a different message replaces the live one: print what the old one still had
+      if (state.live && state.live.id !== action.message.id) {
+        if (state.live.parts.length > committed) {
+          entries = [...entries, chunkEntry(state.live, committed, state.live.parts.length)]
+        }
+        committed = 0
       }
+      if (!state.focus) {
+        const to = committableCount(action.message, committed)
+        if (to > committed) {
+          if (entries === state.entries) entries = [...entries]
+          entries.push(chunkEntry(action.message, committed, to))
+          committed = to
+        }
+      }
+      return { ...state, live: action.message, committed, entries, timing, subagents }
+    }
+    case 'set-focus':
+      return { ...state, focus: action.focus }
     case 'bash-output': {
       const bash = { ...state.bash }
       for (const chunk of action.chunks) {
@@ -208,8 +287,12 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
     }
     case 'turn-finished': {
       const entries = [...state.entries]
-      if (state.live && state.live.parts.length > 0) {
-        entries.push({ kind: 'message', id: `m:${state.live.id}`, message: state.live })
+      if (state.live && state.live.parts.length > state.committed) {
+        entries.push(
+          state.committed === 0
+            ? { kind: 'message', id: `m:${state.live.id}`, message: state.live }
+            : chunkEntry(state.live, state.committed, state.live.parts.length),
+        )
       }
       if (action.note) {
         entries.push({
@@ -231,6 +314,7 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
         entries,
         subagents,
         live: null,
+        committed: 0,
         running: false,
         startedAt: undefined,
       }
@@ -274,6 +358,7 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
         ...initialState(),
         history: state.history,
         expanded: state.expanded,
+        focus: state.focus,
         epoch: state.epoch + 1,
         seq,
       }
@@ -288,6 +373,7 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
         subagents,
         history: state.history,
         expanded: state.expanded,
+        focus: state.focus,
         epoch: state.epoch + 1,
         seq,
         entries: [
