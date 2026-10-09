@@ -92,8 +92,9 @@ started.` when aborted while waiting for a slot. Tools return errors as strings,
 
 ### 2.2 Background (`run_in_background`, `'inline'` / `'policy'`)
 
-The call returns at once with `Started background subagent <id> (<type>): <description>. You will
-be notified when it finishes.` The child runs detached (concurrency cap applies, aborted when the
+The call returns at once with `Started background subagent <task id> (<type>): <description>. You will
+be notified when it finishes.` The task id is the `subagentTasks` registry id (`agent-1`, …), the
+same id the UI and the completion notice use. The child runs detached (concurrency cap applies, aborted when the
 parent session closes) and on completion the plugin calls `ctx.session.inject('eh.event', { name:
 'subagent', text, data: { sessionId, agent, status } }, { deliver: 'next-step', wake: true })`: a
 running parent sees it at its next step boundary, an idle one wakes. The event is a stored message,

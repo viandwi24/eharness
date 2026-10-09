@@ -1148,7 +1148,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         sem.release()
       }
     })()
-    return `Started background subagent ${sessionId} (${agentName}): ${label}. You will be notified when it finishes.`
+    return `Started background subagent ${taskId} (${agentName}): ${label}. You will be notified when it finishes.`
   }
 
   // ─── park: an external tool whose start runs the child's first turn ─────────────────────

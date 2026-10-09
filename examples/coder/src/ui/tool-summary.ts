@@ -200,7 +200,14 @@ function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`
 }
 
-const NON_MCP = new Set(['load_skill', 'read_skill_file', 'search_skills', 'tool_search'])
+const NON_MCP = new Set([
+  'load_skill',
+  'read_skill_file',
+  'search_skills',
+  'tool_search',
+  'bash_output',
+  'kill_shell',
+])
 
 /**
  * Split an MCP tool name into server and tool: `mcp__server__tool`, or `server_tool` for any tool
@@ -477,6 +484,12 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       if (view.state === 'output-available' && !view.preliminary && !/^error:/i.test(text))
         desc.summary = `Did 1 search · ${plural(countSources(text), 'source')}`
       else if (/^error:/i.test(text)) status = 'error'
+      break
+    }
+    case 'bash_output':
+    case 'kill_shell': {
+      desc.label = view.toolName === 'bash_output' ? 'BashOutput' : 'KillShell'
+      desc.target = str(asRecord(view.input).id)
       break
     }
     default: {
