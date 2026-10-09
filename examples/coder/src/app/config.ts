@@ -89,6 +89,7 @@ const settingsSchema = z.object({
   statusLine: z.object({ command: z.string().min(1) }).optional(),
   promptSuggestions: z.boolean().optional(),
   editorMode: z.enum(['normal', 'vim']).optional(),
+  deferTools: z.boolean().optional(),
   hooks: z
     .partialRecord(z.enum(HOOK_EVENTS as [HookEvent, ...HookEvent[]]), z.array(hookEntrySchema))
     .optional(),
@@ -563,6 +564,7 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     cliAgents,
     maxSteps: flags.maxSteps ?? 200,
     maxAgentDepth: 2,
+    deferTools: mergeSettings(layers.map((l) => l.settings)).deferTools ?? true,
     mcpServers,
     print,
     continueLast: flags.continue ?? false,

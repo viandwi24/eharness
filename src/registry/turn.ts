@@ -125,6 +125,26 @@ export async function ensureSessionBlock(
   )
 }
 
+/**
+ * Turn reminder listing the deferred tools by name (spec 02 §3.3), so the model knows they exist
+ * and can load them with `tool_search`. Undefined when no tool is deferred.
+ */
+export function deferredToolsReminder(entries: readonly TurnToolEntry[]): string | undefined {
+  const lines = entries
+    .filter((entry) => entry.tool.deferLoading === true)
+    .map((entry) => {
+      const description = typeof entry.tool.description === 'string' ? entry.tool.description : ''
+      const first = description.split('\n')[0]?.trim() ?? ''
+      const short = first.length > 100 ? `${first.slice(0, 99)}…` : first
+      return short === '' ? `- ${entry.name}` : `- ${entry.name}: ${short}`
+    })
+  if (lines.length === 0) return undefined
+  return [
+    'Deferred tools: these tools exist but their schemas are not loaded. Load one with `tool_search` (for example `select:<name>`, or keywords) before calling it.',
+    ...lines,
+  ].join('\n')
+}
+
 /** The model-visible context of an idle session, resolved like a turn would (no request tools). */
 export interface RegistryInspection {
   /** The three instruction texts of a request (blocks 1–2 and the turn reminder). */
@@ -144,6 +164,7 @@ export interface RegistryInspection {
 export async function inspectRegistry(args: {
   open: OpenSession
   toolOrder?: readonly string[] | undefined
+  deferTools?: readonly string[] | undefined
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
 }): Promise<RegistryInspection> {
@@ -156,7 +177,14 @@ export async function inspectRegistry(args: {
     (e) => e.kind === 'dynamic' && e.refresh === 'turn',
     contextOf,
   )
-  const collected = await collectToolEntries({ open, skills, contextOf, warn: args.warn })
+  const collected = await collectToolEntries({
+    open,
+    skills,
+    contextOf,
+    warn: args.warn,
+    deferTools: args.deferTools,
+  })
+  const deferredText = deferredToolsReminder(collected.entries)
   open.toolOrderWarned ??= new Set()
   return {
     block1: appendBlock(joinParts(staticParts), skills.staticText),
@@ -164,7 +192,7 @@ export async function inspectRegistry(args: {
       open.sessionBlock === '' ? undefined : open.sessionBlock,
       skills.dynamicText,
     ),
-    turnReminder: joinParts(turnParts),
+    turnReminder: appendBlock(joinParts(turnParts), deferredText),
     instructionBlocks: [
       ...staticParts.map((p): InstructionBlock => ({ ...p, refresh: 'static' })),
       ...(skills.staticText === undefined
@@ -175,6 +203,9 @@ export async function inspectRegistry(args: {
         ? []
         : [{ owner: 'core:skills', refresh: 'session' as const, text: skills.dynamicText }]),
       ...turnParts.map((p): InstructionBlock => ({ ...p, refresh: 'turn' })),
+      ...(deferredText === undefined
+        ? []
+        : [{ owner: 'core:tools', refresh: 'turn' as const, text: deferredText }]),
     ],
     entries: applyToolOrder(collected.entries, args.toolOrder, args.warn, open.toolOrderWarned),
   }
@@ -191,6 +222,8 @@ export async function resolveTurnRegistry(args: {
   toolOutput?: ToolOutputConfig | undefined
   /** `config.toolOrder` (spec 02 §6). */
   toolOrder?: readonly string[] | undefined
+  /** `config.deferTools` (spec 02 §3.3). */
+  deferTools?: readonly string[] | undefined
   /** `config.toolErrorText` (spec 10 §1.1). */
   toolErrorText?: ToolErrorTextFn | undefined
   contextOf: (owner: string) => HarnessContext
@@ -221,7 +254,15 @@ export async function resolveTurnRegistry(args: {
     (e) => e.kind === 'dynamic' && e.refresh === 'turn',
     contextOf,
   )
-  const instructionReminder = joinParts(turnParts)
+  const collected = await collectToolEntries({
+    open,
+    skills,
+    contextOf,
+    warn: args.warn,
+    deferTools: args.deferTools,
+  })
+  const deferredText = deferredToolsReminder(collected.entries)
+  const instructionReminder = appendBlock(joinParts(turnParts), deferredText)
   // page context: data from the client, after the plugins' reminders, never stored (rule 6)
   const pageContext = renderPageContext(args.pageContext, args.pageContextOptions, args.warn)
   const turnReminder = appendBlock(instructionReminder, pageContext)
@@ -235,6 +276,9 @@ export async function resolveTurnRegistry(args: {
       ? []
       : [{ owner: 'core:skills', refresh: 'session' as const, text: skills.dynamicText }]),
     ...turnParts.map((p): InstructionBlock => ({ ...p, refresh: 'turn' })),
+    ...(deferredText === undefined
+      ? []
+      : [{ owner: 'core:tools', refresh: 'turn' as const, text: deferredText }]),
     ...(pageContext === undefined
       ? []
       : [{ owner: 'core:page-context', refresh: 'turn' as const, text: pageContext }]),
@@ -252,12 +296,6 @@ export async function resolveTurnRegistry(args: {
       toolOutputs: open.services.get('toolOutputs') as ToolOutputSink | undefined,
     },
   }
-  const collected = await collectToolEntries({
-    open,
-    skills,
-    contextOf,
-    warn: args.warn,
-  })
   let raw: TurnToolEntry[] = collected.entries
   let staticCount = collected.staticCount
   // request-scoped client tools come after `tool_search` (last of the static prefix) and before

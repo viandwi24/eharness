@@ -145,4 +145,58 @@ describe('woken turn with an approval', () => {
     expect(v.woken().state).toBe('output-available')
     expect(v.state.live).toBeNull()
   })
+
+  test('the event that wakes an idle session is shown once, before the woken reply, live and after resume', async () => {
+    const model = routerModel((route) => {
+      if (route.isChild) return { text: 'CHILD REPORT', delayMs: 200 }
+      if (route.conversation.includes('Background subagent')) return { text: 'woken done' }
+      if (route.toolResults === 0) {
+        return {
+          toolCalls: [
+            {
+              toolName: 'agent',
+              input: {
+                subagent_type: 'explore',
+                description: 'look around',
+                prompt: 'look',
+                run_in_background: true,
+              },
+            },
+          ],
+        }
+      }
+      return { text: 'launched' }
+    })
+    const { controller } = await makeController({ model, files: { 'a.txt': 'alpha\n' } })
+    const v = view()
+    const answering = (async () => {
+      for (;;) {
+        const request = await nextPending(controller.broker)
+        controller.broker.answer(request.id, { approved: true })
+      }
+    })()
+    answering.catch(() => undefined)
+    await runTurn(controller, 'go', v.dispatch)
+    await v.settled('woken done')
+    const order = (entries: ViewState['entries']): string[] =>
+      entries.flatMap((e) =>
+        e.kind === 'message'
+          ? [
+              e.message.metadata?.eharness?.kind === 'eh.event'
+                ? 'event'
+                : JSON.stringify(e.message).includes('woken done')
+                  ? 'reply'
+                  : 'other',
+            ]
+          : [],
+      )
+    const live = order(v.state.entries)
+    expect(live.filter((k) => k === 'event')).toHaveLength(1)
+    expect(live.indexOf('event')).toBeLessThan(live.indexOf('reply'))
+    // resume: the stored conversation renders the same
+    const loaded = reduce(initialState(), { type: 'load', messages: await controller.messages() })
+    const stored = order(loaded.entries)
+    expect(stored.filter((k) => k === 'event')).toHaveLength(1)
+    expect(stored.indexOf('event')).toBeLessThan(stored.indexOf('reply'))
+  })
 })

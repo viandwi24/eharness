@@ -200,6 +200,10 @@ function plural(count: number, one: string, many = `${one}s`): string {
   return `${count} ${count === 1 ? one : many}`
 }
 
+/**
+ * Library-provided tool names that are not in {@link TOOL} (eharness/subagent, shell, skills,
+ * memory and core): never read as an MCP `server_tool`. Keep next to {@link TOOL}.
+ */
 const NON_MCP = new Set([
   'load_skill',
   'read_skill_file',
@@ -207,6 +211,26 @@ const NON_MCP = new Set([
   'tool_search',
   'bash_output',
   'kill_shell',
+  'agent_output',
+  'agent_stop',
+  'send_message',
+  'memory_view',
+  'memory_create',
+  'memory_str_replace',
+  'memory_insert',
+  'memory_delete',
+  'memory_rename',
+  'todo_write',
+  'ask_user_question',
+  'exit_plan_mode',
+  'request_directory_access',
+  'web_fetch',
+  'web_search',
+  'read_file',
+  'list_files',
+  'edit_file',
+  'write_file',
+  'delete_file',
 ])
 
 /**
@@ -330,6 +354,15 @@ export function countSources(output: string): number {
   return new Set(output.match(/https?:\/\/[^\s)>\]"']+/g) ?? []).size
 }
 
+/** Names of the tools a `tool_search` result found (`{ tools: [{ name }] }`, maybe `{ type, value }`). */
+export function foundToolNames(output: unknown): string[] {
+  const rec = asRecord(output)
+  const value = 'value' in rec && 'type' in rec ? rec.value : output
+  const tools = asRecord(value).tools
+  if (!Array.isArray(tools)) return []
+  return tools.map((t) => asRecord(t).name).filter((n): n is string => typeof n === 'string')
+}
+
 /** Describe one tool call. */
 export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescription {
   const input = asRecord(view.input)
@@ -449,6 +482,23 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       if (ok && text) desc.summary = firstLine(text, 120)
       break
     }
+    case 'agent_output': {
+      desc.label = 'AgentOutput'
+      desc.target = str(input.id)
+      if (ok && text) {
+        if (/is still running/.test(text)) desc.summary = 'still running'
+        else if (/^ERROR/.test(text)) desc.summary = firstLine(text, 120)
+        else
+          desc.summary = `Read ${plural(countLines(text.split('\n\n').slice(1).join('\n\n')), 'line')}`
+      }
+      break
+    }
+    case 'agent_stop': {
+      desc.label = 'AgentStop'
+      desc.target = str(input.id)
+      if (ok && text) desc.summary = firstLine(text, 120)
+      break
+    }
     case TOOL.ask: {
       desc.label = 'Ask'
       const questions = Array.isArray(input.questions) ? input.questions : []
@@ -490,6 +540,18 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       if (view.state === 'output-available' && !view.preliminary && !/^error:/i.test(text))
         desc.summary = `Did 1 search · ${plural(countSources(text), 'source')}`
       else if (/^error:/i.test(text)) status = 'error'
+      break
+    }
+    case 'tool_search': {
+      desc.label = 'Loaded tools'
+      const names = foundToolNames(view.output)
+      desc.target =
+        names.length > 0
+          ? names.join(', ')
+          : str(input.query)
+              .replace(/^select:/, '')
+              .trim()
+      if (ok && names.length === 0) desc.summary = 'No matching tools'
       break
     }
     case 'bash_output':

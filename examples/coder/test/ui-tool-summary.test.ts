@@ -61,6 +61,35 @@ describe('helpers', () => {
   })
 })
 
+describe('tool_search', () => {
+  test('the card reads Loaded tools with the found names', () => {
+    const d = describeTool(
+      view(
+        'tool_search',
+        { query: 'select:web_fetch' },
+        {
+          output: { tools: [{ name: 'web_fetch', description: 'x' }, { name: 'lsp' }] },
+        },
+      ),
+    )
+    expect(d.label).toBe('Loaded tools')
+    expect(d.target).toBe('web_fetch, lsp')
+  })
+
+  test('while running it shows the query; an empty result says so', () => {
+    const running = describeTool(
+      view(
+        'tool_search',
+        { query: 'select:web_fetch' },
+        { state: 'input-available', output: undefined },
+      ),
+    )
+    expect(running.target).toBe('web_fetch')
+    const none = describeTool(view('tool_search', { query: 'zzz' }, { output: { tools: [] } }))
+    expect(none.summary).toBe('No matching tools')
+  })
+})
+
 describe('send_message', () => {
   test('the card reads SendMessage → name with a message preview', () => {
     const d = describeTool(
@@ -378,5 +407,41 @@ describe('web tools', () => {
       view(TOOL.webSearch, { query: 'q' }, { output: 'see https://a.io and https://b.io/x.' }),
     )
     expect(urls.summary).toBe('Did 1 search · 2 sources')
+  })
+})
+
+describe('agent_output and agent_stop', () => {
+  test('agent_stop is a plain tool, not an MCP agent/stop', () => {
+    const d = describeTool(view('agent_stop', { id: 'slow' }, { output: 'slow was stopped.' }))
+    expect(d.label).toBe('AgentStop')
+    expect(d.target).toBe('slow')
+    expect(d.summary).toBe('slow was stopped.')
+  })
+
+  test('agent_output summarises a report and a running agent', () => {
+    const done = describeTool(
+      view(
+        'agent_output',
+        { id: 'a1' },
+        { output: 'a1 (explore, finished)\n\nline1\nline2\nline3' },
+      ),
+    )
+    expect(done.label).toBe('AgentOutput')
+    expect(done.target).toBe('a1')
+    expect(done.summary).toBe('Read 3 lines')
+    const running = describeTool(
+      view(
+        'agent_output',
+        { id: 'a1' },
+        { output: 'a1 (explore) is still running; no final report yet.' },
+      ),
+    )
+    expect(running.summary).toBe('still running')
+  })
+
+  test('library tool names are never MCP', () => {
+    for (const name of ['agent_stop', 'agent_output', 'send_message', 'memory_view', 'web_fetch'])
+      expect(splitMcpName(name)).toBeUndefined()
+    expect(splitMcpName('github_search')).toEqual({ server: 'github', tool: 'search' })
   })
 })

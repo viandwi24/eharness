@@ -89,8 +89,10 @@ describe('agent tool', () => {
         expect(r.tools).not.toContain(t)
       }
       expect(r.tools).toEqual(
-        expect.arrayContaining(['read_file', 'grep', 'glob', 'bash', 'web_fetch', 'web_search']),
+        expect.arrayContaining(['read_file', 'grep', 'glob', 'bash', 'tool_search']),
       )
+      // web tools are deferred: loaded with tool_search, not sent up front
+      expect(r.tools).not.toContain('web_fetch')
     }
     expect(await exists(join(env.root, 'evil.txt'))).toBe(false)
     expect(env.broker.pending()).toEqual([])

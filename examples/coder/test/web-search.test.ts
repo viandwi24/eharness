@@ -18,6 +18,8 @@ const usage = {
 describe('web_search wiring', () => {
   test('a scripted controller has no search: the tool answers ERROR', async () => {
     const model = scriptedModel([
+      // web_search is deferred: load it first
+      { toolCalls: [{ toolName: 'tool_search', input: { query: 'select:web_search' } }] },
       { toolCalls: [{ toolName: 'web_search', input: { query: 'anything' } }] },
       { text: 'ok' },
     ])
@@ -33,6 +35,8 @@ describe('web_search wiring', () => {
 
   test('an injected search works through the whole agent', async () => {
     const model = scriptedModel([
+      // web_search is deferred: load it first
+      { toolCalls: [{ toolName: 'tool_search', input: { query: 'select:web_search' } }] },
       { toolCalls: [{ toolName: 'web_search', input: { query: 'ai sdk 7' } }] },
       { text: 'ok' },
     ])

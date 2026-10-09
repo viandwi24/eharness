@@ -566,6 +566,7 @@ export function createSessionHandle(args: {
     return inspectRegistry({
       open,
       toolOrder: config.toolOrder,
+      deferTools: config.deferTools,
       contextOf: rt.contextOf,
       warn: rt.warn,
     })
@@ -582,7 +583,11 @@ export function createSessionHandle(args: {
       .filter((t): t is string => t !== undefined)
       .join('\n\n')
     let tools = 0
-    for (const e of inspection.entries) tools += await toolTokens(e.name, e.tool, compaction.count)
+    // deferred tools are not sent until discovered (spec 02 §3.3): they cost nothing here
+    for (const e of inspection.entries) {
+      if (e.tool.deferLoading === true) continue
+      tools += await toolTokens(e.name, e.tool, compaction.count)
+    }
     return { instructions: text.length === 0 ? 0 : compaction.count(text), tools, inspection }
   }
 

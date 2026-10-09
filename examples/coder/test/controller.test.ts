@@ -507,7 +507,8 @@ describe('context, usage and status', () => {
     expect(c.tools.map((t) => t.tokens)).toEqual(
       [...c.tools.map((t) => t.tokens)].sort((x, y) => y - x),
     )
-    const itemised = c.tools.reduce((n, t) => n + t.tokens, 0)
+    // deferred tools are sized but not sent: they are not part of the tools category
+    const itemised = c.tools.filter((t) => !t.deferred).reduce((n, t) => n + t.tokens, 0)
     expect(Math.abs(itemised - (byKey.tools ?? 0))).toBeLessThanOrEqual(c.tools.length)
   })
 

@@ -53,6 +53,7 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   'load_skill',
   'read_skill_file',
   'search_skills',
+  'tool_search',
   TOOL.lsp,
 ]
 
@@ -99,6 +100,12 @@ export interface CoderSettings {
   promptSuggestions?: boolean
   /** Prompt editor mode. Default `normal`. */
   editorMode?: 'normal' | 'vim'
+  /**
+   * Defer MCP tools and rarely used built-ins (`web_fetch`, `lsp`, …): the model sees only their
+   * names and loads one with `tool_search` before calling it. Default true. An MCP server entry
+   * can override it with its own `"defer": true|false`.
+   */
+  deferTools?: boolean
   /** Shell hooks on agent events (project hooks need trust). */
   hooks?: Partial<
     Record<HookEvent, Array<{ matcher?: string; command: string; timeoutMs?: number }>>
@@ -158,6 +165,8 @@ export interface CoderConfig {
   maxSteps: number
   /** Default 2: subagent nesting depth below the main agent. */
   maxAgentDepth: number
+  /** `deferTools` setting (default true). */
+  deferTools: boolean
   mcpServers: Record<string, unknown>
   print?: PrintOptions
   /** `--continue` / `--resume [id]`. `resume: true` = show a picker. */
@@ -409,7 +418,13 @@ export interface ContextDetails {
   autocompactBuffer: number
   categories: ContextCategory[]
   /** Tool definitions by estimated size, largest first. */
-  tools: Array<{ name: string; tokens: number; source: 'builtin' | 'mcp' | 'skill' }>
+  tools: Array<{
+    name: string
+    tokens: number
+    source: 'builtin' | 'mcp' | 'skill'
+    /** Hidden until found with `tool_search`; `tokens` is then what loading it would cost. */
+    deferred?: boolean
+  }>
   /** Project memory files (AGENTS.md …) by estimated size. */
   memoryFiles: Array<{ path: string; tokens: number }>
   messages: { count: number; user: number; assistant: number; toolCalls: number }

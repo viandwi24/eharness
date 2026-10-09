@@ -437,6 +437,12 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * changed order busts the prompt cache.
    */
   toolOrder?: string[]
+  /**
+   * Names of tools to hide until found with `tool_search` (sets `deferLoading: true` on them,
+   * spec 02 §3.3). Applies to app, plugin and source tools; names that match no tool are ignored.
+   * The core lists the deferred tools by name in the turn reminder so the model knows they exist.
+   */
+  deferTools?: string[]
   skills?: Array<Skill | SkillSource>
   mcp?: ToolSource[]
   /** App data parts (no namespace): part type `data-<key>`. */

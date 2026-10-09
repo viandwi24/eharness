@@ -3,6 +3,7 @@ import type { ReactElement } from 'react'
 import type { CoderMessage } from '../contracts.ts'
 import { InlineMarkdown, Markdown } from './markdown.tsx'
 import { partDuration, Reasoning } from './Reasoning.tsx'
+import { ReportBlock } from './ReportBlock.tsx'
 import type { ToolTiming } from './state.ts'
 import { ToolCard, ToolLine } from './ToolCard.tsx'
 import { color, sym } from './theme.ts'
@@ -63,16 +64,23 @@ const EVENT_FRAME = /^<event name="([^"]*)">([\s\S]*?)<\/event>\s*$/
 const SUBAGENT_HEAD =
   /^(Background|Resumed) subagent (\S+)(?: "([^"]*)")? \(([^:)]*?)(?:: ([\s\S]*?))?\) (finished|failed|was stopped)\.(?:\n\n([\s\S]*))?$/
 
+/** A report from another agent: header line and the report text (markdown). */
+export interface AgentReport {
+  head: string
+  /** The report without its header, blank lines kept. */
+  body: string
+}
+
 /**
- * A subagent completion event (`eh.event` name `subagent`) as a dim `⏺ writer finished · type ·
- * first line of the report` line plus, expanded, the full report. `text` is the event text (the
- * data-eh.input part only carries the model framing `<event name="subagent">…</event>`, which is
- * unwrapped here); `undefined` when it is not a subagent report.
+ * A subagent completion event (`eh.event` name `subagent`) as the header `⏺ Message from writer ·
+ * general-purpose · finished` plus the report, which the UI previews as markdown. `text` is the
+ * event text (the data-eh.input part only carries the model framing `<event name="subagent">…
+ * </event>`, which is unwrapped here); `undefined` when it is not a subagent report.
  */
 export function subagentEventLine(
   text: string,
   data?: { name?: unknown; agent?: unknown; taskId?: unknown; status?: unknown },
-): { head: string; report: string[] } | undefined {
+): AgentReport | undefined {
   const frame = EVENT_FRAME.exec(text.trim())
   if (frame !== null && frame[1] !== 'subagent') return undefined
   const body = frame === null ? text.trim() : (frame[2] ?? '')
@@ -82,13 +90,20 @@ export function subagentEventLine(
     (typeof data?.name === 'string' && data.name !== '' ? data.name : undefined) ?? m[3] ?? m[2]
   const verb = m[1] === 'Resumed' ? `${m[6]} (resumed)` : m[6]
   const type = typeof data?.agent === 'string' ? data.agent : m[4]
-  const lines = (m[7] ?? '').split('\n').filter((l) => l.trim() !== '')
-  const first = (lines[0] ?? '').replace(/\s+/g, ' ').trim()
-  const clipped = first.length > 160 ? `${first.slice(0, 159)}…` : first
   return {
-    head: `${sym.bullet} ${who} ${verb} · ${type}${clipped === '' ? '' : ` · ${clipped}`}`,
-    report: lines,
+    head: `${sym.bullet} Message from ${who} · ${type} · ${verb}`,
+    body: (m[7] ?? '').trim(),
   }
+}
+
+/** A message another agent sent to this one (`<agent-message from="writer" …>`) as a report. */
+export function agentMessageReport(text: string): AgentReport | undefined {
+  const frame = EVENT_FRAME.exec(text.trim())
+  const match = AGENT_FRAME.exec(
+    frame !== null && frame[1] === 'agent-message' ? (frame[2] ?? '').trim() : text.trim(),
+  )
+  if (match === null) return undefined
+  return { head: `${sym.bullet} Message from ${match[1]}`, body: (match[2] ?? '').trim() }
 }
 
 /**
@@ -124,32 +139,13 @@ export function SteeredInput({
     )
   }
   if (source === 'event') {
-    const sub = subagentEventLine(text)
-    if (sub !== undefined) {
-      const rest = sub.report.slice(1)
-      return (
-        <Box marginTop={1} flexDirection="column">
-          <Text dimColor>{sub.head}</Text>
-          {expanded ? (
-            rest.map((line, i) => (
-              // biome-ignore lint/suspicious/noArrayIndexKey: static report lines
-              <Text key={i} dimColor>
-                {'  '}
-                {line}
-              </Text>
-            ))
-          ) : rest.length > 0 ? (
-            <Text dimColor>
-              {'  '}
-              {sym.ellipsis} +{rest.length} lines (ctrl+o to expand)
-            </Text>
-          ) : null}
-        </Box>
-      )
+    const report = subagentEventLine(text) ?? agentMessageReport(text)
+    if (report !== undefined) {
+      return <ReportBlock head={report.head} body={report.body} expanded={expanded} />
     }
     return (
       <Box marginTop={1}>
-        <Text dimColor>{agentMessageLine(text) ?? `· ${text}`}</Text>
+        <Text dimColor>{`· ${text}`}</Text>
       </Box>
     )
   }
@@ -172,6 +168,22 @@ function changeFor(
   return undefined
 }
 
+/** The report of an `eh.event` kind message from another agent, if it is one. */
+function eventReport(message: CoderMessage): AgentReport | undefined {
+  if (message.metadata?.eharness?.kind !== 'eh.event') return undefined
+  const part = message.parts.find((p) => p.type === 'data-eh.event') as
+    | { data?: Record<string, unknown> }
+    | undefined
+  const name = part?.data?.name
+  const text = String(part?.data?.text ?? '')
+  if (name === 'agent-message') return agentMessageReport(text)
+  if (name === 'subagent') {
+    const data = (part?.data?.data ?? undefined) as Parameters<typeof subagentEventLine>[1]
+    return subagentEventLine(text, data)
+  }
+  return undefined
+}
+
 function kindLine(message: CoderMessage): string {
   const kind = message.metadata?.eharness?.kind ?? 'event'
   const part = message.parts.find((p) => p.type === `data-${kind}`) as
@@ -182,15 +194,6 @@ function kindLine(message: CoderMessage): string {
     return tokens
       ? `Conversation compacted (${tokens.before} → ${tokens.after} tokens)`
       : 'Conversation compacted'
-  }
-  if (kind === 'eh.event' && part?.data?.name === 'agent-message') {
-    const line = agentMessageLine(String(part.data.text ?? ''))
-    if (line !== undefined) return line
-  }
-  if (kind === 'eh.event' && part?.data?.name === 'subagent') {
-    const data = (part.data.data ?? undefined) as Parameters<typeof subagentEventLine>[1]
-    const sub = subagentEventLine(String(part.data.text ?? ''), data)
-    if (sub !== undefined) return sub.head
   }
   const text = part?.data && typeof part.data.message === 'string' ? `: ${part.data.message}` : ''
   return `${kind.replace(/^eh\./, '')}${text}`
@@ -215,12 +218,14 @@ export function MessageView({
   focus = false,
 }: MessageViewProps): ReactElement | null {
   if (message.metadata?.eharness?.kind) {
+    const report = eventReport(message)
+    if (report !== undefined) {
+      return <ReportBlock head={report.head} body={report.body} expanded={expanded} />
+    }
     const line = kindLine(message)
     return (
       <Box marginTop={1}>
-        <Text dimColor>
-          {line.startsWith('← ') || line.startsWith(`${sym.bullet} `) ? line : `── ${line} ──`}
-        </Text>
+        <Text dimColor>{`── ${line} ──`}</Text>
       </Box>
     )
   }

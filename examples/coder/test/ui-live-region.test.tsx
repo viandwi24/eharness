@@ -102,14 +102,14 @@ describe('subagent event rendering', () => {
 
   test('framed model text becomes one dim line with the task name', () => {
     const line = subagentEventLine(`<event name="subagent">${text}</event>`)
-    expect(line?.head).toBe('⏺ writer finished · general-purpose · Done.')
-    expect(line?.report).toHaveLength(3)
+    expect(line?.head).toBe('⏺ Message from writer · general-purpose · finished')
+    expect(line?.body).toBe('Done.\n**Files read** a, b\nmore')
   })
 
   test('unnamed, resumed and failed; other events are not claimed', () => {
     expect(
       subagentEventLine('Resumed subagent agent-2 (explore: look) failed.\n\nboom')?.head,
-    ).toBe('⏺ agent-2 failed (resumed) · explore · boom')
+    ).toBe('⏺ Message from agent-2 · explore · failed (resumed)')
     expect(subagentEventLine('<event name="ci">CI red</event>')).toBeUndefined()
   })
 })

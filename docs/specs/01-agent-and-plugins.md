@@ -39,6 +39,7 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   instructions?: InstructionInput | InstructionInput[]          // spec 02 §2
   tools?: ToolsInput<DP>                                         // tool functions: ctx typed with DP
   toolOrder?: string[]                                           // spec 02 §6: these final tool names first, the rest after
+  deferTools?: string[]                                          // spec 02 §3.3: hide these tools until tool_search finds them
   skills?: Array<Skill | SkillSource>                            // spec 07
   mcp?: ToolSource[]                                             // spec 09 (e.g. mcpServer(...))
   dataParts?: DP                                                 // spec 03 §4 (app namespace)

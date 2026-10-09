@@ -444,6 +444,9 @@ step. If the agent is idle, the event wakes it: the library starts a `wake` turn
 `ctx.session.inject`), `session.onRun` hands it to the controller, and the controller drives it like
 a prompt, with approvals and the stream shown as usual (the same path takes queued turns and a steer
 that became a turn). A shell you stopped sends nothing; a stopped background agent reports `aborted`.
+A finished (or failed, stopped, resumed) agent shows in the chat as `⏺ Message from <name> · <type> ·
+<status>` with the first 8 rows of its report rendered as markdown and `… +N lines (ctrl+o to
+expand)`; a message an agent sent with `send_message` uses the same block.
 All shells and background agents are stopped when coder exits. `/tasks` merges the library's
 `shellTasks` and `subagentTasks` services of the session (they live in this process: tasks of a
 session reopened after a restart are not listed).
@@ -489,6 +492,7 @@ scope; `Enter` or `Space` toggles or cycles, `Enter` edits text and numbers).
 | `statusLine` | none | `{ "command": "..." }` footer command | yes |
 | `promptSuggestions` | `false` | next-prompt suggestion after each turn | no |
 | `editorMode` | `normal` | `normal` or `vim`; default scope: user | no |
+| `deferTools` | `true` | defer MCP tools and rarely used built-ins (see Deferred tools) | no |
 | `hooks` | `{}` | shell hooks by event | yes |
 | `sandbox.enabled` | `false` | OS sandbox for `bash` | turning it off needs trust; turning it on does not |
 | `sandbox.network` | `false` | allow network in the sandbox | enabling needs trust |
@@ -575,6 +579,22 @@ that point on (tools and the static prefix stay cached). Switch rarely.
   nothing (`off`). Hooks on `Notification` fire at the same moments.
 - **Focus view.** `/focus` shows only your prompts and the final answers (one-line tool summaries
   are hidden); toggle again to leave. `Ctrl+T` toggles the todo list.
+
+### Deferred tools
+
+Like Claude Code, coder keeps tool definitions out of the request until they are needed
+(`deferTools: true`, the default). Deferred tools are listed **by name** (with a one-line
+description) in the turn reminder under `Deferred tools`; the model loads the schema with
+`tool_search` (for example `select:web_fetch`, or keywords) and calls the tool in its next step. The
+card reads `Loaded tools · web_fetch`. Deferred: every MCP tool, `web_fetch`, `web_search`, `lsp`,
+`agent_output`, `agent_stop`, `bash_output`, `kill_shell` and `request_directory_access`. Always
+loaded: the file tools, `bash`, `agent`, `send_message`, `todo_write`, `ask_user_question`,
+`exit_plan_mode` and the skill tools. `tool_search` needs no approval; the deferred tool itself asks
+as usual. `/context` marks deferred tools and shows the tokens they do not cost. Set
+`"deferTools": false` to send everything on every request. One MCP server can override the setting
+with `"defer": true | false` in its entry of `mcpServers`.
+
+This is the library's `deferTools` agent option (spec 02 §3.3) plus `mcpServer({ defer })`.
 
 ### LSP
 
@@ -939,7 +959,7 @@ Notes:
 
 Tool order is stable (prompt-cache prefix), identical for every turn of an agent: the app tools
 (`lsp`, `request_directory_access`), `bash` (+ `bash_output`, `kill_shell`), `agent`, the filesystem
-tools (`glob` included), `todo_write`, `web_fetch`, `web_search`, `ask_user_question`, MCP tools,
+tools (`glob` included), `todo_write`, `web_fetch`, `web_search`, `ask_user_question`, MCP tools (deferred tools keep their place; `tool_search` is last),
 `exit_plan_mode` last.
 
 Layering: `workspace/`, `permissions/`, `agents/` and `app/` never import Ink or React.

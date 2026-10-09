@@ -167,6 +167,8 @@ export function ContextBody({
   const wide = columns >= 70
   const grid = <Grid cells={cells} perRow={perRow} />
   const sortedTools = [...d.tools].sort((a, b) => b.tokens - a.tokens)
+  const deferredTools = d.tools.filter((t) => t.deferred === true)
+  const deferredTokens = deferredTools.reduce((sum, t) => sum + t.tokens, 0)
   return (
     <>
       <Box flexDirection="column">
@@ -192,14 +194,24 @@ export function ContextBody({
           <Row
             key={`${t.source}:${t.name}`}
             cols={[
-              { text: t.name, width: 30 },
-              { text: t.source, width: 10, dim: true },
+              { text: t.name, width: 30, dim: t.deferred === true },
+              {
+                text: t.deferred === true ? `${t.source} deferred` : t.source,
+                width: 18,
+                dim: true,
+              },
               { text: fmtTokens(t.tokens), width: 8, right: true },
             ]}
           />
         ))}
         {sortedTools.length > TOOL_ROWS ? (
           <Text dimColor>… {sortedTools.length - TOOL_ROWS} more</Text>
+        ) : null}
+        {deferredTools.length > 0 ? (
+          <Text dimColor>
+            {deferredTools.length} deferred (loaded with tool_search) · ~{fmtTokens(deferredTokens)}{' '}
+            tokens not sent
+          </Text>
         ) : null}
       </Section>
 

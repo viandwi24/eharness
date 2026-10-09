@@ -824,6 +824,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         approval: config.approval,
         toolOutput: config.toolOutput,
         toolOrder: config.toolOrder,
+        deferTools: config.deferTools,
         toolErrorText: config.toolErrorText,
         contextOf: rt.contextOf,
         warn: rt.warn,

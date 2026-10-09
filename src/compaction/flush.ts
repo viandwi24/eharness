@@ -455,6 +455,7 @@ export async function manualFlushEnv(args: {
     approval: config.approval,
     toolOutput: config.toolOutput,
     toolOrder: config.toolOrder,
+    deferTools: config.deferTools,
     toolErrorText: config.toolErrorText,
     contextOf: rt.contextOf,
     warn: rt.warn,

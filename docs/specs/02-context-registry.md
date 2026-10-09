@@ -86,6 +86,18 @@ If at least one tool in the turn's tool set has `deferLoading: true` (from a `de
 set by the developer), the core adds AI SDK's `toolSearch()` under the reserved name
 `tool_search`. The model initially sees only non-deferred tools plus `tool_search`.
 
+`config.deferTools: string[]` marks tools by name `deferLoading: true` without touching the source,
+so app, plugin and source tools (for example a plugin's rarely used tool) can be deferred by the
+app. Names that match no tool are ignored.
+
+**The model learns the names from the turn reminder.** When any tool is deferred, the core appends
+a dynamic block (owner `core:tools`, refresh `turn`, never in `instructions`) after the plugins'
+reminders: a `Deferred tools` header followed by one `- name: first line of the description` line
+per deferred tool (description cut to 100 characters), in tool order. Tools already discovered
+stay in the list (they are callable, the list is only a catalog). Deferred tools count 0 tokens in
+`session.stats()` (`instructions`/`tools`, `toolSources[].tokens`) until discovered;
+`session.tools()` still reports their definition size so an app can show what deferral saves.
+
 AI SDK tracks discovered tools **per `streamText` call**, and eharness runs one call per step
 (ADR-0002), so the core tracks discovery itself:
 

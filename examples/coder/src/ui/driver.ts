@@ -6,7 +6,7 @@
 import { type FileUIPart, readUIMessageStream } from 'ai'
 import type { HarnessRun, TurnResult } from 'eharness'
 import type { BashOutputData, CoderController, CoderMessage, RunHooks } from './../contracts.ts'
-import type { ViewAction } from './state.ts'
+import { type ViewAction, wakeEvents } from './state.ts'
 
 const THROTTLE_MS = 50
 
@@ -79,6 +79,7 @@ async function drive(
   dispatch: (action: ViewAction) => void,
   options: DriveOptions,
   lazy?: { before(): void },
+  stored?: () => Promise<CoderMessage[]>,
 ): Promise<boolean> {
   let started = false
   const begin = (): void => {
@@ -147,11 +148,18 @@ async function drive(
    * approval keeps the turn open: the `respond()` continuation arrives here as the next run.
    */
   const late = (run: HarnessRun<CoderMessage>): void => {
-    if (!lateOpen) {
+    const first = !lateOpen
+    if (first) {
       lateOpen = true
       dispatch({ type: 'turn-started', now: Date.now() })
     }
     void (async () => {
+      if (first && stored !== undefined) {
+        // the events that woke the session are stored messages, not part of the turn's stream:
+        // show them before the reply
+        const events = wakeEvents(await stored().catch(() => []))
+        if (events.length > 0) dispatch({ type: 'events', messages: events })
+      }
       await consume(run)
       const result = await run.result.catch(() => undefined)
       if (result?.stop === 'tool-pending') return
@@ -212,6 +220,8 @@ export async function runTurn(
       files?.length ? controller.run(text, hooks, { files }) : controller.run(text, hooks),
     dispatch,
     options,
+    undefined,
+    () => controller.messages(),
   )
 }
 
@@ -241,6 +251,7 @@ export async function steerTurn(
           dispatch({ type: 'user-submitted', text })
         },
       },
+      () => controller.messages(),
     )
     return own ? 'turn' : 'step'
   } catch (error) {

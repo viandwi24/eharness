@@ -57,6 +57,7 @@ export const FIXTURE_CONTEXT: ContextDetails = {
     { name: 'github_search', tokens: 900, source: 'mcp' },
     { name: 'read_file', tokens: 700, source: 'builtin' },
     { name: 'load_skill', tokens: 300, source: 'skill' },
+    { name: 'web_fetch', tokens: 600, source: 'builtin', deferred: true },
   ],
   memoryFiles: [
     { path: 'AGENTS.md', tokens: 1900 },

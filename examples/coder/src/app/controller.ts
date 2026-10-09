@@ -748,6 +748,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         .map((t) => ({
           name: t.name,
           tokens: t.tokens,
+          ...(t.deferred ? { deferred: true } : {}),
           source: (t.source.startsWith('source:mcp:')
             ? 'mcp'
             : t.source === 'core'

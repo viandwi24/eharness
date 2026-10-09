@@ -35,6 +35,8 @@ export const TOOL_KINDS: ToolKinds = {
   load_skill: { kind: 'safe' },
   read_skill_file: { kind: 'safe' },
   search_skills: { kind: 'safe' },
+  // loads the schema of a deferred tool; the tool itself still asks when it is called
+  tool_search: { kind: 'safe' },
   [TOOL.lsp]: { kind: 'safe' },
   // asks in every mode (an allow rule or bypassPermissions never approves it), no rule suggested
   [TOOL.dirAccess]: { kind: 'other', alwaysAsk: true },

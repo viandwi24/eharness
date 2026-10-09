@@ -123,6 +123,8 @@ describe('/context', () => {
     expect(f).toContain('⛝')
     expect(f).toContain('bash')
     expect(f).toContain('github_search')
+    expect(f).toContain('builtin deferred')
+    expect(f).toContain('1 deferred (loaded with tool_search) · ~600 tokens not sent')
     expect(f).toContain('AGENTS.md')
     expect(f).toContain('24 messages')
     expect(f).toContain('Auto-compact at 160k tokens (80%)')

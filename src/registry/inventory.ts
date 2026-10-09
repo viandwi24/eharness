@@ -6,7 +6,7 @@
  * @see docs/specs/02-context-registry.md#3-tools
  * @see docs/specs/06-compaction.md#2-token-accounting
  */
-import { asSchema, type JSONSchema7 } from 'ai'
+import { asSchema, type JSONSchema7, type Tool } from 'ai'
 import { type CountTokens, toolTokens } from '../compaction/tokens.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { InstructionBlockStats, ToolSourceStats } from '../messages/types.ts'
@@ -69,6 +69,8 @@ export async function collectToolEntries(args: {
   skills: TurnSkills
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
+  /** `config.deferTools` (spec 02 §3.3). */
+  deferTools?: readonly string[] | undefined
 }): Promise<CollectedTools> {
   const { open } = args
   const raw: TurnToolEntry[] = open.tools.map((t) => ({
@@ -94,7 +96,16 @@ export async function collectToolEntries(args: {
       warn: args.warn,
     })),
   )
-  return { entries: withToolSearch(raw), staticCount }
+  const defer = new Set(args.deferTools ?? [])
+  const marked =
+    defer.size === 0
+      ? raw
+      : raw.map((entry) =>
+          defer.has(entry.name) && entry.tool.deferLoading !== true
+            ? { ...entry, tool: { ...entry.tool, deferLoading: true } as Tool }
+            : entry,
+        )
+  return { entries: withToolSearch(marked), staticCount }
 }
 
 /** Skills of a turn (shared by the turn registry and the idle inspection). */
@@ -190,7 +201,10 @@ export async function toolSourceStats(
     const source = toolSourceLabel(entry)
     const stats = out.get(source) ?? { source, tools: 0, tokens: 0 }
     stats.tools++
-    stats.tokens += calibrate(await toolTokens(entry.name, entry.tool, count))
+    // deferred tools are not sent until discovered (spec 02 §3.3)
+    if (entry.tool.deferLoading !== true) {
+      stats.tokens += calibrate(await toolTokens(entry.name, entry.tool, count))
+    }
     out.set(source, stats)
   }
   return [...out.values()]

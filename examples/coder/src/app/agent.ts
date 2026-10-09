@@ -153,6 +153,21 @@ const NON_READ_ONLY_TOOLS: string[] = Object.values(TOOL).filter(
     name !== TOOL.webSearch,
 )
 
+/**
+ * Built-ins that are loaded on demand with `tool_search` when `deferTools` is on (the core tools
+ * read/edit/bash/agent/todo/ask/skills stay loaded). Names an agent does not have are ignored.
+ */
+export const DEFERRED_BUILTIN_TOOLS: readonly string[] = [
+  TOOL.webFetch,
+  TOOL.webSearch,
+  TOOL.lsp,
+  'agent_output',
+  'agent_stop',
+  'bash_output',
+  'kill_shell',
+  TOOL.dirAccess,
+]
+
 /** Does an allow rule name this host (`WebFetch(domain:host)`)? Only then private hosts are fetched. */
 function hostAllowedBy(permissions: CoderPermissionEngine, host: string): boolean {
   return permissions.rules().allow.some((raw) => {
@@ -244,10 +259,32 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       if (def.permissionMode === 'plan') disallowed.push(...NON_READ_ONLY_TOOLS)
     }
 
+    // an allow list keeps `tool_search` when it allows a deferred tool, or the tool could never be loaded
+    const withToolSearch = (tools: string[]): string[] =>
+      config.deferTools &&
+      tools.some((t) =>
+        [...permissions.expandRuleTool(t)].some((name) => DEFERRED_BUILTIN_TOOLS.includes(name)),
+      )
+        ? [...tools, 'tool_search']
+        : tools
+
     const mcp = isMain
       ? Object.entries(config.mcpServers).flatMap(([name, transport]) => {
           try {
-            return [mcpServer({ name, transport: transport as never })]
+            // a server entry may carry its own `defer`; the setting is the default
+            const { defer, ...rest } =
+              typeof transport === 'object' && transport !== null
+                ? (transport as { defer?: unknown })
+                : { defer: undefined }
+            return [
+              mcpServer({
+                name,
+                transport: (typeof transport === 'object' && transport !== null
+                  ? rest
+                  : transport) as never,
+                defer: typeof defer === 'boolean' ? defer : config.deferTools,
+              }),
+            ]
           } catch (error) {
             warnMcp(
               `Skipping MCP server "${name}": ${error instanceof Error ? error.message : String(error)}`,
@@ -319,7 +356,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       permissionsPlugin({
         engine: permissions,
         ...(def?.permissionMode === 'plan' ? { mode: 'plan' as const } : {}),
-        ...(def?.tools ? { allowedTools: def.tools } : {}),
+        ...(def?.tools ? { allowedTools: withToolSearch(def.tools) } : {}),
         ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
         onDecision: auditLog(auditFile, def?.name),
       }),
@@ -342,6 +379,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       // pasted images arrive as data: URLs only, at most 5 MB each (never fetched URLs)
       ...(isMain ? { inputFiles: { protocols: ['data:'], maxBytes: 5 * 1024 * 1024 } } : {}),
       tools: appTools as never,
+      // hidden until `tool_search` finds them; the core lists their names in the turn reminder
+      ...(config.deferTools ? { deferTools: [...DEFERRED_BUILTIN_TOOLS] } : {}),
       mcp,
       plugins,
       storage: deps.storage,

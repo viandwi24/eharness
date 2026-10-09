@@ -545,8 +545,12 @@ describe('lsp', () => {
   test('the lsp tool exists only with a configured server and works', async () => {
     const withServer = routerModel((route) =>
       route.toolResults === 0
-        ? { toolCalls: [{ toolName: 'lsp', input: { operation: 'diagnostics', path: '/a.ts' } }] }
-        : { text: 'checked' },
+        ? { toolCalls: [{ toolName: 'tool_search', input: { query: 'select:lsp' } }] }
+        : route.toolResults === 1
+          ? {
+              toolCalls: [{ toolName: 'lsp', input: { operation: 'diagnostics', path: '/a.ts' } }],
+            }
+          : { text: 'checked' },
     )
     const { controller } = await makeController({
       model: withServer,
@@ -555,8 +559,11 @@ describe('lsp', () => {
     })
     const { result } = await turn(controller, 'check types')
     expect(result.stop).toBe('complete')
-    expect(withServer.routes[0]?.tools).toContain('lsp')
-    expect(withServer.routes[1]?.conversation).toContain('a.ts')
+    // lsp is deferred (loaded with tool_search): named in the reminder, sent once it is found
+    expect(withServer.routes[0]?.tools).not.toContain('lsp')
+    expect(withServer.routes[0]?.conversation).toContain('- lsp:')
+    expect(withServer.routes[1]?.tools).toContain('lsp')
+    expect(withServer.routes[2]?.conversation).toContain('a.ts')
     expect(controller.broker.pending()).toEqual([])
     expect((await controller.doctor()).find((c) => c.name === 'Language servers')).toBeDefined()
     await controller.close()

@@ -72,6 +72,8 @@ export type ViewAction =
   | { type: 'transcript'; title: string; messages: CoderMessage[] }
   | { type: 'reset' }
   | { type: 'load'; messages: CoderMessage[] }
+  /** Event messages that woke an idle session: shown before the woken turn's reply. */
+  | { type: 'events'; messages: CoderMessage[] }
   | { type: 'toggle-expand' }
   /** Focus view on/off: it disables the progressive commit. */
   | { type: 'set-focus'; focus: boolean }
@@ -378,12 +380,27 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
         seq,
         entries: [
           ...fresh.entries,
-          ...action.messages
+          ...withoutInlineEvents(action.messages)
             .filter((m) => m.parts.length > 0)
             .map((message): Entry => ({ kind: 'message', id: `m:${message.id}`, message })),
         ],
       }
     }
+    case 'events':
+      return {
+        ...state,
+        seq,
+        entries: [
+          ...state.entries,
+          ...action.messages.map(
+            (message): Entry => ({
+              kind: 'message',
+              id: `m:${message.id}`,
+              message,
+            }),
+          ),
+        ],
+      }
     case 'toggle-expand':
       return { ...state, expanded: !state.expanded }
     case 'redraw':
@@ -414,4 +431,49 @@ export function latestTodos(state: ViewState): Todo[] | null {
 /** True while a todo is neither completed nor cancelled. */
 export function hasOpenTodos(todos: Todo[] | null): boolean {
   return !!todos?.some((t) => t.status === 'pending' || t.status === 'in_progress')
+}
+
+/** The text a stored `eh.event` kind message carries, if it is one. */
+function eventText(message: CoderMessage): string | undefined {
+  if (message.metadata?.eharness?.kind !== 'eh.event') return undefined
+  const part = message.parts.find((p) => p.type === 'data-eh.event') as
+    | { data?: { text?: unknown } }
+    | undefined
+  return typeof part?.data?.text === 'string' ? part.data.text : undefined
+}
+
+/**
+ * Drop the `eh.event` messages a running turn already took inline: the assistant message shows
+ * them as a `data-eh.input` part, the stored kind message would show them a second time.
+ */
+export function withoutInlineEvents(messages: CoderMessage[]): CoderMessage[] {
+  const inputs: string[] = []
+  for (const m of messages) {
+    for (const part of m.parts) {
+      if ((part.type as string) !== 'data-eh.input') continue
+      const text = (part as unknown as { data?: { text?: unknown } }).data?.text
+      if (typeof text === 'string') inputs.push(text)
+    }
+  }
+  return messages.filter((m) => {
+    const text = eventText(m)
+    return text === undefined || !inputs.some((i) => i.includes(text))
+  })
+}
+
+/**
+ * The events that woke an idle session: `eh.event` messages stored after the last conversation
+ * message that no turn took inline. Called when a woken turn starts.
+ */
+export function wakeEvents(messages: CoderMessage[]): CoderMessage[] {
+  const kept = withoutInlineEvents(messages)
+  let from = kept.length
+  while (from > 0 && kept[from - 1]?.metadata?.eharness?.kind === 'eh.event') from--
+  // only reports from other agents; a background task's exit has its own notice
+  return kept.slice(from).filter((m) => {
+    const part = m.parts.find((p) => p.type === 'data-eh.event') as
+      | { data?: { name?: unknown } }
+      | undefined
+    return part?.data?.name === 'subagent' || part?.data?.name === 'agent-message'
+  })
 }

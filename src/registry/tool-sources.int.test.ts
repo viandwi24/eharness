@@ -305,6 +305,54 @@ describe('deferred tools and tool_search', () => {
   })
 })
 
+describe('config.deferTools (spec 02 §3.3)', () => {
+  test('named tools are hidden, listed by name in the reminder, loaded by tool_search and counted as saved', async () => {
+    const { agent, model } = setup(
+      [
+        { toolCalls: [{ toolName: 'tool_search', input: { query: 'later' } }] },
+        { toolCalls: [{ toolName: 'later', input: { text: 'x' } }] },
+        { text: 'done' },
+      ],
+      {
+        tools: { now: echo('now'), later: echo('later', 'Runs later.\nSecond line.') },
+        deferTools: ['later', 'missing'],
+      },
+    )
+    const session = agent.session('s1')
+    const infos = await session.tools()
+    expect(infos.map((t) => [t.name, t.deferred])).toEqual([
+      ['now', false],
+      ['later', true],
+      ['tool_search', false],
+    ])
+    const result = await session.send('go').result
+    expect(result.stop).toBe('complete')
+    expect(toolNames(model.calls[0])).toEqual(['now', 'tool_search'])
+    expect(toolNames(model.calls[1])).toEqual(['now', 'later', 'tool_search'])
+    const prompt = JSON.stringify(model.prompts[0])
+    expect(prompt).toContain('Deferred tools')
+    expect(prompt).toContain('- later: Runs later.')
+    expect(prompt).not.toContain('Second line.')
+    expect(toolOutputs(assistantOf(result)).map(([name]) => name)).toEqual(['tool_search', 'later'])
+  })
+
+  test('deferred tools cost no context tokens until loaded; no deferTools = no reminder', async () => {
+    const plain = setup([{ text: 'ok' }], { tools: { now: echo('now'), later: echo('later') } })
+    const deferred = setup([{ text: 'ok' }], {
+      tools: { now: echo('now'), later: echo('later') },
+      deferTools: ['later'],
+    })
+    const a = await plain.agent.session('s1').stats()
+    const b = await deferred.agent.session('s1').stats()
+    const app = (stats: typeof a) => stats.toolSources?.find((x) => x.source === 'app')
+    expect(app(a)?.tools).toBe(2)
+    expect(app(b)?.tools).toBe(2)
+    expect(app(b)?.tokens).toBeLessThan(app(a)?.tokens ?? 0)
+    await plain.agent.session('s2').send('go').result
+    expect(JSON.stringify(plain.model.prompts[0])).not.toContain('Deferred tools')
+  })
+})
+
 describe('tool output limits (spec 09 §4)', () => {
   const big = (n: number) => `${'h'.repeat(n / 2)}${'t'.repeat(n / 2)}`
 
