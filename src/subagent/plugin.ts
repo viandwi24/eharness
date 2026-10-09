@@ -159,6 +159,12 @@ export interface SubagentsOptions {
    */
   background?: boolean
   /**
+   * With `background`: an `agent` call that omits `run_in_background` runs in the background
+   * (Claude Code's interactive default); the model passes `run_in_background: false` when it needs
+   * the result before it can continue. Default `false` (omitted means foreground).
+   */
+  backgroundByDefault?: boolean
+  /**
    * Offer `run_in_background` in CHILD sessions too (default `false`). A child session is closed
    * when its turn ends, which aborts the background subagents it started, and its report would go
    * to a session nobody watches; so by default only the root session (and any session without a
@@ -766,6 +772,8 @@ export async function pendingSubagentApprovals(
 
 const BACKGROUND_FIELD =
   'Start the subagent in the background and return at once; its report arrives later as an event. Use it for work you do not need before continuing.'
+const BACKGROUND_DEFAULT_FIELD =
+  'Default true: the subagent runs in the background, the call returns at once and its report arrives later as an event. Set false only when you need the result before you can continue.'
 
 function describeTypes(defs: Record<string, SubagentDefinition>): string {
   return Object.entries(defs)
@@ -962,7 +970,16 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           description: z.string().describe('A short (3-5 words) label for the task'),
           prompt: z.string().describe('The complete task for the subagent'),
           ...(canBackground
-            ? { run_in_background: z.boolean().optional().describe(BACKGROUND_FIELD) }
+            ? {
+                run_in_background: z
+                  .boolean()
+                  .optional()
+                  .describe(
+                    options.backgroundByDefault === true
+                      ? BACKGROUND_DEFAULT_FIELD
+                      : BACKGROUND_FIELD,
+                  ),
+              }
             : {}),
           ...(messaging
             ? { name: z.string().regex(AGENT_NAME_PATTERN).optional().describe(NAME_FIELD) }
@@ -1412,7 +1429,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           depth: depth + 1,
         }
         if (
-          run_in_background === true &&
+          (run_in_background ?? options.backgroundByDefault === true) &&
           options.background === true &&
           (ctx.session.parent === undefined || options.backgroundInChildren === true)
         ) {

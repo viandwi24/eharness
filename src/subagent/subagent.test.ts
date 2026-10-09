@@ -350,6 +350,41 @@ describe('failures, limits and abort', () => {
     await main.close()
   })
 
+  test('backgroundByDefault: an agent call without run_in_background runs in the background', async () => {
+    const storage = shared()
+    const worker = childAgent(storage, { steps: [{ text: 'bg report', delayMs: 30 }] })
+    const main = parentAgent(
+      storage,
+      worker,
+      { approvals: 'policy', background: true, backgroundByDefault: true },
+      [{ toolCalls: [spawn('later', 'cb')] }, { text: 'started it' }, { text: 'saw the report' }],
+    )
+    const session = main.session('p1')
+    expect((await session.send('go').result).stop).toBe('complete')
+    expect(String(agentOutput(await session.messages())?.output)).toContain('Started background')
+    await until('wake turn finished', async () =>
+      JSON.stringify(await session.messages()).includes('saw the report'),
+    )
+    await main.close()
+  })
+
+  test('backgroundByDefault: run_in_background false still runs in the foreground', async () => {
+    const storage = shared()
+    const worker = childAgent(storage, { steps: [{ text: 'fg report' }] })
+    const main = parentAgent(
+      storage,
+      worker,
+      { approvals: 'policy', background: true, backgroundByDefault: true },
+      [{ toolCalls: [spawn('now', 'cf', { run_in_background: false })] }, { text: 'done' }],
+    )
+    const session = main.session('p2')
+    expect((await session.send('go').result).stop).toBe('complete')
+    const output = String(agentOutput(await session.messages())?.output)
+    expect(output).toContain('fg report')
+    expect(output).not.toContain('Started background')
+    await main.close()
+  })
+
   test("background is not available with 'park'", () => {
     expect(() => subagents({ agents: {}, approvals: 'park', background: true })).toThrow(/park/)
   })

@@ -299,7 +299,12 @@ describe('subagent runs', () => {
             toolCalls: [
               {
                 toolName: 'agent',
-                input: { subagent_type: 'explore', description: 'look around', prompt: 'look' },
+                input: {
+                  subagent_type: 'explore',
+                  description: 'look around',
+                  prompt: 'look',
+                  run_in_background: false,
+                },
               },
             ],
           }

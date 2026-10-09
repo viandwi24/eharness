@@ -406,7 +406,12 @@ describe('model, thinking and preferences', () => {
               toolCalls: [
                 {
                   toolName: 'agent',
-                  input: { description: 'd', prompt: 'look around', subagent_type: 'explore' },
+                  input: {
+                    description: 'd',
+                    prompt: 'look around',
+                    subagent_type: 'explore',
+                    run_in_background: false,
+                  },
                 },
               ],
             }

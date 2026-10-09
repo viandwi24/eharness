@@ -3,7 +3,7 @@
  * {@link CoderController} contract that the Ink UI and print mode consume.
  */
 import { spawnSync } from 'node:child_process'
-import { access } from 'node:fs/promises'
+import { access, appendFile, mkdir } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import type { FileUIPart, LanguageModel } from 'ai'
 import {
@@ -323,7 +323,17 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     toVirtual: (path) => workspace.toVirtual(path),
   })
 
+  // Library warnings (`W_TOOL_OUTPUT_LIMITED`, …) go to `<userDir>/warnings.log`, never to the
+  // terminal: the default handler is `console.warn`, which would print through the Ink UI.
+  const warningLog = join(config.userDir, 'warnings.log')
+  const onWarning = (warning: { code: string; message: string }): void => {
+    const line = `${new Date().toISOString()} ${warning.code}: ${warning.message}\n`
+    void mkdir(config.userDir, { recursive: true })
+      .then(() => appendFile(warningLog, line))
+      .catch(() => {})
+  }
   const agents: Promise<Agents> = createAgents({
+    onWarning,
     config,
     workspace,
     sandbox,

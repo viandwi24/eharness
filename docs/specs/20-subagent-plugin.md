@@ -96,6 +96,11 @@ started.` when aborted while waiting for a slot. Tools return errors as strings,
 
 ### 2.2 Background (`run_in_background`, `'inline'` / `'policy'`)
 
+With `backgroundByDefault: true` (and `background: true`) an `agent` call that omits
+`run_in_background` runs in the background, like Claude Code's interactive default; the field's
+description tells the model to pass `false` only when it needs the result before continuing.
+Default `false`: omitted means foreground.
+
 The call returns at once with `Started background subagent <task id> (<type>): <description>. You will
 be notified when it finishes.` The task id is the `subagentTasks` registry id (`agent-1`, …), the
 same id the UI and the completion notice use. The child runs detached (concurrency cap applies, aborted when the
