@@ -366,6 +366,7 @@ export function fakeController(opts: FakeOptions = {}) {
     messagesOf: async (id) => opts.childMessages?.[id] ?? [],
     compact: async (instructions) => {
       calls.push(`compact:${instructions ?? ''}`)
+      return { tokens: { before: 52_000, after: 8_100 } }
     },
     clear: async () => {},
     resume: async (id) => {

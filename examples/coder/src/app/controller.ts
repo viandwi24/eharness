@@ -24,6 +24,7 @@ import {
   type CoderController,
   type CoderMessage,
   type CoderSettings,
+  type CompactSummary,
   type ContextCategory,
   type ContextDetails,
   type CustomCommand,
@@ -620,9 +621,17 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       return (await storage.messages.load({ sessionId: id })) as CoderMessage[]
     },
 
-    async compact(instructions?: string): Promise<void> {
+    async compact(instructions?: string): Promise<CompactSummary | null> {
       const s = await session()
-      await compactWithFocus(focus, () => s.compact(), instructions)
+      const message = await compactWithFocus(focus, () => s.compact(), instructions)
+      if (!message) return null
+      const part = message.parts.find((p) => p.type === 'data-eh.compaction') as
+        | { data?: { tokens?: { before?: unknown; after?: unknown } } }
+        | undefined
+      const tokens = part?.data?.tokens
+      return typeof tokens?.before === 'number' && typeof tokens.after === 'number'
+        ? { tokens: { before: tokens.before, after: tokens.after } }
+        : {}
     },
 
     async clear(): Promise<void> {

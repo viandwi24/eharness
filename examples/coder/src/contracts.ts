@@ -549,6 +549,11 @@ export type SteerResult =
   /** No turn was running any more: it ran as a turn of its own, driven with the given hooks. */
   | { delivered: 'turn'; result: TurnResult<CoderMessage> }
 
+/** What `/compact` reports: context tokens before and after, when the compaction recorded them. */
+export interface CompactSummary {
+  tokens?: { before: number; after: number }
+}
+
 export interface CoderController {
   readonly config: CoderConfig
   readonly permissions: PermissionEngine
@@ -570,8 +575,8 @@ export interface CoderController {
   messages(): Promise<CoderMessage[]>
   /** Stored messages of another session of this project, e.g. a subagent child (`AgentProgress.sessionId`). */
   messagesOf(sessionId: string): Promise<CoderMessage[]>
-  /** Summarize the conversation now; `instructions` focus the summary. */
-  compact(instructions?: string): Promise<void>
+  /** Summarize the conversation now; `instructions` focus the summary. Null: nothing to compact. */
+  compact(instructions?: string): Promise<CompactSummary | null>
   /** Start a fresh session (`/clear`). */
   clear(): Promise<void>
   /** Switch to a stored session (`/resume`). */

@@ -33,7 +33,10 @@ function harness(over: Record<string, unknown> = {}) {
     },
     messagesOf: async (id: string) => [{ id: `m-${id}`, role: 'assistant', parts: [] }],
     clear: async () => void calls.push('clear'),
-    compact: async () => void calls.push('compact'),
+    compact: async () => {
+      calls.push('compact')
+      return { tokens: { before: 52_000, after: 8_100 } }
+    },
     setModel: (m: string) => void calls.push(`setModel:${m}`),
     agents: () => [{ name: 'explore', source: 'builtin', description: 'finds things' }],
     resume: async (id: string) => void calls.push(`resume:${id}`),
@@ -45,6 +48,7 @@ function harness(over: Record<string, unknown> = {}) {
     controller,
     model: 'm0',
     print: (text, tone) => void printed.push({ text, tone }),
+    activity: (status) => void calls.push(`activity:${status ?? 'off'}`),
     reset: () => void calls.push('reset'),
     load: () => void calls.push('load'),
     pickSession: () => void calls.push('pick'),
@@ -186,19 +190,27 @@ describe('slash effects', () => {
   test('/compact success and failure', async () => {
     const h = harness()
     await runSlash('/compact', h.ctx)
-    expect(h.calls).toEqual(['compact', 'refresh'])
-    expect(h.printed.map((p) => p.text)).toEqual([
-      'Compacting the conversation…',
-      'Conversation compacted.',
+    expect(h.calls).toEqual([
+      'activity:Compacting conversation',
+      'compact',
+      'activity:off',
+      'refresh',
     ])
+    expect(h.printed.map((p) => p.text)).toEqual([
+      '✻ Conversation compacted (52k → 8.1k tokens · ctrl+o for history)',
+    ])
+    const empty = harness({ compact: async () => null })
+    await runSlash('/compact', empty.ctx)
+    expect(empty.printed.map((p) => p.text)).toEqual(['Nothing to compact yet.'])
     const bad = harness({
       compact: async () => {
         throw new Error('nope')
       },
     })
     await runSlash('/compact', bad.ctx)
-    expect(bad.printed[1]).toMatchObject({ tone: 'error' })
-    expect(bad.printed[1]?.text).toContain('nope')
+    expect(bad.printed[0]).toMatchObject({ tone: 'error' })
+    expect(bad.calls).toContain('activity:off')
+    expect(bad.printed[0]?.text).toContain('nope')
   })
 
   test('/model opens the picker or switches', async () => {

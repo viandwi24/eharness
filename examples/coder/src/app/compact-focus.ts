@@ -42,14 +42,14 @@ export function createCompactFocus(): CompactFocus {
 }
 
 /** `CoderController.compact(instructions)`: set the focus, run the compaction, never leave it pending. */
-export async function compactWithFocus(
+export async function compactWithFocus<T>(
   focus: CompactFocus,
-  compact: () => Promise<unknown>,
+  compact: () => Promise<T>,
   instructions?: string,
-): Promise<void> {
+): Promise<T> {
   focus.setFocus(instructions)
   try {
-    await compact()
+    return await compact()
   } finally {
     focus.setFocus(undefined)
   }

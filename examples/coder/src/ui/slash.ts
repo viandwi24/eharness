@@ -2,7 +2,13 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import type { Todo } from 'eharness/todos'
-import type { CoderController, CoderMessage, CustomCommand, PermissionRules } from '../contracts.ts'
+import type {
+  CoderController,
+  CoderMessage,
+  CompactSummary,
+  CustomCommand,
+  PermissionRules,
+} from '../contracts.ts'
 import {
   PERMISSION_MODES,
   type PermissionMode,
@@ -10,6 +16,7 @@ import {
   type ThinkingLevel,
 } from '../contracts.ts'
 import type { PageSpec } from './pages/spec.ts'
+import { formatTokens } from './Spinner.tsx'
 import type { SubagentRun } from './state.ts'
 
 /** What a command may do to the UI. */
@@ -19,6 +26,8 @@ export interface SlashContext {
   args: string
   /** Current model id (changes with `/model`). */
   model: string
+  /** Show an animated status line (`✻ Compacting conversation… (3s)`) until called with null. */
+  activity?(status: string | null): void
   /** Print dim system lines into the transcript. */
   print(text: string, tone?: 'info' | 'error'): void
   /** Clear the transcript view. */
@@ -180,11 +189,13 @@ export const slashCommands: SlashCommand[] = [
     description: 'Summarise the conversation to free context',
     usage: '[instructions]',
     run: async (ctx) => {
-      ctx.print('Compacting the conversation…')
+      ctx.activity?.('Compacting conversation')
       try {
-        await ctx.controller.compact(ctx.args || undefined)
-        ctx.print('Conversation compacted.')
+        const result = await ctx.controller.compact(ctx.args || undefined)
+        ctx.activity?.(null)
+        ctx.print(compactedLine(result))
       } catch (error) {
+        ctx.activity?.(null)
         ctx.print(`Compaction failed: ${error instanceof Error ? error.message : error}`, 'error')
       }
       ctx.refreshStats()
@@ -533,4 +544,17 @@ export async function runSlash(text: string, ctx: Omit<SlashContext, 'args'>): P
     ctx.print(`/${command.name} failed: ${error instanceof Error ? error.message : error}`, 'error')
   }
   return true
+}
+
+/** `✻ Conversation compacted (52k → 8.1k tokens · ctrl+o for history)`, like Claude Code. */
+export function compactedLine(result: CompactSummary | null): string {
+  if (result === null) return 'Nothing to compact yet.'
+  const parts: string[] = []
+  if (result.tokens) {
+    parts.push(
+      `${formatTokens(result.tokens.before)} → ${formatTokens(result.tokens.after)} tokens`,
+    )
+  }
+  parts.push('ctrl+o for history')
+  return `✻ Conversation compacted (${parts.join(' · ')})`
 }

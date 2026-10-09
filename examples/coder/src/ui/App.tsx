@@ -49,6 +49,7 @@ import { QueuedMessages } from './QueuedMessages.tsx'
 import { RewindMenu } from './RewindMenu.tsx'
 import { SessionPicker } from './SessionPicker.tsx'
 import { SideQuestion } from './SideQuestion.tsx'
+import { ThinkingIndicator } from './Spinner.tsx'
 import { SuggestionKeys } from './Suggestion.tsx'
 import { isBuiltin, parseSlash, runSlash } from './slash.ts'
 import {
@@ -244,6 +245,8 @@ export function App({
   // rows behind. Like Claude Code, clear and reprint the whole transcript at the new width once the
   // resize settles (on the primary screen only; a page open on the alternate screen defers it).
   const [resizePending, setResizePending] = useState(false)
+  // a slash command's own progress line (`/compact`), shown like the turn's thinking line
+  const [activity, setActivity] = useState<{ status: string; startedAt: number } | null>(null)
   useEffect(() => {
     const tty = stdout as NodeJS.WriteStream
     let width = tty.columns
@@ -559,6 +562,7 @@ export function App({
       void runSlash(text, {
         controller,
         model: modelRef.current,
+        activity: (status) => setActivity(status ? { status, startedAt: Date.now() } : null),
         print: (line, tone) => dispatch({ type: 'system', text: line, tone }),
         reset: () => {
           stdout.write(CLEAR_SCREEN)
@@ -949,6 +953,9 @@ export function App({
         {...(liveTokens(state.live) !== undefined ? { tokens: liveTokens(state.live) } : {})}
       />
       <Box flexDirection="column" display={pageHost.active ? 'none' : 'flex'}>
+        {activity ? (
+          <ThinkingIndicator startedAt={activity.startedAt} status={activity.status} hint="" />
+        ) : null}
         {approvals.length > 0 ? (
           <PermissionPrompt broker={controller.broker} />
         ) : questions.length > 0 ? (
