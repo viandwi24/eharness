@@ -31,6 +31,14 @@ export interface PageProps {
   startAtEnd?: boolean
   /** A child is capturing text input: the page ignores every key (Esc and `q` included). */
   editing?: boolean
+  /**
+   * A fixed block under the body (a prompt). Its height is measured and taken from the body. With
+   * a footer the page keeps typing keys for it: `q`, `g`, `G` and the arrows only act while
+   * `footerEmpty`, Esc closes only then, PgUp/PgDn/Home/End always scroll.
+   */
+  footer?: ReactNode
+  /** The footer prompt holds no text. */
+  footerEmpty?: boolean
   /** Override the terminal size (tests). */
   size?: { rows: number; columns: number }
   children: ReactNode
@@ -83,13 +91,17 @@ export function Page({
   arrows = true,
   startAtEnd = false,
   editing = false,
+  footer,
+  footerEmpty = true,
   size,
   children,
 }: PageProps): ReactElement {
   const win = useWindowSize()
   const rows = size?.rows ?? win.rows
   const columns = size?.columns ?? win.columns
-  const viewport = bodyRows(rows)
+  const footerRef = useRef<DOMElement>(null)
+  const [footerHeight, setFooterHeight] = useState(0)
+  const viewport = Math.max(3, bodyRows(rows) - (footer === undefined ? 0 : footerHeight))
   const viewRef = useRef<DOMElement>(null)
   const contentRef = useRef<DOMElement>(null)
   const [contentHeight, setContentHeight] = useState(0)
@@ -97,6 +109,8 @@ export function Page({
   useEffect(() => {
     const h = contentRef.current ? measureElement(contentRef.current).height : 0
     if (h !== contentHeight) setContentHeight(h)
+    const f = footerRef.current ? measureElement(footerRef.current).height : 0
+    if (f !== footerHeight) setFooterHeight(f)
   })
   const [requested, setRequested] = useState(startAtEnd ? Number.MAX_SAFE_INTEGER : 0)
   const sections = useRef<Array<RefObject<DOMElement | null>>>([])
@@ -114,16 +128,27 @@ export function Page({
 
   useInput(
     (input, key) => {
-      if (key.escape || input === 'q') return onClose()
+      const typing = footer !== undefined && !footerEmpty
+      // `q` closes only pages without a prompt: with one, `q` is the first letter of a message
+      if (footer === undefined && (key.escape || input === 'q')) return onClose()
+      if (footer !== undefined && footerEmpty && key.escape) return onClose()
       const fresh = contentRef.current ? measureElement(contentRef.current).height : contentHeight
       const limit = Math.max(0, fresh - viewport)
-      const set = (n: number): void => setRequested(Math.max(0, Math.min(limit, n)))
-      if (arrows && key.upArrow) return set(top - 1)
-      if (arrows && key.downArrow) return set(top + 1)
+      // a page that opened at the end keeps following new content once scrolled back to the end
+      const set = (n: number): void =>
+        setRequested(
+          startAtEnd && n >= limit ? Number.MAX_SAFE_INTEGER : Math.max(0, Math.min(limit, n)),
+        )
+      const arrowsOn = arrows && !typing
+      if (arrowsOn && key.upArrow) return set(top - 1)
+      if (arrowsOn && key.downArrow) return set(top + 1)
       if (key.pageUp) return set(top - (viewport - 1))
       if (key.pageDown) return set(top + (viewport - 1))
-      if (input === 'g' || key.home) return set(0)
-      if (input === 'G' || key.end) return set(limit)
+      if (key.home) return set(0)
+      if (key.end) return set(limit)
+      if (footer !== undefined) return
+      if (input === 'g') return set(0)
+      if (input === 'G') return set(limit)
       if (key.tab && !key.shift) {
         const base = contentRef.current ? measureElement(contentRef.current).y : 0
         const ys = sections.current
@@ -169,11 +194,24 @@ export function Page({
           </Box>
         </SectionContext>
       </Box>
-      <Box paddingX={1} justifyContent="space-between">
-        <Text dimColor wrap="truncate-end">
-          {hints}
-        </Text>
-        {position ? <Text dimColor>{position}</Text> : null}
+      {footer === undefined ? null : (
+        <Box ref={footerRef} flexDirection="column" flexShrink={0} paddingX={1}>
+          {footer}
+        </Box>
+      )}
+      <Box paddingX={1} justifyContent="space-between" height={1} flexShrink={0}>
+        <Box flexShrink={1} flexGrow={1} overflow="hidden">
+          <Text dimColor wrap="truncate-end">
+            {hints}
+          </Text>
+        </Box>
+        {position ? (
+          <Box flexShrink={0} marginLeft={1}>
+            <Text dimColor wrap="truncate-end">
+              {position}
+            </Text>
+          </Box>
+        ) : null}
       </Box>
     </Box>
   )

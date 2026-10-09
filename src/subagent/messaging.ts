@@ -7,6 +7,9 @@
  */
 import { neutralizeTags, type TurnResult } from '../index.ts'
 
+/** Default tool name of the tool that stops a running agent. */
+export const AGENT_STOP_TOOL = 'agent_stop'
+
 /** Default tool name of the messaging tool. */
 export const SEND_MESSAGE_TOOL = 'send_message'
 
@@ -71,6 +74,8 @@ export interface AgentEntry {
   description: string
   status: AgentEntryStatus
   resumable: boolean
+  /** Stopped by `agent_stop` (the model), not by the user: it stays resumable. */
+  modelStopped?: boolean
   startedAt: number
   /** Deliver an agent message into the running child (rejects when it cannot). */
   deliver?: (text: string, data: Record<string, unknown>) => Promise<void>
@@ -242,7 +247,7 @@ export function rosterText(
     const id = e.taskId ?? e.childSessionId
     const label = e.name === undefined ? id : `${e.name} (${id})`
     const state =
-      e.status === 'stopped'
+      e.status === 'stopped' && e.modelStopped !== true
         ? 'cancelled by the user, cannot be messaged'
         : e.status === 'running'
           ? 'running'

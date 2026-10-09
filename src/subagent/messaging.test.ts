@@ -705,3 +705,136 @@ describe('send_message', () => {
     await second.close()
   })
 })
+
+describe('agent_output and the report cap', () => {
+  const outCall = (id: string, toolCallId: string, extra: Record<string, unknown> = {}) => ({
+    toolName: 'agent_output',
+    toolCallId,
+    input: { id, ...extra },
+  })
+  const eventText = async (session: { messages(): Promise<HarnessUIMessage[]> }) =>
+    JSON.stringify(await session.messages())
+
+  test('a cut report names agent_output; the tool pages through the full report', async () => {
+    const storage = shared()
+    const report = `${'a'.repeat(60)}${'b'.repeat(60)}`
+    const w = worker(storage, [{ text: report }])
+    const m = main(
+      storage,
+      w.agent,
+      [
+        { toolCalls: [spawnCall('cb', { name: 'rev' })] },
+        { text: 'started' },
+        {
+          toolCalls: [
+            outCall('rev', 'o1', { limit: 50 }),
+            outCall('agent-1', 'o2', { offset: 100 }),
+          ],
+        },
+        { text: 'read' },
+      ],
+      { reportMaxChars: 50 },
+      { resumable: false },
+    )
+    const session = m.session('p1')
+    await session.send('go').result
+    await until('report seen', async () => (await eventText(session)).includes('report cut at 50'))
+    const raw = await eventText(session)
+    expect(raw).toContain('report cut at 50 of 120 characters')
+    expect(raw).toContain('agent_output({ id: \\"agent-1\\" })')
+    await session.idle()
+    await session.send('read it').result
+    const out = outputs(await session.messages(), 'agent_output')
+    expect(out.o1).toContain('a'.repeat(50))
+    expect(out.o1).toContain('more: agent_output({ id: "rev", offset: 50 })')
+    expect(out.o2).toContain('b'.repeat(20))
+    expect(out.o2).toContain('end of report')
+    await m.close()
+  })
+
+  test('unknown ids are errors; the tool is not offered without background or messaging', async () => {
+    const storage = shared()
+    const w = worker(storage, [{ text: 'r' }])
+    const m = main(storage, w.agent, [{ toolCalls: [outCall('nope', 'o1')] }, { text: 'ok' }], {})
+    const session = m.session('p2')
+    await session.send('go').result
+    expect(outputs(await session.messages(), 'agent_output').o1).toContain('ERROR: no agent "nope"')
+    await m.close()
+
+    const plain = defineHarnessAgent({
+      model: scriptedModel([{ text: 'x' }]),
+      contextWindow: 100_000,
+      storage: shared(),
+      logger: silent,
+      plugins: [
+        subagents({
+          agents: { worker: { agent: w.agent, description: 'd' } },
+          approvals: 'policy',
+          messaging: false,
+        }),
+      ] as never,
+    })
+    const s = plain.session('p3')
+    await s.send('hi').result
+    expect(JSON.stringify(await s.messages())).not.toContain('agent_output')
+    await plain.close()
+  })
+
+  test('a running agent returns status and progress', async () => {
+    const storage = shared()
+    const g = gate()
+    const w = worker(
+      storage,
+      [{ toolCalls: [{ toolName: 'wait', toolCallId: 'w1', input: {} }] }, { text: 'done' }],
+      { tools: { wait: waitTool(g) } },
+    )
+    const m = main(storage, w.agent, [
+      { toolCalls: [spawnCall('cb')] },
+      { toolCalls: [outCall('agent-1', 'o1')] },
+      { text: 'ok' },
+    ])
+    const session = m.session('p4')
+    await session.send('go').result
+    expect(outputs(await session.messages(), 'agent_output').o1).toContain('still running')
+    g.open()
+    await m.close()
+  })
+})
+
+describe('agent_stop', () => {
+  const stopCall = (id: string, toolCallId: string) => ({
+    toolName: 'agent_stop',
+    toolCallId,
+    input: { id },
+  })
+
+  test('the model stops a running agent; it stays resumable', async () => {
+    const storage = shared()
+    const g = gate()
+    const w = worker(
+      storage,
+      [
+        { toolCalls: [{ toolName: 'wait', toolCallId: 'w1', input: {} }] },
+        { text: 'done' },
+        { text: 'resumed report' },
+      ],
+      { tools: { wait: waitTool(g) } },
+    )
+    const m = main(storage, w.agent, [
+      { toolCalls: [spawnCall('cb', { name: 'rev' })] },
+      { toolCalls: [stopCall('rev', 's1'), stopCall('nope', 's2')] },
+      { toolCalls: [sendCall('rev', 'again please', 'sm1')] },
+      { text: 'ok' },
+    ])
+    const session = m.session('p5')
+    await session.send('go').result
+    const out = outputs(await session.messages(), 'agent_stop')
+    expect(out.s1).toContain('Stopped rev')
+    expect(out.s2).toContain('ERROR: no running agent "nope"')
+    g.open()
+    await until('resumed', async () =>
+      (outputs(await session.messages(), 'send_message').sm1 ?? '').includes('resumed'),
+    )
+    await m.close()
+  })
+})

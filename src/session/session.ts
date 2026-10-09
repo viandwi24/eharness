@@ -31,6 +31,7 @@ import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
 import { recordOutsideTurn } from '../loop/ledger.ts'
 import { createKindMessage } from '../messages/kinds.ts'
+import { normalizeRawInput } from '../messages/tool-parts.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
@@ -526,7 +527,7 @@ export function createSessionHandle(args: {
   async function persist(messages: HarnessUIMessage[]): Promise<HarnessUIMessage[]> {
     const out: HarnessUIMessage[] = []
     for (const original of messages) {
-      let message = original
+      let message = normalizeRawInput(original)
       for (const hook of rt.open?.hooks.list('message.beforeSave') ?? []) {
         try {
           const next = await hook.fn(rt.contextOf(hook.owner), structuredClone(message))

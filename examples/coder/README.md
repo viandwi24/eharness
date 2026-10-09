@@ -189,7 +189,7 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | `/model [id]` | model picker, or switch to `id` |
 | `/thinking [level]` | thinking picker, or set the level |
 | `/permissions` | mode and rules (page); `allow\|ask\|deny <rule> [--project]`, `remove <kind> <rule>`, `mode <mode>` edit them |
-| `/agents [n]` | subagents and this session's runs (page); `/agents <n>` (or `/transcript <n>`) opens a run read-only |
+| `/agents [n]` | subagents and this session's runs (page); `/agents <n>` (or `/transcript <n>`) opens the agent view of run `n` |
 | `/resume [id]` | pick a stored session, or resume one by id |
 | `/todos` | show the current todo list |
 | `/diff` | review the working-tree changes (page, see below) |
@@ -229,7 +229,7 @@ Prompt features:
   command: no permission check applies.
 - `@path` completes file paths from the project (and mounted directories); Tab completes.
 - `--resume` without an id, and `/resume` without an id, open a session picker.
-- `/agents <n>` and `/transcript <n>` open run `n` of this session's subagent runs read-only
+- `/agents <n>` and `/transcript <n>` open the agent view of run `n` of this session's subagent runs
   (numbers are listed by `/agents`).
 - `/permissions mode bypassPermissions` needs `--yes` to confirm.
 
@@ -431,10 +431,10 @@ The `bash` tool takes two extra inputs, and `agent` takes one:
 |---|---|
 | `bash { run_in_background: true }` | start the command and return a task id (`bash-1`, ...) at once |
 | `bash { notify_on: "<regex>" }` | with `run_in_background`: each new output line matching the regex is reported to the agent, at most one notification per 5 s (batched) |
-| `agent { run_in_background: true }` | run the subagent in the background (`agent-1` in `/tasks`); its report (cut to 4000 characters) arrives later |
+| `agent { run_in_background: true }` | run the subagent in the background (`agent-1` in `/tasks`); its report (cut at 16 000 characters, with a hint to read the rest) arrives later |
 
 Two more tools: **`bash_output { id, filter? }`** returns the output since the last read with status
-and exit code (`filter` is a regex over lines); **`kill_shell { id }`** stops a task. Background
+and exit code (`filter` is a regex over lines); **`kill_shell { id }`** stops a shell task. The library adds **`agent_output { id, offset?, limit? }`** (the full final report of an agent, paged; also for one-shot agents and after a restart) and **`agent_stop { id }`** (stops a running agent; it stays resumable). Background
 commands use the same sandbox and permission checks as `bash`. Output is capped at 1 MB per task.
 Background mode is the library's (`shell({ background: true })`, `subagents({ background: true })`) on
 the **main agent only**: a subagent's own background shells or agents would die with its session.
@@ -448,8 +448,21 @@ All shells and background agents are stopped when coder exits. `/tasks` merges t
 `shellTasks` and `subagentTasks` services of the session (they live in this process: tasks of a
 session reopened after a restart are not listed).
 
-`/tasks` opens a page with every task, its status and tail output: `↑/↓` select, `Enter` shows the
-output, `x` stops a running task, `Esc` or `q` closes.
+`/tasks` opens a page with every task, its status and tail output: `↑/↓` select, `Enter` shows a
+shell's output or opens an agent's view, `x` stops a running task, `Esc` or `q` closes.
+
+**Agent view.** `Enter` on an agent row in the footer (`↓` from the prompt, then `Enter`), on a
+run in `/agents`, on an agent in `/tasks`, or `/transcript <n>` opens that agent's full
+conversation on the alternate screen: the task prompt, reasoning, tool cards and markdown text
+rendered like the main transcript, live while the agent runs (it follows the end; scroll with
+`↑/↓`, `PgUp/PgDn`, `Home/End` and it keeps following once you are back at the end). Header:
+`◆ writer · general-purpose · running 12s`. The prompt at the bottom messages the agent
+(`Enter`): a running agent gets it at its next step, a finished resumable one is resumed in the
+background; a one-shot or cancelled agent shows the refusal text. `Esc` closes (and `q` while the
+prompt is empty). A tool call of the agent waiting for approval is marked in the view; answer it at
+the main prompt, where it is labelled with the agent's name. Runs of earlier processes open with
+their stored conversation. The view reads the child session from storage (it is saved after every
+step, so the text of the step that is still streaming appears when the step ends).
 
 ### Settings reference
 

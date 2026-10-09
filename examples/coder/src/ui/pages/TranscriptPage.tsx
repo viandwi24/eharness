@@ -22,7 +22,14 @@ export function messageMeta(message: CoderMessage): { at?: number; model?: strin
   return { at: meta?.createdAt, model: meta?.model }
 }
 
-function MessageEntry({ message }: { message: CoderMessage }): ReactElement {
+export function MessageEntry({
+  message,
+  expanded = true,
+}: {
+  message: CoderMessage
+  /** Tool cards expanded (the transcript viewer) or compact like the main transcript. */
+  expanded?: boolean
+}): ReactElement {
   const { at, model } = messageMeta(message)
   const stamp = [at === undefined ? undefined : clock(at), model ? shortModel(model) : undefined]
     .filter(Boolean)
@@ -30,7 +37,7 @@ function MessageEntry({ message }: { message: CoderMessage }): ReactElement {
   return (
     <Box flexDirection="column" marginTop={1}>
       {message.role === 'assistant' && stamp ? <Text dimColor>── {stamp}</Text> : null}
-      <MessageView message={message} expanded bash={{}} timing={{}} />
+      <MessageView message={message} expanded={expanded} bash={{}} timing={{}} />
     </Box>
   )
 }

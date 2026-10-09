@@ -130,6 +130,21 @@ child session id; a subagent addresses the root as `"main"`.
   `childAgent.session(id).enqueue(text, { mode: 'steer' })`, the core inbox).
 - Every session with the plugin gets a short roster reminder of addressable agents each step.
 
+## Reading a full report (`agent_output`)
+
+A background report is cut at `reportMaxChars` (default 16 000) and says so. The model reads the
+rest with `agent_output({ id: "agent-2", offset?, limit? })`: it works by task id, name or child
+session id, for one-shot agents and after a restart (it reads the child session's stored final
+text), pages by characters with a `more: …offset=` footer, and returns status plus progress for an
+agent that is still running. Offered when `background` or messaging is on; `outputTool: false`
+turns it off, `outputToolName` renames it.
+
+## Stopping an agent (`agent_stop`)
+
+`agent_stop({ id })` lets the model stop a running background agent (id, name or child session
+id). The agent stays resumable by `send_message` (a stop by the user does not); `stopTool: false`
+turns it off, `stopToolName` renames it.
+
 ## Background children
 
 `background: true` (inline and policy only) adds `run_in_background`. The call returns at once; when

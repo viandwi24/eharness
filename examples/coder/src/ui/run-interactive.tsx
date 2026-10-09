@@ -1,4 +1,5 @@
 import { render } from 'ink'
+import { installWarningSinks } from '../app/warnings.ts'
 import type { CoderController, CoderMessage } from '../contracts.ts'
 import { App } from './App.tsx'
 
@@ -28,6 +29,8 @@ export async function runInteractive(
   } catch {
     // no version in the banner
   }
+  // library and process warnings must never print through the Ink UI
+  const restoreWarnings = installWarningSinks(controller.config.userDir)
   // Pages switch to the terminal's alternate screen themselves (see ui/pages/host.ts), so Ink's
   // own `alternateScreen` option stays off: the conversation lives in the primary scrollback.
   const instance = render(
@@ -45,6 +48,7 @@ export async function runInteractive(
   try {
     await instance.waitUntilExit()
   } finally {
+    restoreWarnings()
     await controller.close()
   }
 }

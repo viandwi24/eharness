@@ -98,7 +98,7 @@ output is 1 MB (newest kept); a read that missed dropped output starts with
 ### `kill_shell` (only with `background`, risk `write`)
 
 Input `{ id }`. `Stopped bash-N.`, `bash-N is not running (<status>).` or
-`ERROR: no background shell "<id>".` Stopping sends SIGTERM to the process group and SIGKILL after
+`ERROR: no background shell "<id>". To stop a background agent (agent-N) use agent_stop.` Stopping sends SIGTERM to the process group and SIGKILL after
 2 s. A stopped task never sends an exit event.
 
 ## 3. Data part

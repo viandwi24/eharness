@@ -8,10 +8,13 @@ export {
   AGENT_MESSAGE_INSTRUCTIONS,
   AGENT_MESSAGE_MAX_CHARS,
   AGENT_NAME_PATTERN,
+  AGENT_STOP_TOOL,
   SEND_MESSAGE_TOOL,
   type SubagentMessageLimits,
 } from './messaging.ts'
 export {
+  AGENT_OUTPUT_PAGE_CHARS,
+  AGENT_OUTPUT_TOOL,
   pendingSubagentApprovals,
   reconcileSubagentWaits,
   SUBAGENT_BACKGROUND_REPORT_CHARS,

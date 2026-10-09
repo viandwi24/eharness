@@ -16,7 +16,6 @@ function harness(over: Record<string, unknown> = {}) {
   const rules = { allow: ['Bash(ls)'], ask: [] as string[], deny: ['Read(./.env)'] }
   const runs: SubagentRun[] = []
   const pages: unknown[] = []
-  const transcripts: Array<{ title: string; messages: unknown[] }> = []
   const controller = {
     permissions: {
       mode: 'plan',
@@ -56,7 +55,6 @@ function harness(over: Record<string, unknown> = {}) {
     pickThinking: () => void calls.push('pickThinking'),
     openPage: (page) => void pages.push(page),
     subagents: () => runs,
-    showTranscript: (title, messages) => void transcripts.push({ title, messages }),
     submit: (p) => void calls.push(`submit:${p}`),
     todos: () => [{ id: '1', content: 'do it', status: 'in_progress' }] as never,
     setModelLabel: (m) => void calls.push(`label:${m}`),
@@ -74,7 +72,7 @@ function harness(over: Record<string, unknown> = {}) {
     },
     refreshTitle: () => void calls.push('title'),
   }
-  return { ctx, calls, printed, runs, transcripts, pages }
+  return { ctx, calls, printed, runs, pages }
 }
 
 describe('slash parsing', () => {
@@ -382,13 +380,15 @@ describe('/agents runs and transcripts', () => {
     status: n === 2 ? 'running' : 'done',
   })
 
-  test('/agents <n> and /transcript <n> load the child messages', async () => {
+  test('/agents <n> and /transcript <n> open the agent page of the run', async () => {
     const h = harness()
     h.runs.push(run(1), run(2))
     await runSlash('/agents 2', h.ctx)
     await runSlash('/transcript 1', h.ctx)
-    expect(h.transcripts.map((t) => t.title)).toEqual(['explore: task 2', 'explore: task 1'])
-    expect(h.transcripts[0]?.messages[0]).toMatchObject({ id: 'm-child-2' })
+    expect(h.pages).toMatchObject([
+      { kind: 'agent', target: { sessionId: 'child-2', name: 'explore', status: 'running' } },
+      { kind: 'agent', target: { sessionId: 'child-1', description: 'task 1', status: 'done' } },
+    ])
   })
 
   test('bad numbers print an error', async () => {
@@ -400,6 +400,6 @@ describe('/agents runs and transcripts', () => {
     await runSlash('/agents x', h.ctx)
     expect(h.printed[1]?.text).toContain('1-1')
     expect(h.printed[2]).toMatchObject({ tone: 'error' })
-    expect(h.transcripts).toEqual([])
+    expect(h.pages).toEqual([])
   })
 })

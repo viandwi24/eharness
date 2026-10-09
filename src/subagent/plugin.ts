@@ -31,6 +31,7 @@ import {
   AGENT_MESSAGE_INSTRUCTIONS,
   AGENT_MESSAGE_MAX_CHARS,
   AGENT_NAME_PATTERN,
+  AGENT_STOP_TOOL,
   type AgentDirectory,
   type AgentEntry,
   type AgentSender,
@@ -74,8 +75,14 @@ export const SUBAGENT_NO_CLIENT =
 /** Text of a bare denial from an `answer` callback. */
 export const SUBAGENT_DENIED = 'Denied by the user.'
 
-/** Cap of the report injected into the parent when a background child finishes. */
-export const SUBAGENT_BACKGROUND_REPORT_CHARS = 4000
+/** Default cap of the report injected into the parent when a background child finishes. */
+export const SUBAGENT_BACKGROUND_REPORT_CHARS = 16000
+
+/** Default name of the tool that reads a subagent's full final report. */
+export const AGENT_OUTPUT_TOOL = 'agent_output'
+
+/** Default page size of `agent_output`, in characters. */
+export const AGENT_OUTPUT_PAGE_CHARS = 16000
 
 // biome-ignore lint/suspicious/noExplicitAny: agents of different configs share one loose type
 type AnyAgent = HarnessAgent<any>
@@ -201,6 +208,26 @@ export interface SubagentsOptions {
   messaging?: boolean
   /** Name of the messaging tool. Default `'send_message'`. */
   messageToolName?: string
+  /**
+   * Offer `agent_output` (default: when `background` or `messaging` is on; never with
+   * `approvals: 'park'`). Spec 20 §5.6.
+   */
+  outputTool?: boolean
+  /**
+   * Offer `agent_stop` (default: with `outputTool`'s condition: `background` or `messaging` on;
+   * never with `approvals: 'park'`). Spec 20 §5.8.
+   */
+  stopTool?: boolean
+  /** Name of the stop tool. Default `'agent_stop'`. */
+  stopToolName?: string
+  /** Name of the report-reading tool. Default `'agent_output'`. */
+  outputToolName?: string
+  /**
+   * Cap of the report a finishing background agent injects into the parent, in characters
+   * (default {@link SUBAGENT_BACKGROUND_REPORT_CHARS}). A cut report says how to read the rest
+   * with `agent_output`.
+   */
+  reportMaxChars?: number
   /** Throttling of `send_message` (spec 20 §5.4). */
   messageLimits?: SubagentMessageLimits
   /** `'park'`: timeout of the parent's wait in ms. Default none. */
@@ -362,9 +389,9 @@ function inspect(message: MessageLike): { steps: number; lastTool?: string } {
 
 const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
-function reportOf(text: string): string {
-  return text.length > SUBAGENT_BACKGROUND_REPORT_CHARS
-    ? `${text.slice(0, SUBAGENT_BACKGROUND_REPORT_CHARS)}\n… [report truncated]`
+function reportOf(text: string, max: number, hint?: string): string {
+  return text.length > max
+    ? `${text.slice(0, max)}\n… [report cut at ${max} of ${text.length} characters${hint === undefined ? '' : `; ${hint}`}]`
     : text
 }
 
@@ -854,6 +881,17 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   const messageToolName = options.messageToolName ?? SEND_MESSAGE_TOOL
   const messaging = options.messaging !== false && options.approvals !== 'park'
   const limits = resolveLimits(options.messageLimits)
+  const outputToolName = options.outputToolName ?? AGENT_OUTPUT_TOOL
+  const outputEnabled =
+    options.outputTool !== false &&
+    options.approvals !== 'park' &&
+    (options.background === true || messaging)
+  const stopToolName = options.stopToolName ?? AGENT_STOP_TOOL
+  const stopEnabled =
+    options.stopTool !== false &&
+    options.approvals !== 'park' &&
+    (options.background === true || messaging)
+  const reportMax = Math.max(1, options.reportMaxChars ?? SUBAGENT_BACKGROUND_REPORT_CHARS)
 
   /** Where a report goes: the `inject` of some session (ADR-0038). */
   type Reporter = (text: string, data: Record<string, unknown>) => Promise<void>
@@ -991,6 +1029,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             : (runTool(ctx, defs, depth, description, inputSchema, registry, current) as ToolInput)
       }
       if (messaging) tools[messageToolName] = messageTool(current, messageToolName)
+      if (outputEnabled) tools[outputToolName] = outputTool(current, outputToolName)
+      if (stopEnabled) tools[stopToolName] = stopTool(current)
       if (dir !== undefined) {
         const roster = dir
         hooks['step.prepare'] = async () => {
@@ -1092,6 +1132,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     if (def === undefined) {
       return `ERROR: the agent type "${entry.agent}" is not available any more; it cannot be resumed.`
     }
+    entry.modelStopped = false
     const taskId = launch({
       scope,
       def,
@@ -1190,7 +1231,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     if (sender.kind === 'agent' && entry.childSessionId === sender.sessionId) {
       return fail('you cannot message yourself.')
     }
-    if (entry.status === 'stopped') {
+    if (entry.status === 'stopped' && entry.modelStopped !== true) {
       return fail(`${label} was cancelled by the user and cannot be messaged.`)
     }
     const running = entry.status === 'running'
@@ -1288,6 +1329,133 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           case 'resumed':
             return `${routed.label} had finished; it was resumed on the same session with your message and runs in the background as ${routed.id}. Its report arrives here when it finishes.`
         }
+      },
+    }) as ToolInput
+  }
+
+  /** The `agent_stop` tool of one session: stop a running agent; it stays resumable. */
+  function stopTool(scope: Scope): ToolInput {
+    const schema = z.object({
+      id: z.string().describe('An agent id such as agent-2, its name, or its child session id'),
+    })
+    return tool({
+      description: `Stop a running background subagent (by id, name or child session id). Its work so far stays in its session; unless it is a one-shot type you can resume it later by sending it a message. For shell commands use kill_shell instead.`,
+      inputSchema: schema as unknown as FlexibleSchema<{ id: string }>,
+      async execute({ id }): Promise<string> {
+        const { dir, registry } = scope
+        const key = id.trim()
+        if (key === '') return 'ERROR: `id` is empty.'
+        let entry: AgentEntry | undefined
+        if (dir !== undefined) {
+          entry = findEntry(dir, key)
+          if (entry === undefined) {
+            await rebuildEntries(scope)
+            entry = findEntry(dir, key)
+          }
+        }
+        const task = registry.get(key)
+        if (task === undefined) {
+          const label = entry?.name ?? entry?.taskId ?? key
+          return entry === undefined
+            ? `ERROR: no running agent "${key}". Agents that finished need no stopping.`
+            : `${label} is not running (${entry.status}).`
+        }
+        const label = task.name ?? task.id
+        if (task.status !== 'running') return `${label} is not running (${task.status}).`
+        if (entry !== undefined) entry.modelStopped = true
+        await registry.stop(task.id)
+        return `Stopped ${label}.${entry?.resumable === false ? '' : ' It can be resumed by sending it a message.'}`
+      },
+    }) as ToolInput
+  }
+
+  /** The `agent_output` tool of one session: the full final report of an agent, paged. */
+  function outputTool(scope: Scope, name: string): ToolInput {
+    const schema = z.object({
+      id: z.string().describe('An agent id such as agent-2, its name, or its child session id'),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Character to start at (default 0); use the offset of the "more" footer'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(`Characters to return (default ${AGENT_OUTPUT_PAGE_CHARS})`),
+    })
+    return tool({
+      description: `Read the full final report of a subagent (by id, name or child session id). Use it when a background agent's report arrived cut, or to read a finished agent again. Works for one-shot agents and after a restart. A report longer than one page continues with ${name}({ id, offset }). A still-running agent returns its status and latest progress.`,
+      inputSchema: schema as unknown as FlexibleSchema<{
+        id: string
+        offset?: number
+        limit?: number
+      }>,
+      async execute({ id, offset, limit }): Promise<string> {
+        const { ctx, dir, registry } = scope
+        const key = id.trim()
+        if (key === '') return 'ERROR: `id` is empty.'
+        let entry: AgentEntry | undefined
+        if (dir !== undefined) {
+          entry = findEntry(dir, key)
+          if (entry === undefined) {
+            await rebuildEntries(scope)
+            entry = findEntry(dir, key)
+          }
+        }
+        const task = registry.get(key)
+        const agent = entry?.agent ?? task?.agent
+        const childId = entry?.childSessionId ?? task?.childSessionId
+        if (agent === undefined || childId === undefined) {
+          const known = [
+            ...(dir === undefined
+              ? []
+              : [...dir.entries.values()].map((e) => e.name ?? e.taskId ?? e.childSessionId)),
+            ...registry.list().map((t) => t.name ?? t.id),
+          ]
+          const unique = [...new Set(known)]
+          return `ERROR: no agent "${key}".${unique.length === 0 ? ' No agents were started in this session.' : ` Known agents: ${unique.join(', ')}.`}`
+        }
+        const label = entry?.name ?? entry?.taskId ?? task?.id ?? childId
+        const status = entry?.status ?? task?.status
+        if (status === 'running') {
+          const tail = task?.tail ?? ''
+          return `${label} (${agent}) is still running; no final report yet.${tail === '' ? '' : `\nLatest progress:\n${tail}`}\nIts report arrives as a message when it finishes.`
+        }
+        const def = scope.defs()[agent]
+        if (def === undefined) return `ERROR: the agent type "${agent}" is not available.`
+        let text = ''
+        try {
+          const child = def.agent.session(childId) as AnySession
+          try {
+            const stored = (await child.messages({ limit: 200 })) as unknown as MessageLike[]
+            for (const m of stored.toReversed()) {
+              if (m.role !== 'assistant') continue
+              text = textOf(m, true)
+              if (text !== '') break
+            }
+          } finally {
+            await def.agent.closeSession(childId).catch(() => {})
+          }
+        } catch (error) {
+          ctx.log.warn('subagent: could not read an agent report', { error: errText(error) })
+          return `ERROR: could not read the report of ${label}: ${errText(error)}`
+        }
+        const head = `${label} (${agent}, ${status ?? 'finished'})`
+        if (text === '') return `${head} has no final text report.`
+        const from = Math.min(offset ?? 0, text.length)
+        const size = limit ?? AGENT_OUTPUT_PAGE_CHARS
+        const to = Math.min(text.length, from + size)
+        const body = text.slice(from, to)
+        const footer =
+          to < text.length
+            ? `\n… [characters ${from}-${to} of ${text.length}; more: ${name}({ id: "${key}", offset: ${to} })]`
+            : from > 0
+              ? `\n… [characters ${from}-${to} of ${text.length}; end of report]`
+              : ''
+        return `${head}\n\n${body}${footer}`
       },
     }) as ToolInput
   }
@@ -1630,7 +1798,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             const soFar = latest.text || latest.lastTool || ''
             yield progress({ status: 'running', text: 'Moved to the background.' })
             yield `${SUBAGENT_BACKGROUNDED_PREFIX} ${taskId} (${subagent_type}): ${label}, by the user.${
-              soFar === '' ? '' : ` Progress so far: ${reportOf(soFar.slice(-1000))}`
+              soFar === '' ? '' : ` Progress so far: ${reportOf(soFar.slice(-1000), 1000)}`
             } You will be notified when it finishes.`
             return
           }
@@ -1705,13 +1873,16 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         stopped ? 'was stopped' : status === 'completed' ? 'finished' : 'failed'
       }.`
       try {
-        await report(`${head}\n\n${reportOf(text) || '(no report)'}`, {
-          sessionId,
-          agent: agentName,
-          status: outcome,
-          taskId,
-          ...(extra.name === undefined ? {} : { name: extra.name }),
-        })
+        await report(
+          `${head}\n\n${reportOf(text, reportMax, outputEnabled ? `read the full report with ${outputToolName}({ id: "${taskId}" })` : undefined) || '(no report)'}`,
+          {
+            sessionId,
+            agent: agentName,
+            status: outcome,
+            taskId,
+            ...(extra.name === undefined ? {} : { name: extra.name }),
+          },
+        )
       } catch (error) {
         // the receiving session may be closed by now
         ctx.log.warn('subagent: could not deliver a background report', { error: errText(error) })

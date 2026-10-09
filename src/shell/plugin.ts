@@ -610,7 +610,8 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
           metadata: { risk: 'write' },
           execute: async ({ id }): Promise<string> => {
             const task = registry.get(id)
-            if (task === undefined) return `ERROR: no background shell "${id}".`
+            if (task === undefined)
+              return `ERROR: no background shell "${id}". To stop a background agent (agent-N) use agent_stop.`
             if (task.status !== 'running') return `${id} is not running (${task.status}).`
             await registry.stop(id)
             return `Stopped ${id}.`

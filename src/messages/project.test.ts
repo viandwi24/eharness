@@ -424,4 +424,34 @@ describe('sanitizeModelMessages', () => {
     expect(JSON.stringify(wire)).not.toContain('orphan')
     expect(JSON.stringify(wire)).not.toContain('dup')
   })
+
+  test('output-error parts with rawInput project without the AI SDK deprecation warning', async () => {
+    const g = globalThis as { AI_SDK_LOG_WARNINGS?: unknown }
+    const previous = g.AI_SDK_LOG_WARNINGS
+    const logged: unknown[] = []
+    g.AI_SDK_LOG_WARNINGS = (o: unknown) => logged.push(o)
+    try {
+      const stored = assistant('a1', [
+        stepStart,
+        {
+          type: 'tool-weather',
+          toolCallId: 'c1',
+          state: 'output-error',
+          input: undefined,
+          rawInput: { city: 'Oslo' },
+          errorText: 'Invalid input',
+        },
+      ])
+      const wire = await project([user('u1', 'hi'), stored], {
+        registry: registry(),
+        sessionId: 's1',
+      })
+      expect(logged).toEqual([])
+      expect(JSON.stringify(wire)).toContain('Oslo')
+      // the input is not mutated
+      expect(JSON.stringify(stored)).toContain('rawInput')
+    } finally {
+      g.AI_SDK_LOG_WARNINGS = previous
+    }
+  })
 })

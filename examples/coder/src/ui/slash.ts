@@ -34,8 +34,6 @@ export interface SlashContext {
   reset(): void
   /** Replace the transcript with these stored messages. */
   load(messages: CoderMessage[]): void
-  /** Show the transcript viewer page for a subagent's messages. */
-  showTranscript(title: string, messages: CoderMessage[]): void
   /** Subagent runs seen in this session, oldest first. */
   subagents(): SubagentRun[]
   /** Open a fullscreen page (`/context`, `/status`, `/cost`, `/help`, `/agents`, `/permissions`). */
@@ -154,8 +152,16 @@ async function openTranscript(ctx: SlashContext): Promise<void> {
     )
     return
   }
-  const messages = await ctx.controller.messagesOf(run.sessionId)
-  ctx.showTranscript(`${run.name}: ${run.description}`, messages)
+  ctx.openPage({
+    kind: 'agent',
+    target: {
+      sessionId: run.sessionId,
+      name: run.name,
+      agent: run.name,
+      description: run.description,
+      status: run.status,
+    },
+  })
 }
 
 type Theme = 'dark' | 'light' | 'auto'
@@ -254,13 +260,13 @@ export const slashCommands: SlashCommand[] = [
   {
     name: 'agents',
     usage: '[n]',
-    description: 'Subagents and their runs; /agents <n> opens a run transcript',
+    description: 'Subagents and their runs; /agents <n> opens the agent (live, you can message it)',
     run: (ctx) => (ctx.args ? openTranscript(ctx) : ctx.openPage({ kind: 'agents' })),
   },
   {
     name: 'transcript',
     usage: '<n>',
-    description: 'Open the transcript of subagent run n (see /agents)',
+    description: 'Open the conversation of subagent run n (see /agents)',
     run: (ctx) => openTranscript(ctx),
   },
   {

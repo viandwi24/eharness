@@ -60,6 +60,9 @@ export function createTaskHub(deps: TaskHubDeps): TaskHub {
         startedAt: t.startedAt,
         ...(t.endedAt !== undefined ? { endedAt: t.endedAt } : {}),
         tail: t.tail,
+        sessionId: t.childSessionId,
+        agent: t.agent,
+        ...(t.name !== undefined ? { name: t.name } : {}),
       }),
     )
     return [...shells, ...agents].sort((a, b) => a.startedAt - b.startedAt)

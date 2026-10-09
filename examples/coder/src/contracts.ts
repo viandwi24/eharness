@@ -497,6 +497,12 @@ export interface BackgroundTask {
   exitCode?: number | null
   /** Last lines of output (shell) or of the agent's text. */
   tail: string
+  /** Agents only: the child session that holds the agent's conversation (`messagesOf`). */
+  sessionId?: string
+  /** Agents only: the subagent type (`explore`, `general-purpose`, …). */
+  agent?: string
+  /** Agents only: the name the model gave the agent. */
+  name?: string
 }
 
 /** One editable setting for the `/config` page. */

@@ -158,6 +158,12 @@ export interface TranscriptProps {
   tokens?: number
   /** Focus view: last prompt and final text in full, tool calls on one line. */
   focus?: boolean
+  /**
+   * Extra rows the caller renders below beyond the {@link LIVE_RESERVE} baseline (footer task
+   * rows, queued messages). Ink repaints the whole terminal on every frame once the live area is
+   * as tall as the terminal, which copies the top of a long streaming text into the scrollback.
+   */
+  extraReserve?: number
 }
 
 /** `Date.now()` of the moment `running` last became true (stable while it stays true). */
@@ -170,7 +176,7 @@ function useRunStart(running: boolean): number {
 }
 
 /** Terminal rows kept free for what renders below the live tail (indicator, dialog, prompt, footer). */
-const LIVE_RESERVE = 12
+export const LIVE_RESERVE = 16
 
 /** Finished entries once in `<Static>`, then the live assistant message. */
 export function Transcript({
@@ -179,6 +185,7 @@ export function Transcript({
   welcome = {},
   tokens,
   focus = false,
+  extraReserve = 0,
 }: TranscriptProps): ReactElement {
   useTheme()
   const live: CoderMessage | null = state.live
@@ -221,7 +228,7 @@ export function Transcript({
           flexDirection="column"
           justifyContent="flex-end"
           overflowY="hidden"
-          maxHeight={Math.max(4, rows - LIVE_RESERVE)}
+          maxHeight={Math.max(4, rows - LIVE_RESERVE - extraReserve)}
           flexShrink={0}
         >
           <Box flexDirection="column" flexShrink={0}>

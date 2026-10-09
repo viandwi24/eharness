@@ -327,6 +327,12 @@ export interface ProjectionContext {
 }
 ```
 
+**Deprecated `rawInput`.** AI SDK's UI stream marks a tool call whose input failed to parse as an
+`output-error` part with the deprecated `rawInput` field, and `convertToModelMessages` /
+`validateUIMessages` log a warning for it. Projection, load validation and persistence normalise
+such parts first (on a copy): `input` is taken from `rawInput` when it is undefined and `rawInput`
+is removed, so stored messages stop carrying it and no AI SDK warning is logged.
+
 ## 7. Validation on load
 
 Stored data is untrusted (other versions, manual edits, other writers). Validation works on an

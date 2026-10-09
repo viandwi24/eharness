@@ -113,3 +113,33 @@ describe('subagent event rendering', () => {
     expect(subagentEventLine('<event name="ci">CI red</event>')).toBeUndefined()
   })
 })
+
+describe('the whole live area fits the terminal', () => {
+  test('a long streaming text plus prompt, footer and task rows stays below the terminal height', async () => {
+    const text = Array.from({ length: 120 }, (_, i) => `line-${i}`).join('\n\n')
+    const state = stateWith([{ type: 'text', text, state: 'streaming' }])
+    const extra = 10
+    const app = renderAt(
+      <>
+        <Transcript state={{ ...state, entries: [] }} config={config} extraReserve={extra} />
+        <Box flexDirection="column">
+          <Text>prompt 1</Text>
+          <Text>prompt 2</Text>
+          <Text>prompt 3</Text>
+          <Text>footer</Text>
+          {Array.from({ length: extra }, (_, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static rows
+            <Text key={i}>task row {i}</Text>
+          ))}
+        </Box>
+      </>,
+      80,
+      ROWS,
+    )
+    cleanup.push(app.unmount)
+    await tick()
+    const frame = app.lastFrame()
+    expect(frame.split('\n').length).toBeLessThan(ROWS)
+    expect(frame).toContain('line-119')
+  })
+})

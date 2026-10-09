@@ -21,11 +21,12 @@ import type {
 } from '../contracts.ts'
 import { runTurn, steerTurn } from './driver.ts'
 import { Footer, ShortcutsPanel } from './Footer.tsx'
-import { FooterTasks, footerTasks } from './FooterTasks.tsx'
+import { FooterTasks, footerTasks, MAX_FOOTER_ROWS } from './FooterTasks.tsx'
 import { createFileLister } from './mentions.ts'
 import { notify as rawNotify, setTerminalTitle as rawSetTitle } from './notify.ts'
 import { PermissionPrompt, usePending } from './PermissionPrompt.tsx'
 import { PromptInput } from './PromptInput.tsx'
+import { AgentPage } from './pages/AgentPage.tsx'
 import { AgentsPage } from './pages/AgentsPage.tsx'
 import { ConfigPage } from './pages/ConfigPage.tsx'
 import { ContextPage } from './pages/ContextPage.tsx'
@@ -38,7 +39,7 @@ import { usePageHost } from './pages/host.ts'
 import { MemoryPage } from './pages/MemoryPage.tsx'
 import { PermissionsPage } from './pages/PermissionsPage.tsx'
 import { StatusPage } from './pages/StatusPage.tsx'
-import type { PageSpec } from './pages/spec.ts'
+import { agentTargetOfTask, type PageSpec } from './pages/spec.ts'
 import { TasksPage } from './pages/TasksPage.tsx'
 import { TranscriptPage } from './pages/TranscriptPage.tsx'
 import { ModelPicker } from './pickers/ModelPicker.tsx'
@@ -576,8 +577,6 @@ export function App({
           stdout.write(CLEAR_SCREEN)
           dispatch({ type: 'load', messages })
         },
-        showTranscript: (title, messages) =>
-          openPage({ kind: 'transcript', title, entries: messageEntries(messages) }),
         openPage,
         subagents: () => stateRef.current.subagents,
         pickSession: () => setPicker('session'),
@@ -778,8 +777,13 @@ export function App({
           setFooterSel(Math.min(items.length - 1, sel + 1))
         } else if (key.leftArrow) setFooterSel(Math.max(0, sel - 1))
         else if (key.upArrow || (key.ctrl && input === 'p')) setFooterSel(sel > 0 ? sel - 1 : null)
-        else if (key.return && item) openPage({ kind: 'tasks', taskId: item.id })
-        else if (input === 'x' && item) void controller.stopTask(item.id).catch(() => {})
+        else if (key.return && item) {
+          openPage(
+            item.kind === 'agent'
+              ? { kind: 'agent', target: agentTargetOfTask(item) }
+              : { kind: 'tasks', taskId: item.id },
+          )
+        } else if (input === 'x' && item) void controller.stopTask(item.id).catch(() => {})
         if (!isModelKey(input, key.meta) && !isThinkingKey(input, key.meta)) return
       }
     }
@@ -917,24 +921,34 @@ export function App({
   }, [])
 
   const openRun = useCallback(
-    (run: { name: string; description: string; sessionId: string }) => {
-      void controller
-        .messagesOf(run.sessionId)
-        .then((messages) =>
-          pageRef.current.open({
-            kind: 'transcript',
-            title: run.name,
-            subtitle: run.description,
-            entries: messageEntries(messages),
-            parent: { kind: 'agents' },
-          }),
-        )
-        .catch((error: unknown) =>
-          showHint(`Cannot open run: ${error instanceof Error ? error.message : String(error)}`),
-        )
+    (run: {
+      name: string
+      description: string
+      sessionId: string
+      status: 'running' | 'done' | 'failed'
+    }) => {
+      pageRef.current.open({
+        kind: 'agent',
+        target: {
+          sessionId: run.sessionId,
+          name: run.name,
+          agent: run.name,
+          description: run.description,
+          status: run.status,
+        },
+        parent: { kind: 'agents' },
+      })
     },
-    [controller, showHint],
+    [],
   )
+
+  const openAgentTask = useCallback((task: BackgroundTask) => {
+    pageRef.current.open({
+      kind: 'agent',
+      target: agentTargetOfTask(task),
+      parent: { kind: 'tasks', taskId: task.id },
+    })
+  }, [])
 
   // While a page is open nothing may be printed above it: hold the transcript where it was.
   // (entries added while the page is still `entering` print on the primary screen, which is fine)
@@ -954,6 +968,13 @@ export function App({
         state={shown}
         config={{ ...controller.config, model }}
         focus={focus}
+        extraReserve={
+          (footerItems.length === 0
+            ? 0
+            : Math.min(footerItems.length, MAX_FOOTER_ROWS) +
+              (footerItems.length > MAX_FOOTER_ROWS ? 1 : 0)) +
+          (queue.length > 0 ? queue.length + 1 : 0)
+        }
         welcome={{ provider: controller.provider, thinking, ...(version ? { version } : {}) }}
         {...(liveTokens(state.live) !== undefined ? { tokens: liveTokens(state.live) } : {})}
       />
@@ -1105,6 +1126,7 @@ export function App({
           runs={state.subagents}
           onClose={pageHost.close}
           onOpenRun={openRun}
+          onOpenAgent={openAgentTask}
           onConfigSaved={configSaved}
         />
       ) : null}
@@ -1118,6 +1140,7 @@ function PageRoute({
   runs,
   onClose,
   onOpenRun,
+  onOpenAgent,
   onConfigSaved,
 }: {
   page: PageSpec
@@ -1125,16 +1148,20 @@ function PageRoute({
   runs: ViewState['subagents']
   onClose(): void
   onOpenRun(run: ViewState['subagents'][number]): void
+  onOpenAgent(task: BackgroundTask): void
   onConfigSaved(key: string, value: unknown): void
 }): ReactElement {
   switch (page.kind) {
     case 'config':
       return <ConfigPage controller={controller} onClose={onClose} onSaved={onConfigSaved} />
+    case 'agent':
+      return <AgentPage controller={controller} target={page.target} onClose={onClose} />
     case 'tasks':
       return (
         <TasksPage
           controller={controller}
           onClose={onClose}
+          onOpenAgent={onOpenAgent}
           {...(page.taskId ? { initialTaskId: page.taskId } : {})}
         />
       )

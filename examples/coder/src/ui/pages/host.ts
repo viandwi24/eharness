@@ -98,7 +98,10 @@ export function usePageHost(): PageHost {
   const close = useCallback(() => {
     const current = viewRef.current
     if (current.phase !== 'open') return
-    const parent = current.page.kind === 'transcript' ? current.page.parent : undefined
+    const parent =
+      current.page.kind === 'transcript' || current.page.kind === 'agent'
+        ? current.page.parent
+        : undefined
     setView(parent ? { phase: 'open', page: parent } : { phase: 'leaving', page: current.page })
   }, [])
 

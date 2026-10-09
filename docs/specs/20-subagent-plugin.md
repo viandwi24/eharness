@@ -24,6 +24,11 @@ subagents({
   maxConcurrent?: number                       // 8, per nesting depth and plugin instance
   messaging?: boolean                          // true: send_message + the `name` field (§5); never with 'park'
   messageToolName?: string                     // 'send_message'
+  stopTool?: boolean                           // like outputTool: agent_stop (§5.8)
+  stopToolName?: string                        // 'agent_stop'
+  outputTool?: boolean                         // true when background or messaging is on; never with 'park' (§5.7)
+  outputToolName?: string                      // 'agent_output'
+  reportMaxChars?: number                      // 16 000: cap of a background report (§2.2)
   messageLimits?: { perWindow?: number; windowMs?: number; duplicateWindowMs?: number; maxQueued?: number }   // §5.4
   background?: boolean                         // false; 'inline' and 'policy' only
   backgroundInChildren?: boolean               // false: run_in_background only in sessions without a parent (§2.2)
@@ -109,7 +114,7 @@ parent session closes) and on completion the plugin calls `ctx.session.inject('e
 running parent sees it at its next step boundary, an idle one wakes. The event is a stored message,
 so it survives restarts of the UI process. `text` starts `Background subagent <task id> ["<name>"] (<type>:
 <description>) finished.` (`Resumed subagent …` after a resume, `failed` / `was stopped`), then the report; it
-names the task id and agent name, never the child session id (that stays in `data`). The report is capped at 4 000 characters. An inject that
+names the task id and agent name, never the child session id (that stays in `data`). The report is capped at `reportMaxChars` (default 16 000); a cut report ends `… [report cut at N of M characters; read the full report with agent_output({ id: "agent-2" })]` (without the hint when `agent_output` is off). An inject that
 fails (parent closed) is logged. Approvals follow the configured strategy; a wake run is not driven
 by anyone — observe it with `session.onRun()` (in process, spec 05 §2.1) or `session.events()`.
 
@@ -364,12 +369,33 @@ launched it. Same refusals as §5.2; never throws; not throttled; `to: 'main'` i
   old ids (the id counter moves past them) and join `subagentTasks.list()` only once resumed. A
   child that was running at the restart is gone (rebuilt as `failed`).
 
+### 5.7 `agent_output`
+
+`agent_output({ id, offset?, limit? })` (name: `outputToolName`; kind `safe` in `eharness/permissions`)
+returns the full final report of an agent by task id, name or child session id: the last
+non-empty text of the child session's stored assistant messages (after the last `step-start`, the
+same extraction as the report), so it works after a restart and for one-shot agents. Pages of
+`limit` characters (default 16 000) from `offset`; a longer report ends `… [characters A-B of N;
+more: agent_output({ id: "…", offset: B })]`. A running agent returns `<label> (<type>) is still running;
+no final report yet.` with its latest progress. Errors (`ERROR: no agent "x". Known agents: …`) are
+strings. Offered when `background` or messaging is on (`outputTool: false` disables it).
+
+### 5.8 `agent_stop`
+
+`agent_stop({ id })` (name: `stopToolName`; kind `safe`; offered with `agent_output`'s condition,
+`stopTool: false` disables it) stops a running background agent by task id, name or child session
+id, like `subagentTasks.stop`. Unlike a user stop, a model stop leaves the agent resumable (unless
+its type is one-shot): the entry keeps `modelStopped`, so `send_message` resumes it. User stops
+still refuse. Results: `Stopped <label>. It can be resumed by sending it a message.`,
+`<label> is not running (<status>).`, `ERROR: no running agent "x". …`. The `kill_shell` unknown id
+error points to it.
+
 ## 6. Model-visible texts (a change is a minor change)
 
 Tool description (see source `toolDescription`), `SUBAGENT_NO_USER`: "No user is available; this
 action is not allowed in autonomous mode.", `SUBAGENT_NO_CLIENT`: "No user is available to answer
 this call. Continue without it or choose another approach.", the final output forms of §2.1 and the
-background event text, the `Subagent moved to the background as task …` result and everything in §5 (tool description, result strings, `AGENT_MESSAGE_INSTRUCTIONS`, the roster reminder).
+background event text, the `Subagent moved to the background as task …` result and everything in §5 (tool description, result strings, `AGENT_MESSAGE_INSTRUCTIONS`, the roster reminder), the `agent_output` description, result strings and the cut notice.
 
 ## 7. Tests
 

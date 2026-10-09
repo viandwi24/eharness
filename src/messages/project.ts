@@ -17,7 +17,7 @@ import { kindOf } from './kinds.ts'
 import type { MessageRegistry } from './registry.ts'
 import { sanitizeModelMessages } from './sanitize.ts'
 import { INTERRUPTED_UNKNOWN } from './texts.ts'
-import { answerDanglingToolParts, isToolPart } from './tool-parts.ts'
+import { answerDanglingToolParts, isToolPart, normalizeRawInput } from './tool-parts.ts'
 import type {
   CompactionPayload,
   HarnessUIMessage,
@@ -104,12 +104,15 @@ export async function project(
     // 4. split at data-eh.input
     for (const piece of splitAtInput(message)) {
       // 6. convert
-      const converted = await convertToModelMessages([stripReasoningTiming(piece)], {
-        ...(options.tools === undefined ? {} : { tools: options.tools }),
-        ignoreIncompleteToolCalls: true,
-        convertDataPart: (part) =>
-          convertDataPart(part as { type: string; data: unknown }, ctx, registry),
-      })
+      const converted = await convertToModelMessages(
+        [normalizeRawInput(stripReasoningTiming(piece))],
+        {
+          ...(options.tools === undefined ? {} : { tools: options.tools }),
+          ignoreIncompleteToolCalls: true,
+          convertDataPart: (part) =>
+            convertDataPart(part as { type: string; data: unknown }, ctx, registry),
+        },
+      )
       wire.push(...converted)
     }
   }

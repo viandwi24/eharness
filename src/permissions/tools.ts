@@ -17,6 +17,8 @@ export const DEFAULT_TOOL_KINDS: Readonly<ToolKinds> = {
   web_search: { kind: 'search' },
   agent: { kind: 'agent', nameField: 'subagent_type' },
   send_message: { kind: 'safe' },
+  agent_output: { kind: 'safe' },
+  agent_stop: { kind: 'safe' },
   ask_user_question: { kind: 'ask' },
   exit_plan_mode: { kind: 'plan-exit' },
   todo_write: { kind: 'safe' },

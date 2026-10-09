@@ -6,6 +6,7 @@ import { Branch, Indent } from './Branch.tsx'
 import { DiffView } from './DiffView.tsx'
 import { keyedLines } from './keys.ts'
 import { SubagentTree } from './SubagentTree.tsx'
+import { expandTabs } from './sanitize.ts'
 import { TodoList } from './TodoPanel.tsx'
 import { color, sym } from './theme.ts'
 import {
@@ -76,7 +77,7 @@ function Lines({ lines, dim = true }: { lines: string[]; dim?: boolean }): React
     <Box flexDirection="column">
       {keyedLines(lines).map(({ key, line }) => (
         <Text key={key} dimColor={dim}>
-          {line === '' ? ' ' : line}
+          {line === '' ? ' ' : expandTabs(line)}
         </Text>
       ))}
     </Box>

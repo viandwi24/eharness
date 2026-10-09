@@ -18,11 +18,14 @@ const STATUS_COLOR: Record<BackgroundTask['status'], string | undefined> = {
 export function TasksPage({
   controller,
   onClose,
+  onOpenAgent,
   initialTaskId,
   size,
 }: {
   controller: CoderController
   onClose(): void
+  /** Enter on an agent: open its conversation (without it, Enter shows the agent's output text). */
+  onOpenAgent?(task: BackgroundTask): void
   /** Open with this task selected and its output shown (Enter on a footer row). */
   initialTaskId?: string
   size?: { rows: number; columns: number }
@@ -63,7 +66,8 @@ export function TasksPage({
     if (action && action !== 'accept' && action !== 'cancel') {
       setIndex((i) => moveIndex(i, tasks.length, action))
     } else if (key.return && selected) {
-      if (open?.id === selected.id) setOpen(null)
+      if (selected.kind === 'agent' && onOpenAgent) onOpenAgent(selected)
+      else if (open?.id === selected.id) setOpen(null)
       else setOpen({ id: selected.id, text: selected.tail })
     } else if (input === 'x' && selected?.status === 'running') {
       void controller.stopTask(selected.id).catch(() => {})
@@ -74,7 +78,7 @@ export function TasksPage({
     <Page
       title="Tasks"
       subtitle="background shells and agents"
-      hints="esc/q close · ↑↓ select · enter output · x stop"
+      hints="esc/q close · ↑↓ select · enter open agent / show output · x stop"
       arrows={false}
       onClose={onClose}
       size={size}

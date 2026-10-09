@@ -5,6 +5,7 @@
  */
 import { Box, Text } from 'ink'
 import type { ReactElement } from 'react'
+import { expandTabs } from './sanitize.ts'
 import { color } from './theme.ts'
 
 /** A styled run of inline text. */
@@ -206,7 +207,7 @@ function CodeBlock({ lang, lines }: { lang: string; lines: string[] }): ReactEle
       {lines.length === 0 ? <Text> </Text> : null}
       {lines.map((line, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: lines of a static block
-        <Text key={`${i}`}>{line === '' ? ' ' : line}</Text>
+        <Text key={`${i}`}>{line === '' ? ' ' : expandTabs(line)}</Text>
       ))}
     </Box>
   )

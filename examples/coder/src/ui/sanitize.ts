@@ -20,3 +20,21 @@ const CONTROLS = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g
 export function stripControl(text: string): string {
   return text.replace(ESCAPES, '').replace(CONTROLS, '')
 }
+
+/**
+ * Replace tabs with spaces up to the next tab stop. Ink counts a tab as one column while the
+ * terminal jumps to the next stop, so a tab in a `cat -n` style file listing makes lines wider than
+ * Ink thinks: they wrap or overwrite their neighbours. Expand per line, before rendering.
+ */
+export function expandTabs(text: string, size = 4): string {
+  if (!text.includes('\t')) return text
+  return text
+    .split('\n')
+    .map((line) => {
+      if (!line.includes('\t')) return line
+      let out = ''
+      for (const ch of line) out += ch === '\t' ? ' '.repeat(size - (out.length % size)) : ch
+      return out
+    })
+    .join('\n')
+}

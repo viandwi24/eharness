@@ -90,3 +90,29 @@ export function answerDanglingToolParts<M extends { parts: AnyPart[] }>(
   })
   return changed ? { ...message, parts } : message
 }
+
+/**
+ * Replace the deprecated `rawInput` of `output-error` tool parts by `input` (AI SDK's UI stream
+ * sets `rawInput` when a call's input failed to parse; `convertToModelMessages` and
+ * `validateUIMessages` warn about it). `input` is only filled when it is undefined. Returns the
+ * same message object when nothing changed, otherwise a shallow copy with new parts.
+ */
+export function normalizeRawInput<M extends UIMessage>(message: M): M {
+  let changed = false
+  const parts = message.parts.map((part): AnyPart => {
+    const p = part as { type?: unknown; state?: unknown } & Record<string, unknown>
+    if (
+      typeof p.type !== 'string' ||
+      !isToolPart(p as { type: string }) ||
+      p.state !== 'output-error' ||
+      !Object.hasOwn(p, 'rawInput')
+    )
+      return part
+    changed = true
+    const { rawInput, ...rest } = p
+    return (
+      rest.input === undefined && rawInput !== undefined ? { ...rest, input: rawInput } : rest
+    ) as AnyPart
+  })
+  return changed ? { ...message, parts } : message
+}
