@@ -2,6 +2,7 @@
 import { Text, useInput } from 'ink'
 import { type ReactElement, useState } from 'react'
 import type { CoderController } from '../../contracts.ts'
+import { moveIndex, selectAction } from '../select.ts'
 import { color, sym } from '../theme.ts'
 import { Loading, Page, Section } from './Page.tsx'
 import { useAsync } from './useAsync.ts'
@@ -20,16 +21,15 @@ export function MemoryPage({
   const [index, setIndex] = useState(0)
   const [shown, setShown] = useState<string | null>(null)
   const files = state.status === 'ready' ? state.data : []
-  useInput((_input, key) => {
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-    else if (key.downArrow) setIndex((i) => Math.min(files.length - 1, i + 1))
-    else if (key.return) {
+  useInput((input, key) => {
+    const action = selectAction(input, key)
+    if (action === 'accept') {
       const file = files[index]
       if (file) {
         const editor = process.env.VISUAL || process.env.EDITOR || 'vi'
         setShown(`${editor} ${file.real}`)
       }
-    }
+    } else setIndex((i) => moveIndex(i, files.length, action))
   })
   return (
     <Page

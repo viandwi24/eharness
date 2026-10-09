@@ -1,5 +1,5 @@
 import type { FileUIPart } from 'ai'
-import { Box, type Key, Text, useApp, useInput, usePaste } from 'ink'
+import { Box, type Key, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
 import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react'
 import type { CustomCommand } from '../contracts.ts'
 import { type ClipboardImage, readClipboardImage } from './clipboard.ts'
@@ -21,11 +21,9 @@ import {
   killWordBackSpace,
   killWordForward,
   move,
-  moveLine,
   popUndo,
   pushKill,
   pushUndo,
-  renderLines,
   splitEnter,
   type UndoKind,
   undoBreak,
@@ -64,6 +62,7 @@ import {
   vimKey,
   visualRange,
 } from './vim.ts'
+import { cursorPlace, moveVisual, type VisualRow, visualRows, wrapWords } from './wrap.ts'
 
 /** Props of {@link PromptInput}. */
 export interface PromptInputProps {
@@ -113,6 +112,11 @@ export interface PromptInputProps {
   onShortcuts?(): void
   /** Called with the new text after every edit (the App can close the shortcuts panel). */
   onTextChange?(text: string): void
+  /**
+   * Down was pressed on the last visual row with no menu open and history at the newest entry:
+   * the integrator may move focus to the footer.
+   */
+  onFooterFocus?(): void
   /** Override of the placeholder shown when the prompt is empty. */
   placeholder?: string
   /** Replace the buffer with `text` whenever `id` changes (rewind puts the prompt back, a suggestion is accepted). */
@@ -125,64 +129,83 @@ export const PLACEHOLDER = 'Try "explain this codebase"'
 /** Highlight of a VISUAL selection (end exclusive). */
 type Selection = { start: number; end: number }
 
-function EditorLines({
+/** Terminal rows of the prompt chrome around the text: border (2), padding (2), `> ` prefix (2). */
+const CHROME_COLUMNS = 6
+
+/** Cells of a visual row: its characters plus the cursor cell, each flagged when highlighted. */
+function rowRuns(
+  text: string,
+  row: VisualRow,
+  cursorAt: number | undefined,
+  selection: Selection | undefined,
+): Array<{ text: string; on: boolean }> {
+  const cells: Array<{ ch: string; on: boolean }> = []
+  let at = row.start
+  for (const ch of text.slice(row.start, row.end)) {
+    const selected = selection !== undefined && at >= selection.start && at < selection.end
+    cells.push({ ch, on: at === cursorAt || selected })
+    at += ch.length
+  }
+  if (cursorAt !== undefined && cursorAt >= row.end) cells.push({ ch: ' ', on: true })
+  const runs: Array<{ text: string; on: boolean }> = []
+  for (const cell of cells) {
+    const last = runs[runs.length - 1]
+    if (last && last.on === cell.on) last.text += cell.ch
+    else runs.push({ text: cell.ch, on: cell.on })
+  }
+  return runs
+}
+
+/**
+ * The prompt text as visual rows. Each row is ONE `<Text>` (nested `<Text>` only for the cursor and
+ * the selection), already wrapped at `width` by {@link visualRows}, so Ink never re-wraps it.
+ */
+function EditorRows({
   buf,
+  rows,
   active,
   placeholder,
   selection,
+  width,
 }: {
   buf: Buffer
+  rows: VisualRow[]
   active: boolean
   placeholder: string
   selection?: Selection
+  width: number
 }): ReactElement {
   if (buf.text === '') {
+    const lines = wrapWords(placeholder, width)
     return (
-      <Box flexGrow={1} flexShrink={1}>
-        <Text dimColor>
-          {active ? <Text inverse>{placeholder.slice(0, 1)}</Text> : placeholder.slice(0, 1)}
-          {placeholder.slice(1)}
-        </Text>
+      <Box flexDirection="column" flexGrow={1} flexShrink={1}>
+        {lines.map((line, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: wrapped placeholder rows are positional
+          <Text key={i} dimColor wrap="truncate-end">
+            {i === 0 && active ? <Text inverse>{line.slice(0, 1) || ' '}</Text> : line.slice(0, 1)}
+            {line.slice(1)}
+          </Text>
+        ))}
       </Box>
     )
   }
-  let offset = 0
+  const place = cursorPlace(buf.text, rows, buf.cursor)
   return (
     <Box flexDirection="column" flexGrow={1} flexShrink={1}>
-      {renderLines(buf).map((line, i) => {
-        const key = `${i}:${line.text}`
-        const base = offset
-        offset += line.text.length + 1
-        if (selection && active) {
-          const selected = (at: number): boolean =>
-            base + at >= selection.start && base + at < selection.end
-          const cells = [...line.text, ' '].map((ch, at) => ({
-            ch,
-            on: at === line.cursorAt || (at < line.text.length && selected(at)),
-          }))
-          const runs: Array<{ text: string; on: boolean }> = []
-          for (const cell of cells) {
-            const last = runs[runs.length - 1]
-            if (last && last.on === cell.on) last.text += cell.ch
-            else runs.push({ text: cell.ch, on: cell.on })
-          }
-          return (
-            <Text key={key}>
-              {runs.map((run, r) => (
-                // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional
-                <Text key={r} inverse={run.on}>
-                  {run.text}
-                </Text>
-              ))}
-            </Text>
-          )
-        }
-        if (line.cursorAt === undefined || !active) return <Text key={key}>{line.text || ' '}</Text>
+      {rows.map((row, i) => {
+        const cursorAt = active && place.row === i ? buf.cursor : undefined
+        const runs = rowRuns(buf.text, row, cursorAt, active ? selection : undefined)
         return (
-          <Text key={key}>
-            {line.text.slice(0, line.cursorAt)}
-            <Text inverse>{line.text[line.cursorAt] ?? ' '}</Text>
-            {line.text.slice(line.cursorAt + 1)}
+          // biome-ignore lint/suspicious/noArrayIndexKey: visual rows are positional
+          <Text key={i} wrap="truncate-end">
+            {runs.length === 0
+              ? ' '
+              : runs.map((run, r) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional
+                  <Text key={r} inverse={run.on}>
+                    {run.text}
+                  </Text>
+                ))}
           </Text>
         )
       })}
@@ -202,6 +225,21 @@ const MENTION_LABEL: Record<MentionItem['kind'], string> = {
   agent: 'agent',
 }
 
+/** Suggestions with the one named exactly like the typed text first (Enter then runs it). */
+function orderExactFirst(
+  list: ReturnType<typeof matchSlash>,
+  text: string,
+): ReturnType<typeof matchSlash> {
+  const exact = list.findIndex((c) => `/${c.name}` === text)
+  if (exact <= 0) return list
+  return [list[exact] as (typeof list)[number], ...list.slice(0, exact), ...list.slice(exact + 1)]
+}
+
+/** A command whose usage starts with `<` cannot run without arguments: accepting it types its name. */
+function needsArgs(command: { usage?: string }): boolean {
+  return command.usage?.startsWith('<') === true
+}
+
 /** Multiline prompt editor: Enter submits, Shift+Enter or `\` + Enter inserts a newline. */
 export function PromptInput(props: PromptInputProps): ReactElement {
   const {
@@ -217,6 +255,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     onSubmit,
     onSubmitDetailed,
     onShortcuts,
+    onFooterFocus,
     onTextChange,
     placeholder = PLACEHOLDER,
     editorMode = 'normal',
@@ -236,10 +275,20 @@ export function PromptInput(props: PromptInputProps): ReactElement {
   const bufRef = useRef<Buffer>(emptyBuffer)
   const setBuf = (next: Buffer): void => {
     bufRef.current = next
+    goalCol.current = undefined
     setView(next)
   }
-  const [histIndex, setHistIndex] = useState<number | null>(null)
+  // history browsing lives in refs: two keys can arrive before React re-renders
+  const histRef = useRef<number | null>(null)
+  const historyRef = useRef(history)
+  historyRef.current = history
   const draft = useRef('')
+  const goalCol = useRef<number | undefined>(undefined)
+  const { columns } = useWindowSize()
+  const wrapWidth = Math.max(1, columns - CHROME_COLUMNS - 1)
+  const widthRef = useRef(wrapWidth)
+  widthRef.current = wrapWidth
+  const [dismissedFor, setDismissedFor] = useState<string | null>(null)
   const active = !disabled
   const [files, setFiles] = useState<string[]>([])
   const folders = useMemo(() => folderPaths(files), [files])
@@ -258,9 +307,15 @@ export function PromptInput(props: PromptInputProps): ReactElement {
       cancelled = true
     }
   }, [mentionActive, listFiles])
+  // menus only open for text the user typed: a recalled history entry never opens one, and Esc
+  // dismisses the menu until the text changes
+  const menuOn = active && histRef.current === null && dismissedFor !== view.text
   const completions: MentionItem[] =
-    active && mention ? matchMentions(files, mention.query, agents, folders) : []
-  const suggestions = active && !mention ? matchSlash(view.text, commands).slice(0, 8) : []
+    menuOn && mention ? matchMentions(files, mention.query, agents, folders) : []
+  const suggestions =
+    menuOn && !mention
+      ? orderExactFirst(matchSlash(view.text, commands), view.text).slice(0, 8)
+      : []
   const completionsRef = useRef<MentionItem[]>([])
   completionsRef.current = completions
   const suggestionsRef = useRef<ReturnType<typeof matchSlash>>([])
@@ -320,7 +375,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     const next = bufferOf(prefill.text)
     bufRef.current = next
     setView(next)
-    setHistIndex(null)
+    histRef.current = null
     onTextChange?.(next.text)
   })
 
@@ -331,7 +386,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     }
     lastAction.current = 'other'
     setBuf(next)
-    setHistIndex(null)
+    histRef.current = null
     setPick(0)
     onTextChange?.(next.text)
   }
@@ -340,33 +395,45 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     setBuf(next)
   }
 
-  const browseHistory = (dir: -1 | 1): void => {
-    if (history.length === 0) return
-    if (histIndex === null) {
-      if (dir === 1) return
-      draft.current = bufRef.current.text
-      const index = history.length - 1
-      setHistIndex(index)
-      setBuf(bufferOf(history[index] ?? ''))
-      return
-    }
-    const next = histIndex + dir
-    if (next >= history.length) {
-      setHistIndex(null)
-      setBuf(bufferOf(draft.current))
-    } else if (next >= 0) {
-      setHistIndex(next)
-      setBuf(bufferOf(history[next] ?? ''))
-    }
+  /** Show a history entry (or the draft) and tell the integrator the text changed. */
+  const showHistory = (text: string): void => {
+    setBuf(bufferOf(text))
+    onTextChange?.(text)
   }
 
-  const submit = (): void => {
-    const text = bufRef.current.text.trim()
+  /** Up / Down on the first / last row: older / newer prompt. `false` = Down at the newest entry. */
+  const browseHistory = (dir: -1 | 1): boolean => {
+    const list = historyRef.current
+    const at = histRef.current
+    if (at === null) {
+      if (dir === 1) return false
+      const text = bufRef.current.text
+      let index = list.length - 1
+      while (index >= 0 && list[index] === text) index--
+      if (index < 0) return true
+      draft.current = text
+      histRef.current = index
+      showHistory(list[index] ?? '')
+      return true
+    }
+    const next = at + dir
+    if (next >= list.length) {
+      histRef.current = null
+      showHistory(draft.current)
+    } else if (next >= 0) {
+      histRef.current = next
+      showHistory(list[next] ?? '')
+    }
+    return true
+  }
+
+  const submit = (override?: string): void => {
+    const text = (override ?? bufRef.current.text).trim()
     if (text === '') return
     const expanded = expandPastes(text, store)
     const images = imagesInOrder(text, store)
     setBuf(emptyBuffer)
-    setHistIndex(null)
+    histRef.current = null
     undoRef.current = emptyUndo
     if (!stashRef.current) store.clear()
     if (onSubmitDetailed) onSubmitDetailed({ text: expanded, files: images })
@@ -409,7 +476,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     lastAction.current = 'other'
     setBuf(res.buf)
     if (changed) {
-      setHistIndex(null)
+      histRef.current = null
       onTextChange?.(res.buf.text)
     }
     if (res.submit) submit()
@@ -524,6 +591,52 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     else edit(backspace(bufRef.current))
   }
 
+  const menuVisible = (): boolean =>
+    completionsRef.current.length > 0 || suggestionsRef.current.length > 0
+
+  /** Enter / Tab on an open menu. `run` lets Enter execute a slash command. Returns whether it handled the key. */
+  const acceptMenu = (run: boolean): boolean => {
+    const buf = bufRef.current
+    const chosen = completionsRef.current[pickRef.current]
+    const at = mentionAt(buf.text, buf.cursor)
+    if (chosen && at) {
+      setPick(0)
+      edit(completeItem(buf.text, at.start, buf.cursor, chosen))
+      return true
+    }
+    const command = suggestionsRef.current[pickRef.current]
+    if (!command) return false
+    if (run && !needsArgs(command)) submit(`/${command.name}`)
+    else edit(bufferOf(`/${command.name} `))
+    return true
+  }
+
+  /** Up (`-1`) / Down (`1`): menu, then visual rows, then queue take-back, history, footer. */
+  const vertical = (dir: -1 | 1): void => {
+    const count = Math.max(completionsRef.current.length, suggestionsRef.current.length)
+    if (count > 0) {
+      setPick((pickRef.current + (dir === -1 ? count - 1 : 1)) % count)
+      return
+    }
+    const buf = bufRef.current
+    const rows = visualRows(buf.text, widthRef.current)
+    const goal = goalCol.current ?? cursorPlace(buf.text, rows, buf.cursor).col
+    const moved = moveVisual(buf.text, rows, buf.cursor, dir, goal)
+    if (moved !== undefined) {
+      cursorTo({ ...buf, cursor: moved })
+      goalCol.current = goal
+      return
+    }
+    if (dir === -1 && queuedCount > 0) {
+      const recalled = onRecallQueue?.()
+      if (recalled) {
+        edit(bufferOf(buf.text === '' ? recalled : `${recalled}\n${buf.text}`))
+        return
+      }
+    }
+    if (!browseHistory(dir)) onFooterFocus?.()
+  }
+
   useInput(
     (input, key) => {
       if (editorBusy.current) return
@@ -532,7 +645,10 @@ export function PromptInput(props: PromptInputProps): ReactElement {
       // --- vim ---------------------------------------------------------------------------
       if (vim) {
         const mode = vimRef.current.mode
-        if (key.escape) return runVim({ escape: true })
+        if (key.escape) {
+          if (menuVisible()) setDismissedFor(bufRef.current.text)
+          return runVim({ escape: true })
+        }
         if (mode !== 'insert') {
           const plain = !key.ctrl && !key.meta && !key.tab
           if (key.return && !key.shift && !key.meta) return runVim({ enter: true })
@@ -549,7 +665,12 @@ export function PromptInput(props: PromptInputProps): ReactElement {
           }
         }
       } else if (key.escape) {
-        // A single Esc keeps its meaning elsewhere (the App interrupts); this only adds the double press.
+        // Esc first closes an open menu; otherwise a single Esc keeps its meaning elsewhere (the
+        // App interrupts) and this only adds the double press.
+        if (menuVisible()) {
+          setDismissedFor(bufRef.current.text)
+          return
+        }
         if (key.meta) return doubleEsc()
         const now = Date.now()
         const previous = lastEsc.current
@@ -560,20 +681,14 @@ export function PromptInput(props: PromptInputProps): ReactElement {
 
       if (key.return) {
         if (key.shift || key.meta) return edit(insert(bufRef.current, '\n'))
+        if (acceptMenu(true)) return
         const continued = backslashNewline(bufRef.current)
         if (continued) return edit(continued)
         return submit()
       }
       if (key.tab) {
         if (key.shift) return
-        const chosen = completionsRef.current[pickRef.current]
-        const at = mentionAt(bufRef.current.text, bufRef.current.cursor)
-        if (chosen && at) {
-          setPick(0)
-          return edit(completeItem(bufRef.current.text, at.start, bufRef.current.cursor, chosen))
-        }
-        const first = suggestionsRef.current[pickRef.current]
-        if (first) edit(bufferOf(`/${first.name} `))
+        acceptMenu(false)
         return
       }
       if (key.escape || key.pageUp || key.pageDown) return
@@ -582,6 +697,10 @@ export function PromptInput(props: PromptInputProps): ReactElement {
         switch (input) {
           case 'j':
             return edit(insert(buf, '\n'))
+          case 'p':
+            return vertical(-1)
+          case 'n':
+            return vertical(1)
           case 'a':
             return cursorTo(home(buf))
           case 'e':
@@ -653,24 +772,8 @@ export function PromptInput(props: PromptInputProps): ReactElement {
         return cursorTo(moveChip(bufRef.current, 1, store) ?? move(bufRef.current, 1))
       if (key.home) return cursorTo(home(bufRef.current))
       if (key.end) return cursorTo(end(bufRef.current))
-      const count = Math.max(completionsRef.current.length, suggestionsRef.current.length)
-      if ((key.upArrow || key.downArrow) && count > 0) {
-        return setPick((pickRef.current + (key.upArrow ? count - 1 : 1)) % count)
-      }
-      if (key.upArrow && queuedCount > 0 && bufRef.current.text === '') {
-        const recalled = onRecallQueue?.()
-        if (recalled) return edit(bufferOf(recalled))
-      }
-      if (key.upArrow) {
-        return bufRef.current.text.includes('\n')
-          ? cursorTo(moveLine(bufRef.current, -1))
-          : browseHistory(-1)
-      }
-      if (key.downArrow) {
-        return bufRef.current.text.includes('\n')
-          ? cursorTo(moveLine(bufRef.current, 1))
-          : browseHistory(1)
-      }
+      if (key.upArrow) return vertical(-1)
+      if (key.downArrow) return vertical(1)
       // Terminals send DEL for the backspace key; Ink may report it as either flag.
       if (key.backspace || key.delete) return deleteBack()
       if (input === '?' && bufRef.current.text === '' && onShortcuts) return onShortcuts()
@@ -682,7 +785,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
       if (chunk.before) typed(chunk.before)
       const continued = backslashNewline(bufRef.current)
       if (continued) return edit(insert(continued, chunk.rest))
-      submit()
+      if (!acceptMenu(true)) submit()
       if (chunk.rest) typed(chunk.rest)
     },
     { isActive: active },
@@ -714,6 +817,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     vim && (vimMode === 'visual' || vimMode === 'visual-line')
       ? visualRange(view, vimRef.current)
       : undefined
+  const rows = visualRows(view.text, wrapWidth)
   const shellMode = view.text.startsWith('!')
   const borderColor = !active ? color.border : shellMode ? color.shell : color.accent
   const nameWidth = Math.max(
@@ -732,7 +836,14 @@ export function PromptInput(props: PromptInputProps): ReactElement {
             {shellMode ? '!' : sym.prompt}
           </Text>
         </Box>
-        <EditorLines buf={view} active={active} placeholder={placeholder} selection={selection} />
+        <EditorRows
+          buf={view}
+          rows={rows}
+          active={active}
+          placeholder={placeholder}
+          selection={selection}
+          width={wrapWidth}
+        />
       </Box>
       {shellMode ? (
         <Text color={color.shell} dimColor>

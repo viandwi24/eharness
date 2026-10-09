@@ -166,7 +166,7 @@ export function modeColor(mode: PermissionMode): string | undefined {
     case 'dontAsk':
       return color.warning
     default:
-      return undefined
+      return color.dim
   }
 }
 

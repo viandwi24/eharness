@@ -21,6 +21,7 @@ import type {
 } from '../contracts.ts'
 import { runTurn, steerTurn } from './driver.ts'
 import { Footer, ShortcutsPanel } from './Footer.tsx'
+import { FooterTasks, footerTasks } from './FooterTasks.tsx'
 import { createFileLister } from './mentions.ts'
 import { notify as rawNotify, setTerminalTitle as rawSetTitle } from './notify.ts'
 import { PermissionPrompt, usePending } from './PermissionPrompt.tsx'
@@ -190,6 +191,11 @@ export function App({
   const [sideQuestion, setSideQuestion] = useState<string | null>(null)
   const [suggestion, setSuggestion] = useState<string | undefined>(undefined)
   const [inputEmpty, setInputEmpty] = useState(true)
+  /** Selected row of the footer task list (null: the prompt has focus). */
+  const [footerSel, setFooterSel] = useState<number | null>(null)
+  const footerSelRef = useRef<number | null>(null)
+  footerSelRef.current = footerSel
+  const footerItemsRef = useRef<BackgroundTask[]>([])
   const [prefill, setPrefill] = useState<{ id: number; text: string }>({ id: 0, text: '' })
   const [sessionLabel, setSessionLabel] = useState<string | undefined>(controller.sessionName)
   const [statusLine, setStatusLine] = useState<string | undefined>(undefined)
@@ -236,6 +242,17 @@ export function App({
   const busy = useRef(false)
   const lastCtrlC = useRef(0)
   const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const footerItems = useMemo(() => footerTasks(tasks), [tasks])
+  footerItemsRef.current = footerItems
+  // the list shrank under the selection: clamp it, or leave when it is empty
+  useEffect(() => {
+    setFooterSel((sel) => {
+      if (sel === null) return null
+      if (footerItems.length === 0) return null
+      return Math.min(sel, footerItems.length - 1)
+    })
+  }, [footerItems.length])
 
   const showHint = useCallback((text: string) => {
     setHint(text)
@@ -625,12 +642,35 @@ export function App({
     showHint('press Ctrl+D again to exit')
   }, [controller, exit, showHint])
 
+  /** Close whatever dialog is open: decline pending approvals, dismiss questions, close pickers and pages. */
+  const closeDialog = useCallback(() => {
+    for (const r of controller.broker.pending()) controller.broker.answer(r.id, { approved: false })
+    for (const q of controller.broker.pendingQuestions())
+      controller.broker.answerQuestion(q.id, null)
+    setPicker(null)
+    setSideQuestion(null)
+    if (pageRef.current.active) pageRef.current.close()
+  }, [controller])
+
   useInput((input, key) => {
     if (editorRunning.current) return
     const overlay = pendingRef.current > 0 || pickerRef.current !== null || sideRef.current !== null
     const pageOpen = pageRef.current.active
     if (key.ctrl && input === 'c') {
       const now = Date.now()
+      const dialog =
+        pendingRef.current > 0 || pickerRef.current !== null || sideRef.current !== null
+      if (dialog || pageOpen) {
+        // a dialog closes with a second Ctrl+C instead of exiting
+        if (now - lastCtrlC.current <= EXIT_WINDOW_MS) {
+          lastCtrlC.current = 0
+          closeDialog()
+        } else {
+          lastCtrlC.current = now
+          showHint('press Ctrl+C again to close')
+        }
+        return
+      }
       if (now - lastCtrlC.current <= EXIT_WINDOW_MS) {
         if (stateRef.current.running) controller.abort()
         shellAbort.current?.abort()
@@ -640,6 +680,7 @@ export function App({
       lastCtrlC.current = now
       // the first press clears whatever is typed (a fresh prompt editor)
       setInputEpoch((n) => n + 1)
+      setFooterSel(null)
       showHint('press Ctrl+C again to exit')
       return
     }
@@ -666,6 +707,22 @@ export function App({
       if (overlay) return
       setMode(controller.permissions.cycleMode())
       return
+    }
+    if (!overlay) {
+      const items = footerItemsRef.current
+      const sel = footerSelRef.current
+      // Down at the prompt's last row enters the footer rows (PromptInput onFooterFocus)
+      if (sel !== null) {
+        const item = items[sel]
+        if (key.escape) setFooterSel(null)
+        else if (key.rightArrow || key.downArrow || (key.ctrl && input === 'n')) {
+          setFooterSel(Math.min(items.length - 1, sel + 1))
+        } else if (key.leftArrow) setFooterSel(Math.max(0, sel - 1))
+        else if (key.upArrow || (key.ctrl && input === 'p')) setFooterSel(sel > 0 ? sel - 1 : null)
+        else if (key.return && item) openPage({ kind: 'tasks', taskId: item.id })
+        else if (input === 'x' && item) void controller.stopTask(item.id).catch(() => {})
+        if (!isModelKey(input, key.meta) && !isThinkingKey(input, key.meta)) return
+      }
     }
     if (pendingRef.current === 0 && isModelKey(input, key.meta)) {
       setPicker('model')
@@ -713,11 +770,23 @@ export function App({
   )
 
   const selectModel = useCallback(
-    (id: string) => {
+    (id: string, opts?: { thinking?: ThinkingLevel; sessionOnly?: boolean }) => {
       setPicker(null)
-      controller.setModel(id)
+      const persist = opts?.sessionOnly !== true
+      controller.setModel(id, { persist })
       setModel(id)
-      dispatch({ type: 'system', text: `Model set to ${id}.` })
+      const level =
+        opts?.thinking !== undefined && opts.thinking !== controller.thinking
+          ? opts.thinking
+          : undefined
+      if (level !== undefined) {
+        controller.setThinking(level, { persist })
+        setThinking(level)
+      }
+      dispatch({
+        type: 'system',
+        text: `Model set to ${id}${level !== undefined ? ` (thinking ${level})` : ''}${persist ? '' : ' for this session'}.`,
+      })
       refreshStats()
     },
     [controller, refreshStats],
@@ -887,7 +956,11 @@ export function App({
         <PromptInput
           key={inputEpoch}
           disabled={
-            pending.length > 0 || picker !== null || pageHost.active || sideQuestion !== null
+            pending.length > 0 ||
+            picker !== null ||
+            pageHost.active ||
+            sideQuestion !== null ||
+            footerSel !== null
           }
           {...(suggestion ? { placeholder: suggestion } : {})}
           prefill={prefill}
@@ -913,6 +986,9 @@ export function App({
             searchOpen.current = open
           }}
           onSubmit={submit}
+          onFooterFocus={() => {
+            if (footerItemsRef.current.length > 0 && !searchOpen.current) setFooterSel(0)
+          }}
           onSubmitDetailed={({ text, files }) => submit(text, files)}
           onShortcuts={() => setShortcutsOpen((open) => !open)}
           onTextChange={(text) => {
@@ -939,14 +1015,13 @@ export function App({
           {...(stats.costUsd !== undefined ? { costUsd: stats.costUsd } : {})}
           hint={hint ?? (queue.length > 0 ? `${queue.length} queued · ↑ to edit` : null)}
           shortcutsOpen={shortcutsOpen}
+          inputEmpty={inputEmpty}
           busy={state.running}
           {...(editorMode === 'vim' && vimLabel ? { vimMode: vimLabel } : {})}
           {...(statusLine ? { statusLine } : {})}
-          {...(tasks.filter((t) => t.status === 'running').length > 0
-            ? { tasks: tasks.filter((t) => t.status === 'running').length }
-            : {})}
           {...(sessionLabel ? { sessionName: sessionLabel } : {})}
         />
+        <FooterTasks tasks={footerItems} selected={footerSel} />
       </Box>
       {page ? (
         <PageRoute
@@ -981,7 +1056,13 @@ function PageRoute({
     case 'config':
       return <ConfigPage controller={controller} onClose={onClose} onSaved={onConfigSaved} />
     case 'tasks':
-      return <TasksPage controller={controller} onClose={onClose} />
+      return (
+        <TasksPage
+          controller={controller}
+          onClose={onClose}
+          {...(page.taskId ? { initialTaskId: page.taskId } : {})}
+        />
+      )
     case 'doctor':
       return <DoctorPage controller={controller} onClose={onClose} />
     case 'memory':

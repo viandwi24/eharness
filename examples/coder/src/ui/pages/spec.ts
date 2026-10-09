@@ -10,7 +10,7 @@ export type PageSpec =
   | { kind: 'permissions' }
   | { kind: 'diff' }
   | { kind: 'config' }
-  | { kind: 'tasks' }
+  | { kind: 'tasks' /** Preselect this task and show its output. */; taskId?: string }
   | { kind: 'doctor' }
   | { kind: 'memory' }
   | {

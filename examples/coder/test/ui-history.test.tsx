@@ -7,6 +7,7 @@ import { fakeController } from './fake-controller.ts'
 const ENTER = '\r'
 const ESC = '\x1b'
 const UP = '\x1b[A'
+const DOWN = '\x1b[B'
 const CTRL_R = '\x12'
 const CTRL_G = '\x07'
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -72,6 +73,45 @@ describe('persistent history', () => {
     await type('hello')
     await type(ENTER)
     await until(() => calls.includes('addHistory:hello'), 'added prompt')
+  })
+})
+
+/** Text of the (last) prompt box line `│ > text │`. */
+function promptLine(frame: string): string {
+  const lines = frame.split('\n').filter((l) => /^│ [>!] /.test(l))
+  return (lines[lines.length - 1] ?? '').replace(/^│ [>!] /, '').replace(/\s*│$/, '')
+}
+
+describe('Up / Down through the App', () => {
+  test('two submitted prompts: Up, Up, Down walk them and the typed draft returns', async () => {
+    const { type, frame, calls } = mount({
+      script: [{ text: 'answer one' }, { text: 'answer two' }],
+    })
+    await type('first prompt')
+    await type(ENTER)
+    await until(() => frame().includes('answer one'), 'first turn')
+    await type('second prompt')
+    await type(ENTER)
+    await until(() => frame().includes('answer two'), 'second turn')
+    expect(calls).toContain('addHistory:second prompt')
+    await type('half typed')
+    await type(UP)
+    expect(promptLine(frame())).toBe('second prompt')
+    await type(UP)
+    expect(promptLine(frame())).toBe('first prompt')
+    await type(DOWN)
+    expect(promptLine(frame())).toBe('second prompt')
+    await type(DOWN)
+    expect(promptLine(frame())).toBe('half typed')
+  })
+
+  test('a recalled slash command keeps Up / Down on history (no command menu)', async () => {
+    const { type, frame } = mount({ history: ['older', '/todos'] })
+    await tick(80)
+    await type(UP)
+    expect(promptLine(frame())).toBe('/todos')
+    await type(UP)
+    expect(promptLine(frame())).toBe('older')
   })
 })
 

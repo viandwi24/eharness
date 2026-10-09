@@ -2,6 +2,7 @@
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import type { CoderController, SettingView } from '../../contracts.ts'
+import { moveIndex, selectAction } from '../select.ts'
 import { color, sym } from '../theme.ts'
 import { Loading, Page } from './Page.tsx'
 
@@ -90,9 +91,10 @@ export function ConfigPage({ controller, onClose, onSaved, size }: ConfigPagePro
         if (input && !key.ctrl && !key.meta) setEdit((t) => (t ?? '') + input)
         return
       }
-      if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-      else if (key.downArrow) setIndex((i) => Math.min(items.length - 1, i + 1))
-      else if (input === 'u') setScope('user')
+      const action = selectAction(input, key)
+      if (action && action !== 'accept' && action !== 'cancel') {
+        setIndex((i) => moveIndex(i, items.length, action))
+      } else if (input === 'u') setScope('user')
       else if (input === 'l') setScope('local')
       else if ((key.return || input === ' ') && view) {
         if (view.type === 'boolean') save(view, !view.value)
@@ -108,7 +110,7 @@ export function ConfigPage({ controller, onClose, onSaved, size }: ConfigPagePro
   const hint =
     edit !== null
       ? 'type a value · enter save · esc cancel'
-      : 'esc/q close · ↑↓ select · enter/space change · u user · l project-local'
+      : 'esc/q close · ↑↓/jk select · enter/space change · u user · l project-local'
   return (
     <Page
       title="Config"

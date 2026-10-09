@@ -1,8 +1,9 @@
 /** `/model` and Alt+P: pick a model with type-to-filter search; a custom id can be typed. */
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useMemo, useState } from 'react'
-import type { CoderController, ModelOption } from '../../contracts.ts'
+import type { CoderController, ModelOption, ThinkingLevel } from '../../contracts.ts'
 import { fmtPrice, fmtTokens } from '../pages/format.ts'
+import { moveIndex, selectAction } from '../select.ts'
 import { color, sym } from '../theme.ts'
 import { PickerFrame, VISIBLE_ROWS, windowStart } from './PickerFrame.tsx'
 
@@ -49,8 +50,29 @@ function firstSelectable(rows: ModelRow[], current?: string): number {
 /** Props of {@link ModelPicker}. */
 export interface ModelPickerProps {
   controller: CoderController
-  onSelect(id: string): void
+  /**
+   * Enter applies; `thinking` is the effort chosen with Left/Right (only for a model that
+   * reasons); `sessionOnly` is set by `s` (do not save the choice as the project preference).
+   */
+  onSelect(id: string, opts?: { thinking?: ThinkingLevel; sessionOnly?: boolean }): void
   onCancel(): void
+}
+
+/** The levels of the effort slider, lowest first. */
+const EFFORT_LEVELS: ThinkingLevel[] = ['none', 'low', 'medium', 'high', 'xhigh']
+
+/** Slider levels for a current level (a level outside the slider, e.g. `minimal`, is kept in place). */
+export function effortLevels(current: ThinkingLevel): ThinkingLevel[] {
+  if (current === 'provider-default' || EFFORT_LEVELS.includes(current)) return EFFORT_LEVELS
+  return ['none', 'minimal', 'low', 'medium', 'high', 'xhigh']
+}
+
+/** The slider row: `Thinking: ○ none ○ low ● medium ○ high`. */
+export function effortLine(levels: ThinkingLevel[], level: ThinkingLevel): string {
+  const marks = levels.map((l) => `${l === level ? '●' : '○'} ${l}`).join(' ')
+  return level === 'provider-default'
+    ? `Thinking: ${marks} (provider default)`
+    : `Thinking: ${marks}`
 }
 
 /** Inline model picker. */
@@ -60,6 +82,9 @@ export function ModelPicker({ controller, onSelect, onCancel }: ModelPickerProps
   const [query, setQuery] = useState('')
   const [index, setIndex] = useState(0)
   const current = controller.model
+  const [filtering, setFiltering] = useState(false)
+  const [effort, setEffort] = useState<ThinkingLevel>(controller.thinking)
+  const levels = effortLevels(controller.thinking)
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: load once on mount
   useEffect(() => {
@@ -95,16 +120,49 @@ export function ModelPicker({ controller, onSelect, onCancel }: ModelPickerProps
     }
   }
 
+  const highlighted = rows[Math.min(index, Math.max(0, rows.length - 1))]
+  // a custom id is assumed to reason; a listed model says so
+  const reasons = highlighted?.kind === 'custom' || highlighted?.option.reasoning === true
+
+  const apply = (sessionOnly: boolean): void => {
+    const row = rows[index]
+    if (!row || !selectable(row)) return
+    onSelect(row.kind === 'custom' ? row.id : row.option.id, {
+      ...(reasons ? { thinking: effort } : {}),
+      ...(sessionOnly ? { sessionOnly: true } : {}),
+    })
+  }
+
   useInput((input, key) => {
     if (key.escape) return onCancel()
     if (models === null) return
-    if (key.upArrow) return move(-1)
-    if (key.downArrow) return move(1)
-    if (key.return) {
-      const row = rows[index]
-      if (!row || !selectable(row)) return
-      return onSelect(row.kind === 'custom' ? row.id : row.option.id)
+    // the list filters as you type: j/k are text here, the arrows and Ctrl+N/P move
+    const action = selectAction(input, key, { letters: false })
+    if (action === 'next') return move(1)
+    if (action === 'previous') return move(-1)
+    if (action === 'pageDown' || action === 'pageUp' || action === 'first' || action === 'last') {
+      const target = moveIndex(index, rows.length, action, VISIBLE_ROWS)
+      const dir = target >= index ? 1 : -1
+      for (let i = target; i >= 0 && i < rows.length; i += dir) {
+        if (selectable(rows[i])) return setIndex(i)
+      }
+      return
     }
+    if (action === 'accept') return apply(false)
+    if (key.leftArrow || key.rightArrow) {
+      if (!reasons) return
+      const at = levels.indexOf(effort)
+      // from the provider default (not on the slider) either arrow lands on the first mark
+      const next =
+        at < 0 ? 0 : Math.max(0, Math.min(levels.length - 1, at + (key.rightArrow ? 1 : -1)))
+      const level = levels[next]
+      if (level) setEffort(level)
+      return
+    }
+    // `s` applies for this session only, unless the filter is already in use (`/` opens it
+    // explicitly, for a query that starts with an s)
+    if (input === '/' && query === '' && !filtering) return setFiltering(true)
+    if (input === 's' && !key.ctrl && !key.meta && query === '' && !filtering) return apply(true)
     if (key.backspace || key.delete) {
       const next = query.slice(0, -1)
       setQuery(next)
@@ -132,7 +190,7 @@ export function ModelPicker({ controller, onSelect, onCancel }: ModelPickerProps
       hint={
         offline
           ? 'type a model id · enter use it · esc cancel'
-          : '↑/↓ select · type to filter · enter switch · esc cancel'
+          : '↑/↓ select · ←/→ thinking · type to filter · enter apply · s this session only · esc cancel'
       }
     >
       <Text>
@@ -180,6 +238,18 @@ export function ModelPicker({ controller, onSelect, onCancel }: ModelPickerProps
       })}
       {first + VISIBLE_ROWS < rows.length ? (
         <Text dimColor> ↓ {rows.length - first - VISIBLE_ROWS} more</Text>
+      ) : null}
+      {!offline && rows.length > 0 ? (
+        <Box marginTop={1}>
+          {reasons ? (
+            <Text>
+              <Text color={color.accent}>{effortLine(levels, effort)}</Text>
+              <Text dimColor> ←/→</Text>
+            </Text>
+          ) : (
+            <Text dimColor>Thinking: not supported by this model</Text>
+          )}
+        </Box>
       ) : null}
     </PickerFrame>
   )

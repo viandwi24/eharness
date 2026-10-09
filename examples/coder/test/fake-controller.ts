@@ -361,8 +361,8 @@ export function fakeController(opts: FakeOptions = {}) {
       shellCalls.push(command)
       return { output: 'shell out', exitCode: 0 }
     },
-    setModel(id) {
-      calls.push(`setModel:${id}`)
+    setModel(id, o) {
+      calls.push(`setModel:${id}${o?.persist === false ? ':session' : ''}`)
       currentModel = id
     },
     get model() {
@@ -372,8 +372,8 @@ export function fakeController(opts: FakeOptions = {}) {
     get thinking() {
       return currentThinking
     },
-    setThinking(level) {
-      calls.push(`setThinking:${level}`)
+    setThinking(level, o) {
+      calls.push(`setThinking:${level}${o?.persist === false ? ':session' : ''}`)
       currentThinking = level
     },
     models: async () =>

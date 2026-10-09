@@ -2,6 +2,7 @@
 import { Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import type { CoderController } from '../../contracts.ts'
+import { moveIndex, selectAction } from '../select.ts'
 import { color, sym } from '../theme.ts'
 import { PickerFrame } from './PickerFrame.tsx'
 
@@ -46,15 +47,16 @@ export function OutputStylePicker({
     }
   }, [])
 
-  useInput((_input, key) => {
-    if (key.escape) return onCancel()
+  useInput((input, key) => {
+    const action = selectAction(input, key)
+    if (action === 'cancel') return onCancel()
     if (!styles) return
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-    else if (key.downArrow) setIndex((i) => Math.min(styles.length - 1, i + 1))
-    else if (key.return) {
+    if (action === 'accept') {
       const picked = styles[index]
       if (picked) onSelect(picked.name)
+      return
     }
+    setIndex((i) => moveIndex(i, styles.length, action))
   })
 
   if (!styles) return <Text dimColor>Loading output styles…</Text>

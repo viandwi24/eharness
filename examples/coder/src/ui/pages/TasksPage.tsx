@@ -2,6 +2,7 @@
 import { Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import type { BackgroundTask, CoderController } from '../../contracts.ts'
+import { moveIndex, selectAction } from '../select.ts'
 import { color, sym } from '../theme.ts'
 import { fmtDuration } from './format.ts'
 import { Page, Section } from './Page.tsx'
@@ -13,19 +14,30 @@ const STATUS_COLOR: Record<BackgroundTask['status'], string | undefined> = {
   stopped: undefined,
 }
 
-/** The tasks page: ↑↓ select, Enter shows the output, `k` stops a running task. */
+/** The tasks page: ↑↓ select, Enter shows the output, `x` stops a running task. */
 export function TasksPage({
   controller,
   onClose,
+  initialTaskId,
   size,
 }: {
   controller: CoderController
   onClose(): void
+  /** Open with this task selected and its output shown (Enter on a footer row). */
+  initialTaskId?: string
   size?: { rows: number; columns: number }
 }): ReactElement {
   const [tasks, setTasks] = useState<BackgroundTask[]>(() => controller.tasks())
-  const [index, setIndex] = useState(0)
-  const [open, setOpen] = useState<{ id: string; text: string } | null>(null)
+  const [index, setIndex] = useState(() =>
+    Math.max(
+      0,
+      controller.tasks().findIndex((t) => t.id === initialTaskId),
+    ),
+  )
+  const [open, setOpen] = useState<{ id: string; text: string } | null>(() => {
+    const t = controller.tasks().find((x) => x.id === initialTaskId)
+    return t ? { id: t.id, text: t.tail } : null
+  })
   useEffect(() => controller.onTasks(setTasks), [controller])
   const selected = tasks[Math.min(index, tasks.length - 1)]
 
@@ -47,12 +59,13 @@ export function TasksPage({
   }, [controller, open?.id, tasks])
 
   useInput((input, key) => {
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-    else if (key.downArrow) setIndex((i) => Math.min(tasks.length - 1, i + 1))
-    else if (key.return && selected) {
+    const action = selectAction(input, key)
+    if (action && action !== 'accept' && action !== 'cancel') {
+      setIndex((i) => moveIndex(i, tasks.length, action))
+    } else if (key.return && selected) {
       if (open?.id === selected.id) setOpen(null)
       else setOpen({ id: selected.id, text: selected.tail })
-    } else if (input === 'k' && selected?.status === 'running') {
+    } else if (input === 'x' && selected?.status === 'running') {
       void controller.stopTask(selected.id).catch(() => {})
     }
   })
@@ -61,7 +74,7 @@ export function TasksPage({
     <Page
       title="Tasks"
       subtitle="background shells and agents"
-      hints="esc/q close · ↑↓ select · enter output · k stop"
+      hints="esc/q close · ↑↓ select · enter output · x stop"
       arrows={false}
       onClose={onClose}
       size={size}

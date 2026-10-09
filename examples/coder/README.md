@@ -56,6 +56,9 @@ Model: `--model <id>`, `"model"` in settings, `CODER_MODEL`, then the model last
 project (see Preferences), then the provider default. `/model <id>` switches inside a session.
 
 - **Model picker** (`/model`, Alt+P): a filterable list; typing an id that is not listed uses it as is.
+  `Left`/`Right` change the thinking level of the highlighted model (slider row under the list),
+  `Enter` applies model and level and saves them as the project preference, `s` applies them for this
+  session only (type `/` first to filter on a word that starts with `s`).
   The OpenRouter list comes from the OpenRouter model catalog, cached in
   `~/.coder/openrouter-models.json` (24 h, refreshed in the background, 3 s fetch limit; with
   `CODER_OFFLINE=1` only the cache is used).
@@ -134,8 +137,13 @@ move the user directory (default `~/.coder`), for example to a temp folder.
 A rounded welcome box (version, `cwd` with `~` and a shortened middle, model, provider, thinking) opens
 the session. The transcript is plain scrollback: user prompts as `> text`, assistant text with
 Markdown, one compact card per tool call (`Ctrl+O` shows the full transcript). A footer under the
-prompt shows the permission mode, the model and thinking level, the context left and the cost. `?`
-on an empty prompt opens the shortcuts panel.
+prompt always shows the permission mode (`⏸ manual mode on`, `⏵⏵ accept edits on`, `⏸ plan mode on`,
+`⏵⏵ don't ask on`, `⏵⏵ bypass permissions on`, each with a dim `(shift+tab to cycle)`), the model and
+thinking level, the context left and the cost. `?` on an empty prompt opens the shortcuts panel.
+Running background shells and agents are listed as rows below the footer: `Down` from the empty
+prompt moves into them, `Left`/`Right`/`Up`/`Down` select, `Enter` opens the task, `x` stops it, `Esc`
+returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctrl+P`, `PageUp`/`PageDown`,
+`Home`/`End`; `Ctrl+C` twice closes a dialog or page instead of exiting.
 
 | Key | Action |
 |---|---|
@@ -437,7 +445,7 @@ All shells and background agents are stopped when coder exits. `/tasks` merges t
 session reopened after a restart are not listed).
 
 `/tasks` opens a page with every task, its status and tail output: `↑/↓` select, `Enter` shows the
-output, `k` stops a running task, `Esc` or `q` closes.
+output, `x` stops a running task, `Esc` or `q` closes.
 
 ### Settings reference
 

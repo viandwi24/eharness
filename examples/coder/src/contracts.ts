@@ -550,13 +550,15 @@ export interface CoderController {
    * capped like the bash tool) is returned; `exitCode` is null when the command was aborted.
    */
   shell(command: string, signal?: AbortSignal): Promise<{ output: string; exitCode: number | null }>
-  setModel(model: string): void
+  /** Switch model; `persist: false` keeps the choice to this session (default: saved per project). */
+  setModel(model: string, opts?: { persist?: boolean }): void
   /** Current model id (changes with {@link CoderController.setModel}; takes effect at the next turn). */
   readonly model: string
   readonly provider: ModelProvider
   /** Current thinking level (default `provider-default`); applies to the main agent and subagents. */
   readonly thinking: ThinkingLevel
-  setThinking(level: ThinkingLevel): void
+  /** Set the thinking level; `persist: false` keeps it to this session. */
+  setThinking(level: ThinkingLevel, opts?: { persist?: boolean }): void
   /** Models for the picker (OpenRouter catalog when available, cached), tool-capable first. */
   models(): Promise<ModelOption[]>
   contextDetails(): Promise<ContextDetails>

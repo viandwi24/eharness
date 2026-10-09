@@ -122,8 +122,10 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   const resolveModel = opts.resolveModel ?? createModelResolver(config.provider)
   // preference writes are serialized so the last choice wins
   let saving: Promise<void> = Promise.resolve()
-  const persist = (): void => {
-    const snapshot = { ...modelState }
+  const persist = (...keys: Array<keyof ModelState>): void => {
+    // only the named fields are written: a session-only change must not leak into the saved patch
+    const snapshot: Partial<ModelState> = { provider: modelState.provider }
+    for (const key of keys) Object.assign(snapshot, { [key]: modelState[key] })
     saving = saving.then(() => savePreferences(config.projectDataDir, snapshot))
   }
   let turnMs = 0
@@ -665,13 +667,13 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     },
 
     /** The agents read the model state at the start of every turn: nothing is rebuilt. */
-    setModel(model: string): void {
+    setModel(model: string, opts?: { persist?: boolean }): void {
       if (typeof model !== 'string' || model.trim() === '') {
         throw new Error('setModel: the model id must be a non-empty string')
       }
       modelState.model = model.trim()
       config.model = modelState.model
-      persist()
+      if (opts?.persist !== false) persist('model')
     },
 
     get model(): string {
@@ -684,14 +686,14 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       return modelState.thinking
     },
 
-    setThinking(level: ThinkingLevel): void {
+    setThinking(level: ThinkingLevel, opts?: { persist?: boolean }): void {
       if (!THINKING_LEVELS.includes(level)) {
         throw new Error(
           `setThinking: invalid level "${String(level)}". Use one of: ${THINKING_LEVELS.join(', ')}`,
         )
       }
       modelState.thinking = level
-      persist()
+      if (opts?.persist !== false) persist('thinking')
     },
 
     async models(): Promise<ModelOption[]> {

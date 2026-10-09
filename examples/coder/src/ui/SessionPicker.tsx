@@ -2,6 +2,7 @@ import { Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import type { SessionSummary } from '../contracts.ts'
 import { PickerFrame, VISIBLE_ROWS, windowStart } from './pickers/PickerFrame.tsx'
+import { moveIndex, selectAction } from './select.ts'
 import { color, sym } from './theme.ts'
 
 /** Props of {@link SessionPicker}. */
@@ -39,15 +40,16 @@ export function SessionPicker({ load, onSelect, onCancel }: SessionPickerProps):
     }
   }, [])
 
-  useInput((_input, key) => {
-    if (key.escape) return onCancel()
+  useInput((input, key) => {
+    const action = selectAction(input, key)
+    if (action === 'cancel') return onCancel()
     if (!sessions) return
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-    else if (key.downArrow) setIndex((i) => Math.min(sessions.length - 1, i + 1))
-    else if (key.return) {
+    if (action === 'accept') {
       const chosen = sessions[index]
       if (chosen) onSelect(chosen.id)
+      return
     }
+    setIndex((i) => moveIndex(i, sessions.length, action, VISIBLE_ROWS))
   })
 
   if (!sessions) return <Text dimColor>Loading sessions…</Text>

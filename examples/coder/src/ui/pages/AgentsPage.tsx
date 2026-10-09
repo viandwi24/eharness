@@ -2,6 +2,7 @@
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useState } from 'react'
 import type { AgentDefinition } from '../../contracts.ts'
+import { moveIndex, selectAction } from '../select.ts'
 import type { SubagentRun } from '../state.ts'
 import { color, sym } from '../theme.ts'
 import { Page, Section } from './Page.tsx'
@@ -31,14 +32,13 @@ export function AgentsPage({
   size,
 }: AgentsPageProps): ReactElement {
   const [index, setIndex] = useState(Math.max(0, runs.length - 1))
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (runs.length === 0) return
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-    else if (key.downArrow) setIndex((i) => Math.min(runs.length - 1, i + 1))
-    else if (key.return) {
+    const action = selectAction(input, key)
+    if (action === 'accept') {
       const run = runs[index]
       if (run) onOpenRun(run)
-    }
+    } else setIndex((i) => moveIndex(i, runs.length, action))
   })
   return (
     <Page

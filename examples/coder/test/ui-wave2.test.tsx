@@ -244,7 +244,7 @@ describe('pages', () => {
     await tick(60)
     await m.type(ENTER)
     await until(() => m.frame().includes('tail line'), 'output')
-    await m.type('k')
+    await m.type('x')
     await until(() => m.calls.includes('stopTask:bash-1'), 'stop')
     await until(() => m.frame().includes('stopped'), 'status updates')
   })
@@ -275,7 +275,7 @@ describe('pages', () => {
 })
 
 describe('background tasks', () => {
-  test('footer count and a system line when one finishes', async () => {
+  test('footer rows and a system line when one finishes', async () => {
     const m = mount()
     const base: BackgroundTask = {
       id: 'bash-1',
@@ -286,7 +286,7 @@ describe('background tasks', () => {
       tail: '',
     }
     m.setTasks([base])
-    await until(() => m.frame().includes('1 background'), 'count')
+    await until(() => m.frame().includes('⧉ bash-1 · x · running'), 'row')
     m.setTasks([{ ...base, status: 'completed', exitCode: 0, endedAt: Date.now() }])
     await until(() => m.frame().includes('Background task bash-1 finished (exit 0)'), 'line')
   })

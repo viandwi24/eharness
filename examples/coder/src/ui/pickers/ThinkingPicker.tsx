@@ -2,6 +2,7 @@
 import { Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import { type CoderController, THINKING_LEVELS, type ThinkingLevel } from '../../contracts.ts'
+import { moveIndex, selectAction } from '../select.ts'
 import { color, sym } from '../theme.ts'
 import { PickerFrame } from './PickerFrame.tsx'
 
@@ -48,14 +49,15 @@ export function ThinkingPicker({
     }
   }, [])
 
-  useInput((_input, key) => {
-    if (key.escape) return onCancel()
-    if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-    else if (key.downArrow) setIndex((i) => Math.min(THINKING_LEVELS.length - 1, i + 1))
-    else if (key.return) {
+  useInput((input, key) => {
+    const action = selectAction(input, key)
+    if (action === 'cancel') return onCancel()
+    if (action === 'accept') {
       const level = THINKING_LEVELS[index]
       if (level) onSelect(level)
+      return
     }
+    setIndex((i) => moveIndex(i, THINKING_LEVELS.length, action))
   })
 
   return (

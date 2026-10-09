@@ -11,6 +11,7 @@ import { type Buffer, backspace, deleteForward, insert, move } from './editor.ts
 import { keyedLines } from './keys.ts'
 import { Markdown } from './markdown.tsx'
 import { stripControl } from './sanitize.ts'
+import { moveIndex, selectAction } from './select.ts'
 import { color, sym } from './theme.ts'
 import { displayPath } from './tool-summary.ts'
 
@@ -117,6 +118,11 @@ export function dialogQuestion(request: ApprovalRequest): string {
   }
 }
 
+/** Edit, create and delete prompts: the ones Shift+Tab speeds up. */
+function isFileTool(toolName: string): boolean {
+  return toolName === TOOL.edit || toolName === TOOL.write || toolName === TOOL.delete
+}
+
 const PLAN_MAX_LINES = 60
 
 function Detail({ request }: { request: ApprovalRequest }): ReactElement | null {
@@ -205,17 +211,29 @@ export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactE
       }
       if (key.escape) {
         broker.answer(request.id, { approved: false })
-      } else if (key.upArrow) setIndex((i) => (i + options.length - 1) % options.length)
-      else if (key.downArrow) setIndex((i) => (i + 1) % options.length)
-      else if (key.tab) {
-        if (!key.shift && options[index]?.comment) {
+        return
+      }
+      if (key.tab && key.shift) {
+        // a file prompt: highlight "don't ask again this session" when it is offered
+        const at = options.findIndex((o) => o.answer.approved && o.answer.remember === 'session')
+        if (at >= 0 && isFileTool(request.toolName)) setIndex(at)
+        return
+      }
+      if (key.tab) {
+        if (options[index]?.comment) {
           const text = comments[index] ?? ''
           setField({ index, buffer: { text, cursor: text.length } })
         }
-      } else if (key.return) choose(index)
-      else if (/^[1-9]$/.test(input) && Number(input) <= options.length) {
-        choose(Number(input) - 1)
+        return
       }
+      if (key.return) return choose(index)
+      if (/^[1-9]$/.test(input) && Number(input) <= options.length) {
+        return choose(Number(input) - 1)
+      }
+      const action = selectAction(input, key)
+      if (action === 'next') setIndex((i) => (i + 1) % options.length)
+      else if (action === 'previous') setIndex((i) => (i + options.length - 1) % options.length)
+      else setIndex((i) => moveIndex(i, options.length, action, options.length))
     },
     { isActive: request !== undefined },
   )
@@ -284,8 +302,8 @@ export function PermissionPrompt({ broker }: { broker: ApprovalBroker }): ReactE
           {field
             ? 'Enter to send · Tab to close'
             : options[index]?.comment
-              ? 'Tab to add a note · Esc to cancel'
-              : 'Esc to cancel'}
+              ? 'Enter to confirm · Tab to add a note · Esc to cancel'
+              : 'Enter to confirm · Esc to cancel'}
         </Text>
       </Box>
     </Box>

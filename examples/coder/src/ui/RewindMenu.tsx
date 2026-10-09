@@ -4,6 +4,7 @@ import { type ReactElement, useEffect, useState } from 'react'
 import type { CoderController, RewindPoint, RewindResult } from '../contracts.ts'
 import { fmtAgo } from './pages/format.ts'
 import { PickerFrame, VISIBLE_ROWS, windowStart } from './pickers/PickerFrame.tsx'
+import { moveIndex, selectAction } from './select.ts'
 import { color, sym } from './theme.ts'
 
 type What = 'both' | 'conversation' | 'code'
@@ -56,25 +57,24 @@ export function RewindMenu({ controller, onDone, onCancel }: RewindMenuProps): R
     }
   }, [])
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
     if (busy) return
-    if (key.escape) return chosen ? setChosen(null) : onCancel()
+    const act = selectAction(input, key)
+    if (act === 'cancel') return chosen ? setChosen(null) : onCancel()
     if (!points) return
     if (!chosen) {
-      if (key.upArrow) setIndex((i) => Math.max(0, i - 1))
-      else if (key.downArrow) setIndex((i) => Math.min(points.length - 1, i + 1))
-      else if (key.return) {
+      if (act === 'accept') {
         const point = points[index]
         if (point) {
           setChosen(point)
           setAction(0)
         }
+        return
       }
+      setIndex((i) => moveIndex(i, points.length, act, VISIBLE_ROWS))
       return
     }
-    if (key.upArrow) setAction((i) => Math.max(0, i - 1))
-    else if (key.downArrow) setAction((i) => Math.min(ACTIONS.length - 1, i + 1))
-    else if (key.return) {
+    if (act === 'accept') {
       const picked = ACTIONS[action]
       if (!picked || picked.what === 'cancel') return onCancel()
       setBusy(true)
@@ -83,7 +83,9 @@ export function RewindMenu({ controller, onDone, onCancel }: RewindMenuProps): R
         (error: unknown) =>
           onCancel(`Rewind failed: ${error instanceof Error ? error.message : error}`),
       )
+      return
     }
+    setAction((i) => moveIndex(i, ACTIONS.length, act))
   })
 
   if (!points) return <Text dimColor>Loading rewind points…</Text>

@@ -13,6 +13,7 @@ import { formatTokens, ThinkingIndicator, VERBS } from '../src/ui/Spinner.tsx'
 import { SubagentTree } from '../src/ui/SubagentTree.tsx'
 import { TodoList, TodoPanel } from '../src/ui/TodoPanel.tsx'
 import { ToolCard } from '../src/ui/ToolCard.tsx'
+import { color } from '../src/ui/theme.ts'
 import type { ToolView } from '../src/ui/tool-summary.ts'
 import { shortenHome, truncateMiddle, WelcomeBox } from '../src/ui/WelcomeBox.tsx'
 
@@ -383,7 +384,7 @@ describe('Footer', () => {
   const base = { model: 'anthropic/claude-sonnet-4.6', thinking: 'high' } as const
   test('default mode and right side', () => {
     const out = show(<Footer mode="default" {...base} />).text()
-    expect(out).toContain('? for shortcuts')
+    expect(out).toContain('⏸ manual mode on (shift+tab to cycle) · ? for shortcuts')
     expect(out).toContain('claude-sonnet-4.6 · thinking high')
     expect(shortModel('a/b/c')).toBe('c')
   })
@@ -395,9 +396,20 @@ describe('Footer', () => {
       '⏸ plan mode on (shift+tab to cycle)',
     )
     expect(show(<Footer mode="bypassPermissions" {...base} />).text()).toContain(
-      '⏵⏵ bypass permissions on',
+      '⏵⏵ bypass permissions on (shift+tab to cycle)',
     )
-    expect(modeIndicator('dontAsk').text).toContain("don't ask")
+    expect(show(<Footer mode="dontAsk" {...base} />).text()).toContain(
+      "⏵⏵ don't ask on (shift+tab to cycle)",
+    )
+    // `? for shortcuts` only for an empty prompt with nothing else shown
+    expect(show(<Footer mode="default" {...base} inputEmpty={false} />).text()).not.toContain(
+      '? for shortcuts',
+    )
+    expect(show(<Footer mode="default" {...base} busy />).text()).toContain('esc to interrupt')
+    expect(modeIndicator('default').color).toBe(color.dim)
+    expect(modeIndicator('plan').color).toBe(color.plan)
+    expect(modeIndicator('acceptEdits').color).toBe(color.acceptEdits)
+    expect(modeIndicator('bypassPermissions').color).toBe(color.bypass)
   })
   test('context warning only at 20% or less; hint replaces the mode text', () => {
     expect(show(<Footer mode="default" {...base} contextLeftPct={50} />).text()).not.toContain(
@@ -416,13 +428,17 @@ describe('Footer', () => {
       '! for bash mode',
       '/ for commands',
       '@ for file paths',
-      '\\⏎ / ctrl+j for newline',
+      '\\⏎ for newline',
+      'double tap esc to clear input',
+      'ctrl+t to show todos',
+      'ctrl+s to stash prompt',
+      'ctrl+r to search history',
+      'ctrl+g to edit in $EDITOR',
       'shift+tab to cycle modes',
       'alt+p to switch model',
       'alt+t to change thinking',
       'ctrl+o for transcript',
       'esc to interrupt',
-      'ctrl+c to exit',
     ]) {
       expect(out).toContain(s)
     }
@@ -521,7 +537,7 @@ describe('footer extras, focus view, todo toggle', () => {
       />,
     )
     const t = f.text()
-    expect(t).toContain('-- INSERT -- ? for shortcuts')
+    expect(t).toContain('-- INSERT -- ⏸ manual mode on')
     expect(t).toContain('⧉ 2 background')
     expect(t).toContain('work · m')
     expect(
