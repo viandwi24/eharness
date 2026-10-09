@@ -41,10 +41,12 @@ bunx changeset              # add a changeset (required for every user-facing ch
    `LanguageModel`, `createUIMessageStream`, `convertToModelMessages` directly. Do not invent our
    own message, tool or stream shapes (ADR-0001).
 3. **Runtime-neutral source.** `src/` must run on Node ≥ 22 and Bun. No `Bun.*`, no `node:fs` in core.
-   Node built-ins are allowed only in clearly Node-only modules (none exist in v0). Use Web APIs
+   Node built-ins are allowed only in the Node-only modules `src/filesystem/node*` and `src/shell/**`
+   (ADR-0036; listed in `scripts/check-imports.ts`). Use Web APIs
    (`crypto.subtle`, `TextEncoder`, `ReadableStream`).
 4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`,
-   `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**`, `src/group/**` and `src/testing/**` may import core only through `src/index.ts`
+   `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**`, `src/group/**`, `src/ask/**`,
+   `src/permissions/**`, `src/shell/**`, `src/subagent/**`, `src/web/**` and `src/testing/**` may import core only through `src/index.ts`
    (dogfooding, ADR-0008).
 5. **The library ships memory adapters only.** Database/S3/JSON-file adapters are examples in
    `examples/`, never dependencies (ADR-0008).
@@ -78,7 +80,7 @@ bunx changeset              # add a changeset (required for every user-facing ch
 src/
   index.ts          public core API (the only entry other subpaths may import)
   agent/ plugin/ registry/ messages/ stream/ session/ loop/ compaction/ skills/ errors.ts
-  filesystem/       eharness/filesystem + eharness/filesystem/memory
+  filesystem/       eharness/filesystem + eharness/filesystem/memory + eharness/filesystem/node (Node-only)
   storage/          eharness/storage/memory
   mcp/              eharness/mcp
   todos/            eharness/todos
@@ -86,6 +88,11 @@ src/
   guard/            eharness/guard
   openapi/          eharness/openapi
   group/            eharness/group
+  ask/              eharness/ask
+  permissions/      eharness/permissions
+  shell/            eharness/shell (Node-only)
+  subagent/         eharness/subagent
+  web/              eharness/web
   models/           model catalog, cost (core)
   testing/          eharness/testing (conformance suites, mocks)
 examples/           runnable examples, NOT published

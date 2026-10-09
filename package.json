@@ -69,16 +69,22 @@
   },
   "exports": {
     ".": "./dist/index.js",
+    "./ask": "./dist/ask/index.js",
     "./filesystem": "./dist/filesystem/index.js",
     "./filesystem/memory": "./dist/filesystem/memory.js",
+    "./filesystem/node": "./dist/filesystem/node.js",
     "./group": "./dist/group/index.js",
     "./guard": "./dist/guard/index.js",
     "./mcp": "./dist/mcp/index.js",
     "./memory": "./dist/memory/index.js",
     "./openapi": "./dist/openapi/index.js",
+    "./permissions": "./dist/permissions/index.js",
+    "./shell": "./dist/shell/index.js",
     "./storage/memory": "./dist/storage/memory.js",
+    "./subagent": "./dist/subagent/index.js",
     "./testing": "./dist/testing/index.js",
     "./todos": "./dist/todos/index.js",
+    "./web": "./dist/web/index.js",
     "./package.json": "./package.json"
   }
 }

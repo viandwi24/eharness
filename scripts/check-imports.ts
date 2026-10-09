@@ -1,11 +1,12 @@
 /**
  * Import rules for `src/` (ADR-0008, ADR-0010, docs/engineering/conventions.md):
  *
- * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group`) import core only through the relative
+ * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|permissions|shell|subagent|web`) import core only through the relative
  *    path to `src/index.ts`, never through other core files or the `eharness` self-reference.
  *    Non-test files never import another subpath; test files of a subpath may (e.g. a filesystem
  *    test running `fileSystemConformance` from `src/testing`), but still never core internals.
- * 2. Non-test files under `src/` never use `Bun.` or import `node:` built-ins.
+ * 2. Non-test files under `src/` never use `Bun.` or import `node:` built-ins, except the Node-only
+ *    modules listed in `nodeOnly` (ADR-0036): they may import `node:` built-ins (never `Bun.`).
  *
  * Exits with code 1 and lists every violation.
  */
@@ -25,7 +26,14 @@ const subpaths = [
   'guard',
   'openapi',
   'group',
+  'ask',
+  'permissions',
+  'shell',
+  'subagent',
+  'web',
 ]
+/** Node-only modules (ADR-0036): `node:` built-ins allowed. */
+const nodeOnly = ['filesystem/node.ts', 'filesystem/node/', 'shell/']
 const coreIndex = join(src, 'index.ts')
 
 const specifierPattern =
@@ -47,7 +55,7 @@ for await (const file of new Glob('**/*.{ts,mts,cts,js,mjs}').scan({ cwd: src })
     const specifier = match[1] ?? match[2] ?? match[3]
     if (specifier === undefined) continue
 
-    if (!isTest && specifier.startsWith('node:')) {
+    if (!isTest && specifier.startsWith('node:') && !nodeOnly.some((p) => file.startsWith(p))) {
       violations.push(`${shown}: imports Node built-in '${specifier}'`)
     }
     if (subpath === undefined) continue
