@@ -25,6 +25,8 @@ export interface FooterProps {
   tasks?: number
   /** Session name, dim, left of the model. */
   sessionName?: string
+  /** Auto mode paused after repeated classifier blocks (shown instead of `auto mode on`). */
+  autoPaused?: boolean
   /** The prompt is empty: `· ? for shortcuts` follows the mode (default true). */
   inputEmpty?: boolean
 }
@@ -36,8 +38,16 @@ export function shortModel(model: string): string {
 }
 
 /** What the left side of the footer says for a permission mode ("the reference TUI" wording). */
-export function modeIndicator(mode: PermissionMode): { text: string; color: string | undefined } {
+export function modeIndicator(
+  mode: PermissionMode,
+  autoPaused = false,
+): { text: string; color: string | undefined } {
   switch (mode) {
+    case 'auto':
+      // paused after repeated blocks: calls ask until one is approved (the warning color says so)
+      return autoPaused
+        ? { text: '⏵⏵ auto mode paused · approve to resume', color: color.warning }
+        : { text: '⏵⏵ auto mode on', color: color.auto }
     case 'acceptEdits':
       return { text: '⏵⏵ accept edits on', color: color.acceptEdits }
     case 'plan':
@@ -57,10 +67,10 @@ export const CYCLE_HINT = ' (shift+tab to cycle)'
 /** Below the prompt box: mode indicator on the left, model, thinking and context on the right. */
 export function Footer(props: FooterProps): ReactElement {
   const { mode, model, thinking, contextLeftPct, costUsd, hint, shortcutsOpen, busy } = props
-  const { vimMode, statusLine, tasks, sessionName } = props
+  const { vimMode, statusLine, tasks, sessionName, autoPaused } = props
   const inputEmpty = props.inputEmpty ?? true
   useTheme()
-  const indicator = modeIndicator(mode)
+  const indicator = modeIndicator(mode, autoPaused === true)
   const low = contextLeftPct !== undefined && contextLeftPct <= 20
   return (
     <Box paddingX={1} justifyContent="space-between">

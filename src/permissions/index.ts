@@ -1,17 +1,26 @@
 /**
  * `eharness/permissions`: rule-based tool permissions — `Tool(spec)` rules with deny/ask/allow
- * precedence, modes (`default`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions`), shell
+ * precedence, modes (`default`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions`, `auto`), shell
  * command analysis with read-only grammars and path containment, protected paths, plan mode and
  * output filtering. One engine, three deployment profiles (autonomous server, single-process CLI,
  * split web/server).
  *
  * @see docs/specs/18-permissions-plugin.md
  */
+export {
+  AUTO_CLASSIFIER_INSTRUCTIONS,
+  type ModelClassifierOptions,
+  modelClassifier,
+} from './classifier.ts'
 export { type ParsedCommand, parseCommand } from './command.ts'
 export {
+  AUTO_MAX_CONSECUTIVE_BLOCKS,
+  AUTO_MAX_TOTAL_BLOCKS,
+  AUTO_PAUSED_REASON,
   createPermissionEngine,
   DEFAULT_BUILTIN_ASK,
   DEFAULT_PROTECTED_PATHS,
+  type DecideOptions,
   DONT_ASK_REASON,
   type PermissionEngine,
   type PermissionEngineOptions,
@@ -37,9 +46,17 @@ export {
 } from './rules.ts'
 export { DEFAULT_ALIASES, DEFAULT_TOOL_KINDS } from './tools.ts'
 export {
+  type AutoAction,
+  type AutoClassifier,
+  type AutoClassifierContext,
+  type AutoEvent,
+  type AutoListener,
+  type AutoState,
+  type AutoVerdict,
   DEFAULT_MODE_CYCLE,
   type ListingFormat,
   type ModeListener,
+  modeCycleFor,
   PERMISSION_MODES,
   type PermissionCall,
   type PermissionDecision,

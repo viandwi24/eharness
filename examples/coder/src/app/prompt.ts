@@ -89,6 +89,7 @@ const MODE_TEXT: Record<PermissionMode, string> = {
   plan: 'Plan mode is ON: only read and explore. Do not modify files or run commands that change anything. Present your plan with exit_plan_mode when ready.',
   dontAsk: 'dontAsk: anything that is not explicitly allowed by a rule is denied; do not retry it.',
   bypassPermissions: 'bypassPermissions: tool calls run without asking. Be careful.',
+  auto: 'auto: a classifier reviews risky actions. If one is blocked, do not retry it as is; use a safer approach or ask the user.',
 }
 
 async function run(cmd: string[], cwd: string): Promise<string | undefined> {

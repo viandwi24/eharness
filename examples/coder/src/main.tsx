@@ -114,7 +114,18 @@ const program = new Command()
     `reasoning effort: ${THINKING_LEVELS.join(' | ')} (default: saved choice, else provider-default)`,
     parseThinking,
   )
-  .option('--permission-mode <mode>', 'default | acceptEdits | plan | dontAsk | bypassPermissions')
+  .option(
+    '--permission-mode <mode>',
+    'default (alias manual) | acceptEdits | plan | auto | dontAsk | bypassPermissions',
+  )
+  .option(
+    '--allow-dangerously-skip-permissions',
+    'add bypassPermissions to the Shift+Tab cycle without starting in it',
+  )
+  .option(
+    '--dangerously-skip-permissions',
+    'start in bypassPermissions (alias of --permission-mode bypassPermissions)',
+  )
   .option('--add-dir <path...>', 'extra directories, mounted at /@dirs/<basename>/')
   .option('--allowed-tools <rule...>', 'extra allow rules for this run')
   .option('--disallowed-tools <rule...>', 'extra deny rules for this run')

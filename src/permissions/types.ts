@@ -1,7 +1,18 @@
 /** Public types of `eharness/permissions` (spec 18). */
 
-/** How the engine decides when no rule does. */
-export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions'
+import type { GuardTranscriptEntry } from '../index.ts'
+
+/**
+ * How the engine decides when no rule does. `auto` hands the calls no rule or read-only check
+ * settles to an {@link AutoClassifier} (spec 18 §12); it needs the engine's `classifier` option.
+ */
+export type PermissionMode =
+  | 'default'
+  | 'acceptEdits'
+  | 'plan'
+  | 'dontAsk'
+  | 'bypassPermissions'
+  | 'auto'
 
 /** Every mode, in the order of the table in spec 18 §3. */
 export const PERMISSION_MODES: readonly PermissionMode[] = [
@@ -10,10 +21,22 @@ export const PERMISSION_MODES: readonly PermissionMode[] = [
   'plan',
   'dontAsk',
   'bypassPermissions',
+  'auto',
 ]
 
 /** Default order of {@link PermissionEngine.cycleMode}. */
 export const DEFAULT_MODE_CYCLE: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan']
+
+/**
+ * The cycle with optional modes slotted in after `plan`: `bypassPermissions` first, `auto` last.
+ * `dontAsk` is never part of a cycle. Pass the result as the engine's `modeCycle`.
+ */
+export function modeCycleFor(options: { bypass?: boolean; auto?: boolean }): PermissionMode[] {
+  const cycle: PermissionMode[] = [...DEFAULT_MODE_CYCLE]
+  if (options.bypass === true) cycle.push('bypassPermissions')
+  if (options.auto === true) cycle.push('auto')
+  return cycle
+}
 
 /** Rule strings (`Tool` or `Tool(specifier)`, spec 18 §2) by decision. */
 export interface PermissionRules {
@@ -51,9 +74,65 @@ export interface PermissionCall {
 
 /** The engine's answer; the plugin maps it onto the core's `ToolApprovalStatus` (spec 11 §3). */
 export type PermissionDecision =
-  | { status: 'approved'; rule?: string }
-  | { status: 'user-approval'; rule?: string; reason?: string }
-  | { status: 'denied'; rule?: string; reason: string }
+  | { status: 'approved'; rule?: string; auto?: 'allowed' }
+  | { status: 'user-approval'; rule?: string; reason?: string; auto?: 'classify' | 'paused' }
+  | { status: 'denied'; rule?: string; reason: string; auto?: 'blocked' }
+
+/** The action an {@link AutoClassifier} reviews. */
+export interface AutoAction {
+  toolName: string
+  input: unknown
+  kind: ToolKind
+  /** The command of a shell tool or the URL of a fetch tool, when there is one. */
+  summary?: string
+  /** Name of the (sub)agent making the call, when known. */
+  agent?: string
+}
+
+/** What an {@link AutoClassifier} may read besides the action. */
+export interface AutoClassifierContext {
+  /**
+   * The restricted transcript (user messages and earlier tool calls, never tool outputs), oldest
+   * first; empty when the caller has none.
+   */
+  transcript: readonly GuardTranscriptEntry[]
+  abortSignal?: AbortSignal
+}
+
+/** A classifier verdict. `reason` is shown to the model when the action is blocked. */
+export interface AutoVerdict {
+  decision: 'allow' | 'block'
+  reason?: string
+}
+
+/**
+ * Judges one action in `auto` mode. It must be fail-safe: throwing (or returning anything but a
+ * well-formed verdict) blocks the action.
+ */
+export type AutoClassifier = (
+  action: AutoAction,
+  ctx: AutoClassifierContext,
+) => Promise<AutoVerdict> | AutoVerdict
+
+/** Block counters of `auto` mode; `paused` means calls ask a person until one is approved. */
+export interface AutoState {
+  paused: boolean
+  /** Blocks in a row (an allowed action resets it). */
+  consecutive: number
+  /** Blocks since the session started, or since the total limit last paused auto mode. */
+  total: number
+}
+
+/** Something that happened in `auto` mode, for notices. */
+export type AutoEvent =
+  /** `reason` is short (the classifier's own, or why it was unavailable): for a notice. */
+  /** `reason` is short (the classifier's own, or why it was unavailable): for a notice. */
+  | { type: 'blocked'; toolName: string; reason: string; state: AutoState }
+  | { type: 'paused'; cause: 'consecutive' | 'total'; state: AutoState }
+  | { type: 'resumed'; state: AutoState }
+
+/** Listener of {@link AutoEvent}s. */
+export type AutoListener = (event: AutoEvent) => void
 
 /**
  * What a tool does, which decides how its calls are analysed:

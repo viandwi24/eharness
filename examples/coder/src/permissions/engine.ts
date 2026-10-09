@@ -10,9 +10,13 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
+import type { LanguageModel } from 'ai'
 import {
+  type AutoClassifier,
   createPermissionEngine as createLibraryEngine,
   type PermissionEngine as LibraryEngine,
+  modeCycleFor,
+  modelClassifier,
   parseRule,
   type RuleChange,
   type ToolKinds,
@@ -88,8 +92,22 @@ async function editLocalSettings(file: string, change: RuleChange): Promise<bool
 export function createPermissionEngine(opts: {
   config: CoderConfig
   mounts: () => Mount[]
+  /**
+   * Model of the auto mode classifier, read at every check (the session's model unless
+   * `autoMode.model` says otherwise). Without it auto mode is unavailable.
+   */
+  classifierModel?: () => LanguageModel
 }): CoderPermissionEngine {
   const { config } = opts
+  const classifierModel = opts.classifierModel
+  const classifier: AutoClassifier | undefined =
+    classifierModel === undefined || config.autoEnabled === false
+      ? undefined
+      : (action, ctx) =>
+          modelClassifier({
+            model: classifierModel(),
+            environment: `The working directory is ${config.root}.`,
+          })(action, ctx)
   const engine = createLibraryEngine({
     roots: () =>
       opts.mounts().map((m) => ({
@@ -101,6 +119,12 @@ export function createPermissionEngine(opts: {
       })),
     home: homedir(),
     mode: config.mode,
+    ...(classifier ? { classifier } : {}),
+    // Shift+Tab: default, acceptEdits, plan, then bypassPermissions (opt-in), then auto
+    modeCycle: modeCycleFor({
+      bypass: config.bypassInCycle === true || config.mode === 'bypassPermissions',
+      auto: classifier !== undefined,
+    }),
     // a bad rule in a settings file is dropped (the library would refuse to start with it)
     rules: {
       allow: config.rules.allow.filter((r) => parseRule(r) !== undefined),

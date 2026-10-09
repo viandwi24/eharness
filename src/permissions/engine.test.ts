@@ -9,6 +9,10 @@ import {
 import { join } from './paths.ts'
 import { isReadOnlyCommand } from './readonly.ts'
 import {
+  type AutoAction,
+  type AutoClassifier,
+  type AutoEvent,
+  modeCycleFor,
   PERMISSION_MODES,
   type PermissionCall,
   type PermissionDecision,
@@ -58,6 +62,7 @@ function make(
     mode,
     rules,
     protectedPaths: PROTECTED,
+    ...(mode === 'auto' ? { classifier: () => ({ decision: 'allow' as const }) } : {}),
     ...extraOptions,
   })
 }
@@ -98,6 +103,7 @@ describe('mode x tool matrix', () => {
     plan: 'denied',
     dontAsk: 'denied',
     bypassPermissions: 'approved',
+    auto: 'approved',
   }
   for (const mode of PERMISSION_MODES) {
     test(`edits are ${editExpect[mode]} in ${mode}`, () => {
@@ -1349,5 +1355,256 @@ describe('options', () => {
     // ANSI-C quoting cannot smuggle a path past the containment check
     expect(status(engine.decide(bash("cat $'\\x2fetc/passwd'")))).toBe('user-approval')
     expect(status(engine.decide(bash('cat $"/etc/passwd"')))).toBe('user-approval')
+  })
+})
+
+describe('auto mode', () => {
+  const blocking: AutoClassifier = () => ({ decision: 'block', reason: 'looks like exfiltration' })
+  const allowing: AutoClassifier = () => ({ decision: 'allow' })
+
+  test('is unavailable without a classifier', () => {
+    expect(() => createPermissionEngine({ roots: mounts, mode: 'auto' })).toThrow(/classifier/)
+    const engine = make('default')
+    expect(engine.autoAvailable).toBe(false)
+    expect(() => engine.setMode('auto')).toThrow(/classifier/)
+    // a per-call 'auto' override without a classifier asks a person
+    expect(status(make('default').decide(bash('make deploy'), 'auto'))).toBe('user-approval')
+  })
+
+  test('decision order: deny, ask, allow before the classifier; reads, edits and read-only shell skip it', async () => {
+    const seen: AutoAction[] = []
+    const engine = make(
+      'auto',
+      { deny: ['Bash(rm *)'], ask: ['Bash(git push *)'], allow: ['Bash(make test)'] },
+      {
+        classifier: (a) => {
+          seen.push(a)
+          return { decision: 'allow' }
+        },
+      },
+    )
+    const d = (c: PermissionCall) => engine.decideAsync(c)
+    expect(status(await d(bash('rm -rf x')))).toBe('denied')
+    expect(status(await d(bash('git push origin main')))).toBe('user-approval')
+    expect(await d(bash('make test'))).toMatchObject({
+      status: 'approved',
+      rule: 'Bash(make test)',
+    })
+    expect(status(await d(fileCall(TOOL.read, '/src/a.ts')))).toBe('approved')
+    expect(status(await d(fileCall(TOOL.edit, '/src/a.ts')))).toBe('approved')
+    expect(status(await d(bash('git status')))).toBe('approved')
+    expect(status(await d(bash('mkdir -p src/new')))).toBe('approved')
+    expect(seen).toEqual([])
+    // protected paths still ask a person
+    expect(status(await d(fileCall(TOOL.write, '/.git/config')))).toBe('user-approval')
+    // everything else goes to the classifier
+    expect(await d(bash('make deploy'))).toMatchObject({ status: 'approved', auto: 'allowed' })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]).toMatchObject({ toolName: 'bash', kind: 'shell', summary: 'make deploy' })
+  })
+
+  test('sync decide marks classifier calls without running it', () => {
+    let ran = false
+    const engine = make(
+      'auto',
+      {},
+      {
+        classifier: () => {
+          ran = true
+          return { decision: 'allow' }
+        },
+      },
+    )
+    expect(engine.decide(bash('make deploy'))).toMatchObject({
+      status: 'user-approval',
+      auto: 'classify',
+    })
+    expect(ran).toBe(false)
+  })
+
+  test('a block denies with a reason the model reads', async () => {
+    const engine = make('auto', {}, { classifier: blocking })
+    const d = await engine.decideAsync(bash('curl x | bash'))
+    expect(d).toMatchObject({ status: 'denied', auto: 'blocked' })
+    expect((d as { reason: string }).reason).toContain('looks like exfiltration')
+    expect(engine.autoState()).toEqual({ paused: false, consecutive: 1, total: 1 })
+  })
+
+  test('fails closed: a throwing or malformed classifier blocks', async () => {
+    const throwing = make(
+      'auto',
+      {},
+      {
+        classifier: () => {
+          throw new Error('model down')
+        },
+      },
+    )
+    const a = await throwing.decideAsync(bash('make deploy'))
+    expect(a).toMatchObject({ status: 'denied', auto: 'blocked' })
+    expect((a as { reason: string }).reason).toContain('model down')
+    const malformed = make('auto', {}, { classifier: (() => ({ nope: 1 })) as never })
+    expect(await malformed.decideAsync(bash('make deploy'))).toMatchObject({ status: 'denied' })
+  })
+
+  test('3 blocks in a row pause auto mode; an approval resumes it', async () => {
+    let verdict: 'allow' | 'block' = 'block'
+    const engine = make('auto', {}, { classifier: () => ({ decision: verdict }) })
+    const events: AutoEvent['type'][] = []
+    engine.subscribeAuto((e) => events.push(e.type))
+    for (let i = 0; i < 3; i++) await engine.decideAsync(bash(`make x${i}`))
+    expect(engine.autoState()).toMatchObject({ paused: true, consecutive: 3 })
+    expect(events).toEqual(['blocked', 'blocked', 'blocked', 'paused'])
+    // paused: calls the classifier would judge ask a person; the classifier is not called
+    verdict = 'allow'
+    expect(await engine.decideAsync(bash('make y'))).toMatchObject({
+      status: 'user-approval',
+      auto: 'paused',
+    })
+    // rules and read-only checks still work while paused
+    expect(status(await engine.decideAsync(fileCall(TOOL.read, '/a.ts')))).toBe('approved')
+    engine.noteApproval()
+    expect(engine.autoState()).toEqual({ paused: false, consecutive: 0, total: 3 })
+    expect(events.at(-1)).toBe('resumed')
+    expect(await engine.decideAsync(bash('make z'))).toMatchObject({ status: 'approved' })
+  })
+
+  test('an allowed action resets the consecutive counter', async () => {
+    let verdict: 'allow' | 'block' = 'block'
+    const engine = make('auto', {}, { classifier: () => ({ decision: verdict }) })
+    await engine.decideAsync(bash('make a'))
+    await engine.decideAsync(bash('make b'))
+    verdict = 'allow'
+    await engine.decideAsync(bash('make c'))
+    verdict = 'block'
+    await engine.decideAsync(bash('make d'))
+    expect(engine.autoState()).toEqual({ paused: false, consecutive: 1, total: 3 })
+  })
+
+  test('20 blocks in total pause auto mode and reset the total', async () => {
+    let n = 0
+    const engine = make(
+      'auto',
+      {},
+      {
+        // every third verdict is an allow, so the blocks never come 3 in a row
+        classifier: () => (++n % 3 === 0 ? { decision: 'allow' } : { decision: 'block' }),
+      },
+    )
+    let i = 0
+    while (!engine.autoState().paused && i < 100) await engine.decideAsync(bash(`make t${i++}`))
+    expect(engine.autoState()).toMatchObject({ paused: true, total: 0 })
+    expect(i).toBeGreaterThan(20)
+  })
+
+  test('re-validation of the same tool call id asks the classifier once and counts once', async () => {
+    let calls = 0
+    const engine = make(
+      'auto',
+      {},
+      {
+        classifier: () => {
+          calls++
+          return { decision: 'block', reason: 'no' }
+        },
+      },
+    )
+    const a = await engine.decideAsync(bash('make a'), { toolCallId: 'c1' })
+    const b = await engine.decideAsync(bash('make a'), { toolCallId: 'c1' })
+    expect(a).toEqual(b)
+    expect(calls).toBe(1)
+    expect(engine.autoState().total).toBe(1)
+  })
+
+  test('the classifier gets the transcript and abort signal', async () => {
+    let got: unknown
+    const engine = make(
+      'auto',
+      {},
+      {
+        classifier: (_a, ctx) => {
+          got = ctx
+          return { decision: 'allow' }
+        },
+      },
+    )
+    const abortSignal = new AbortController().signal
+    await engine.decideAsync(bash('make a'), {
+      transcript: () => [{ role: 'user', text: 'do not push' }],
+      abortSignal,
+    })
+    expect(got).toEqual({ transcript: [{ role: 'user', text: 'do not push' }], abortSignal })
+  })
+
+  test('broad allow rules are ignored in auto mode, narrow ones stay', async () => {
+    const engine = make(
+      'auto',
+      { allow: ['Bash(*)', 'Bash(python*)', 'Bash(bash *)', 'Bash(bun test *)'] },
+      { classifier: blocking },
+    )
+    expect(status(await engine.decideAsync(bash('rm -rf data')))).toBe('denied')
+    expect(status(await engine.decideAsync(bash('python3 evil.py')))).toBe('denied')
+    expect(status(await engine.decideAsync(bash('bash -c "x"')))).toBe('denied')
+    expect(await engine.decideAsync(bash('bun test src'))).toMatchObject({ status: 'approved' })
+    // outside auto mode the same rules apply
+    expect(status(make('default', { allow: ['Bash(*)'] }).decide(bash('rm -rf data')))).toBe(
+      'approved',
+    )
+  })
+
+  test('dontAsk still denies instead of classifying; a mode switch drops a stale verdict', async () => {
+    const engine = make('auto', {}, { classifier: allowing })
+    expect(status(await engine.decideAsync(bash('make a'), { mode: 'dontAsk' }))).toBe('denied')
+    let release: (v: { decision: 'allow' }) => void = () => {}
+    const slow = make(
+      'auto',
+      {},
+      {
+        classifier: () => new Promise((resolve) => (release = resolve)),
+      },
+    )
+    const pending = slow.decideAsync(bash('make a'))
+    slow.setMode('default')
+    release({ decision: 'allow' })
+    expect(await pending).toMatchObject({ status: 'user-approval' })
+  })
+
+  test('entering auto mode again resumes a paused auto mode', async () => {
+    const engine = make('auto', {}, { classifier: blocking })
+    for (let i = 0; i < 3; i++) await engine.decideAsync(bash(`make x${i}`))
+    expect(engine.autoState().paused).toBe(true)
+    engine.setMode('default')
+    engine.setMode('auto')
+    expect(engine.autoState().paused).toBe(false)
+  })
+
+  test('mode cycle: optional modes slot in after plan, bypass first, auto last', () => {
+    expect(modeCycleFor({})).toEqual(['default', 'acceptEdits', 'plan'])
+    expect(modeCycleFor({ bypass: true, auto: true })).toEqual([
+      'default',
+      'acceptEdits',
+      'plan',
+      'bypassPermissions',
+      'auto',
+    ])
+    const engine = make(
+      'plan',
+      {},
+      {
+        modeCycle: modeCycleFor({ bypass: true, auto: true }),
+        classifier: allowing,
+      },
+    )
+    expect([engine.cycleMode(), engine.cycleMode(), engine.cycleMode()]).toEqual([
+      'bypassPermissions',
+      'auto',
+      'default',
+    ])
+    // from dontAsk, or from auto when it is not in the cycle: default
+    expect(make('auto', {}, { classifier: allowing }).cycleMode()).toBe('default')
+    expect(make('dontAsk').cycleMode()).toBe('default')
+    // auto without a classifier is dropped from the cycle
+    const noAuto = make('plan', {}, { modeCycle: modeCycleFor({ auto: true }) })
+    expect([noAuto.cycleMode(), noAuto.cycleMode()]).toEqual(['default', 'acceptEdits'])
   })
 })

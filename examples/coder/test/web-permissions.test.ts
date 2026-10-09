@@ -24,6 +24,7 @@ function make(mode: PermissionMode = 'default', rules: Partial<PermissionRules> 
       settingsFiles: {},
     } as unknown as CoderConfig,
     mounts: () => [{ virtual: '/', real: root, readonly: false }],
+    classifierModel: () => ({}) as never,
   })
 }
 const fetchCall = (url: string): ToolCallInfo => ({ toolName: TOOL.webFetch, input: { url } })

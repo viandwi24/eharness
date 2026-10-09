@@ -8,7 +8,13 @@
 import type { FileUIPart } from 'ai'
 import type { HarnessRun, HarnessUIMessage, TurnResult } from 'eharness'
 import type { FileSystem } from 'eharness/filesystem'
-import type { PermissionDecision, PermissionMode, PermissionRules } from 'eharness/permissions'
+import type {
+  AutoEvent,
+  AutoState,
+  PermissionDecision,
+  PermissionMode,
+  PermissionRules,
+} from 'eharness/permissions'
 import type { ShellOutputData } from 'eharness/shell'
 import type { SubagentProgress } from 'eharness/subagent'
 
@@ -49,8 +55,18 @@ export const READ_ONLY_TOOLS: readonly string[] = [
 
 // ─── Configuration ───────────────────────────────────────────────────────────────────────────
 
-export type { PermissionDecision, PermissionMode, PermissionRules } from 'eharness/permissions'
-export { DEFAULT_MODE_CYCLE as MODE_CYCLE, PERMISSION_MODES } from 'eharness/permissions'
+export type {
+  AutoEvent,
+  AutoState,
+  PermissionDecision,
+  PermissionMode,
+  PermissionRules,
+} from 'eharness/permissions'
+export {
+  DEFAULT_MODE_CYCLE as MODE_CYCLE,
+  modeCycleFor,
+  PERMISSION_MODES,
+} from 'eharness/permissions'
 
 /** One settings file (`~/.coder/settings.json`, `<root>/.coder/settings.json`, `…local.json`). */
 export interface CoderSettings {
@@ -62,6 +78,8 @@ export interface CoderSettings {
     defaultMode?: PermissionMode
     additionalDirectories?: string[]
   }
+  /** Auto permission mode: the classifier `model` (default: the session's model) and `enabled` (default true). */
+  autoMode?: { model?: string; enabled?: boolean }
   /** MCP servers (M5); shape of `mcpServer()` transport configs, keyed by server name. */
   mcpServers?: Record<string, unknown>
   /** UI palette. Default `dark`; `auto` reads `COLORFGBG`. */
@@ -119,6 +137,15 @@ export interface CoderConfig {
   /** Default 200_000. */
   contextWindow: number
   mode: PermissionMode
+  /**
+   * `bypassPermissions` is in the Shift+Tab cycle (`--allow-dangerously-skip-permissions`,
+   * `--dangerously-skip-permissions`, or starting in it by flag or settings).
+   */
+  bypassInCycle?: boolean
+  /** Auto mode is available (default true); false when `autoMode.enabled` is false. */
+  autoEnabled?: boolean
+  /** Model id of the auto mode classifier (`autoMode.model`, `CODER_AUTO_MODEL`); default: the session's model. */
+  autoModel?: string
   rules: PermissionRules
   /** Real absolute paths of extra directories (`--add-dir`, settings). */
   additionalDirectories: string[]
@@ -185,8 +212,14 @@ export interface ToolCallInfo {
 export interface PermissionEngine {
   readonly mode: PermissionMode
   setMode(mode: PermissionMode): void
-  /** Next mode of {@link MODE_CYCLE} (from any mode outside the cycle: `default`). */
+  /** Next mode of the cycle (`modeCycleFor`; from any mode outside the cycle: `default`). */
   cycleMode(): PermissionMode
+  /** Auto mode can be selected (a classifier is configured). */
+  readonly autoAvailable: boolean
+  /** Block counters of auto mode; `paused` means calls ask until one is approved. */
+  autoState(): AutoState
+  /** Listen to auto mode events (a block, a pause, a resume); returns the unsubscribe function. */
+  subscribeAuto(listener: (event: AutoEvent) => void): () => void
   /** Deterministic and side-effect free (called from `tool.approve`). */
   decide(call: ToolCallInfo, mode?: PermissionMode): PermissionDecision
   /** Rule to offer for "don't ask again" (e.g. `Bash(bun test *)`, `Edit`), if any. */

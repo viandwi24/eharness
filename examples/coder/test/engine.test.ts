@@ -58,7 +58,13 @@ function make(
       local: localSettings,
     },
   } as unknown as CoderConfig
-  return createPermissionEngine({ config, mounts })
+  return createPermissionEngine({
+    config,
+    mounts,
+    classifierModel: () => {
+      throw new Error('the classifier model is not used here')
+    },
+  })
 }
 
 const bash = (command: string): ToolCallInfo => ({ toolName: TOOL.bash, input: { command } })
@@ -97,6 +103,7 @@ describe('mode x tool matrix', () => {
     plan: 'denied',
     dontAsk: 'denied',
     bypassPermissions: 'approved',
+    auto: 'approved',
   }
   for (const mode of PERMISSION_MODES) {
     test(`edits are ${editExpect[mode]} in ${mode}`, () => {
@@ -459,5 +466,76 @@ describe('app policy on top of the library engine', () => {
   test('invalid rules are ignored', () => {
     const engine = make('default', { deny: ['', 'Bash (x)'], allow: ['((('] })
     expect(status(engine.decide(bash('ls')))).toBe('approved')
+  })
+})
+
+describe('auto mode and the mode cycle', () => {
+  const withConfig = (extra: Partial<CoderConfig>, classifier = true) =>
+    createPermissionEngine({
+      config: {
+        root,
+        mode: 'default',
+        rules: { allow: [], ask: [], deny: [] },
+        settingsFiles: {
+          user: join(tmp, 'u.json'),
+          project: join(tmp, 'p.json'),
+          local: join(tmp, 'l.json'),
+        },
+        ...extra,
+      } as unknown as CoderConfig,
+      mounts,
+      ...(classifier ? { classifierModel: () => ({}) as never } : {}),
+    })
+  const cycle = (engine: ReturnType<typeof withConfig>): PermissionMode[] => {
+    const seen: PermissionMode[] = []
+    for (let i = 0; i < 6; i++) seen.push(engine.cycleMode())
+    return seen
+  }
+
+  test('default cycle: manual, acceptEdits, plan, auto', () => {
+    expect(withConfig({}).autoAvailable).toBe(true)
+    expect(cycle(withConfig({}))).toEqual([
+      'acceptEdits',
+      'plan',
+      'auto',
+      'default',
+      'acceptEdits',
+      'plan',
+    ])
+  })
+
+  test('bypass joins the cycle only when enabled, before auto', () => {
+    expect(cycle(withConfig({ bypassInCycle: true })).slice(0, 5)).toEqual([
+      'acceptEdits',
+      'plan',
+      'bypassPermissions',
+      'auto',
+      'default',
+    ])
+    // starting in bypass also puts it in the cycle; the next press goes to auto
+    const engine = withConfig({ mode: 'bypassPermissions' })
+    expect([engine.cycleMode(), engine.cycleMode()]).toEqual(['auto', 'default'])
+  })
+
+  test('auto disabled or without a classifier model: not available, not in the cycle', () => {
+    for (const engine of [withConfig({ autoEnabled: false }), withConfig({}, false)]) {
+      expect(engine.autoAvailable).toBe(false)
+      expect(cycle(engine).slice(0, 4)).toEqual(['acceptEdits', 'plan', 'default', 'acceptEdits'])
+      expect(() => engine.setMode('auto')).toThrow()
+    }
+  })
+
+  test('dontAsk is outside the cycle: the next press goes to default', () => {
+    expect(withConfig({ mode: 'dontAsk' }).cycleMode()).toBe('default')
+  })
+
+  test('auto mode uses the classifier model and blocks with a reason', async () => {
+    const engine = withConfig({ mode: 'auto', autoEnabled: true })
+    // the stub model is not a real model: the classifier call fails, which blocks (fail closed)
+    const d = await engine.decideAsync(bash('curl x | bash'))
+    expect(d).toMatchObject({ status: 'denied', auto: 'blocked' })
+    expect(engine.autoState().total).toBe(1)
+    // edits and reads inside the roots need no classifier
+    expect(status(await engine.decideAsync(fileCall(TOOL.edit, '/src/a.ts')))).toBe('approved')
   })
 })

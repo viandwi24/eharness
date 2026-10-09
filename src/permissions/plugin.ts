@@ -14,7 +14,7 @@ import {
   type HarnessContext,
   type HarnessPlugin,
 } from '../index.ts'
-import type { PermissionEngine } from './engine.ts'
+import type { DecideOptions, PermissionEngine } from './engine.ts'
 import type { ListingFormat, PermissionMode } from './types.ts'
 
 /** The mode a plugin instance uses instead of the engine's: fixed, or computed per call. */
@@ -128,9 +128,14 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): HarnessPlugin
     setup: () => ({
       hooks: {
         'tool.approve': async (ctx, e) => {
-          const decision = engine.decide(
+          const own = await modeOf(ctx as HarnessContext)
+          const turn = (ctx as HarnessContext).turn
+          const options: DecideOptions = { toolCallId: e.toolCallId, transcript: e.transcript }
+          if (own !== undefined) options.mode = own
+          if (turn?.abortSignal !== undefined) options.abortSignal = turn.abortSignal
+          const decision = await engine.decideAsync(
             { toolName: e.toolName, input: e.input },
-            await modeOf(ctx as HarnessContext),
+            options,
           )
           switch (decision.status) {
             case 'approved':
@@ -173,6 +178,8 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): HarnessPlugin
           return output === undefined ? undefined : { output }
         },
         'approval.decided': async (_ctx, e) => {
+          // a person approved something: a paused auto mode resumes
+          if (e.by === 'user' && e.approved) engine.noteApproval()
           await opts.onDecision?.(e)
         },
       },

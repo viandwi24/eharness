@@ -139,7 +139,15 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   const sandbox = localSandbox(config.root, {
     os: osOptions(startSettings.sandbox, osProblem === undefined),
   })
-  const permissions = createPermissionEngine({ config, mounts: () => workspace.mounts() })
+  const permissions = createPermissionEngine({
+    config,
+    mounts: () => workspace.mounts(),
+    // the classifier follows the session's model unless `autoMode.model` / CODER_AUTO_MODEL names one
+    classifierModel: () =>
+      config.autoModel !== undefined
+        ? resolveModel(config.autoModel)
+        : (opts.model ?? resolveModel(modelState.model)),
+  })
   const describe = (call: ToolCallInfo) => describeApproval(call, workspace.fs, permissions)
   const storage = createStorage(config)
   const { definitions, warnings } = await loadAgentDefinitions({
@@ -211,6 +219,10 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     apply: async (key, value) => {
       switch (key) {
         case 'permissions.defaultMode':
+          if (value === 'auto' && !permissions.autoAvailable) {
+            warn('auto mode is not available (disabled by autoMode.enabled).')
+            break
+          }
           permissions.setMode(value as PermissionMode)
           break
         case 'model':

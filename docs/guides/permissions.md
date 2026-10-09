@@ -83,10 +83,43 @@ server (nobody to ask, `dontAsk`) therefore gets them denied.
 | `plan` | read-only exploration; the model ends it with `exit_plan_mode` and the user approves the plan |
 | `dontAsk` | nobody is there: only allow rules and read-only commands run, the rest is denied |
 | `bypassPermissions` | everything runs except deny rules, protected paths and "a deny rule could match" |
+| `auto` | edits and read-only commands run; everything else is judged by a classifier model (see Auto mode) |
 
 Protected paths (`protectedPaths`, default `['.git']`) ask in **every** mode, bypass included;
 add your own state (`'.myapp/settings*.json'`). `engine.cycleMode()` and `engine.subscribe()` are
-what a terminal UI binds to a key and a status line.
+what a terminal UI binds to a key and a status line. `modeCycleFor({ bypass, auto })` builds the
+cycle like Claude Code: `default`, `acceptEdits`, `plan`, then `bypassPermissions`, then `auto`
+(each only when you enable it); from `dontAsk` or any mode outside the cycle the next press goes to
+`default`. Pass it as `modeCycle`; making `bypassPermissions` reachable is your application's
+decision (a flag, a setting).
+
+## Auto mode
+
+A classifier model reviews what no rule settles, so a person is not asked for every command:
+
+```ts
+import { createPermissionEngine, modelClassifier, modeCycleFor } from 'eharness/permissions'
+
+const engine = createPermissionEngine({
+  roots,
+  classifier: modelClassifier({
+    model: cheapModel,
+    environment: 'Trusted: github.com/acme/app, the staging bucket s3://acme-staging',
+  }),
+  modeCycle: modeCycleFor({ auto: true }),
+})
+engine.setMode('auto')   // throws EH_CONFIG_INVALID without a classifier; engine.autoAvailable says
+```
+
+Deny and ask rules still win, narrow allow rules run without the classifier (broad ones like
+`Bash(*)` are ignored in this mode), reads, edits in the roots and read-only commands run, protected
+paths ask a person, and the rest goes to the classifier. A block is a denied tool result with a
+reason the model reads, so it picks another way; a classifier that fails blocks too. After 3 blocks in
+a row or 20 in total auto mode **pauses** and asks a person again until one approval resumes it:
+show `engine.autoState()` and listen with `engine.subscribeAuto()` for a notice. Write your own
+classifier (`(action, { transcript, abortSignal }) => ({ decision, reason })`) or extend the rules
+of the shipped one with `AUTO_CLASSIFIER_INSTRUCTIONS`. The classifier is a heuristic layer: use deny
+rules for hard guarantees. Spec 18 §12 has the exact order and limits.
 
 ## Shell commands
 

@@ -103,6 +103,47 @@ describe('loadConfig', () => {
     expect((error as Error).message).toContain('bypassPermissions')
   })
 
+  test('auto and manual modes; bypass reaches the cycle only by flag or by starting in it', async () => {
+    await isolateHome()
+    const root = await tempDir()
+    const load = (flags: Parameters<typeof loadConfig>[0] = {}) =>
+      loadConfig({ cwd: root, ...flags })
+    expect((await load({ permissionMode: 'auto' })).mode).toBe('auto')
+    expect((await load({ permissionMode: 'manual' })).mode).toBe('default')
+    const plain = await load()
+    expect([plain.mode, plain.bypassInCycle, plain.autoEnabled]).toEqual(['default', false, true])
+    const allowed = await load({ allowDangerouslySkipPermissions: true })
+    expect([allowed.mode, allowed.bypassInCycle]).toEqual(['default', true])
+    const skip = await load({ dangerouslySkipPermissions: true })
+    expect([skip.mode, skip.bypassInCycle]).toEqual(['bypassPermissions', true])
+    const viaMode = await load({ permissionMode: 'bypassPermissions' })
+    expect(viaMode.bypassInCycle).toBe(true)
+  })
+
+  test('autoMode settings: model override, CODER_AUTO_MODEL, and enabled false falls back to manual', async () => {
+    await isolateHome()
+    const root = await tempDir()
+    await writeFiles(root, {
+      '.coder/settings.local.json':
+        '{"autoMode":{"model":"x/classifier"},"permissions":{"defaultMode":"auto"}}',
+    })
+    const config = await loadConfig({ cwd: root })
+    expect([config.mode, config.autoModel]).toEqual(['auto', 'x/classifier'])
+    process.env.CODER_AUTO_MODEL = 'env/model'
+    try {
+      expect((await loadConfig({ cwd: root })).autoModel).toBe('env/model')
+    } finally {
+      delete process.env.CODER_AUTO_MODEL
+    }
+    await writeFiles(root, {
+      '.coder/settings.local.json':
+        '{"autoMode":{"enabled":false},"permissions":{"defaultMode":"auto"}}',
+    })
+    const off = await loadConfig({ cwd: root })
+    expect([off.mode, off.autoEnabled]).toEqual(['default', false])
+    expect(off.warnings.join('\n')).toContain('auto mode is disabled')
+  })
+
   test('--agents JSON is parsed; bad JSON and bad shape error', async () => {
     await isolateHome()
     const root = await tempDir()

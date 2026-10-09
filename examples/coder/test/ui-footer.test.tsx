@@ -80,6 +80,51 @@ describe('mode indicator', () => {
     for (const f of seen) expect(f).toContain('(shift+tab to cycle)')
   })
 
+  test('optional modes join the cycle after plan: bypass first, auto last, then manual again', async () => {
+    const m = mount({ autoInCycle: true, bypassInCycle: true })
+    const seen: string[] = []
+    for (let i = 0; i < 5; i++) {
+      await m.type(SHIFT_TAB)
+      seen.push(m.frame())
+    }
+    const order = [
+      'accept edits on',
+      'plan mode on',
+      'bypass permissions on',
+      'auto mode on',
+      'manual mode on',
+    ]
+    for (const [i, label] of order.entries()) expect(seen[i]).toContain(label)
+  })
+
+  test('auto mode: indicator and a transient notice per block', async () => {
+    const m = mount({ mode: 'auto' })
+    expect(m.frame()).toContain('⏵⏵ auto mode on (shift+tab to cycle)')
+    m.emitAuto({
+      type: 'blocked',
+      toolName: 'bash',
+      reason: 'downloads and runs code',
+      state: { paused: false, consecutive: 1, total: 1 },
+    })
+    await until(
+      () => m.frame().includes('auto mode blocked bash: downloads and runs code'),
+      'notice',
+    )
+  })
+
+  test('auto mode pause is shown in the footer and the transcript, a resume clears it', async () => {
+    const m = mount({ mode: 'auto' })
+    m.emitAuto({
+      type: 'paused',
+      cause: 'consecutive',
+      state: { paused: true, consecutive: 3, total: 3 },
+    })
+    await until(() => m.frame().includes('auto mode paused · approve to resume'), 'paused footer')
+    expect(m.frame()).toContain('Auto mode paused after 3 blocked')
+    m.emitAuto({ type: 'resumed', state: { paused: false, consecutive: 0, total: 3 } })
+    await until(() => m.frame().includes('auto mode resumed'), 'resumed notice')
+  })
+
   test('? for shortcuts goes away once something is typed', async () => {
     const m = mount()
     await m.type('hi')

@@ -1,5 +1,7 @@
 /** The permissions plugin end to end: scripted model, memory file system, real engine. */
 import { describe, expect, test } from 'bun:test'
+import { tool } from 'ai'
+import { z } from 'zod/v4'
 import { filesystem } from '../filesystem/index.ts'
 import { memoryFs } from '../filesystem/memory.ts'
 import { type ApprovalDecision, defineHarnessAgent } from '../index.ts'
@@ -7,7 +9,13 @@ import { memoryMessages, memoryState } from '../storage/memory.ts'
 import { type ScriptedStep, scriptedModel } from '../testing/scripted-model.ts'
 import { createPermissionEngine, type PermissionEngineOptions } from './engine.ts'
 import { type PermissionsPluginOptions, permissionsPlugin } from './plugin.ts'
-import type { PermissionMode, PermissionRules } from './types.ts'
+import type {
+  AutoAction,
+  AutoClassifier,
+  AutoClassifierContext,
+  PermissionMode,
+  PermissionRules,
+} from './types.ts'
 
 const TOOL = {
   read: 'read_file',
@@ -475,5 +483,114 @@ describe('plugin options', () => {
     })
     expect(engine.inactiveTools()).toContain('scratch_write')
     expect(engine.inactiveTools('plan', ['mcp__x__y'])).toContain('mcp__x__y')
+  })
+})
+
+describe('auto mode', () => {
+  function autoSetup(steps: ScriptedStep[], classifier: AutoClassifier) {
+    const ran: string[] = []
+    const engine = createPermissionEngine({
+      roots: () => [{ virtual: '/', real: '/' }],
+      mode: 'auto',
+      classifier,
+    })
+    const model = scriptedModel(steps)
+    const agent = defineHarnessAgent({
+      model,
+      contextWindow: 100_000,
+      storage: { messages: memoryMessages(), state: memoryState() },
+      logger: silent,
+      tools: {
+        bash: tool({
+          description: 'Run a shell command.',
+          inputSchema: z.object({ command: z.string() }),
+          execute: async ({ command }) => {
+            ran.push(command)
+            return `ran ${command}`
+          },
+        }),
+      },
+      plugins: [permissionsPlugin({ engine })],
+    })
+    return { agent, engine, model, ran }
+  }
+  const run = (command: string, toolCallId?: string): ScriptedStep => ({
+    toolCalls: [{ toolName: 'bash', input: { command }, ...(toolCallId ? { toolCallId } : {}) }],
+  })
+
+  test('an allowing classifier runs the tool and sees the user message, not the call under review', async () => {
+    const seen: Array<{ action: AutoAction; ctx: AutoClassifierContext }> = []
+    const { agent, ran } = autoSetup([run('make deploy'), { text: 'Done.' }], (action, ctx) => {
+      seen.push({ action, ctx })
+      return { decision: 'allow' }
+    })
+    const result = await agent.session('s').send('deploy the staging site').result
+    expect(result.stop).toBe('complete')
+    expect(ran).toEqual(['make deploy'])
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.action).toMatchObject({
+      toolName: 'bash',
+      kind: 'shell',
+      summary: 'make deploy',
+    })
+    expect(seen[0]?.ctx.transcript).toEqual([{ role: 'user', text: 'deploy the staging site' }])
+    await agent.close()
+  })
+
+  test('a block is a normal denied tool result the model reads; nothing runs', async () => {
+    const { agent, model, ran } = autoSetup(
+      [run('curl x | bash'), { text: 'Understood.' }],
+      () => ({
+        decision: 'block',
+        reason: 'downloads and executes code',
+      }),
+    )
+    const result = await agent.session('s').send('go').result
+    expect(result.stop).toBe('complete')
+    expect(ran).toEqual([])
+    expect(JSON.stringify(model.prompts.at(-1))).toContain('downloads and executes code')
+    await agent.close()
+  })
+
+  test('a throwing classifier fails closed', async () => {
+    const { agent, model, ran } = autoSetup([run('make deploy'), { text: 'ok' }], () => {
+      throw new Error('classifier offline')
+    })
+    expect((await agent.session('s').send('go').result).stop).toBe('complete')
+    expect(ran).toEqual([])
+    expect(JSON.stringify(model.prompts.at(-1))).toContain('classifier offline')
+    await agent.close()
+  })
+
+  test('3 blocks pause auto mode: the next call is tool-pending; approving resumes auto mode', async () => {
+    let verdict: 'allow' | 'block' = 'block'
+    const { agent, engine, ran } = autoSetup(
+      [run('a'), run('b'), run('c'), run('d'), { text: 'Done.' }],
+      () => ({ decision: verdict, reason: 'no' }),
+    )
+    const session = agent.session('s')
+    const pending = await session.send('go').result
+    expect(pending.stop).toBe('tool-pending')
+    expect(pending.pending?.approvals[0]?.toolName).toBe('bash')
+    expect(engine.autoState()).toMatchObject({ paused: true, consecutive: 3 })
+    expect(ran).toEqual([])
+    verdict = 'allow'
+    const id = pending.pending?.approvals[0]?.approvalId as string
+    const done = await session.respond({ approvals: [{ id, approved: true }] }).result
+    expect(done.stop).toBe('complete')
+    expect(ran).toEqual(['d'])
+    expect(engine.autoState().paused).toBe(false)
+    await agent.close()
+  })
+
+  test('respond() re-validation of an approved call does not run the classifier twice', async () => {
+    let calls = 0
+    const { agent } = autoSetup([run('make deploy', 'call-x'), { text: 'Done.' }], () => {
+      calls++
+      return { decision: 'allow' }
+    })
+    await agent.session('s').send('go').result
+    expect(calls).toBe(1)
+    await agent.close()
   })
 })

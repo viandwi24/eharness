@@ -261,6 +261,29 @@ export function App({
   }, [])
 
   useEffect(() => controller.permissions.subscribe(setMode), [controller])
+  const [autoPaused, setAutoPaused] = useState(controller.permissions.autoState().paused)
+  // auto mode: a transient notice per classifier block, a transcript line when it pauses
+  useEffect(
+    () =>
+      controller.permissions.subscribeAuto((event) => {
+        setAutoPaused(event.state.paused)
+        if (event.type === 'blocked') {
+          showHint(`auto mode blocked ${event.toolName}: ${event.reason}`)
+        } else if (event.type === 'paused') {
+          dispatch({
+            type: 'system',
+            tone: 'warn',
+            text:
+              event.cause === 'consecutive'
+                ? 'Auto mode paused after 3 blocked actions in a row: approve an action to resume it.'
+                : 'Auto mode paused after 20 blocked actions: approve an action to resume it.',
+          })
+        } else {
+          showHint('auto mode resumed')
+        }
+      }),
+    [controller, showHint],
+  )
   useEffect(
     () => () => {
       if (hintTimer.current) clearTimeout(hintTimer.current)
@@ -1017,6 +1040,7 @@ export function App({
           shortcutsOpen={shortcutsOpen}
           inputEmpty={inputEmpty}
           busy={state.running}
+          autoPaused={autoPaused}
           {...(editorMode === 'vim' && vimLabel ? { vimMode: vimLabel } : {})}
           {...(statusLine ? { statusLine } : {})}
           {...(sessionLabel ? { sessionName: sessionLabel } : {})}

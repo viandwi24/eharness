@@ -30,7 +30,7 @@ import type {
   ThinkingLevel,
   UsageSummary,
 } from '../src/contracts.ts'
-import { MODE_CYCLE } from '../src/contracts.ts'
+import { type AutoEvent, type AutoState, modeCycleFor } from '../src/contracts.ts'
 
 /** Realistic `/context` data: a 200k window, 29% used, compaction at 160k. */
 export const FIXTURE_CONTEXT: ContextDetails = {
@@ -202,6 +202,10 @@ export interface FakeOptions {
   resume?: true
   sessions?: SessionSummary[]
   mode?: PermissionMode
+  /** Put `auto` in the Shift+Tab cycle (after plan). */
+  autoInCycle?: boolean
+  /** Put `bypassPermissions` in the Shift+Tab cycle (before auto). */
+  bypassInCycle?: boolean
   untrusted?: string[]
   /** Stored messages by session id for `messagesOf`. */
   childMessages?: Record<string, CoderMessage[]>
@@ -258,6 +262,8 @@ export function fakeController(opts: FakeOptions = {}) {
   let mode: PermissionMode = opts.mode ?? 'default'
   const listeners = new Set<(m: PermissionMode) => void>()
   const rules: PermissionRules = { allow: [], ask: [], deny: [] }
+  let autoState: AutoState = { paused: false, consecutive: 0, total: 0 }
+  const autoListeners = new Set<(e: AutoEvent) => void>()
   const permissions: PermissionEngine = {
     get mode() {
       return mode
@@ -269,8 +275,12 @@ export function fakeController(opts: FakeOptions = {}) {
     },
     cycleMode() {
       calls.push('cycleMode')
-      const i = MODE_CYCLE.indexOf(mode)
-      mode = MODE_CYCLE[(i + 1) % MODE_CYCLE.length] ?? 'default'
+      const cycle = modeCycleFor({
+        auto: opts.autoInCycle === true,
+        bypass: opts.bypassInCycle === true,
+      })
+      const i = cycle.indexOf(mode)
+      mode = i < 0 ? 'default' : (cycle[(i + 1) % cycle.length] ?? 'default')
       for (const l of listeners) l(mode)
       return mode
     },
@@ -293,6 +303,12 @@ export function fakeController(opts: FakeOptions = {}) {
     subscribe(l) {
       listeners.add(l)
       return () => listeners.delete(l)
+    },
+    autoAvailable: true,
+    autoState: () => autoState,
+    subscribeAuto(l) {
+      autoListeners.add(l)
+      return () => autoListeners.delete(l)
     },
   }
   const files = z.object({ path: z.string() })
@@ -547,5 +563,10 @@ export function fakeController(opts: FakeOptions = {}) {
     tasks = next
     for (const l of taskListeners) l(tasks)
   }
-  return { controller, broker, calls, runFiles, setTasks, settingValues }
+  /** Simulate an auto mode event: updates `autoState()` and notifies the UI. */
+  const emitAuto = (event: AutoEvent): void => {
+    autoState = event.state
+    for (const l of [...autoListeners]) l(event)
+  }
+  return { controller, broker, calls, runFiles, setTasks, settingValues, emitAuto }
 }

@@ -26,7 +26,12 @@ export interface CliFlags {
   model?: string
   /** `openrouter` | `gateway`. */
   provider?: string
+  /** `default` (alias `manual`), `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions`, `auto`. */
   permissionMode?: string
+  /** Put `bypassPermissions` in the Shift+Tab cycle without starting in it. */
+  allowDangerouslySkipPermissions?: boolean
+  /** Start in `bypassPermissions` (also puts it in the cycle). */
+  dangerouslySkipPermissions?: boolean
   addDir?: string[]
   allowedTools?: string[]
   disallowedTools?: string[]
@@ -72,6 +77,9 @@ const settingsSchema = z.object({
       defaultMode: modeSchema.optional(),
       additionalDirectories: z.array(z.string()).optional(),
     })
+    .optional(),
+  autoMode: z
+    .object({ model: z.string().min(1).optional(), enabled: z.boolean().optional() })
     .optional(),
   mcpServers: z.record(z.string(), z.unknown()).optional(),
   theme: z.enum(['dark', 'light', 'auto']).optional(),
@@ -453,6 +461,8 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
   let provider: ModelProvider | undefined
   let contextWindow: number | undefined
   let mode: PermissionMode | undefined
+  let autoModel: string | undefined
+  let autoEnabled = true
   const rules: PermissionRules = { allow: [], ask: [], deny: [] }
   const dirs: string[] = []
   const mcpServers: Record<string, unknown> = {}
@@ -464,6 +474,8 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     model = settings.model ?? model
     provider = settings.provider ?? provider
     contextWindow = settings.contextWindow ?? contextWindow
+    autoModel = settings.autoMode?.model ?? autoModel
+    autoEnabled = settings.autoMode?.enabled ?? autoEnabled
     const p = settings.permissions
     if (p) {
       mode = p.defaultMode ?? mode
@@ -480,13 +492,24 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
   }
 
   if (flags.permissionMode !== undefined) {
-    const parsed = modeSchema.safeParse(flags.permissionMode)
+    // `manual` is the name the footer shows for `default`
+    const name = flags.permissionMode === 'manual' ? 'default' : flags.permissionMode
+    const parsed = modeSchema.safeParse(name)
     if (!parsed.success) {
       throw new Error(
-        `Invalid permission mode "${flags.permissionMode}". Use one of: ${PERMISSION_MODES.join(', ')}`,
+        `Invalid permission mode "${flags.permissionMode}". Use one of: manual, ${PERMISSION_MODES.join(', ')}`,
       )
     }
     mode = parsed.data
+  }
+  if (flags.dangerouslySkipPermissions) mode = 'bypassPermissions'
+  const bypassInCycle =
+    mode === 'bypassPermissions' || flags.allowDangerouslySkipPermissions === true
+  if (process.env.CODER_AUTO_MODEL) autoModel = process.env.CODER_AUTO_MODEL
+  if (!autoEnabled && mode === 'auto') {
+    // like a managed `disableAutoMode`: start in manual mode instead
+    warnings.push('auto mode is disabled by settings (autoMode.enabled); starting in manual mode.')
+    mode = 'default'
   }
   if (flags.provider !== undefined) provider = parseProvider(flags.provider, '--provider')
   const resolvedProvider = provider ?? detectProvider(process.env)
@@ -532,6 +555,9 @@ export async function loadConfig(flags: CliFlags): Promise<LoadedConfig> {
     model: explicitModel ?? DEFAULT_MODEL[resolvedProvider],
     contextWindow: contextWindow ?? 200_000,
     mode: mode ?? 'default',
+    bypassInCycle,
+    autoEnabled,
+    ...(autoModel !== undefined ? { autoModel } : {}),
     rules: { allow: dedupe(rules.allow), ask: dedupe(rules.ask), deny: dedupe(rules.deny) },
     additionalDirectories,
     cliAgents,

@@ -75,3 +75,11 @@ review.
 
 1. ~~L2 R7: shipped as `eharness/permissions`.~~ Resolved.
 2. ~~L2 `eharness/web`: ship `turndown`?~~ Resolved: an injectable `toMarkdown` converter, no dependency.
+3. Auto mode (permissions spec 18 §12): decisions taken conservatively, to revisit. (a) Protected-path
+   writes ask a person in `auto` (Claude Code routes them to its classifier). (b) A classifier
+   error counts as a block toward the pause thresholds. (c) `setMode('auto')` without a classifier
+   throws instead of falling back to `default`. (d) The classifier's token usage is not charged to
+   the turn (`approvalGuard` does charge its judge); `modelClassifier` has no `onUsage` yet.
+   (e) Broad allow rules are ignored in auto (`Bash(*)`, wildcarded interpreters) like Claude Code,
+   decided by a heuristic on the rule text. (f) Claude Code's subagent spawn/result review is not
+   implemented.

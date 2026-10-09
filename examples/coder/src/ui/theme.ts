@@ -17,6 +17,8 @@ const DARK = {
   warning: '#FFC107',
   plan: '#48968C',
   acceptEdits: '#AF87FF',
+  /** Auto mode: blue, apart from plan (teal), accept edits (purple), don't ask (yellow), bypass (red). */
+  auto: '#5B9DFF',
   bypass: '#FF6B80',
   shell: '#FD5DB1',
   dim: '#888888',
@@ -44,6 +46,7 @@ const LIGHT: typeof DARK = {
   warning: '#B07900',
   plan: '#2C6E65',
   acceptEdits: '#6B4FD8',
+  auto: '#1F5FBF',
   bypass: '#C62840',
   shell: '#C21E7E',
   dim: '#5F5F5F',
@@ -161,6 +164,8 @@ export function modeColor(mode: PermissionMode): string | undefined {
       return color.plan
     case 'acceptEdits':
       return color.acceptEdits
+    case 'auto':
+      return color.auto
     case 'bypassPermissions':
       return color.bypass
     case 'dontAsk':
@@ -179,6 +184,8 @@ export function modeLabel(mode: PermissionMode): string {
       return 'bypass permissions'
     case 'dontAsk':
       return "don't ask"
+    case 'auto':
+      return 'auto mode'
     default:
       return mode
   }

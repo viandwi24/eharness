@@ -19,7 +19,7 @@
  * command whose text mentions a protected path asks, and an allow rule never approves a command
  * that redirects (or `tee`s) outside the working directories.
  */
-import { HarnessError } from '../index.ts'
+import { type GuardTranscriptEntry, HarnessError } from '../index.ts'
 import { parseCommand } from './command.ts'
 import {
   escapeRegExp,
@@ -53,6 +53,11 @@ import {
 } from './rules.ts'
 import { commandOf, createToolTable, fieldOf, type ToolTable } from './tools.ts'
 import {
+  type AutoAction,
+  type AutoClassifier,
+  type AutoEvent,
+  type AutoListener,
+  type AutoState,
   DEFAULT_MODE_CYCLE,
   type ModeListener,
   type PermissionCall,
@@ -71,6 +76,14 @@ import {
 export const DONT_ASK_REASON = 'Not allowed without approval in dontAsk mode.'
 /** Reason of a plan-mode denial. */
 export const PLAN_MODE_REASON = 'Plan mode: present the plan with exit_plan_mode first.'
+
+/** Blocks in a row that pause auto mode. */
+export const AUTO_MAX_CONSECUTIVE_BLOCKS = 3
+/** Blocks in total that pause auto mode. */
+export const AUTO_MAX_TOTAL_BLOCKS = 20
+/** Reason of a call that asks because auto mode is paused. */
+export const AUTO_PAUSED_REASON =
+  'Auto mode is paused after repeated blocks: this action needs approval.'
 
 /** Ask rules built in; an explicit allow rule overrides them. */
 export const DEFAULT_BUILTIN_ASK: readonly string[] = ['Read(.env*)', 'Read(**/.env*)']
@@ -111,8 +124,14 @@ export interface PermissionEngineOptions {
   toolKinds?: ToolKinds
   /** Rule aliases (`Read`, `Edit`, …); merged over `DEFAULT_ALIASES`. */
   aliases?: Record<string, readonly string[]>
-  /** Order of `cycleMode()`. Default `default`, `acceptEdits`, `plan`. */
+  /** Order of `cycleMode()`. Default `default`, `acceptEdits`, `plan` (see `modeCycleFor`). */
   modeCycle?: readonly PermissionMode[]
+  /**
+   * Judges the actions `auto` mode cannot settle by rules or read-only checks (spec 18 §12).
+   * Without it `auto` is unavailable: `setMode('auto')` and `mode: 'auto'` throw
+   * `EH_CONFIG_INVALID`, and `auto` is dropped from the cycle.
+   */
+  classifier?: AutoClassifier
   /**
    * Called with a copy of the stored rules and the change after `allow`, `addRule` and
    * `removeRule` changed them, so an application can store them (a database row, a settings
@@ -123,13 +142,48 @@ export interface PermissionEngineOptions {
 }
 
 /** The permission engine. */
+/** Options of {@link PermissionEngine.decideAsync}. */
+export interface DecideOptions {
+  /** Mode of this call instead of the engine's (as `decide`'s second argument). */
+  mode?: PermissionMode
+  /**
+   * The id of the tool call. The core re-validates approved calls, so the classifier verdict is
+   * remembered per id: asked once, counted once.
+   */
+  toolCallId?: string
+  /** The restricted transcript for the classifier (`tool.approve` event `transcript()`). */
+  transcript?: () => readonly GuardTranscriptEntry[]
+  abortSignal?: AbortSignal
+}
+
 export interface PermissionEngine {
   readonly mode: PermissionMode
+  /** `setMode('auto')` throws `EH_CONFIG_INVALID` when the engine has no `classifier`. */
   setMode(mode: PermissionMode): void
   /** Next mode of the cycle (from any mode outside the cycle: the first one). */
   cycleMode(): PermissionMode
-  /** Deterministic and free of side effects (it runs inside `tool.approve`). */
+  /** True when the engine has a classifier, i.e. `auto` mode can be used. */
+  readonly autoAvailable: boolean
+  /**
+   * Deterministic and free of side effects (it runs inside `tool.approve`). In `auto` mode a call
+   * the rules and read-only checks cannot settle comes back as `user-approval` with
+   * `auto: 'classify'`; `decideAsync` runs the classifier.
+   */
   decide(call: PermissionCall, mode?: PermissionMode): PermissionDecision
+  /**
+   * `decide`, plus the `auto` classifier: a `classify` result becomes approved (`auto: 'allowed'`),
+   * denied with a reason the model reads (`auto: 'blocked'`, a classifier error included), or, while
+   * auto mode is paused, a person's ask (`auto: 'paused'`). Updates the block counters.
+   */
+  decideAsync(call: PermissionCall, options?: DecideOptions): Promise<PermissionDecision>
+  /** Block counters and whether auto mode is paused. */
+  autoState(): AutoState
+  /** A person approved an action: resumes a paused auto mode (consecutive blocks restart at 0). */
+  noteApproval(): void
+  /** Resume a paused auto mode explicitly. */
+  resumeAuto(): void
+  /** Listen to auto mode events (blocks, pause, resume); returns the unsubscribe function. */
+  subscribeAuto(listener: AutoListener): () => void
   /** Rule to offer for "don't ask again" (`Bash(git status *)`, `Edit`, …), if any. */
   suggestRule(call: PermissionCall): string | undefined
   /** Add an allow rule (scope `project` by default). Resolves when `persist` finished. */
@@ -190,6 +244,7 @@ interface Env extends MatchContext {
 
 const invalid = (message: string): HarnessError =>
   new HarnessError('EH_CONFIG_INVALID', `permissions: ${message}`)
+const noClassifier = (): HarnessError => invalid("auto mode needs the engine's `classifier` option")
 
 /** Resolve a path written in a shell command (relative to the project root). */
 function shellPath(arg: string, env: Env): string {
@@ -410,6 +465,24 @@ function bashSuggestion(command: string): string | undefined {
   return risky ? `Bash(${first})` : `Bash(${words[0]} ${second} *)`
 }
 
+/**
+ * Allow rules auto mode ignores: they would approve arbitrary code without the classifier looking
+ * (a bare `Bash`, `Bash(*)`, `Bash(python*)`, `Bash(bash:*)`, a wildcarded wrapper or interpreter).
+ * Narrow rules such as `Bash(bun test *)` stay in effect.
+ */
+function broadAutoAllow(rule: ParsedRule, env: Env): boolean {
+  if (!env.tools.coversKind(rule.tool, 'shell')) return false
+  const spec = rule.specifier?.trim()
+  if (spec === undefined || /^\*+$/.test(spec)) return true
+  const words = spec.split(/\s+/)
+  const first = (words[0] ?? '').replace(/:\*$/, '')
+  if (first.includes('*')) return true // `python*`, `*` as the program
+  const program = first.split('/').pop() ?? ''
+  const risky = WRAPPERS.has(program) || /^python[\d.]*$/.test(program)
+  const wildcardRest = words.length === 1 ? (words[0] ?? '').endsWith(':*') : words[1] === '*'
+  return risky && wildcardRest && words.length <= 2
+}
+
 /** Literal first path segments of the protected patterns (`.git`, `.app`): what a command text is searched for. */
 function protectedTextPattern(patterns: readonly string[]): RegExp | undefined {
   const names = new Set<string>()
@@ -443,10 +516,14 @@ function checkedRule(raw: string, home: string | undefined): ParsedRule {
 export function createPermissionEngine(options: PermissionEngineOptions): PermissionEngine {
   const home = options.home
   const tools: ToolTable = createToolTable(options.toolKinds, options.aliases)
+  const classifier = options.classifier
+  if (options.mode === 'auto' && classifier === undefined) throw noClassifier()
   let mode: PermissionMode = options.mode ?? 'default'
   let beforePlan: PermissionMode = 'default'
   let planExit: PermissionMode | undefined
-  const cycle = options.modeCycle ?? DEFAULT_MODE_CYCLE
+  const cycle = (options.modeCycle ?? DEFAULT_MODE_CYCLE).filter(
+    (m) => m !== 'auto' || classifier !== undefined,
+  )
   const rules: PermissionRules = {
     allow: [...(options.rules?.allow ?? [])],
     ask: [...(options.rules?.ask ?? [])],
@@ -510,6 +587,13 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       ? { status: 'denied', reason: 'Invalid path.' }
       : { status: 'denied', reason: 'The path is outside the working directories.' }
 
+  /** What `auto` mode sends to the classifier (see `decideAsync`). */
+  const classify: PermissionDecision = {
+    status: 'user-approval',
+    reason: 'Auto mode: the classifier decides.',
+    auto: 'classify',
+  }
+
   const modeDefault = (
     call: PermissionCall,
     kind: ToolKind,
@@ -528,7 +612,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
         if (target.root.readonly === true) {
           return { status: 'denied', reason: 'That directory is read-only.' }
         }
-        return m === 'acceptEdits' || m === 'bypassPermissions'
+        return m === 'acceptEdits' || m === 'bypassPermissions' || m === 'auto'
           ? { status: 'approved' }
           : { status: 'user-approval' }
       }
@@ -537,20 +621,22 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
         if (command === undefined) return { status: 'user-approval' }
         if (isReadOnlyCommand(command, e.ro)) {
           const problem = m === 'bypassPermissions' ? undefined : readPathProblem(command, e)
-          return problem === undefined
-            ? { status: 'approved' }
-            : { status: 'user-approval', reason: problem }
+          if (problem === undefined) return { status: 'approved' }
+          return m === 'auto' ? classify : { status: 'user-approval', reason: problem }
         }
         if (m === 'bypassPermissions') return { status: 'approved' }
-        if (m === 'acceptEdits' && isAcceptedFileCommand(command, e)) return { status: 'approved' }
-        return { status: 'user-approval' }
+        if ((m === 'acceptEdits' || m === 'auto') && isAcceptedFileCommand(command, e)) {
+          return { status: 'approved' }
+        }
+        return m === 'auto' ? classify : { status: 'user-approval' }
       }
       case 'agent':
       case 'ask':
       case 'safe':
         return { status: 'approved' }
       default:
-        return m === 'bypassPermissions' ? { status: 'approved' } : { status: 'user-approval' }
+        if (m === 'bypassPermissions') return { status: 'approved' }
+        return m === 'auto' ? classify : { status: 'user-approval' }
     }
   }
 
@@ -649,7 +735,10 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     }
 
     // 6. allow rules (never for a command that writes outside the working directories)
-    const allow = parsed(rules.allow).find((rule) => ruleMatchesCall(rule, call, 'allow', e))
+    const allow = parsed(rules.allow).find(
+      (rule) =>
+        !(m === 'auto' && broadAutoAllow(rule, e)) && ruleMatchesCall(rule, call, 'allow', e),
+    )
     if (allow !== undefined) {
       const blocker = allowBlocker(call, targets, e)
       if (blocker !== undefined) {
@@ -700,8 +789,105 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     return [...out]
   }
 
+  // auto mode state (spec 18 §12)
+  const auto: AutoState = { paused: false, consecutive: 0, total: 0 }
+  const autoListeners = new Set<AutoListener>()
+  const autoSnapshot = (): AutoState => ({ ...auto })
+  const emitAuto = (event: AutoEvent): void => {
+    for (const listener of [...autoListeners]) listener(event)
+  }
+  const resume = (): void => {
+    if (!auto.paused) return
+    auto.paused = false
+    auto.consecutive = 0
+    emitAuto({ type: 'resumed', state: autoSnapshot() })
+  }
+  const recordBlock = (toolName: string, why: string): void => {
+    auto.consecutive++
+    auto.total++
+    emitAuto({ type: 'blocked', toolName, reason: why, state: autoSnapshot() })
+    const cause =
+      auto.consecutive >= AUTO_MAX_CONSECUTIVE_BLOCKS
+        ? 'consecutive'
+        : auto.total >= AUTO_MAX_TOTAL_BLOCKS
+          ? 'total'
+          : undefined
+    if (cause === undefined) return
+    auto.paused = true
+    if (cause === 'total') auto.total = 0
+    emitAuto({ type: 'paused', cause, state: autoSnapshot() })
+  }
+  // verdicts per tool call id: the core re-validates approved calls, the classifier runs once
+  const verdicts = new Map<string, Promise<PermissionDecision>>()
+
+  const classifyCall = async (
+    call: PermissionCall,
+    opts: DecideOptions,
+  ): Promise<PermissionDecision> => {
+    const kind = tools.kindOf(call.toolName)
+    const spec = tools.spec(call.toolName)
+    const action: AutoAction = { toolName: call.toolName, input: call.input, kind }
+    const summary =
+      kind === 'shell'
+        ? commandOf(call, spec)
+        : kind === 'fetch'
+          ? fieldOf(call.input, spec?.urlField ?? 'url')
+          : undefined
+    if (summary !== undefined) action.summary = summary
+    if (call.agent !== undefined) action.agent = call.agent
+    let transcript: readonly GuardTranscriptEntry[] = []
+    try {
+      transcript = opts.transcript?.() ?? []
+    } catch {
+      transcript = []
+    }
+    const ctx: { transcript: readonly GuardTranscriptEntry[]; abortSignal?: AbortSignal } = {
+      transcript,
+    }
+    if (opts.abortSignal !== undefined) ctx.abortSignal = opts.abortSignal
+    let why: string
+    let reason: string
+    try {
+      const verdict = await (classifier as AutoClassifier)(action, ctx)
+      if (verdict?.decision === 'allow') {
+        auto.consecutive = 0
+        return { status: 'approved', auto: 'allowed' }
+      }
+      if (verdict?.decision === 'block') {
+        why = typeof verdict.reason === 'string' ? verdict.reason.trim() : ''
+        if (why === '') why = 'the classifier judged it unsafe'
+        reason = `Auto mode blocked this action: ${why}. Do not retry it as is; choose a safer approach or ask the user.`
+      } else {
+        why = 'unreadable classifier verdict'
+        reason = 'Auto mode could not classify this action (unreadable verdict), so it was blocked.'
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      why = `classifier unavailable (${message})`
+      reason = `Auto mode could not classify this action (${message}), so it was blocked.`
+    }
+    recordBlock(call.toolName, why)
+    return { status: 'denied', reason, auto: 'blocked' }
+  }
+
+  const decide = (call: PermissionCall, modeOverride?: PermissionMode): PermissionDecision => {
+    const m = modeOverride ?? mode
+    const decision = evaluate(call, m)
+    // the global dontAsk also turns the asks of a per-agent mode override into denials
+    if ((m === 'dontAsk' || mode === 'dontAsk') && decision.status === 'user-approval') {
+      const out: PermissionDecision = { status: 'denied', reason: DONT_ASK_REASON }
+      if (decision.rule !== undefined) out.rule = decision.rule
+      return out
+    }
+    return decision
+  }
+
   const setMode = (next: PermissionMode): void => {
     if (next === mode) return
+    if (next === 'auto') {
+      if (classifier === undefined) throw noClassifier()
+      resume()
+    }
     if (next === 'plan') {
       beforePlan = mode
       planExit = undefined
@@ -759,23 +945,45 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       planExit = undefined
       return target
     },
+    autoAvailable: classifier !== undefined,
+    autoState: autoSnapshot,
+    noteApproval: resume,
+    resumeAuto: resume,
+    subscribeAuto(listener: AutoListener): () => void {
+      autoListeners.add(listener)
+      return () => {
+        autoListeners.delete(listener)
+      }
+    },
+    async decideAsync(call: PermissionCall, opts: DecideOptions = {}): Promise<PermissionDecision> {
+      const m = opts.mode ?? mode
+      const decision = decide(call, opts.mode)
+      if (decision.auto !== 'classify') return decision
+      if (classifier === undefined) {
+        return { status: 'user-approval', reason: 'Auto mode has no classifier configured.' }
+      }
+      if (auto.paused) {
+        return { status: 'user-approval', reason: AUTO_PAUSED_REASON, auto: 'paused' }
+      }
+      const id = opts.toolCallId
+      const known = id === undefined ? undefined : verdicts.get(id)
+      const run = known ?? classifyCall(call, opts)
+      if (id !== undefined && known === undefined) {
+        verdicts.set(id, run)
+        if (verdicts.size > 500) verdicts.delete(verdicts.keys().next().value as string)
+      }
+      const result = await run
+      // the mode changed while the classifier ran: a verdict the new mode would not have asked for is dropped
+      if (opts.mode === undefined && m === 'auto' && mode !== 'auto') return decide(call)
+      return result
+    },
     cycleMode(): PermissionMode {
       const index = cycle.indexOf(mode)
       const next = (index < 0 ? cycle[0] : cycle[(index + 1) % cycle.length]) ?? 'default'
       setMode(next)
       return next
     },
-    decide(call: PermissionCall, modeOverride?: PermissionMode): PermissionDecision {
-      const m = modeOverride ?? mode
-      const decision = evaluate(call, m)
-      // the global dontAsk also turns the asks of a per-agent mode override into denials
-      if ((m === 'dontAsk' || mode === 'dontAsk') && decision.status === 'user-approval') {
-        const out: PermissionDecision = { status: 'denied', reason: DONT_ASK_REASON }
-        if (decision.rule !== undefined) out.rule = decision.rule
-        return out
-      }
-      return decision
-    },
+    decide,
     suggestRule(call: PermissionCall): string | undefined {
       const kind = tools.kindOf(call.toolName)
       if (kind === 'plan-exit' || kind === 'ask') return undefined

@@ -86,7 +86,9 @@ cost is shown. `contextWindow` in a settings file always wins over the catalog.
 | `--model <id>` | model id for the provider |
 | `--provider <name>` | `openrouter` or `gateway` |
 | `--thinking <level>` | reasoning effort (see Providers, models, thinking) |
-| `--permission-mode <mode>` | `default`, `acceptEdits`, `plan`, `dontAsk`, `bypassPermissions` |
+| `--permission-mode <mode>` | `default` (alias `manual`), `acceptEdits`, `plan`, `auto`, `dontAsk`, `bypassPermissions` |
+| `--allow-dangerously-skip-permissions` | put `bypassPermissions` in the `Shift+Tab` cycle without starting in it |
+| `--dangerously-skip-permissions` | start in `bypassPermissions` (same as `--permission-mode bypassPermissions`) |
 | `--add-dir <path...>` | extra directories, mounted at `/@dirs/<basename>/` |
 | `--allowed-tools <rule...>` / `--disallowed-tools <rule...>` | extra allow / deny rules for this run |
 | `--agents <json>` | session-only subagent definitions |
@@ -138,7 +140,7 @@ A rounded welcome box (version, `cwd` with `~` and a shortened middle, model, pr
 the session. The transcript is plain scrollback: user prompts as `> text`, assistant text with
 Markdown, one compact card per tool call (`Ctrl+O` shows the full transcript). A footer under the
 prompt always shows the permission mode (`⏸ manual mode on`, `⏵⏵ accept edits on`, `⏸ plan mode on`,
-`⏵⏵ don't ask on`, `⏵⏵ bypass permissions on`, each with a dim `(shift+tab to cycle)`), the model and
+`⏵⏵ auto mode on`, `⏵⏵ don't ask on`, `⏵⏵ bypass permissions on`, each with a dim `(shift+tab to cycle)`), the model and
 thinking level, the context left and the cost. `?` on an empty prompt opens the shortcuts panel.
 Running background shells and agents are listed as rows below the footer: `Down` from the empty
 prompt moves into them, `Left`/`Right`/`Up`/`Down` select, `Enter` opens the task, `x` stops it, `Esc`
@@ -150,7 +152,7 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | Enter | send; while a turn runs, queue the message (see Message queue). Also when the terminal delivers text and Enter as one chunk: `hi\r` sends `hi`; text after the Enter becomes the next draft) |
 | Shift+Enter, or `\` then Enter, Ctrl+J | newline (a bracketed paste keeps its newlines as text) |
 | Esc | interrupt the running turn (queued messages are then sent), close a page, picker or search |
-| Shift+Tab | cycle the mode: default, acceptEdits, plan |
+| Shift+Tab | cycle the mode: manual, accept edits, plan, then bypass permissions (opt-in) and auto |
 | Alt+P | model picker |
 | Alt+T | thinking picker |
 | Ctrl+O | transcript viewer (full tool output, reasoning expanded) |
@@ -461,7 +463,8 @@ scope; `Enter` or `Space` toggles or cycles, `Enter` edits text and numbers).
 | `provider` | from API keys | `openrouter` or `gateway` | no |
 | `contextWindow` | 200000 without a catalog entry | context window override | no |
 | `permissions.allow` / `ask` / `deny` | `[]` | rules (see Permissions); `ask` and `deny` only tighten | `allow` only |
-| `permissions.defaultMode` | `default` | mode a new session starts in | yes |
+| `permissions.defaultMode` | `default` | mode a new session starts in (`auto` allowed) | yes |
+| `autoMode.model` / `autoMode.enabled` | session model / `true` | auto mode classifier model; `false` removes auto mode | yes |
 | `permissions.additionalDirectories` | `[]` | extra mounted directories | yes |
 | `mcpServers` | `{}` | MCP servers by name | yes |
 | `theme` | `dark` | `dark`, `light` or `auto` (`auto` reads `COLORFGBG`); `/config` default scope: user | no |
@@ -720,10 +723,33 @@ Known limits:
 | `acceptEdits` | file edits in writable dirs and simple `mkdir` / `touch` / `mv` / `cp` inside them are allowed |
 | `plan` | read-only: edit tools are removed, only read-only commands run; `exit_plan_mode` asks you to approve the plan, then the previous mode is restored |
 | `dontAsk` | anything that would ask is denied |
+| `auto` | edits and read-only commands run; every other action is judged by a classifier model (below) |
 | `bypassPermissions` | everything is allowed except deny rules and protected paths |
 
 The mode lives in the permission engine, in memory. `Shift+Tab`, `/permissions mode` and approved
 plans change it; it takes effect at the next step.
+
+**`Shift+Tab` cycle.** `manual` (the footer's name for `default`), `accept edits`, `plan`, then
+`bypass permissions` only when you opted in (`--allow-dangerously-skip-permissions`,
+`--dangerously-skip-permissions`, or starting in it by flag or `permissions.defaultMode`), then `auto`
+last. From a mode outside the cycle (`dontAsk`, or `auto` with auto mode disabled) the next press goes
+to `manual`. `dontAsk` is never in the cycle.
+
+**Auto mode** (library `eharness/permissions`, spec 18 §12) lets a classifier model approve or block
+what no rule settles, instead of asking you. Deny and ask rules still win, narrow allow rules run
+without the classifier (broad ones like `Bash(*)` are ignored in this mode), reads, edits inside the
+working directories and read-only commands run, protected paths and `request_directory_access` still
+ask you, and the rest (other shell commands, web fetch and search, MCP tools) goes to the classifier.
+A block is a normal denied tool result the model reads, shown as a short notice under the prompt.
+After 3 blocks in a row or 20 in total auto mode **pauses**: the footer says
+`⏵⏵ auto mode paused · approve to resume` and actions ask you again until you approve one. The
+classifier uses the session's current model through the provider you already use (so it costs tokens
+on every classified action); override it with `"autoMode": { "model": "<id>" }` in settings or
+`CODER_AUTO_MODEL`, or remove auto mode from the cycle with `"autoMode": { "enabled": false }`.
+The session still **starts in `manual` mode** unless you ask for auto (`--permission-mode auto` or
+`permissions.defaultMode: "auto"`): auto sends command text to a model, so it is opt-in. The footer
+color of auto is blue (manual gray, accept edits purple, plan teal, don't ask yellow, bypass red).
+The classifier is a heuristic layer, not a boundary; use deny rules for hard guarantees.
 
 **Rules** are strings in `permissions.allow`, `permissions.ask` and `permissions.deny`:
 

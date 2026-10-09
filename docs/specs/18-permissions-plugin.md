@@ -35,7 +35,8 @@ export interface PermissionEngineOptions {
   readOnlyCommands?: 'default' | readonly string[]      // default 'default'
   toolKinds?: ToolKinds                                 // merged over DEFAULT_TOOL_KINDS
   aliases?: Record<string, readonly string[]>           // merged over DEFAULT_ALIASES
-  modeCycle?: readonly PermissionMode[]                 // default ['default','acceptEdits','plan']
+  modeCycle?: readonly PermissionMode[]                 // default ['default','acceptEdits','plan'], see modeCycleFor
+  classifier?: AutoClassifier                           // enables `auto` mode, §12
   persist?: (rules: PermissionRules, change: RuleChange) => void | Promise<void>
 }
 
@@ -43,6 +44,8 @@ export interface PermissionEngine {
   readonly mode: PermissionMode
   setMode(mode): void;  cycleMode(): PermissionMode;  subscribe(listener): () => void
   decide(call: PermissionCall, mode?: PermissionMode): PermissionDecision
+  decideAsync(call, options?: DecideOptions): Promise<PermissionDecision>   // decide + the auto classifier (§12)
+  autoAvailable: boolean;  autoState(): AutoState;  noteApproval();  resumeAuto();  subscribeAuto(listener): () => void
   suggestRule(call): string | undefined
   allow(rule): Promise<void>;  addRule(kind, rule): Promise<void>;  removeRule(kind, rule): Promise<boolean>
   rules(): PermissionRules
@@ -61,7 +64,9 @@ export function matchRule(rule: string, call: PermissionCall, options: MatchRule
 Also exported: `parseRule`, `matchBashSpec`, `domainSpecifierMatches`, `isReadOnlySubcommand`,
 `readPathArguments`, `isGlobArg`, `READ_ONLY_COMMAND_NAMES`, `DEFAULT_TOOL_KINDS`,
 `DEFAULT_ALIASES`, `DEFAULT_BUILTIN_ASK`, `DEFAULT_PROTECTED_PATHS`, `DEFAULT_MODE_CYCLE`,
-`PERMISSION_MODES`, `DONT_ASK_REASON`, `PLAN_MODE_REASON` and the types.
+`PERMISSION_MODES`, `DONT_ASK_REASON`, `PLAN_MODE_REASON`, `modeCycleFor`, `modelClassifier`,
+`AUTO_CLASSIFIER_INSTRUCTIONS`, `AUTO_PAUSED_REASON`, `AUTO_MAX_CONSECUTIVE_BLOCKS`,
+`AUTO_MAX_TOTAL_BLOCKS` and the types.
 
 `decide` is **deterministic and free of side effects** (the core calls `tool.approve` again for
 approved calls, spec 11 §3). The engine holds three pieces of mutable state: the rules, the mode
@@ -169,6 +174,7 @@ servers (profile a) run in `dontAsk`, so such tools are denied there.
 | `plan` | read-only: no writes, no shell except read-only commands; ends through the plan-exit tool |
 | `dontAsk` | never asks: every would-be ask is a denial (`DONT_ASK_REASON`) — the autonomous allow-list mode |
 | `bypassPermissions` | everything approved except deny rules, protected paths and "a deny rule could match" (§5) |
+| `auto` | like `acceptEdits`, but what no rule or read-only check settles goes to a classifier model that allows it or blocks it (§12). Needs the engine's `classifier` |
 
 `decide(call, mode?)` evaluates, first hit wins:
 
@@ -197,7 +203,12 @@ every tool a rule without specifier denies. The plugin hides them with `activeTo
 
 `setMode('plan')` remembers the previous mode (`modeBeforePlan()`); `leavePlanMode()` returns the
 mode chosen with `setPlanExitMode('acceptEdits' | 'default')`, else the remembered one.
-`cycleMode()` follows `modeCycle`; from a mode outside the cycle it goes to the first.
+`cycleMode()` follows `modeCycle`; from a mode outside the cycle (`dontAsk`, or `auto` when it is not
+in the cycle) it goes to the first, `default`. `modeCycleFor({ bypass, auto })` builds the cycle the way
+Claude Code does: `default`, `acceptEdits`, `plan`, then `bypassPermissions` (when `bypass`), then
+`auto` (when `auto`), last. `dontAsk` is never in a cycle, and `auto` is dropped from `modeCycle`
+when the engine has no classifier. Deciding which optional modes the user may reach (flags,
+settings) is the application's: it passes the result as `modeCycle`.
 
 ## 5. Shell commands (threat model)
 
@@ -272,10 +283,10 @@ segment appears as a word (`.git`, not `.gitignore`, not `foo.git`).
 
 | Where | What |
 |---|---|
-| `tool.approve` | `engine.decide(...)` → `{ type: 'approved' }`, `{ type: 'user-approval', reason? }`, `{ type: 'denied', reason }`. Combines with other hooks, policy and grants by "most restrictive wins" (spec 11 §3) |
+| `tool.approve` | `await engine.decideAsync(...)` (the classifier of `auto` mode runs here, with the event's `toolCallId`, restricted `transcript()` and the turn's abort signal) → `{ type: 'approved' }`, `{ type: 'user-approval', reason? }`, `{ type: 'denied', reason }`. Combines with other hooks, policy and grants by "most restrictive wins" (spec 11 §3) |
 | `step.prepare` | `activeTools`: drops `inactiveTools`, `disallowedTools`, and everything outside `allowedTools` (names or aliases). A mode change takes effect at the next model call. When the plan-exit tool was just approved (`e.continuing`), the next step already offers the tools of the mode being entered |
 | `tool.after` | `filterOutputs` (default true): lines of `grep`/`list_files`/`glob` output (per the tool's `listing`) whose path `readBlocked` reports are dropped and counted: `(N results hidden by permission rules)` |
-| `approval.decided` | `onDecision(decision)`: every automatic decision (`by: 'plugin:permissions'`) and every answer — an audit log. Errors are `W_HOOK_FAILED` and never change a decision |
+| `approval.decided` | a person's approval (`by: 'user'`, approved) calls `engine.noteApproval()`: a paused auto mode resumes. Then `onDecision(decision)`: every automatic decision (`by: 'plugin:permissions'`) and every answer — an audit log. Errors are `W_HOOK_FAILED` and never change a decision |
 | session tool | the plan-exit tool (`exit_plan_mode`, input `{ plan }`, risk `external`) unless `planExitTool: false` or `mode` is a fixed mode. It asks in plan mode; once the user approves, it switches the engine to `leavePlanMode()` and calls `onPlanExit(mode, ctx)` |
 
 `mode` (plugin option) overrides the engine's mode for this plugin instance: a fixed
@@ -322,6 +333,80 @@ engines are cheap) or pass `permissionsPlugin({ mode: (ctx) => modes.get(ctx.ses
 a remembered answer with `persist` or from `suggestRule`; store the continuing mode from
 `onPlanExit`. A user's session-level "always allow" is the core's `remember: 'session'` grant (spec
 11 §3.1), which this module does not duplicate.
+
+## 12. Auto mode
+
+Modelled on Claude Code's auto mode: a classifier model reviews the actions no rule settles, so
+the person is not asked for every shell command and the model still cannot do the dangerous
+things without a human. `auto` is a `PermissionMode` and needs `classifier` in the engine options:
+
+```ts
+type AutoClassifier = (action: AutoAction, ctx: AutoClassifierContext) => Promise<AutoVerdict> | AutoVerdict
+interface AutoAction { toolName; input; kind: ToolKind; summary?: string /* command or URL */; agent?: string }
+interface AutoClassifierContext { transcript: readonly GuardTranscriptEntry[]; abortSignal?: AbortSignal }
+interface AutoVerdict { decision: 'allow' | 'block'; reason?: string }
+```
+
+**Availability.** Without a classifier `auto` is unavailable: `createPermissionEngine({ mode: 'auto' })`
+and `setMode('auto')` throw `EH_CONFIG_INVALID`, `auto` is filtered out of the cycle, and a per-call
+or per-plugin `mode: 'auto'` asks a person (it never approves). `engine.autoAvailable` tells UIs.
+
+**Decision order** in `auto` (the §4 order up to the mode default is unchanged, with the changes
+marked):
+1. deny rules → denied. 2. plan-exit / `ask` kinds as before. 3. `alwaysAsk` tools and protected
+paths → ask a person (Claude Code sends protected-path writes to its classifier; we keep a human
+there, the conservative choice). 4. ask rules and built-in ask rules → ask a person. 5. allow rules
+→ approved **without** the classifier, except broad ones that approve arbitrary code (bare `Bash`,
+`Bash(*)`, wildcarded interpreters/wrappers such as `Bash(python*)`, `Bash(bash *)`), which are
+ignored in `auto` as in Claude Code; narrow rules (`Bash(bun test *)`) stay. 6. mode default:
+reads, writes inside writable roots, read-only shell commands (paths inside the working
+directories) and `mkdir`/`touch`/`mv`/`cp` of `acceptEdits` → approved; `agent`, `ask`, `safe` →
+approved; everything else (other shell commands, `fetch`, `search`, `other`, a read-only command
+reading outside the working directories) → **classify**.
+
+`decide()` stays deterministic and sync: it returns `{ status: 'user-approval', auto: 'classify' }`
+for a call that needs the classifier. `decideAsync(call, { mode?, toolCallId?, transcript?, abortSignal? })`
+runs it:
+- `allow` → `{ status: 'approved', auto: 'allowed' }`; resets the consecutive-block counter.
+- `block` → `{ status: 'denied', auto: 'blocked', reason }`. The reason ("Auto mode blocked this
+  action: …") reaches the model as the tool result, so it can choose another way; the block is counted.
+- A classifier that throws, times out or returns something unreadable → blocked with a reason
+  (**fail closed**) and counted.
+- The verdict is remembered per `toolCallId` (AI SDK re-validates approved calls): the classifier
+  runs once and counts once. If the engine's mode left `auto` while the classifier ran, the verdict is
+  dropped and the new mode decides (usually an ask).
+- `dontAsk` (global) still turns what would be an ask into a denial; the classifier is not called.
+
+**Fallback (repeated blocks).** 3 blocks in a row, or 20 in total, **pause** auto mode
+(`AUTO_MAX_CONSECUTIVE_BLOCKS`, `AUTO_MAX_TOTAL_BLOCKS`; fixed like in Claude Code). While paused,
+calls that would be classified ask a person (`auto: 'paused'`, `AUTO_PAUSED_REASON`); rules and
+read-only checks work as before. A person's approval (`approval.decided` with `by: 'user'`;
+`noteApproval()` for apps that answer elsewhere) or `resumeAuto()` or entering `auto` again resumes;
+the consecutive counter restarts at 0, the total persists (it resets only when its own limit pauses
+auto mode). In a host with nobody to answer the ask behaves like any other ask there (the turn stops
+`tool-pending`, or the application's `dontAsk`-style policy denies it); the action never runs. State
+and notices: `autoState(): { paused, consecutive, total }` and
+`subscribeAuto(listener)` with events `blocked` (tool, reason, state), `paused` (cause), `resumed`.
+The counters live in the engine instance (one per session in a CLI); the library does not persist
+them.
+
+**`modelClassifier({ model, instructions?, environment?, maxContext?, timeoutMs?, maxRetries? })`**
+is the ready classifier: one AI SDK `generateText` call with `Output.object` (`{ decision, reason }`).
+The default rules are the exported `AUTO_CLASSIFIER_INSTRUCTIONS` (extend it:
+`${AUTO_CLASSIFIER_INSTRUCTIONS}\n…`, or replace through `instructions`): block downloading and
+running code, sending secrets out, production deploys, irreversible destruction, force pushes;
+allow routine work in the working directory; a boundary the user stated in the conversation blocks
+matching actions until lifted; an explicit approval naming the action and what makes it dangerous
+clears one block. `environment` describes trusted infrastructure. The prompt carries the restricted
+transcript (spec 11 §3.4: user messages and earlier tool calls, **never tool outputs**, so a prompt
+injection in a file or page cannot reach it), the call under review is left out of it, and the
+action's input is framed as data. Use a cheap fast model; its usage is the application's to track
+(it is not charged to the turn).
+
+Limits: the classifier is a heuristic layer, not a boundary; use deny rules for hard guarantees.
+Boundaries stated in the conversation are lost if compaction removes the message that stated them.
+Claude Code's per-command sandbox domains, critical-path removal checks and subagent-spawn/result
+review are not part of this module.
 
 ## 10. Dropped from the example, on purpose
 
