@@ -195,7 +195,7 @@ export interface PermissionEngine {
   allow(rule: string, scope: 'session' | 'project'): Promise<void>
   /** Add a rule of any kind (`/permissions allow|ask|deny <rule>`); `project` persists to settings.local.json. */
   addRule(kind: keyof PermissionRules, rule: string, scope: 'session' | 'project'): Promise<void>
-  /** Remove a rule from the in-memory rules and, when present, from settings.local.json. Returns whether it existed. */
+  /** Remove a rule from the in-memory rules and, when it was persisted, from settings.local.json. Returns whether it existed. */
   removeRule(kind: keyof PermissionRules, rule: string): Promise<boolean>
   rules(): PermissionRules
   /** Tools a mode makes unavailable (plan mode: everything not read-only except exit_plan_mode). */

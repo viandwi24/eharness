@@ -555,17 +555,24 @@ describe('sandbox', () => {
     const kind = detectOsSandbox().kind
     expect(off.kind).toBe(kind)
 
+    // the bash description states the sandbox (library); the turn reminder no longer does
+    const bash = (route: (typeof model.routes)[number]): string =>
+      JSON.stringify(
+        ((route.call.tools ?? []) as Array<{ name: string; description?: string }>).find(
+          (t) => t.name === 'bash',
+        ),
+      )
     await turn(controller, 'one')
-    // the model is told in the turn reminder (the library's bash description does not carry it)
-    const reminder = (route: (typeof model.routes)[number]): string => route.conversation
-    expect(reminder(model.routes.at(-1) as never)).toContain('Sandbox: off')
+    expect(bash(model.routes.at(-1) as never)).toContain('without an OS sandbox')
+    const last = model.routes.at(-1)
+    expect(`${last?.system}${last?.conversation}`).not.toContain('Sandbox:')
 
     await controller.updateSetting('sandbox.enabled', true, 'local')
     const on = (await controller.status()).sandbox
     if (kind === 'seatbelt') expect(on.enabled).toBe(true)
     await turn(controller, 'two')
     if (on.enabled) {
-      expect(reminder(model.routes.at(-1) as never)).toContain('Sandbox: ON')
+      expect(bash(model.routes.at(-1) as never)).toContain('in an OS sandbox')
     }
     await controller.updateSetting('sandbox.enabled', false, 'local')
     expect((await controller.status()).sandbox.enabled).toBe(false)

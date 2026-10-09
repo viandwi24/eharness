@@ -743,11 +743,11 @@ persisted.
 ### Implementation notes: UX batch (2026-10-08)
 
 - **Steer outcome** (`app/controller.ts`): `run()` and `steer()` share an `ActiveTurn` (`started`,
-  `seen`, `pending`, `deferred`, `deliveries`). A steer is sent with `ifBusy: 'steer'` and its
-  outcome is read from `run.delivery` (P31): `'step'` needs nothing, `'turn'` hands the queued
-  turn's run to the drive loop (`pending`, or `session.attach()` when the run is still the first
-  turn's), `'dropped'` puts the text into `deferred`. The loop awaits the outstanding deliveries when
-  the turn ends, so a queued turn never runs without its approvals being answered.
+  `deferred`, `deliveries`). A steer is sent with `ifBusy: 'steer'` and its outcome is read from
+  `run.delivery` (P31): `'step'` needs nothing, `'turn'` needs nothing either (the turn's run reaches
+  `adopt` through `session.onRun`, below), `'dropped'` puts the text into `deferred`. The loop awaits
+  the outstanding deliveries and the adopted runs when the turn ends, so a queued turn never runs
+  without its approvals being answered.
 - **Deferred steers during approvals.** While the turn waits for an approval the session is not
   running (`session.running` is `false`) and a send would auto-deny it, so the text goes straight to
   `deferred`; so do steers the core dropped (`delivery` `'dropped'`). Deferred texts are sent as the
@@ -853,15 +853,16 @@ status line, notifications, OS sandbox. Library follow-ups from this work are in
 
 - **Wake-ups drive background turns.** A finished background shell, a throttled `notify_on` match
   (at most one event per 5 s, batched) and a finished background agent are injected into the
-  parent session as `eh.event` messages with `{ deliver: 'next-step', wake: true }` (`app/tasks.ts`,
-  `app/background-bash.ts`, `agents/agent-tool.ts`). A busy turn sees them at its next step
-  boundary; an idle session starts a no-input turn. That run is handed to `onWake` in the
-  controller, which drives it like a prompt (approvals through the broker) and streams it through
-  the hooks of the most recent `run()` / `steer()`, or drains it when there were none, so no wake
-  run stops unanswered at an approval. A task the user stopped sends nothing.
+  parent session as `eh.event` messages with `{ deliver: 'next-step', wake: true }` (library: the `shell` and
+  `subagents` plugins). A busy turn sees them at its next step
+  boundary; an idle session starts a no-input turn. The controller subscribes to `session.onRun`
+  (P31): every run that `drive` did not start itself (a wake, a queued turn, a steer that became a
+  turn) is adopted, driven like a prompt (approvals through the broker) and streamed through the
+  hooks of the most recent `run()` / `steer()`, or drained when there were none, so no wake run
+  stops unanswered at an approval. The `turn-start` watcher and `attach()` are gone. A task the user stopped sends nothing.
 - **Output style is a session instruction.** The style text goes into the session instruction
   block (after the static instructions), never into the static prefix. Switching style (or the
-  sandbox note) reopens the session handle when idle (`refreshSession`), so the prompt cache is
+  sandbox setting) reopens the session handle when idle (`refreshSession`), so the prompt cache is
   rebuilt from the session block onwards; tools and the static instructions stay cached. `default`
   adds no text. Project styles need project trust (they are part of the trust hash).
 - **Hook determinism deviation** (spec 01 section 5 wants `tool.approve` hooks to be deterministic and
@@ -929,9 +930,9 @@ deleted its own copies; what remains is product and UI policy.
 | Was (example) | Now (library) | App-only part that stays |
 |---|---|---|
 | `workspace/{disk-fs,guard,mount-fs,index}.ts` | `eharness/filesystem/node`: `nodeWorkspace` | `request_directory_access` (`workspace/dir-access.ts`) |
-| `app/checkpoints.ts` (JSON store, plugin, copy) | `filesystem({ checkpoints: nodeCheckpointStore(dir) })`, `rewindFiles`, `checkpointsSince`, `session.fork({ beforeMessageId })` | which prompts `/rewind` lists, walking the subagent sessions, copying checkpoints into a fork; session names |
-| `shell/*`, `app/background-bash.ts`, shell part of `app/tasks.ts` | `eharness/shell`: `shell({ background: true })`, `localSandbox`, `shellTasks` | `app/tasks.ts` (task list for the UI), the sandbox setting and its line in the turn reminder |
-| `permissions/{engine,rules,bash-match,readonly-commands,plugin}.ts` | `eharness/permissions` | `permissions/engine.ts` (app tool kinds, `.coder` protected paths, rule scopes in `settings.local.json`, always-ask directory access), broker, `describe.ts`, audit log |
+| `app/checkpoints.ts` (JSON store, plugin, copy) | `filesystem({ checkpoints: nodeCheckpointStore(dir) })`, `rewindFiles`, `checkpointsSince`, `session.fork({ beforeMessageId })` | which prompts `/rewind` lists, nested subagent sessions for `sessionIds` (`children()` is direct only); session names. The fork copy is the plugin's `session.fork` hook |
+| `shell/*`, `app/background-bash.ts`, shell part of `app/tasks.ts` | `eharness/shell`: `shell({ background: true })`, `localSandbox`, `shellTasks` | `app/tasks.ts` (merges `shellTasks` and `subagentTasks` for the UI), the sandbox setting |
+| `permissions/{engine,rules,bash-match,readonly-commands,plugin}.ts` | `eharness/permissions` | `permissions/engine.ts` (app tool kinds with `alwaysAsk` directory access, `.coder` protected paths, `persist` writing project-scope rules to `settings.local.json`), broker, `describe.ts`, audit log |
 | `agents/agent-tool.ts`, child part of `agents/drive.ts` | `eharness/subagent` (`approvals: 'inline'`, `background: true` on the main agent) | agent definitions from files, `agents/subagents.ts` (`answer` = broker), main-agent `driveTurn` |
 | `agents/ask-tool.ts` | `eharness/ask`: `askUser`, `pendingQuestions`, `answerOutput` | the question dialog, the answer timeout |
 | `app/web-tools.ts` | `eharness/web`: `webFetch`, `webSearch` | turndown, DNS lookup, provider search (`app/web-search.ts`) |
@@ -940,8 +941,8 @@ Behaviour differences (all deliberate or library behaviour):
 
 - Tool-output eviction directory is `/.eharness/tool-outputs/` (was `/.coder/tool-outputs/`); the prompt,
   README and the permission roots follow.
-- `bash` description no longer carries the sandbox state; the turn reminder does (`Sandbox: ON …`), so a
-  toggle applies at the next turn without reopening the session.
+- The sandbox state is in the library's `bash` description, no longer in the turn reminder; a toggle
+  reopens the session handle (idle) so the description is resolved again.
 - "Don't ask again" for `bun test …` offers the exact command (`bun` is an interpreter for the library
   engine); an invalid rule in a settings file is still dropped silently, an invalid `/permissions` rule
   is rejected with the library's message.
@@ -956,6 +957,17 @@ Behaviour differences (all deliberate or library behaviour):
 - Old checkpoint files (`checkpoints/<session>/<message>.json`) are not read; the library store has its
   own layout.
 - `request_directory_access` is denied (not asked) in plan mode, where the tool is hidden anyway.
+- An invalid `/permissions` rule (and a stored one) is refused with the library's error instead of
+  being ignored; removing a rule that only exists in `settings.local.json` but was never loaded into
+  the engine is a no-op (the library removes what it knows).
+
+Gaps closed after the migration (`ecc9b59`; workarounds deleted): `alwaysAsk` replaces the `decide`
+upgrade for `request_directory_access`; `persist(rules, change)` with scopes replaces the change
+tracking wrapper; `session.onRun` replaces the `turn-start` / `attach()` wake watcher and the
+queued-run plumbing; the filesystem plugin's `session.fork` hook replaces the app's checkpoint copy;
+`sessionIds` replaces the per-session loops of `rewindFiles` / `checkpointsSince`; `subagentTasks`
+replaces the task list derived from stored messages; the `bash` description replaces the sandbox
+line of the turn reminder. No library gap is left in the example.
 
 Remaining app-only parts: the Ink UI and its state, commands and slash registry, settings and trust,
 hooks, output styles, models catalog, LSP, session storage and names, memory files, recap, side

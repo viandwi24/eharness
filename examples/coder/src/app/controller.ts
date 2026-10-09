@@ -222,7 +222,10 @@ export async function createController(opts: CreateControllerOptions): Promise<C
           const wanted = settingsMgr.setting('sandbox')
           const problem = probeOsSandbox(wanted?.enabled === true)
           if (problem !== undefined) warn(problem)
-          sandbox.setOs(osOptions(wanted, problem === undefined)) // told to the model in the turn reminder
+          sandbox.setOs(osOptions(wanted, problem === undefined))
+          // the bash description states the sandbox: reopen the session so it is re-resolved
+          sessionStale = true
+          await refreshSession()
           break
         }
         case 'outputStyle':
@@ -293,61 +296,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   const recap = createRecap({ storage, sessionId: () => sessionId, model: currentModel })
 
   // ─── background tasks ───
-  const taskHub = createTaskHub({
-    session: () => sessionId,
-    storage,
-    messages: async () => (await session()).messages(),
-    stopAgent: async (childId, agent) => {
-      const def = definitions.find((d) => d.name === agent)
-      if (def !== undefined) (await agentsReady).agentFor(def, 1).session(childId).abort()
-    },
-  })
-  let waking: Promise<unknown> | undefined
-  /** A run nobody started through `run()` / `steer()` (a background event woke the session). */
-  const onWake = (run: HarnessRun<CoderMessage>): void => {
-    // driven exactly like a prompt: approvals through the broker, the stream through the hooks
-    // of the most recent run()/steer() (the UI's), or drained when there were none
-    const done = drive(() => run, {
-      onRun: (r) => {
-        if (lastHooks !== undefined) lastHooks.onRun(r)
-        else void drain(r)
-      },
-    })
-      .catch(() => undefined)
-      .finally(() => {
-        if (waking === done) waking = undefined
-        void taskHub.refresh().catch(() => {})
-      })
-    waking = done
-  }
-  /**
-   * Background tasks (shell exits, monitor matches, subagent reports) inject an `eh.event` with
-   * `wake: true` through `ctx.session.inject`: an idle session starts a no-input `wake` turn that
-   * nobody holds. Watch the session's events and drive that turn like a prompt.
-   */
-  const watched = new Set<string>()
-  const watchSession = (s: HarnessSession<CoderMessage>): void => {
-    if (watched.has(s.id)) return
-    watched.add(s.id)
-    void (async () => {
-      try {
-        const reader = s.events().getReader()
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          if (value.type !== 'turn-start' || value.kind !== 'wake') continue
-          if (active !== undefined || waking !== undefined) continue
-          const run = s.attach() as HarnessRun<CoderMessage> | undefined
-          if (run !== undefined && run.turnId === value.turnId) onWake(run)
-        }
-      } catch {
-        // the session was closed
-      } finally {
-        watched.delete(s.id)
-      }
-    })()
-  }
-
+  const taskHub = createTaskHub({ session: () => sessionId })
   // ─── LSP ───
   const lsp = createLspManager({
     servers: startSettings.lsp,
@@ -395,20 +344,22 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
   let controller: AbortController | undefined
 
-  /** The turn `run()` / `steer()` is driving: lets a steer that became a turn join the drive loop. */
+  /** The turn `run()` / `steer()` is driving: lets steers that were not delivered wait for its end. */
   interface ActiveTurn {
     /** Resolves once the first `send()` returned (a steer waits for it). */
     started: Promise<void>
-    /** Turn ids already driven. */
-    seen: Set<string>
-    /** Runs of steers that became a turn of their own (`delivery` 'turn') that nothing drives yet. */
-    pending: Array<HarnessRun<CoderMessage>>
     /** Texts of steers that were not delivered (`delivery` 'dropped', or the turn waits for an approval). */
     deferred: string[]
     /** `run.delivery` of the steers sent; they all settle when the turn ends. */
     deliveries: Array<Promise<void>>
   }
   let active: ActiveTurn | undefined
+
+  /** Turn ids a drive loop (`drive` / `adopt`) answers the approvals of: `onRun` skips those. */
+  const driven = new Set<string>()
+  /** Runs `session.onRun` handed over that nobody drove (wake, queued turn, steer fallback). */
+  const adopted = new Set<Promise<TurnResult<CoderMessage>>>()
+  const adoptAborts = new Set<AbortController>()
 
   const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
@@ -446,8 +397,6 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     controller = abort
     const turn: ActiveTurn = {
       started: Promise.resolve(),
-      seen: new Set(),
-      pending: [],
       deferred: [],
       deliveries: [],
     }
@@ -468,12 +417,11 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         stopOnBareDeny: true,
         questionTimeout: () => settingsMgr.setting('askUserQuestionTimeout'),
         onRun: (run: HarnessRun<CoderMessage>) => {
-          turn.seen.add(run.turnId)
+          driven.add(run.turnId)
           hooks.onRun(run)
         },
       }
       const first = start(s, abort.signal)
-      turn.seen.add(first.turnId)
       markStarted()
       let result = await driveTurn(first, driveOptions)
       for (;;) {
@@ -481,17 +429,17 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         // the turn ended: every steer of it has been delivered, queued as a turn or dropped
         await Promise.all(turn.deliveries.splice(0))
         await tick()
-        const next =
-          turn.pending.shift() ??
-          (() => {
-            const queued = s.attach() as HarnessRun<CoderMessage> | undefined
-            return queued !== undefined && !turn.seen.has(queued.turnId) ? queued : undefined
-          })() ??
-          (turn.deferred.length > 0
-            ? s.send(turn.deferred.splice(0).join('\n\n'), { abortSignal: abort.signal })
-            : undefined)
-        if (next === undefined) break
-        result = await driveTurn(next, driveOptions)
+        // turns the session started meanwhile (a queued turn, a steer that became one) are driven
+        // by `adopt`: the prompt is done when they are
+        if (adopted.size > 0) {
+          result = (await Promise.all([...adopted])).at(-1) ?? result
+          continue
+        }
+        if (turn.deferred.length === 0) break
+        result = await driveTurn(
+          s.send(turn.deferred.splice(0).join('\n\n'), { abortSignal: abort.signal }),
+          driveOptions,
+        )
       }
       return result
     } finally {
@@ -499,7 +447,6 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       turnMs += Date.now() - began
       if (controller === abort) controller = undefined
       if (active === turn) active = undefined
-      await taskHub.refresh().catch(() => {}) // a background subagent may have been started
       await refreshSession()
     }
   }
@@ -511,8 +458,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     files?: FileUIPart[],
   ): Promise<TurnResult<CoderMessage>> => {
     lastHooks = hooks
-    // a turn woken by a background task is still running: it must end before the next prompt
-    if (waking !== undefined) await waking
+    // a turn the session started by itself (a wake) is still running: it ends before the next prompt
+    while (adopted.size > 0) await Promise.all([...adopted])
     return drive(
       (s, signal) =>
         s.send(files !== undefined && files.length > 0 ? { text, files } : text, {
@@ -520,6 +467,38 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         }),
       hooks,
     )
+  }
+
+  const subscribed = new WeakSet<object>()
+
+  /**
+   * Drive a run nobody started through `run()` / `steer()`: its approvals and questions go
+   * through the broker like a prompt's, its stream to the hooks of the most recent
+   * `run()` / `steer()` (the UI's), or is drained when there were none.
+   */
+  const adopt = (s: HarnessSession<CoderMessage>, run: HarnessRun<CoderMessage>): void => {
+    const abort = new AbortController()
+    adoptAborts.add(abort)
+    const done: Promise<TurnResult<CoderMessage>> = driveTurn(run, {
+      session: s,
+      broker,
+      permissions,
+      describe,
+      signal: abort.signal,
+      stopOnBareDeny: true,
+      questionTimeout: () => settingsMgr.setting('askUserQuestionTimeout'),
+      onRun: (r) => {
+        driven.add(r.turnId)
+        if (lastHooks !== undefined) lastHooks.onRun(r)
+        else void drain(r)
+      },
+    }).finally(() => {
+      adopted.delete(done)
+      adoptAborts.delete(abort)
+    })
+    adopted.add(done)
+    // a run error is in the result; the promise only guards the broker
+    done.catch(() => undefined)
   }
 
   /** Close the handle of a session we leave (never while its turn runs). */
@@ -530,7 +509,17 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
   const session = async (): Promise<HarnessSession<CoderMessage>> => {
     const s = (await agentsReady).main.session(sessionId) as unknown as HarnessSession<CoderMessage>
-    watchSession(s)
+    if (!subscribed.has(s)) {
+      subscribed.add(s)
+      // every run of the session: the ones `drive` started answer to it, the others (a wake by a
+      // background shell or subagent, a queued turn, a steer that became a turn) are adopted. The
+      // check waits a microtask so `drive` has registered the run it started itself.
+      s.onRun((run) => {
+        queueMicrotask(() => {
+          if (!driven.has(run.turnId)) adopt(s, run)
+        })
+      })
+    }
     return s
   }
 
@@ -540,7 +529,6 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     sessionId = id
     if (old !== id) await closeSessionHandle(old)
     taskHub.changed()
-    void taskHub.refresh().catch(() => {})
   }
 
   const sandboxInfo = (): { enabled: boolean; kind: string; network: boolean } => {
@@ -595,10 +583,9 @@ export async function createController(opts: CreateControllerOptions): Promise<C
           }
           const run = s.send(text, { ifBusy: 'steer' })
           turn.deliveries.push(
+            // a steer that became a turn of its own reaches `adopt` through `session.onRun`
             (run.delivery ?? Promise.resolve('step' as const)).then((delivery) => {
               if (delivery === 'dropped') turn.deferred.push(text)
-              // a turn of its own: the drive loop takes its run over (it may be the first turn's)
-              else if (delivery === 'turn' && !turn.seen.has(run.turnId)) turn.pending.push(run)
             }),
           )
           return { delivered: 'step' }
@@ -609,6 +596,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     abort(): void {
       controller?.abort()
+      for (const a of adoptAborts) a.abort()
       void session().then((s) => s.abort())
     },
 
@@ -908,7 +896,6 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       const from = sessionId
       const to = (await (await session()).fork()).id
       await sessionTools.nameBranch(from, to, name)
-      await checkpoints.copy(from, to)
       await switchTo(to)
       return to
     },
@@ -996,6 +983,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     async close(): Promise<void> {
       controller?.abort()
+      for (const a of adoptAborts) a.abort()
       taskHub.close()
       await lsp.close().catch(() => {})
       await (await agentsReady).closeAll()

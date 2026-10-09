@@ -1,12 +1,10 @@
 /**
  * The permission engine of the coder: the library's `createPermissionEngine()` configured for
- * this app (tool kinds of the app's own tools, protected `.coder` paths, mounts as roots) plus the
- * three pieces of policy the library leaves to applications:
+ * this app (tool kinds of the app's own tools, protected `.coder` paths, mounts as roots):
  *
- * - "don't ask again" has a scope: `session` keeps the rule in memory, `project` also writes it to
- *   `.coder/settings.local.json` (the library's `persist` hook is called for every change);
- * - `request_directory_access` asks in every mode, an allow rule or `bypassPermissions` never
- *   approves it (the library has no "always ask" tool kind);
+ * - "don't ask again" has a scope: `session` stays in memory, `project` goes to `persist`, which
+ *   writes it to `.coder/settings.local.json`;
+ * - `request_directory_access` is an `alwaysAsk` tool: it asks in every mode;
  * - the settings files are the app's: rules are loaded from them by `app/config.ts`.
  */
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -14,21 +12,12 @@ import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import {
   createPermissionEngine as createLibraryEngine,
-  DONT_ASK_REASON,
   type PermissionEngine as LibraryEngine,
-  type PermissionRules,
   parseRule,
+  type RuleChange,
   type ToolKinds,
 } from 'eharness/permissions'
-import {
-  type CoderConfig,
-  type Mount,
-  type PermissionDecision,
-  type PermissionEngine,
-  type PermissionMode,
-  TOOL,
-  type ToolCallInfo,
-} from '../contracts.ts'
+import { type CoderConfig, type Mount, type PermissionEngine, TOOL } from '../contracts.ts'
 import { TOOL_OUTPUTS_VIRTUAL } from '../workspace/index.ts'
 
 export { DONT_ASK_REASON, PLAN_MODE_REASON } from 'eharness/permissions'
@@ -43,14 +32,12 @@ export const TOOL_KINDS: ToolKinds = {
   read_skill_file: { kind: 'safe' },
   search_skills: { kind: 'safe' },
   [TOOL.lsp]: { kind: 'safe' },
-  // `other`: asks, denied in plan mode; `decide` below makes it ask even with an allow rule
-  [TOOL.dirAccess]: { kind: 'other' },
+  // asks in every mode (an allow rule or bypassPermissions never approves it), no rule suggested
+  [TOOL.dirAccess]: { kind: 'other', alwaysAsk: true },
 }
 
-/** The engine the plugin and the controller use (the library's, plus the app's extras). */
+/** The engine the plugin and the controller use. */
 export type CoderPermissionEngine = PermissionEngine & LibraryEngine
-
-type Change = { kind: keyof PermissionRules; rule: string; op: 'add' | 'remove' }
 
 /** Read a settings file as an object; `undefined` when it is missing or not an object. */
 async function readSettings(file: string): Promise<Record<string, unknown> | undefined> {
@@ -66,7 +53,7 @@ async function readSettings(file: string): Promise<Record<string, unknown> | und
 }
 
 /** Apply one rule change to the `permissions` object of the local settings file. */
-async function editLocalSettings(file: string, change: Change): Promise<boolean> {
+async function editLocalSettings(file: string, change: RuleChange): Promise<boolean> {
   const existing = await readSettings(file)
   if (existing === undefined && change.op === 'remove') return false
   const settings = existing ?? {}
@@ -103,7 +90,6 @@ export function createPermissionEngine(opts: {
   mounts: () => Mount[]
 }): CoderPermissionEngine {
   const { config } = opts
-  let writing: Change | undefined
   const engine = createLibraryEngine({
     roots: () =>
       opts.mounts().map((m) => ({
@@ -123,61 +109,10 @@ export function createPermissionEngine(opts: {
     },
     protectedPaths: PROTECTED_PATHS,
     toolKinds: TOOL_KINDS,
-    // the library calls `persist` for every rule change; only a `project` change is written
-    persist: async () => {
-      const change = writing
-      writing = undefined
-      if (change !== undefined) await editLocalSettings(config.settingsFiles.local, change)
+    // only `project` rules reach `persist` (the library keeps `session` rules in memory)
+    persist: async (_rules, change) => {
+      await editLocalSettings(config.settingsFiles.local, change)
     },
   })
-
-  const change = async (c: Change, scope: 'session' | 'project'): Promise<void> => {
-    writing = scope === 'project' ? c : undefined
-    try {
-      if (c.op === 'add') await engine.addRule(c.kind, c.rule)
-      else await engine.removeRule(c.kind, c.rule)
-    } finally {
-      writing = undefined
-    }
-  }
-
-  // The library engine is a closure object: delegating through the prototype keeps every other
-  // method and the `mode` getter live.
-  return Object.assign(Object.create(engine) as CoderPermissionEngine, {
-    decide(call: ToolCallInfo, modeOverride?: PermissionMode): PermissionDecision {
-      const decision = engine.decide(call, modeOverride)
-      // Access to a new directory always needs the user, whatever the mode and the rules say.
-      if (call.toolName === TOOL.dirAccess && decision.status === 'approved') {
-        return engine.mode === 'dontAsk' || modeOverride === 'dontAsk'
-          ? { status: 'denied', reason: DONT_ASK_REASON }
-          : { status: 'user-approval', reason: 'Access to a new directory always needs approval.' }
-      }
-      return decision
-    },
-    suggestRule(call: ToolCallInfo): string | undefined {
-      return call.toolName === TOOL.dirAccess ? undefined : engine.suggestRule(call)
-    },
-    // an invalid rule is ignored (the suggested rules are always valid)
-    allow: async (rule: string, scope: 'session' | 'project' = 'session') => {
-      if (parseRule(rule.trim()) !== undefined) {
-        await change({ kind: 'allow', rule: rule.trim(), op: 'add' }, scope)
-      }
-    },
-    addRule: (
-      kind: keyof PermissionRules,
-      rule: string,
-      scope: 'session' | 'project' = 'session',
-    ) => change({ kind, rule: rule.trim(), op: 'add' }, scope),
-    // a rule that only lives in the local settings file is removed from there as well
-    async removeRule(kind: keyof PermissionRules, rule: string): Promise<boolean> {
-      const clean = rule.trim()
-      const existed = await engine.removeRule(kind, clean)
-      const inFile = await editLocalSettings(config.settingsFiles.local, {
-        kind,
-        rule: clean,
-        op: 'remove',
-      })
-      return existed || inFile
-    },
-  })
+  return engine
 }

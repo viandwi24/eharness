@@ -116,22 +116,11 @@ async function gitSummary(root: string): Promise<string> {
   return `Git branch: ${branch}\nGit status (short):\n${shown.join('\n')}${more}`
 }
 
-/**
- * Whether `bash` is sandboxed. It is told in the turn reminder (the shell plugin's tool
- * description does not carry it), so a live `sandbox.enabled` toggle reaches the model at once.
- */
-export function sandboxNote(state: { enabled: boolean; kind: string; network: boolean }): string {
-  return state.enabled
-    ? `Sandbox: ON (${state.kind}). Commands can write only inside the project, the extra directories and temp dirs; network access is ${state.network ? 'allowed' : 'blocked'}. "Operation not permitted" / "Read-only file system" errors usually come from the sandbox: do not retry them, tell the user.`
-    : 'Sandbox: off. Commands run with the full privileges of the user.'
-}
-
-/** The `refresh: 'turn'` reminder text: date, platform, git state, permission mode, sandbox, extra dirs. */
+/** The `refresh: 'turn'` reminder text: date, platform, git state, permission mode, extra dirs. */
 export function turnReminder(opts: {
   root: string
   mode: () => PermissionMode
   extraDirs: () => string[]
-  sandbox?: () => { enabled: boolean; kind: string; network: boolean }
 }): (ctx: Parameters<InstructionFn>[0]) => Promise<string> {
   return async () => {
     const lines = [
@@ -139,7 +128,6 @@ export function turnReminder(opts: {
       `Platform: ${platform()} ${release()}`,
       await gitSummary(opts.root),
       `Permission mode: ${MODE_TEXT[opts.mode()]}`,
-      ...(opts.sandbox ? [sandboxNote(opts.sandbox())] : []),
     ]
     const dirs = opts.extraDirs()
     if (dirs.length > 0) lines.push(`Extra directories mounted: ${dirs.join(', ')}`)

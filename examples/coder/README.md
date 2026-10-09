@@ -19,8 +19,8 @@ use**.
 | Virtual file tree, disk access, containment | `eharness/filesystem/node`: `nodeWorkspace` (`diskFs`, `mountFs`) | `request_directory_access` tool (asks, too-broad refusals) |
 | File tools, `glob`, images, tool-output eviction, skills | `eharness/filesystem` | the `.coder/skills` location |
 | Rewind of files and conversation | `filesystem({ checkpoints })` + `nodeCheckpointStore`, `rewindFiles`, `checkpointsSince`, `session.fork()` | which prompts `/rewind` lists, subagent edits in the rewind, session names |
-| `bash`, background shells, live output, OS sandbox | `eharness/shell`: `shell({ background })`, `localSandbox`, `shellTasks` | the `/tasks` page and footer (`app/tasks.ts`), settings toggle, sandbox line in the turn reminder |
-| Rules, modes, shell analysis, plan mode | `eharness/permissions`: `createPermissionEngine`, `permissionsPlugin` | app tool kinds, `.coder` protected paths, rule scopes written to `settings.local.json`, `request_directory_access` always asking, the approval broker, `describeApproval` (diffs), audit log, settings files and project trust |
+| `bash`, background shells, live output, OS sandbox | `eharness/shell`: `shell({ background })`, `localSandbox`, `shellTasks` | the `/tasks` page and footer (`app/tasks.ts`), settings toggle |
+| Rules, modes, shell analysis, plan mode | `eharness/permissions`: `createPermissionEngine`, `permissionsPlugin` | app tool kinds, `.coder` protected paths, `persist` writing project-scope rules to `settings.local.json`, `request_directory_access` as an `alwaysAsk` tool kind, the approval broker, `describeApproval` (diffs), audit log, settings files and project trust |
 | `agent` tool, child sessions, background agents | `eharness/subagent` (`approvals: 'inline'`) | agent definitions from files (`agents/load.ts`), `answer` = the broker labelled with the agent name |
 | `ask_user_question` | `eharness/ask`: `askUser`, `pendingQuestions`, `answerOutput` | the question dialog, the answer timeout |
 | `web_fetch`, `web_search` | `eharness/web`: `webFetch`, `webSearch` | turndown, DNS lookup, the OpenRouter / AI Gateway search call |
@@ -429,10 +429,12 @@ the **main agent only**: a subagent's own background shells or agents would die 
 
 When a task finishes (or a `notify_on` line matches) the event is delivered to the agent at its next
 step. If the agent is idle, the event wakes it: the library starts a `wake` turn (the plugins call
-`ctx.session.inject`) and the controller drives it like a prompt, with approvals and the stream
-shown as usual. A shell you stopped sends nothing; a stopped background agent reports `aborted`.
-All shells are stopped when coder exits. The `/tasks` list of background agents is derived from the
-stored messages and the child sessions' state, so it also works after a resume.
+`ctx.session.inject`), `session.onRun` hands it to the controller, and the controller drives it like
+a prompt, with approvals and the stream shown as usual (the same path takes queued turns and a steer
+that became a turn). A shell you stopped sends nothing; a stopped background agent reports `aborted`.
+All shells and background agents are stopped when coder exits. `/tasks` merges the library's
+`shellTasks` and `subagentTasks` services of the session (they live in this process: tasks of a
+session reopened after a restart are not listed).
 
 `/tasks` opens a page with every task, its status and tail output: `↑/↓` select, `Enter` shows the
 output, `k` stops a running task, `Esc` or `q` closes.
@@ -588,8 +590,8 @@ the file tools (those use the virtual path tree) or MCP servers and hooks. When 
 missing, coder says so and commands run unsandboxed; `/doctor` and `/status` show the state. The
 permission engine still asks as described in the Safety model; the sandbox is a second layer. A
 write blocked by the sandbox is reported to the model with a hint (the library's `SANDBOX_HINT`);
-whether the sandbox is on is told to the model in the turn reminder, so a live toggle applies at
-once.
+whether the sandbox is on is part of the `bash` tool description (library); a live toggle reopens
+the session handle so the description is resolved again.
 
 ### Doctor, memory
 
@@ -868,7 +870,7 @@ Notes:
 | Folder (`src/`) | Role and eharness features it exercises |
 |---|---|
 | `main.tsx`, `print.ts` | CLI (commander) and headless output; `HarnessRun` streams, `TurnResult.usage` |
-| `app/` | config (settings, trust), controller, agents, prompt, storage, models.dev catalog. `defineHarnessAgent`, `session.send` / `respond` / `fork`, `compaction`, `toolOutput` eviction, turn reminders (mode, sandbox, extra dirs), cost and context window from the catalog, JSON-file adapters. `agent.ts` composes the shipped plugins per agent; `checkpoints.ts` (rewind policy), `tasks.ts` (task list), `web-search.ts` (provider search) |
+| `app/` | config (settings, trust), controller, agents, prompt, storage, models.dev catalog. `defineHarnessAgent`, `session.send` / `respond` / `fork` / `onRun`, `compaction`, `toolOutput` eviction, turn reminders (mode, extra dirs), cost and context window from the catalog, JSON-file adapters. `agent.ts` composes the shipped plugins per agent; `checkpoints.ts` (rewind policy), `tasks.ts` (task list), `web-search.ts` (provider search) |
 | `workspace/` | `nodeWorkspace()` and the `request_directory_access` tool |
 | `permissions/` | the library engine configured for the app (`engine.ts`: tool kinds, protected paths, rule scopes, always-ask directory access), the approval broker, `describeApproval`, the audit log |
 | `agents/` | `drive.ts` answers `tool-pending` stops of the main agent (approvals, questions); `subagents.ts` is the `answer` callback of the `agent` tool; definitions from files (`load.ts`, `builtin.ts`) |
@@ -884,15 +886,10 @@ Layering: `workspace/`, `permissions/`, `agents/` and `app/` never import Ink or
 
 ## Library gaps found
 
-Everything that was a gap in the first version of the example is now a shipped module
-([P31](../../docs/plans/P31-library-from-coder.md)). What the example still works around:
-
-| Gap | Workaround here |
-|---|---|
-| No "always ask" tool kind in `eharness/permissions` (an allow rule or `bypassPermissions` approves any `other` tool) | `permissions/engine.ts` turns an approval of `request_directory_access` into an ask |
-| `persist(rules)` gets the whole rule set, not the change, so a session-only and a project-only "don't ask again" cannot be told apart | the wrapper remembers the change it is making |
-| No task service for background subagents (no list, no stop, no `data-subagent.run` part for a background run) | `app/tasks.ts` derives them from the stored messages and child sessions; stop = `childSession.abort()` |
-| A woken (`wake`) turn is not returned to anyone; `attach()` is `undefined` when it ended already | the controller watches `session.events()` for `turn-start` of kind `wake` |
-| `bash` description does not say whether the OS sandbox is on | the turn reminder says it |
-| `web_fetch` refuses a private host without telling how to allow it | none (the model-visible text differs from before) |
-| `checkpointsSince` / `rewindFiles` know one session, not its subagent sessions | `app/checkpoints.ts` walks `core.children` |
+Everything that was a gap in the example is now a shipped module or a library feature
+([P31](../../docs/plans/P31-library-from-coder.md)); no workaround for a library gap is left. The
+last ones were closed in `ecc9b59`: `alwaysAsk` tool kinds, `persist(rules, change)` with scopes,
+`session.onRun`, the `session.fork` hook and `sessionIds` for checkpoints, `subagentTasks`, and the
+sandbox state in the `bash` description. One small piece stays app-side: `session.children()` lists direct
+children only, so `app/checkpoints.ts` reads nested subagent sessions from the stored state before
+passing `sessionIds`.

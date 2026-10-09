@@ -2,7 +2,8 @@
  * Rewind (`/rewind`) and branch (`/branch`) on top of the library: file checkpoints are
  * `filesystem({ checkpoints })` + `rewindFiles` / `checkpointsSince`, the conversation is
  * `session.fork({ beforeMessageId })`. What stays here is policy: which points the UI lists, that
- * a rewind also covers the files subagents changed, and the copy of checkpoints into a fork.
+ * a rewind also covers the files subagents changed (`sessionIds`). The checkpoints of a fork are
+ * copied by the filesystem plugin's `session.fork` hook.
  *
  * Not checkpointed (library rule): changes made through the shell (`bash`, `!command`), other
  * tools and edits made outside the agent.
@@ -39,8 +40,6 @@ export interface Checkpoints {
    * it and returns the id of the NEW session (the old one is untouched) for the caller to switch to.
    */
   rewind(messageId: string, what: 'conversation' | 'code' | 'both'): Promise<RewindResult>
-  /** Copy the checkpoints of session `from` into `to` (a fork), only turns before `beforeKey`. */
-  copy(from: string, to: string, beforeKey?: string): Promise<void>
 }
 
 const rel = (path: string): string => path.replace(/^\/+/, '')
@@ -57,14 +56,15 @@ export function createCheckpoints(deps: CheckpointsDeps): Checkpoints {
   const max = deps.maxPoints ?? MAX_REWIND_POINTS
 
   /**
-   * A session and its descendants (subagent sessions): their edits are checkpointed under their
-   * own session ids, with turn keys that sort after the parent turn that started them.
+   * The descendants of a session (subagent sessions, nested too): their edits are checkpointed
+   * under their own session ids. `session.children()` only lists direct children, so deeper
+   * levels are read from the stored state.
    */
-  const family = async (id: string, depth = 0): Promise<string[]> => {
+  const descendants = async (id: string, depth = 0): Promise<string[]> => {
     const children = (await storage.state.get(id))?.core.children ?? []
     const nested =
-      depth < 4 ? await Promise.all(children.map((c) => family(c.sessionId, depth + 1))) : []
-    return [id, ...nested.flat()]
+      depth < 4 ? await Promise.all(children.map((c) => descendants(c.sessionId, depth + 1))) : []
+    return children.flatMap((c, i) => [c.sessionId, ...(nested[i] ?? [])])
   }
 
   const userMessages = async (sessionId: string): Promise<CoderMessage[]> =>
@@ -72,27 +72,22 @@ export function createCheckpoints(deps: CheckpointsDeps): Checkpoints {
       (m) => m.role === 'user' && !isKindMessage(m),
     )
 
-  const copy = async (from: string, to: string, beforeKey?: string): Promise<void> => {
-    for (const r of await store.list(from)) {
-      if (beforeKey !== undefined && r.turnKey >= beforeKey) continue
-      await store.save({ sessionId: to, turnKey: r.turnKey, path: r.path }, r.before)
-    }
-  }
-
   return {
-    copy,
-
     async rewindPoints() {
       const session = await deps.session()
-      const sessions = await family(session.id)
+      const sessionIds = await descendants(session.id)
       const users = (await userMessages(session.id)).slice(-max).reverse()
       const points: RewindPoint[] = []
       for (const message of users) {
         const files = new Set<string>()
-        for (const sessionId of sessions) {
-          const since = await checkpointsSince({ store, sessionId, fromTurnKey: message.id, fs })
-          for (const cp of since) if (cp.changed !== false) files.add(rel(cp.path))
-        }
+        const since = await checkpointsSince({
+          store,
+          sessionId: session.id,
+          sessionIds,
+          fromTurnKey: message.id,
+          fs,
+        })
+        for (const cp of since) if (cp.changed !== false) files.add(rel(cp.path))
         points.push({
           messageId: message.id,
           text: messageText(message, '\n'),
@@ -113,17 +108,20 @@ export function createCheckpoints(deps: CheckpointsDeps): Checkpoints {
 
       if (what === 'conversation' || what === 'both') {
         const forked = await session.fork({ beforeMessageId: messageId })
-        // earlier turns keep their snapshots in the new session (copied before a code rewind drops them)
-        await copy(session.id, forked.id, messageId)
+        // earlier turns keep their snapshots: the fork hook copied them before a code rewind drops them
         result.sessionId = forked.id
       }
 
       if (what === 'code' || what === 'both') {
         const touched = new Set<string>()
-        for (const sessionId of await family(session.id)) {
-          const out = await rewindFiles({ fs, store, sessionId, fromTurnKey: messageId })
-          for (const path of [...out.restored, ...out.deleted]) touched.add(rel(path))
-        }
+        const out = await rewindFiles({
+          fs,
+          store,
+          sessionId: session.id,
+          sessionIds: await descendants(session.id),
+          fromTurnKey: messageId,
+        })
+        for (const path of [...out.restored, ...out.deleted]) touched.add(rel(path))
         result.restoredFiles = [...touched].sort()
       }
       return result

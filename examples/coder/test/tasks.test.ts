@@ -1,163 +1,55 @@
 /**
- * The task list: background shells are the library's `shellTasks` (tested in the library, and
- * through the controller in integration.test.ts); what is tested here is the app's part: the hub
- * derives background subagents from stored messages and states, and a session woken by a
- * background event is driven by the controller (its approvals are answered).
+ * The task list and woken turns. Background shells and subagents are the library's `shellTasks`
+ * and `subagentTasks` services (tested in the library, and through the controller in
+ * integration.test.ts); what is tested here is the app's part: the merged list and stop, and that
+ * a run the controller did not start (a wake) is driven through `session.onRun`.
  */
 import { describe, expect, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { SessionStateSnapshot } from 'eharness'
 import { scriptedModel } from 'eharness/testing'
-import { createTaskHub } from '../src/app/tasks.ts'
-import type { CoderMessage } from '../src/contracts.ts'
-import { makeController, nextPending } from './helpers.ts'
-
-const CHILD = 'p1:agent:call-1'
-
-const started = (): CoderMessage =>
-  ({
-    id: 'a1',
-    role: 'assistant',
-    parts: [
-      {
-        type: 'tool-agent',
-        toolCallId: 'call-1',
-        state: 'output-available',
-        input: {},
-        output: `Started background subagent ${CHILD} (explore): look. around. You will be notified when it finishes.`,
-      },
-    ],
-  }) as unknown as CoderMessage
-
-const finished = (status: 'completed' | 'failed'): CoderMessage =>
-  ({
-    id: 'e1',
-    role: 'user',
-    parts: [
-      {
-        type: 'data-eh.event',
-        data: {
-          name: 'subagent',
-          text: 'done',
-          data: { sessionId: CHILD, agent: 'explore', status },
-        },
-      },
-    ],
-  }) as unknown as CoderMessage
-
-const childText = (text: string, stop?: string): CoderMessage =>
-  ({
-    id: 'c1',
-    role: 'assistant',
-    parts: [{ type: 'step-start' }, { type: 'text', text }],
-    metadata: { eharness: stop === undefined ? {} : { stop } },
-  }) as unknown as CoderMessage
-
-function hub(opts: {
-  messages: CoderMessage[]
-  child?: CoderMessage[]
-  state?: Partial<SessionStateSnapshot['core']> | null
-}) {
-  const stopped: string[] = []
-  const storage = {
-    state: {
-      get: async (id: string) =>
-        id === CHILD
-          ? opts.state === null
-            ? null
-            : { v: 1, rev: 1, core: opts.state ?? {}, plugins: {} }
-          : null,
-    },
-    messages: {
-      load: async ({ sessionId }: { sessionId: string }) =>
-        sessionId === CHILD ? (opts.child ?? []) : [],
-    },
-  }
-  const h = createTaskHub({
-    session: () => 'p1',
-    storage: storage as never,
-    messages: async () => opts.messages,
-    stopAgent: async (id, agent) => void stopped.push(`${agent}:${id}`),
-  })
-  return { h, stopped }
-}
+import { makeController, nextPending, routerModel } from './helpers.ts'
 
 describe('background subagents in the task list', () => {
-  test('a child with an active turn is running, with its latest text as the tail', async () => {
-    const { h } = hub({
-      messages: [started()],
-      child: [childText('looking at src')],
-      state: { activeTurn: { turnId: 't' } as never },
+  test('the subagentTasks service feeds /tasks: running with a tail, stoppable', async () => {
+    const model = routerModel((route) => {
+      if (route.isChild) return { text: 'CHILD REPORT', delayMs: 20_000 }
+      if (route.toolResults === 0) {
+        return {
+          toolCalls: [
+            {
+              toolName: 'agent',
+              input: {
+                subagent_type: 'explore',
+                description: 'look around',
+                prompt: 'look',
+                run_in_background: true,
+              },
+            },
+          ],
+        }
+      }
+      return { text: 'launched' }
     })
-    await h.refresh()
-    expect(h.tasks()).toMatchObject([
-      {
-        id: 'agent-1',
-        kind: 'agent',
-        label: 'explore: look. around',
-        status: 'running',
-        tail: 'looking at src',
-      },
-    ])
-    expect(h.taskOutput('agent-1')).toBe('looking at src')
-    h.close()
-  })
-
-  test('the report event decides: completed or failed (also after a restart)', async () => {
-    for (const status of ['completed', 'failed'] as const) {
-      const { h } = hub({
-        messages: [started(), finished(status)],
-        child: [childText('REPORT', 'complete')],
-      })
-      await h.refresh()
-      expect(h.tasks()[0]).toMatchObject({ status, tail: 'REPORT' })
-      expect(h.tasks()[0]?.endedAt).toBeGreaterThan(0)
-      h.close()
-    }
-  })
-
-  test('a child that stopped without a report event is judged by its stop reason', async () => {
-    const aborted = hub({ messages: [started()], child: [childText('half', 'aborted')], state: {} })
-    await aborted.h.refresh()
-    expect(aborted.h.tasks()[0]?.status).toBe('failed')
-    const done = hub({ messages: [started()], child: [childText('ok', 'complete')], state: {} })
-    await done.h.refresh()
-    expect(done.h.tasks()[0]?.status).toBe('completed')
-  })
-
-  test('stopTask aborts the child once and the task stays stopped', async () => {
-    const { h, stopped } = hub({
-      messages: [started()],
-      child: [childText('x')],
-      state: { activeTurn: { turnId: 't' } as never },
-    })
-    await h.refresh()
-    await h.stopTask('agent-1')
-    await h.stopTask('agent-1')
-    expect(stopped).toEqual([`explore:${CHILD}`])
-    await h.refresh()
-    expect(h.tasks()[0]?.status).toBe('stopped')
-    h.close()
-  })
-
-  test('listeners are told about changes and can unsubscribe', async () => {
-    const { h } = hub({
-      messages: [started(), finished('completed')],
-      child: [childText('R', 'complete')],
+    const { controller } = await makeController({
+      model,
+      flags: { permissionMode: 'bypassPermissions' },
     })
     const seen: string[] = []
-    const off = h.onTasks((list) => seen.push(list.map((t) => t.status).join()))
-    await h.refresh()
-    expect(seen).toEqual(['completed'])
-    off()
-    h.changed()
-    expect(seen).toHaveLength(1)
+    controller.onTasks((tasks) => seen.push(tasks.map((t) => t.status).join()))
+    await controller.run('go', { onRun() {} })
+    expect(controller.tasks()).toMatchObject([
+      { id: 'agent-1', kind: 'agent', label: 'explore: look around', status: 'running' },
+    ])
+    await controller.stopTask('agent-1')
+    expect(controller.tasks()[0]).toMatchObject({ status: 'stopped' })
+    expect(controller.tasks()[0]?.endedAt).toBeGreaterThan(0)
+    expect(seen).toContain('stopped')
   })
 })
 
 describe('a session woken by a background event', () => {
-  test('the controller drives the woken turn: its approval reaches the broker and the edit lands', async () => {
+  test('session.onRun hands the woken run to the controller: its approval reaches the broker and the edit lands', async () => {
     const model = scriptedModel([
       {
         toolCalls: [

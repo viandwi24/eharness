@@ -276,12 +276,12 @@ describe('allow()', () => {
     expect(() => readFileSync(local)).toThrow()
   })
 
-  test('duplicates and invalid rules are ignored', async () => {
+  test('duplicates are ignored and an invalid rule is refused', async () => {
     const engine = make('default')
     await engine.allow('Edit', 'session')
     await engine.allow('Edit', 'session')
-    await engine.allow('  ', 'session')
-    await engine.allow('Bash (x', 'session')
+    await expect(engine.allow('  ', 'session')).rejects.toThrow('invalid permission rule')
+    await expect(engine.allow('Bash (x', 'session')).rejects.toThrow('invalid permission rule')
     expect(engine.rules().allow).toEqual(['Edit'])
   })
 
@@ -442,8 +442,8 @@ describe('finding 9: addRule / removeRule', () => {
       permissions: { deny: ['Edit(y)'] },
     })
     expect(await engine.removeRule('deny', 'Edit(x)')).toBe(false)
-    // only in the file
-    expect(await engine.removeRule('deny', 'Edit(y)')).toBe(true)
+    // only in the file (not a rule of the engine): nothing to remove
+    expect(await engine.removeRule('deny', 'Edit(y)')).toBe(false)
     // only in memory, no file at all
     const lone = make('default', { ask: ['Read(z)'] })
     expect(await lone.removeRule('ask', 'Read(z)')).toBe(true)

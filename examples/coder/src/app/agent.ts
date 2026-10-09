@@ -188,7 +188,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
           .mounts()
           .filter((m) => m.virtual.startsWith('/@dirs/'))
           .map((m) => `${m.virtual} (${m.real})`),
-      sandbox: () => deps.sandbox.state(),
     }),
     refresh: 'turn' as const,
   }
@@ -277,7 +276,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         sandbox: deps.sandbox,
         ...(background ? { background: true } : {}),
       }),
-      ...(isMain && deps.taskHub ? [deps.taskHub.plugin] : []),
       ...(depth < config.maxAgentDepth
         ? [
             subagents({
@@ -297,6 +295,8 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
             }),
           ]
         : []),
+      // after `shell()` and `subagents()`: it reads their task services
+      ...(isMain && deps.taskHub ? [deps.taskHub.plugin] : []),
       filesystem({
         fs: workspace.fs,
         ...(deps.checkpoints ? { checkpoints: deps.checkpoints } : {}),
