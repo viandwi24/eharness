@@ -181,6 +181,27 @@ combine it with a session fork if you also want that. `memoryCheckpointStore()` 
 a web app with separate server processes implement the four-method `CheckpointStore` over your
 database.
 
+## Project instructions (`CLAUDE.md` / `AGENTS.md`)
+
+`projectInstructions()` loads the repository's instruction files from the `fs` service into the
+system prompt. Per directory the first existing file of `['CLAUDE.md', 'AGENTS.md']` wins; if
+both exist, `CLAUDE.md` is used and `AGENTS.md` is ignored for that directory. The root file is
+inlined once per session (static, cache-friendly); files in subdirectories are only listed so the
+model reads them before working there.
+
+```ts
+import { filesystem, projectInstructions } from 'eharness/filesystem'
+
+plugins: [
+  filesystem({ fs: diskFs('/work/project') }),
+  projectInstructions({ files: ['AGENTS.md', 'CLAUDE.md'], maxChars: 20_000 }), // optional
+]
+// ctx.services.projectInstructions → { root, nested, nestedOmitted } for a /memory page
+```
+
+Use `loadProjectInstructions(fs, opts)` to read the same information without a session, and
+`frame` / `nestedFrame` to change the wording. See spec 08 §13.
+
 ## Your own adapter
 
 A `FileSystem` has four required methods — `read`, `write` (with `ifVersion`), `delete`, `list` —

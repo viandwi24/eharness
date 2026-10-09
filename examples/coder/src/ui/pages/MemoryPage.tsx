@@ -1,4 +1,4 @@
-/** `/memory`: the memory files (AGENTS.md and friends) the agent reads. */
+/** `/memory`: the memory files (CLAUDE.md / AGENTS.md) the agent reads. */
 import { Text, useInput } from 'ink'
 import { type ReactElement, useState } from 'react'
 import type { CoderController } from '../../contracts.ts'
@@ -51,6 +51,7 @@ export function MemoryPage({
               <Text dimColor>
                 {'  '}
                 {f.scope} · {f.exists ? 'exists' : 'not created'}
+                {f.ignored && f.ignored.length > 0 ? ` · ${f.ignored.join(', ')} ignored` : ''}
               </Text>
             </Text>
           ))}

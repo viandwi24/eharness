@@ -629,3 +629,46 @@ base64 characters, so it is replaced by the `[output of read_file pruned: <n> ch
 once past `keepTurns`; the stored reference is untouched. Alternatives rejected: base64 in the
 stored output (megabytes per message, hits the 50 000-character output limit, duplicated into
 every adapter and reload) and a core change for media outputs (not needed).
+
+## 13. Project instructions
+
+`projectInstructions(opts?)` (also exported from `eharness/filesystem`) loads the project's
+instruction files (`CLAUDE.md`, `AGENTS.md`) from the `fs` service, so it works on the memory,
+disk and mounted file systems alike. Plugin: `name: 'project-instructions'`,
+`requires: ['fs']`, `provides: ['projectInstructions']`; place it **after** `filesystem()`.
+
+```ts
+export interface ProjectInstructionsOptions {
+  files?: string[]       // candidate names in priority order. Default ['CLAUDE.md', 'AGENTS.md']
+  root?: string          // directory of the root file / base of the nested search. Default '/'
+  maxChars?: number      // default 40_000, root file only
+  maxNested?: number     // default 50
+  nested?: boolean       // default true
+  exclude?: string[]     // prefixes never searched for nested files
+  frame?: (file: ProjectInstructionFile) => string
+  nestedFrame?: (files: NestedProjectInstructionFile[]) => string
+}
+export function loadProjectInstructions(fs: FileSystem, opts?): Promise<ProjectInstructionsInfo>
+```
+
+- **Preference rule (per directory).** The first existing name of `files` wins and only that file
+  is used; the others that exist in the same directory are reported in `ignored`. With the default
+  both `CLAUDE.md` and `AGENTS.md` present means `CLAUDE.md` only.
+- **Root file** → one static instruction (system block 1, spec 02 §5), framed by `frame`
+  (default: the maintainers' instructions for this repository; they override default style but
+  never the security rules or the user's explicit requests). It is read in the plugin's session
+  phase, i.e. once per session open, and never changes mid-session, so the prompt-cache prefix
+  stays stable (spec 02 §6); a new session (e.g. after `/clear`) reads it again. An empty or
+  whitespace-only file adds no text. Content over `maxChars` is cut and
+  `[truncated: <name> is longer than <n> characters]` appended.
+- **Nested files** (every directory below `root`, same per-directory preference) are **listed, not
+  inlined**, in a second static block (`nestedFrame`: "read the file with `read_file` before
+  working in that folder"). Sorted by path, at most `maxNested` (`nestedOmitted` counts the rest).
+  `.git` and `node_modules` directories, `/.eharness` and `exclude` prefixes are skipped; ignore
+  rules of the adapter (e.g. `diskFs` gitignore) apply through `list` / `glob`.
+- **Service** `projectInstructions: ProjectInstructionsInfo` = `{ root?, nested, nestedOmitted }`
+  (path, name, content, `chars`, `truncated`, `ignored`) for apps that show what was loaded.
+  `loadProjectInstructions(fs, opts)` is the same loader without the plugin (a `/memory` page can
+  call it outside a session). In `ContextStats.instructionBlocks` the text appears under the owner
+  `project-instructions` (`refresh: 'static'`).
+- Invalid options throw `EH_CONFIG_INVALID`; missing files never throw.

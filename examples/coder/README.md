@@ -195,7 +195,7 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | `/diff` | review the working-tree changes (page, see below) |
 | `/plan [description]` | switch to plan mode; with a description, start planning that task |
 | `/<name> [args]` | a custom command or a skill (see Custom commands) |
-| `/init` | ask the agent to write an `AGENTS.md` for the project |
+| `/init` | ask the agent to write the project instructions (`AGENTS.md`, or update an existing `CLAUDE.md`) |
 | `/exit` | quit |
 | `/compact [instructions]` | as `/compact`; the optional text tells the summary what to keep |
 | `/rewind` | restore code and/or conversation to an earlier prompt (also `Esc Esc`) |
@@ -612,8 +612,9 @@ the session handle so the description is resolved again.
   trust, MCP servers, LSP servers and that the data directory is writable. Each is `ok`, `warn` or
   `error` with a detail.
 - **`/memory`** lists the memory files the agent reads, in load order: user memory
-  `~/.coder/AGENTS.md`, then the project `AGENTS.md` (fallback `CLAUDE.md`), then nested
-  `AGENTS.md` files. Missing ones are listed too; `Enter` shows the edit command for `$EDITOR`.
+  `~/.coder/CLAUDE.md` (or `AGENTS.md`), then the project `CLAUDE.md` (or `AGENTS.md`), then nested
+  ones. When a directory has both, `CLAUDE.md` is loaded and the other is marked `ignored`.
+  Missing ones are listed too; `Enter` shows the edit command for `$EDITOR`.
   User memory is added to the static instructions ahead of the project file (capped at 40 000
   characters) and applies to every project.
 
@@ -881,11 +882,13 @@ Notes:
 
 ## Project memory, skills, MCP, sessions
 
-- **User memory.** `~/.coder/AGENTS.md` (if present) is added to the instructions before the
+- **User memory.** `~/.coder/CLAUDE.md`, else `~/.coder/AGENTS.md` (if present) is added to the instructions before the
   project file, for every project (see `/memory`).
-- **Project memory.** `AGENTS.md` at the project root is added to the instructions (fallback:
-  `CLAUDE.md`). Other `AGENTS.md` files in the tree are listed as virtual paths so the model can
-  read them when working there. `/init` asks the agent to write one.
+- **Project memory.** Loaded by the library's `projectInstructions()` plugin
+  (`eharness/filesystem`): per directory the first of `CLAUDE.md`, `AGENTS.md` wins (both present
+  means `CLAUDE.md` only). The root file is added to the static instructions once per session;
+  files in subfolders are listed as virtual paths so the model can read them when working there.
+  `/init` asks the agent to write an `AGENTS.md` (or update an existing `CLAUDE.md`).
 - **Skills.** If `<root>/.coder/skills/` exists and the project is trusted, it is loaded as a skill
   folder (`SKILL.md` per skill) through the filesystem plugin.
 - **MCP.** `mcpServers` in a settings file maps a server name to an `mcpServer()` transport config.

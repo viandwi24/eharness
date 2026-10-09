@@ -1,17 +1,26 @@
 /**
- * Memory files for `/memory` and the prompt: `<root>/AGENTS.md` (fallback `<root>/CLAUDE.md`),
- * the user memory `<userDir>/AGENTS.md`, nested `AGENTS.md` files, plus the `addDirectory` helper
- * of `/add-dir`.
- *
- * `app/project-memory.ts` only loads the project file; the integrator should also load
- * {@link loadUserMemory} and pass it into the session instructions (user memory first, static).
+ * Memory files for `/memory` and the prompt. Project instructions are loaded by the library
+ * (`projectInstructions()` of `eharness/filesystem`: per directory `CLAUDE.md` wins over
+ * `AGENTS.md`); this module lists them for `/memory`, loads the user memory
+ * (`<userDir>/CLAUDE.md`, else `<userDir>/AGENTS.md`) and holds the `addDirectory` helper of
+ * `/add-dir`.
  */
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, parse, resolve } from 'node:path'
+import {
+  type FileSystem,
+  loadProjectInstructions,
+  type ProjectInstructionsOptions,
+} from 'eharness/filesystem'
+import { diskFs } from 'eharness/filesystem/node'
 import type { Workspace } from '../contracts.ts'
 import { isInside } from '../workspace/dir-access.ts'
-import { loadProjectMemory } from './project-memory.ts'
+
+/** Options of the library's project instructions: the extra directories are not the project. */
+export const PROJECT_INSTRUCTIONS_OPTIONS: ProjectInstructionsOptions = {
+  exclude: ['/@dirs'],
+}
 
 /** One entry of `CoderController.memoryFiles()`. */
 export interface MemoryFile {
@@ -20,6 +29,8 @@ export interface MemoryFile {
   real: string
   exists: boolean
   scope: 'project' | 'user'
+  /** Files in the same directory that exist but are not loaded (e.g. `AGENTS.md` next to `CLAUDE.md`). */
+  ignored?: string[]
 }
 
 async function exists(file: string): Promise<boolean> {
@@ -30,49 +41,69 @@ async function exists(file: string): Promise<boolean> {
 }
 
 /**
- * The memory files in load order: the user file, the project file (`AGENTS.md`, or `CLAUDE.md`
- * when there is no `AGENTS.md`; the first one is listed as missing when neither exists), then
- * nested `AGENTS.md` files (project-relative, existing). Missing user/project files are listed
- * with `exists: false` so `/memory` can offer to create them.
+ * The memory files in load order: the user file, the project root file, then nested files
+ * (project-relative, existing). Per directory the library's preference applies (`CLAUDE.md`
+ * before `AGENTS.md`); the loser is reported in `ignored`. A missing user/project file is listed
+ * with `exists: false` (as `AGENTS.md`) so `/memory` can offer to create it.
  */
 export async function listMemoryFiles(opts: {
+  fs: FileSystem
   root: string
   userDir: string
 }): Promise<MemoryFile[]> {
   const out: MemoryFile[] = []
-  const userFile = join(opts.userDir, 'AGENTS.md')
+  const user = await loadUserMemory(opts.userDir)
+  const userName = user?.name ?? 'AGENTS.md'
   out.push({
-    path: '~/.coder/AGENTS.md',
-    real: userFile,
-    exists: await exists(userFile),
+    path: `~/.coder/${userName}`,
+    real: join(opts.userDir, userName),
+    exists: user !== undefined || (await exists(join(opts.userDir, userName))),
     scope: 'user',
+    ...(user !== undefined && user.ignored.length > 0 ? { ignored: user.ignored } : {}),
   })
-  const agents = join(opts.root, 'AGENTS.md')
-  const claude = join(opts.root, 'CLAUDE.md')
-  if (await exists(agents))
-    out.push({ path: 'AGENTS.md', real: agents, exists: true, scope: 'project' })
-  else if (await exists(claude))
-    out.push({ path: 'CLAUDE.md', real: claude, exists: true, scope: 'project' })
-  else out.push({ path: 'AGENTS.md', real: agents, exists: false, scope: 'project' })
-  const { nested } = await loadProjectMemory(opts.root)
-  for (const virtual of nested) {
-    const path = virtual.slice(1)
-    out.push({ path, real: join(opts.root, path), exists: true, scope: 'project' })
+  const info = await loadProjectInstructions(opts.fs, PROJECT_INSTRUCTIONS_OPTIONS)
+  if (info.root !== undefined) {
+    out.push({
+      path: info.root.name,
+      real: join(opts.root, info.root.name),
+      exists: true,
+      scope: 'project',
+      ...(info.root.ignored.length > 0 ? { ignored: info.root.ignored } : {}),
+    })
+  } else {
+    out.push({
+      path: 'AGENTS.md',
+      real: join(opts.root, 'AGENTS.md'),
+      exists: false,
+      scope: 'project',
+    })
+  }
+  for (const file of info.nested) {
+    const path = file.path.slice(1)
+    out.push({
+      path,
+      real: join(opts.root, path),
+      exists: true,
+      scope: 'project',
+      ...(file.ignored.length > 0 ? { ignored: file.ignored } : {}),
+    })
   }
   return out
 }
 
-/** Text of the user memory file, if it exists (capped at 40 000 characters). */
-export async function loadUserMemory(userDir: string): Promise<string | undefined> {
-  try {
-    const text = await readFile(join(userDir, 'AGENTS.md'), 'utf8')
-    if (text.trim() === '') return undefined
-    return text.length > 40_000
-      ? `${text.slice(0, 40_000)}\n\n[truncated: the user memory file is longer than 40000 characters]`
-      : text
-  } catch {
-    return undefined
-  }
+/**
+ * The user memory file of `userDir`: `CLAUDE.md`, else `AGENTS.md` (same preference as the
+ * project), capped at 40 000 characters. Undefined when neither exists or the text is blank.
+ */
+export async function loadUserMemory(
+  userDir: string,
+): Promise<{ name: string; text: string; ignored: string[] } | undefined> {
+  const info = await loadProjectInstructions(diskFs(userDir), { nested: false }).catch(
+    () => undefined,
+  )
+  const root = info?.root
+  if (root === undefined || root.content.trim() === '') return undefined
+  return { name: root.name, text: root.content, ignored: root.ignored }
 }
 
 /**

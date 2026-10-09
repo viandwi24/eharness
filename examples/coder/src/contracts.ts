@@ -631,7 +631,14 @@ export interface CoderController {
   // ─── workspace and memory ───
   addDirectory(path: string): Promise<string>
   memoryFiles(): Promise<
-    Array<{ path: string; real: string; exists: boolean; scope: 'project' | 'user' }>
+    Array<{
+      path: string
+      real: string
+      exists: boolean
+      scope: 'project' | 'user'
+      /** Files in the same directory that exist but are not loaded (`AGENTS.md` next to `CLAUDE.md`). */
+      ignored?: string[]
+    }>
   >
   // ─── background tasks ───
   tasks(): BackgroundTask[]

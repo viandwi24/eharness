@@ -83,7 +83,7 @@ export interface SlashCommand {
 
 /** Fixed prompt of `/init`. */
 export const INIT_PROMPT =
-  'Analyse this project: its layout, languages, build, test and lint commands, conventions and anything a new contributor should know. Then write an AGENTS.md at the project root that captures it concisely (commands first). If an AGENTS.md already exists, improve it instead of replacing it.'
+  'Analyse this project: its layout, languages, build, test and lint commands, conventions and anything a new contributor should know. Then write an AGENTS.md at the project root that captures it concisely (commands first). If a CLAUDE.md already exists at the project root, update that file instead (it takes precedence over AGENTS.md); if an AGENTS.md already exists, improve it instead of replacing it.'
 
 const RULE_KINDS: readonly (keyof PermissionRules)[] = ['allow', 'ask', 'deny']
 
@@ -473,7 +473,8 @@ export const slashCommands: SlashCommand[] = [
   },
   {
     name: 'init',
-    description: 'Ask the agent to write an AGENTS.md for this project',
+    description:
+      'Ask the agent to write or update the project instructions (AGENTS.md / CLAUDE.md)',
     run: (ctx) => ctx.submit(INIT_PROMPT),
   },
   {

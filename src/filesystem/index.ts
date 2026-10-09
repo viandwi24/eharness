@@ -6,6 +6,7 @@
  *
  * @see docs/specs/08-filesystem-plugin.md
  */
+import type { ProjectInstructionsInfo } from './project-instructions.ts'
 import type { FileSystem, ToolOutputStore } from './types.ts'
 
 export {
@@ -34,6 +35,19 @@ export {
   type FilesystemDataParts,
   filesystem,
 } from './plugin.ts'
+export {
+  DEFAULT_PROJECT_INSTRUCTION_FILES,
+  DEFAULT_PROJECT_INSTRUCTIONS_MAX_CHARS,
+  DEFAULT_PROJECT_INSTRUCTIONS_MAX_NESTED,
+  defaultNestedInstructionsFrame,
+  defaultProjectInstructionsFrame,
+  loadProjectInstructions,
+  type NestedProjectInstructionFile,
+  type ProjectInstructionFile,
+  type ProjectInstructionsInfo,
+  type ProjectInstructionsOptions,
+  projectInstructions,
+} from './project-instructions.ts'
 export { type FsSkillSourceOptions, fsSkillSource } from './skill-source.ts'
 export { type FileMediaRef, isFileMediaRef } from './tools.ts'
 export type {
@@ -62,5 +76,10 @@ declare module 'eharness' {
      * `EH_SERVICE_MISSING` (declare `requires: ['toolOutputs']` to get a boot error instead).
      */
     toolOutputs: ToolOutputStore
+    /**
+     * What `projectInstructions()` loaded at session open (spec 08 §13): the chosen root file,
+     * the nested files and the candidates that lost the preference.
+     */
+    projectInstructions: ProjectInstructionsInfo
   }
 }

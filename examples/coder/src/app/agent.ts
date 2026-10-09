@@ -25,7 +25,12 @@ import {
   type StateAdapter,
 } from 'eharness'
 import { askUser } from 'eharness/ask'
-import { type CheckpointStore, filesystem } from 'eharness/filesystem'
+import {
+  type CheckpointStore,
+  filesystem,
+  loadProjectInstructions,
+  projectInstructions,
+} from 'eharness/filesystem'
 import { mcpServer } from 'eharness/mcp'
 import { domainSpecifierMatches, parseRule, permissionsPlugin } from 'eharness/permissions'
 import { type LocalSandbox, shell } from 'eharness/shell'
@@ -46,14 +51,9 @@ import type { LspManager } from '../lsp/index.ts'
 import { createLspTools } from '../lsp/index.ts'
 import { auditLog, type CoderPermissionEngine } from '../permissions/index.ts'
 import { createDirAccessTool } from '../workspace/index.ts'
+import { PROJECT_INSTRUCTIONS_OPTIONS } from './memory-files.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
-import { loadProjectMemory } from './project-memory.ts'
-import {
-  projectInstructions,
-  STATIC_INSTRUCTIONS,
-  subagentInstructions,
-  turnReminder,
-} from './prompt.ts'
+import { STATIC_INSTRUCTIONS, subagentInstructions, turnReminder } from './prompt.ts'
 import type { TaskHub } from './tasks.ts'
 import { htmlToMarkdown, resolveHost, type SearchFn } from './web-search.ts'
 
@@ -104,8 +104,8 @@ export interface CreateAgentsDeps {
   extraPlugins?: (agent: { main: boolean }) => Array<ReturnType<typeof definePlugin>>
   /** Plugins of the MAIN agent only (compact focus). */
   mainPlugins?: Array<ReturnType<typeof definePlugin>>
-  /** User memory text (`~/.coder/AGENTS.md`), a SESSION instruction after the project memory. */
-  userMemory?: () => Promise<string | undefined>
+  /** User memory text (`~/.coder/AGENTS.md`), a SESSION instruction (the project memory is a static one). */
+  userMemory?: () => Promise<{ name: string; text: string } | undefined>
   /**
    * Text of the active output style, a SESSION instruction of the main agent. Evaluated when the
    * session opens: the controller closes the session handle after a style change so the next turn
@@ -134,8 +134,10 @@ export interface Agents {
  * rest of the `app` instruction block, so `/context` subtracts this estimate from it.
  */
 export interface AgentContextInfo {
-  /** Project and user memory text in the instructions (estimated). */
+  /** User memory text in the `app` instruction block (estimated). */
   memoryTokens: number
+  /** Project memory text (owned by the `project-instructions` plugin; estimated). */
+  projectMemoryTokens: number
   memoryFiles: Array<{ path: string; tokens: number }>
 }
 
@@ -174,8 +176,6 @@ function hostAllowedBy(permissions: CoderPermissionEngine, host: string): boolea
  */
 export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
   const { config, workspace, permissions } = deps
-  const memory = await loadProjectMemory(config.root)
-  const projectText = projectInstructions(memory)
   // project skills are repo content: only loaded once the project is trusted
   const hasSkills = config.trusted && existsSync(join(config.root, '.coder', 'skills'))
   const auditFile = join(config.projectDataDir, 'audit.jsonl')
@@ -214,23 +214,21 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     const userMemory = deps.userMemory
     const userMemoryText = userMemory
       ? (): Promise<string | undefined> =>
-          userMemory().then((text) =>
-            text === undefined
+          userMemory().then((memory) =>
+            memory === undefined
               ? undefined
-              : `# User instructions (~/.coder/AGENTS.md)\n\nThe user wrote these personal instructions for every project. Follow them.\n\n${text.trim()}`,
+              : `# User instructions (~/.coder/${memory.name})\n\nThe user wrote these personal instructions for every project. Follow them.\n\n${memory.text.trim()}`,
           )
       : undefined
     const instructions = isMain
       ? [
           STATIC_INSTRUCTIONS,
-          ...(projectText ? [projectText] : []),
           ...(userMemoryText ? [userMemoryText] : []),
           ...(deps.outputStyle ? [deps.outputStyle] : []),
           reminder,
         ]
       : [
           subagentInstructions(def),
-          ...(projectText && !def.omitProjectMemory ? [projectText] : []),
           ...(userMemoryText && !def.omitProjectMemory ? [userMemoryText] : []),
           reminder,
         ]
@@ -302,6 +300,10 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         ...(deps.checkpoints ? { checkpoints: deps.checkpoints } : {}),
         ...(hasSkills ? { skills: { root: '/.coder/skills' } } : {}),
       }),
+      // right after `filesystem()` (it reads the `fs` service); a static instruction (block 1)
+      ...(def?.omitProjectMemory === true
+        ? []
+        : [projectInstructions(PROJECT_INSTRUCTIONS_OPTIONS)]),
       todos(),
       webFetch({
         allow: (host) => hostAllowedBy(permissions, host),
@@ -382,16 +384,19 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     main,
     agentFor,
     async contextInfo(): Promise<AgentContextInfo> {
-      const userText = await deps.userMemory?.().catch(() => undefined)
-      const memoryTokens = estimateTokens(projectText ?? '') + estimateTokens(userText ?? '')
+      const user = await deps.userMemory?.().catch(() => undefined)
+      const project = (await loadProjectInstructions(workspace.fs, PROJECT_INSTRUCTIONS_OPTIONS))
+        .root
       return {
-        memoryTokens,
+        // the user memory sits in the `app` instruction block; the project file has its own owner
+        memoryTokens: estimateTokens(user?.text ?? ''),
+        projectMemoryTokens: estimateTokens(project?.content ?? ''),
         memoryFiles: [
-          ...(memory.file !== undefined && memory.text !== undefined
-            ? [{ path: `/${memory.file}`, tokens: estimateTokens(memory.text) }]
+          ...(project !== undefined
+            ? [{ path: project.path, tokens: estimateTokens(project.content) }]
             : []),
-          ...(userText !== undefined
-            ? [{ path: '~/.coder/AGENTS.md', tokens: estimateTokens(userText) }]
+          ...(user !== undefined
+            ? [{ path: `~/.coder/${user.name}`, tokens: estimateTokens(user.text) }]
             : []),
         ],
       }

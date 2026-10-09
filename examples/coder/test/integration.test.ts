@@ -501,6 +501,25 @@ describe('memory and directories', () => {
     )
   })
 
+  test('CLAUDE.md wins over AGENTS.md; nested files are listed in the prompt', async () => {
+    const model = routerModel(() => ({ text: 'ok' }))
+    const { controller } = await makeController({
+      model,
+      files: {
+        'CLAUDE.md': 'CLAUDE-MEM-TEXT',
+        'AGENTS.md': 'AGENTS-MEM-TEXT',
+        'pkg/AGENTS.md': 'nested',
+      },
+    })
+    const files = await controller.memoryFiles()
+    expect(files[1]).toMatchObject({ path: 'CLAUDE.md', ignored: ['AGENTS.md'] })
+    await turn(controller, 'hi')
+    const text = model.routes.at(-1)?.system ?? ''
+    expect(text).toContain('CLAUDE-MEM-TEXT')
+    expect(text).not.toContain('AGENTS-MEM-TEXT')
+    expect(text).toContain('/pkg/AGENTS.md')
+  })
+
   test('addDirectory mounts the directory', async () => {
     const { controller } = await makeController({ model: scriptedModel([]) })
     const other = await tempDir('coder-extra-')

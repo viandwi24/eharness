@@ -13,6 +13,7 @@ import {
   type TurnResult,
   version,
 } from 'eharness'
+import { loadProjectInstructions } from 'eharness/filesystem'
 import { nodeCheckpointStore } from 'eharness/filesystem/node'
 import { capOutput, detectOsSandbox, localSandbox } from 'eharness/shell'
 import { driveTurn, loadAgentDefinitions } from '../agents/index.ts'
@@ -55,12 +56,16 @@ import { computeDiff } from './diff.ts'
 import { runDoctor } from './doctor.ts'
 import { addHistory, readHistory } from './history.ts'
 import { createHookRunner, hasHooks, hooksPlugin } from './hooks.ts'
-import { addDirectory, listMemoryFiles, loadUserMemory } from './memory-files.ts'
+import {
+  addDirectory,
+  listMemoryFiles,
+  loadUserMemory,
+  PROJECT_INSTRUCTIONS_OPTIONS,
+} from './memory-files.ts'
 import type { ModelState } from './model-switch.ts'
 import { loadProviderModels } from './models.ts'
 import { createOutputStyles } from './output-styles.ts'
 import { loadPreferences, savePreferences } from './preferences.ts'
-import { loadProjectMemory } from './project-memory.ts'
 import { createModelResolver, KEY_ENV } from './provider.ts'
 import { createRecap } from './recap.ts'
 import { createSessionTools } from './session-tools.ts'
@@ -746,19 +751,25 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         if (t.source.startsWith('source:mcp:')) mcpTokens += t.tokens
         else toolTokens += t.tokens
       }
-      // The core cannot tell the memory blocks from the rest of the `app` instruction block, so
-      // the app's own memory estimate is subtracted from it.
+      // The project memory has its own owner; the user memory sits in the `app` instruction block
+      // (the core cannot tell it apart), so the app's own estimate is subtracted from it.
       let app = 0
+      let project = 0
       let skills = 0
       let other = 0
       for (const b of stats.instructionBlocks ?? []) {
         if (b.owner === 'app') app += b.tokens
+        else if (b.owner === 'project-instructions') project += b.tokens
         else if (b.owner === 'core:skills') skills += b.tokens
         else other += b.tokens
       }
-      const memory = Math.min(info.memoryTokens, app)
+      const memory = Math.min(info.memoryTokens, app) + project
       const categories: ContextCategory[] = [
-        { key: 'system', label: 'System prompt', tokens: app - memory + other },
+        {
+          key: 'system',
+          label: 'System prompt',
+          tokens: app - Math.min(info.memoryTokens, app) + other,
+        },
         { key: 'memory', label: 'Memory files', tokens: memory },
         { key: 'skills', label: 'Skills', tokens: skills },
         { key: 'tools', label: 'Tools', tokens: toolTokens },
@@ -818,7 +829,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     },
 
     async status(): Promise<StatusInfo> {
-      const memory = await loadProjectMemory(config.root)
+      const memory = (await loadProjectInstructions(workspace.fs, PROJECT_INSTRUCTIONS_OPTIONS))
+        .root
       const settingsFiles = await Promise.all(
         Object.values(config.settingsFiles).map(async (path) => ({
           path,
@@ -840,7 +852,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         mounts: workspace.mounts(),
         trusted: config.trusted,
         untrusted: config.untrusted,
-        ...(memory.file !== undefined ? { memoryFile: memory.file } : {}),
+        ...(memory !== undefined ? { memoryFile: memory.name } : {}),
         mcpServers: Object.keys(config.mcpServers),
         agents: definitions.length,
         settingsFiles,
@@ -943,7 +955,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     // ─── workspace and memory ───
     addDirectory: (path: string): Promise<string> => addDirectory(workspace, path),
-    memoryFiles: () => listMemoryFiles({ root: config.root, userDir: config.userDir }),
+    memoryFiles: () =>
+      listMemoryFiles({ fs: workspace.fs, root: config.root, userDir: config.userDir }),
 
     // ─── background tasks ───
     tasks: (): BackgroundTask[] => taskHub.tasks(),
