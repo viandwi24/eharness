@@ -52,6 +52,11 @@ export function renderAt(tree: ReactElement, columns: number, rows = 40) {
     stdin,
     frames: stdout.frames,
     lastFrame: (): string => stdout.frames[stdout.frames.length - 1] ?? '',
+    /** Change the column count and emit `resize`, like a terminal window being resized. */
+    resize: (next: number): void => {
+      stdout.columns = next
+      stdout.emit('resize')
+    },
     unmount: (): void => {
       instance.unmount()
       instance.cleanup()

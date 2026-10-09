@@ -7,6 +7,7 @@ import { FooterTasks, taskRowText } from '../src/ui/FooterTasks.tsx'
 import { effortLevels, effortLine } from '../src/ui/pickers/ModelPicker.tsx'
 import { moveIndex, selectAction } from '../src/ui/select.ts'
 import { fakeController } from './fake-controller.ts'
+import { renderAt } from './term.tsx'
 
 const ENTER = '\r'
 const ESC = '\x1b'
@@ -322,5 +323,26 @@ describe('dialogs and Ctrl+C', () => {
     await m.type(CTRL_C)
     await until(() => m.broker.answers.length === 1, 'declined')
     expect(m.broker.answers[0]?.answer).toMatchObject({ approved: false })
+  })
+})
+
+describe('terminal resize', () => {
+  test('a narrower terminal clears the screen and reprints the transcript once it settles', async () => {
+    const fake = fakeController()
+    const app = renderAt(<App controller={fake.controller} />, 80)
+    cleanup.push(() => app.unmount())
+    await tick()
+    const clears = (): number => app.frames.filter((f) => f.includes('\x1b[3J')).length
+    expect(clears()).toBe(0)
+    app.resize(70)
+    app.resize(60)
+    await tick(50)
+    expect(clears()).toBe(0) // still settling: one redraw per resize burst
+    await until(() => clears() === 1, 'redraw after resize')
+    await tick(200)
+    expect(clears()).toBe(1)
+    app.resize(60) // same width: nothing to reflow
+    await tick(250)
+    expect(clears()).toBe(1)
   })
 })

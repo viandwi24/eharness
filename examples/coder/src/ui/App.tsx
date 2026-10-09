@@ -108,6 +108,7 @@ const EXIT_WINDOW_MS = 2000
 const CTRL_D_WINDOW_MS = 800
 const HINT_MS = 3000
 const CLEAR_SCREEN = '\x1b[2J\x1b[3J\x1b[H'
+const RESIZE_SETTLE_MS = 150
 
 /** Terminal side effects only on a real terminal (piped output and tests stay clean). */
 const defaultNotify = (text: string, mode: 'off' | 'bell' | 'desktop'): void => {
@@ -239,6 +240,32 @@ export function App({
   pendingRef.current = pending.length
   const promptHistoryRef = useRef(promptHistory)
   promptHistoryRef.current = promptHistory
+  // A narrower terminal reflows the previous frame, so Ink's erase-by-line-count leaves stale
+  // rows behind. Like Claude Code, clear and reprint the whole transcript at the new width once the
+  // resize settles (on the primary screen only; a page open on the alternate screen defers it).
+  const [resizePending, setResizePending] = useState(false)
+  useEffect(() => {
+    const tty = stdout as NodeJS.WriteStream
+    let width = tty.columns
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const onResize = (): void => {
+      if (tty.columns === width) return
+      width = tty.columns
+      clearTimeout(timer)
+      timer = setTimeout(() => setResizePending(true), RESIZE_SETTLE_MS)
+    }
+    stdout.on('resize', onResize)
+    return () => {
+      clearTimeout(timer)
+      stdout.off('resize', onResize)
+    }
+  }, [stdout])
+  useEffect(() => {
+    if (!resizePending || pageHost.active) return
+    setResizePending(false)
+    stdout.write(CLEAR_SCREEN)
+    dispatch({ type: 'redraw' })
+  }, [resizePending, pageHost.active, stdout])
   const busy = useRef(false)
   const lastCtrlC = useRef(0)
   const hintTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
