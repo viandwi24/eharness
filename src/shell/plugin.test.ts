@@ -543,3 +543,96 @@ describe('background tasks', () => {
     await (session as never as { close(): Promise<void> }).close()
   })
 })
+
+describe('moving a running foreground command to the background', () => {
+  test('background() detaches it: the call returns at once, the task keeps its output and notifies on exit', async () => {
+    const events: ShellTaskEvent[] = []
+    let tasks: import('./tasks.ts').ShellTasks | undefined
+    const probe = definePlugin({
+      name: 'probe',
+      requires: ['shellTasks'],
+      setup: () => ({
+        hooks: {
+          'step.prepare': (ctx) => {
+            tasks = ctx.services.shellTasks
+          },
+        },
+      }),
+    })
+    const model = scriptedModel([
+      call('bash', { command: 'echo first; sleep 0.8; echo second', description: 'slow' }),
+      call('wait', { ms: 1200 }),
+      call('bash_output', { id: 'bash-1' }),
+      { text: 'done' },
+    ])
+    const agent = defineHarnessAgent({
+      model,
+      contextWindow: 100_000,
+      logger: silent,
+      plugins: [
+        shell({
+          sandbox: localSandbox(await temp()),
+          timeoutMs: 400,
+          background: true,
+          onTaskEvent: (e) => void events.push(e),
+        }),
+        waiter,
+        probe,
+      ],
+    })
+    const session = agent.session('s')
+    const run = session.send('go')
+    await until(() => tasks !== undefined)
+    await sleep(150)
+    // nothing to move for an unknown tool call id
+    expect(tasks?.background('nope')).toEqual([])
+    // the 400 ms foreground timeout no longer applies once it is a background task
+    expect(tasks?.background()).toEqual(['bash-1'])
+    expect(tasks?.background()).toEqual([])
+    expect((await run.result).stop).toBe('complete')
+    const [text] = await outputs(session, 'bash')
+    expect(text).toContain('Command moved to the background as task bash-1 by the user.')
+    expect(text).toContain('first')
+    expect(text).toContain('Use bash_output to read more; you will be notified when it finishes.')
+    expect(tasks?.get('bash-1')?.label).toBe('slow')
+    await until(() => tasks?.get('bash-1')?.status === 'completed')
+    expect(tasks?.output('bash-1')).toContain('second')
+    expect(tasks?.get('bash-1')?.exitCode).toBe(0)
+    await until(() => events.length === 1)
+    expect(events[0]).toMatchObject({ taskId: 'bash-1', type: 'exit' })
+    expect(events[0]?.payload.text).toContain('exited with code 0')
+    // every tool call has a result
+    expect((await outputs(session, 'bash_output'))[0]).toContain('[bash-1: completed, exit code 0]')
+    await session.close()
+  })
+
+  test('without background enabled nothing can be moved', async () => {
+    let tasks: import('./tasks.ts').ShellTasks | undefined
+    const probe = definePlugin({
+      name: 'probe',
+      requires: ['shellTasks'],
+      setup: () => ({
+        hooks: {
+          'step.prepare': (ctx) => {
+            tasks = ctx.services.shellTasks
+          },
+        },
+      }),
+    })
+    const model = scriptedModel([call('bash', { command: 'sleep 0.3' }), { text: 'ok' }])
+    const agent = defineHarnessAgent({
+      model,
+      contextWindow: 100_000,
+      logger: silent,
+      plugins: [shell({ sandbox: localSandbox(await temp()) }), probe],
+    })
+    const session = agent.session('s')
+    const run = session.send('go')
+    await until(() => tasks !== undefined)
+    await sleep(100)
+    expect(tasks?.background()).toEqual([])
+    await run.result
+    expect((await outputs(session, 'bash'))[0]).toContain('Exit code 0')
+    await session.close()
+  })
+})

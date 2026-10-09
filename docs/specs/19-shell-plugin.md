@@ -120,6 +120,7 @@ interface ShellTasks {
   stop(id: string): Promise<void>           // marks 'stopped', then kills the group
   stopAll(): Promise<void>
   subscribe(listener: (tasks: ShellTask[]) => void): () => void
+  background(toolCallId?: string): string[] // move running foreground bash calls to the background (§4.1)
 }
 interface ShellTask {
   id: string; label: string; command: string
@@ -132,6 +133,20 @@ interface ShellTask {
 errors are swallowed. A completed task is `completed` with exit code 0, else `failed`; a task that
 was stopped stays `stopped` whatever the process reports. On session close (and when the
 session's `ctx.signal` aborts) every running task is stopped.
+
+### 4.1 Moving a running foreground command to the background
+
+`background(toolCallId?)` (Ctrl+B in Claude Code) detaches the running foreground `bash` calls of
+the session (all, or only that tool call) and returns the new task ids (`[]` when nothing was
+running, the call was unknown, `maxTasks` is reached, or `background` is not enabled). Each call
+registers a task in the same registry (`bash-<n>`, same id counter as `run_in_background`); the
+output so far is copied into it and the process keeps being captured. The foreground timeout and
+the tool call's abort signal no longer apply (a background task lives until it exits, is stopped,
+or the session closes). The tool call resolves at once with `Command moved to the background as
+task <id> by the user. Output so far:\n<tail>\nUse bash_output to read more; you will be notified
+when it finishes.` (`…Use bash_output to read more.` when `notify: false`). On exit the registry
+is completed and the `exit` event is delivered exactly like a `run_in_background` task (§5);
+`notify_on` monitors do not apply. The live `data-shell.output` chunks stop at the detach.
 
 ## 5. Task events and the three profiles
 

@@ -156,6 +156,7 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | Alt+P | model picker |
 | Alt+T | thinking picker |
 | Ctrl+O | transcript viewer (full tool output, reasoning expanded) |
+| Ctrl+B | while a turn runs: move the running foreground `bash` / `agent` calls to the background (`shellTasks.background()`, `subagentTasks.background()`); otherwise cursor left |
 | Ctrl+L | redraw the screen |
 | Ctrl+C twice | exit (the first press clears the input) |
 | `?` | shortcuts panel (empty prompt) |

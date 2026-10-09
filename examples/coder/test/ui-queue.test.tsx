@@ -153,3 +153,38 @@ describe('message queue', () => {
     await until(() => calls.includes('run:queued msg'), 'queued sent', 3000)
   })
 })
+
+describe('Ctrl+B', () => {
+  const CTRL_B = '\x02'
+
+  test('while a turn runs it moves foreground work to the background and shows a hint and a task row', async () => {
+    const { frame, type, calls } = mount({ script: SLOW, backgroundable: ['bash-2'] })
+    await type('go')
+    await type(ENTER)
+    await until(() => calls.includes('run:go'), 'run')
+    await type(CTRL_B)
+    await until(() => calls.includes('backgroundRunning'), 'background call')
+    await until(() => frame().includes('moved to background · bash-2'), 'hint')
+    await until(() => frame().includes('sleep bash-2'), 'footer task row')
+  })
+
+  test('when nothing can be backgrounded, or no turn runs, it keeps moving the cursor left', async () => {
+    const { frame, type, calls } = mount({ script: SLOW })
+    // idle: no controller call at all
+    await type('abc')
+    await type(CTRL_B)
+    await type('X')
+    expect(frame()).toContain('abXc')
+    expect(calls).not.toContain('backgroundRunning')
+    await type(ENTER)
+    await until(() => calls.includes('run:abXc'), 'run')
+    // running, but nothing to move
+    await type('abc')
+    await type(CTRL_B)
+    await until(() => calls.includes('backgroundRunning'), 'background call')
+    await tick(60)
+    await type('Y')
+    expect(frame()).toContain('abYc')
+    expect(frame()).not.toContain('moved to background')
+  })
+})

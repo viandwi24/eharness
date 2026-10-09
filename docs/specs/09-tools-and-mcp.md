@@ -64,6 +64,8 @@ export interface McpServerOptions {
   connect?: 'lazy' | 'eager'
   /** Pin tool definitions on first connect and block changed definitions (drift). Default false. */
   pinDefinitions?: boolean
+  /** Frame text results as untrusted content (spec 03 §10). Default true. */
+  wrapUntrusted?: boolean
   /** createMCPClient `maxRetries`: retries of tools/call requests only (not connect). Default 0. */
   maxRetries?: number
   refresh?: 'session' | 'turn'
@@ -136,6 +138,13 @@ Lifecycle:
   `undefined` keeps the derived risk; a function that throws or returns an invalid value keeps
   the derived risk and logs `ctx.log.warn`. Pins (`fingerprintTools`) are computed on the
   server's tools before `risk` is applied.
+- Result mapping (`wrapUntrusted`, default `true`): the listed tool's `toModelOutput` is wrapped
+  so every `text` part of a `content` output becomes
+  `untrustedContent(text, { source: 'mcp', name: '<server>/<tool>' })` (spec 03 §10). Image/file
+  parts, the `json` output of structured results and the `isError` flag are unchanged (an error
+  result's text is framed too: the server wrote it). The stored UI tool output stays the raw MCP
+  result; only the model-visible projection is framed. `mcpServer` exposes tool calls only (no
+  resource reads).
 - Connection failures → `W_TOOL_SOURCE_FAILED`, zero tools, retried at the next turn regardless
   of `refresh`.
 

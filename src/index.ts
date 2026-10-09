@@ -83,7 +83,12 @@ export {
   type WarningCode,
 } from './errors.ts'
 export { type DataChunk, type DataPartDef, defineDataPart } from './messages/data-parts.ts'
-export { neutralizeTags } from './messages/framing.ts'
+export {
+  neutralizeTags,
+  UNTRUSTED_CONTENT_INSTRUCTIONS,
+  type UntrustedContentOptions,
+  untrustedContent,
+} from './messages/framing.ts'
 export { isUuidV7, uuidv7 } from './messages/ids.ts'
 export {
   type CreateKindMessageOptions,

@@ -190,6 +190,29 @@ permissionsPlugin({
 A per-session "always allow" without writing a rule is the core's `remember: 'session'` grant
 (spec 11 §3.1).
 
+## Prompt injection
+
+Tool output from outside your control (web pages, search results, MCP servers, files someone else
+wrote) can contain instructions aimed at the model. No single layer stops that; stack them:
+
+1. **Framing.** `webFetch`, `webSearch` and `mcpServer` wrap their text results in
+   `<untrusted-content source="…">…</untrusted-content>` (`untrustedContent()` from `eharness`;
+   text inside cannot close the frame). Put `UNTRUSTED_CONTENT_INSTRUCTIONS` in your instructions
+   so the model knows to treat the frame as data. Opt out with `wrapUntrusted: false`.
+   Filesystem reads are **not** framed (the project is the user's own workspace and framing every
+   read is noisy); wrap a tool result yourself with `untrustedContent()` where you read files you
+   do not trust (downloads, other users' uploads).
+2. **Permissions.** Reads of untrusted data are harmless only if the dangerous tools (shell,
+   writes, network, `external` and `destructive` risks) still ask. Keep approval on for them.
+3. **Auto mode.** The classifier never sees tool outputs, so an injected page cannot talk the
+   classifier into approving an action.
+4. **Sandbox.** Run the shell in a sandbox and restrict `webFetch` with `onlyAllowed` / `allow`
+   for autonomous servers.
+5. **Containment.** Least-privilege credentials per session, no secrets in the model's reach,
+   per-user MCP transports, budgets and abort.
+
+Framing lowers the odds; permissions and containment limit the damage when it fails.
+
 ## Plugin options
 
 | Option | What |

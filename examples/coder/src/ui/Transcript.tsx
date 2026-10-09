@@ -1,4 +1,4 @@
-import { Box, Static, Text } from 'ink'
+import { Box, Static, Text, useWindowSize } from 'ink'
 import { type ReactElement, useRef } from 'react'
 import type { CoderConfig, CoderMessage, ModelProvider, ThinkingLevel } from '../contracts.ts'
 import { Branch } from './Branch.tsx'
@@ -184,11 +184,15 @@ export function Transcript({
   // streaming in the current step replaces it with its own "Thinking…" line.
   const waiting = state.running && !hasStreamingReasoning(currentStepParts(live))
   const startedAt = useRunStart(state.running)
+  // <Static> lays its items out absolutely, without the terminal width: give each entry the width
+  // explicitly, or a row like `⏺ text` wraps its text at the full width plus the bullet column and
+  // the terminal hard-wraps the overflow mid-word.
+  const { columns } = useWindowSize()
   return (
     <>
       <Static key={state.epoch} items={state.entries}>
         {(entry) => (
-          <Box key={entry.id} flexDirection="column">
+          <Box key={entry.id} flexDirection="column" width={columns}>
             <EntryView
               entry={entry}
               config={config}

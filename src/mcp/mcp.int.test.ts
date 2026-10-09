@@ -98,6 +98,22 @@ describe('mcpServer: listing', () => {
     await agent.close()
   })
 
+  test('text results reach the model framed as untrusted; UI output and opt-out stay raw', async () => {
+    for (const wrap of [undefined, false]) {
+      const server = fakeMcpServer(tools())
+      const { agent, model } = setup(
+        [{ toolCalls: [{ toolName: 'gh_search_issues', input: { q: 'bug' } }] }, { text: 'done' }],
+        { mcp: [gh(server, wrap === undefined ? {} : { wrapUntrusted: wrap })] },
+      )
+      await agent.session('s1').send('find bugs').result
+      const prompt = JSON.stringify(model.prompts[1])
+      const frame = '<untrusted-content source=\\"mcp\\" name=\\"gh/search_issues\\">'
+      expect(prompt.includes(frame)).toBe(wrap === undefined)
+      expect(prompt).toContain('found: bug')
+      await agent.close()
+    }
+  })
+
   test("prefix: custom and '' (disabled)", async () => {
     const server = fakeMcpServer(tools())
     const custom = setup([{ text: 'a' }], { mcp: [gh(server, { prefix: 'github__' })] })

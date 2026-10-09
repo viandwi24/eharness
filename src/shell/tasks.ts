@@ -40,6 +40,13 @@ export interface ShellTasks {
   stopAll(): Promise<void>
   /** Called with the full list after every change (throttled for output). Returns an unsubscribe. */
   subscribe(listener: (tasks: ShellTask[]) => void): () => void
+  /**
+   * Move running foreground `bash` calls to the background (Ctrl+B in Claude Code): the call
+   * returns to the model at once, the command keeps running as a task. All running foreground
+   * calls, or only `toolCallId`. Returns the new task ids (empty when nothing could be moved or
+   * `background` is not enabled).
+   */
+  background(toolCallId?: string): string[]
 }
 
 interface Entry {
@@ -58,7 +65,7 @@ function tailOf(buffer: string): string {
 }
 
 /** @internal The registry behind the {@link ShellTasks} service. */
-export interface TaskRegistry extends ShellTasks {
+export interface TaskRegistry extends Omit<ShellTasks, 'background'> {
   add(init: { label: string; command: string; stop: () => void | Promise<void> }): string
   append(id: string, text: string): void
   complete(id: string, result: { status: 'completed' | 'failed'; exitCode: number | null }): void

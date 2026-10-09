@@ -24,6 +24,7 @@ import type { Sandbox } from './sandbox-local.ts'
 import { createTaskRegistry, type ShellTasks } from './tasks.ts'
 import {
   BACKGROUND_NOTE,
+  BACKGROUNDED_PREFIX,
   BASH_DESCRIPTION,
   BASH_OUTPUT_DESCRIPTION,
   KILL_SHELL_DESCRIPTION,
@@ -120,6 +121,7 @@ export interface ShellOptions {
 const HEAD_CHARS = 10_000
 const MAX_MATCH_LINES = 40
 const MAX_MATCH_CHARS = 4000
+const TAIL_RESULT_CHARS = 4000
 
 /** Cap `text` to `max` characters: head (10 000) + marker + tail. */
 export function capOutput(text: string, max: number): string {
@@ -405,11 +407,15 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
         return `Started background task ${id}. Use ${BASH_OUTPUT_TOOL} to read its output.`
       }
 
+      /** Running foreground commands that can still be moved to the background, by tool call id. */
+      const foreground = new Map<string, () => string | undefined>()
+
       async function runForeground(
         command: string,
         requested: number | undefined,
         toolCallId: string,
         abortSignal: AbortSignal | undefined,
+        label: string | undefined,
       ): Promise<string> {
         const timeout = Math.min(requested ?? defaultTimeout, maxTimeout)
         const started = Date.now()
@@ -436,6 +442,33 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
 
         const buffer = new OutputBuffer(maxChars)
         let denial = false
+        /** Set once the user moved this command to the background (spec 19 §6). */
+        let detachedId: string | undefined
+        let resolveDetached: ((text: string) => void) | undefined
+        const detached = new Promise<string>((resolve) => {
+          resolveDetached = resolve
+        })
+        if (background) {
+          foreground.set(toolCallId, () => {
+            if (detachedId !== undefined || registry.running() >= maxTasks) return undefined
+            clearTimeout(timer)
+            abortSignal?.removeEventListener('abort', onAbort)
+            const id = registry.add({
+              label: label?.trim() ? label.trim() : oneLine(command, 80),
+              command,
+              stop: () => {
+                void proc.kill()
+              },
+            })
+            detachedId = id
+            registry.append(id, buffer.raw())
+            const tail = capOutput(buffer.raw().trimEnd(), TAIL_RESULT_CHARS)
+            resolveDetached?.(
+              `${BACKGROUNDED_PREFIX} ${id} by the user.${tail ? ` Output so far:\n${tail}\n` : ' No output yet. '}${notify === false ? `Use ${BASH_OUTPUT_TOOL} to read more.` : `Use ${BASH_OUTPUT_TOOL} to read more; you will be notified when it finishes.`}`,
+            )
+            return id
+          })
+        }
         const pump = async (
           stream: ReadableStream<Uint8Array>,
           name: 'stdout' | 'stderr',
@@ -443,6 +476,10 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
           const dec = new TextDecoder()
           const emit = (chunk: string): void => {
             if (!chunk) return
+            if (detachedId !== undefined) {
+              registry.append(detachedId, chunk)
+              return
+            }
             buffer.add(chunk)
             if (!denial && SANDBOX_DENIAL.test(chunk)) denial = true
             if (ctx.stream.active) ctx.stream.data('output', { toolCallId, stream: name, chunk })
@@ -456,19 +493,40 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
         }
 
         let exitCode: number | undefined
-        try {
-          const [, , result] = await Promise.all([
-            pump(proc.stdout, 'stdout'),
-            pump(proc.stderr, 'stderr'),
-            proc.wait(),
-          ])
-          exitCode = result.exitCode
-        } catch (error) {
-          if (!aborted && !timedOut) return `ERROR: ${errText(error)}`
-        } finally {
-          clearTimeout(timer)
-          abortSignal?.removeEventListener('abort', onAbort)
-        }
+        let failure: string | undefined
+        const finished = (async (): Promise<void> => {
+          try {
+            const [, , result] = await Promise.all([
+              pump(proc.stdout, 'stdout'),
+              pump(proc.stderr, 'stderr'),
+              proc.wait(),
+            ])
+            exitCode = result.exitCode
+          } catch (error) {
+            if (!aborted && !timedOut) failure = `ERROR: ${errText(error)}`
+          } finally {
+            clearTimeout(timer)
+            abortSignal?.removeEventListener('abort', onAbort)
+            foreground.delete(toolCallId)
+          }
+          const id = detachedId
+          if (id !== undefined) {
+            const stopped = registry.get(id)?.status === 'stopped'
+            const code = failure === undefined ? (exitCode ?? null) : null
+            registry.complete(id, { status: code === 0 ? 'completed' : 'failed', exitCode: code })
+            if (!stopped) {
+              deliver(
+                'exit',
+                id,
+                `Background task ${id} (${oneLine(command, 80)}) exited with code ${code ?? 'unknown'}.`,
+                code,
+              )
+            }
+          }
+        })()
+        const early = await Promise.race([finished.then(() => undefined), detached])
+        if (early !== undefined) return early
+        if (failure !== undefined) return failure
 
         let body = buffer.text().trimEnd()
         const osState = (sandbox as { state?: () => { enabled: boolean } }).state
@@ -501,7 +559,13 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
             if (background && i.run_in_background === true) {
               return await startBackground(i.command, i.description, i.notify_on)
             }
-            return await runForeground(i.command, i.timeoutMs, toolCallId, abortSignal)
+            return await runForeground(
+              i.command,
+              i.timeoutMs,
+              toolCallId,
+              abortSignal,
+              i.description,
+            )
           },
         } as never),
       }
@@ -565,6 +629,15 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
             stop: registry.stop,
             stopAll: registry.stopAll,
             subscribe: registry.subscribe,
+            background: (toolCallId) => {
+              const ids: string[] = []
+              const targets = toolCallId === undefined ? [...foreground.keys()] : [toolCallId]
+              for (const key of targets) {
+                const id = foreground.get(key)?.()
+                if (id !== undefined) ids.push(id)
+              }
+              return ids
+            },
           },
         },
         tools: tools as never,

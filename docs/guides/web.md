@@ -39,6 +39,12 @@ turndown.remove(['script', 'style', 'nav', 'footer', 'noscript', 'iframe', 'temp
 webFetch({ toMarkdown: (html) => turndown.turndown(html) })
 ```
 
+Prompt injection: the page content is wrapped in
+`<untrusted-content source="web_fetch" url="…">…</untrusted-content>` (the `URL:` header and errors
+are not). Tell the model what the frame means by adding `UNTRUSTED_CONTENT_INSTRUCTIONS` (exported
+by `eharness`) to your instructions. Opt out with `wrapUntrusted: false`. Details:
+[Permissions → Prompt injection](permissions.md#prompt-injection).
+
 Profiles: autonomous server = allow-list policy and no approval; CLI / web = add `approval` by
 risk (`external`) and answer through the pending state ([Approvals and interaction](approvals-and-interaction.md)).
 
@@ -46,6 +52,9 @@ risk (`external`) and answer through the pending state ([Approvals and interacti
 
 The library has no search provider: you supply `search(query, { allowedDomains, blockedDomains, signal })`
 returning `{ text, sources, usage?, model? }`. Usage is charged to the turn.
+
+Findings and source titles are framed as `<untrusted-content source="web_search">` too
+(`wrapUntrusted: false` to opt out).
 
 OpenRouter (`web` plugin, with the AI SDK OpenRouter provider; citations are AI SDK `url` sources):
 

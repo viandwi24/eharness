@@ -46,6 +46,14 @@ export interface SubagentTasks {
   stopAll(): Promise<void>
   /** Called with the full list after every change (throttled for tail updates). Returns an unsubscribe. */
   subscribe(listener: (tasks: SubagentTask[]) => void): () => void
+  /**
+   * Move running foreground `agent` calls to the background (Ctrl+B in Claude Code): each call
+   * returns to the model at once, the child keeps running as a task and reports like a
+   * `run_in_background` one. All running foreground calls, or only `toolCallId`. Returns the new
+   * task ids (empty when nothing could be moved; not available with `approvals: 'park'` or
+   * without `background: true`).
+   */
+  background(toolCallId?: string): string[]
 }
 
 const TAIL_CHARS = 2000
@@ -53,6 +61,8 @@ const NOTIFY_THROTTLE_MS = 100
 
 /** @internal */
 export interface SubagentTaskRegistry extends SubagentTasks {
+  /** Running foreground calls that can be moved to the background, by tool call id. */
+  foreground: Map<string, () => string | undefined>
   add(init: {
     agent: string
     description: string
@@ -128,6 +138,16 @@ export function createSubagentTaskRegistry(options: {
       e.task.status = status
       e.task.endedAt = Date.now()
       fire()
+    },
+    foreground: new Map(),
+    background(toolCallId) {
+      const ids: string[] = []
+      const keys = toolCallId === undefined ? [...registry.foreground.keys()] : [toolCallId]
+      for (const key of keys) {
+        const id = registry.foreground.get(key)?.()
+        if (id !== undefined) ids.push(id)
+      }
+      return ids
     },
     stopped: (id) => entries.get(id)?.task.status === 'stopped',
     list: snapshot,

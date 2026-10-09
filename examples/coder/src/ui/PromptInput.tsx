@@ -98,6 +98,11 @@ export interface PromptInputProps {
   onHint?(text: string): void
   /** Ctrl+D on an empty prompt (exit handling). With text Ctrl+D deletes the char after the cursor. */
   onCtrlDEmpty?(): void
+  /**
+   * Ctrl+B: return a promise to take the key (resolving `false` = nothing to background, the key
+   * then moves the cursor left like readline), or `false` to leave it to the editor at once.
+   */
+  onBackground?(): Promise<boolean> | false
   /** The external editor (Ctrl+G) started (`true`) or finished (`false`): pause other key handling meanwhile. */
   onExternalEditor?(running: boolean): void
   /** Double Esc cleared a non-empty draft: save it to history. */
@@ -262,6 +267,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
     onVimMode,
     onHint,
     onCtrlDEmpty,
+    onBackground,
     onExternalEditor,
     onSaveDraft,
     onRewindMenu,
@@ -705,8 +711,14 @@ export function PromptInput(props: PromptInputProps): ReactElement {
             return cursorTo(home(buf))
           case 'e':
             return cursorTo(end(buf))
-          case 'b':
-            return cursorTo(move(buf, -1))
+          case 'b': {
+            const pending = onBackground?.() ?? false
+            if (pending === false) return cursorTo(move(buf, -1))
+            void pending.then((moved) => {
+              if (!moved) cursorTo(move(bufRef.current, -1))
+            })
+            return
+          }
           case 'f':
             return cursorTo(move(buf, 1))
           case 'u':

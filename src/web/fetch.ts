@@ -7,7 +7,7 @@
  */
 import { tool } from 'ai'
 import { z } from 'zod/v4'
-import { definePlugin, type HarnessPlugin } from '../index.ts'
+import { definePlugin, type HarnessPlugin, untrustedContent } from '../index.ts'
 
 /** Options of {@link webFetch}. */
 export interface WebFetchOptions {
@@ -37,6 +37,12 @@ export interface WebFetchOptions {
   resolveHost?: (host: string) => Promise<string[]>
   /** Default: the global `fetch`. */
   fetch?: typeof fetch
+  /**
+   * Wrap the page content in an `<untrusted-content source="web_fetch" url="…">` frame
+   * (`untrustedContent()`, spec 03 §10) so the model treats it as data. Default `true`. Errors and
+   * the `URL:` header stay unwrapped.
+   */
+  wrapUntrusted?: boolean
   /** Default `'web_fetch'`. */
   toolName?: string
   /** Default `'eharness-web-fetch/0'`. */
@@ -350,6 +356,9 @@ export function webFetch(options: WebFetchOptions = {}): HarnessPlugin<'web-fetc
                   content = `${content.slice(0, maxChars)}\n… [truncated: ${content.length - maxChars} more characters]`
                 } else if (capped) {
                   content += `\n… [truncated: the page is larger than ${maxBytes / 1024 / 1024} MB]`
+                }
+                if (options.wrapUntrusted !== false) {
+                  content = untrustedContent(content, { source: toolName, url: url.href })
                 }
                 const focus = prompt?.trim() ? `\n(Focus: ${prompt.trim()})` : ''
                 return `URL: ${url.href} · ${response.status} · ${bytes.byteLength} bytes${focus}\n\n${content}`

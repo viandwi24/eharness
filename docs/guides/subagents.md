@@ -114,6 +114,11 @@ starting turn streams) and the `eh.event` report (`data.status` `completed` / `f
 `stopped`). `stop()` aborts the child; for an id the process does not know it calls
 `requestAbort()` on the child session, which reaches a child running in another instance.
 
+**Moving a foreground child to the background.** `ctx.services.subagentTasks.background()` (Claude
+Code's Ctrl+B) detaches the running foreground `agent` calls: each returns at once with "Subagent
+moved to the background as task agent-2 …", the child keeps running and reports through the same
+`eh.event` path as `run_in_background`. Needs `background: true`; not available for `'park'`.
+
 **Wake turns.** A report wakes an idle parent with a turn nobody started: use
 `session.onRun((run) => …)` to stream it and answer its approvals (spec 05 §2.1); in
 multi-instance deployments use `events()` + `attach()`.

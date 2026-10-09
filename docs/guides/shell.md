@@ -58,6 +58,14 @@ its own: follow it with `session.events()` / `session.attach()`, or set
 `onTaskEvent: (e) => session.inject('eh.event', e.payload, e.options)` to take delivery over and
 drive the returned run yourself.
 
+## Moving a running command to the background
+
+`ctx.services.shellTasks.background()` detaches every running foreground `bash` call (Claude Code's
+Ctrl+B) and returns the new task ids. The call returns to the model at once ("Command moved to the
+background as task bash-3 by the user. Output so far: …"), the command keeps running as a normal
+background task (no foreground timeout any more) and its exit is delivered like a
+`run_in_background` task. Needs `background` enabled; otherwise it returns `[]`.
+
 ## UIs: the `shellTasks` service
 
 ```ts

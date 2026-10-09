@@ -1026,6 +1026,18 @@ export function App({
           onVimMode={(m) => setVimLabel(vimModeLabel(m))}
           onHint={showHint}
           onCtrlDEmpty={ctrlDExit}
+          onBackground={() => {
+            // only a running turn can have foreground work to move; otherwise Ctrl+B is "cursor left"
+            if (!stateRef.current.running) return false
+            return controller
+              .backgroundRunning()
+              .then((ids) => {
+                if (ids.length === 0) return false
+                showHint(`moved to background · ${ids.join(', ')}`)
+                return true
+              })
+              .catch(() => false)
+          }}
           onExternalEditor={(running) => {
             editorRunning.current = running
           }}

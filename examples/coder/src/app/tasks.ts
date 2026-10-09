@@ -22,6 +22,8 @@ export interface TaskHub {
   /** Tasks of the current session, oldest first. */
   tasks(): BackgroundTask[]
   stopTask(id: string): Promise<void>
+  /** Move the running foreground bash / agent calls to the background; the new task ids. */
+  backgroundRunning(): string[]
   taskOutput(id: string): string
   onTasks(listener: (tasks: BackgroundTask[]) => void): () => void
   /** The current session changed: notify the listeners. */
@@ -105,6 +107,11 @@ export function createTaskHub(deps: TaskHubDeps): TaskHub {
       if (services === undefined) return
       if (services.agents.get(id) !== undefined) await services.agents.stop(id)
       else await services.shells.stop(id)
+    },
+    backgroundRunning() {
+      const services = sessions.get(deps.session())
+      if (services === undefined) return []
+      return [...services.shells.background(), ...services.agents.background()]
     },
     taskOutput(id) {
       const services = sessions.get(deps.session())

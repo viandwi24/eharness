@@ -318,6 +318,9 @@ function reportOf(text: string): string {
     : text
 }
 
+/** Start of the result of a foreground subagent the user moved to the background. */
+const SUBAGENT_BACKGROUNDED_PREFIX = 'Subagent moved to the background as task'
+
 /** Text the parent model reads for a child that did not complete. */
 const stoppedText = (stop: string, text: string): string => `[subagent stopped: ${stop}] ${text}`
 
@@ -926,6 +929,9 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             )
           }
         }
+        const canDetach =
+          options.background === true &&
+          (ctx.session.parent === undefined || options.backgroundInChildren === true)
         const sem = semaphoreFor(depth)
         marker('running')
         yield progress({ text: 'Waiting for a free subagent slot…' })
@@ -936,6 +942,15 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           return
         }
         let opened = false
+        // the child's own abort: follows the tool call until the user moves it to the background
+        const childAc = new AbortController()
+        const onToolAbort = (): void => childAc.abort(abortSignal.reason)
+        const onParentClosed = (): void => childAc.abort('parent closed')
+        if (abortSignal.aborted) onToolAbort()
+        else abortSignal.addEventListener('abort', onToolAbort, { once: true })
+        ctx.signal.addEventListener('abort', onParentClosed, { once: true })
+        let detachedId: string | undefined
+        let handedOff = false
         try {
           const child = def.agent.session(sessionId, { parent: parentInfo }) as AnySession
           opened = true
@@ -967,20 +982,23 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
                   text: textOf(m, true),
                 })
                 notify()
+                if (detachedId !== undefined) {
+                  registry.setTail(detachedId, textOf(m, true) || info.lastTool || '')
+                }
               }
             } catch {
               // stream errors surface through run.result
             }
           }
           const run = child.send(prompt, {
-            abortSignal,
+            abortSignal: childAc.signal,
             ...(def.maxTurns === undefined ? {} : { maxSteps: def.maxTurns }),
           }) as AnyRun
           const driven = driveChild(run, {
             session: child,
             agent: subagent_type,
             options,
-            signal: abortSignal,
+            signal: childAc.signal,
             onRun: (r) => {
               consumers.push(consume(r))
             },
@@ -991,7 +1009,21 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           })
           // observed below; this keeps an early exit of the generator from leaving it unhandled
           driven.catch(() => {})
-          while (!finished || dirty) {
+          if (canDetach) {
+            registry.foreground.set(toolCallId, () => {
+              if (detachedId !== undefined || finished) return undefined
+              abortSignal.removeEventListener('abort', onToolAbort)
+              detachedId = registry.add({
+                agent: subagent_type,
+                description: label,
+                childSessionId: sessionId,
+                stop: () => childAc.abort('stopped'),
+              })
+              notify()
+              return detachedId
+            })
+          }
+          while ((!finished || dirty) && detachedId === undefined) {
             if (!dirty) {
               await new Promise<void>((resolve) => {
                 wake = resolve
@@ -1003,6 +1035,56 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             dirty = false
             yield latest
             if (!finished) await sleep(100)
+          }
+          if (detachedId !== undefined) {
+            const taskId = detachedId
+            handedOff = true
+            const finish = backgroundFinisher(
+              ctx,
+              registry,
+              taskId,
+              def,
+              subagent_type,
+              label,
+              sessionId,
+              (status) => {
+                if (ctx.stream.active && ctx.turn?.id === parentInfo.turnId) {
+                  ctx.stream.data(
+                    'run',
+                    { toolCallId, sessionId, agent: subagent_type, status },
+                    { id: toolCallId },
+                  )
+                }
+              },
+            )
+            void (async () => {
+              try {
+                const result = await driven
+                await Promise.all(consumers)
+                try {
+                  ctx.turn?.addUsage(result.usage, { source: `subagent:${subagent_type}` })
+                } catch {
+                  // the parent turn is over
+                }
+                const text = finalText(result) || textOf(lastMessage, true)
+                await finish(
+                  result.stop === 'complete' ? 'completed' : 'failed',
+                  result.stop === 'complete' ? text : stoppedText(result.stop, text),
+                )
+              } catch (error) {
+                await finish('failed', errText(error))
+              } finally {
+                ctx.signal.removeEventListener('abort', onParentClosed)
+                await def.agent.closeSession(sessionId).catch(() => {})
+                sem.release()
+              }
+            })()
+            const soFar = latest.text || latest.lastTool || ''
+            yield progress({ status: 'running', text: 'Moved to the background.' })
+            yield `${SUBAGENT_BACKGROUNDED_PREFIX} ${taskId} (${subagent_type}): ${label}, by the user.${
+              soFar === '' ? '' : ` Progress so far: ${reportOf(soFar.slice(-1000))}`
+            } You will be notified when it finishes.`
+            return
           }
           const result = await driven
           try {
@@ -1031,11 +1113,52 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           yield progress({ status: 'failed', text: errText(error) })
           yield `ERROR: subagent failed: ${errText(error)}`
         } finally {
-          if (opened) await def.agent.closeSession(sessionId).catch(() => {})
-          sem.release()
+          registry.foreground.delete(toolCallId)
+          abortSignal.removeEventListener('abort', onToolAbort)
+          if (!handedOff) {
+            ctx.signal.removeEventListener('abort', onParentClosed)
+            if (opened) await def.agent.closeSession(sessionId).catch(() => {})
+            sem.release()
+          }
         }
       },
     })
+  }
+
+  /** The completion of a background child: registry, run marker and the report to the parent. */
+  function backgroundFinisher(
+    ctx: Ctx,
+    registry: SubagentTaskRegistry,
+    taskId: string,
+    _def: SubagentDefinition,
+    agentName: string,
+    label: string,
+    sessionId: string,
+    marker: (status: SubagentRunData['status']) => void,
+  ): (status: 'completed' | 'failed', text: string) => Promise<void> {
+    return async (status, text) => {
+      const stopped = registry.stopped(taskId)
+      registry.complete(taskId, status)
+      marker(status === 'completed' ? 'done' : 'failed')
+      const outcome = stopped ? 'stopped' : status
+      const head = `Background subagent ${sessionId} (${agentName}: ${label}) ${
+        stopped ? 'was stopped' : status === 'completed' ? 'finished' : 'failed'
+      }.`
+      try {
+        await ctx.session.inject(
+          'eh.event',
+          {
+            name: 'subagent',
+            text: `${head}\n\n${reportOf(text) || '(no report)'}`,
+            data: { sessionId, agent: agentName, status: outcome },
+          },
+          { deliver: 'next-step', wake: true },
+        )
+      } catch (error) {
+        // the parent session may be closed by now
+        ctx.log.warn('subagent: could not deliver a background report', { error: errText(error) })
+      }
+    }
   }
 
   /** Start a child detached from the calling turn; returns the text for the model. */
@@ -1071,29 +1194,16 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       }
     }
     marker('running')
-    const finish = async (status: 'completed' | 'failed', text: string): Promise<void> => {
-      const stopped = registry.stopped(taskId)
-      registry.complete(taskId, status)
-      marker(status === 'completed' ? 'done' : 'failed')
-      const outcome = stopped ? 'stopped' : status
-      const head = `Background subagent ${sessionId} (${agentName}: ${label}) ${
-        stopped ? 'was stopped' : status === 'completed' ? 'finished' : 'failed'
-      }.`
-      try {
-        await ctx.session.inject(
-          'eh.event',
-          {
-            name: 'subagent',
-            text: `${head}\n\n${reportOf(text) || '(no report)'}`,
-            data: { sessionId, agent: agentName, status: outcome },
-          },
-          { deliver: 'next-step', wake: true },
-        )
-      } catch (error) {
-        // the parent session may be closed by now
-        ctx.log.warn('subagent: could not deliver a background report', { error: errText(error) })
-      }
-    }
+    const finish = backgroundFinisher(
+      ctx,
+      registry,
+      taskId,
+      def,
+      agentName,
+      label,
+      sessionId,
+      marker,
+    )
     void (async () => {
       if (!(await sem.acquire(ac.signal))) {
         await finish('failed', 'aborted before it started')

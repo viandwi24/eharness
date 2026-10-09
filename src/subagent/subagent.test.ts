@@ -750,3 +750,47 @@ describe('background subagents: the subagentTasks service', () => {
     expect(await fields(make(true), true)).toContain('run_in_background')
   })
 })
+
+describe('moving a running foreground subagent to the background', () => {
+  test('background() detaches it: the call returns at once, the child finishes and reports like run_in_background', async () => {
+    const storage = shared()
+    const worker = childAgent(storage, { steps: [{ text: 'late report', delayMs: 400 }] })
+    let capture: { services: { subagentTasks: SubagentTasks } } | undefined
+    const tap = definePlugin({
+      name: 'tap',
+      session: (ctx) => {
+        capture = ctx as unknown as { services: { subagentTasks: SubagentTasks } }
+      },
+    })
+    const main = parentAgent(
+      storage,
+      worker,
+      { approvals: 'policy', background: true },
+      [{ toolCalls: [spawn('later', 'cb')] }, { text: 'moved on' }, { text: 'saw the report' }],
+      [tap],
+    )
+    const session = main.session('p1')
+    await session.ready()
+    const tasks = capture?.services.subagentTasks as SubagentTasks
+    const run = session.send('go')
+    let ids: string[] = []
+    await until('detached', () => {
+      ids = tasks.background()
+      return ids.length > 0
+    })
+    expect(ids).toEqual(['agent-1'])
+    expect(tasks.background()).toEqual([])
+    expect((await run.result).stop).toBe('complete')
+    const out = agentOutput(await session.messages(), 'cb')
+    expect(out?.state).toBe('output-available')
+    expect(String(out?.output)).toContain('Subagent moved to the background as task agent-1')
+    expect(tasks.get('agent-1')?.status).toBe('running')
+    await until('task completed', () => tasks.get('agent-1')?.status === 'completed')
+    expect(tasks.get('agent-1')?.tail).toBe('late report')
+    await until('wake turn finished', async () =>
+      JSON.stringify(await session.messages()).includes('saw the report'),
+    )
+    expect(JSON.stringify(await session.messages())).toContain('late report')
+    await main.close()
+  })
+})

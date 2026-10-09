@@ -118,6 +118,7 @@ interface SubagentTasks {
   list(): SubagentTask[]; get(id: string): SubagentTask | undefined   // task id or child session id
   stop(id: string): Promise<void>; stopAll(): Promise<void>
   subscribe(listener: (tasks: SubagentTask[]) => void): () => void   // tail updates throttled to 100 ms
+  background(toolCallId?: string): string[]   // move running foreground agent calls to the background
 }
 ```
 
@@ -127,6 +128,18 @@ stopped (a stopped child counts as `failed` in the part). An id that is not a ta
 process is taken for a child session id: the plugin calls `requestAbort('stopped')` on it through
 the catalog agents (spec 05 §9.1), which reaches a child running in another instance. Closing the
 parent session stops every running task (`dispose`).
+
+**Moving a foreground run to the background.** With `background: true` (same rules as
+`run_in_background`: root session, or `backgroundInChildren`; `'inline'` and `'policy'`, not
+`'park'`, where it is a no-op) `subagentTasks.background(toolCallId?)` detaches the running
+foreground `agent` calls (Ctrl+B in Claude Code) and returns the new task ids (`[]` when none).
+The tool call resolves at once with `Subagent moved to the background as task <id> (<type>):
+<description>, by the user. Progress so far: <latest text or tool> You will be notified when it
+finishes.`; its progress stream ends with a final `Moved to the background.` progress value and
+that output. The child keeps running with its own abort controller: the tool call's abort signal
+no longer reaches it (stop it with `stop(id)`), parent session close still aborts it. Completion
+follows the background path above (task `agent-<n>`, `eh.event` report, `wake`, usage added to the
+parent turn when it is still open, concurrency slot released at the end).
 
 **Persisted marker.** The tool writes `data-subagent.run` `{ toolCallId, sessionId, agent,
 status: 'running' }` (id = tool call id) when the background child starts. The final `done` /
@@ -264,7 +277,7 @@ nothing; the answering instance opens the child (and, through the hook, the pare
 Tool description (see source `toolDescription`), `SUBAGENT_NO_USER`: "No user is available; this
 action is not allowed in autonomous mode.", `SUBAGENT_NO_CLIENT`: "No user is available to answer
 this call. Continue without it or choose another approach.", the final output forms of §2.1 and the
-background event text.
+background event text and the `Subagent moved to the background as task …` result.
 
 ## 6. Tests
 

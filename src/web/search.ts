@@ -7,7 +7,7 @@
 import type { LanguageModel } from 'ai'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
-import { type AddUsageInput, definePlugin, type HarnessPlugin } from '../index.ts'
+import { type AddUsageInput, definePlugin, type HarnessPlugin, untrustedContent } from '../index.ts'
 
 /** Filters and abort signal passed to the app's `search` function. */
 export interface SearchOptions {
@@ -30,6 +30,11 @@ export interface SearchResult {
 export interface WebSearchOptions {
   /** Runs one search (the app supplies the provider). Throwing is reported as an `ERROR:` text. */
   search: (query: string, options: SearchOptions) => Promise<SearchResult>
+  /**
+   * Wrap the findings and source titles in an `<untrusted-content source="web_search">` frame
+   * (`untrustedContent()`, spec 03 §10). Default `true`. Errors and `No results found.` stay unwrapped.
+   */
+  wrapUntrusted?: boolean
   /** Default `'web_search'`. */
   toolName?: string
 }
@@ -78,7 +83,10 @@ export function webSearch(options: WebSearchOptions): HarnessPlugin<'web-search'
               const sources = found.sources.map((s) =>
                 s.title ? `- ${s.title} — ${s.url}` : `- ${s.url}`,
               )
-              return sources.length > 0 ? `${text}\n\nSources:\n${sources.join('\n')}` : text
+              const body = sources.length > 0 ? `${text}\n\nSources:\n${sources.join('\n')}` : text
+              return options.wrapUntrusted === false
+                ? body
+                : untrustedContent(body, { source: toolName })
             } catch (error) {
               if (abortSignal?.aborted) return 'ERROR: the search was aborted'
               return `ERROR: web search failed: ${error instanceof Error ? error.message : String(error)}`

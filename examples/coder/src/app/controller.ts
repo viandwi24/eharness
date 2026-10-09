@@ -948,6 +948,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     // ─── background tasks ───
     tasks: (): BackgroundTask[] => taskHub.tasks(),
     stopTask: (id: string): Promise<void> => taskHub.stopTask(id),
+    backgroundRunning: async (): Promise<string[]> => taskHub.backgroundRunning(),
     async taskOutput(id: string): Promise<string> {
       return taskHub.taskOutput(id)
     },

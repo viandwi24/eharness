@@ -31,3 +31,6 @@ export { SANDBOX_HINT } from './os-sandbox.ts'
 export const SANDBOX_ON_NOTE =
   'Commands run in an OS sandbox: writes only inside {roots} (and temp dirs), network {network}.'
 export const SANDBOX_OFF_NOTE = "Commands run without an OS sandbox, with your user's privileges."
+
+/** Start of the result of a foreground command the user moved to the background. */
+export const BACKGROUNDED_PREFIX = 'Command moved to the background as task'

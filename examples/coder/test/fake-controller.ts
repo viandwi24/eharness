@@ -229,6 +229,8 @@ export interface FakeOptions {
   /** Result of `rewind()`; default restores the point's files and returns its prompt. */
   rewindResult?: Partial<RewindResult>
   tasks?: BackgroundTask[]
+  /** Task ids `backgroundRunning()` moves (each becomes a running shell task); default none. */
+  backgroundable?: string[]
   settings?: SettingView[]
   /** Values `setting(key)` returns. */
   settingValues?: Partial<CoderSettings>
@@ -251,6 +253,7 @@ export function fakeController(opts: FakeOptions = {}) {
   const broker = fakeBroker()
   const runFiles: FileUIPart[][] = []
   let tasks: BackgroundTask[] = [...(opts.tasks ?? [])]
+  const backgroundable = [...(opts.backgroundable ?? [])]
   const taskListeners = new Set<(t: BackgroundTask[]) => void>()
   const settings: SettingView[] = (opts.settings ?? DEFAULT_SETTINGS).map((v) => ({ ...v }))
   const settingValues: Record<string, unknown> = { ...opts.settingValues }
@@ -525,6 +528,27 @@ export function fakeController(opts: FakeOptions = {}) {
       calls.push(`stopTask:${id}`)
       tasks = tasks.map((t) => (t.id === id ? { ...t, status: 'stopped', endedAt: Date.now() } : t))
       for (const l of taskListeners) l(tasks)
+    },
+    async backgroundRunning() {
+      calls.push('backgroundRunning')
+      const ids = backgroundable.splice(0)
+      if (ids.length > 0) {
+        tasks = [
+          ...tasks,
+          ...ids.map(
+            (id): BackgroundTask => ({
+              id,
+              kind: 'shell',
+              label: `sleep ${id}`,
+              status: 'running',
+              startedAt: Date.now(),
+              tail: '',
+            }),
+          ),
+        ]
+        for (const l of taskListeners) l(tasks)
+      }
+      return ids
     },
     async taskOutput(id) {
       calls.push(`taskOutput:${id}`)

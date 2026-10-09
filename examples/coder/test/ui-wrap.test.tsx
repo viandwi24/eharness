@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import type { CoderConfig, CoderMessage } from '../src/contracts.ts'
 import { UserMessage } from '../src/ui/MessageView.tsx'
 import { Markdown } from '../src/ui/markdown.tsx'
 import { PromptInput, type PromptInputProps } from '../src/ui/PromptInput.tsx'
+import { initialState, type ViewState } from '../src/ui/state.ts'
+import { Transcript } from '../src/ui/Transcript.tsx'
 import {
   cellWidth,
   cursorPlace,
@@ -13,6 +16,8 @@ import {
   wrapWords,
 } from '../src/ui/wrap.ts'
 import { renderAt } from './term.tsx'
+
+const transcriptConfig = { root: '/tmp/p', model: 'm', mode: 'default' } as unknown as CoderConfig
 
 const ENTER = '\r'
 const ESC = '\x1b'
@@ -334,5 +339,33 @@ describe('prompt: visual row navigation, history, menus', () => {
     expect(frame()).toContain('> look at @README.md')
     await type(ENTER)
     expect(submitted).toEqual(['look at @README.md'])
+  })
+})
+
+describe('static transcript width', () => {
+  // regression: <Static> lays items out without the terminal width, so `⏺ text` wrapped its text at
+  // the full width plus the bullet column and the terminal hard-wrapped the overflow mid-word
+  test('a finished assistant message never exceeds the terminal width', async () => {
+    const text =
+      'Saya coder, agen yang bekerja di proyek ini lewat terminal. Saya bisa membaca dan menjelaskan kode, memperbaiki bug, menambah fitur, refactor, menjalankan perintah (test, build, git), dan meninjau perubahan.'
+    const message = {
+      id: 'a1',
+      role: 'assistant',
+      parts: [{ type: 'text', text, state: 'done' }],
+    } as unknown as CoderMessage
+    for (const columns of [120, 142, 143]) {
+      const state = {
+        ...initialState(),
+        entries: [{ kind: 'message', id: 'm:a1', message }],
+      } as unknown as ViewState
+      const app = renderAt(<Transcript state={state} config={transcriptConfig} />, columns)
+      await new Promise((r) => setTimeout(r, 20))
+      const widths = app.frames
+        .join('\n')
+        .split('\n')
+        .map((line) => stringWidth(line))
+      expect(Math.max(...widths)).toBeLessThanOrEqual(columns)
+      app.unmount()
+    }
   })
 })

@@ -19,6 +19,7 @@ import {
   type StateAdapter,
   type ToolRisk,
   type ToolSource,
+  untrustedContent,
 } from '../index.ts'
 
 /** A transport config accepted by `createMCPClient({ transport })` (`{ type: 'http' | 'sse', url, … }`). */
@@ -56,6 +57,12 @@ export interface McpServerOptions {
   defer?: boolean | 'auto'
   /** `'lazy'` (default): connect at the first turn of the session. `'eager'`: at session open. */
   connect?: 'lazy' | 'eager'
+  /**
+   * Wrap the text parts of tool results in an `<untrusted-content source="mcp" name="<server>_<tool>">`
+   * frame (`untrustedContent()`, spec 03 §10) so the model treats them as data. Images and other
+   * non-text parts, structured JSON output and `isError` are unchanged. Default `true`.
+   */
+  wrapUntrusted?: boolean
   /** Pin tool definitions on first connect and exclude changed or added tools (drift). Default false. */
   pinDefinitions?: boolean
   /** `createMCPClient` `maxRetries`: retries of `tools/call` requests only (not connect). Default 0. */
@@ -353,6 +360,27 @@ export function createMcpServer(
     return undefined
   }
 
+  /** Wrap the text parts of the tool's model output in an untrusted-content frame. */
+  function frameResults(tool: Tool, label: string): Tool {
+    const original = tool.toModelOutput
+    if (original === undefined) return tool
+    return {
+      ...tool,
+      toModelOutput: async (options: Parameters<typeof original>[0]) => {
+        const out = await original(options)
+        if (out.type !== 'content') return out
+        return {
+          ...out,
+          value: out.value.map((part) =>
+            part.type === 'text'
+              ? { ...part, text: untrustedContent(part.text, { source: 'mcp', name: label }) }
+              : part,
+          ),
+        }
+      },
+    } as Tool
+  }
+
   const source = defineToolSource({
     id,
     ...(opts.refresh === undefined ? {} : { refresh: opts.refresh }),
@@ -415,6 +443,7 @@ export function createMcpServer(
           const metadata = (original as { metadata?: Record<string, unknown> }).metadata
           tool = { ...tool, metadata: { ...metadata, risk } } as Tool
         }
+        if (opts.wrapUntrusted !== false) tool = frameResults(tool, `${name}/${serverName}`)
         out[`${prefix}${serverName}`] = deferred ? ({ ...tool, deferLoading: true } as Tool) : tool
       }
       return out

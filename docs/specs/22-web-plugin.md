@@ -29,6 +29,7 @@ webFetch({
   toMarkdown?: (html: string, url: string) => string   // default htmlToText
   resolveHost?: (host: string) => Promise<string[]>
   fetch?: typeof fetch
+  wrapUntrusted?: boolean   // true: frame the page content (spec 03 §10)
   toolName?: string         // 'web_fetch'
   userAgent?: string
 })
@@ -62,7 +63,9 @@ Tool input `{ url, prompt? }`. Rules, in order:
 7. Timeout → `ERROR: timed out after Ns`; abort → `ERROR: the fetch was aborted`.
 
 Output: `URL: <final url> · <status> · <bytes> bytes`, an optional `(Focus: <prompt>)` line, a blank
-line, the content.
+line, the content. Unless `wrapUntrusted: false`, the content (including a truncation note) is
+framed with `untrustedContent(content, { source: <toolName>, url: <final url> })` (spec 03 §10);
+the header line and every `ERROR:` / `REDIRECT:` string stay unwrapped (they are ours).
 
 The DNS check has a time-of-check gap (rebinding); resolve in the injected function and pin
 addresses in a custom `fetch` for strict environments. Document-level threats: page text is data,
@@ -79,6 +82,7 @@ never instructions (the description says so).
 webSearch({
   search: (query: string, o: { allowedDomains?: string[]; blockedDomains?: string[]; signal?: AbortSignal })
     => Promise<{ text: string; sources: { title?: string; url: string }[]; usage?: AddUsageInput; model?: LanguageModel }>
+  wrapUntrusted?: boolean    // true: frame the findings and sources (spec 03 §10)
   toolName?: string          // 'web_search'
 })
 ```
@@ -86,6 +90,8 @@ webSearch({
 Tool input `{ query (≥ 2 chars), allowed_domains?, blocked_domains? }`. Output: the answer text, a
 blank line, `Sources:` and one `- <title> — <url>` (or `- <url>`) line per source; `No results
 found.` for empty text and no sources; a thrown error → `ERROR: web search failed: <message>`;
-abort → `ERROR: the search was aborted`. `usage` (with `model` or `costUsd`) is charged to the
+abort → `ERROR: the search was aborted`. Unless `wrapUntrusted: false`, the answer text and the
+`Sources:` lines are framed together as one `untrustedContent(…, { source: <toolName> })` block;
+`No results found.` and `ERROR:` strings stay unwrapped. `usage` (with `model` or `costUsd`) is charged to the
 turn through `ctx.turn.addUsage(…, { source: 'web_search' })`. The library has no provider code;
 recipes are in the guide.

@@ -173,6 +173,13 @@ const agent = defineHarnessAgent({
 - Other options: `prefix` (default `<name>_`, `''` for none), `maxRetries` (retries of tool calls,
   default 0), `refresh` (`'session'` or `'turn'`).
 
+MCP output is untrusted: the text parts of every tool result reach the model inside
+`<untrusted-content source="mcp" name="<server>/<tool>">…</untrusted-content>` (images, structured
+JSON and `isError` are unchanged, and the UI keeps the raw result). Opt out per server with
+`mcpServer({ wrapUntrusted: false })`, e.g. for a server you fully trust. Add
+`UNTRUSTED_CONTENT_INSTRUCTIONS` to your instructions. See
+[Permissions → Prompt injection](permissions.md#prompt-injection).
+
 ## Tool output limits
 
 Large tool results are the main cause of context blow-ups. Every final tool output is limited

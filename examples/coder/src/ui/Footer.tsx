@@ -125,6 +125,7 @@ export const SHORTCUT_ROWS: ReadonlyArray<readonly [string, string, string]> = [
   ['/ for commands', 'shift+tab to cycle modes', 'alt+t to change thinking'],
   ['@ for file paths', 'ctrl+o for transcript', 'ctrl+r to search history'],
   ['\\⏎ for newline', 'ctrl+t to show todos', 'ctrl+s to stash prompt'],
+  ['ctrl+b to background', '', ''],
   ['ctrl+g to edit in $EDITOR', 'ctrl+v to paste images', 'esc to interrupt'],
 ]
 

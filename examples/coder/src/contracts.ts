@@ -636,6 +636,11 @@ export interface CoderController {
   // ─── background tasks ───
   tasks(): BackgroundTask[]
   stopTask(id: string): Promise<void>
+  /**
+   * Ctrl+B: move the running foreground `bash` and `agent` calls of the turn to the background.
+   * Resolves with the new task ids (`bash-2`, `agent-1`); empty when nothing could be moved.
+   */
+  backgroundRunning(): Promise<string[]>
   taskOutput(id: string): Promise<string>
   onTasks(listener: (tasks: BackgroundTask[]) => void): () => void
   // ─── settings and diagnostics ───
