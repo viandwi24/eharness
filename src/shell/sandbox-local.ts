@@ -42,6 +42,8 @@ export interface SandboxState {
   enabled: boolean
   kind: OsSandboxKind
   network: boolean
+  /** Directories commands may write to (the root and `allowWrite`; temp dirs come on top). */
+  writableRoots: string[]
 }
 
 /** A {@link Sandbox} whose OS isolation can be inspected and toggled at runtime. */
@@ -249,7 +251,12 @@ export function localSandbox(root: string, opts: LocalSandboxOptions = {}): Loca
       return describeState()
     },
 
-    state: () => ({ enabled: active(), kind: detected.kind, network: os.network }),
+    state: () => ({
+      enabled: active(),
+      kind: detected.kind,
+      network: os.network,
+      writableRoots: [root, ...os.allowWrite.map(abs)],
+    }),
 
     setOs(next) {
       os = normalize(next)

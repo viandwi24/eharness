@@ -44,7 +44,7 @@ Tool input `{ url, prompt? }`. Rules, in order:
 3. A host not trusted by `allow` (or any host when `onlyAllowed` and not in `allow`: `ERROR: <host> is not in the allow list`):
    - IP literals and local names (`localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan`,
      single-label names) in private, loopback, link-local, CGNAT, unspecified or multicast ranges
-     (IPv4, IPv6, IPv4-mapped) → refused. **Always** applied to untrusted hosts, with or without
+     (IPv4, IPv6, IPv4-mapped) → `ERROR: <host> is a private or local host and is not allowed. Add it to the web_fetch allow list (allow: ['<host>']) to fetch it.` (`web_fetch` is the literal text). **Always** applied to untrusted hosts, with or without
      `resolveHost`.
    - ports other than 80/443 → refused.
    - with `resolveHost`: any resolved address in a private range → refused. A resolver error is

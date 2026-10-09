@@ -701,6 +701,24 @@ export interface HarnessSession<
   /** Replay + follow the running turn. */
   attach(): HarnessRun<M> | undefined
   /**
+   * Called synchronously whenever ANY turn of this session starts in this process: `send`,
+   * `respond`, `regenerate`, `edit`, a queued turn (`ifBusy: 'queue' | 'wait' | 'collect'`, the
+   * fallback of a steer), a wake (`inject(…, { wake: true })`, `ctx.session.inject`, background
+   * deliveries) and a turn the inbox drain starts. It is called before the turn's stream is read.
+   *
+   * Every listener gets its OWN run object, a reader of the turn buffer like `attach()` (replay
+   * from the first chunk + follow): consuming `run.stream` of a listener never takes anything
+   * from the caller of `send()` or from other listeners, and a listener that never reads it costs
+   * only the (already kept) turn buffer. `abort()` of that run aborts the turn. A listener that
+   * throws is logged and skipped. Returns the unsubscribe function; `close()` drops all.
+   *
+   * In-process only (deployment profiles b/c in one process, ADR-0034): a turn started by another
+   * instance is not announced; use `events()` + `attach()` there.
+   *
+   * @see docs/specs/05-session-and-storage.md#2-session-api
+   */
+  onRun(listener: (run: HarnessRun<M>) => void): () => void
+  /**
    * Abort the running turn. Queued turns are dropped. When no turn of this session runs in this
    * process, it requests the abort of a turn running in another instance (fire-and-forget form of
    * {@link HarnessSession.requestAbort}; failures are logged).

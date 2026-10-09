@@ -104,6 +104,24 @@ export interface ToolKindSpec {
   nameField?: string
   /** `read`: how to find the paths in the tool's text output (see `filterOutputs`). */
   listing?: ListingFormat
+  /**
+   * Every call asks the user (`user-approval`) in every mode, `bypassPermissions` included, and
+   * no allow rule approves it; `dontAsk` turns the ask into a denial and deny rules still deny.
+   * For tools that must always involve a human (directory access, payments, deploys). Ignored
+   * for the `ask` and `plan-exit` kinds.
+   */
+  alwaysAsk?: boolean
+}
+
+/** Where a rule change lives: `session` rules are not stored, `project` rules go to `persist`. */
+export type RuleScope = 'session' | 'project'
+
+/** One rule change, passed to `persist` (spec 18 §2). */
+export interface RuleChange {
+  op: 'add' | 'remove'
+  kind: keyof PermissionRules
+  rule: string
+  scope: RuleScope
 }
 
 /** Tool name to its description. */

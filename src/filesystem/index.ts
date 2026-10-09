@@ -15,6 +15,7 @@ export {
   checkpointedFs,
   checkpointsSince,
   checkpointTurnKey,
+  copyCheckpoints,
   DEFAULT_CHECKPOINT_KEEP_TURNS,
   type FileCheckpoint,
   type FileSnapshot,

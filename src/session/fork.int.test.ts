@@ -7,6 +7,7 @@ import { isHarnessError } from '../errors.ts'
 import { createUuidV7Generator, uuidv7 } from '../messages/ids.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
+import { definePlugin } from '../plugin/define-plugin.ts'
 import { memoryMessages, memoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 
@@ -358,5 +359,56 @@ describe('session.fork()', () => {
     await make().session('s1').send('one').result
     const fork = await make().session('s1').fork({ id: 'f1' })
     expect(await fork.messages()).toHaveLength(2)
+  })
+})
+
+describe('session.fork hook', () => {
+  test('runs after the copy with the kept ids; a throwing hook warns and the fork succeeds', async () => {
+    const events: unknown[] = []
+    const warnings: string[] = []
+    const agent = defineHarnessAgent({
+      model: scriptedModel([{ text: 'a' }, { text: 'b' }]),
+      contextWindow: 100_000,
+      storage: { messages: memoryMessages(), state: memoryState() },
+      logger: silent,
+      onWarning: (w) => warnings.push(w.code),
+      plugins: [
+        definePlugin({
+          name: 'copier',
+          setup: () => ({
+            hooks: {
+              'session.fork': (_ctx, e) => {
+                events.push(e)
+              },
+            },
+          }),
+        }),
+        definePlugin({
+          name: 'broken',
+          setup: () => ({
+            hooks: {
+              'session.fork': () => {
+                throw new Error('nope')
+              },
+            },
+          }),
+        }),
+      ],
+    })
+    const session = agent.session('s1')
+    const first = await session.send('one').result
+    const second = await session.send('two').result
+    const secondUser = second.messages.filter((m) => m.role === 'user').at(-1)?.id as string
+    const forked = await session.fork({ beforeMessageId: secondUser })
+    expect(events).toEqual([
+      {
+        sourceSessionId: 's1',
+        targetSessionId: forked.id,
+        beforeMessageId: secondUser,
+        keptMessageIds: first.messages.map((m) => m.id).sort(),
+      },
+    ])
+    expect(warnings).toContain('W_HOOK_FAILED')
+    expect(await forked.messages()).toHaveLength(2)
   })
 })

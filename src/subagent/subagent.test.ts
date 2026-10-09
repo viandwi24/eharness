@@ -3,6 +3,7 @@ import { tool } from 'ai'
 import { z } from 'zod/v4'
 import {
   defineHarnessAgent,
+  definePlugin,
   type HarnessAgent,
   type HarnessSession,
   type HarnessUIMessage,
@@ -16,6 +17,7 @@ import {
   SUBAGENT_NO_USER,
   type SubagentApprovalRequest,
   type SubagentsOptions,
+  type SubagentTasks,
   subagentChild,
   subagents,
 } from './index.ts'
@@ -596,5 +598,155 @@ describe('reconcileSubagentWaits (crash between the child finishing and its hook
     expect(agentOutput(await session.messages())?.output).toBe('late report')
     await main.close()
     await worker.close()
+  })
+})
+
+describe('background subagents: the subagentTasks service', () => {
+  /** Captures the service of the session (a plugin that requires it). */
+  function taps() {
+    const capture: {
+      get tasks(): SubagentTasks
+      ctx?: { services: unknown }
+    } = {
+      get tasks(): SubagentTasks {
+        return (capture.ctx as { services: { subagentTasks: SubagentTasks } }).services
+          .subagentTasks
+      },
+    }
+    // no `requires`: this plugin is ordered before `subagents()`; the service is read lazily
+    const plugin = definePlugin({
+      name: 'tap',
+      session: (ctx) => {
+        capture.ctx = ctx as unknown as { services: unknown }
+      },
+    })
+    return { capture, plugin }
+  }
+
+  test('lists the task, notifies listeners, keeps the tail and writes data-subagent.run', async () => {
+    const storage = shared()
+    const worker = childAgent(storage, { steps: [{ text: 'bg report', delayMs: 40 }] })
+    const { capture, plugin } = taps()
+    const main = parentAgent(
+      storage,
+      worker,
+      { approvals: 'policy', background: true },
+      [
+        { toolCalls: [spawn('later', 'cb', { run_in_background: true })] },
+        { text: 'started it' },
+        { text: 'saw the report' },
+      ],
+      [plugin],
+    )
+    const session = main.session('p1')
+    await session.ready()
+    const tasks = capture.tasks
+    const lists: string[][] = []
+    tasks.subscribe((list) => lists.push(list.map((t) => t.status)))
+    expect((await session.send('go').result).stop).toBe('complete')
+    const [task] = tasks.list()
+    expect(task).toMatchObject({
+      id: 'agent-1',
+      agent: 'worker',
+      description: 'task',
+      childSessionId: 'p1:agent:cb',
+      status: expect.stringMatching(/running|completed/),
+    })
+    expect(tasks.get('p1:agent:cb')?.id).toBe('agent-1')
+    await until('task completed', () => tasks.get('agent-1')?.status === 'completed')
+    const done = tasks.get('agent-1')
+    expect(done?.tail).toBe('bg report')
+    expect(done?.endedAt).toBeGreaterThanOrEqual(done?.startedAt ?? 0)
+    expect(lists.at(-1)).toEqual(['completed'])
+    await until('wake turn finished', async () =>
+      JSON.stringify(await session.messages()).includes('saw the report'),
+    )
+    const stored = await session.messages()
+    const runParts = stored.flatMap((m) =>
+      m.parts.filter((p) => (p.type as string) === 'data-subagent.run'),
+    ) as unknown as Array<{ id?: string; data: { status: string; sessionId: string } }>
+    expect(runParts.map((p) => [p.id, p.data.status, p.data.sessionId])).toEqual([
+      ['cb', 'running', 'p1:agent:cb'],
+    ])
+    await main.close()
+  })
+
+  test('stop aborts the child, marks the task stopped and tells the parent', async () => {
+    const storage = shared()
+    const worker = childAgent(storage, { steps: [{ text: 'never', delayMs: 5000 }] })
+    const { capture, plugin } = taps()
+    const main = parentAgent(
+      storage,
+      worker,
+      { approvals: 'policy', background: true },
+      [
+        { toolCalls: [spawn('later', 'cb', { run_in_background: true })] },
+        { text: 'started it' },
+        { text: 'noted the stop' },
+      ],
+      [plugin],
+    )
+    const session = main.session('p1')
+    await session.ready()
+    const tasks = capture.tasks
+    await session.send('go').result
+    expect(tasks.get('agent-1')?.status).toBe('running')
+    await tasks.stop('agent-1')
+    expect(tasks.get('agent-1')?.status).toBe('stopped')
+    await until('parent told', async () =>
+      JSON.stringify(await session.messages()).includes('was stopped'),
+    )
+    const event = JSON.stringify(await session.messages())
+    expect(event).toContain('"status":"stopped"')
+    expect(tasks.get('agent-1')?.status).toBe('stopped')
+    await main.close()
+  })
+
+  test('stop of an unknown id asks the child session to abort (requestAbort)', async () => {
+    const storage = shared()
+    const worker = childAgent(storage, { steps: [{ text: 'x' }] })
+    const { capture, plugin } = taps()
+    const main = parentAgent(
+      storage,
+      worker,
+      { approvals: 'policy', background: true },
+      [],
+      [plugin],
+    )
+    const session = main.session('p1')
+    await session.ready()
+    await capture.tasks.stop('p1:agent:nothing')
+    await main.close()
+  })
+
+  test('run_in_background is offered to the root session, not to child sessions by default', async () => {
+    const storage = shared()
+    const leaf = childAgent(storage, { steps: [{ text: 'leaf' }] })
+    const make = (backgroundInChildren?: boolean): Agent =>
+      defineHarnessAgent({
+        model: scriptedModel([{ text: 'x' }]),
+        contextWindow: 100_000,
+        storage,
+        logger: silent,
+        plugins: [
+          subagents({
+            agents: { worker: { agent: leaf, description: 'w' } },
+            approvals: 'policy',
+            background: true,
+            maxDepth: 3,
+            ...(backgroundInChildren === undefined ? {} : { backgroundInChildren }),
+          }),
+        ],
+      }) as Agent
+    const fields = async (agent: Agent, parent?: boolean): Promise<string[]> => {
+      const session = agent.session(parent === true ? 'child' : 'root', {
+        ...(parent === true ? { parent: { sessionId: 'root', turnId: 't', depth: 1 } } : {}),
+      })
+      const info = (await session.tools()).find((t) => t.name === 'agent')
+      return Object.keys((info?.inputSchema.properties ?? {}) as Record<string, unknown>)
+    }
+    expect(await fields(make())).toContain('run_in_background')
+    expect(await fields(make(), true)).not.toContain('run_in_background')
+    expect(await fields(make(true), true)).toContain('run_in_background')
   })
 })

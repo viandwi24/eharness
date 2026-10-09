@@ -46,6 +46,8 @@ export {
   type PermissionMode,
   type PermissionRoot,
   type PermissionRules,
+  type RuleChange,
+  type RuleScope,
   type ToolKind,
   type ToolKindSpec,
   type ToolKinds,

@@ -28,6 +28,7 @@ export const TOOL_NAME_PATTERN: RegExp = /^[a-zA-Z0-9_-]{1,64}$/
 export const HOOK_NAMES: readonly HookName[] = [
   'session.start',
   'session.close',
+  'session.fork',
   'input.submit',
   'turn.prepare',
   'turn.start',

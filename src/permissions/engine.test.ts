@@ -841,6 +841,60 @@ describe('allow() and persist', () => {
   })
 })
 
+describe('persist change and scope', () => {
+  test('persist receives the change; session rules are not stored', async () => {
+    const calls: { rules: PermissionRules; change: unknown }[] = []
+    const engine = make(
+      'default',
+      {},
+      { persist: (rules, change) => void calls.push({ rules, change }) },
+    )
+    await engine.allow('Edit', 'session')
+    expect(calls).toEqual([])
+    expect(engine.rules().allow).toEqual(['Edit'])
+    await engine.allow('Bash(bun test *)')
+    expect(calls).toEqual([
+      {
+        rules: { allow: ['Bash(bun test *)'], ask: [], deny: [] },
+        change: { op: 'add', kind: 'allow', rule: 'Bash(bun test *)', scope: 'project' },
+      },
+    ])
+    expect(await engine.removeRule('allow', 'Edit')).toBe(true)
+    expect(calls).toHaveLength(1)
+    expect(await engine.removeRule('allow', 'Bash(bun test *)')).toBe(true)
+    expect(calls[1]?.change).toEqual({
+      op: 'remove',
+      kind: 'allow',
+      rule: 'Bash(bun test *)',
+      scope: 'project',
+    })
+  })
+
+  test('adding a session rule at project scope promotes it', async () => {
+    const calls: PermissionRules[] = []
+    const engine = make('default', {}, { persist: (rules) => void calls.push(rules) })
+    await engine.allow('Edit', 'session')
+    await engine.allow('Edit')
+    expect(calls).toEqual([{ allow: ['Edit'], ask: [], deny: [] }])
+  })
+})
+
+describe('alwaysAsk tools', () => {
+  const kinds = { pay: { kind: 'other' as const, alwaysAsk: true } }
+  const pay: PermissionCall = { toolName: 'pay', input: {} }
+  test('asks in every mode, despite allow rules; dontAsk denies; deny wins', () => {
+    for (const mode of ['default', 'acceptEdits', 'bypassPermissions'] as const) {
+      const engine = make(mode, { allow: ['pay'] }, { toolKinds: kinds })
+      expect(status(engine.decide(pay))).toBe('user-approval')
+    }
+    const dont = make('dontAsk', { allow: ['pay'] }, { toolKinds: kinds })
+    expect(dont.decide(pay)).toEqual({ status: 'denied', reason: DONT_ASK_REASON })
+    const deny = make('bypassPermissions', { deny: ['pay'] }, { toolKinds: kinds })
+    expect(status(deny.decide(pay))).toBe('denied')
+    expect(make('default', {}, { toolKinds: kinds }).suggestRule(pay)).toBeUndefined()
+  })
+})
+
 describe('finding 1: read-only commands are argument grammars (allow-lists)', () => {
   const writers = [
     'uniq a.txt victim.txt',

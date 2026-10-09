@@ -80,6 +80,11 @@ export interface HarnessSession<
   /** Replay + follow the running turn (spec 04 §6). */
   attach(): HarnessRun<M> | undefined
   /**
+   * 0.8. Called synchronously whenever ANY turn of this session starts in this process (see §2.1).
+   * Returns the unsubscribe function.
+   */
+  onRun(listener: (run: HarnessRun<M>) => void): () => void
+  /**
    * Abort the running turn. Partial output is saved with stop 'aborted'. Queued turns are dropped.
    * When no turn of this session runs in this process, it requests the abort of a turn running in
    * another instance (§9.1): fire-and-forget `requestAbort()`, failures go to the logger.
@@ -245,6 +250,27 @@ run returned by `inject(…, { wake })`):
   source `close()`), so per-session resources are released through the normal abort path. The
   session stays usable: the next open attempt gets a fresh `ctx.signal` (unless the session was
   closed meanwhile).
+
+### 2.1 `onRun`: every run reaches the app (0.8)
+
+`session.onRun(listener)` is the **in-process** channel for runs the caller of an operation never
+sees: a wake from `inject({ wake: true })` (also `ctx.session.inject`, background deliveries of
+shell / subagent plugins), a queued turn (`ifBusy: 'queue' | 'wait' | 'collect'`), the turn a
+steer falls back to, a turn the inbox drain starts. It is also called for `send`, `respond`,
+`regenerate` and `edit` (so one listener covers every turn). The listener runs synchronously
+when the turn starts, before its stream is read; it receives a `HarnessRun` and may stream it to
+a UI or answer its approvals (`run.result` → `tool-pending` → `session.respond`).
+
+**Stream ownership.** There is nothing to win: each listener gets its **own** `HarnessRun`, a
+reader of the turn buffer exactly like `attach()` (replay from the first chunk, then follow). The
+caller's original run keeps its `stream`, other listeners keep theirs; `run.abort()` of any of
+them aborts the turn; a listener that never reads costs nothing beyond the buffer the turn keeps
+anyway. A throwing listener is logged and skipped. `close()` drops all listeners.
+
+Serializable events are unchanged (`turn-start` carries no run): this is profile b/c **in one
+process** (ADR-0034). In multi-instance deployments a turn another instance starts is not
+announced here; observe it with `events()` and `attach()`.
+
 
 ## 3. Turn lifecycle (normative order)
 
@@ -1214,4 +1240,9 @@ the same as this session's (messages, state, inbox) so it works in every deploym
    this session except `parent` and `runtime`) and returned **after `ready()`**; the handle is
    the cached one. Commit point: the state write. A failure while copying leaves orphaned
    messages under the new id (`'exists'` on a retry with the same id: pick another).
+6. **`session.fork` hook (0.8).** After the copy (state written, new session opened) the hooks of
+   the source session run with `{ sourceSessionId, targetSessionId, beforeMessageId?,
+   keptMessageIds }` (spec 01 §5): plugins copy what lives outside session storage (the filesystem
+   plugin copies the file checkpoints of the kept turns, spec 08 §11). A throwing hook is
+   `W_HOOK_FAILED`; the fork still succeeds and is returned.
 

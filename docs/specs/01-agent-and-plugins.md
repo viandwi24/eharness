@@ -399,6 +399,13 @@ receive the previous hook's result (plugin order, root first; setup hooks before
 export interface HarnessHooks<DP extends DataPartMap = {}> {
   'session.start'?(ctx: HarnessContext<DP>): Awaitable<void>
   'session.close'?(ctx: HarnessContext<DP>): Awaitable<void>
+  /**
+   * 0.8. Runs in the SOURCE session after `session.fork()` copied messages and state (spec 05
+   * §14); the new session is stored and open. Copy data kept outside the session storage (the
+   * filesystem plugin copies file checkpoints). `keptMessageIds` = ids of the copied messages.
+   * A throwing hook is reported as `W_HOOK_FAILED`; the fork still succeeds.
+   */
+  'session.fork'?(ctx: HarnessContext<DP>, e: { sourceSessionId: string; targetSessionId: string; beforeMessageId?: string; keptMessageIds: string[] }): Awaitable<void>
 
   /** Chainable. Runs on every user input (send, edit, steer) before it is saved. */
   'input.submit'?(ctx: HarnessContext<DP>, e: { message: HarnessUIMessage; via: 'send' | 'edit' | 'steer' | 'queue' })

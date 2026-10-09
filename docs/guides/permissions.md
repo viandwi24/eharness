@@ -61,6 +61,7 @@ createPermissionEngine({
     run_script: { kind: 'shell', commandField: 'cmd' },
     read_doc: { kind: 'read', pathField: 'file' },
     deploy: { kind: 'other' },            // asks by default, denied in plan mode
+    pay: { kind: 'other', alwaysAsk: true }, // asks in every mode, even bypassPermissions
   },
   aliases: { Docs: ['read_doc'] },
 })
@@ -68,6 +69,10 @@ createPermissionEngine({
 
 `Read(...)` rules now cover `read_doc` too. Kinds: `read`, `write`, `shell`, `fetch`, `search`,
 `agent`, `ask`, `plan-exit`, `safe`, `other` (spec 18 §3 has the behaviour table).
+
+`alwaysAsk` is the way to protect tools that must always involve a human (directory access,
+payments, deploys): no allow rule or mode approves them, deny rules still deny. An autonomous
+server (nobody to ask, `dontAsk`) therefore gets them denied.
 
 ## Modes
 
@@ -128,6 +133,7 @@ onShiftTab(() => engine.cycleMode())
 // the user picked "always allow" on an approval:
 const rule = engine.suggestRule({ toolName, input })
 if (rule) await engine.allow(rule)       // persist() writes it to your settings file
+if (rule) await engine.allow(rule, 'session') // this session only: persist() is not called
 ```
 
 **Split web/server.** Decisions are a deterministic function of (rules, mode, call), so any
@@ -138,7 +144,7 @@ answers with `respond()`. The rules and the mode are your application state:
 const engine = createPermissionEngine({
   roots: () => [{ virtual: '/', real: tenantRoot }],
   rules: await loadRules(tenantId),
-  persist: (rules) => saveRules(tenantId, rules),     // after allow()/addRule()/removeRule()
+  persist: (rules, change) => saveRules(tenantId, rules),  // after allow()/addRule()/removeRule(); change = { op, kind, rule, scope }
 })
 permissionsPlugin({
   engine,

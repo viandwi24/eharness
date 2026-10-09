@@ -484,14 +484,17 @@ export interface CheckpointStore {
   list(sessionId: string): Promise<CheckpointRecord[]> // { turnKey, path, before, at }
   /** The given turns, or the whole session when `turnKeys` is omitted. */
   delete(sessionId: string, turnKeys?: readonly string[]): Promise<void>
+  /** Optional (0.8): copy the snapshots of `from` for `turnKeys` (all when omitted) into `to`. */
+  copy?(from: string, to: string, turnKeys?: readonly string[]): Promise<void>
 }
 
 export function memoryCheckpointStore(opts?: { keepTurns?: number }): CheckpointStore // eharness/filesystem
 export function nodeCheckpointStore(dir: string, opts?: { keepTurns?: number }): CheckpointStore // eharness/filesystem/node
 
-export function checkpointsSince(args: { store; sessionId; fromTurnKey; fs? }): Promise<FileCheckpoint[]>
-export function rewindFiles(args: { fs; store; sessionId; fromTurnKey; keepRecords? }): Promise<RewindFilesResult>
+export function checkpointsSince(args: { store; sessionId; sessionIds?; fromTurnKey; fs? }): Promise<FileCheckpoint[]>
+export function rewindFiles(args: { fs; store; sessionId; sessionIds?; fromTurnKey; keepRecords? }): Promise<RewindFilesResult>
 export function checkpointTurnKey(turn: { id: string; input?: { id: string } }): string
+export function copyCheckpoints(args: { store; from; to; turnKeys?; beforeTurnKey? }): Promise<void>
 ```
 
 - **What is recorded.** The plugin hands the tools and the `fs` service a recording wrapper of the
@@ -507,6 +510,20 @@ export function checkpointTurnKey(turn: { id: string; input?: { id: string } }):
   not need a checkpoint of its own. The natural point of a UI is the id of a user message.
 - **Sessions.** The key's `sessionId` is the id of the session that ran the tool; a subagent's
   child session has its own checkpoints (the plugin does not map them to the parent's turn).
+  **Children in a rewind (0.8).** `checkpointsSince` and `rewindFiles` take `sessionIds`: more
+  sessions whose snapshots are included. Turn keys are UUIDv7, so snapshots of the parent and of
+  its children are ordered by time together, and the earliest per path wins across sessions
+  (`FileCheckpoint.sessionId` says which). Collect the ids with `session.children()` (recursively
+  for nested children; a child's own `children()` needs `agent.session(childId)`, or read
+  `core.children` from the `StateAdapter`). `rewindFiles` deletes the rewound snapshots of every
+  listed session.
+- **Fork (0.8).** The plugin registers a `session.fork` hook (spec 01 §5): when
+  `session.fork({ beforeMessageId })` succeeds it copies the checkpoints of the source whose turn
+  key is `< beforeMessageId` (all when omitted) into the new session (`store.copy` when the store
+  has it, else `list` + `save`; `copyCheckpoints` is exported). The cut is by key comparison:
+  turn keys are message or turn ids (UUIDv7), so a turn that started before the cut message is
+  kept. Checkpoints of child sessions are not copied (the fork has no children). A failing copy is
+  `W_HOOK_FAILED`; the fork still succeeds.
 - **`checkpointsSince`** returns the earliest snapshot per path among turns `>= fromTurnKey`
   (`{ path, turnKey, before, changed? }`, sorted by path); with `fs`, `changed` says whether the
   file differs from the snapshot now (a UI shows "N files will be restored").

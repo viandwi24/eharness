@@ -29,6 +29,11 @@ means for you (`tool.approve`, `approval.risk`, see [approvals](approvals-and-in
 `allowWrite` and temp; network off unless `network: true`). Check `sandbox.state().enabled`: when the
 platform tool is missing it is `false` and you must not tell users they are isolated.
 
+The `bash` tool description states the sandbox state for the model ("Commands run in an OS
+sandbox: writes only inside …" or "… without an OS sandbox …"). It is computed when the session's
+tools are resolved, so a `setOs()` toggle shows up in the next session or tool resolution; the
+prompt cache is only busted when the setting actually changed.
+
 ## Live output
 
 Foreground commands write transient `data-shell.output` parts (`{ toolCallId, stream, chunk }`).

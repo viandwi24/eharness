@@ -45,6 +45,41 @@ export interface CheckpointStore {
   list(sessionId: string): Promise<CheckpointRecord[]>
   /** Delete the snapshots of the given turns, or of the whole session when `turnKeys` is omitted. */
   delete(sessionId: string, turnKeys?: readonly string[]): Promise<void>
+  /**
+   * Optional: copy the snapshots of `from` whose turn key is in `turnKeys` (all turns when
+   * omitted) into `to`, keeping existing snapshots of `to` (first write wins). Lets a backend copy
+   * server side; without it {@link copyCheckpoints} uses `list` + `save`.
+   */
+  copy?(from: string, to: string, turnKeys?: readonly string[]): Promise<void>
+}
+
+/**
+ * Copy the checkpoints of session `from` into session `to` (a fork, spec 05 §14): the turns whose
+ * key is in `turnKeys`, or those below `beforeTurnKey` (string comparison; keys are UUIDv7), or
+ * all. Uses `store.copy` when the store has it, else `list` + `save`.
+ */
+export async function copyCheckpoints(args: {
+  store: CheckpointStore
+  from: string
+  to: string
+  turnKeys?: readonly string[]
+  /** Only turns with a key strictly before this one. */
+  beforeTurnKey?: string
+}): Promise<void> {
+  const { store, from, to } = args
+  const records = (await store.list(from)).filter(
+    (r) =>
+      (args.turnKeys === undefined || args.turnKeys.includes(r.turnKey)) &&
+      (args.beforeTurnKey === undefined || r.turnKey < args.beforeTurnKey),
+  )
+  if (records.length === 0) return
+  const keys = [...new Set(records.map((r) => r.turnKey))]
+  if (store.copy !== undefined) {
+    await store.copy(from, to, keys)
+    return
+  }
+  for (const r of records)
+    await store.save({ sessionId: to, turnKey: r.turnKey, path: r.path }, r.before)
 }
 
 /** Options of {@link memoryCheckpointStore}. */
@@ -110,6 +145,8 @@ export function checkpointTurnKey(turn: {
 /** The earliest snapshot per path among the turns at or after `fromTurnKey`. */
 export interface FileCheckpoint {
   path: string
+  /** The session whose snapshot this is (differs from `sessionId` for `sessionIds`). */
+  sessionId: string
   /** The turn that first changed the file at or after the point. */
   turnKey: string
   before: FileSnapshot
@@ -145,18 +182,33 @@ async function currentContent(fs: FileSystem, path: string): Promise<string | nu
 export async function checkpointsSince(args: {
   store: CheckpointStore
   sessionId: string
+  /**
+   * More sessions to include, typically the child sessions of `sessionId` (`session.children()`,
+   * recursively for nested children). Turn keys are UUIDv7, so snapshots of all sessions are
+   * ordered by time together: the earliest snapshot per path wins across sessions.
+   */
+  sessionIds?: readonly string[]
   fromTurnKey: string
   /** When given, `changed` is computed against it. */
   fs?: FileSystem
 }): Promise<FileCheckpoint[]> {
-  const records = (await args.store.list(args.sessionId))
-    .filter((r) => r.turnKey >= args.fromTurnKey)
-    .sort((a, b) => byText(a.turnKey, b.turnKey))
-  const earliest = new Map<string, CheckpointRecord>()
+  const records: Array<CheckpointRecord & { sessionId: string }> = []
+  for (const sessionId of new Set([args.sessionId, ...(args.sessionIds ?? [])])) {
+    for (const r of await args.store.list(sessionId)) {
+      if (r.turnKey >= args.fromTurnKey) records.push({ ...r, sessionId })
+    }
+  }
+  records.sort((a, b) => byText(a.turnKey, b.turnKey))
+  const earliest = new Map<string, CheckpointRecord & { sessionId: string }>()
   for (const r of records) if (!earliest.has(r.path)) earliest.set(r.path, r)
   const out: FileCheckpoint[] = []
   for (const r of earliest.values()) {
-    const item: FileCheckpoint = { path: r.path, turnKey: r.turnKey, before: r.before }
+    const item: FileCheckpoint = {
+      path: r.path,
+      sessionId: r.sessionId,
+      turnKey: r.turnKey,
+      before: r.before,
+    }
     if (args.fs) {
       const now = await currentContent(args.fs, r.path)
       item.changed = now === undefined || !sameAs(now, r.before)
@@ -202,6 +254,8 @@ export async function rewindFiles(args: {
   fs: FileSystem
   store: CheckpointStore
   sessionId: string
+  /** More sessions to include (child sessions), see {@link checkpointsSince}. */
+  sessionIds?: readonly string[]
   fromTurnKey: string
   /** Keep the snapshots after restoring. Default false. */
   keepRecords?: boolean
@@ -233,10 +287,13 @@ export async function rewindFiles(args: {
     }
   }
   if (!args.keepRecords && result.failed.length === 0) {
-    const turns = new Set(points.map((p) => p.turnKey))
-    const all = await args.store.list(args.sessionId)
-    for (const r of all) if (r.turnKey >= args.fromTurnKey) turns.add(r.turnKey)
-    if (turns.size > 0) await args.store.delete(args.sessionId, [...turns])
+    for (const sessionId of new Set([args.sessionId, ...(args.sessionIds ?? [])])) {
+      const turns = new Set<string>()
+      for (const r of await args.store.list(sessionId)) {
+        if (r.turnKey >= args.fromTurnKey) turns.add(r.turnKey)
+      }
+      if (turns.size > 0) await args.store.delete(sessionId, [...turns])
+    }
   }
   return result
 }

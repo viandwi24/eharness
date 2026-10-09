@@ -24,3 +24,4 @@ export {
   subagents,
   subagentWaitId,
 } from './plugin.ts'
+export type { SubagentTask, SubagentTaskStatus, SubagentTasks } from './tasks.ts'

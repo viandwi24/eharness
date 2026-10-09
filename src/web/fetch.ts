@@ -235,7 +235,9 @@ export function webFetch(options: WebFetchOptions = {}): HarnessPlugin<'web-fetc
     if (!allowed) {
       if (options.onlyAllowed === true) return { error: `ERROR: ${host} is not in the allow list` }
       if (isPrivateHost(host)) {
-        return { error: `ERROR: ${host} is a private or local host and is not allowed` }
+        return {
+          error: `ERROR: ${host} is a private or local host and is not allowed. Add it to the web_fetch allow list (allow: ['${host}']) to fetch it.`,
+        }
       }
       if (url.port !== '' && url.port !== '80' && url.port !== '443') {
         return { error: `ERROR: port ${url.port} is not allowed for ${host}` }

@@ -96,6 +96,7 @@ describe.skipIf(!available)('real OS sandbox', () => {
       enabled: true,
       kind: detectOsSandbox().kind,
       network: false,
+      writableRoots: [root],
     })
     expect(sb.description).toContain('OS sandbox')
     expect(sb.description).toContain(root)

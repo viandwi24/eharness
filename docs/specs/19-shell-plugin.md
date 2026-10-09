@@ -55,7 +55,12 @@ Exports besides the above: `capOutput`, `seatbeltProfile`, `wrapCommand`, `SANDB
 Input: `{ command, description?, timeoutMs? }`; with `background`: plus `run_in_background?`,
 `notify_on?`. `metadata.risk` = `risk` (default `'external'`). The description is the text in
 `src/shell/texts.ts` (`BASH_DESCRIPTION` with the timeouts filled in, plus `BACKGROUND_NOTE` when
-`background` is on).
+`background` is on). When the sandbox exposes `state()` (`localSandbox` does) a sandbox line is
+appended, computed when the session's tools are resolved: `Commands run in an OS sandbox: writes
+only inside <roots> (and temp dirs), network on|off.` or `Commands run without an OS sandbox, with
+your user's privileges.` The description changes (and the prompt-cache prefix with it) only when
+the sandbox setting changed between sessions or tool resolutions. `state()` also carries
+`writableRoots` (the root and `allowWrite`).
 
 Foreground result (always a string, never a throw):
 

@@ -28,6 +28,8 @@ import {
   BASH_OUTPUT_DESCRIPTION,
   KILL_SHELL_DESCRIPTION,
   SANDBOX_HINT,
+  SANDBOX_OFF_NOTE,
+  SANDBOX_ON_NOTE,
 } from './texts.ts'
 
 declare module '../index.ts' {
@@ -244,6 +246,22 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
         typeof options.sandbox === 'function'
           ? await options.sandbox(ctx as unknown as HarnessContext)
           : options.sandbox
+      const state = (
+        sandbox as {
+          state?: () => { enabled: boolean; writableRoots?: string[]; network?: boolean }
+        }
+      ).state?.()
+      const toolDescription =
+        state === undefined
+          ? description
+          : `${description}\n\n${
+              state.enabled
+                ? SANDBOX_ON_NOTE.replace(
+                    '{roots}',
+                    (state.writableRoots ?? []).join(', '),
+                  ).replace('{network}', state.network === true ? 'on' : 'off')
+                : SANDBOX_OFF_NOTE
+            }`
       const registry = createTaskRegistry()
       /** Fallback notices for the next step when the default `ctx.session.inject` fails. */
       const notices: string[] = []
@@ -466,7 +484,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
 
       const tools: Record<string, unknown> = {
         [toolName]: tool({
-          description,
+          description: toolDescription,
           inputSchema,
           metadata: { risk },
           execute: async (

@@ -97,3 +97,8 @@ const search: WebSearchOptions['search'] = async (query, { allowedDomains, block
 
 Check the provider package versions for the exact option names; these recipes mirror
 `examples/coder/src/app/web-tools.ts`.
+
+Refused private or local hosts tell the model how to allow them: `ERROR: <host> is a private or
+local host and is not allowed. Add it to the web_fetch allow list (allow: ['<host>']) to fetch it.`
+The text is neutral; wrap the tool (or map the host to `WebFetch(domain:<host>)`) if your app
+manages that allow list through permission rules.

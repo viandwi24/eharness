@@ -75,6 +75,8 @@ export async function registerChild(
 export interface CopiedHistory {
   /** Number of messages copied. */
   count: number
+  /** Ids of the copied messages (newest batch first). */
+  ids: string[]
   /** Newest copied compaction boundary, as the state pointer. */
   compaction?: { markerId: string; resumeFromId: string | null }
   /** Rewind markers among the copied messages, chronological. */
@@ -95,7 +97,7 @@ export async function copyMessages(args: {
   registry: MessageRegistry
 }): Promise<CopiedHistory> {
   const { adapter, registry } = args
-  const out: CopiedHistory = { count: 0, rewinds: [] }
+  const out: CopiedHistory = { count: 0, ids: [], rewinds: [] }
   let cursor = args.beforeId
   try {
     for (;;) {
@@ -109,6 +111,7 @@ export async function copyMessages(args: {
       if (page.length === 0) break
       await adapter.save(args.to, structuredClone(page))
       out.count += page.length
+      for (const m of page) out.ids.push(m.id)
       out.rewinds.unshift(...rewindsIn(page))
       if (out.compaction === undefined) {
         for (let i = page.length - 1; i >= 0; i--) {

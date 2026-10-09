@@ -26,6 +26,18 @@ import {
   type ToolInput,
   type TurnResult,
 } from '../index.ts'
+import {
+  createSubagentTaskRegistry,
+  type SubagentTaskRegistry,
+  type SubagentTasks,
+} from './tasks.ts'
+
+declare module '../index.ts' {
+  interface HarnessServices {
+    /** Provided by `subagents()`: the background subagents this session started. */
+    subagentTasks: SubagentTasks
+  }
+}
 
 /** Default tool name. */
 export const SUBAGENT_TOOL = 'agent'
@@ -119,6 +131,13 @@ export interface SubagentsOptions {
    * report is injected into the parent as an `eh.event` with `wake: true`. Default `false`.
    */
   background?: boolean
+  /**
+   * Offer `run_in_background` in CHILD sessions too (default `false`). A child session is closed
+   * when its turn ends, which aborts the background subagents it started, and its report would go
+   * to a session nobody watches; so by default only the root session (and any session without a
+   * `parent`) gets the field. Enable it only when your child sessions stay open (spec 20 §2.2).
+   */
+  backgroundInChildren?: boolean
   /**
    * How the child's approvals and client tool calls are answered: `'inline'` (the `answer`
    * callback, in process), `'park'` (the parent parks as an external wait, ADR-0035) or
@@ -759,9 +778,27 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
 
   return definePlugin({
     name: 'subagent',
+    provides: ['subagentTasks'],
     dataParts: { run: runPart },
     session: (ctx) => {
       const depth = ctx.session.parent?.depth ?? 0
+      const registry = createSubagentTaskRegistry({
+        foreign: async (childSessionId) => {
+          // not a task of this process: ask the child session to abort, wherever it runs
+          for (const def of Object.values(resolveCatalog(options.agents))) {
+            const child = def.agent.session(childSessionId) as AnySession
+            try {
+              const out = await child.requestAbort('stopped')
+              if (out.target !== 'idle') return
+            } catch {
+              // try the next agent
+            } finally {
+              await def.agent.closeSession(childSessionId).catch(() => {})
+            }
+          }
+        },
+      })
+      const services = { subagentTasks: registry as SubagentTasks }
       const hooks: Record<string, unknown> = { 'turn.end': parkHook }
       if (options.approvals === 'park' && options.selfAgent !== undefined) {
         const self = options.selfAgent
@@ -787,13 +824,18 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           )
         }
       }
-      if (depth >= maxDepth) return { hooks } as SessionContribution
+      const dispose = (): void => {
+        void registry.stopAll()
+      }
+      if (depth >= maxDepth) return { hooks, services, dispose } as SessionContribution
       const defs = resolveCatalog(options.agents)
       const names = Object.keys(defs)
-      if (names.length === 0) return { hooks } as SessionContribution
+      if (names.length === 0) return { hooks, services, dispose } as SessionContribution
       // resolved once per session so the description (and the prompt-cache prefix) stays stable
       const description = toolDescription(defs)
-      const canBackground = options.background === true
+      const canBackground =
+        options.background === true &&
+        (ctx.session.parent === undefined || options.backgroundInChildren === true)
       const inputSchema = z.object({
         subagent_type: z.enum(names as [string, ...string[]]).describe('The subagent type to use'),
         description: z.string().describe('A short (3-5 words) label for the task'),
@@ -806,9 +848,9 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         [toolName]:
           options.approvals === 'park'
             ? (parkTool(ctx, defs, depth, description, inputSchema) as ToolInput)
-            : (runTool(ctx, defs, depth, description, inputSchema) as ToolInput),
+            : (runTool(ctx, defs, depth, description, inputSchema, registry) as ToolInput),
       }
-      return { tools, hooks } as SessionContribution
+      return { tools, hooks, services, dispose } as SessionContribution
     },
   }) as unknown as HarnessPlugin<'subagent'>
 
@@ -820,6 +862,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     depth: number,
     description: string,
     inputSchema: unknown,
+    registry: SubagentTaskRegistry,
   ): ToolInput {
     return tool({
       description,
@@ -846,9 +889,15 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           toolCallId,
           depth: depth + 1,
         }
-        if (run_in_background === true && options.background === true) {
+        if (
+          run_in_background === true &&
+          options.background === true &&
+          (ctx.session.parent === undefined || options.backgroundInChildren === true)
+        ) {
           yield startBackground(
             ctx,
+            registry,
+            toolCallId,
             def,
             subagent_type,
             label,
@@ -992,6 +1041,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   /** Start a child detached from the calling turn; returns the text for the model. */
   function startBackground(
     ctx: Ctx,
+    registry: SubagentTaskRegistry,
+    toolCallId: string,
     def: SubagentDefinition,
     agentName: string,
     label: string,
@@ -1003,15 +1054,38 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     const ac = new AbortController()
     ctx.signal.addEventListener('abort', () => ac.abort('parent closed'), { once: true })
     const sem = semaphoreFor(depth)
+    const taskId = registry.add({
+      agent: agentName,
+      description: label,
+      childSessionId: sessionId,
+      stop: () => ac.abort('stopped'),
+    })
+    /** The persisted marker, while the starting turn still streams (a later turn cannot amend it). */
+    const marker = (status: SubagentRunData['status']): void => {
+      if (ctx.stream.active && ctx.turn?.id === parentInfo.turnId) {
+        ctx.stream.data(
+          'run',
+          { toolCallId, sessionId, agent: agentName, status },
+          { id: toolCallId },
+        )
+      }
+    }
+    marker('running')
     const finish = async (status: 'completed' | 'failed', text: string): Promise<void> => {
-      const head = `Background subagent ${sessionId} (${agentName}: ${label}) ${status === 'completed' ? 'finished' : 'failed'}.`
+      const stopped = registry.stopped(taskId)
+      registry.complete(taskId, status)
+      marker(status === 'completed' ? 'done' : 'failed')
+      const outcome = stopped ? 'stopped' : status
+      const head = `Background subagent ${sessionId} (${agentName}: ${label}) ${
+        stopped ? 'was stopped' : status === 'completed' ? 'finished' : 'failed'
+      }.`
       try {
         await ctx.session.inject(
           'eh.event',
           {
             name: 'subagent',
             text: `${head}\n\n${reportOf(text) || '(no report)'}`,
-            data: { sessionId, agent: agentName, status },
+            data: { sessionId, agent: agentName, status: outcome },
           },
           { deliver: 'next-step', wake: true },
         )
@@ -1043,8 +1117,9 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             consumers.push(
               (async () => {
                 try {
-                  for await (const _ of r.stream as AsyncIterable<unknown>) {
-                    // drained
+                  for await (const message of readUIMessageStream({ stream: r.stream })) {
+                    const m = message as unknown as MessageLike
+                    registry.setTail(taskId, textOf(m, true) || inspect(m).lastTool || '')
                   }
                 } catch {
                   // surfaces through run.result

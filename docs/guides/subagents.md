@@ -105,6 +105,26 @@ the child finishes, the plugin injects an `eh.event` into the parent with `ctx.s
 (`deliver: 'next-step'`, `wake: true`): a running parent sees it at its next step, an idle one
 wakes. The report is stored in the history, so it survives a UI restart.
 
+**Task list.** `ctx.services.subagentTasks` (like `shellTasks`) lists the background children of a
+session for a UI: `list()`, `get(id)` (task id `agent-1` or child session id), `stop(id)`,
+`stopAll()`, `subscribe(listener)`; an entry is `{ id, agent, description, childSessionId, status:
+'running' | 'completed' | 'failed' | 'stopped', startedAt, endedAt?, tail }`. It is per process and
+live session; the durable records are the `data-subagent.run` part (`running`, written while the
+starting turn streams) and the `eh.event` report (`data.status` `completed` / `failed` /
+`stopped`). `stop()` aborts the child; for an id the process does not know it calls
+`requestAbort()` on the child session, which reaches a child running in another instance.
+
+**Wake turns.** A report wakes an idle parent with a turn nobody started: use
+`session.onRun((run) => …)` to stream it and answer its approvals (spec 05 §2.1); in
+multi-instance deployments use `events()` + `attach()`.
+
+**Children of children.** A child session is closed when its turn ends, which aborts the
+background subagents it started, and a report for it would go to a session nobody watches. So
+`run_in_background` is offered to the root session only; set `backgroundInChildren: true` if your
+child sessions stay open. Do the same for shell background tasks: give child agents a `shell()`
+without `background` (a separate child agent definition), so every report reaches the session the
+user sees.
+
 ## Appendix: the manual pattern
 
 The plugin is a convenience; a subagent is just a tool that opens a child session. If you need

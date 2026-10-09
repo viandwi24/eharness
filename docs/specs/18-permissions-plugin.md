@@ -36,7 +36,7 @@ export interface PermissionEngineOptions {
   toolKinds?: ToolKinds                                 // merged over DEFAULT_TOOL_KINDS
   aliases?: Record<string, readonly string[]>           // merged over DEFAULT_ALIASES
   modeCycle?: readonly PermissionMode[]                 // default ['default','acceptEdits','plan']
-  persist?: (rules: PermissionRules) => void | Promise<void>
+  persist?: (rules: PermissionRules, change: RuleChange) => void | Promise<void>
 }
 
 export interface PermissionEngine {
@@ -109,8 +109,15 @@ programs, the exact command for interpreters, shells and wrappers (`bash -c`, `p
 `WebFetch(domain:host)`; `WebSearch`; the tool name otherwise. None for compound or complex
 commands, commands with `*`, protected paths, the plan-exit and ask tools.
 
-`persist(rules)` is called with a copy after `allow`, `addRule` and `removeRule` changed the
-in-memory rules; the returned promise is what those methods return. The library stores nothing.
+`persist(rules, change)` is called with a copy of the stored rules and the change
+`{ op: 'add' | 'remove', kind: 'allow' | 'ask' | 'deny', rule, scope: 'session' | 'project' }`
+after `allow(rule, scope?)`, `addRule(kind, rule, scope?)` and `removeRule` changed the in-memory
+rules; the returned promise is what those methods return. The library stores nothing. `scope`
+defaults to `'project'`. A rule added with scope `'session'` takes effect at once but is not
+stored: `persist` is not called and later copies leave it out (adding it again at `'project'`
+scope promotes it). `removeRule` of a session rule does not call `persist` either. The extra
+`change` argument is backwards compatible with `persist(rules)` callbacks; the changed `allow` and
+`addRule` signatures only add an optional parameter.
 
 ## 3. Tool map
 
@@ -126,6 +133,7 @@ interface ToolKindSpec {
   urlField?: string                         // fetch, default 'url'
   nameField?: string                        // agent, default 'subagent_type'
   listing?: 'grep' | 'list' | 'paths'       // read: how to find paths in the text output (§8)
+  alwaysAsk?: boolean                       // every mode asks, see below
 }
 ```
 
@@ -134,6 +142,12 @@ interface ToolKindSpec {
 (write), `bash` (shell, `eharness/shell`), `bash_output`, `kill_shell`, `todo_write` (safe),
 `web_fetch`, `web_search`, `agent`, `ask_user_question`, `exit_plan_mode`. A tool the map does not
 know is `other`. Pass `toolKinds` to add or override (`{ run: { kind: 'shell', commandField: 'cmd' } }`).
+
+**`alwaysAsk: true`** (any kind except `ask`/`plan-exit`): the tool's calls are `user-approval` in
+every mode including `bypassPermissions`, no allow rule approves them (and `suggestRule` offers
+none), `dontAsk` turns the ask into a denial (`DONT_ASK_REASON`) and deny rules still deny. Use it
+for tools that must always involve a human (directory access, payments, deploys). Autonomous
+servers (profile a) run in `dontAsk`, so such tools are denied there.
 
 | Kind | default / acceptEdits / bypass | plan | dontAsk |
 |---|---|---|---|

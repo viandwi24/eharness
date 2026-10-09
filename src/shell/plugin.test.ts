@@ -219,6 +219,25 @@ describe('bash tool', () => {
     expect(info?.description).not.toContain('Background mode')
   })
 
+  test('the description states the sandbox state', async () => {
+    const root = await temp()
+    const desc = async (sandbox: Sandbox): Promise<string> => {
+      const { agent } = agentWith([{ text: 'x' }], { sandbox })
+      return (await agent.session('a').tools()).find((t) => t.name === 'bash')?.description ?? ''
+    }
+    expect(await desc(localSandbox(root))).toContain(
+      "Commands run without an OS sandbox, with your user's privileges.",
+    )
+    if (detectOsSandbox().kind !== 'none') {
+      expect(await desc(localSandbox(root, { os: { enabled: true } }))).toContain(
+        `Commands run in an OS sandbox: writes only inside ${root} (and temp dirs), network off.`,
+      )
+    }
+    const plain = { ...localSandbox(root) } as Record<string, unknown>
+    delete plain.state
+    expect(await desc(plain as unknown as Sandbox)).not.toContain('OS sandbox')
+  })
+
   test('streams transient data-shell.output chunks', async () => {
     const sandbox = localSandbox(await temp())
     const { agent } = agentWith(

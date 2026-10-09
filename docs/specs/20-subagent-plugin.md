@@ -22,6 +22,7 @@ subagents({
   maxDepth?: number                            // 2: the root is depth 0; a session at maxDepth has no tool
   maxConcurrent?: number                       // 8, per nesting depth and plugin instance
   background?: boolean                         // false; 'inline' and 'policy' only
+  backgroundInChildren?: boolean               // false: run_in_background only in sessions without a parent (§2.2)
   approvals: 'inline' | 'park' | 'policy'
   answer?: (request: SubagentApprovalRequest, signal: AbortSignal)
             => Promise<SubagentApprovalAnswer> | SubagentApprovalAnswer   // required for 'inline'
@@ -98,7 +99,49 @@ parent session closes) and on completion the plugin calls `ctx.session.inject('e
 running parent sees it at its next step boundary, an idle one wakes. The event is a stored message,
 so it survives restarts of the UI process. The report is capped at 4 000 characters. An inject that
 fails (parent closed) is logged. Approvals follow the configured strategy; a wake run is not driven
-by anyone — observe it with `session.events()`.
+by anyone — observe it with `session.onRun()` (in process, spec 05 §2.1) or `session.events()`.
+
+**`subagentTasks` service (0.8).** The plugin `provides: ['subagentTasks']` (always, also without
+`background`), per live session, in memory, like `shellTasks`:
+
+```ts
+interface SubagentTask {
+  id: string                 // 'agent-1', per session
+  agent: string; description: string
+  childSessionId: string
+  status: 'running' | 'completed' | 'failed' | 'stopped'
+  startedAt: number; endedAt?: number
+  tail: string               // latest text of the child (≤ 2 000 chars), else its latest tool call
+}
+interface SubagentTasks {
+  list(): SubagentTask[]; get(id: string): SubagentTask | undefined   // task id or child session id
+  stop(id: string): Promise<void>; stopAll(): Promise<void>
+  subscribe(listener: (tasks: SubagentTask[]) => void): () => void   // tail updates throttled to 100 ms
+}
+```
+
+`stop(id)` marks the task `stopped` first, then aborts the child (the abort signal of its turn);
+the parent receives the `eh.event` with `data.status: 'stopped'` and a text that says it was
+stopped (a stopped child counts as `failed` in the part). An id that is not a task of this
+process is taken for a child session id: the plugin calls `requestAbort('stopped')` on it through
+the catalog agents (spec 05 §9.1), which reaches a child running in another instance. Closing the
+parent session stops every running task (`dispose`).
+
+**Persisted marker.** The tool writes `data-subagent.run` `{ toolCallId, sessionId, agent,
+status: 'running' }` (id = tool call id) when the background child starts. The final `done` /
+`failed` is written with the same id only while the starting turn still streams; afterwards the
+report event (`eh.event`, `data: { sessionId, agent, status }`) is the durable record, since a
+stored message of an earlier turn cannot be amended.
+
+**Children of children (the rule).** A report is injected into the session that started the
+child. A child session closes when its turn ends, which aborts its background children
+(`ctx.signal`), so a nested background run would be lost. Rule: `run_in_background` is only
+offered in sessions **without a parent** (the root the user sees); `backgroundInChildren: true`
+offers it in child sessions too, for apps whose child sessions stay open (the report then goes to
+that child). No cross-session injection exists (the root session handle lives in another agent
+and may be in another instance). Shell background tasks follow the same rule by configuration:
+install `shell({ background: true })` only on the root agent and a `shell()` without `background`
+on child agents (spec 19).
 
 ## 3. `'park'` (profile c): nested approvals, ADR-0035
 
@@ -228,4 +271,5 @@ background event text.
 deny / approve, child error, abort propagation, depth limit, per-depth concurrency, background wake,
 park (another instance answers; parent process restart; child finishes at once; child fails),
 `reconcileSubagentWaits` (child finished without the hook, still waiting, `selfAgent` on open),
-`pendingSubagentApprovals`. Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`).
+`pendingSubagentApprovals`, `subagentTasks` (list / tail / stop / `run` part), `backgroundInChildren`.
+Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`).

@@ -14,7 +14,7 @@ import {
   type HarnessPlugin,
   type SessionContribution,
 } from '../index.ts'
-import { checkpointedFs, checkpointTurnKey } from './checkpoints.ts'
+import { checkpointedFs, checkpointTurnKey, copyCheckpoints } from './checkpoints.ts'
 import { lastReadOf } from './last-read.ts'
 import { joinPath, normalizePath, normalizePrefixes } from './paths.ts'
 import { fsSkillSource } from './skill-source.ts'
@@ -217,6 +217,23 @@ export function filesystem(
     name: 'filesystem',
     provides: outputsDir === undefined ? ['fs'] : ['fs', 'toolOutputs'],
     dataParts: { change: changePart },
+    setup() {
+      const store = opts.checkpoints
+      if (store === undefined) return
+      return {
+        hooks: {
+          // a fork keeps the file checkpoints of the turns it kept (spec 08 §11)
+          async 'session.fork'(_ctx, e) {
+            await copyCheckpoints({
+              store,
+              from: e.sourceSessionId,
+              to: e.targetSessionId,
+              ...(e.beforeMessageId === undefined ? {} : { beforeTurnKey: e.beforeMessageId }),
+            })
+          },
+        },
+      }
+    },
     async session(ctx): Promise<SessionContribution<FilesystemDataParts>> {
       const fs =
         typeof opts.fs === 'function' ? await opts.fs(ctx as unknown as HarnessContext) : opts.fs

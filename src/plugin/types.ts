@@ -312,6 +312,21 @@ export interface StepEndEvent {
 export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   'session.start'?(ctx: HarnessContext<DP>): Awaitable<void>
   'session.close'?(ctx: HarnessContext<DP>): Awaitable<void>
+  /**
+   * Runs in the SOURCE session after `session.fork()` copied the messages and the state (the
+   * new session is stored and open; the context is the source session's). Use it to copy
+   * data kept outside the session storage (e.g. file checkpoints). `keptMessageIds` are the ids
+   * of the copied messages. An error is reported as `W_HOOK_FAILED`; the fork still succeeds.
+   */
+  'session.fork'?(
+    ctx: HarnessContext<DP>,
+    e: {
+      sourceSessionId: string
+      targetSessionId: string
+      beforeMessageId?: string
+      keptMessageIds: string[]
+    },
+  ): Awaitable<void>
 
   /** Chainable. Runs on every user input (send, edit, steer) before it is saved. */
   'input.submit'?(

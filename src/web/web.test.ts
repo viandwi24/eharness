@@ -151,6 +151,9 @@ describe('web_fetch', () => {
 
   test('private hosts, odd ports and resolved private addresses are refused', async () => {
     expect(await fetchTool({}, { url: `${base}/text` })).toContain('private or local host')
+    expect(await fetchTool({}, { url: 'https://localhost/x' })).toBe(
+      "ERROR: localhost is a private or local host and is not allowed. Add it to the web_fetch allow list (allow: ['localhost']) to fetch it.",
+    )
     expect(await fetchTool({}, { url: 'https://169.254.169.254/latest' })).toContain('private')
     expect(await fetchTool({}, { url: 'https://[::1]/' })).toContain('private')
     expect(await fetchTool({}, { url: 'https://[::ffff:127.0.0.1]/' })).toContain('private')

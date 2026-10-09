@@ -60,6 +60,8 @@ import {
   type PermissionMode,
   type PermissionRoot,
   type PermissionRules,
+  type RuleChange,
+  type RuleScope,
   type ToolKind,
   type ToolKindSpec,
   type ToolKinds,
@@ -112,10 +114,12 @@ export interface PermissionEngineOptions {
   /** Order of `cycleMode()`. Default `default`, `acceptEdits`, `plan`. */
   modeCycle?: readonly PermissionMode[]
   /**
-   * Called with a copy of the rules after `allow`, `addRule` and `removeRule` changed them, so an
-   * application can store them (a database row, a settings file). Rules are in memory otherwise.
+   * Called with a copy of the stored rules and the change after `allow`, `addRule` and
+   * `removeRule` changed them, so an application can store them (a database row, a settings
+   * file). Rules added with scope `'session'` are not in the copy and do not call `persist`.
+   * Rules are in memory otherwise.
    */
-  persist?: (rules: PermissionRules) => void | Promise<void>
+  persist?: (rules: PermissionRules, change: RuleChange) => void | Promise<void>
 }
 
 /** The permission engine. */
@@ -128,11 +132,15 @@ export interface PermissionEngine {
   decide(call: PermissionCall, mode?: PermissionMode): PermissionDecision
   /** Rule to offer for "don't ask again" (`Bash(git status *)`, `Edit`, …), if any. */
   suggestRule(call: PermissionCall): string | undefined
-  /** Add an allow rule. Resolves when `persist` finished. */
-  allow(rule: string): Promise<void>
-  /** Add a rule of any kind. Throws `EH_CONFIG_INVALID` for an invalid rule. Resolves when `persist` finished. */
-  addRule(kind: keyof PermissionRules, rule: string): Promise<void>
-  /** Remove a rule; resolves with whether it existed. */
+  /** Add an allow rule (scope `project` by default). Resolves when `persist` finished. */
+  allow(rule: string, scope?: RuleScope): Promise<void>
+  /**
+   * Add a rule of any kind. `session` rules live in memory only (not stored, `persist` is not
+   * called); `project` (default) rules call `persist`. Throws `EH_CONFIG_INVALID` for an invalid
+   * rule. Resolves when `persist` finished.
+   */
+  addRule(kind: keyof PermissionRules, rule: string, scope?: RuleScope): Promise<void>
+  /** Remove a rule; resolves with whether it existed. Removing a session rule does not call `persist`. */
   removeRule(kind: keyof PermissionRules, rule: string): Promise<boolean>
   /** A copy of the rules. */
   rules(): PermissionRules
@@ -600,6 +608,11 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       return { status: 'denied', reason: PLAN_MODE_REASON }
     }
 
+    // 3b. tools that always involve a human (`alwaysAsk`): in every mode, despite allow rules
+    if (tools.spec(name)?.alwaysAsk === true) {
+      return { status: 'user-approval', reason: 'This tool always asks for approval.' }
+    }
+
     // 4. protected paths ask in every mode (bypassPermissions included)
     if (targets.some((real) => e.isProtected(real))) {
       return {
@@ -697,15 +710,34 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     for (const listener of [...listeners]) listener(mode)
   }
 
-  const persist = async (): Promise<void> => {
-    await options.persist?.({ allow: [...rules.allow], ask: [...rules.ask], deny: [...rules.deny] })
+  // rules added with scope 'session' (`kind\0rule`): decided on, never stored
+  const sessionRules = new Set<string>()
+  const sessionKey = (kind: keyof PermissionRules, rule: string): string => `${kind}\0${rule}`
+  const stored = (): PermissionRules => {
+    const keep = (kind: keyof PermissionRules): string[] =>
+      rules[kind].filter((rule) => !sessionRules.has(sessionKey(kind, rule)))
+    return { allow: keep('allow'), ask: keep('ask'), deny: keep('deny') }
+  }
+  const persist = async (change: RuleChange): Promise<void> => {
+    await options.persist?.(stored(), change)
   }
 
-  const addRule = (kind: keyof PermissionRules, rule: string): Promise<void> => {
+  const addRule = async (
+    kind: keyof PermissionRules,
+    rule: string,
+    scope: RuleScope = 'project',
+  ): Promise<void> => {
     const clean = rule.trim()
     checkedRule(clean, home)
-    if (!rules[kind].includes(clean)) rules[kind].push(clean)
-    return persist()
+    const key = sessionKey(kind, clean)
+    if (!rules[kind].includes(clean)) {
+      rules[kind].push(clean)
+      if (scope === 'session') sessionRules.add(key)
+    } else if (scope === 'project') {
+      sessionRules.delete(key) // a session rule promoted to the project
+    }
+    if (scope === 'session') return
+    await persist({ op: 'add', kind, rule: clean, scope })
   }
 
   return {
@@ -747,6 +779,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     suggestRule(call: PermissionCall): string | undefined {
       const kind = tools.kindOf(call.toolName)
       if (kind === 'plan-exit' || kind === 'ask') return undefined
+      if (tools.spec(call.toolName)?.alwaysAsk === true) return undefined
       const e = env()
       if (writeTargets(call, e).some((real) => e.isProtected(real))) return undefined
       switch (kind) {
@@ -768,8 +801,8 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
           return call.toolName
       }
     },
-    allow(rule: string): Promise<void> {
-      return addRule('allow', rule)
+    allow(rule: string, scope?: RuleScope): Promise<void> {
+      return addRule('allow', rule, scope)
     },
     addRule,
     async removeRule(kind: keyof PermissionRules, rule: string): Promise<boolean> {
@@ -777,7 +810,8 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       const index = rules[kind].indexOf(clean)
       if (index === -1) return false
       rules[kind].splice(index, 1)
-      await persist()
+      if (sessionRules.delete(sessionKey(kind, clean))) return true
+      await persist({ op: 'remove', kind, rule: clean, scope: 'project' })
       return true
     },
     rules(): PermissionRules {

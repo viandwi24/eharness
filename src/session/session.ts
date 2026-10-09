@@ -734,8 +734,22 @@ export function createSessionHandle(args: {
       turnId: next.turnId,
       via: 'queue',
     })
+    announce(current)
     next.handle.bind(current.run)
     for (const extra of next.extraHandles ?? []) extra.bind(attachRun(current))
+  }
+
+  /** `session.onRun()` listeners (in-process, spec 05 §2). */
+  const runListeners = new Set<(run: HarnessRun<UIMessage>) => void>()
+  /** Hand every listener its own reader of a turn that just started (before anyone consumes it). */
+  function announce(running: RunningTurn): void {
+    for (const listener of [...runListeners]) {
+      try {
+        listener(attachRun(running))
+      } catch (error) {
+        log.warn('eharness: an onRun listener threw', { error })
+      }
+    }
   }
 
   /** A new reader of a running turn (replay + follow), like `attach()`. */
@@ -1005,6 +1019,7 @@ export function createSessionHandle(args: {
     rt.running = true
     touch()
     current = startTurn(host, op)
+    announce(current)
     return current.run
   }
 
@@ -1036,6 +1051,7 @@ export function createSessionHandle(args: {
     rt.closed = true
     if (idleTimer !== undefined) clearTimeout(idleTimer)
     waits.dispose()
+    runListeners.clear()
     drain?.close()
     dropQueue(true)
     closing = (async () => {
@@ -1216,6 +1232,13 @@ export function createSessionHandle(args: {
       assertOpen()
       if (rt.running) throw busyError(id)
       return begin({ kind: 'edit', input, options, queued: false, target: messageId })
+    },
+    onRun(listener) {
+      assertOpen()
+      runListeners.add(listener)
+      return () => {
+        runListeners.delete(listener)
+      }
     },
     attach() {
       assertOpen()
@@ -1597,6 +1620,25 @@ export function createSessionHandle(args: {
           : { runtime: (options.runtime ?? runtime) as Record<string, unknown> }),
       })
       await forked.ready()
+      // plugins copy what lives outside the session storage (spec 01 §5 `session.fork`)
+      try {
+        const open = await ensureOpen()
+        const event = {
+          sourceSessionId: id,
+          targetSessionId: newId,
+          ...(beforeMessageId === undefined ? {} : { beforeMessageId }),
+          keptMessageIds: [...copied.ids].sort(),
+        }
+        for (const hook of open.hooks.list('session.fork')) {
+          try {
+            await hook.fn(rt.contextOf(hook.owner), structuredClone(event))
+          } catch (error) {
+            hookFailed(rt, 'session.fork', hook.owner, error)
+          }
+        }
+      } catch (error) {
+        log.warn('eharness: session.fork hooks could not run', { error })
+      }
       return forked as never
     },
     async children() {

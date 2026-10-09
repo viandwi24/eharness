@@ -23,3 +23,11 @@ export const KILL_SHELL_DESCRIPTION =
 
 /** Hint appended to results when a sandbox denial shows up while the OS sandbox is on. */
 export { SANDBOX_HINT } from './os-sandbox.ts'
+
+/**
+ * Sandbox state line appended to the `bash` description when the sandbox exposes `state()`
+ * (computed when the session's tools are resolved; `{roots}` and `{network}` are filled in).
+ */
+export const SANDBOX_ON_NOTE =
+  'Commands run in an OS sandbox: writes only inside {roots} (and temp dirs), network {network}.'
+export const SANDBOX_OFF_NOTE = "Commands run without an OS sandbox, with your user's privileges."
