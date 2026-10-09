@@ -48,6 +48,69 @@ describe('background subagents in the task list', () => {
   })
 })
 
+describe('messaging background subagents', () => {
+  const spawn = (subagent_type: string) => ({
+    toolCalls: [
+      {
+        toolName: 'agent',
+        input: {
+          subagent_type,
+          description: 'look around',
+          prompt: 'look',
+          run_in_background: true,
+          name: 'rev',
+        },
+      },
+    ],
+  })
+
+  test('/tell resumes a finished general-purpose agent: same task id, running again', async () => {
+    const model = routerModel((route) => {
+      if (route.isChild) return { text: 'CHILD REPORT' }
+      if (route.toolResults === 0) return spawn('general-purpose')
+      return { text: 'noted' }
+    })
+    const { controller } = await makeController({
+      model,
+      flags: { permissionMode: 'bypassPermissions' },
+    })
+    await controller.run('go', { onRun() {} })
+    for (let i = 0; i < 200 && controller.tasks()[0]?.status !== 'completed'; i++) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    expect(controller.tasks()[0]).toMatchObject({ id: 'agent-1', status: 'completed' })
+    expect(controller.tasks()[0]?.label).toBe('rev (general-purpose): look around')
+    const result = await controller.sendAgentMessage('rev', 'one more thing')
+    expect(result).toMatchObject({ ok: true, status: 'resumed', id: 'agent-1' })
+    expect(controller.tasks()).toHaveLength(1)
+    for (let i = 0; i < 200; i++) {
+      if (controller.tasks()[0]?.status === 'completed' && controller.tasks()[0]?.tail !== '') break
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    expect(controller.tasks()[0]).toMatchObject({ id: 'agent-1', status: 'completed' })
+    expect(await controller.sendAgentMessage('nobody', 'x')).toMatchObject({ ok: false })
+  })
+
+  test('the built-in explore agent is one-shot: a finished one is not resumed', async () => {
+    const model = routerModel((route) => {
+      if (route.isChild) return { text: 'CHILD REPORT' }
+      if (route.toolResults === 0) return spawn('explore')
+      return { text: 'noted' }
+    })
+    const { controller } = await makeController({
+      model,
+      flags: { permissionMode: 'bypassPermissions' },
+    })
+    await controller.run('go', { onRun() {} })
+    for (let i = 0; i < 200 && controller.tasks()[0]?.status !== 'completed'; i++) {
+      await new Promise((r) => setTimeout(r, 10))
+    }
+    const result = await controller.sendAgentMessage('rev', 'more')
+    expect(result.ok).toBe(false)
+    expect(JSON.stringify(result)).toContain('cannot be resumed')
+  })
+})
+
 describe('a session woken by a background event', () => {
   test('session.onRun hands the woken run to the controller: its approval reaches the broker and the edit lands', async () => {
     const model = scriptedModel([

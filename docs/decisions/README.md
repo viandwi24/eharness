@@ -42,3 +42,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0035](0035-nested-approvals-park-the-parent.md) | Nested approvals: park the parent at the tool boundary (`inline` / `park` / `deny`) |
 | [0036](0036-node-only-modules.md) | Node-only modules: `eharness/filesystem/node` and `eharness/shell`, enforced by `check-imports` |
 | [0037](0037-fork-and-child-index.md) | Fork keeps ids; the child index is a foreign-writable field of the parent's state |
+| [0038](0038-agent-messaging.md) | Agent messaging: `send_message`, named agents, resume of finished children |

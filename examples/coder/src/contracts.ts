@@ -31,6 +31,7 @@ export const TOOL = {
   bash: 'bash',
   todo: 'todo_write',
   agent: 'agent',
+  sendMessage: 'send_message',
   exitPlan: 'exit_plan_mode',
   dirAccess: 'request_directory_access',
   ask: 'ask_user_question',
@@ -47,6 +48,8 @@ export const READ_ONLY_TOOLS: readonly string[] = [
   TOOL.grep,
   TOOL.glob,
   TOOL.todo,
+  // reaches agents that already run under the same rules; changes no project file
+  TOOL.sendMessage,
   'load_skill',
   'read_skill_file',
   'search_skills',
@@ -326,6 +329,8 @@ export interface AgentDefinitionInput {
   permissionMode?: PermissionMode
   maxTurns?: number
   omitProjectMemory?: boolean
+  /** `false`: a finished agent cannot be resumed with `send_message` (default `true`; built-in explore and plan are one-shot). */
+  resumable?: boolean
 }
 
 export interface AgentDefinition extends AgentDefinitionInput {
@@ -649,6 +654,17 @@ export interface CoderController {
    */
   backgroundRunning(): Promise<string[]>
   taskOutput(id: string): Promise<string>
+  /**
+   * Message a subagent as the user (`/tell`): a running agent gets it at its next step, a finished
+   * one is resumed in the background (it shows as running again in the footer and `/tasks`).
+   * `to` is a name, task id or child session id.
+   */
+  sendAgentMessage(
+    to: string,
+    message: string,
+  ): Promise<
+    { ok: true; status: 'delivered' | 'resumed'; id: string } | { ok: false; error: string }
+  >
   onTasks(listener: (tasks: BackgroundTask[]) => void): () => void
   // ─── settings and diagnostics ───
   settings(): Promise<SettingView[]>

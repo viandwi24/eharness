@@ -965,6 +965,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     async taskOutput(id: string): Promise<string> {
       return taskHub.taskOutput(id)
     },
+    sendAgentMessage: (to, message) => taskHub.sendMessage(to, message, { from: 'user' }),
     onTasks: (listener) => taskHub.onTasks(listener),
 
     // ─── settings and diagnostics ───

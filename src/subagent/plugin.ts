@@ -27,6 +27,27 @@ import {
   type TurnResult,
 } from '../index.ts'
 import {
+  type AddUsage,
+  AGENT_MESSAGE_INSTRUCTIONS,
+  AGENT_MESSAGE_MAX_CHARS,
+  AGENT_NAME_PATTERN,
+  type AgentDirectory,
+  type AgentEntry,
+  type AgentSender,
+  createDirectory,
+  directoryFor,
+  dropDirectory,
+  findEntry,
+  frameAgentMessage,
+  nameProblem,
+  registerKey,
+  resolveLimits,
+  rosterText,
+  SEND_MESSAGE_TOOL,
+  type SubagentMessageLimits,
+  throttle,
+} from './messaging.ts'
+import {
   createSubagentTaskRegistry,
   type SubagentTaskRegistry,
   type SubagentTasks,
@@ -75,6 +96,12 @@ export interface SubagentDefinition {
   description: string
   /** `maxSteps` of the child's turns. */
   maxTurns?: number
+  /**
+   * Whether a finished agent of this type can be resumed by `send_message` (a new turn on the same
+   * child session, full history). Default `true`; set `false` for one-shot types such as read-only
+   * search or plan agents (they can still receive messages while they run).
+   */
+  resumable?: boolean
 }
 
 /** Subagent types by name, or a function evaluated once per session. */
@@ -154,12 +181,22 @@ export interface SubagentsOptions {
   /** Child session id. Default `<parentId>:agent:<toolCallId>`. */
   childSessionId?: (parentSessionId: string, toolCallId: string) => string
   /**
-   * `'park'`: the agent that owns this plugin's sessions. When set, `session.start` reconciles the
-   * session's pending subagent waits in the background ({@link reconcileSubagentWaits}, children
+   * The agent that owns this plugin's sessions. With `'park'` and when set, `session.start`
+   * reconciles the session's pending subagent waits in the background ({@link reconcileSubagentWaits}, children
    * opened on the catalog agents): a crash between a child finishing and its hook is healed when
    * the session opens. Best effort, never awaited by the open; failures are logged.
    */
   selfAgent?: () => AnyAgent
+  /**
+   * Offer `send_message` and the `name` field of the `agent` tool (default `true`; never with
+   * `approvals: 'park'`). A session that has the plugin and no catalog still gets `send_message`.
+   * ADR-0038, spec 20 §5.
+   */
+  messaging?: boolean
+  /** Name of the messaging tool. Default `'send_message'`. */
+  messageToolName?: string
+  /** Throttling of `send_message` (spec 20 §5.4). */
+  messageLimits?: SubagentMessageLimits
   /** `'park'`: timeout of the parent's wait in ms. Default none. */
   timeoutMs?: number
   /**
@@ -192,6 +229,10 @@ export interface SubagentRunData {
   sessionId: string
   agent: string
   status: 'running' | 'waiting' | 'done' | 'failed'
+  /** The `name` the model gave the agent (spec 20 §5). */
+  name?: string
+  /** Background task id (`agent-<n>`), when the agent has one (restores the id after a restart). */
+  taskId?: string
 }
 
 const runSchema: FlexibleSchema<SubagentRunData> = z.object({
@@ -199,6 +240,8 @@ const runSchema: FlexibleSchema<SubagentRunData> = z.object({
   sessionId: z.string(),
   agent: z.string(),
   status: z.enum(['running', 'waiting', 'done', 'failed']),
+  name: z.string().optional(),
+  taskId: z.string().optional(),
 }) as never
 
 /** The data parts of the subagent plugin. */
@@ -217,6 +260,7 @@ interface AgentInput {
   description: string
   prompt: string
   run_in_background?: boolean
+  name?: string
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────────────────────
@@ -729,7 +773,22 @@ function describeTypes(defs: Record<string, SubagentDefinition>): string {
     .join('\n')
 }
 
-function toolDescription(defs: Record<string, SubagentDefinition>): string {
+const NAME_FIELD =
+  'A short name (lowercase letters, digits, hyphens) so you can address this agent later with send_message'
+
+function messageDescription(name: string): string {
+  return `Send a message to another agent of this session and keep working.
+
+\`to\` is "main" (the agent that talks to the user, from a subagent), an agent id such as agent-2, a child session id, or the name you gave an agent.
+- A running agent receives the message at its next step; nothing it is doing is interrupted.
+- A finished agent is resumed on its own session, with its full history and your message as new input; its report arrives later like a background agent's report. One-shot agents that cannot be resumed refuse.
+- Use ${name} to revise or extend an agent's work instead of stopping it and starting a new one.
+- The receiver does not see your conversation: make the message self-contained, and do not repeat it.
+
+${AGENT_MESSAGE_INSTRUCTIONS}`
+}
+
+function toolDescription(defs: Record<string, SubagentDefinition>, messageTool?: string): string {
   return `Launch a subagent to handle a task on its own and return a report.
 
 Available subagent types:
@@ -739,7 +798,12 @@ Usage:
 - The subagent starts with no context: the prompt must be self-contained (goal, what you already know, the form of the answer you need).
 - Only the subagent's final report comes back to you; it is not shown to the user.
 - Launch independent subagents in parallel by calling this tool several times in one step.
-- Do simple lookups yourself instead of launching a subagent.`
+- Do simple lookups yourself instead of launching a subagent.${
+    messageTool === undefined
+      ? ''
+      : `
+- Give an agent a \`name\` if you may want to follow up on it later: ${messageTool} reaches it by name or id, also after it finished (unless it is a one-shot type).`
+  }`
 }
 
 /**
@@ -779,12 +843,48 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     onParentRun: options.onParentRun,
   })
 
+  const messageToolName = options.messageToolName ?? SEND_MESSAGE_TOOL
+  const messaging = options.messaging !== false && options.approvals !== 'park'
+  const limits = resolveLimits(options.messageLimits)
+
+  /** Where a report goes: the `inject` of some session (ADR-0038). */
+  type Reporter = (text: string, data: Record<string, unknown>) => Promise<void>
+
+  /** Everything one session's plugin instance needs to start, address and resume children. */
+  interface Scope {
+    ctx: Ctx
+    registry: SubagentTaskRegistry
+    dir: AgentDirectory | undefined
+    depth: number
+    defs(): Record<string, SubagentDefinition>
+    rebuilt: boolean
+  }
+
   return definePlugin({
     name: 'subagent',
     provides: ['subagentTasks'],
     dataParts: { run: runPart },
     session: (ctx) => {
       const depth = ctx.session.parent?.depth ?? 0
+      const isRoot = ctx.session.parent === undefined
+      let dir: AgentDirectory | undefined
+      if (messaging) {
+        dir = isRoot
+          ? createDirectory(ctx.session.id, async (text, data) => {
+              await ctx.session.inject(
+                'eh.event',
+                { name: 'agent-message', text, data },
+                { deliver: 'next-step', wake: true },
+              )
+            })
+          : (directoryFor(ctx.session.id) ?? createDirectory(ctx.session.id, undefined))
+      }
+      let defsCache: Record<string, SubagentDefinition> | undefined
+      const getDefs = (): Record<string, SubagentDefinition> => {
+        defsCache ??= resolveCatalog(options.agents)
+        return defsCache
+      }
+      let scope: Scope | undefined
       const registry = createSubagentTaskRegistry({
         foreign: async (childSessionId) => {
           // not a task of this process: ask the child session to abort, wherever it runs
@@ -799,6 +899,19 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
               await def.agent.closeSession(childSessionId).catch(() => {})
             }
           }
+        },
+        send: async (to, message) => {
+          if (scope === undefined) return { ok: false, error: 'ERROR: the session is not ready.' }
+          const text = message.trim()
+          if (text === '') return { ok: false, error: 'ERROR: the message is empty.' }
+          const routed = await route(scope, { kind: 'user' }, to, text)
+          return routed.kind === 'error' || routed.kind === 'dropped'
+            ? { ok: false, error: routed.text }
+            : {
+                ok: true,
+                status: routed.kind === 'resumed' ? 'resumed' : 'delivered',
+                id: routed.id,
+              }
         },
       })
       const services = { subagentTasks: registry as SubagentTasks }
@@ -829,33 +942,429 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       }
       const dispose = (): void => {
         void registry.stopAll()
+        if (dir !== undefined && isRoot) dropDirectory(dir)
       }
-      if (depth >= maxDepth) return { hooks, services, dispose } as SessionContribution
-      const defs = resolveCatalog(options.agents)
-      const names = Object.keys(defs)
-      if (names.length === 0) return { hooks, services, dispose } as SessionContribution
-      // resolved once per session so the description (and the prompt-cache prefix) stays stable
-      const description = toolDescription(defs)
-      const canBackground =
-        options.background === true &&
-        (ctx.session.parent === undefined || options.backgroundInChildren === true)
-      const inputSchema = z.object({
-        subagent_type: z.enum(names as [string, ...string[]]).describe('The subagent type to use'),
-        description: z.string().describe('A short (3-5 words) label for the task'),
-        prompt: z.string().describe('The complete task for the subagent'),
-        ...(canBackground
-          ? { run_in_background: z.boolean().optional().describe(BACKGROUND_FIELD) }
-          : {}),
-      })
-      const tools: Record<string, ToolInput> = {
-        [toolName]:
+      scope = { ctx, registry, dir, depth, defs: getDefs, rebuilt: false }
+      const current: Scope = scope
+      const tools: Record<string, ToolInput> = {}
+      if (depth < maxDepth && Object.keys(getDefs()).length > 0) {
+        const defs = getDefs()
+        const names = Object.keys(defs)
+        // resolved once per session so the description (and the prompt-cache prefix) stays stable
+        const description = toolDescription(defs, messaging ? messageToolName : undefined)
+        const canBackground =
+          options.background === true &&
+          (ctx.session.parent === undefined || options.backgroundInChildren === true)
+        const inputSchema = z.object({
+          subagent_type: z
+            .enum(names as [string, ...string[]])
+            .describe('The subagent type to use'),
+          description: z.string().describe('A short (3-5 words) label for the task'),
+          prompt: z.string().describe('The complete task for the subagent'),
+          ...(canBackground
+            ? { run_in_background: z.boolean().optional().describe(BACKGROUND_FIELD) }
+            : {}),
+          ...(messaging
+            ? { name: z.string().regex(AGENT_NAME_PATTERN).optional().describe(NAME_FIELD) }
+            : {}),
+        })
+        tools[toolName] =
           options.approvals === 'park'
             ? (parkTool(ctx, defs, depth, description, inputSchema) as ToolInput)
-            : (runTool(ctx, defs, depth, description, inputSchema, registry) as ToolInput),
+            : (runTool(ctx, defs, depth, description, inputSchema, registry, current) as ToolInput)
+      }
+      if (messaging) tools[messageToolName] = messageTool(current, messageToolName)
+      if (dir !== undefined) {
+        const roster = dir
+        hooks['step.prepare'] = async () => {
+          const self = roster.entries.get(ctx.session.id)
+          if (self !== undefined) self.queued.length = 0
+          if (ctx.session.id === roster.rootId) roster.mainQueued.length = 0
+          await rebuildEntries(current)
+          const text = rosterText(
+            roster,
+            ctx.session.id,
+            ctx.session.id === roster.rootId,
+            messageToolName,
+          )
+          return text === undefined ? undefined : { reminder: text }
+        }
       }
       return { tools, hooks, services, dispose } as SessionContribution
     },
   }) as unknown as HarnessPlugin<'subagent'>
+
+  // ─── the directory: entries, wiring and resume (ADR-0038) ───────────────────────────────
+
+  /** Register an addressable child of this session. */
+  function addEntry(
+    scope: Scope,
+    init: {
+      childSessionId: string
+      agent: string
+      description: string
+      name?: string
+      taskId?: string
+      status?: AgentEntry['status']
+      parentInfo: AgentEntry['parentInfo']
+    },
+  ): AgentEntry | undefined {
+    const dir = scope.dir
+    if (dir === undefined) return undefined
+    const entry: AgentEntry = {
+      childSessionId: init.childSessionId,
+      ownerSessionId: scope.ctx.session.id,
+      parentInfo: init.parentInfo,
+      agent: init.agent,
+      description: init.description,
+      status: init.status ?? 'running',
+      resumable: scope.defs()[init.agent]?.resumable !== false,
+      startedAt: Date.now(),
+      queued: [],
+      ...(init.name === undefined ? {} : { name: init.name }),
+      ...(init.taskId === undefined ? {} : { taskId: init.taskId }),
+    }
+    entry.resume = (text, sender) => resumeEntry(scope, entry, text, sender)
+    dir.entries.set(init.childSessionId, entry)
+    registerKey(dir, init.childSessionId)
+    return entry
+  }
+
+  /** The child runs: messages can be delivered into it. */
+  function wireRunning(entry: AgentEntry, child: AnySession): void {
+    entry.status = 'running'
+    entry.deliver = async (text, data) => {
+      await child.inject(
+        'eh.event',
+        { name: 'agent-message', text, data },
+        { deliver: 'next-step' },
+      )
+    }
+    entry.deliverUser = async (text) => {
+      // a steer: the text lands at the next step boundary as `data-eh.input { source: 'user' }`
+      const run = child.send(text, { ifBusy: 'steer' }) as AnyRun
+      void (async () => {
+        try {
+          for await (const _ of run.stream as AsyncIterable<unknown>) {
+            // drained: the turn stores itself
+          }
+        } catch {
+          // surfaces through run.result
+        }
+      })()
+      void run.result.catch(() => {})
+    }
+  }
+
+  function finishEntry(entry: AgentEntry | undefined, status: AgentEntry['status']): void {
+    if (entry === undefined) return
+    if (entry.status !== 'stopped') entry.status = status
+    entry.deliver = undefined
+    entry.deliverUser = undefined
+    entry.queued.length = 0
+  }
+
+  /** Start a new turn on a finished child (ADR-0038); resolves to the text for the sender. */
+  async function resumeEntry(
+    scope: Scope,
+    entry: AgentEntry,
+    text: string,
+    sender: AgentSender,
+  ): Promise<string> {
+    const def = scope.defs()[entry.agent]
+    if (def === undefined) {
+      return `ERROR: the agent type "${entry.agent}" is not available any more; it cannot be resumed.`
+    }
+    const taskId = launch({
+      scope,
+      def,
+      entry,
+      agentName: entry.agent,
+      label: entry.description,
+      prompt: text,
+      sessionId: entry.childSessionId,
+      parentInfo: entry.parentInfo,
+      ...(entry.taskId === undefined ? {} : { taskId: entry.taskId }),
+      ...(entry.name === undefined ? {} : { name: entry.name }),
+      ...(sender.kind === 'agent'
+        ? {
+            report: sender.report,
+            ...(sender.addUsage === undefined ? {} : { addUsage: sender.addUsage }),
+          }
+        : {}),
+      resumed: true,
+    })
+    return taskId
+  }
+
+  function reporterOf(ctx: Ctx): Reporter {
+    return async (text, data) => {
+      await ctx.session.inject(
+        'eh.event',
+        { name: 'subagent', text, data },
+        { deliver: 'next-step', wake: true },
+      )
+    }
+  }
+
+  type Routed =
+    | { kind: 'error'; text: string }
+    | { kind: 'dropped'; text: string }
+    | { kind: 'delivered'; label: string; id: string }
+    | { kind: 'resumed'; label: string; id: string }
+
+  function fail(text: string): Routed {
+    return { kind: 'error', text: text.startsWith('ERROR') ? text : `ERROR: ${text}` }
+  }
+
+  /** Find the target of a message, check the rules, then deliver or resume. */
+  async function route(
+    scope: Scope,
+    sender: AgentSender,
+    to: string,
+    text: string,
+  ): Promise<Routed> {
+    const dir = scope.dir
+    if (dir === undefined) return fail('messaging is not available in this session.')
+    if (text.length > AGENT_MESSAGE_MAX_CHARS) {
+      return fail(
+        `the message is too long (${text.length} characters, at most ${AGENT_MESSAGE_MAX_CHARS}). Shorten it.`,
+      )
+    }
+    const key = to.trim()
+    if (key === '') return fail('`to` is empty.')
+    const isMain = key.toLowerCase() === 'main'
+    let target = isMain ? undefined : findEntry(dir, key)
+    if (!isMain && target === undefined) {
+      await rebuildEntries(scope)
+      target = findEntry(dir, key)
+    }
+    const known = (): string =>
+      [
+        ...(sender.kind === 'agent' && sender.sessionId === dir.rootId ? [] : ['main']),
+        ...[...dir.entries.values()].map((e) => e.name ?? e.taskId ?? e.childSessionId),
+      ].join(', ')
+    const senderLabel = sender.kind === 'agent' ? sender.label : 'user'
+    const senderId = sender.kind === 'agent' ? sender.id : 'user'
+
+    if (isMain) {
+      if (sender.kind === 'user') return fail('the user talks to main in the main conversation.')
+      if (sender.sessionId === dir.rootId)
+        return fail('you are the main agent; you cannot message yourself.')
+      if (dir.main === undefined) return fail('the main agent cannot be reached from this session.')
+      const limited = throttle(dir, `${senderId}->main`, text, limits, dir.mainQueued)
+      if (limited !== undefined) {
+        return limited.startsWith('ERROR') ? fail(limited) : { kind: 'dropped', text: limited }
+      }
+      const relation =
+        dir.entries.get(sender.sessionId)?.ownerSessionId === dir.rootId ? 'child' : 'peer'
+      const framed = frameAgentMessage(text, { label: senderLabel, id: senderId }, relation)
+      try {
+        await dir.main(framed, { from: senderLabel, fromId: senderId })
+      } catch (error) {
+        return fail(`could not deliver the message to main: ${errText(error)}`)
+      }
+      return { kind: 'delivered', label: 'main', id: 'main' }
+    }
+
+    if (target === undefined) return fail(`no agent "${key}". You can message: ${known()}.`)
+    const entry = target
+    const label = entry.name ?? entry.taskId ?? entry.childSessionId
+    if (sender.kind === 'agent' && entry.childSessionId === sender.sessionId) {
+      return fail('you cannot message yourself.')
+    }
+    if (entry.status === 'stopped') {
+      return fail(`${label} was cancelled by the user and cannot be messaged.`)
+    }
+    const running = entry.status === 'running'
+    if (!running && !entry.resumable) {
+      return fail(
+        `${label} (${entry.agent}) has finished and cannot be resumed (a one-shot agent). Start a new agent with the ${toolName} tool if more work is needed.`,
+      )
+    }
+    if (running && entry.deliver === undefined) {
+      return fail(`${label} is still starting; send the message again in a moment.`)
+    }
+    if (sender.kind === 'agent') {
+      const limited = throttle(
+        dir,
+        `${senderId}->${entry.childSessionId}`,
+        text,
+        limits,
+        entry.queued,
+      )
+      if (limited !== undefined) {
+        return limited.startsWith('ERROR') ? fail(limited) : { kind: 'dropped', text: limited }
+      }
+    }
+    const relation =
+      sender.kind === 'agent' && sender.sessionId === entry.ownerSessionId
+        ? 'launcher'
+        : sender.kind === 'agent' &&
+            dir.entries.get(sender.sessionId)?.ownerSessionId === entry.childSessionId
+          ? 'child'
+          : 'peer'
+    const payload =
+      sender.kind === 'agent'
+        ? frameAgentMessage(text, { label: senderLabel, id: senderId }, relation)
+        : text
+    const id = entry.taskId ?? entry.childSessionId
+    if (running) {
+      try {
+        if (sender.kind === 'user') await entry.deliverUser?.(text)
+        else await entry.deliver?.(payload, { from: senderLabel, fromId: senderId })
+        return { kind: 'delivered', label, id }
+      } catch (error) {
+        if (isHarnessError(error) && error.code === 'EH_SESSION_CLOSED') {
+          return fail(`${label} is just finishing; send the message again in a moment.`)
+        }
+        return fail(`could not deliver the message to ${label}: ${errText(error)}`)
+      }
+    }
+    if (entry.resume === undefined) return fail(`${label} cannot be resumed.`)
+    const out = await entry.resume(payload, sender)
+    if (out.startsWith('ERROR')) return fail(out)
+    return { kind: 'resumed', label, id: out }
+  }
+
+  /** The `send_message` tool of one session. */
+  function messageTool(scope: Scope, name: string): ToolInput {
+    const schema = z.object({
+      to: z
+        .string()
+        .describe('"main", an agent id such as agent-2, a child session id, or the name you gave'),
+      message: z.string().describe('The message; it must be self-contained'),
+    })
+    return tool({
+      description: messageDescription(name),
+      inputSchema: schema as unknown as FlexibleSchema<{ to: string; message: string }>,
+      async execute({ to, message }): Promise<string> {
+        const { ctx, dir } = scope
+        if (dir === undefined) return 'ERROR: messaging is not available in this session.'
+        const text = message.trim()
+        if (text === '') return 'ERROR: the message is empty.'
+        const self = dir.entries.get(ctx.session.id)
+        const isRoot = ctx.session.id === dir.rootId
+        const sender: AgentSender = {
+          kind: 'agent',
+          label: isRoot ? 'main' : (self?.name ?? self?.taskId ?? self?.agent ?? 'agent'),
+          id: isRoot ? 'main' : (self?.taskId ?? ctx.session.id),
+          sessionId: ctx.session.id,
+          report: reporterOf(ctx),
+          addUsage: (usage, source) => {
+            try {
+              ctx.turn?.addUsage(usage, { source })
+            } catch {
+              // the sender's turn is over
+            }
+          },
+        }
+        const routed = await route(scope, sender, to, text)
+        switch (routed.kind) {
+          case 'error':
+          case 'dropped':
+            return routed.text
+          case 'delivered':
+            return routed.label === 'main'
+              ? 'Message sent to main. It sees it at its next step, or now if it is idle.'
+              : `Message delivered to ${routed.label}. It sees it at its next step; its answer, if any, comes back as a message.`
+          case 'resumed':
+            return `${routed.label} had finished; it was resumed on the same session with your message and runs in the background as ${routed.id}. Its report arrives here when it finishes.`
+        }
+      },
+    }) as ToolInput
+  }
+
+  /**
+   * After a restart this process knows none of the earlier children: rebuild finished entries
+   * from the markers and reports stored in this session (once, needs `selfAgent`).
+   */
+  async function rebuildEntries(scope: Scope): Promise<void> {
+    const dir = scope.dir
+    if (scope.rebuilt || dir === undefined || options.selfAgent === undefined) return
+    scope.rebuilt = true
+    const { ctx } = scope
+    try {
+      const session = options.selfAgent().session(ctx.session.id) as AnySession
+      const children = await session.children()
+      if (children.length === 0) return
+      const byChild = new Map(children.map((c) => [c.sessionId, c]))
+      type Stored = { id: string; parts: Array<{ type: string; data?: unknown }> }
+      const markers = new Map<string, SubagentRunData>()
+      const outcomes = new Map<string, string>()
+      let before: string | undefined
+      for (let page = 0; page < 5 && markers.size < 100; page++) {
+        const batch = (await session.messages({
+          limit: 200,
+          ...(before === undefined ? {} : { beforeId: before }),
+        })) as unknown as Stored[]
+        if (batch.length === 0) break
+        for (const message of batch.toReversed()) {
+          for (const part of message.parts.toReversed()) {
+            if (part.type === 'data-subagent.run') {
+              const d = part.data as SubagentRunData
+              if (!markers.has(d.sessionId)) markers.set(d.sessionId, d)
+            } else if (part.type === 'data-eh.event') {
+              const d = part.data as {
+                name?: string
+                data?: { sessionId?: string; status?: string }
+              }
+              if (d.name === 'subagent' && d.data?.sessionId !== undefined && d.data.status) {
+                if (!outcomes.has(d.data.sessionId)) outcomes.set(d.data.sessionId, d.data.status)
+              }
+            }
+          }
+        }
+        before = batch[0]?.id
+        if (batch.length < 200) break
+      }
+      const defs = scope.defs()
+      for (const [sessionId, marker] of markers) {
+        if (dir.entries.has(sessionId)) continue
+        const def = defs[marker.agent]
+        const info = byChild.get(sessionId)
+        if (def === undefined || info === undefined) continue
+        let status: AgentEntry['status']
+        const reported = outcomes.get(sessionId)
+        if (reported === 'stopped' || reported === 'completed' || reported === 'failed') {
+          status = reported
+        } else if (marker.status === 'done') status = 'completed'
+        else if (marker.status === 'failed') status = 'failed'
+        else {
+          // the marker says running: the stored child tells how its last turn ended
+          const child = def.agent.session(sessionId) as AnySession
+          try {
+            const stored = (await child.messages({ limit: 20 })) as unknown as Array<{
+              role: string
+              metadata?: { eharness?: { stop?: string } }
+            }>
+            const last = stored.findLast((m) => m.role === 'assistant')
+            status = last?.metadata?.eharness?.stop === 'complete' ? 'completed' : 'failed'
+          } finally {
+            await def.agent.closeSession(sessionId).catch(() => {})
+          }
+        }
+        addEntry(scope, {
+          childSessionId: sessionId,
+          agent: marker.agent,
+          description: marker.name ?? marker.agent,
+          status,
+          ...(marker.name === undefined ? {} : { name: marker.name }),
+          ...(marker.taskId === undefined ? {} : { taskId: marker.taskId }),
+          parentInfo: {
+            sessionId: ctx.session.id,
+            turnId: info.turnId,
+            toolCallId: info.toolCallId ?? marker.toolCallId,
+            depth: scope.depth + 1,
+          },
+        })
+        const n = Number(/^agent-(\d+)$/.exec(marker.taskId ?? '')?.[1] ?? 0)
+        if (n > 0) scope.registry.reserve(n)
+      }
+    } catch (error) {
+      ctx.log.warn('subagent: could not rebuild the agent directory', { error: errText(error) })
+    }
+  }
 
   // ─── inline / policy: an ordinary tool that runs the child and streams progress ─────────
 
@@ -866,12 +1375,13 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     description: string,
     inputSchema: unknown,
     registry: SubagentTaskRegistry,
+    scope: Scope,
   ): ToolInput {
     return tool({
       description,
       inputSchema: inputSchema as FlexibleSchema<AgentInput>,
       async *execute(
-        { subagent_type, description: label, prompt, run_in_background },
+        { subagent_type, description: label, prompt, run_in_background, name },
         { toolCallId, abortSignal: toolSignal },
       ): AsyncGenerator<SubagentProgress | string, void, undefined> {
         const abortSignal = toolSignal ?? new AbortController().signal
@@ -884,6 +1394,15 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         if (turn === undefined) {
           yield 'ERROR: subagents can only be started inside a turn.'
           return
+        }
+        const dir = scope.dir
+        if (dir !== undefined && name !== undefined) {
+          await rebuildEntries(scope)
+          const problem = nameProblem(dir, name)
+          if (problem !== undefined) {
+            yield problem
+            return
+          }
         }
         const sessionId = childIdOf(ctx.session.id, toolCallId)
         const parentInfo = {
@@ -898,8 +1417,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           (ctx.session.parent === undefined || options.backgroundInChildren === true)
         ) {
           yield startBackground(
-            ctx,
-            registry,
+            scope,
             toolCallId,
             def,
             subagent_type,
@@ -907,10 +1425,17 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             prompt,
             sessionId,
             parentInfo,
-            depth,
+            name,
           )
           return
         }
+        const entry = addEntry(scope, {
+          childSessionId: sessionId,
+          agent: subagent_type,
+          description: label,
+          parentInfo,
+          ...(name === undefined ? {} : { name }),
+        })
         const progress = (over: Partial<SubagentProgress>): SubagentProgress => ({
           status: 'running',
           agent: subagent_type,
@@ -920,14 +1445,16 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           text: '',
           ...over,
         })
+        const runData = (status: SubagentRunData['status']): SubagentRunData => ({
+          toolCallId,
+          sessionId,
+          agent: subagent_type,
+          status,
+          ...(name === undefined ? {} : { name }),
+          ...(entry?.taskId === undefined ? {} : { taskId: entry.taskId }),
+        })
         const marker = (status: SubagentRunData['status']): void => {
-          if (ctx.stream.active) {
-            ctx.stream.data(
-              'run',
-              { toolCallId, sessionId, agent: subagent_type, status },
-              { id: toolCallId },
-            )
-          }
+          if (ctx.stream.active) ctx.stream.data('run', runData(status), { id: toolCallId })
         }
         const canDetach =
           options.background === true &&
@@ -936,6 +1463,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         marker('running')
         yield progress({ text: 'Waiting for a free subagent slot…' })
         if (!(await sem.acquire(abortSignal))) {
+          finishEntry(entry, 'failed')
           marker('failed')
           yield progress({ status: 'failed' })
           yield `ERROR: subagent was aborted before it started.`
@@ -954,6 +1482,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         try {
           const child = def.agent.session(sessionId, { parent: parentInfo }) as AnySession
           opened = true
+          if (entry !== undefined) wireRunning(entry, child)
           // latest-value mailbox between the stream consumers (callbacks) and this generator
           let latest = progress({})
           let dirty = true
@@ -1016,9 +1545,14 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
               detachedId = registry.add({
                 agent: subagent_type,
                 description: label,
+                ...(name === undefined ? {} : { name }),
                 childSessionId: sessionId,
-                stop: () => childAc.abort('stopped'),
+                stop: () => {
+                  if (entry !== undefined) entry.status = 'stopped'
+                  childAc.abort('stopped')
+                },
               })
+              if (entry !== undefined) entry.taskId = detachedId
               notify()
               return detachedId
             })
@@ -1049,13 +1583,10 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
               sessionId,
               (status) => {
                 if (ctx.stream.active && ctx.turn?.id === parentInfo.turnId) {
-                  ctx.stream.data(
-                    'run',
-                    { toolCallId, sessionId, agent: subagent_type, status },
-                    { id: toolCallId },
-                  )
+                  ctx.stream.data('run', runData(status), { id: toolCallId })
                 }
               },
+              { entry, ...(name === undefined ? {} : { name }) },
             )
             void (async () => {
               try {
@@ -1096,6 +1627,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           }
           const text = finalText(result) || textOf(lastMessage, true) || latest.text
           const complete = result.stop === 'complete'
+          finishEntry(entry, complete ? 'completed' : 'failed')
           marker(complete ? 'done' : 'failed')
           yield progress({
             status: complete ? 'done' : 'failed',
@@ -1109,6 +1641,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
               ? `ERROR: subagent failed${result.error === undefined ? '' : `: ${result.error.message}`}`
               : stoppedText(result.stop, text)
         } catch (error) {
+          finishEntry(entry, 'failed')
           marker('failed')
           yield progress({ status: 'failed', text: errText(error) })
           yield `ERROR: subagent failed: ${errText(error)}`
@@ -1125,7 +1658,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     })
   }
 
-  /** The completion of a background child: registry, run marker and the report to the parent. */
+  /** The completion of a background child: registry, run marker and the report to the reader. */
   function backgroundFinisher(
     ctx: Ctx,
     registry: SubagentTaskRegistry,
@@ -1135,27 +1668,34 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     label: string,
     sessionId: string,
     marker: (status: SubagentRunData['status']) => void,
+    extra: {
+      entry?: AgentEntry | undefined
+      name?: string
+      /** Where the report goes. Default: the session that started the child. */
+      report?: Reporter
+      resumed?: boolean
+    } = {},
   ): (status: 'completed' | 'failed', text: string) => Promise<void> {
+    const report = extra.report ?? reporterOf(ctx)
     return async (status, text) => {
       const stopped = registry.stopped(taskId)
       registry.complete(taskId, status)
+      finishEntry(extra.entry, stopped ? 'stopped' : status)
       marker(status === 'completed' ? 'done' : 'failed')
       const outcome = stopped ? 'stopped' : status
-      const head = `Background subagent ${sessionId} (${agentName}: ${label}) ${
+      const head = `${extra.resumed === true ? 'Resumed subagent' : 'Background subagent'} ${sessionId} (${agentName}: ${label}) ${
         stopped ? 'was stopped' : status === 'completed' ? 'finished' : 'failed'
       }.`
       try {
-        await ctx.session.inject(
-          'eh.event',
-          {
-            name: 'subagent',
-            text: `${head}\n\n${reportOf(text) || '(no report)'}`,
-            data: { sessionId, agent: agentName, status: outcome },
-          },
-          { deliver: 'next-step', wake: true },
-        )
+        await report(`${head}\n\n${reportOf(text) || '(no report)'}`, {
+          sessionId,
+          agent: agentName,
+          status: outcome,
+          taskId,
+          ...(extra.name === undefined ? {} : { name: extra.name }),
+        })
       } catch (error) {
-        // the parent session may be closed by now
+        // the receiving session may be closed by now
         ctx.log.warn('subagent: could not deliver a background report', { error: errText(error) })
       }
     }
@@ -1163,8 +1703,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
 
   /** Start a child detached from the calling turn; returns the text for the model. */
   function startBackground(
-    ctx: Ctx,
-    registry: SubagentTaskRegistry,
+    scope: Scope,
     toolCallId: string,
     def: SubagentDefinition,
     agentName: string,
@@ -1172,24 +1711,95 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     prompt: string,
     sessionId: string,
     parentInfo: { sessionId: string; turnId: string; toolCallId: string; depth: number },
-    depth: number,
+    name: string | undefined,
   ): string {
+    const entry = addEntry(scope, {
+      childSessionId: sessionId,
+      agent: agentName,
+      description: label,
+      parentInfo,
+      ...(name === undefined ? {} : { name }),
+    })
+    const taskId = launch({
+      scope,
+      def,
+      entry,
+      agentName,
+      label,
+      prompt,
+      sessionId,
+      parentInfo,
+      toolCallId,
+      ...(name === undefined ? {} : { name }),
+      resumed: false,
+    })
+    return `Started background subagent ${taskId}${name === undefined ? '' : ` "${name}"`} (${agentName}): ${label}. You will be notified when it finishes.`
+  }
+
+  /**
+   * Run a child turn detached (a `run_in_background` start, or a resume of a finished child) as a
+   * task of the registry. Returns the task id at once.
+   */
+  function launch(a: {
+    scope: Scope
+    def: SubagentDefinition
+    entry: AgentEntry | undefined
+    agentName: string
+    label: string
+    name?: string
+    prompt: string
+    sessionId: string
+    parentInfo: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+    /** Run marker (first start only). */
+    toolCallId?: string
+    /** Existing task id: the task runs again. */
+    taskId?: string
+    report?: Reporter
+    addUsage?: AddUsage
+    resumed: boolean
+  }): string {
+    const { scope, def, entry, agentName, label, sessionId, parentInfo } = a
+    const { ctx, registry, depth } = scope
     const ac = new AbortController()
     ctx.signal.addEventListener('abort', () => ac.abort('parent closed'), { once: true })
     const sem = semaphoreFor(depth)
-    const taskId = registry.add({
-      agent: agentName,
-      description: label,
-      childSessionId: sessionId,
-      stop: () => ac.abort('stopped'),
-    })
+    const stop = (): void => {
+      if (entry !== undefined) entry.status = 'stopped'
+      ac.abort('stopped')
+    }
+    let taskId: string
+    if (a.taskId !== undefined && registry.get(a.taskId) !== undefined) {
+      taskId = a.taskId
+      registry.restart(taskId, stop)
+    } else {
+      taskId = registry.add({
+        ...(a.taskId === undefined ? {} : { id: a.taskId }),
+        agent: agentName,
+        description: label,
+        ...(a.name === undefined ? {} : { name: a.name }),
+        childSessionId: sessionId,
+        stop,
+      })
+    }
+    if (entry !== undefined) {
+      entry.taskId = taskId
+      entry.status = 'running'
+      entry.startedAt = Date.now()
+    }
     /** The persisted marker, while the starting turn still streams (a later turn cannot amend it). */
     const marker = (status: SubagentRunData['status']): void => {
-      if (ctx.stream.active && ctx.turn?.id === parentInfo.turnId) {
+      if (a.toolCallId !== undefined && ctx.stream.active && ctx.turn?.id === parentInfo.turnId) {
         ctx.stream.data(
           'run',
-          { toolCallId, sessionId, agent: agentName, status },
-          { id: toolCallId },
+          {
+            toolCallId: a.toolCallId,
+            sessionId,
+            agent: agentName,
+            status,
+            taskId,
+            ...(a.name === undefined ? {} : { name: a.name }),
+          },
+          { id: a.toolCallId },
         )
       }
     }
@@ -1203,6 +1813,12 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       label,
       sessionId,
       marker,
+      {
+        entry,
+        resumed: a.resumed,
+        ...(a.name === undefined ? {} : { name: a.name }),
+        ...(a.report === undefined ? {} : { report: a.report }),
+      },
     )
     void (async () => {
       if (!(await sem.acquire(ac.signal))) {
@@ -1213,7 +1829,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       try {
         const child = def.agent.session(sessionId, { parent: parentInfo }) as AnySession
         opened = true
-        const run = child.send(prompt, {
+        if (entry !== undefined) wireRunning(entry, child)
+        const run = child.send(a.prompt, {
           abortSignal: ac.signal,
           ...(def.maxTurns === undefined ? {} : { maxSteps: def.maxTurns }),
         }) as AnyRun
@@ -1240,9 +1857,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         })
         await Promise.all(consumers)
         try {
-          ctx.turn?.addUsage(result.usage, {
-            source: `subagent:${agentName}`,
-          })
+          if (a.addUsage !== undefined) a.addUsage(result.usage, `subagent:${agentName}`)
+          else ctx.turn?.addUsage(result.usage, { source: `subagent:${agentName}` })
         } catch {
           // the parent turn is over
         }
@@ -1258,7 +1874,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         sem.release()
       }
     })()
-    return `Started background subagent ${taskId} (${agentName}): ${label}. You will be notified when it finishes.`
+    return taskId
   }
 
   // ─── park: an external tool whose start runs the child's first turn ─────────────────────

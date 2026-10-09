@@ -98,6 +98,38 @@ result (idempotent, safe to call from a timer or an admin endpoint). With
 `subagents({ approvals: 'park', selfAgent: () => parentAgent })` it also runs, detached and best
 effort, whenever a parent session opens. Spec 20 §3.4.
 
+## Messaging and follow-ups (`send_message`)
+
+With `approvals: 'inline'` or `'policy'` the plugin also adds `send_message({ to, message })`
+([ADR-0038](../decisions/0038-agent-messaging.md), spec 20 §5). Give an agent a `name` when you
+start it (`agent({ …, name: 'reviewer' })`) and address it later by name, task id (`agent-2`) or
+child session id; a subagent addresses the root as `"main"`.
+
+- **Running target:** the message lands at its **next step**, between tool calls (a running tool is
+  never interrupted), as `data-eh.input` of the child (`source: 'event'`), framed as
+  `<agent-message from="main" id="main" relation="launcher">…</agent-message>`.
+- **Finished target** (completed or failed): it is **resumed** on the same child session, with its
+  full history, tools and model, in the background under the same task id. Its report goes to
+  whoever sent the message (main, or the subagent that sent it, as a next-step event or wake).
+- **Stopped by the user:** refused (`… was cancelled by the user`).
+- **One-shot types:** `agents: { explore: { agent, description, resumable: false } }`. They can
+  receive messages while running; once finished they cannot be resumed.
+- **From a subagent:** install the plugin on the child agent too, usually with an empty catalog:
+  `subagents({ agents: {}, approvals: 'policy' })` (or your normal config; at `maxDepth` the child
+  loses `agent` but keeps `send_message`). `to: "main"` reaches the root's running turn at its next
+  step, or wakes an idle root (observe the wake with `session.onRun()`).
+- **Users:** `services.subagentTasks.send('reviewer', 'also check the tests')` messages an agent as
+  the user (plain user input, not an agent message).
+- **Safety:** agent messages are data from another agent: add `AGENT_MESSAGE_INSTRUCTIONS` to your
+  prompt (the tool description already says it). No agent message approves a permission or changes
+  settings; approvals are answered only through your `answer` callback, policy or `respond()`.
+- **Limits:** 20 messages per minute per (sender, target), identical repeats within 10 s dropped,
+  50 undelivered per target (`messageLimits`).
+- **Restarts:** pass `selfAgent: () => agent` to rebuild names and finished agents from the
+  stored run markers when the root session is reopened. `'park'` has no `send_message` (use
+  `childAgent.session(id).enqueue(text, { mode: 'steer' })`, the core inbox).
+- Every session with the plugin gets a short roster reminder of addressable agents each step.
+
 ## Background children
 
 `background: true` (inline and policy only) adds `run_in_background`. The call returns at once; when

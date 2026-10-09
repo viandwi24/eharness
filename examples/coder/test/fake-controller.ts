@@ -524,6 +524,10 @@ export function fakeController(opts: FakeOptions = {}) {
         },
       ],
     tasks: () => tasks,
+    async sendAgentMessage(to, message) {
+      calls.push(`sendAgentMessage:${to}:${message}`)
+      return { ok: true, status: 'delivered', id: to }
+    },
     async stopTask(id) {
       calls.push(`stopTask:${id}`)
       tasks = tasks.map((t) => (t.id === id ? { ...t, status: 'stopped', endedAt: Date.now() } : t))

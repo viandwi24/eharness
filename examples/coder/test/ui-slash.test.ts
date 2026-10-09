@@ -145,6 +145,7 @@ describe('slash parsing', () => {
       'memory',
       'config',
       'tasks',
+      'tell',
       'doctor',
       'output-style',
       'theme',
@@ -168,6 +169,29 @@ describe('slash effects', () => {
     expect(await runSlash('/nope', h.ctx)).toBe(true)
     expect(h.printed[0]).toMatchObject({ tone: 'error' })
     expect(h.printed[0]?.text).toContain('/nope')
+  })
+
+  test('/tell messages an agent as the user and reports the outcome', async () => {
+    const sent: string[] = []
+    const h = harness({
+      async sendAgentMessage(to: string, message: string) {
+        sent.push(`${to}|${message}`)
+        return to === 'gone'
+          ? { ok: false, error: 'ERROR: no agent "gone".' }
+          : { ok: true, status: to === 'old' ? 'resumed' : 'delivered', id: 'agent-1' }
+      },
+    })
+    await runSlash('/tell rev check the tests too', h.ctx)
+    await runSlash('/tell old more', h.ctx)
+    await runSlash('/tell gone hi', h.ctx)
+    await runSlash('/tell rev', h.ctx)
+    expect(sent).toEqual(['rev|check the tests too', 'old|more', 'gone|hi'])
+    expect(h.printed.map((p) => p.text)).toEqual([
+      'Message delivered to rev.',
+      'Resumed agent-1 with your message.',
+      'no agent "gone".',
+      'Usage: /tell <name|id> <message>',
+    ])
   })
 
   test('/help, /context, /status, /cost open their page', async () => {

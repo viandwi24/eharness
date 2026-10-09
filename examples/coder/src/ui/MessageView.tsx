@@ -43,6 +43,19 @@ export function UserMessage({ text }: { text: string }): ReactElement {
   )
 }
 
+const AGENT_FRAME = /^<agent-message from="([^"]*)"[^>]*>\n?([\s\S]*?)\n?<\/agent-message>\s*$/
+
+/**
+ * A framed agent message (`<agent-message from="reviewer" …>text</agent-message>`) as a dim
+ * `← reviewer: text` line; `undefined` when the text is not one.
+ */
+export function agentMessageLine(text: string): string | undefined {
+  const match = AGENT_FRAME.exec(text.trim())
+  if (match === null) return undefined
+  const body = (match[2] ?? '').replace(/\s+/g, ' ').trim()
+  return `← ${match[1]}: ${body.length > 200 ? `${body.slice(0, 199)}…` : body}`
+}
+
 /**
  * A `data-eh.input` part: input delivered inside the running turn (ADR-0011). `source: 'user'` is a
  * steered message (or an approval note, `approvalNote` set, shown as a dim `Note: ...` with the raw
@@ -76,7 +89,7 @@ export function SteeredInput({
   if (source === 'event') {
     return (
       <Box marginTop={1}>
-        <Text dimColor>· {text}</Text>
+        <Text dimColor>{agentMessageLine(text) ?? `· ${text}`}</Text>
       </Box>
     )
   }
@@ -110,6 +123,10 @@ function kindLine(message: CoderMessage): string {
       ? `Conversation compacted (${tokens.before} → ${tokens.after} tokens)`
       : 'Conversation compacted'
   }
+  if (kind === 'eh.event' && part?.data?.name === 'agent-message') {
+    const line = agentMessageLine(String(part.data.text ?? ''))
+    if (line !== undefined) return line
+  }
   const text = part?.data && typeof part.data.message === 'string' ? `: ${part.data.message}` : ''
   return `${kind.replace(/^eh\./, '')}${text}`
 }
@@ -133,9 +150,10 @@ export function MessageView({
   focus = false,
 }: MessageViewProps): ReactElement | null {
   if (message.metadata?.eharness?.kind) {
+    const line = kindLine(message)
     return (
       <Box marginTop={1}>
-        <Text dimColor>── {kindLine(message)} ──</Text>
+        <Text dimColor>{line.startsWith('← ') ? line : `── ${line} ──`}</Text>
       </Box>
     )
   }

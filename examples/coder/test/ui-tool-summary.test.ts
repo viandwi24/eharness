@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { TOOL } from '../src/contracts.ts'
+import { agentMessageLine } from '../src/ui/MessageView.tsx'
 import {
   bashBody,
   countChanges,
@@ -57,6 +58,25 @@ describe('helpers', () => {
     expect(isAgentProgress({ status: 'running', agent: 'x', steps: 1 })).toBe(true)
     expect(isAgentProgress('text')).toBe(false)
     expect(isAgentProgress(null)).toBe(false)
+  })
+})
+
+describe('send_message', () => {
+  test('the card reads SendMessage → name with a message preview', () => {
+    const d = describeTool(
+      view(TOOL.sendMessage, { to: 'reviewer', message: 'please also check the tests' }),
+    )
+    expect(d.label).toBe('SendMessage → reviewer')
+    expect(d.note).toBe('please also check the tests')
+  })
+
+  test('a delivered agent message is a dim ← line', () => {
+    expect(
+      agentMessageLine(
+        '<agent-message from="reviewer" id="agent-2" relation="peer">\nfound a bug\n</agent-message>',
+      ),
+    ).toBe('← reviewer: found a bug')
+    expect(agentMessageLine('plain event')).toBeUndefined()
   })
 })
 

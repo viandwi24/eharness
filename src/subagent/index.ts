@@ -5,6 +5,13 @@
  * @see docs/specs/20-subagent-plugin.md
  */
 export {
+  AGENT_MESSAGE_INSTRUCTIONS,
+  AGENT_MESSAGE_MAX_CHARS,
+  AGENT_NAME_PATTERN,
+  SEND_MESSAGE_TOOL,
+  type SubagentMessageLimits,
+} from './messaging.ts'
+export {
   pendingSubagentApprovals,
   reconcileSubagentWaits,
   SUBAGENT_BACKGROUND_REPORT_CHARS,

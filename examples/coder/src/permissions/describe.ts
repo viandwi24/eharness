@@ -164,6 +164,8 @@ export async function describeApproval(
         `Agent ${str(input, 'subagent_type') ?? ''}: ${oneLine(str(input, 'description') ?? '')}`,
         str(input, 'prompt'),
       )
+    case TOOL.sendMessage:
+      return out(`Message ${str(input, 'to') ?? ''}`, str(input, 'message'))
     case TOOL.webFetch: {
       const url = oneLine(str(input, 'url') ?? '', 300)
       const prompt = str(input, 'prompt')

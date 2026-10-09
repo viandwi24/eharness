@@ -209,6 +209,7 @@ returns to the prompt. Lists and pickers take `Down`/`j`/`Ctrl+N`, `Up`/`k`/`Ctr
 | `/memory` | memory files the agent reads (page) |
 | `/config` | view and change settings (page) |
 | `/tasks` | background shells and agents (page) |
+| `/tell <name\|id> <message>` | message a subagent as yourself: a running one gets it at its next step, a finished one is resumed |
 | `/doctor` | check the environment (page) |
 | `/output-style [name]` | pick the response style, or set it by name |
 | `/theme [dark\|light\|auto]` | show or set the colour theme |
@@ -877,6 +878,15 @@ Notes:
   is shown to you in the same prompt UI, labelled with the agent name, and the child waits in
   process (`subagents({ approvals: 'inline', answer })`). This does not survive a restart; the
   library's `'park'` strategy is for split web/server apps (ADR-0035).
+- Messaging: the main agent (and subagents) have `send_message`; start an agent with a `name`
+  (`agent { name: "reviewer", … }`) and address it later by name, task id (`agent-2`) or `main`.
+  A running agent gets the message at its next step (shown as a dim `← reviewer: …` line in the
+  transcript; the call reads `SendMessage → reviewer`); a finished agent is resumed on its own
+  session with its full history, shows as running again in the footer and `/tasks`, and its report
+  goes back to the sender. `explore` and `plan` are one-shot (`resumable: false`): they take
+  messages while running, but finished ones are not resumed. `/tell <name|id> <message>` sends as
+  you (plain user input, not an agent message); typing into the `/agents` transcript viewer is not
+  supported. Agent messages are framed `<agent-message>` and are never an approval (ADR-0038).
 - Transcripts: `/agents <n>` opens a child's stored messages. Runs are listed from the persisted
   `data-subagent.run` parts, so they are also available after a resume.
 

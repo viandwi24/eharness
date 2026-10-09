@@ -35,6 +35,13 @@ describe('loadAgentDefinitions', () => {
     expect(warnings).toEqual([])
   })
 
+  test('built-in explore and plan are one-shot (not resumable by send_message)', async () => {
+    const { byName } = await load()
+    expect(byName.get('explore')?.resumable).toBe(false)
+    expect(byName.get('plan')?.resumable).toBe(false)
+    expect(byName.get('general-purpose')?.resumable).toBeUndefined()
+  })
+
   test('built-in explore is read-only', async () => {
     const { byName } = await load()
     const explore = byName.get('explore')

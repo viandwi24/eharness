@@ -408,6 +408,27 @@ export const slashCommands: SlashCommand[] = [
     run: (ctx) => ctx.openPage({ kind: 'tasks' }),
   },
   {
+    name: 'tell',
+    description: 'Message a subagent: /tell <name|id> <message>',
+    run: async (ctx) => {
+      const space = ctx.args.search(/\s/)
+      const to = space < 0 ? ctx.args : ctx.args.slice(0, space)
+      const message = space < 0 ? '' : ctx.args.slice(space).trim()
+      if (to === '' || message === '') {
+        ctx.print('Usage: /tell <name|id> <message>', 'error')
+        return
+      }
+      const result = await ctx.controller.sendAgentMessage(to, message)
+      if (!result.ok) ctx.print(result.error.replace(/^ERROR: /, ''), 'error')
+      else
+        ctx.print(
+          result.status === 'resumed'
+            ? `Resumed ${result.id} with your message.`
+            : `Message delivered to ${to}.`,
+        )
+    },
+  },
+  {
     name: 'doctor',
     description: 'Check the environment',
     run: (ctx) => ctx.openPage({ kind: 'doctor' }),

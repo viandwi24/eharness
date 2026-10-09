@@ -269,30 +269,31 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       (async () => {
         throw new Error('web search is not available')
       })
+    const self: { agent?: HarnessAgent } = {}
     const plugins = [
       shell({
         sandbox: deps.sandbox,
         ...(background ? { background: true } : {}),
       }),
-      ...(depth < config.maxAgentDepth
-        ? [
-            subagents({
-              agents: () => subagentCatalog(depth),
-              approvals: 'inline',
-              answer: subagentAnswer({
-                broker: deps.broker,
-                permissions,
-                describe: deps.describe,
-              }),
-              maxDepth: config.maxAgentDepth,
-              ...(deps.maxConcurrentAgents !== undefined
-                ? { maxConcurrent: deps.maxConcurrentAgents }
-                : {}),
-              // a child's own background reports would die with its session: main agent only
-              ...(background ? { background: true } : {}),
-            }),
-          ]
-        : []),
+      // always installed: at `maxDepth` the plugin drops the `agent` tool and keeps `send_message`,
+      // so even a leaf agent can report to `main` (ADR-0038)
+      subagents({
+        agents: () => subagentCatalog(depth),
+        approvals: 'inline',
+        answer: subagentAnswer({
+          broker: deps.broker,
+          permissions,
+          describe: deps.describe,
+        }),
+        maxDepth: config.maxAgentDepth,
+        ...(deps.maxConcurrentAgents !== undefined
+          ? { maxConcurrent: deps.maxConcurrentAgents }
+          : {}),
+        // a child's own background reports would die with its session: main agent only
+        ...(background ? { background: true } : {}),
+        // rebuilds agent names and finished agents when a stored session is reopened
+        selfAgent: () => self.agent as HarnessAgent,
+      }),
       // after `shell()` and `subagents()`: it reads their task services
       ...(isMain && deps.taskHub ? [deps.taskHub.plugin] : []),
       filesystem({
@@ -347,6 +348,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
     }) as unknown as HarnessAgent
+    self.agent = agent
     built.push(agent)
     return agent
   }
@@ -365,6 +367,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
           },
           description: def.description,
           ...(def.maxTurns !== undefined ? { maxTurns: def.maxTurns } : {}),
+          ...(def.resumable !== undefined ? { resumable: def.resumable } : {}),
         },
       ]),
     )

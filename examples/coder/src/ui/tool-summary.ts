@@ -443,6 +443,12 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       desc.note = str(input.subagent_type) || 'general-purpose'
       break
     }
+    case TOOL.sendMessage: {
+      desc.label = `SendMessage → ${str(input.to)}`
+      desc.note = firstLine(str(input.message), 100)
+      if (ok && text) desc.summary = firstLine(text, 120)
+      break
+    }
     case TOOL.ask: {
       desc.label = 'Ask'
       const questions = Array.isArray(input.questions) ? input.questions : []

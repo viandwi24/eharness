@@ -64,6 +64,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash, ...WEB_TOOLS],
     disallowedTools: [...WRITE_TOOLS, TOOL.agent],
     permissionMode: 'plan',
+    resumable: false,
     source: 'builtin',
   },
   {
@@ -74,6 +75,7 @@ export const BUILTIN_AGENTS: AgentDefinition[] = [
     tools: [...READ_ONLY_TOOLS.filter((t) => t !== TOOL.todo), TOOL.bash, ...WEB_TOOLS],
     disallowedTools: [...WRITE_TOOLS, TOOL.agent],
     permissionMode: 'plan',
+    resumable: false,
     source: 'builtin',
   },
 ]

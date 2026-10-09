@@ -25,6 +25,8 @@ export interface TaskHub {
   /** Move the running foreground bash / agent calls to the background; the new task ids. */
   backgroundRunning(): string[]
   taskOutput(id: string): string
+  /** Message an agent as the user. */
+  sendMessage: SubagentTasks['send']
   onTasks(listener: (tasks: BackgroundTask[]) => void): () => void
   /** The current session changed: notify the listeners. */
   changed(): void
@@ -53,7 +55,7 @@ export function createTaskHub(deps: TaskHubDeps): TaskHub {
       (t): BackgroundTask => ({
         id: t.id,
         kind: 'agent',
-        label: `${t.agent}: ${t.description}`,
+        label: `${t.name === undefined ? t.agent : `${t.name} (${t.agent})`}: ${t.description}`,
         status: t.status,
         startedAt: t.startedAt,
         ...(t.endedAt !== undefined ? { endedAt: t.endedAt } : {}),
@@ -116,6 +118,11 @@ export function createTaskHub(deps: TaskHubDeps): TaskHub {
     taskOutput(id) {
       const services = sessions.get(deps.session())
       return services?.agents.get(id)?.tail ?? services?.shells.output(id) ?? ''
+    },
+    async sendMessage(to, message, options) {
+      const services = sessions.get(deps.session())
+      if (services === undefined) return { ok: false, error: 'No agents in this session.' }
+      return await services.agents.send(to, message, options)
     },
     onTasks(listener) {
       listeners.add(listener)

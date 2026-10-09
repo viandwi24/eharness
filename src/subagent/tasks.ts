@@ -16,6 +16,8 @@ export interface SubagentTask {
   agent: string
   /** The `description` label the model gave. */
   description: string
+  /** The `name` the model gave (addressable with `send_message`), when it gave one. */
+  name?: string
   /** The child session that runs it (open it with `agent.session(childSessionId)`). */
   childSessionId: string
   status: SubagentTaskStatus
@@ -33,7 +35,7 @@ export interface SubagentTask {
 export interface SubagentTasks {
   /** All tasks of this session, oldest first. */
   list(): SubagentTask[]
-  /** By task id (`agent-1`) or child session id. */
+  /** By task id (`agent-1`), child session id or name. */
   get(id: string): SubagentTask | undefined
   /**
    * Stop a running task (task id or child session id): aborts the child (its turn ends
@@ -54,6 +56,20 @@ export interface SubagentTasks {
    * without `background: true`).
    */
   background(toolCallId?: string): string[]
+  /**
+   * Message an agent as the USER (or by id / child session id / name): a running agent gets it as
+   * input at its next step (a steer, `source: 'user'`); a finished resumable one is resumed in the
+   * background on the same child session (same task id, `running` again) and its report goes to
+   * the session that launched it. Never throws: a refusal is `{ ok: false, error }` (unknown agent,
+   * stopped by the user, one-shot agent, messaging not available).
+   */
+  send(
+    to: string,
+    message: string,
+    options?: { from?: 'user' },
+  ): Promise<
+    { ok: true; status: 'delivered' | 'resumed'; id: string } | { ok: false; error: string }
+  >
 }
 
 const TAIL_CHARS = 2000
@@ -64,11 +80,18 @@ export interface SubagentTaskRegistry extends SubagentTasks {
   /** Running foreground calls that can be moved to the background, by tool call id. */
   foreground: Map<string, () => string | undefined>
   add(init: {
+    /** An existing id to reuse (a task restored after a restart); the counter moves past it. */
+    id?: string
     agent: string
     description: string
+    name?: string
     childSessionId: string
     stop: () => void | Promise<void>
   }): string
+  /** A finished task runs again (a resume): same id, `running`, new stop function. */
+  restart(id: string, stop: () => void | Promise<void>): void
+  /** Move the id counter past `n` (`agent-<n>` ids that exist in stored history). */
+  reserve(n: number): void
   setTail(id: string, tail: string): void
   complete(id: string, status: 'completed' | 'failed'): void
   /** Whether the task was stopped through `stop()`. */
@@ -79,6 +102,8 @@ export interface SubagentTaskRegistry extends SubagentTasks {
 export function createSubagentTaskRegistry(options: {
   /** Called by `stop()` for an id that is not a known task. */
   foreign: (childSessionId: string) => Promise<void>
+  /** Backs `send()`. */
+  send: SubagentTasks['send']
 }): SubagentTaskRegistry {
   const entries = new Map<string, { task: SubagentTask; stop: () => void | Promise<void> }>()
   const listeners = new Set<(tasks: SubagentTask[]) => void>()
@@ -101,17 +126,25 @@ export function createSubagentTaskRegistry(options: {
     }
   }
   const find = (id: string) =>
-    entries.get(id) ?? [...entries.values()].find((e) => e.task.childSessionId === id)
+    entries.get(id) ??
+    [...entries.values()].find((e) => e.task.childSessionId === id || e.task.name === id)
 
   const registry: SubagentTaskRegistry = {
     add(init) {
-      counter++
-      const id = `agent-${counter}`
+      let id = init.id
+      if (id === undefined) {
+        counter++
+        id = `agent-${counter}`
+      } else {
+        const n = Number(/^agent-(\d+)$/.exec(id)?.[1] ?? 0)
+        if (n > counter) counter = n
+      }
       entries.set(id, {
         task: {
           id,
           agent: init.agent,
           description: init.description,
+          ...(init.name === undefined ? {} : { name: init.name }),
           childSessionId: init.childSessionId,
           status: 'running',
           startedAt: Date.now(),
@@ -122,6 +155,21 @@ export function createSubagentTaskRegistry(options: {
       fire()
       return id
     },
+    restart(id, stop) {
+      const e = entries.get(id)
+      if (e === undefined) return
+      e.task.status = 'running'
+      e.task.startedAt = Date.now()
+      e.task.endedAt = undefined
+      delete e.task.endedAt
+      e.task.tail = ''
+      e.stop = stop
+      fire()
+    },
+    reserve(n) {
+      if (n > counter) counter = n
+    },
+    send: (to, message, opts) => options.send(to, message, opts),
     setTail(id, tail) {
       const e = entries.get(id)
       if (e === undefined || e.task.status !== 'running') return
