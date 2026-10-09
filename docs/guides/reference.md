@@ -338,14 +338,20 @@ tools) and `PAGE_CONTEXT_PREAMBLE` (the framing of page context). `eharness/guar
 | `eharness/filesystem` | `filesystem({ fs, … })` | spec 08 §2 | `list_files`, `read_file`, `write_file`, `edit_file`, `delete_file`, `grep`, `glob` |
 | `eharness/todos` | `todos()` | `enforce` (false), `maxNudges` (3), `remindEvery` (5), `maxItems` (50) | `todo_write` |
 | `eharness/memory` | `memory({ roots })` | `pinned`, `maxPinnedChars` (2_000), `maxFileChars` (20_000), `protocol` (`MEMORY_PROTOCOL`), `tool`, `onWrite`, `flushOnCompaction` (false) | `memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`, `memory_delete`, `memory_rename` (or the app's `memory` tool) |
-
 | `eharness/guard` | `approvalGuard({ model, … })` | `policy` (`GUARD_DEFAULT_POLICY`), `skipRisks` (`['read']`), `skipTools`, `onlyTools`, `transcript` (`{ maxMessages: 20, maxChars: 12_000 }`), `timeoutMs` (15 000), `maxRetries` (1), `maxConsecutiveDenials` (3; `Infinity` = off), `cache` (`{ maxEntries: 200, ttlMs? }`) | none (a `tool.approve` hook; helpers `canonicalJson()`, `verdictKey()`) |
 | `eharness/group` | `groupChat({ botId, … })`, `routeGroupMessage(group, session, message, options?)` | `botName`, `requireMention` (true), `mentionPatterns`, `replyCountsAsMention` (true), `historyLimit` (20), `maxBotTurns` (`{ count: 3, windowMs: 60_000 }`), `allowBots` (false), `shouldRespond`, `formatSpeaker` | none (kind `group.message`, `metadata.group`) |
 | `eharness/openapi` | `openApiTools(spec, { name, baseUrl, … })` (a tool source) | `headers`, `include`, `exclude`, `names`, `prefix` (`<name>_`), `risk` (`riskFromMethod`), `maxTools` (64), `defer` (`'auto'`: above 20), `timeoutMs` (30 000), `maxResponseChars` (50 000), `schema`, `useSpecServers` (false), `fetch` | one tool per selected operation; input `{ path?, query?, headers?, body? }` |
+| `eharness/filesystem/node` (Node-only) | `diskFs(root, opts?)`, `mountFs(mounts)`, `nodeWorkspace(opts)`, `nodeCheckpointStore(opts)`, `compileIgnore()` | `diskFs`: `maxFileBytes`, `maxBinaryBytes`, `.gitignore` subset; spec 08 §8 | none (a `FileSystem` for `filesystem()`) |
+| `eharness/shell` (Node-only) | `shell({ sandbox, … })`, `localSandbox(root, opts?)` | `timeoutMs` (120 000), `maxTimeoutMs` (600 000), `maxOutputChars` (30 000), `background` (false), `onTaskEvent`, `toolName` (`bash`), `risk` (`'external'`); sandbox `os`, `env`, `shell` | `bash`, with `background`: `bash_output`, `kill_shell`; service `shellTasks`, part `data-shell.output` |
+| `eharness/permissions` | `permissionsPlugin({ engine })`, `createPermissionEngine({ roots, … })` | `mode` (`'default'`), `rules`, `protectedPaths` (`['.git']`), `builtinAsk`, `readOnlyCommands`, `toolKinds`, `aliases`, `modeCycle`, `persist` | none (a `tool.approve` hook, plan mode, output filter) |
+| `eharness/subagent` | `subagents({ agents, approvals, … })`, `subagentChild({ parent })`, `reconcileSubagentWaits()` | `toolName` (`agent`), `maxDepth` (2), `maxConcurrent` (8), `background` (false), `answer`, `policy` (`'deny'`), `timeoutMs`, `selfAgent`, `parentAgent`, `onParentRun` | `agent` (`subagent_type`, `description`, `prompt`); part `data-subagent.run` |
+| `eharness/ask` | `askUser(options?)`, `pendingQuestions()`, `answerOutput()` | `toolName`, `maxQuestions` (4), `interactive` (true), `whenNoHuman` (`'dismiss'`) | `ask_user_question` (a client tool, or executed with `interactive: false`) |
+| `eharness/web` | `webFetch(options?)`, `webSearch({ search, … })` | `webFetch`: `allow`, `deny`, `onlyAllowed`, `maxBytes` (5 MiB), `maxChars` (30 000), `timeoutMs` (15 000), `maxRedirects` (5), `toMarkdown`, `resolveHost`, `fetch` | `web_fetch`, `web_search` (risk `'external'`) |
 
 `riskFromMethod(method)`: `GET`, `HEAD`, `OPTIONS` give `'read'`, `DELETE` gives `'destructive'`,
 the rest `'write'`. Guides: [guard](guard.md), [group chat](group-chat.md),
-[OpenAPI tools](openapi-tools.md).
+[OpenAPI tools](openapi-tools.md), [shell](shell.md), [permissions](permissions.md),
+[subagents](subagents.md), [ask](ask.md), [web](web.md).
 
 `FileSystem.move` is optional (atomic rename → `MoveResult`; `memoryFs` implements it,
 `fileSystemConformance` checks it with `requireMove`).

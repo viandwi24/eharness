@@ -1,11 +1,16 @@
 /** The `request_directory_access` tool: mount a directory outside the project (after approval). */
 import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { isAbsolute, join, parse, resolve } from 'node:path'
+import { isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import type { Workspace } from '../contracts.ts'
-import { isInside } from './guard.ts'
+
+/** True when `path` is `dir` or lies below it (both real, absolute paths). */
+export const isInside = (path: string, dir: string): boolean => {
+  const rel = relative(dir, path)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
 
 /**
  * Build the `request_directory_access` tool. Approval is enforced by the permissions plugin
@@ -39,7 +44,7 @@ function makeDirAccessTool(workspace: Workspace) {
         const tooBroad =
           real === parse(real).root ||
           real === (await realpath(homedir()).catch(() => homedir())) ||
-          (root !== undefined && isInside(real, root))
+          (root !== undefined && isInside(root, real))
         if (tooBroad) {
           return `ERROR: ${real} is too broad (it is the filesystem root, your home directory, or contains the project). Ask for a narrower directory.`
         }

@@ -212,6 +212,39 @@ describe('subagent run tracking', () => {
     expect(s.subagents[0]?.sessionId).toBe('child-1')
   })
 
+  test('the persisted data-subagent.run part lists runs of a loaded conversation (after /resume)', () => {
+    const run = (status: string, id = 'a1', sessionId = 'child-1') => ({
+      type: 'data-subagent.run',
+      id,
+      data: { toolCallId: id, sessionId, agent: 'explore', status },
+    })
+    const message = (id: string, parts: unknown[]) => assistant(id, parts)
+    const s = reduce(initialState(), {
+      type: 'load',
+      messages: [
+        message('m1', [agentPart('output-available', 'final answer'), run('done')]),
+        message('m2', [run('running', 'a2', 'child-2')]),
+      ],
+    })
+    expect(s.subagents).toEqual([
+      {
+        toolCallId: 'a1',
+        name: 'explore',
+        description: 'look',
+        sessionId: 'child-1',
+        status: 'done',
+      },
+      // stored as running: the run was interrupted
+      {
+        toolCallId: 'a2',
+        name: 'explore',
+        description: '',
+        sessionId: 'child-2',
+        status: 'failed',
+      },
+    ])
+  })
+
   test('a tool error marks failed; an interrupted turn fails running runs; reset clears', () => {
     let s = live(initialState(), agentPart('output-available', progress('running'), true))
     s = live(s, agentPart('output-error'))

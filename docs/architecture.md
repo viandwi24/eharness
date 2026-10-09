@@ -27,12 +27,12 @@ Status: **Accepted** (v0).
 ┌──────────────▼───────── shipped extensions (same package, subpaths) ──────────────┐
 │ eharness/filesystem         FileSystem contract, filesystem() plugin, file tools │
 │ eharness/filesystem/memory  memoryFs()                                           │
-│ eharness/filesystem/node    diskFs(): real disk (Node-only)                      │
-│ eharness/shell              bash tool over sandbox sessions (Node-only)          │
-│ eharness/permissions        permission rules and modes as a plugin               │
-│ eharness/subagent           subagentTool(): child sessions, nested approvals     │
-│ eharness/ask                askUserQuestionTool(): client-tool questions         │
-│ eharness/web                webFetchTool(): guarded fetch to Markdown            │
+│ eharness/filesystem/node    diskFs(), mountFs(), nodeWorkspace() (Node-only)     │
+│ eharness/shell              shell(), localSandbox(): bash tool (Node-only)       │
+│ eharness/permissions        permissionsPlugin(), createPermissionEngine()        │
+│ eharness/subagent           subagents(), subagentChild(): child sessions         │
+│ eharness/ask                askUser(): multiple-choice questions                 │
+│ eharness/web                webFetch(), webSearch(): guarded fetch, search       │
 │ eharness/storage/memory     memoryMessages(), memoryState(), memoryInbox(),      │
 │                             memoryBudgetLedger()                                 │
 │ eharness/mcp                mcpServer() tool source over @ai-sdk/mcp             │
@@ -65,14 +65,14 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | Import | Source | Contents |
 |---|---|---|
 | `eharness` | `src/index.ts` | core API and types |
-| `eharness/filesystem` | `src/filesystem/index.ts` | `FileSystem` contract, `filesystem()` plugin, `fsSkillSource()`, helpers |
+| `eharness/filesystem` | `src/filesystem/index.ts` | `FileSystem` contract, `filesystem()` plugin, `fsSkillSource()`, checkpoints (`checkpointedFs()`, `memoryCheckpointStore()`, `rewindFiles()`, `checkpointsSince()`), binary helpers (`looksBinary()`, `detectMediaType()`, `imageDimensions()`, `isFileMediaRef()`), `normalizePath()`, `compileGlob()`, `contentVersion()` / `bytesVersion()` |
 | `eharness/filesystem/memory` | `src/filesystem/memory.ts` | `memoryFs()` |
-| `eharness/filesystem/node` | `src/filesystem/node.ts` | `diskFs()` (Node-only, ADR-0036) |
-| `eharness/shell` | `src/shell/index.ts` | bash tool, sandbox drivers (Node-only, ADR-0036) |
-| `eharness/permissions` | `src/permissions/index.ts` | permission rule engine and modes plugin |
-| `eharness/subagent` | `src/subagent/index.ts` | `subagentTool()`, approval strategies `inline` / `park` / `deny` (ADR-0035) |
-| `eharness/ask` | `src/ask/index.ts` | `askUserQuestionTool()` |
-| `eharness/web` | `src/web/index.ts` | `webFetchTool()` |
+| `eharness/filesystem/node` | `src/filesystem/node.ts` | `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()`, `compileIgnore()` (Node-only, ADR-0036) |
+| `eharness/shell` | `src/shell/index.ts` | `shell()` plugin (`bash`, `bash_output`, `kill_shell`, the `shellTasks` service), `localSandbox()`, `detectOsSandbox()`, `seatbeltProfile()`, `wrapCommand()`, `killAllSandboxProcesses()` (Node-only, ADR-0036) |
+| `eharness/permissions` | `src/permissions/index.ts` | `permissionsPlugin()`, `createPermissionEngine()`, `parseRule()` / `matchRule()`, `parseCommand()`, `isReadOnlyCommand()`, `PERMISSION_MODES`, `DEFAULT_PROTECTED_PATHS` (spec 18) |
+| `eharness/subagent` | `src/subagent/index.ts` | `subagents()` (approvals `'inline'` / `'park'` / `'policy'`, background children), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()`, `subagentWaitId()`, `SUBAGENT_*` texts (spec 20, ADR-0035) |
+| `eharness/ask` | `src/ask/index.ts` | `askUser()`, `pendingQuestions()`, `answerOutput()`, `parseQuestions()`, `formatAnswers()`, `ASK_TOOL` (spec 21) |
+| `eharness/web` | `src/web/index.ts` | `webFetch()`, `webSearch()`, `htmlToText()`, `isPrivateHost()`, `matchHost()` (spec 22) |
 | `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, fixed texts |

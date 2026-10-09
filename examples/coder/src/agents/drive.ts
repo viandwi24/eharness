@@ -1,8 +1,11 @@
 /**
- * Drives a turn to its end: answers every `tool-pending` stop through the approval broker and
- * continues with `respond()`. Shared by the controller (main agent) and the `agent` tool (children).
+ * Drives a turn of the MAIN agent to its end: answers every `tool-pending` stop through the
+ * approval broker (and `ask_user_question` through the broker's questions) and continues with
+ * `respond()`. The children of the `agent` tool are driven by the library's `subagents()` plugin
+ * with `approvals: 'inline'`; its `answer` callback is `agents/subagents.ts`.
  */
 import type { HarnessRun, HarnessSession, TurnResult } from 'eharness'
+import { answerOutput, pendingQuestions } from 'eharness/ask'
 import { QUESTION_TIMEOUT_NOTE, withQuestionTimeout } from '../app/ask-timeout.ts'
 import {
   type ApprovalBroker,
@@ -13,7 +16,6 @@ import {
   TOOL,
   type ToolCallInfo,
 } from '../contracts.ts'
-import { formatAnswers, parseQuestions, questionRequest } from './ask-tool.ts'
 
 /** Options of {@link driveTurn}. */
 export interface DriveOptions {
@@ -22,15 +24,12 @@ export interface DriveOptions {
   permissions: PermissionEngine
   /** Title/detail/suggested rule of a pending call (permissions/describe.ts). */
   describe(call: ToolCallInfo): Promise<{ title: string; detail?: string; suggestedRule?: string }>
-  /** Subagent name, shown in prompts; undefined for the main agent. */
-  agent?: string
   signal?: AbortSignal
   /** Called with every run (the first one and every respond continuation) before it is awaited; must consume run.stream if it wants the chunks. */
   onRun?(run: HarnessRun<CoderMessage>): void
   /**
    * A bare "No" (no feedback) on a prompt stops the turn: `respond(…, { endTurn: 'if-denied' })`
-   * records the denial and ends the turn without a model call. Main agent only; a subagent's
-   * denial lets the child continue.
+   * records the denial and ends the turn without a model call.
    */
   stopOnBareDeny?: boolean
   /**
@@ -82,11 +81,10 @@ export async function driveTurn(
     let bareDeny = false
     for (const entry of pending.approvals) {
       if (entry.granted) continue
-      const call: ToolCallInfo = { toolName: entry.toolName, input: entry.input, agent: opts.agent }
+      const call: ToolCallInfo = { toolName: entry.toolName, input: entry.input }
       const description = await opts.describe(call)
       const request: ApprovalRequest = {
         id: entry.approvalId,
-        agent: opts.agent,
         toolName: entry.toolName,
         input: entry.input,
         title: description.title,
@@ -108,7 +106,7 @@ export async function driveTurn(
           await permissions.allow(request.suggestedRule, answer.remember)
         }
         const note = answer.note?.trim()
-        if (entry.toolName === TOOL.exitPlan && opts.agent === undefined) {
+        if (entry.toolName === TOOL.exitPlan) {
           // the user chose the mode to continue in; the exit_plan_mode tool switches to it
           const chosen =
             answer.mode === 'acceptEdits' || answer.mode === 'default' ? answer.mode : undefined
@@ -124,23 +122,27 @@ export async function driveTurn(
     const toolOutputs: Array<
       { toolCallId: string; output: string } | { toolCallId: string; errorText: string }
     > = []
+    const stored: Record<string, unknown> = {}
     for (const call of pending.clientTools) {
-      if (call.toolName !== TOOL.ask) {
+      // the pending state carries the input; the stored part only when it was too large to copy
+      if (call.inputTruncated) stored[call.toolCallId] = await storedInput(session, call.toolCallId)
+    }
+    const questions = pendingQuestions(pending, { storedInputs: stored })
+    const asking = new Set(questions.map((q) => q.toolCallId))
+    for (const call of pending.clientTools) {
+      if (!asking.has(call.toolCallId)) {
         toolOutputs.push({
           toolCallId: call.toolCallId,
           errorText: 'Not supported in this client.',
         })
+      }
+    }
+    for (const call of questions) {
+      if (call.questions === undefined) {
+        toolOutputs.push(answerOutput(call, null))
         continue
       }
-      // the pending state carries the input; the stored part only when it was too large to copy
-      let input: unknown = call.input
-      if (call.inputTruncated) input = await storedInput(session, call.toolCallId)
-      const parsed = parseQuestions(input)
-      if ('error' in parsed) {
-        toolOutputs.push({ toolCallId: call.toolCallId, errorText: parsed.error })
-        continue
-      }
-      const request = questionRequest(call.toolCallId, parsed.questions, opts.agent)
+      const request = { id: call.toolCallId, questions: call.questions }
       const asked = await withQuestionTimeout(
         (s) => broker.question(request, s),
         opts.questionTimeout?.() ?? 0,
@@ -150,11 +152,13 @@ export async function driveTurn(
         session.abort()
         return result
       }
-      const text = formatAnswers(request, asked.result)
-      toolOutputs.push({
-        toolCallId: call.toolCallId,
-        output: asked.timedOut ? `${text}\n\n${asked.note ?? QUESTION_TIMEOUT_NOTE}` : text,
-      })
+      toolOutputs.push(
+        answerOutput(
+          call,
+          asked.result,
+          asked.timedOut ? (asked.note ?? QUESTION_TIMEOUT_NOTE) : undefined,
+        ),
+      )
     }
     run = session.respond(
       { approvals, toolOutputs },

@@ -1,6 +1,7 @@
 /** Permission rules, modes, descriptions and agent availability of web_fetch and web_search. */
 import { describe, expect, test } from 'bun:test'
 import { memoryFs } from 'eharness/filesystem/memory'
+import { domainSpecifierMatches } from 'eharness/permissions'
 import { BUILTIN_AGENTS } from '../src/agents/builtin.ts'
 import {
   type CoderConfig,
@@ -12,7 +13,6 @@ import {
 } from '../src/contracts.ts'
 import { describeApproval } from '../src/permissions/describe.ts'
 import { createPermissionEngine, DONT_ASK_REASON } from '../src/permissions/engine.ts'
-import { domainSpecifierMatches } from '../src/permissions/rules.ts'
 
 const root = '/tmp/web-perm-root'
 function make(mode: PermissionMode = 'default', rules: Partial<PermissionRules> = {}) {

@@ -40,7 +40,7 @@ Code, Codex, OpenCode, Pi, …) behind one surface. eharness is for building **y
 - A **library** (`eharness` on npm), ESM-only, runs on Node ≥ 22 and Bun.
 - A **skeleton**: core runtime + contracts + small reference plugins (`filesystem` with a memory
   adapter, `todos`, `memory`, `guard`, `group`, `permissions`, `subagent`, `ask`, `web`) + Node-only modules
-  (`filesystem/node`, `shell`) + tool sources (MCP, OpenAPI) + memory storage
+  (`filesystem/node`: real disk, mounts, workspace, checkpoint store; `shell`: bash over a local sandbox) + tool sources (MCP, OpenAPI) + memory storage
   adapters (messages, state, inbox, budget ledger) + conformance test suites.
 - **Idiomatic AI SDK**: the stream is the AI SDK UI message stream; messages are `UIMessage`;
   tools are `tool()`; models are `LanguageModel`.

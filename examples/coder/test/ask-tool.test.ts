@@ -1,8 +1,8 @@
-/** `ask_user_question`: client tool round trip through driveTurn, formatting, print mode, subagents. */
+/** `ask_user_question` (the library's `askUser()`): the round trip through the app's driveTurn and broker, print mode, subagents. */
 import { describe, expect, test } from 'bun:test'
 import type { HarnessSession } from 'eharness'
 import { scriptedModel } from 'eharness/testing'
-import { createAskTool, driveTurn, formatAnswers, parseQuestions } from '../src/agents/index.ts'
+import { driveTurn } from '../src/agents/index.ts'
 import type { CoderMessage, QuestionRequest } from '../src/contracts.ts'
 import { createDenyingBroker } from '../src/permissions/broker.ts'
 import { makeAgentsEnv } from './helpers.ts'
@@ -57,49 +57,6 @@ async function nextQuestion(broker: { pendingQuestions(): QuestionRequest[] }) {
     await new Promise((r) => setTimeout(r, 5))
   }
 }
-
-describe('formatAnswers', () => {
-  const request: QuestionRequest = { id: 'x', questions: QUESTIONS as never }
-  test('radio, checkbox, other and notes', () => {
-    expect(
-      formatAnswers(request, {
-        answers: [
-          { question: 'Which database?', selected: ['SQLite'], notes: 'only for tests' },
-          { question: 'Which features?', selected: ['Auth', 'Search'], other: 'Audit log' },
-          { question: 'Which runtime?', selected: [], other: 'Deno' },
-        ],
-      }),
-    ).toBe(
-      [
-        'The user answered:',
-        '- Database: SQLite',
-        '  notes: only for tests',
-        '- Features: Auth, Search; other: "Audit log"',
-        '- Runtime: other: "Deno"',
-      ].join('\n'),
-    )
-  })
-  test('dismissed', () => {
-    expect(formatAnswers(request, null)).toBe(
-      'The user dismissed the questions without answering. Proceed with your best judgment or ask in plain text.',
-    )
-  })
-})
-
-describe('parseQuestions', () => {
-  test('accepts valid input and explains invalid input', () => {
-    expect('questions' in parseQuestions({ questions: QUESTIONS })).toBe(true)
-    const bad = parseQuestions({ questions: [{ ...QUESTIONS[0], options: [{ label: 'one' }] }] })
-    expect('error' in bad && bad.error).toContain('questions.0.options')
-    expect('error' in parseQuestions({ questions: [] })).toBe(true)
-    expect(
-      'error' in parseQuestions({ questions: [{ ...QUESTIONS[0], header: 'a'.repeat(13) }] }),
-    ).toBe(true)
-  })
-  test('the tool is a client tool', () => {
-    expect((createAskTool() as { execute?: unknown }).execute).toBeUndefined()
-  })
-})
 
 describe('ask_user_question round trip', () => {
   test('the answers reach the model as the tool result', async () => {

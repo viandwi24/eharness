@@ -2,18 +2,14 @@
  * Builds the main `HarnessAgent` and the subagent agents from the configuration
  * (docs/plans/P30-coder-example.md §3, §6, §7).
  *
- * Tool placement (decided here, it fixes the prompt-cache prefix):
- *
- * - `bash` needs the app data part `bashOutput` (UI part type `data-bashOutput`). A
- *   plugin's data parts are namespaced (`data-<plugin>.bashOutput`), so the part is registered on
- *   the agent config (`dataParts`) and the app tools sit in the agent `tools` config, which is
- *   also what types `ctx.stream.data('bashOutput', …)`.
- * - Tool order is `[root config tools] → [plugins in order]` (spec 02 §6): `bash`,
- *   `agent` (depth permitting), `request_directory_access` (main only), then the `filesystem()`
- *   tools, `todo_write`, MCP tools (source tools, always after static tools) and last the
- *   permissions plugin's `exit_plan_mode`. The order is identical for every session and turn of
- *   an agent, which is what the cache prefix needs; it differs slightly from `TOOL_ORDER` in
- *   contracts.ts, which the app does not apply yet (the core now has `config.toolOrder`).
+ * Every capability is a library plugin (`eharness/shell`, `subagent`, `filesystem`, `todos`,
+ * `web`, `ask`, `permissions`, `mcp`); this file only decides which agent gets which plugin and
+ * with what policy. Tool placement fixes the prompt-cache prefix: the order is
+ * `[root config tools] → [plugins in order]` (spec 02 §6) and identical for every session and
+ * turn of an agent: the app tools (`lsp`, `request_directory_access`), `bash` (+ `bash_output`,
+ * `kill_shell` on the main agent), `agent`, the `filesystem()` tools, `todo_write`, `web_fetch`,
+ * `web_search`, `ask_user_question` (main only), MCP tools (source tools, after the static ones)
+ * and the permissions plugin's `exit_plan_mode` among the session tools.
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -22,40 +18,34 @@ import {
   defineHarnessAgent,
   type definePlugin,
   type HarnessAgent,
-  type HarnessRun,
   type HarnessWarning,
   lookupModel,
   type MessageAdapter,
   type ModelCatalog,
   type StateAdapter,
 } from 'eharness'
-import { filesystem } from 'eharness/filesystem'
+import { askUser } from 'eharness/ask'
+import { type CheckpointStore, filesystem } from 'eharness/filesystem'
 import { mcpServer } from 'eharness/mcp'
+import { domainSpecifierMatches, parseRule, permissionsPlugin } from 'eharness/permissions'
+import { type LocalSandbox, shell } from 'eharness/shell'
+import { type SubagentDefinition, subagents } from 'eharness/subagent'
 import { todos } from 'eharness/todos'
-import { createAgentTool, createAskTool } from '../agents/index.ts'
+import { webFetch, webSearch } from 'eharness/web'
+import { subagentAnswer } from '../agents/index.ts'
 import {
   type AgentDefinition,
   type ApprovalBroker,
   type CoderConfig,
-  type CoderMessage,
-  type PermissionEngine,
   READ_ONLY_TOOLS,
-  type Sandbox,
   TOOL,
   type ToolCallInfo,
   type Workspace,
 } from '../contracts.ts'
 import type { LspManager } from '../lsp/index.ts'
 import { createLspTools } from '../lsp/index.ts'
-import {
-  domainSpecifierMatches,
-  parseRule,
-  permissionsPlugin,
-  ruleToolMatches,
-} from '../permissions/index.ts'
-import { bashOutputPart, createBashTool, type LocalSandbox } from '../shell/index.ts'
+import { auditLog, type CoderPermissionEngine } from '../permissions/index.ts'
 import { createDirAccessTool } from '../workspace/index.ts'
-import { createBackgroundBashTools, withBackgroundOption } from './background-bash.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
 import { loadProjectMemory } from './project-memory.ts'
 import {
@@ -64,20 +54,15 @@ import {
   subagentInstructions,
   turnReminder,
 } from './prompt.ts'
-import type { TaskInject, TaskManager } from './tasks.ts'
-import {
-  createWebFetchTool,
-  createWebSearchTool,
-  type SearchFn,
-  type WebFetchDeps,
-} from './web-tools.ts'
+import type { TaskHub } from './tasks.ts'
+import { htmlToMarkdown, resolveHost, type SearchFn } from './web-search.ts'
 
 /** Dependencies of {@link createAgents}. */
 export interface CreateAgentsDeps {
   config: CoderConfig
   workspace: Workspace
-  sandbox: Sandbox | LocalSandbox
-  permissions: PermissionEngine
+  sandbox: LocalSandbox
+  permissions: CoderPermissionEngine
   broker: ApprovalBroker
   /** Title/detail/suggested rule of a tool call, for approval prompts. */
   describe: (
@@ -100,14 +85,20 @@ export interface CreateAgentsDeps {
   models?: ModelCatalog
   /** `config.contextWindow` was set in a settings file: it then beats the catalog. */
   contextWindowExplicit?: boolean
-  /** Web search of the `web_search` tool; absent = `ERROR: web search is not available`. */
+  /** Web search of the `web_search` tool; absent = `ERROR: web search failed: …not available`. */
   search?: SearchFn
   /** Overrides of `web_fetch` internals (tests): `fetch`, host resolution, timeout. */
-  webFetch?: Partial<Pick<WebFetchDeps, 'fetch' | 'resolve' | 'timeoutMs'>>
+  webFetch?: {
+    fetch?: typeof fetch
+    resolveHost?: (host: string) => Promise<string[]>
+    timeoutMs?: number
+  }
+  /** File checkpoints (`/rewind`): every agent's `filesystem()` records into it. */
+  checkpoints?: CheckpointStore
   /** Cap of concurrent subagents per nesting depth (default 8). */
   maxConcurrentAgents?: number
   /**
-   * Plugins added to EVERY agent, after the permissions plugin (checkpoints, settings hooks).
+   * Plugins added to EVERY agent, after the permissions plugin (settings hooks).
    * They must not add tools: tool order is the prompt-cache prefix. Called once per agent built.
    */
   extraPlugins?: (agent: { main: boolean }) => Array<ReturnType<typeof definePlugin>>
@@ -121,12 +112,8 @@ export interface CreateAgentsDeps {
    * re-evaluates it (the prompt cache is rebuilt from that block on).
    */
   outputStyle?: () => Promise<string | undefined>
-  /** Background tasks: `bash` gets `run_in_background`, `bash_output`/`kill_shell` are added, `agent` can run in background. */
-  background?: {
-    tasks: TaskManager
-    inject: TaskInject
-    onWake: (run: HarnessRun<CoderMessage>) => void
-  }
+  /** Background tasks: the main agent's `bash` gets `run_in_background` and its `agent` tool too; the hub lists them. */
+  taskHub?: TaskHub
   /** `lsp` tool for every agent when the manager has a server. */
   lsp?: LspManager
   onWarning?: (warning: HarnessWarning) => void
@@ -155,28 +142,6 @@ export interface AgentContextInfo {
 /** `ceil(chars / 4)`, the core's default counter. */
 const estimateTokens = (text: string): number => Math.ceil(text.length / 4)
 
-type LooseTool = { description?: string } & Record<string, unknown>
-
-/**
- * Append whether bash is sandboxed to the tool description. The description is resolved when a
- * session opens, so a live `sandbox.enabled` toggle reaches the model at the next session open
- * (the controller reopens the session handle after the toggle).
- */
-function withSandboxNote(base: unknown, sandbox: Sandbox | LocalSandbox): unknown {
-  const state = (sandbox as Partial<LocalSandbox>).sandboxState?.bind(sandbox)
-  if (state === undefined) return base
-  return (ctx: unknown): unknown => {
-    const inner = (
-      typeof base === 'function' ? (base as (c: unknown) => unknown)(ctx) : base
-    ) as LooseTool
-    const s = state()
-    const note = s.enabled
-      ? `\n\nSandbox: ON (${s.kind}). Commands can write only inside the project, the extra directories and temp dirs; network access is ${s.network ? 'allowed' : 'blocked'}. "Operation not permitted" / "Read-only file system" errors usually come from the sandbox: do not retry them, tell the user.`
-      : '\n\nSandbox: off. Commands run with the full privileges of the user.'
-    return { ...inner, description: `${inner.description ?? ''}${note}` }
-  }
-}
-
 /** Removed from `plan` subagents; `bash` stays, its commands are restricted to read-only ones. */
 const NON_READ_ONLY_TOOLS: string[] = Object.values(TOOL).filter(
   (name) =>
@@ -187,12 +152,12 @@ const NON_READ_ONLY_TOOLS: string[] = Object.values(TOOL).filter(
 )
 
 /** Does an allow rule name this host (`WebFetch(domain:host)`)? Only then private hosts are fetched. */
-function hostAllowedBy(permissions: PermissionEngine, host: string): boolean {
+function hostAllowedBy(permissions: CoderPermissionEngine, host: string): boolean {
   return permissions.rules().allow.some((raw) => {
     const rule = parseRule(raw)
     return (
       rule?.specifier !== undefined &&
-      ruleToolMatches(rule.tool, TOOL.webFetch) &&
+      permissions.expandRuleTool(rule.tool).includes(TOOL.webFetch) &&
       domainSpecifierMatches(rule.specifier, host)
     )
   })
@@ -223,6 +188,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
           .mounts()
           .filter((m) => m.virtual.startsWith('/@dirs/'))
           .map((m) => `${m.virtual} (${m.real})`),
+      sandbox: () => deps.sandbox.state(),
     }),
     refresh: 'turn' as const,
   }
@@ -236,22 +202,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
 
   const cache = new Map<string, HarnessAgent>()
   const built: HarnessAgent[] = []
-
-  const toolDeps = {
-    definitions: () => deps.definitions,
-    agentFor: (def: AgentDefinition, depth: number): HarnessAgent => agentFor(def, depth),
-    broker: deps.broker,
-    permissions: deps.permissions,
-    describe: deps.describe,
-    ...(deps.maxConcurrentAgents !== undefined ? { maxConcurrent: deps.maxConcurrentAgents } : {}),
-    ...(deps.background
-      ? {
-          tasks: deps.background.tasks,
-          inject: deps.background.inject,
-          onWake: deps.background.onWake,
-        }
-      : {}),
-  }
 
   const warnMcp = (message: string): void => {
     deps.onWarning?.({ code: 'W_TOOL_SOURCE_FAILED', message } as HarnessWarning)
@@ -287,30 +237,9 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         ]
 
     // typed loosely: the tools mix plain tools and tool factories
-    const bash = withSandboxNote(createBashTool({ sandbox: deps.sandbox }), deps.sandbox)
-    const appTools: Record<string, unknown> = {
-      [TOOL.bash]: deps.background
-        ? withBackgroundOption(bash as never, { sandbox: deps.sandbox, ...deps.background })
-        : bash,
-      [TOOL.webFetch]: createWebFetchTool({
-        isHostAllowed: (host) => hostAllowedBy(permissions, host),
-        ...deps.webFetch,
-      }),
-      [TOOL.webSearch]: createWebSearchTool({ ...(deps.search ? { search: deps.search } : {}) }),
-    }
+    const appTools: Record<string, unknown> = {}
     if (deps.lsp?.available) Object.assign(appTools, createLspTools(deps.lsp))
-    if (deps.background) {
-      // not model-visible for agents whose `tools` allowlist omits them (read-only subagents)
-      Object.assign(
-        appTools,
-        createBackgroundBashTools({ sandbox: deps.sandbox, ...deps.background }).tools,
-      )
-    }
-    if (depth < config.maxAgentDepth) appTools[TOOL.agent] = createAgentTool(toolDeps, depth)
-    if (isMain) {
-      appTools[TOOL.dirAccess] = createDirAccessTool(workspace)
-      appTools[TOOL.ask] = createAskTool()
-    }
+    if (isMain) appTools[TOOL.dirAccess] = createDirAccessTool(workspace)
 
     const disallowed = [...(def?.disallowedTools ?? [])]
     if (def !== undefined) {
@@ -336,20 +265,58 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     const follows = deps.model === undefined && pinned === undefined
     const model: LanguageModel = deps.model ?? resolveModel(pinned ?? modelState.model)
 
+    // every agent gets the same tools plugins; the main agent adds what only it needs
+    const background = isMain && deps.taskHub !== undefined
+    const search: SearchFn =
+      deps.search ??
+      (async () => {
+        throw new Error('web search is not available')
+      })
     const plugins = [
+      shell({
+        sandbox: deps.sandbox,
+        ...(background ? { background: true } : {}),
+      }),
+      ...(isMain && deps.taskHub ? [deps.taskHub.plugin] : []),
+      ...(depth < config.maxAgentDepth
+        ? [
+            subagents({
+              agents: () => subagentCatalog(depth),
+              approvals: 'inline',
+              answer: subagentAnswer({
+                broker: deps.broker,
+                permissions,
+                describe: deps.describe,
+              }),
+              maxDepth: config.maxAgentDepth,
+              ...(deps.maxConcurrentAgents !== undefined
+                ? { maxConcurrent: deps.maxConcurrentAgents }
+                : {}),
+              // a child's own background reports would die with its session: main agent only
+              ...(background ? { background: true } : {}),
+            }),
+          ]
+        : []),
       filesystem({
         fs: workspace.fs,
-        toolOutputs: { dir: '/.coder/tool-outputs' },
+        ...(deps.checkpoints ? { checkpoints: deps.checkpoints } : {}),
         ...(hasSkills ? { skills: { root: '/.coder/skills' } } : {}),
       }),
       todos(),
+      webFetch({
+        allow: (host) => hostAllowedBy(permissions, host),
+        toMarkdown: htmlToMarkdown,
+        resolveHost,
+        ...deps.webFetch,
+      }),
+      webSearch({ search }),
+      ...(isMain ? [askUser()] : []),
       permissionsPlugin({
         engine: permissions,
-        ...(def ? { agent: def.name } : {}),
         ...(def?.permissionMode === 'plan' ? { mode: 'plan' as const } : {}),
         ...(def?.tools ? { allowedTools: def.tools } : {}),
         ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
-        auditFile,
+        onDecision: auditLog(auditFile, def?.name),
       }),
       modelSwitchPlugin({ state: modelState, ...(follows ? { resolve: resolveModel } : {}) }),
       ...(deps.extraPlugins?.({ main: isMain }) ?? []),
@@ -367,7 +334,6 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
             config.contextWindow,
       ...(deps.models ? { models: deps.models } : {}),
       instructions,
-      dataParts: { bashOutput: bashOutputPart },
       // pasted images arrive as data: URLs only, at most 5 MB each (never fetched URLs)
       ...(isMain ? { inputFiles: { protocols: ['data:'], maxBytes: 5 * 1024 * 1024 } } : {}),
       tools: appTools as never,
@@ -382,6 +348,24 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     built.push(agent)
     return agent
   }
+
+  /**
+   * The subagent types an agent at `depth` can start. The agent of each type is built on first
+   * use (a getter), so unused types cost nothing.
+   */
+  const subagentCatalog = (depth: number): Record<string, SubagentDefinition> =>
+    Object.fromEntries(
+      deps.definitions.map((def) => [
+        def.name,
+        {
+          get agent(): HarnessAgent {
+            return agentFor(def, depth + 1)
+          },
+          description: def.description,
+          ...(def.maxTurns !== undefined ? { maxTurns: def.maxTurns } : {}),
+        },
+      ]),
+    )
 
   const agentFor = (def: AgentDefinition, depth: number): HarnessAgent => {
     const key = `${def.name}:${depth}`

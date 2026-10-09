@@ -2,14 +2,17 @@
  * Shared contracts of the `coder` example (docs/plans/P30-coder-example.md). Every module codes
  * against these types; change them only together with every implementer.
  *
- * Layering: `workspace/`, `shell/`, `permissions/`, `agents/`, `app/` never import Ink or React.
+ * Layering: `workspace/`, `permissions/`, `agents/`, `app/` never import Ink or React.
  * `ui/` and `print.ts` consume a {@link CoderController}.
  */
-import type { Experimental_SandboxSession, FileUIPart } from 'ai'
+import type { FileUIPart } from 'ai'
 import type { HarnessRun, HarnessUIMessage, TurnResult } from 'eharness'
 import type { FileSystem } from 'eharness/filesystem'
+import type { PermissionDecision, PermissionMode, PermissionRules } from 'eharness/permissions'
+import type { ShellOutputData } from 'eharness/shell'
+import type { SubagentProgress } from 'eharness/subagent'
 
-// ─── Tool names (stable order = prompt-cache prefix, see TOOL_ORDER) ─────────────────────────
+// ─── Tool names ──────────────────────────────────────────────────────────────────────────────
 
 export const TOOL = {
   read: 'read_file',
@@ -31,26 +34,6 @@ export const TOOL = {
 } as const
 export type CoderToolName = (typeof TOOL)[keyof typeof TOOL]
 
-/** Order of the tools in every request (AI SDK `toolOrder`); skill and MCP tools come after. */
-export const TOOL_ORDER: readonly string[] = [
-  TOOL.read,
-  TOOL.list,
-  TOOL.grep,
-  TOOL.glob,
-  TOOL.edit,
-  TOOL.write,
-  TOOL.delete,
-  TOOL.bash,
-  TOOL.todo,
-  TOOL.agent,
-  TOOL.exitPlan,
-  TOOL.dirAccess,
-  TOOL.ask,
-  TOOL.webFetch,
-  TOOL.webSearch,
-  TOOL.lsp,
-]
-
 /** Tools that never modify anything (allowed in plan mode and for read-only agents). */
 export const READ_ONLY_TOOLS: readonly string[] = [
   TOOL.read,
@@ -66,23 +49,8 @@ export const READ_ONLY_TOOLS: readonly string[] = [
 
 // ─── Configuration ───────────────────────────────────────────────────────────────────────────
 
-export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions'
-export const PERMISSION_MODES: readonly PermissionMode[] = [
-  'default',
-  'acceptEdits',
-  'plan',
-  'dontAsk',
-  'bypassPermissions',
-]
-/** `Shift+Tab` cycle. */
-export const MODE_CYCLE: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan']
-
-/** Claude-Code-style rule strings, e.g. `Bash(bun test *)`, `Edit(src/**)`, `Read(./.env)`. */
-export interface PermissionRules {
-  allow: string[]
-  ask: string[]
-  deny: string[]
-}
+export type { PermissionDecision, PermissionMode, PermissionRules } from 'eharness/permissions'
+export { DEFAULT_MODE_CYCLE as MODE_CYCLE, PERMISSION_MODES } from 'eharness/permissions'
 
 /** One settings file (`~/.coder/settings.json`, `<root>/.coder/settings.json`, `…local.json`). */
 export interface CoderSettings {
@@ -179,7 +147,7 @@ export interface CoderConfig {
 
 /** A mount of the virtual tree: `/` → project root, `/@dirs/<name>/` → extra directories. */
 export interface Mount {
-  /** Virtual prefix ending in `/` (`'/'`, `'/@dirs/shared-lib/'`, `'/.coder/tool-outputs/'`). */
+  /** Virtual prefix ending in `/` (`'/'`, `'/@dirs/shared-lib/'`, `'/.eharness/tool-outputs/'`). */
   virtual: string
   /** Real absolute directory. */
   real: string
@@ -200,17 +168,10 @@ export interface Workspace {
   addDirectory(realPath: string): Promise<string>
 }
 
-// ─── Shell (shell/) ──────────────────────────────────────────────────────────────────────────
+// ─── Shell (`eharness/shell`) ────────────────────────────────────────────────────────────────
 
-/** AI SDK's sandbox shape; `createLocalSandbox(root)` implements it over `child_process`. */
-export type Sandbox = Experimental_SandboxSession
-
-/** Transient data part `data-bashOutput` written by the bash tool while a command runs. */
-export interface BashOutputData {
-  toolCallId: string
-  stream: 'stdout' | 'stderr'
-  chunk: string
-}
+/** Transient data part `data-shell.output` written by the bash tool while a command runs. */
+export type BashOutputData = ShellOutputData
 
 // ─── Permissions (permissions/) ──────────────────────────────────────────────────────────────
 
@@ -220,11 +181,6 @@ export interface ToolCallInfo {
   /** Name of the subagent making the call; undefined for the main agent. */
   agent?: string
 }
-
-export type PermissionDecision =
-  | { status: 'approved'; rule?: string }
-  | { status: 'user-approval'; rule?: string; reason?: string }
-  | { status: 'denied'; rule?: string; reason: string }
 
 export interface PermissionEngine {
   readonly mode: PermissionMode
@@ -347,15 +303,7 @@ export interface AgentDefinition extends AgentDefinitionInput {
 }
 
 /** Preliminary output of the `agent` tool (the final output is the child's last text, a string). */
-export interface AgentProgress {
-  status: 'running' | 'done' | 'failed'
-  agent: string
-  description: string
-  sessionId: string
-  steps: number
-  lastTool?: string
-  text: string
-}
+export type AgentProgress = SubagentProgress
 
 // ─── Models, thinking, context (app/) → consumed by ui/ ─────────────────────────────────────
 

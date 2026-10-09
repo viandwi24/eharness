@@ -1,6 +1,6 @@
 /**
  * Drives one user prompt through the controller and feeds the view reducer: consumes every run's
- * UI message stream with `readUIMessageStream` and picks the transient `data-bashOutput` chunks
+ * UI message stream with `readUIMessageStream` and picks the transient `data-shell.output` chunks
  * out of the same raw chunk stream (transient parts never appear in messages).
  */
 import { type FileUIPart, readUIMessageStream } from 'ai'
@@ -47,11 +47,11 @@ function createBatcher(dispatch: (a: ViewAction) => void): {
   }
 }
 
-function isBashChunk(chunk: unknown): chunk is { type: 'data-bashOutput'; data: BashOutputData } {
+function isBashChunk(chunk: unknown): chunk is { type: 'data-shell.output'; data: BashOutputData } {
   return (
     typeof chunk === 'object' &&
     chunk !== null &&
-    (chunk as { type?: string }).type === 'data-bashOutput'
+    (chunk as { type?: string }).type === 'data-shell.output'
   )
 }
 

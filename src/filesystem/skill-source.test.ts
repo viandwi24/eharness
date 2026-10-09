@@ -174,4 +174,23 @@ describe('fsSkillSource', () => {
     expect(await read('..', 'secret.md')).toBeNull()
     expect(await read('pine', 'missing.md')).toBeNull()
   })
+
+  test('readFile returns binary assets as bytes when the adapter has readBytes', async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2])
+    const fs = memoryFs({
+      '/skills/pine/SKILL.md': valid('pine'),
+      '/skills/pine/ref.md': 'ref',
+      '/skills/pine/logo.png': png,
+      '/skills/pine/blob.dat': new Uint8Array([0xff, 0xfe, 0, 1]),
+    })
+    const source = fsSkillSource(fs, { root: '/skills' })
+    const read = (path: string) => source.readFile('pine', path, context())
+    expect(await read('ref.md')).toEqual({ type: 'text', text: 'ref' })
+    expect(await read('logo.png')).toEqual({ type: 'binary', mediaType: 'image/png', data: png })
+    expect(await read('blob.dat')).toEqual({
+      type: 'binary',
+      mediaType: 'application/octet-stream',
+      data: new Uint8Array([0xff, 0xfe, 0, 1]),
+    })
+  })
 })

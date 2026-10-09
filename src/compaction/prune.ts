@@ -8,6 +8,7 @@
 import type { ModelMessage, ToolResultPart } from 'ai'
 import type { CompactionConfig, PruneConfig } from '../agent/types.ts'
 import { TOOL_OUTPUT_PRUNED } from '../messages/texts.ts'
+import { asMediaRef, FILE_TOKENS } from './tokens.ts'
 
 /** Default `prune.keepTurns`. */
 export const DEFAULT_PRUNE_KEEP_TURNS = 2
@@ -55,6 +56,12 @@ function json(value: unknown): string {
 type ToolOutput = ToolResultPart['output']
 
 /**
+ * Size, in characters, counted for one non-text item of a `content` output (an image or file:
+ * `FILE_TOKENS × 4`). Fixed, so base64 data does not inflate `stats.chars`.
+ */
+export const PRUNE_MEDIA_CHARS: number = FILE_TOKENS * 4
+
+/**
  * Projected size of a tool output in characters, or `undefined` when the output is never pruned
  * (errors and `execution-denied`: short and meaningful).
  */
@@ -65,12 +72,15 @@ export function prunableChars(output: unknown): number | undefined {
   switch (o.type) {
     case 'text':
       return typeof o.value === 'string' ? o.value.length : json(o.value).length
-    case 'json':
+    case 'json': {
+      const ref = asMediaRef(o.value)
+      if (ref !== undefined) return ref.text.length + PRUNE_MEDIA_CHARS
       return json(o.value).length
+    }
     case 'content': {
       let n = 0
       for (const item of Array.isArray(o.value) ? o.value : []) {
-        n += item.type === 'text' ? String(item.text ?? '').length : json(item).length
+        n += item.type === 'text' ? String(item.text ?? '').length : PRUNE_MEDIA_CHARS
       }
       return n
     }

@@ -28,11 +28,13 @@ subagents({
   policy?: 'deny' | 'approve'                  // 'policy': default 'deny'
   childSessionId?: (parentSessionId: string, toolCallId: string) => string   // `${parent}:agent:${toolCallId}`
   timeoutMs?: number                           // 'park': timeout of the parent's wait (default none)
-  parentAgent?: () => HarnessAgent             // see §4 (the agent is itself a child of a 'park' parent)
+  parentAgent?: () => HarnessAgent             // see §3.1 (the agent is itself a child of a 'park' parent)
+  selfAgent?: () => HarnessAgent               // 'park': this agent; reconciles its waits on session open, §3.4
   onParentRun?: (run: HarnessRun, parentSessionId: string) => void   // 'park', see §4
 }): HarnessPlugin<'subagent'>
 
 subagentChild({ parent: () => HarnessAgent, onParentRun? }): HarnessPlugin<'subagent-child'>
+reconcileSubagentWaits(parentSession, { openChild, onParentRun?, log? }): Promise<SubagentReconcileEntry[]>   // §3.4
 pendingSubagentApprovals(session, agentOrOpen): Promise<Array<{ sessionId; parentSessionId; pending: PendingState }>>
 
 type SubagentApprovalRequest =
@@ -162,8 +164,9 @@ the user, or let it run: by default it is drained and stored; read it with `sess
   `onTimeout` is `WAIT_TIMED_OUT`. A report after a timeout is `already-resolved` and ignored.
 - A `start` precondition failure (unknown type, no turn) resolves the wait at once with an `ERROR:`
   text through an immediately due `onTimeout`.
-- A crash after the child finished and before the hook's `resolveWait()` leaves the wait parked
-  until `timeoutMs` or a manual `resolveWait`; set `timeoutMs` in production.
+- A crash after the child finished and before the hook's `resolveWait()` is healed by
+  `reconcileSubagentWaits` (§3.4); without it the wait stays parked until `timeoutMs` or a manual
+  `resolveWait`, so set `timeoutMs` in production anyway.
 - The concurrency slot is held while `start` awaits the child's first turn, not while parked.
 
 ### 3.3 Server recipe
@@ -177,6 +180,33 @@ const worker = defineHarnessAgent({ ..., plugins: [subagentChild({ parent: () =>
 // POST /answer: worker.session(childId).respond({ approvals: [{ id, approved: true }] })
 //               (any instance; the parent continues by itself when the child completes)
 ```
+
+### 3.4 Reconciliation (crash recovery)
+
+```ts
+reconcileSubagentWaits(parentSession, {
+  openChild: (childSessionId, { agent, toolCallId }) => HarnessSession,
+  onParentRun?: (run, parentSessionId) => void,
+  log?: { warn(message, data?) },
+}): Promise<Array<{ waitId; childSessionId; status: 'resolved' | 'busy' | 'skipped' }>>
+```
+
+For every pending wait `w_<toolCallId>` without a result it finds the child (payload
+`childSessionId`, else `children()` by `toolCallId`, else the `correlationId`), opens it with
+`openChild` and reads stored state only. A child is **finished** when it has no pending state, no
+active turn and its last assistant message has a `metadata.eharness.stop` other than
+`'tool-pending'`; the wait is then resolved with exactly the result the `turn.end` hook would use
+(`complete` → final text, `error` / `aborted` → `ERROR: subagent …`, other stops →
+`[subagent stopped: …]`). Otherwise the entry is `skipped`. A parent that runs a turn gives `busy`
+(retry later). Idempotent: the result is recorded with the wait's compare-and-set, so racing the
+hook, another instance or a second call is harmless.
+
+Automatic: with `approvals: 'park'` and `subagents({ selfAgent: () => parentAgent })` the plugin's
+`session.start` hook starts a reconcile **detached**: opening the session never waits for it and
+never fails on it (failures are logged as warnings). The option exists because the hook context
+has no session object. Manual use (an admin endpoint, a timer, a `ready()` after a deploy) needs no
+option. A session is opened by `send()`, `stats()`, `ready()`, …; reading `messages()` alone does
+not open it.
 
 ## 4. Multi-instance and restarts
 
@@ -197,4 +227,5 @@ background event text.
 `src/subagent/subagent.test.ts`: inline approve / deny with feedback / client tool, policy
 deny / approve, child error, abort propagation, depth limit, per-depth concurrency, background wake,
 park (another instance answers; parent process restart; child finishes at once; child fails),
+`reconcileSubagentWaits` (child finished without the hook, still waiting, `selfAgent` on open),
 `pendingSubagentApprovals`. Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`).

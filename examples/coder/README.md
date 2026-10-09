@@ -1,9 +1,33 @@
 # coder: a terminal coding agent on eharness
 
 `coder` is a terminal coding agent: you chat with a model in an Ink UI, and it reads, searches, edits
-and runs commands in your project. It is built only on the public eharness API (core and the
-`eharness/filesystem`, `eharness/todos`, `eharness/mcp` and `eharness/testing` subpaths). It is an
-example: it lives in a Bun workspace package (`eharness-coder`), is private and is never published.
+and runs commands in your project. It is built only on the public eharness API: the core and the
+shipped modules (`eharness/filesystem`, `filesystem/node`, `shell`, `permissions`, `subagent`, `ask`,
+`web`, `todos`, `mcp` and `testing`). It is an example: it lives in a Bun workspace package
+(`eharness-coder`), is private and is never published. It is deployment profile (b) of
+[ADR-0034](../../docs/decisions/0034-deployment-profiles.md): one interactive process, approvals
+answered in process.
+
+## Built on the library
+
+The point of the example is to prove the library: everything that is not product or UI policy is a
+shipped module. The app only decides **what to ask the user, how to show it and which defaults to
+use**.
+
+| Capability | From the library | What the app adds |
+|---|---|---|
+| Virtual file tree, disk access, containment | `eharness/filesystem/node`: `nodeWorkspace` (`diskFs`, `mountFs`) | `request_directory_access` tool (asks, too-broad refusals) |
+| File tools, `glob`, images, tool-output eviction, skills | `eharness/filesystem` | the `.coder/skills` location |
+| Rewind of files and conversation | `filesystem({ checkpoints })` + `nodeCheckpointStore`, `rewindFiles`, `checkpointsSince`, `session.fork()` | which prompts `/rewind` lists, subagent edits in the rewind, session names |
+| `bash`, background shells, live output, OS sandbox | `eharness/shell`: `shell({ background })`, `localSandbox`, `shellTasks` | the `/tasks` page and footer (`app/tasks.ts`), settings toggle, sandbox line in the turn reminder |
+| Rules, modes, shell analysis, plan mode | `eharness/permissions`: `createPermissionEngine`, `permissionsPlugin` | app tool kinds, `.coder` protected paths, rule scopes written to `settings.local.json`, `request_directory_access` always asking, the approval broker, `describeApproval` (diffs), audit log, settings files and project trust |
+| `agent` tool, child sessions, background agents | `eharness/subagent` (`approvals: 'inline'`) | agent definitions from files (`agents/load.ts`), `answer` = the broker labelled with the agent name |
+| `ask_user_question` | `eharness/ask`: `askUser`, `pendingQuestions`, `answerOutput` | the question dialog, the answer timeout |
+| `web_fetch`, `web_search` | `eharness/web`: `webFetch`, `webSearch` | turndown, DNS lookup, the OpenRouter / AI Gateway search call |
+| Todos, MCP, compaction, hooks, usage, cost | `eharness/todos`, `eharness/mcp`, core | settings hooks, output styles, model switching |
+
+Lines of code: see the note at the end of
+[the plan](../../docs/plans/P30-coder-example.md#migration-to-the-shipped-modules).
 
 Design and decisions: [`docs/plans/P30-coder-example.md`](../../docs/plans/P30-coder-example.md).
 
@@ -280,8 +304,9 @@ replayed messages show it too; the UI measures it only as a fallback for parts w
 
 ### Web tools
 
-Both tools always ask (risk `external`) and are allowed in plan mode, since they change nothing
-locally.
+Both tools are the library's (`eharness/web`; the app supplies turndown, DNS resolution and the
+provider search). They always ask (risk `external`) and are allowed in plan mode, since they change
+nothing locally.
 
 - **`web_fetch { url, prompt? }`** fetches one page and returns Markdown (scripts, styles, nav and
   footers dropped; text and JSON as is; binary types refused). `http` is upgraded to `https`. Private
@@ -295,7 +320,7 @@ locally.
   plugin. AI Gateway: `anthropic/claude-haiku-4.5` with the Perplexity search tool.
   `CODER_SEARCH_MODEL` overrides the model. The search call's usage is added to the turn (tokens and
   cost). Without an API key for the provider (and with `CODER_SCRIPTED_MODEL`) the tool answers
-  `ERROR: web search is not available`.
+  `ERROR: web search failed: web search is not available`.
 
 Rules: `WebFetch(domain:example.com)` (`domain:*.example.com` matches subdomains), `WebFetch` for the
 whole tool, `WebSearch`. "Don't ask again" suggests `WebFetch(domain:<host>)` or `WebSearch`.
@@ -355,18 +380,20 @@ The prompt is a multiline editor with its own undo stack, kill ring and word mot
 
 ### Sessions, rewind and checkpoints
 
-- **Checkpoints.** Before the first change of a turn to a file through `edit_file`, `write_file` or
-  `delete_file`, the file's previous content is saved (subagent edits count for the turn that
-  started them). The last 50 turns per session are kept under
-  `~/.coder/projects/<hash>/checkpoints/`.
+- **Checkpoints.** The library's `filesystem({ checkpoints: nodeCheckpointStore(dir) })` saves a
+  file's previous content before the first change of a turn through `edit_file`, `write_file` or
+  `delete_file`. The last 50 turns per session are kept under
+  `~/.coder/projects/<hash>/checkpoints/`. A subagent's edits are saved under its own child
+  session; `/rewind` also walks the child sessions (`session.children()` index) so they are
+  restored too.
 - **`/rewind`** (or `Esc Esc` on an empty prompt) lists your earlier prompts. Pick one, then
   **Restore code and conversation**, **Restore conversation** or **Restore code**. Code: files the
   agent changed in that turn and later are put back (files that did not exist are deleted).
-  Conversation: a new session is created with the messages before that prompt (the old session stays
-  untouched) and the prompt text returns to the editor.
+  Conversation: `session.fork({ beforeMessageId })` creates a new session with the messages before
+  that prompt (the old session stays untouched) and the prompt text returns to the editor.
 - **What is not checkpointed.** Changes made by the shell (`bash`, `!command`, a background shell),
   by other tools, and by you or other programs outside the agent. A rewind never undoes those.
-- `/branch [name]` copies the conversation into a new session and switches to it. `/rename <name>`
+- `/branch [name]` is `session.fork()` of the whole conversation (checkpoints are copied too) and switches to it. `/rename <name>`
   names the session (shown in the footer). `/export [file]` writes a text
   transcript. `/copy [n]` copies an assistant response with `pbcopy`, `wl-copy`, `xclip`, `xsel` or
   `clip`, else the terminal's OSC 52 clipboard sequence.
@@ -392,16 +419,20 @@ The `bash` tool takes two extra inputs, and `agent` takes one:
 |---|---|
 | `bash { run_in_background: true }` | start the command and return a task id (`bash-1`, ...) at once |
 | `bash { notify_on: "<regex>" }` | with `run_in_background`: each new output line matching the regex is reported to the agent, at most one notification per 5 s (batched) |
-| `agent { run_in_background: true }` | run the subagent in the background (`agent-1`, ...); its report (cut to 4000 characters) arrives later |
+| `agent { run_in_background: true }` | run the subagent in the background (`agent-1` in `/tasks`); its report (cut to 4000 characters) arrives later |
 
 Two more tools: **`bash_output { id, filter? }`** returns the output since the last read with status
 and exit code (`filter` is a regex over lines); **`kill_shell { id }`** stops a task. Background
 commands use the same sandbox and permission checks as `bash`. Output is capped at 1 MB per task.
+Background mode is the library's (`shell({ background: true })`, `subagents({ background: true })`) on
+the **main agent only**: a subagent's own background shells or agents would die with its session.
 
 When a task finishes (or a `notify_on` line matches) the event is delivered to the agent at its next
-step. If the agent is idle, the event wakes it: a new turn starts without input so it can react,
-with approvals and the stream shown as usual. A task you stopped sends nothing. All tasks are
-stopped when coder exits.
+step. If the agent is idle, the event wakes it: the library starts a `wake` turn (the plugins call
+`ctx.session.inject`) and the controller drives it like a prompt, with approvals and the stream
+shown as usual. A shell you stopped sends nothing; a stopped background agent reports `aborted`.
+All shells are stopped when coder exits. The `/tasks` list of background agents is derived from the
+stored messages and the child sessions' state, so it also works after a resume.
 
 `/tasks` opens a page with every task, its status and tail output: `↑/↓` select, `Enter` shows the
 output, `k` stops a running task, `Esc` or `q` closes.
@@ -556,7 +587,9 @@ stays readable by a sandboxed command. It does not limit CPU or memory either, a
 the file tools (those use the virtual path tree) or MCP servers and hooks. When the platform tool is
 missing, coder says so and commands run unsandboxed; `/doctor` and `/status` show the state. The
 permission engine still asks as described in the Safety model; the sandbox is a second layer. A
-write blocked by the sandbox is reported to the model with a hint.
+write blocked by the sandbox is reported to the model with a hint (the library's `SANDBOX_HINT`);
+whether the sandbox is on is told to the model in the turn reminder, so a live toggle applies at
+once.
 
 ### Doctor, memory
 
@@ -580,7 +613,7 @@ Read this before pointing the agent at anything you care about.
 |---|---|
 | `/` | the project root (`--cwd`) |
 | `/@dirs/<name>/` | an extra directory from `--add-dir`, settings, or an approved `request_directory_access` |
-| `/.coder/tool-outputs/` | large tool outputs evicted from the context (in `~/.coder/projects/<hash>/tool-outputs`) |
+| `/.eharness/tool-outputs/` | large tool outputs evicted from the context (in `~/.coder/projects/<hash>/tool-outputs`); readable and writable by the file tools, not a working directory for shell reads |
 
 - **Containment.** Every virtual path is joined to a real root, resolved with `realpath` and rejected
   if the result is outside that root. Symlinks that leave the root are refused by the file tools
@@ -654,15 +687,16 @@ Known limits:
   trust different projects at the same moment.
 - The permission mode is not persisted: a restart (or `--continue`) starts in the configured
   `defaultMode` again, not in the mode the session ended in.
-- Transcripts of subagents (`/agents <n>`) exist only for runs seen live in this process. After a
-  resume the final tool output carries no child session id.
+- Subagent runs after a `/resume` are listed from the stored `data-subagent.run` parts; a run that was
+  still running when the conversation was saved is shown as failed.
 - The OS sandbox does not restrict reads, CPU or memory, and needs `sandbox-exec` (macOS, deprecated
   by Apple) or `bwrap` (Linux); Windows has none. Without the tool commands run unsandboxed.
 - Rewind restores only files changed through the file tools. Shell changes, other tools and outside
   edits are not checkpointed. Only the last 50 turns per session have checkpoints.
 - Hooks are arbitrary commands: a `PreToolUse` hook runs once per tool call and its answer is
   cached, which deviates from the library's deterministic-approval rule.
-- Background tasks live in the process: they stop when coder exits and are not restored on resume.
+- Background shells live in the process: they stop when coder exits and are not restored on resume
+  (background agents are listed from the stored state, but their processes died with coder).
 - Image paste reads PNGs only (macOS `osascript`, Linux `wl-paste` / `xclip`); there is no Windows
   image paste.
 - Vim mode covers the common subset listed above, not macros, registers by name or ex commands.
@@ -716,12 +750,13 @@ skipped in `bypassPermissions`. A global `dontAsk` turns every ask into a denial
 project. "Project" writes it to `.coder/settings.local.json`. The suggestion is deliberately narrow:
 
 - edits: the whole `Edit` tool;
-- an ordinary command: `Bash(prog sub *)`, for example `Bash(bun test *)`;
+- an ordinary command: `Bash(prog sub *)`, for example `Bash(git log *)`;
 - interpreters, shells and wrappers (`bash -c`, `python3 -c`, `node`, `env`, `sudo`, `xargs`,
   `find`, `awk`, `sed`, `npx`, ...), commands whose second word is a flag, `git -c`/`-C`/`config`:
   the exact command only;
 - no suggestion for compound or complex commands, commands containing `*`, protected paths,
-  `exit_plan_mode` and `request_directory_access`. `bun test` is the one prefix rule kept for `bun`.
+  `exit_plan_mode` and `request_directory_access`. `bun` is an interpreter for the library engine:
+  `bun test src/a.test.ts` offers the exact command, not a `bun test *` prefix.
 
 **Settings files**, merged in this order (later wins for scalars, rules and directories are
 concatenated): `~/.coder/settings.json`, `<root>/.coder/settings.json` (subject to project trust),
@@ -802,9 +837,10 @@ Notes:
 - Depth limit: 2 levels of nesting below the main agent; at the limit a child has no `agent` tool.
 - Approvals: a subagent's tool calls go through the same permission engine. A question from a child
   is shown to you in the same prompt UI, labelled with the agent name, and the child waits in
-  process. This does not survive a restart (library request R1).
-- Transcripts: `/agents <n>` opens a child's stored messages. Only runs started in this process are
-  listed.
+  process (`subagents({ approvals: 'inline', answer })`). This does not survive a restart; the
+  library's `'park'` strategy is for split web/server apps (ADR-0035).
+- Transcripts: `/agents <n>` opens a child's stored messages. Runs are listed from the persisted
+  `data-subagent.run` parts, so they are also available after a resume.
 
 ## Project memory, skills, MCP, sessions
 
@@ -832,36 +868,31 @@ Notes:
 | Folder (`src/`) | Role and eharness features it exercises |
 |---|---|
 | `main.tsx`, `print.ts` | CLI (commander) and headless output; `HarnessRun` streams, `TurnResult.usage` |
-| `app/` | config (settings, trust), controller, agents, prompt, storage, models.dev catalog. `defineHarnessAgent`, `session.send` / `respond`, `compaction` (`summarizeAt`, `prune`), `toolOutput` eviction, turn reminders (mode, extra dirs), `dataParts`, cost and context window from the models.dev catalog, JSON-file `MessageAdapter` / `StateAdapter` |
-| `workspace/` | virtual tree over disk: a `FileSystem` for the `filesystem()` plugin (tool-output eviction, skills), `request_directory_access` tool (`glob` is the library's, over this `FileSystem`) |
-| `shell/` | `bash` tool over the AI SDK sandbox shape (own process group per command, killed on abort, timeout and exit); streams stdout and stderr as a transient `data-bashOutput` part |
-| `permissions/` | rule engine, shell command parsing and read-only grammars, broker, audit; a plugin using `tool.approve`, `approval.decided`, `activeTools` and `exit_plan_mode`; approvals via `tool-pending` and `respond()` |
-| `agents/` | `agent` tool: child sessions, preliminary tool results for live progress, `addUsage` to roll child cost into the parent; `drive.ts` answers `tool-pending` stops for main and children |
+| `app/` | config (settings, trust), controller, agents, prompt, storage, models.dev catalog. `defineHarnessAgent`, `session.send` / `respond` / `fork`, `compaction`, `toolOutput` eviction, turn reminders (mode, sandbox, extra dirs), cost and context window from the catalog, JSON-file adapters. `agent.ts` composes the shipped plugins per agent; `checkpoints.ts` (rewind policy), `tasks.ts` (task list), `web-search.ts` (provider search) |
+| `workspace/` | `nodeWorkspace()` and the `request_directory_access` tool |
+| `permissions/` | the library engine configured for the app (`engine.ts`: tool kinds, protected paths, rule scopes, always-ask directory access), the approval broker, `describeApproval`, the audit log |
+| `agents/` | `drive.ts` answers `tool-pending` stops of the main agent (approvals, questions); `subagents.ts` is the `answer` callback of the `agent` tool; definitions from files (`load.ts`, `builtin.ts`) |
 | `ui/` | Ink components: welcome box, transcript, tool cards, diffs, todo panel (`data-todos.list`), subagent tree, permission prompt, footer; `pages/` (alternate-screen pages) and `pickers/` (model, thinking) |
 
-Tool order is stable (prompt-cache prefix): `bash`, `agent`, `request_directory_access`, the
-filesystem tools (`glob` included), `todo_write`, MCP tools, `exit_plan_mode` last.
+Tool order is stable (prompt-cache prefix), identical for every turn of an agent: the app tools
+(`lsp`, `request_directory_access`), `bash` (+ `bash_output`, `kill_shell`), `agent`, the filesystem
+tools (`glob` included), `todo_write`, `web_fetch`, `web_search`, `ask_user_question`, MCP tools,
+`exit_plan_mode` last.
 
-Layering: `workspace/`, `shell/`, `permissions/`, `agents/` and `app/` never import Ink or React.
+Layering: `workspace/`, `permissions/`, `agents/` and `app/` never import Ink or React.
 `ui/` and `print.ts` use a `CoderController` (`src/contracts.ts`).
 
 ## Library gaps found
 
-The example works around these; each is a candidate roadmap item. Details in the
-[plan](../../docs/plans/P30-coder-example.md#requests-to-the-library).
+Everything that was a gap in the first version of the example is now a shipped module
+([P31](../../docs/plans/P31-library-from-coder.md)). What the example still works around:
 
-| # | Gap | Workaround here |
-|---|---|---|
-| R1 | nested approvals across processes | the `agent` tool awaits child approvals in process |
-| R2 | several edits in one `edit_file` call | done in the library (`edits[]`, P31) |
-| R3 | `glob` tool in `eharness/filesystem` | done in the library (`glob`, P31) |
-| R4 | Node-only disk adapter with containment rules | `workspace/disk-fs.ts` |
-| R5 | pass a sandbox to tools; shell plugin | sandbox in a closure |
-| R6 | `eharness/subagent` helper | `agents/agent-tool.ts` |
-| R7 | rule-based grants in core approvals | rules in the app plugin |
-| R8 | `addUsage` accepting `TurnResult.usage` | conversion helper |
-| R9 | binary files and images in `FileSystem` | text only |
-
-R11, R13 and R16 to R19 (step-prepare `continuing`, `ERROR:` adapter errors, approval notes, `endTurn`,
-pending client tool input, `run.delivery`) are done in the library (P31). More (per-agent `toolOrder`, error text for adapter exceptions, subagent transcripts after resume) are
-listed in the plan.
+| Gap | Workaround here |
+|---|---|
+| No "always ask" tool kind in `eharness/permissions` (an allow rule or `bypassPermissions` approves any `other` tool) | `permissions/engine.ts` turns an approval of `request_directory_access` into an ask |
+| `persist(rules)` gets the whole rule set, not the change, so a session-only and a project-only "don't ask again" cannot be told apart | the wrapper remembers the change it is making |
+| No task service for background subagents (no list, no stop, no `data-subagent.run` part for a background run) | `app/tasks.ts` derives them from the stored messages and child sessions; stop = `childSession.abort()` |
+| A woken (`wake`) turn is not returned to anyone; `attach()` is `undefined` when it ended already | the controller watches `session.events()` for `turn-start` of kind `wake` |
+| `bash` description does not say whether the OS sandbox is on | the turn reminder says it |
+| `web_fetch` refuses a private host without telling how to allow it | none (the model-visible text differs from before) |
+| `checkpointsSince` / `rewindFiles` know one session, not its subagent sessions | `app/checkpoints.ts` walks `core.children` |

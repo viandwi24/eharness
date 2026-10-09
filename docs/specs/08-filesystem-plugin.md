@@ -560,6 +560,7 @@ interface FileSystem {
   files are not snapshotted). The plugin only treats a file as binary when the adapter has
   `readBytes`; without it everything is text and nothing changes.
 - Conformance: `fileSystemConformance(factory, { requireBytes: true })`.
+- `fsSkillSource(fs).readFile()` uses `readBytes` when present: a binary skill asset is returned as `{ type: 'binary', mediaType, data }` (spec 07), text as `{ type: 'text' }`.
 
 **`read_file` of a binary file** (needs `readBytes`; the check is one `stat`):
 

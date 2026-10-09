@@ -2,6 +2,7 @@
  * View model of the terminal UI: a pure reducer (no Ink, no React imports) so it can be unit
  * tested. {@link driver.ts} feeds it from a controller run.
  */
+import type { SubagentRunData } from 'eharness/subagent'
 import type { Todo, TodoListData } from 'eharness/todos'
 import type { AgentProgress, BashOutputData, CoderMessage } from '../contracts.ts'
 import { TOOL } from '../contracts.ts'
@@ -112,9 +113,38 @@ function withTiming(
   return next
 }
 
-/** Record the subagent runs of a message snapshot; returns the same array when nothing changed. */
+/** `description` of the `agent` tool call with this id, from its input. */
+function agentDescription(message: CoderMessage, toolCallId: string): string {
+  for (const part of message.parts) {
+    const view = toolView(part)
+    if (view?.toolCallId === toolCallId) {
+      const description = (view.input as { description?: unknown } | undefined)?.description
+      return typeof description === 'string' ? description : ''
+    }
+  }
+  return ''
+}
+
+/**
+ * Record the subagent runs of a message snapshot; returns the same array when nothing changed.
+ * Runs come from the progress outputs of the live `agent` tool call and from the persisted
+ * `data-subagent.run` parts, which also exist in stored messages (after `/resume`).
+ */
 function withSubagents(runs: SubagentRun[], message: CoderMessage): SubagentRun[] {
   let next = runs
+  for (const part of message.parts) {
+    if ((part.type as string) !== 'data-subagent.run') continue
+    const data = (part as unknown as { data?: SubagentRunData }).data
+    if (data === undefined || next.some((r) => r.toolCallId === data.toolCallId)) continue
+    if (next === runs) next = [...runs]
+    next.push({
+      toolCallId: data.toolCallId,
+      name: data.agent,
+      description: agentDescription(message, data.toolCallId),
+      sessionId: data.sessionId,
+      status: data.status === 'waiting' ? 'running' : data.status,
+    })
+  }
   for (const part of message.parts) {
     const view = toolView(part)
     if (!view || view.toolName !== TOOL.agent) continue
@@ -249,8 +279,13 @@ export function reduce(state: ViewState, action: ViewAction): ViewState {
       }
     case 'load': {
       const fresh = initialState()
+      // a run still "running" in a stored conversation was interrupted
+      const subagents = action.messages
+        .reduce(withSubagents, fresh.subagents)
+        .map((r): SubagentRun => (r.status === 'running' ? { ...r, status: 'failed' } : r))
       return {
         ...fresh,
+        subagents,
         history: state.history,
         expanded: state.expanded,
         epoch: state.epoch + 1,

@@ -1,11 +1,8 @@
 /**
- * Session tools: branch (copy a session), names (`/rename`), plain-text export (`/export`),
- * the n-th assistant answer (`/copy`) and the clipboard. Also the helpers the side question,
- * recap and rewind modules share: {@link copySession}, {@link loadView}, {@link renderToolPart}
- * and {@link textOnly}.
- *
- * Integration: `const tools = await createSessionTools({ config, storage, sessionId: () => id })`;
- * `branch(name)` returns the new id and the controller switches to it.
+ * Session tools: names (`/rename`, the label of a branch), plain-text export (`/export`), the
+ * n-th assistant answer (`/copy`) and the clipboard. Also the helpers the side question, recap and
+ * rewind modules share: {@link loadView}, {@link renderToolPart} and {@link textOnly}. Copying a
+ * session is the library's `session.fork()`.
  */
 import { spawn } from 'node:child_process'
 import { mkdir, readFile, rename as renameFile, writeFile } from 'node:fs/promises'
@@ -15,11 +12,9 @@ import {
   type CompactionPayload,
   isKindMessage,
   type MessageAdapter,
-  type SessionStateSnapshot,
   type StateAdapter,
 } from 'eharness'
 import type { CoderConfig, CoderMessage, SessionSummary } from '../contracts.ts'
-import { newSessionId } from './sessions.ts'
 
 /** The storage pair of the controller (`createStorage(config)`). */
 export interface SessionStorage {
@@ -38,51 +33,6 @@ export function messageText(message: UIMessage, joiner = ''): string {
     .map((p) => (p.type === 'text' ? p.text : ''))
     .filter((t) => t !== '')
     .join(joiner)
-}
-
-// ─── copying sessions ────────────────────────────────────────────────────────────────────────
-
-/**
- * Copy messages (default: all) of session `from` into the new session `to`, and the state that
- * stays valid for them: usage, grants and plugin state always; the compaction pointer only when
- * its marker and resume point are among the copied messages; rewinds whose marker was copied.
- * Never copied: the active turn, pending approvals, abort requests and inbox bookkeeping.
- * Returns the copied messages.
- */
-export async function copySession(
-  storage: SessionStorage,
-  from: string,
-  to: string,
-  opts: { beforeId?: string } = {},
-): Promise<CoderMessage[]> {
-  const messages = (await storage.messages.load({
-    sessionId: from,
-    ...(opts.beforeId !== undefined ? { beforeId: opts.beforeId } : {}),
-  })) as CoderMessage[]
-  if (messages.length > 0) await storage.messages.save(to, messages)
-  const state = await storage.state.get(from)
-  if (state !== null) {
-    const ids = new Set(messages.map((m) => m.id))
-    const { compaction, usage, grants, rewinds } = state.core
-    const kept = rewinds?.filter((r) => ids.has(r.rewindId))
-    const copy: SessionStateSnapshot = {
-      v: 1,
-      rev: state.rev,
-      core: {
-        ...(compaction !== undefined &&
-        ids.has(compaction.markerId) &&
-        (compaction.resumeFromId === null || ids.has(compaction.resumeFromId))
-          ? { compaction }
-          : {}),
-        ...(usage !== undefined ? { usage } : {}),
-        ...(grants !== undefined ? { grants } : {}),
-        ...(kept !== undefined && kept.length > 0 ? { rewinds: kept } : {}),
-      },
-      plugins: structuredClone(state.plugins),
-    }
-    await storage.state.set(to, copy)
-  }
-  return messages
 }
 
 // ─── the model's view of a session ───────────────────────────────────────────────────────────
@@ -412,8 +362,8 @@ export interface SessionToolsDeps {
 
 export interface SessionTools {
   names: SessionNames
-  /** Copy ALL messages into a new session and return its id (the caller switches to it). */
-  branch(name?: string): Promise<string>
+  /** Name a branch (`session.fork()` of `from` is `to`): the given name, else `<name> (branch)`. */
+  nameBranch(from: string, to: string, name?: string): Promise<void>
   /** Rename the current session. */
   rename(name: string): Promise<void>
   /** Name of the current session (sync; `CoderController.sessionName`). */
@@ -438,14 +388,10 @@ export async function createSessionTools(deps: SessionToolsDeps): Promise<Sessio
   const names = await createSessionNames(deps.config.projectDataDir)
   return {
     names,
-    async branch(name) {
-      const from = deps.sessionId()
-      const to = newSessionId()
-      await copySession(deps.storage, from, to)
+    async nameBranch(from, to, name) {
       const current = names.nameOf(from)
       const label = name?.trim() || (current !== undefined ? `${current} (branch)` : '')
       if (label !== '') await names.rename(to, label)
-      return to
     },
     rename: (name) => names.rename(deps.sessionId(), name),
     sessionName: () => names.nameOf(deps.sessionId()),

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { LanguageModel } from 'ai'
+import { localSandbox } from 'eharness/shell'
 import {
   type ScriptedCallOptions,
   type ScriptedModel,
@@ -24,7 +25,6 @@ import type {
   ToolCallInfo,
 } from '../src/contracts.ts'
 import { createBroker, createPermissionEngine, describeApproval } from '../src/permissions/index.ts'
-import { createLocalSandbox } from '../src/shell/index.ts'
 import { createWorkspace } from '../src/workspace/index.ts'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -173,7 +173,7 @@ export async function makeAgentsEnv(opts: {
   const agents = await createAgents({
     config,
     workspace,
-    sandbox: createLocalSandbox(config.root),
+    sandbox: localSandbox(config.root),
     permissions,
     broker,
     describe,

@@ -378,6 +378,11 @@ thin and idiomatic:
   and a dead-letter for poison inbox items.
 - **Beyond one-to-one chat (0.5):** group-chat gating and anti-loop (`eharness/group`) and
   OpenAPI operations as tools (`eharness/openapi`).
+- **Coding-agent building blocks (P31):** real-disk and mounted file systems with checkpoints and
+  binary files (`eharness/filesystem/node`), a bash tool over a local sandbox
+  (`eharness/shell`), rule-based permissions and plan mode (`eharness/permissions`), subagents with
+  nested approvals that survive restarts (`eharness/subagent`), user questions (`eharness/ask`),
+  web fetch and search (`eharness/web`), `session.fork()` and a parent/child index.
 - **Prompt-cache friendly:** stable instructions and tool order; volatile context goes into
   per-turn and per-step reminders.
 
@@ -388,6 +393,12 @@ thin and idiomatic:
 | `eharness` | `defineHarnessAgent`, `definePlugin`, `defineSkill`, `defineSkillSource`, `defineToolSource`, `defineDataPart`, `defineMessageKind`, `handleChatRequest`, `externalTool`, `toolTraits`, `modelsDevCatalog`, `lookupModel`, `computeCost`, errors, fixed texts, types |
 | `eharness/filesystem` | `FileSystem` contract, `filesystem()` plugin (file tools, skills autoload), helpers |
 | `eharness/filesystem/memory` | `memoryFs()` |
+| `eharness/filesystem/node` | `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()` (Node-only) |
+| `eharness/shell` | `shell()` plugin (`bash`, background tasks), `localSandbox()` with optional OS isolation (Node-only) |
+| `eharness/permissions` | `permissionsPlugin()`, `createPermissionEngine()`: rules, modes, plan mode, shell command analysis |
+| `eharness/subagent` | `subagents()` (`agent` tool; approvals inline / park / policy), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()` |
+| `eharness/ask` | `askUser()` plugin (`ask_user_question`), `pendingQuestions()`, `answerOutput()` |
+| `eharness/web` | `webFetch()` (SSRF guards, Markdown) and `webSearch()` (provider-agnostic) plugins |
 | `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage), `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `mcpServer()` tool source (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `todos()` plugin (`todo_write` tool, `data-todos.list`), `latestTodos()`, `renderTodos()`, `openTodos()` |
@@ -396,6 +407,13 @@ thin and idiomatic:
 | `eharness/group` | `groupChat()` plugin and `routeGroupMessage()`: should-respond gating, pending history, speaker metadata, bot-to-bot anti-loop |
 | `eharness/openapi` | `openApiTools()` tool source (OpenAPI 3.0 / 3.1 JSON → tools), `riskFromMethod()` |
 | `eharness/testing` | `scriptedModel()` and conformance suites for your adapters (messages, state, inbox, budget ledger, file system, skill source, ids) |
+
+### Deployment profiles
+
+Every shipped module serves three product shapes: an autonomous server (no human, policy and
+budgets), a single-process interactive app (CLI/TUI), and a split web/server app (pending state in
+storage, answers from any instance). Node-only subpaths are marked above. See
+[ADR-0034](docs/decisions/0034-deployment-profiles.md).
 
 ## Examples
 

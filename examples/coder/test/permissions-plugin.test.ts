@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { defineHarnessAgent } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
 import { memoryFs } from 'eharness/filesystem/memory'
+import { type PermissionsPluginOptions, permissionsPlugin } from 'eharness/permissions'
 import { memoryMessages, memoryState } from 'eharness/storage/memory'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import {
@@ -14,8 +15,8 @@ import {
   type PermissionRules,
   TOOL,
 } from '../src/contracts.ts'
+import { auditLog } from '../src/permissions/audit.ts'
 import { createPermissionEngine } from '../src/permissions/engine.ts'
-import { type PermissionsPluginOptions, permissionsPlugin } from '../src/permissions/plugin.ts'
 
 const tmp = realpathSync(mkdtempSync(join(tmpdir(), 'coder-plugin-')))
 afterAll(() => rmSync(tmp, { recursive: true, force: true }))
@@ -250,10 +251,10 @@ describe('permissions plugin', () => {
     await without.agent.close()
   })
 
-  test('the agent name reaches the engine and the audit log', async () => {
+  test('the agent name reaches the audit log', async () => {
     const auditFile = join(tmp, 'agent-audit', 'audit.jsonl')
     const { agent } = setup([write('/x.txt', 'x'), { text: 'ok' }], 'dontAsk', {
-      plugin: { agent: 'explore', auditFile },
+      plugin: { onDecision: auditLog(auditFile, 'explore') },
     })
     await agent.session('s').send('go').result
     expect(JSON.parse(readFileSync(auditFile, 'utf8').trim().split('\n')[0] as string).agent).toBe(
@@ -267,7 +268,7 @@ describe('permissions plugin', () => {
     const { agent } = setup(
       [write('/one.txt', '1'), write('/two.txt', '2'), { text: 'done' }],
       'default',
-      { plugin: { auditFile }, rules: { allow: ['Edit(one.txt)'] } },
+      { plugin: { onDecision: auditLog(auditFile) }, rules: { allow: ['Edit(one.txt)'] } },
     )
     const session = agent.session('s')
     let result = await session.send('go').result
@@ -298,7 +299,7 @@ describe('permissions plugin', () => {
 
   test('an unwritable audit file never breaks the turn', async () => {
     const { agent } = setup([write('/x.txt', 'x'), { text: 'ok' }], 'acceptEdits', {
-      plugin: { auditFile: join('/dev/null', 'nope', 'audit.jsonl') },
+      plugin: { onDecision: auditLog(join('/dev/null', 'nope', 'audit.jsonl')) },
     })
     expect((await agent.session('s').send('go').result).stop).toBe('complete')
     await agent.close()

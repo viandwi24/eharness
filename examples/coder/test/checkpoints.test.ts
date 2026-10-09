@@ -1,15 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { readdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { defineHarnessAgent } from 'eharness'
+import { defineHarnessAgent, type HarnessSession } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
+import { nodeCheckpointStore } from 'eharness/filesystem/node'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
-import {
-  CHECKPOINT_KEEP,
-  createCheckpointStore,
-  createCheckpoints,
-} from '../src/app/checkpoints.ts'
+import { createCheckpoints } from '../src/app/checkpoints.ts'
 import { createStorage, newSessionId } from '../src/app/sessions.ts'
+import type { CoderMessage } from '../src/contracts.ts'
 import { createWorkspace } from '../src/workspace/index.ts'
 import { setup } from './helpers.ts'
 
@@ -21,23 +19,20 @@ async function env(files: Record<string, string>, steps: ScriptedStepInput[]) {
   const { root, config } = await setup(files)
   const workspace = await createWorkspace(config)
   const storage = createStorage(config)
-  const store = createCheckpointStore({
-    projectDataDir: config.projectDataDir,
-    fs: workspace.fs,
-  })
+  const store = nodeCheckpointStore(join(config.projectDataDir, 'checkpoints'))
   let sessionId = newSessionId()
-  const checkpoints = createCheckpoints({
-    store,
-    storage,
-    fs: workspace.fs,
-    sessionId: () => sessionId,
-  })
   const agent = defineHarnessAgent({
     id: 'cp',
     model: scriptedModel(steps),
     contextWindow: 100_000,
     storage,
-    plugins: [filesystem({ fs: workspace.fs }), checkpoints.plugin],
+    plugins: [filesystem({ fs: workspace.fs, checkpoints: store })],
+  })
+  const checkpoints = createCheckpoints({
+    store,
+    storage,
+    fs: workspace.fs,
+    session: async () => agent.session(sessionId) as never as HarnessSession<CoderMessage>,
   })
   const send = async (text: string) => {
     const result = await agent.session(sessionId).send(text).result
@@ -49,6 +44,7 @@ async function env(files: Record<string, string>, steps: ScriptedStepInput[]) {
     storage,
     store,
     checkpoints,
+    agent,
     send,
     useSession: (id: string) => {
       sessionId = id
@@ -78,13 +74,15 @@ describe('checkpoints and rewind code', () => {
     await t.send('second')
     expect(await t.disk('a.txt')).toBe('ONE\nTWO!\n')
 
-    const cps = await t.store.list(t.id())
-    expect(cps).toHaveLength(2)
-    expect(cps[0]?.files['/new.txt']).toEqual({ existed: false })
-    expect(cps[0]?.files['/a.txt']).toEqual({ existed: true, content: 'one\ntwo\n' })
+    const records = await t.store.list(t.id())
+    const before = (turn: number, path: string) =>
+      records.filter((r) => r.path === path)[turn]?.before
+    expect(records.map((r) => r.path)).toEqual(['/a.txt', '/new.txt', '/a.txt', '/new.txt'])
+    expect(before(0, '/new.txt')).toEqual({ missing: true })
+    expect(before(0, '/a.txt')).toEqual({ content: 'one\ntwo\n' })
     // the second edit of the same turn does not overwrite the snapshot
-    expect(cps[1]?.files['/a.txt']).toEqual({ existed: true, content: 'ONE\ntwo\n' })
-    expect(cps[1]?.files['/new.txt']).toEqual({ existed: true, content: 'brand new\n' })
+    expect(before(1, '/a.txt')).toEqual({ content: 'ONE\ntwo\n' })
+    expect(before(1, '/new.txt')).toEqual({ content: 'brand new\n' })
     const files = await readdir(join(t.config.projectDataDir, 'checkpoints', t.id()))
     expect(files).toHaveLength(2)
 
@@ -136,8 +134,8 @@ describe('checkpoints and rewind code', () => {
 
     // the new session keeps the checkpoint of turn 1 only
     const kept = await t.store.list(result.sessionId ?? '')
-    expect(kept.map((c) => c.userMessageId)).toEqual([before[0]?.id ?? ''])
-    expect(await t.store.list(first)).toHaveLength(2)
+    expect([...new Set(kept.map((c) => c.turnKey))]).toEqual([before[0]?.id ?? ''])
+    expect(await t.store.list(first)).toHaveLength(4)
   })
 
   test('both: new session and files restored; unknown message id throws', async () => {
@@ -163,15 +161,29 @@ describe('checkpoints and rewind code', () => {
     expect(await t.disk('a.txt')).toBe('changed by hand\n')
   })
 
-  test('keeps the last 50 turns per session', async () => {
-    const { config } = await setup({ 'a.txt': 'x' })
-    const workspace = await createWorkspace(config)
-    const store = createCheckpointStore({ projectDataDir: config.projectDataDir, fs: workspace.fs })
-    expect(CHECKPOINT_KEEP).toBe(50)
-    for (let i = 0; i < 53; i++) await store.record('s', `m${String(i).padStart(3, '0')}`, '/a.txt')
-    const ids = (await store.list('s')).map((c) => c.userMessageId)
-    expect(ids).toHaveLength(50)
-    expect(ids[0]).toBe('m003')
-    expect(ids.at(-1)).toBe('m052')
+  test('a rewind also restores the files subagents changed; a fork keeps earlier checkpoints', async () => {
+    const t = await env({ 'a.txt': 'one\n', 'b.txt': 'bee\n' }, [
+      call('read_file', { path: '/a.txt' }),
+      call('edit_file', { path: '/a.txt', old_string: 'one', new_string: 'ONE' }),
+      { text: 'parent done' },
+      // the child session runs on the same agent and the same script
+      call('read_file', { path: '/b.txt' }),
+      call('edit_file', { path: '/b.txt', old_string: 'bee', new_string: 'BEE' }),
+      { text: 'child done' },
+    ])
+    await t.send('first')
+    const parent = t.id()
+    const child = t.agent.session(`${parent}:agent:c1`, {
+      parent: { sessionId: parent, turnId: 't', toolCallId: 'c1', depth: 1 },
+    })
+    expect((await child.send('child task').result).stop).toBe('complete')
+    expect(await t.disk('b.txt')).toBe('BEE\n')
+
+    const [point] = await t.checkpoints.rewindPoints()
+    expect(point?.files).toEqual(['a.txt', 'b.txt'])
+    const result = await t.checkpoints.rewind(point?.messageId ?? '', 'code')
+    expect(result.restoredFiles).toEqual(['a.txt', 'b.txt'])
+    expect(await t.disk('a.txt')).toBe('one\n')
+    expect(await t.disk('b.txt')).toBe('bee\n')
   })
 })

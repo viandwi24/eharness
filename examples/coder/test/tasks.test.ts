@@ -1,228 +1,213 @@
+/**
+ * The task list: background shells are the library's `shellTasks` (tested in the library, and
+ * through the controller in integration.test.ts); what is tested here is the app's part: the hub
+ * derives background subagents from stored messages and states, and a session woken by a
+ * background event is driven by the controller (its approvals are answered).
+ */
 import { describe, expect, test } from 'bun:test'
-import {
-  BASH_OUTPUT_TOOL,
-  createBackgroundBashTools,
-  KILL_SHELL_TOOL,
-  withBackgroundOption,
-} from '../src/app/background-bash.ts'
-import { createTaskManager, MAX_TASK_OUTPUT, type TaskInject } from '../src/app/tasks.ts'
-import { createBashTool, createLocalSandbox } from '../src/shell/index.ts'
-import { tempDir } from './helpers.ts'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import type { SessionStateSnapshot } from 'eharness'
+import { scriptedModel } from 'eharness/testing'
+import { createTaskHub } from '../src/app/tasks.ts'
+import type { CoderMessage } from '../src/contracts.ts'
+import { makeController, nextPending } from './helpers.ts'
 
-const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+const CHILD = 'p1:agent:call-1'
 
-async function until(check: () => boolean, ms = 5000): Promise<void> {
-  const start = Date.now()
-  while (!check()) {
-    if (Date.now() - start > ms) throw new Error('timed out')
-    await sleep(10)
+const started = (): CoderMessage =>
+  ({
+    id: 'a1',
+    role: 'assistant',
+    parts: [
+      {
+        type: 'tool-agent',
+        toolCallId: 'call-1',
+        state: 'output-available',
+        input: {},
+        output: `Started background subagent ${CHILD} (explore): look. around. You will be notified when it finishes.`,
+      },
+    ],
+  }) as unknown as CoderMessage
+
+const finished = (status: 'completed' | 'failed'): CoderMessage =>
+  ({
+    id: 'e1',
+    role: 'user',
+    parts: [
+      {
+        type: 'data-eh.event',
+        data: {
+          name: 'subagent',
+          text: 'done',
+          data: { sessionId: CHILD, agent: 'explore', status },
+        },
+      },
+    ],
+  }) as unknown as CoderMessage
+
+const childText = (text: string, stop?: string): CoderMessage =>
+  ({
+    id: 'c1',
+    role: 'assistant',
+    parts: [{ type: 'step-start' }, { type: 'text', text }],
+    metadata: { eharness: stop === undefined ? {} : { stop } },
+  }) as unknown as CoderMessage
+
+function hub(opts: {
+  messages: CoderMessage[]
+  child?: CoderMessage[]
+  state?: Partial<SessionStateSnapshot['core']> | null
+}) {
+  const stopped: string[] = []
+  const storage = {
+    state: {
+      get: async (id: string) =>
+        id === CHILD
+          ? opts.state === null
+            ? null
+            : { v: 1, rev: 1, core: opts.state ?? {}, plugins: {} }
+          : null,
+    },
+    messages: {
+      load: async ({ sessionId }: { sessionId: string }) =>
+        sessionId === CHILD ? (opts.child ?? []) : [],
+    },
   }
+  const h = createTaskHub({
+    session: () => 'p1',
+    storage: storage as never,
+    messages: async () => opts.messages,
+    stopAgent: async (id, agent) => void stopped.push(`${agent}:${id}`),
+  })
+  return { h, stopped }
 }
 
-describe('task manager', () => {
-  test('ids, status, listeners, stop', async () => {
-    const tasks = createTaskManager()
-    const seen: string[][] = []
-    const off = tasks.onTasks((list) => seen.push(list.map((t) => `${t.id}:${t.status}`)))
-    let stopped = 0
-    const a = tasks.add({ kind: 'shell', label: 'a', stop: () => void stopped++ })
-    const b = tasks.add({ kind: 'agent', label: 'b', stop: () => {} })
-    const c = tasks.add({ kind: 'shell', label: 'c', stop: () => {} })
-    expect([a, b, c]).toEqual(['bash-1', 'agent-1', 'bash-2'])
-    await tasks.stopTask(a)
-    expect(stopped).toBe(1)
-    expect(tasks.get(a)?.status).toBe('stopped')
-    // the producer's own completion does not overwrite `stopped`
-    tasks.complete(a, { status: 'failed', exitCode: 143 })
-    expect(tasks.get(a)?.status).toBe('stopped')
-    tasks.complete(b, { status: 'completed', exitCode: 0 })
-    expect(tasks.get(b)).toMatchObject({ status: 'completed', exitCode: 0 })
-    expect(tasks.get(b)?.endedAt).toBeGreaterThan(0)
-    expect(seen.at(-1)).toEqual(['bash-1:stopped', 'agent-1:completed', 'bash-2:running'])
+describe('background subagents in the task list', () => {
+  test('a child with an active turn is running, with its latest text as the tail', async () => {
+    const { h } = hub({
+      messages: [started()],
+      child: [childText('looking at src')],
+      state: { activeTurn: { turnId: 't' } as never },
+    })
+    await h.refresh()
+    expect(h.tasks()).toMatchObject([
+      {
+        id: 'agent-1',
+        kind: 'agent',
+        label: 'explore: look. around',
+        status: 'running',
+        tail: 'looking at src',
+      },
+    ])
+    expect(h.taskOutput('agent-1')).toBe('looking at src')
+    h.close()
+  })
+
+  test('the report event decides: completed or failed (also after a restart)', async () => {
+    for (const status of ['completed', 'failed'] as const) {
+      const { h } = hub({
+        messages: [started(), finished(status)],
+        child: [childText('REPORT', 'complete')],
+      })
+      await h.refresh()
+      expect(h.tasks()[0]).toMatchObject({ status, tail: 'REPORT' })
+      expect(h.tasks()[0]?.endedAt).toBeGreaterThan(0)
+      h.close()
+    }
+  })
+
+  test('a child that stopped without a report event is judged by its stop reason', async () => {
+    const aborted = hub({ messages: [started()], child: [childText('half', 'aborted')], state: {} })
+    await aborted.h.refresh()
+    expect(aborted.h.tasks()[0]?.status).toBe('failed')
+    const done = hub({ messages: [started()], child: [childText('ok', 'complete')], state: {} })
+    await done.h.refresh()
+    expect(done.h.tasks()[0]?.status).toBe('completed')
+  })
+
+  test('stopTask aborts the child once and the task stays stopped', async () => {
+    const { h, stopped } = hub({
+      messages: [started()],
+      child: [childText('x')],
+      state: { activeTurn: { turnId: 't' } as never },
+    })
+    await h.refresh()
+    await h.stopTask('agent-1')
+    await h.stopTask('agent-1')
+    expect(stopped).toEqual([`explore:${CHILD}`])
+    await h.refresh()
+    expect(h.tasks()[0]?.status).toBe('stopped')
+    h.close()
+  })
+
+  test('listeners are told about changes and can unsubscribe', async () => {
+    const { h } = hub({
+      messages: [started(), finished('completed')],
+      child: [childText('R', 'complete')],
+    })
+    const seen: string[] = []
+    const off = h.onTasks((list) => seen.push(list.map((t) => t.status).join()))
+    await h.refresh()
+    expect(seen).toEqual(['completed'])
     off()
-    const before = seen.length
-    tasks.complete(c, { status: 'completed' })
-    expect(seen.length).toBe(before)
-    await tasks.stopTask('nope')
-  })
-
-  test('output: tail, readNew cursor, 1 MB cap', async () => {
-    const tasks = createTaskManager()
-    const id = tasks.add({ kind: 'shell', label: 'x', stop: () => {} })
-    tasks.append(id, 'one\ntwo\n')
-    expect(tasks.readNew(id)).toBe('one\ntwo\n')
-    expect(tasks.readNew(id)).toBe('')
-    tasks.append(id, 'three\n')
-    expect(tasks.readNew(id)).toBe('three\n')
-    expect(tasks.taskOutput(id)).toBe('one\ntwo\nthree\n')
-    expect(tasks.get(id)?.tail).toContain('three')
-    const big = 'x'.repeat(MAX_TASK_OUTPUT)
-    tasks.append(id, big)
-    tasks.append(id, 'END')
-    expect(tasks.taskOutput(id).length).toBe(MAX_TASK_OUTPUT)
-    expect(tasks.taskOutput(id).endsWith('END')).toBe(true)
-    expect(tasks.readNew(id)).toContain('dropped')
-    expect(tasks.readNew('missing')).toBeUndefined()
-  })
-
-  test('agent tail via update', () => {
-    const tasks = createTaskManager()
-    const id = tasks.add({ kind: 'agent', label: 'x', stop: () => {} })
-    tasks.update(id, { tail: 'thinking…' })
-    expect(tasks.get(id)?.tail).toBe('thinking…')
-    expect(tasks.taskOutput(id)).toBe('thinking…')
+    h.changed()
+    expect(seen).toHaveLength(1)
   })
 })
 
-interface Event {
-  sessionId: string
-  text: string
-  options: { deliver?: string; wake?: boolean }
-}
-
-async function harness(monitorIntervalMs = 5000) {
-  const root = await tempDir()
-  const sandbox = createLocalSandbox(root)
-  const tasks = createTaskManager()
-  const events: Event[] = []
-  const inject: TaskInject = async (sessionId, event, options) => {
-    events.push({ sessionId, text: event.text, options })
-    return undefined
-  }
-  const deps = { sandbox, tasks, inject, monitorIntervalMs }
-  const bash = withBackgroundOption(createBashTool({ sandbox }) as never, deps)
-  const tool = (
-    bash as unknown as (ctx: unknown) => {
-      description: string
-      inputSchema: { safeParse(v: unknown): { success: boolean } }
-      execute: (i: unknown, o: unknown) => Promise<string>
+describe('a session woken by a background event', () => {
+  test('the controller drives the woken turn: its approval reaches the broker and the edit lands', async () => {
+    const model = scriptedModel([
+      {
+        toolCalls: [
+          { toolName: 'bash', input: { command: 'sleep 0.4; echo hi', run_in_background: true } },
+        ],
+      },
+      { text: 'started' },
+      // the exit event wakes the idle session: read, edit (needs approval), answer
+      { toolCalls: [{ toolName: 'read_file', input: { path: '/a.txt' } }] },
+      {
+        toolCalls: [
+          {
+            toolName: 'edit_file',
+            input: { path: '/a.txt', old_string: 'alpha', new_string: 'ALPHA' },
+          },
+        ],
+      },
+      { text: 'edited after the task ended' },
+    ])
+    const { controller, root } = await makeController({ model, files: { 'a.txt': 'alpha\n' } })
+    const chunks: string[] = []
+    const hooks = {
+      onRun(run: { stream: ReadableStream<unknown> }) {
+        void (async () => {
+          const reader = run.stream.getReader()
+          for (;;) {
+            const r = await reader.read()
+            if (r.done) return
+            chunks.push((r.value as { type: string }).type)
+          }
+        })()
+      },
     }
-  )({ session: { id: 'sess-1' }, stream: { active: false } })
-  const run = (input: Record<string, unknown>): Promise<string> =>
-    tool.execute(input, { toolCallId: 'c1', abortSignal: undefined, messages: [] })
-  const { tools } = createBackgroundBashTools(deps)
-  const side = (name: string) =>
-    (tools[name] as unknown as { execute: (i: unknown, o: unknown) => Promise<string> }).execute
-  const output = (input: Record<string, unknown>): Promise<string> =>
-    side(BASH_OUTPUT_TOOL)(input, { toolCallId: 'c2', messages: [] })
-  const kill = (input: Record<string, unknown>): Promise<string> =>
-    side(KILL_SHELL_TOOL)(input, { toolCallId: 'c3', messages: [] })
-  return { tool, run, output, kill, tasks, events }
-}
-
-describe('background bash', () => {
-  test('foreground behaviour is unchanged; the schema gains the new fields', async () => {
-    const h = await harness()
-    expect(await h.run({ command: 'echo hi' })).toContain('Exit code 0')
-    expect(h.tool.description).toContain('run_in_background')
-    expect(
-      h.tool.inputSchema.safeParse({ command: 'x', run_in_background: true, notify_on: 'a' })
-        .success,
-    ).toBe(true)
-    expect(h.tasks.tasks()).toEqual([])
-  })
-
-  test('run_in_background returns at once, output is readable, exit is injected', async () => {
-    const h = await harness()
-    const started = Date.now()
-    const text = await h.run({
-      command: 'echo first; sleep 0.3; echo second; exit 3',
-      description: 'demo',
-      run_in_background: true,
-    })
-    expect(Date.now() - started).toBeLessThan(250)
-    expect(text).toBe('Started background task bash-1. Use bash_output to read its output.')
-    expect(h.tasks.get('bash-1')?.label).toBe('demo')
-    await until(() => h.tasks.get('bash-1')?.status !== 'running')
-    expect(h.tasks.get('bash-1')).toMatchObject({ status: 'failed', exitCode: 3 })
-    const out = await h.output({ id: 'bash-1' })
-    expect(out).toContain('[bash-1: failed, exit code 3]')
-    expect(out).toContain('first')
-    expect(out).toContain('second')
-    expect(await h.output({ id: 'bash-1' })).toContain('(no new output)')
-    await until(() => h.events.length > 0)
-    expect(h.events).toHaveLength(1)
-    expect(h.events[0]?.sessionId).toBe('sess-1')
-    expect(h.events[0]?.text).toBe(
-      'Background task bash-1 (echo first; sleep 0.3; echo second; exit 3) exited with code 3.',
-    )
-    expect(h.events[0]?.options).toEqual({ deliver: 'next-step', wake: true })
-  })
-
-  test('bash_output filter and unknown ids', async () => {
-    const h = await harness()
-    await h.run({ command: 'printf "a1\\nb2\\na3\\n"', run_in_background: true })
-    await until(() => h.tasks.get('bash-1')?.status === 'completed')
-    const out = await h.output({ id: 'bash-1', filter: '^a' })
-    expect(out).toContain('a1\na3')
-    expect(out).not.toContain('b2')
-    expect(await h.output({ id: 'bash-9' })).toContain('ERROR: no background task "bash-9"')
-    expect(await h.output({ id: 'bash-1', filter: '(' })).toContain(
-      'not a valid regular expression',
-    )
-  })
-
-  test('kill_shell stops the process and sends no exit event', async () => {
-    const h = await harness()
-    await h.run({ command: 'sleep 30', run_in_background: true })
-    expect(h.tasks.get('bash-1')?.status).toBe('running')
-    expect(await h.kill({ id: 'bash-1' })).toBe('Stopped bash-1.')
-    expect(h.tasks.get('bash-1')?.status).toBe('stopped')
-    await sleep(300)
-    expect(h.events).toEqual([])
-    expect(await h.kill({ id: 'bash-1' })).toContain('not running')
-    expect(await h.kill({ id: 'nope' })).toContain('ERROR')
-  })
-
-  test('notify_on: matching lines are batched and rate-limited', async () => {
-    const h = await harness(400)
-    await h.run({
-      command: 'for i in 1 2 3 4 5; do echo "hit $i"; echo "noise $i"; sleep 0.02; done; sleep 0.1',
-      run_in_background: true,
-      notify_on: '^hit',
-    })
-    await until(() => h.events.some((e) => e.text.includes('exited')))
-    const matches = h.events.filter((e) => e.text.includes('matching'))
-    // first match goes out at once, the rest is batched (and flushed at exit): never one per line
-    expect(matches.length).toBeGreaterThanOrEqual(1)
-    expect(matches.length).toBeLessThanOrEqual(2)
-    const all = matches.map((e) => e.text).join('\n')
-    for (const n of [1, 2, 3, 4, 5]) expect(all).toContain(`hit ${n}`)
-    expect(all).not.toContain('noise 1')
-    expect(h.events.at(-1)?.text).toContain('exited with code 0')
-    for (const e of h.events) expect(e.options).toEqual({ deliver: 'next-step', wake: true })
-  })
-
-  test('an invalid notify_on is an error string, nothing starts', async () => {
-    const h = await harness()
-    const text = await h.run({ command: 'echo x', run_in_background: true, notify_on: '(' })
-    expect(text).toContain('ERROR: notify_on')
-    expect(h.tasks.tasks()).toEqual([])
-  })
-
-  test('onWake receives the run of a woken idle session', async () => {
-    const root = await tempDir()
-    const tasks = createTaskManager()
-    const fakeRun = { turnId: 'w' } as never
-    const woken: unknown[] = []
-    const deps = {
-      sandbox: createLocalSandbox(root),
-      tasks,
-      inject: (async () => ({ run: fakeRun })) as TaskInject,
-      onWake: (run: unknown) => woken.push(run),
+    const turn = controller.run('start a task', hooks)
+    const bash = await nextPending(controller.broker)
+    expect(bash.toolName).toBe('bash')
+    controller.broker.answer(bash.id, { approved: true })
+    // the turn ends, the task exits afterwards and wakes the idle session
+    await turn
+    // the woken turn asks for the edit, with nobody having called run()
+    const edit = await nextPending(controller.broker)
+    expect(edit.toolName).toBe('edit_file')
+    controller.broker.answer(edit.id, { approved: true })
+    const start = Date.now()
+    while ((await readFile(join(root, 'a.txt'), 'utf8')) !== 'ALPHA\n') {
+      if (Date.now() - start > 8000) throw new Error('the woken turn never edited the file')
+      await new Promise((r) => setTimeout(r, 20))
     }
-    const bash = withBackgroundOption(createBashTool({ sandbox: deps.sandbox }) as never, deps)
-    const tool = (
-      bash as unknown as (c: unknown) => { execute: (i: unknown, o: unknown) => Promise<string> }
-    )({
-      session: { id: 's' },
-      stream: { active: false },
-    })
-    await tool.execute(
-      { command: 'true', run_in_background: true },
-      { toolCallId: 'c', messages: [] },
-    )
-    await until(() => woken.length > 0)
-    expect(woken).toEqual([fakeRun])
+    expect(JSON.stringify(model.prompts.at(-1))).toContain('exited with code 0')
+    // the UI hooks received the woken runs too (the send, its respond, the wake and its respond)
+    expect(chunks.filter((c) => c === 'finish').length).toBeGreaterThanOrEqual(3)
   })
 })

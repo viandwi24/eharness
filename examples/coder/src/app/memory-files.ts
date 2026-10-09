@@ -10,7 +10,7 @@ import { readFile, realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, parse, resolve } from 'node:path'
 import type { Workspace } from '../contracts.ts'
-import { isInside } from '../workspace/guard.ts'
+import { isInside } from '../workspace/dir-access.ts'
 import { loadProjectMemory } from './project-memory.ts'
 
 /** One entry of `CoderController.memoryFiles()`. */
@@ -97,7 +97,7 @@ export async function addDirectory(workspace: Workspace, path: string): Promise<
   const root = workspace.mounts().find((m) => m.virtual === '/')?.real
   const home = await realpath(homedir()).catch(() => homedir())
   const tooBroad =
-    real === parse(real).root || real === home || (root !== undefined && isInside(real, root))
+    real === parse(real).root || real === home || (root !== undefined && isInside(root, real))
   if (tooBroad) {
     throw new Error(
       `${real} is too broad (the filesystem root, your home directory, or the project or a parent of it).`,

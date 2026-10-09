@@ -36,7 +36,8 @@ describe('describeApproval', () => {
     expect(d).toEqual({
       title: 'Bash: bun test src/a.test.ts',
       detail: 'bun test src/a.test.ts',
-      suggestedRule: 'Bash(bun test *)',
+      // `bun` is an interpreter for the library engine: the exact command, not a prefix
+      suggestedRule: 'Bash(bun test src/a.test.ts)',
     })
   })
 

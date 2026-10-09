@@ -1,6 +1,6 @@
 # P31 — Library improvements found by the coding-agent benchmark
 
-Status: in progress (L1 done, L2 R2/R3 done; L2 R4–R7 and the other modules, and L3, remain) · Owner: — · Branch: `main` (direct commits)
+Status: review (L1, L2 and L3 shipped; the coder example migration and the final review remain) · Owner: — · Branch: `main` (direct commits)
 
 ## Goal
 
@@ -47,21 +47,21 @@ when it is product policy (the coder's permission UX, slash commands, settings f
 | # | Module | From the example | Notes |
 |---|---|---|---|
 | R2, R3 | **Done** (`edit_file` `edits[]`, `glob` tool, `compileGlob`): `eharness/filesystem`: `edit_file` with `edits: [{ old_string, new_string, replace_all? }]` (atomic, one read check) and a `glob` tool | `workspace/glob-tool.ts`; the model's repeated edits | spec 08 change, model-visible texts |
-| R4 | `eharness/filesystem/node`: `diskFs(root)` with realpath containment, ignore rules, mode-preserving atomic writes, `rg` grep fast path | `workspace/disk-fs.ts`, `guard.ts`, `mount-fs.ts` | first Node-only module: ADR (runtime rule 3) |
-| R5 | `eharness/shell`: bash tool over AI SDK `Experimental_SandboxSession` (local driver, OS sandbox driver: Seatbelt / bubblewrap), process-group cleanup, background shells | `shell/**`, `app/background-bash.ts` | Node-only; "Sandbox plugin" roadmap row; ADR |
-| R6 | `eharness/subagent`: `subagentTool({ agents, depth, concurrency, background? })` with progress, usage, approvals driven through a caller-supplied answerer | `agents/agent-tool.ts`, `agents/drive.ts` | roadmap "Subagents plugin" |
-| R7 | `eharness/permissions`: rule engine (`Tool(spec)` allow/ask/deny, modes incl. plan, shell command parsing with containment) as a plugin | `permissions/**` | big surface: spec + ADR; keep the UI out |
-| — | `eharness/ask`: `askUserQuestionTool()` (client tool) + answer formatting | `agents/ask-tool.ts` | small plugin |
-| — | `eharness/web`: `webFetchTool()` (SSRF guards, same-host redirects, Markdown) | `app/web-tools.ts` | needs an HTML→Markdown dependency: ADR or injectable converter |
-| — | Filesystem checkpoints: `filesystem({ checkpoints })` snapshots before the first change per turn + `rewindFiles()` | `app/checkpoints.ts` | pairs with a core `session.fork(beforeMessageId)` (roadmap "Fork") |
+| R4 | **Done** (`eharness/filesystem/node`: `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()`, `compileIgnore()`; spec 08 §8, ADR-0036): `diskFs(root)` with realpath containment, gitignore subset, mode-preserving atomic writes, `rg` grep fast path | `workspace/disk-fs.ts`, `guard.ts`, `mount-fs.ts` | first Node-only module (runtime rule 3 relaxed per subpath) |
+| R5 | **Done** (`eharness/shell`: `shell()` with `bash` / `bash_output` / `kill_shell`, `localSandbox()` with Seatbelt / bubblewrap, `shellTasks` service; spec 19): bash tool over AI SDK sandbox sessions, process-group cleanup, background shells | `shell/**`, `app/background-bash.ts` | Node-only; roadmap "Sandbox plugin" |
+| R6 | **Done** (`eharness/subagent`: `subagents({ agents, maxDepth, maxConcurrent, background, approvals })`, `pendingSubagentApprovals()`; spec 20): progress, usage and approvals through a caller-supplied `answer` (inline), policy or park | `agents/agent-tool.ts`, `agents/drive.ts` | roadmap "Subagents plugin" |
+| R7 | **Done** (`eharness/permissions`: `permissionsPlugin()`, `createPermissionEngine()`, `parseCommand()`; spec 18): rule engine (`Tool(spec)` allow/ask/deny, modes incl. plan, shell command parsing with containment); the UI stays in the app | `permissions/**` | spec + guide |
+| — | **Done** (`eharness/ask`: `askUser()`, `pendingQuestions()`, `answerOutput()`; spec 21): `ask_user_question` client tool with a non-interactive fallback | `agents/ask-tool.ts` | small plugin |
+| — | **Done** (`eharness/web`: `webFetch()` with an injectable `toMarkdown`, `webSearch()`; spec 22): SSRF guards, same-host redirects, no new dependency | `app/web-tools.ts` | converter is injectable (no dependency) |
+| — | **Done** (`checkpointedFs()`, `memoryCheckpointStore()`, `nodeCheckpointStore()`, `rewindFiles()`, `checkpointsSince()`; spec 08 §11): snapshots before the first change per turn, rewind | `app/checkpoints.ts` | pairs with `session.fork()` (done) |
 
 ## L3 — larger items (ADR first)
 
 | # | Item |
 |---|---|
-| R1 | Nested approvals across processes: park a parent turn while a child session waits for a person |
-| R9 | Binary files / images in `FileSystem` and file parts to the model |
-| R10 | Parent/child session index (`session.children()`), child session id on the agent tool's final output — **core done** (`children()`, `parentInfo()`, spec 05 §13, ADR-0037); the child id on the agent tool's output is example/subagent work |
+| R1 | **Done** (ADR-0035, spec 20 §3: `subagents({ approvals: 'park' })`, `subagentChild()`, `reconcileSubagentWaits()` / `selfAgent` for crash recovery): nested approvals across processes: the parent parks as an external wait while a child session waits for a person |
+| R9 | **Done** (`FileSystem.readBytes` / `writeBytes`, `FileMeta.binary`, `read_file` media outputs with stored `media-ref`, binary skill assets; spec 08 §12, spec 06 §2): binary files / images in `FileSystem` and file parts to the model |
+| R10 | Parent/child session index (`session.children()`), child session id on the agent tool's final output — **core done** (`children()`, `parentInfo()`, spec 05 §13, ADR-0037); the child id is in the wait payload and `data-subagent.run` (spec 20) |
 | — | `session.fork(beforeMessageId?)` in core (rewind conversation, branch) — **done** (spec 05 §14, ADR-0037) |
 
 ## Order
@@ -73,6 +73,5 @@ review.
 
 ## Open questions
 
-1. L2 R7: is a permission engine generic enough for core users (server products use `approval`
-   policies), or should it stay an example with only the shell-command parser shipped?
-2. L2 `eharness/web`: ship `turndown` as an optional peer, or take a converter function?
+1. ~~L2 R7: shipped as `eharness/permissions`.~~ Resolved.
+2. ~~L2 `eharness/web`: ship `turndown`?~~ Resolved: an injectable `toMarkdown` converter, no dependency.

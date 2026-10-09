@@ -6,6 +6,7 @@
  */
 export {
   pendingSubagentApprovals,
+  reconcileSubagentWaits,
   SUBAGENT_BACKGROUND_REPORT_CHARS,
   SUBAGENT_DENIED,
   SUBAGENT_NO_CLIENT,
@@ -16,6 +17,7 @@ export {
   type SubagentCatalog,
   type SubagentDefinition,
   type SubagentProgress,
+  type SubagentReconcileEntry,
   type SubagentRunData,
   type SubagentsOptions,
   subagentChild,

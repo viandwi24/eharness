@@ -2,8 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { HarnessSession } from 'eharness'
-import { createAgentTool, driveTurn } from '../src/agents/index.ts'
-import { createTaskManager, type TaskInject } from '../src/app/tasks.ts'
+import { driveTurn } from '../src/agents/index.ts'
 import type { AgentProgress, CoderMessage } from '../src/contracts.ts'
 import { makeAgentsEnv, nextPending, routerModel } from './helpers.ts'
 
@@ -129,7 +128,12 @@ describe('agent tool', () => {
   test('the concurrency cap queues extra children', async () => {
     let running = 0
     let peak = 0
-    const model = routerModel(() => {
+    const model = routerModel((r) => {
+      if (!r.isChild) {
+        return r.toolResults === 0
+          ? { toolCalls: [1, 2, 3, 4].map((i) => spawn('explore', `TASK-${i}`, `c${i}`)) }
+          : { text: 'main done' }
+      }
       running++
       peak = Math.max(peak, running)
       setTimeout(() => {
@@ -137,35 +141,16 @@ describe('agent tool', () => {
       }, 120)
       return { text: 'ok', delayMs: 30 }
     })
-    const { env } = await setupAgents(model)
-    // the cap belongs to the tool deps: build the tool through the real factory with maxConcurrent 2
-    const agentTool = createAgentTool(
-      {
-        definitions: () => env.definitions,
-        agentFor: env.agents.agentFor,
-        broker: env.broker,
-        permissions: env.permissions,
-        describe: env.describe,
-        maxConcurrent: 2,
-      },
-      0,
-    ) as unknown as (ctx: unknown) => {
-      execute: (input: unknown, opts: unknown) => AsyncGenerator<unknown>
-    }
-    const tool = agentTool({ session: { id: 'main-x' }, turn: { id: 't', addUsage: () => {} } })
-    const outputs = await Promise.all(
-      [1, 2, 3, 4].map(async (i) => {
-        let last: unknown
-        for await (const o of tool.execute(
-          { subagent_type: 'explore', description: 'd', prompt: `TASK-${i}` },
-          { toolCallId: `c${i}`, abortSignal: undefined },
-        )) {
-          last = o
-        }
-        return last
-      }),
-    )
-    expect(outputs).toEqual(['ok', 'ok', 'ok', 'ok'])
+    const env = await makeAgentsEnv({ files: { 'a.txt': 'x' }, model, maxConcurrentAgents: 2 })
+    const session = env.agents.main.session('main-cap') as never as HarnessSession<CoderMessage>
+    const result = await driveTurn(session.send('go'), {
+      session,
+      broker: env.broker,
+      permissions: env.permissions,
+      describe: env.describe,
+    })
+    expect(result.stop).toBe('complete')
+    expect(model.routes.filter((r) => r.isChild)).toHaveLength(4)
     expect(peak).toBeLessThanOrEqual(2)
   })
 
@@ -221,7 +206,7 @@ describe('agent tool', () => {
     expect(result.usage.outputTokens).toBe(112)
   })
 
-  test('unknown subagent type -> ERROR string listing the available ones', async () => {
+  test('unknown subagent type -> an invalid tool call the model can correct (the enum lists the types)', async () => {
     const model = routerModel((r) =>
       r.toolResults === 0 ? { toolCalls: [spawn('nope', 'x', 'cn')] } : { text: 'ok' },
     )
@@ -229,7 +214,7 @@ describe('agent tool', () => {
     const result = await drive('go').result
     expect(result.stop).toBe('complete')
     const text = model.routes.at(-1)?.conversation ?? ''
-    expect(text).toContain('ERROR: unknown subagent_type')
+    expect(text).toContain('Invalid input for tool agent')
     expect(text).toContain('nope')
     expect(text).toContain('explore')
   })
@@ -388,35 +373,6 @@ describe('agent tool', () => {
     expect(model.routes.filter((r) => r.firstUser.startsWith('L2-')).length).toBeGreaterThan(0)
   })
 
-  test('a failure inside the child becomes an ERROR string, the slot is released', async () => {
-    const { env } = await setupAgents(routerModel(() => ({ text: 'x' })))
-    const failing = {
-      definitions: () => env.definitions,
-      agentFor: () => {
-        throw new Error('boom')
-      },
-      broker: env.broker,
-      permissions: env.permissions,
-      describe: env.describe,
-      maxConcurrent: 1,
-    }
-    const make = createAgentTool(failing as never, 0) as unknown as (ctx: unknown) => {
-      execute: (input: unknown, opts: unknown) => AsyncGenerator<unknown>
-    }
-    const tool = make({ session: { id: 'main-x' }, turn: { id: 't', addUsage: () => {} } })
-    for (const id of ['a', 'b']) {
-      // twice with a cap of 1: a leaked slot would hang the second call
-      let last: unknown
-      for await (const o of tool.execute(
-        { subagent_type: 'explore', description: 'd', prompt: 'p' },
-        { toolCallId: id, abortSignal: undefined },
-      )) {
-        last = o
-      }
-      expect(last).toBe('ERROR: subagent failed: boom')
-    }
-  })
-
   test('explore runs its bash read-only even when the session is in bypassPermissions', async () => {
     const model = routerModel((r) => {
       if (!r.isChild) {
@@ -442,113 +398,5 @@ describe('agent tool', () => {
     })
     expect(result.stop).toBe('complete')
     expect(await exists(join(env.root, 'evil.txt'))).toBe(false)
-  })
-})
-
-describe('background agents', () => {
-  async function backgroundTool(model: ReturnType<typeof routerModel>) {
-    const { env } = await setupAgents(model)
-    const tasks = createTaskManager()
-    const events: Array<{ session: string; text: string; options: unknown }> = []
-    const fakeRun = { turnId: 'wake' } as never
-    const woken: unknown[] = []
-    const inject: TaskInject = async (session, event, options) => {
-      events.push({ session, text: event.text, options })
-      return { run: fakeRun }
-    }
-    const make = createAgentTool(
-      {
-        definitions: () => env.definitions,
-        agentFor: env.agents.agentFor,
-        broker: env.broker,
-        permissions: env.permissions,
-        describe: env.describe,
-        tasks,
-        inject,
-        onWake: (run) => woken.push(run),
-      },
-      0,
-    ) as unknown as (ctx: unknown) => {
-      inputSchema: { safeParse(v: unknown): { success: boolean } }
-      execute: (input: unknown, opts: unknown) => AsyncGenerator<unknown>
-    }
-    const tool = make({ session: { id: 'main-x' }, turn: { id: 't', addUsage: () => {} } })
-    const run = async (input: Record<string, unknown>): Promise<unknown[]> => {
-      const out: unknown[] = []
-      for await (const o of tool.execute(
-        { subagent_type: 'explore', description: 'look around', prompt: 'TASK', ...input },
-        { toolCallId: 'bg1', abortSignal: undefined },
-      )) {
-        out.push(o)
-      }
-      return out
-    }
-    return { tool, run, tasks, events, woken }
-  }
-
-  const until = async (check: () => boolean): Promise<void> => {
-    const start = Date.now()
-    while (!check()) {
-      if (Date.now() - start > 5000) throw new Error('timed out')
-      await new Promise((r) => setTimeout(r, 10))
-    }
-  }
-
-  test('returns at once, then injects the report into the parent and wakes it', async () => {
-    const model = routerModel(() => ({ text: 'BACKGROUND REPORT', delayMs: 40 }))
-    const { run, tasks, events, woken, tool } = await backgroundTool(model)
-    expect(
-      tool.inputSchema.safeParse({
-        subagent_type: 'x',
-        description: 'd',
-        prompt: 'p',
-        run_in_background: true,
-      }).success,
-    ).toBe(true)
-    const started = Date.now()
-    const out = await run({ run_in_background: true })
-    expect(out).toEqual([
-      'Started background agent agent-1 (explore): look around. You will be notified when it finishes.',
-    ])
-    expect(Date.now() - started).toBeLessThan(200)
-    expect(tasks.get('agent-1')).toMatchObject({ kind: 'agent', status: 'running' })
-    await until(() => events.length > 0)
-    expect(events[0]?.session).toBe('main-x')
-    expect(events[0]?.text).toContain('Background agent agent-1 (explore: look around) finished.')
-    expect(events[0]?.text).toContain('BACKGROUND REPORT')
-    expect(events[0]?.options).toEqual({ deliver: 'next-step', wake: true })
-    expect(tasks.get('agent-1')).toMatchObject({ status: 'completed', tail: 'BACKGROUND REPORT' })
-    expect(woken).toHaveLength(1)
-  })
-
-  test('stopTask aborts the child and sends no event', async () => {
-    const model = routerModel(() => ({ text: 'never finished '.repeat(20), delayMs: 400 }))
-    const { run, tasks, events } = await backgroundTool(model)
-    await run({ run_in_background: true })
-    await until(() => model.routes.length > 0)
-    await tasks.stopTask('agent-1')
-    expect(tasks.get('agent-1')?.status).toBe('stopped')
-    await new Promise((r) => setTimeout(r, 600))
-    expect(events).toEqual([])
-    expect(tasks.get('agent-1')?.status).toBe('stopped')
-  })
-
-  test('without tasks/inject the field does not exist and the child runs in the foreground', async () => {
-    const model = routerModel(() => ({ text: 'FG' }))
-    const { env } = await setupAgents(model)
-    const make = createAgentTool(
-      {
-        definitions: () => env.definitions,
-        agentFor: env.agents.agentFor,
-        broker: env.broker,
-        permissions: env.permissions,
-        describe: env.describe,
-      },
-      0,
-    ) as unknown as (ctx: unknown) => {
-      inputSchema: { shape: Record<string, unknown> }
-    }
-    const tool = make({ session: { id: 'm' }, turn: { id: 't', addUsage: () => {} } })
-    expect(Object.keys(tool.inputSchema.shape)).not.toContain('run_in_background')
   })
 })

@@ -11,6 +11,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   defaultCountTokens,
   FILE_TOKENS,
+  mediaRefTokens,
   messageTokens,
   modelMessageTokens,
   resolveWindow,
@@ -181,5 +182,37 @@ describe('window and limits', () => {
       summarizeAt: 750,
       hardLimit: 820,
     })
+  })
+})
+
+describe('media-ref outputs (stored filesystem media)', () => {
+  const ref = (mediaType: string, bytes: number) => ({
+    type: 'media-ref',
+    path: '/a',
+    version: 'v1',
+    mediaType,
+    bytes,
+    text: 'Image /a (x)',
+  })
+  const message = (output: unknown): ModelMessage => ({
+    role: 'tool',
+    content: [{ type: 'tool-result', toolCallId: 'c', toolName: 'read_file', output }] as never,
+  })
+
+  test('counted like the wire: text plus a fixed image cost, not the JSON', () => {
+    const n = modelMessageTokens(message({ type: 'json', value: ref('image/png', 900_000) }), count)
+    expect(n).toBe(4 + count('read_file') + count('Image /a (x)') + FILE_TOKENS)
+  })
+
+  test('PDFs scale with bytes (50 000 per page, 1..100 pages)', () => {
+    expect(mediaRefTokens('application/pdf', 10)).toBe(FILE_TOKENS)
+    expect(mediaRefTokens('application/pdf', 120_000)).toBe(3 * FILE_TOKENS)
+    expect(mediaRefTokens('application/pdf', 1e12)).toBe(100 * FILE_TOKENS)
+    expect(mediaRefTokens('image/png', 1e9)).toBe(FILE_TOKENS)
+  })
+
+  test('other JSON outputs are still counted as JSON', () => {
+    const n = modelMessageTokens(message({ type: 'json', value: { type: 'x', text: 'y' } }), count)
+    expect(n).toBe(4 + count('read_file') + count('{"type":"x","text":"y"}'))
   })
 })

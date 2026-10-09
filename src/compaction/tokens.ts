@@ -32,6 +32,39 @@ const DEFAULT_RESERVE_SHARE = 0.08
 /** Fixed estimate of one file / image part (real costs depend on the provider). */
 export const FILE_TOKENS = 1_500
 
+/** Bytes per estimated PDF page (see {@link mediaRefTokens}). */
+const PDF_BYTES_PER_PAGE = 50_000
+/** Upper bound of the estimated PDF pages. */
+const PDF_MAX_PAGES = 100
+
+/**
+ * Estimate of the media a `media-ref` tool output stands for (spec 06 §2): `FILE_TOKENS` for an
+ * image, `FILE_TOKENS` per started 50 000 bytes (1 to 100 pages) for a PDF, `FILE_TOKENS` for any
+ * other media type. Independent of the base64 length of the bytes.
+ */
+export function mediaRefTokens(mediaType: string, bytes: number): number {
+  if (mediaType === 'application/pdf' && Number.isFinite(bytes) && bytes > 0) {
+    return FILE_TOKENS * Math.min(PDF_MAX_PAGES, Math.max(1, Math.ceil(bytes / PDF_BYTES_PER_PAGE)))
+  }
+  return FILE_TOKENS
+}
+
+/**
+ * Structural check for the stored output `eharness/filesystem` `read_file` returns for an image or
+ * PDF (`{ type: 'media-ref', path, version, mediaType, bytes, text }`). Core cannot import the
+ * subpath, so the shape is detected here.
+ */
+export function asMediaRef(
+  value: unknown,
+): { mediaType: string; bytes: number; text: string } | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const v = value as { type?: unknown; mediaType?: unknown; bytes?: unknown; text?: unknown }
+  if (v.type !== 'media-ref' || typeof v.mediaType !== 'string' || typeof v.text !== 'string') {
+    return undefined
+  }
+  return { mediaType: v.mediaType, bytes: typeof v.bytes === 'number' ? v.bytes : 0, text: v.text }
+}
+
 /** Fixed per-message overhead (role, separators). */
 const MESSAGE_OVERHEAD = 4
 
@@ -68,7 +101,12 @@ function outputTokens(output: unknown, count: CountTokens): number {
     case 'text':
     case 'error-text':
       return count(typeof o.value === 'string' ? o.value : json(o.value))
-    case 'json':
+    case 'json': {
+      // a stored `media-ref`: the wire carries its text and the media (toModelOutput), not the JSON
+      const ref = asMediaRef(o.value)
+      if (ref !== undefined) return count(ref.text) + mediaRefTokens(ref.mediaType, ref.bytes)
+      return count(json(o.value))
+    }
     case 'error-json':
       return count(json(o.value))
     case 'execution-denied':

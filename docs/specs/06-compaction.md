@@ -69,7 +69,12 @@ Guard settings: `config.guard?: { maxContextRatio?: number /* 0.9 */; reserveTok
   size = instructions + tool definitions + Σ message tokens.
 - Estimate of model messages: `countTokens` of every text / reasoning part, tool name + JSON input
   of tool calls, tool name + output of tool results; a fixed 1_500 per file / image part; 4 per
-  message. Tool definitions: name + description + JSON schema of the input + 10. Instructions:
+  message.
+  A stored `media-ref` tool output (`{ type: 'media-ref', path, version, mediaType, bytes, text }`,
+  the `read_file` result for an image or PDF, spec 08 §12; detected structurally, core cannot import
+  the subpath) is counted like the wire it stands for: `countTokens(text)` + 1_500 for an image or
+  any other media type, + 1_500 per started 50 000 bytes for a PDF (1 to 100 pages), never its JSON
+  or base64 size (`mediaRefTokens()`). Tool definitions: name + description + JSON schema of the input + 10. Instructions:
   block 1 + block 2 (+ the turn reminder inside a turn).
 - Calibration: after each step the core compares provider-reported `usage.inputTokens` with the
   estimate of the same request (instructions, tools, reminders, messages) and keeps a factor
@@ -112,6 +117,9 @@ request it built; `session.stats()` (idle) measures the next request, in which e
 turn except the newest `keepTurns` is pruned. The saving of a message (estimate of its projection
 minus the estimate of its pruned projection) is computed once per stored message and cached for
 the session; `metadata.eharness.tokens` stays the unpruned estimate.
+Prune sizes media by a fixed amount, not by its data: each non-text item of a `content` output, and
+the media of a `media-ref`, counts `1_500 × 4` characters (`PRUNE_MEDIA_CHARS`), so `stats.chars`
+is not inflated by base64 and the `minChars` decision is stable.
 
 ## 3. Marker payload
 

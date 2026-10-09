@@ -4,7 +4,7 @@
  */
 import { getToolName, isToolUIPart } from 'ai'
 import { diffLines } from 'diff'
-import { classifyToolResult } from 'eharness/filesystem'
+import { classifyToolResult, isFileMediaRef } from 'eharness/filesystem'
 import { editsOf } from '../app/edits.ts'
 import type { AgentProgress, CoderMessage } from '../contracts.ts'
 import { TOOL } from '../contracts.ts'
@@ -187,6 +187,8 @@ function baseStatus(view: ToolView): ToolStatus {
 function outputText(view: ToolView): string {
   if (typeof view.output === 'string') return view.output
   if (view.output === undefined) return ''
+  // `read_file` of an image or PDF stores a small reference; its `text` is what the model reads
+  if (isFileMediaRef(view.output)) return view.output.text
   return JSON.stringify(view.output)
 }
 
@@ -339,7 +341,12 @@ export function describeTool(view: ToolView, ctx: ToolContext = {}): ToolDescrip
       if (offset !== undefined && limit !== undefined)
         desc.target += `, lines ${offset}–${offset + limit - 1}`
       else if (offset !== undefined) desc.target += `, from line ${offset}`
-      if (ok) desc.summary = `Read ${plural(text.replace(/\s+$/, '').split('\n').length, 'line')}`
+      if (ok) {
+        // an image: `Image <path> (<w>x<h>, <bytes> bytes, <mediaType>)`
+        desc.summary = isFileMediaRef(view.output)
+          ? view.output.text
+          : `Read ${plural(text.replace(/\s+$/, '').split('\n').length, 'line')}`
+      }
       break
     }
     case TOOL.list: {

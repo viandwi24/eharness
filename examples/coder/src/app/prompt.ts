@@ -20,7 +20,7 @@ export const STATIC_INSTRUCTIONS: string = `You are a coding agent working in th
 
 # Working with the code
 - Search before you read: use \`grep\` (content) and \`glob\` (file names) to find what matters, then read it.
-- Read files with \`offset\` and \`limit\` windows instead of whole files when they are large. Output that was too long is stored under \`/.coder/tool-outputs/\`; page through it with \`read_file\`.
+- Read files with \`offset\` and \`limit\` windows instead of whole files when they are large. Output that was too long is stored under \`/.eharness/tool-outputs/\`; page through it with \`read_file\`.
 - Always read a file before you edit or overwrite it. If an edit reports a stale file or a non-unique match, read again and retry with more context.
 - Prefer \`edit_file\` with a unique \`old_string\` over rewriting a file with \`write_file\`. For several changes in one file, make one \`edit_file\` call with \`edits\` (applied in order, all or nothing) instead of several calls. Use \`write_file\` for new files or total rewrites only.
 - Never create files unless they are needed for the task. Prefer editing existing ones. Do not create documentation files unless asked.
@@ -116,11 +116,22 @@ async function gitSummary(root: string): Promise<string> {
   return `Git branch: ${branch}\nGit status (short):\n${shown.join('\n')}${more}`
 }
 
-/** The `refresh: 'turn'` reminder text: date, platform, git state, permission mode, extra dirs. */
+/**
+ * Whether `bash` is sandboxed. It is told in the turn reminder (the shell plugin's tool
+ * description does not carry it), so a live `sandbox.enabled` toggle reaches the model at once.
+ */
+export function sandboxNote(state: { enabled: boolean; kind: string; network: boolean }): string {
+  return state.enabled
+    ? `Sandbox: ON (${state.kind}). Commands can write only inside the project, the extra directories and temp dirs; network access is ${state.network ? 'allowed' : 'blocked'}. "Operation not permitted" / "Read-only file system" errors usually come from the sandbox: do not retry them, tell the user.`
+    : 'Sandbox: off. Commands run with the full privileges of the user.'
+}
+
+/** The `refresh: 'turn'` reminder text: date, platform, git state, permission mode, sandbox, extra dirs. */
 export function turnReminder(opts: {
   root: string
   mode: () => PermissionMode
   extraDirs: () => string[]
+  sandbox?: () => { enabled: boolean; kind: string; network: boolean }
 }): (ctx: Parameters<InstructionFn>[0]) => Promise<string> {
   return async () => {
     const lines = [
@@ -128,6 +139,7 @@ export function turnReminder(opts: {
       `Platform: ${platform()} ${release()}`,
       await gitSummary(opts.root),
       `Permission mode: ${MODE_TEXT[opts.mode()]}`,
+      ...(opts.sandbox ? [sandboxNote(opts.sandbox())] : []),
     ]
     const dirs = opts.extraDirs()
     if (dirs.length > 0) lines.push(`Extra directories mounted: ${dirs.join(', ')}`)

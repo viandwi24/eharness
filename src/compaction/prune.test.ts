@@ -5,6 +5,7 @@ import { TOOL_OUTPUT_PRUNED } from '../messages/texts.ts'
 import {
   DEFAULT_PRUNE_KEEP_TURNS,
   DEFAULT_PRUNE_MIN_CHARS,
+  PRUNE_MEDIA_CHARS,
   prunableChars,
   pruneMessages,
   pruneTurns,
@@ -88,6 +89,41 @@ describe('pruneMessages', () => {
         ],
       }),
     ).toBe(5)
+  })
+
+  test('media is measured by a fixed size, not by its base64 length', () => {
+    const huge = 'A'.repeat(1_000_000)
+    expect(
+      prunableChars({
+        type: 'content',
+        value: [
+          { type: 'text', text: 'abc' },
+          { type: 'image-data', data: huge, mediaType: 'image/png' },
+        ],
+      }),
+    ).toBe(3 + PRUNE_MEDIA_CHARS)
+    expect(
+      prunableChars({
+        type: 'json',
+        value: {
+          type: 'media-ref',
+          path: '/a',
+          version: 'v',
+          mediaType: 'image/png',
+          bytes: 9,
+          text: 'ab',
+        },
+      }),
+    ).toBe(2 + PRUNE_MEDIA_CHARS)
+    const pruned = pruneMessages(
+      turn('1', {
+        type: 'content',
+        value: [{ type: 'image-data', data: huge, mediaType: 'image/png' }],
+      } as ToolResultPart['output']),
+      defaults,
+    )
+    expect(pruned.stats.outputs).toBe(1)
+    expect(pruned.stats.chars).toBeLessThan(PRUNE_MEDIA_CHARS)
   })
 
   test('errors and execution-denied are never pruned', () => {

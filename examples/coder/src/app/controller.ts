@@ -13,6 +13,8 @@ import {
   type TurnResult,
   version,
 } from 'eharness'
+import { nodeCheckpointStore } from 'eharness/filesystem/node'
+import { capOutput, detectOsSandbox, localSandbox } from 'eharness/shell'
 import { driveTurn, loadAgentDefinitions } from '../agents/index.ts'
 import {
   type AgentDefinition,
@@ -43,10 +45,9 @@ import {
 } from '../contracts.ts'
 import { createLspManager } from '../lsp/index.ts'
 import { createBroker, createPermissionEngine, describeApproval } from '../permissions/index.ts'
-import { capOutput, createLocalSandbox, detectOsSandbox } from '../shell/index.ts'
 import { createWorkspace } from '../workspace/index.ts'
-import { type Agents, createAgents } from './agent.ts'
-import { checkpointPlugin, createCheckpointStore, createCheckpoints } from './checkpoints.ts'
+import { type Agents, type CreateAgentsDeps, createAgents } from './agent.ts'
+import { createCheckpoints } from './checkpoints.ts'
 import { expandBody, expandSkill, type LoadedCommand, loadCommands } from './commands.ts'
 import { compactWithFocus, createCompactFocus } from './compact-focus.ts'
 import { mergeSettings, readSettingsLayers } from './config.ts'
@@ -67,8 +68,8 @@ import { createStorage, latestSessionId, listSessions, newSessionId } from './se
 import { createSettingsManager } from './settings.ts'
 import { createSideQuestion } from './side-question.ts'
 import { createStatusLine } from './status-line.ts'
-import { createTaskManager, type TaskInject } from './tasks.ts'
-import { createSearchFn, type SearchFn, type WebFetchDeps } from './web-tools.ts'
+import { createTaskHub } from './tasks.ts'
+import { createSearchFn, type SearchFn } from './web-search.ts'
 
 /** Options of {@link createController}. */
 export interface CreateControllerOptions {
@@ -93,7 +94,7 @@ export interface CreateControllerOptions {
   /** Web search of the `web_search` tool (tests). Default: the provider's search; none for scripted models. */
   search?: SearchFn
   /** Overrides of `web_fetch` internals (tests): `fetch`, host resolution, timeout. */
-  webFetch?: Partial<Pick<WebFetchDeps, 'fetch' | 'resolve' | 'timeoutMs'>>
+  webFetch?: CreateAgentsDeps['webFetch']
   /** Start on this session id (wins over `config.resume` and `config.continueLast`). */
   sessionId?: string
 }
@@ -133,7 +134,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   const workspace = await createWorkspace(config)
   const osProblem = probeOsSandbox(startSettings.sandbox?.enabled === true)
   if (osProblem !== undefined) warn(osProblem)
-  const sandbox = createLocalSandbox(config.root, {
+  const sandbox = localSandbox(config.root, {
     os: osOptions(startSettings.sandbox, osProblem === undefined),
   })
   const permissions = createPermissionEngine({ config, mounts: () => workspace.mounts() })
@@ -183,7 +184,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     newSessionId()
   const currentModel = (): LanguageModel => opts.model ?? resolveModel(modelState.model)
   let api: CoderController
-  /** The session handle must be reopened (output style / sandbox note changed): see `refreshSession`. */
+  /** The session handle must be reopened (the output style changed): see `refreshSession`. */
   let sessionStale = false
 
   // ─── settings, output styles ───
@@ -221,9 +222,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
           const wanted = settingsMgr.setting('sandbox')
           const problem = probeOsSandbox(wanted?.enabled === true)
           if (problem !== undefined) warn(problem)
-          sandbox.setOsSandbox(osOptions(wanted, problem === undefined))
-          sessionStale = true // the bash tool description says whether it is sandboxed
-          await refreshSession()
+          sandbox.setOs(osOptions(wanted, problem === undefined)) // told to the model in the turn reminder
           break
         }
         case 'outputStyle':
@@ -278,15 +277,12 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     storage,
     sessionId: () => sessionId,
   })
-  const checkpointStore = createCheckpointStore({
-    projectDataDir: config.projectDataDir,
-    fs: workspace.fs,
-  })
+  const checkpointStore = nodeCheckpointStore(join(config.projectDataDir, 'checkpoints'))
   const checkpoints = createCheckpoints({
     store: checkpointStore,
     storage,
     fs: workspace.fs,
-    sessionId: () => sessionId,
+    session: () => session(),
   })
   const focus = createCompactFocus()
   const sideQuestion = createSideQuestion({
@@ -297,28 +293,17 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   const recap = createRecap({ storage, sessionId: () => sessionId, model: currentModel })
 
   // ─── background tasks ───
-  const taskManager = createTaskManager()
-  /**
-   * Delivers a task event into the session. A producer may run inside a subagent session
-   * (`<root>:agent:<call>`): the event always goes to the ROOT session. Only the current session
-   * is woken; an event for a session we left waits for its next turn.
-   */
-  const inject: TaskInject = async (id, data, options) => {
-    try {
-      const root = id.split(':agent:')[0] ?? id
-      const live = (await agentsReady).main.session(root)
-      const out = await live.inject(
-        'eh.event',
-        data,
-        root === sessionId ? options : { deliver: 'next-turn' },
-      )
-      const run = (out as { run?: HarnessRun<CoderMessage> } | undefined)?.run
-      return run !== undefined ? { run } : undefined
-    } catch {
-      return undefined // the session was closed or the event was rejected
-    }
-  }
+  const taskHub = createTaskHub({
+    session: () => sessionId,
+    storage,
+    messages: async () => (await session()).messages(),
+    stopAgent: async (childId, agent) => {
+      const def = definitions.find((d) => d.name === agent)
+      if (def !== undefined) (await agentsReady).agentFor(def, 1).session(childId).abort()
+    },
+  })
   let waking: Promise<unknown> | undefined
+  /** A run nobody started through `run()` / `steer()` (a background event woke the session). */
   const onWake = (run: HarnessRun<CoderMessage>): void => {
     // driven exactly like a prompt: approvals through the broker, the stream through the hooks
     // of the most recent run()/steer() (the UI's), or drained when there were none
@@ -331,8 +316,36 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       .catch(() => undefined)
       .finally(() => {
         if (waking === done) waking = undefined
+        void taskHub.refresh().catch(() => {})
       })
     waking = done
+  }
+  /**
+   * Background tasks (shell exits, monitor matches, subagent reports) inject an `eh.event` with
+   * `wake: true` through `ctx.session.inject`: an idle session starts a no-input `wake` turn that
+   * nobody holds. Watch the session's events and drive that turn like a prompt.
+   */
+  const watched = new Set<string>()
+  const watchSession = (s: HarnessSession<CoderMessage>): void => {
+    if (watched.has(s.id)) return
+    watched.add(s.id)
+    void (async () => {
+      try {
+        const reader = s.events().getReader()
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          if (value.type !== 'turn-start' || value.kind !== 'wake') continue
+          if (active !== undefined || waking !== undefined) continue
+          const run = s.attach() as HarnessRun<CoderMessage> | undefined
+          if (run !== undefined && run.turnId === value.turnId) onWake(run)
+        }
+      } catch {
+        // the session was closed
+      } finally {
+        watched.delete(s.id)
+      }
+    })()
   }
 
   // ─── LSP ───
@@ -357,8 +370,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     ...(opts.model ? { model: opts.model } : {}),
     ...(catalog ? { models: catalog } : {}),
     contextWindowExplicit: opts.config.contextWindowExplicit === true,
+    checkpoints: checkpointStore,
     extraPlugins: () => [
-      checkpointPlugin(checkpointStore),
       ...(hookRunner
         ? [
             hooksPlugin({
@@ -372,7 +385,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     mainPlugins: [focus.plugin],
     userMemory: () => loadUserMemory(config.userDir),
     outputStyle: () => outputStyles.instruction(settingsMgr.setting('outputStyle')),
-    background: { tasks: taskManager, inject, onWake },
+    taskHub,
     lsp,
     ...(search ? { search } : {}),
     ...(opts.webFetch ? { webFetch: opts.webFetch } : {}),
@@ -486,6 +499,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       turnMs += Date.now() - began
       if (controller === abort) controller = undefined
       if (active === turn) active = undefined
+      await taskHub.refresh().catch(() => {}) // a background subagent may have been started
       await refreshSession()
     }
   }
@@ -514,18 +528,23 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     await (await agentsReady).main.closeSession(id).catch(() => {})
   }
 
-  const session = async (): Promise<HarnessSession<CoderMessage>> =>
-    (await agentsReady).main.session(sessionId) as unknown as HarnessSession<CoderMessage>
+  const session = async (): Promise<HarnessSession<CoderMessage>> => {
+    const s = (await agentsReady).main.session(sessionId) as unknown as HarnessSession<CoderMessage>
+    watchSession(s)
+    return s
+  }
 
   /** Switch the controller to another stored session and close the handle of the one it leaves. */
   const switchTo = async (id: string): Promise<void> => {
     const old = sessionId
     sessionId = id
     if (old !== id) await closeSessionHandle(old)
+    taskHub.changed()
+    void taskHub.refresh().catch(() => {})
   }
 
   const sandboxInfo = (): { enabled: boolean; kind: string; network: boolean } => {
-    const state = sandbox.sandboxState()
+    const state = sandbox.state()
     return { enabled: state.enabled, kind: state.kind, network: state.network }
   }
 
@@ -887,12 +906,9 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     async branch(name?: string): Promise<string> {
       const from = sessionId
-      const to = await sessionTools.branch(name)
-      await checkpointStore.copy(
-        from,
-        to,
-        (await checkpointStore.list(from)).map((cp) => cp.userMessageId),
-      )
+      const to = (await (await session()).fork()).id
+      await sessionTools.nameBranch(from, to, name)
+      await checkpoints.copy(from, to)
       await switchTo(to)
       return to
     },
@@ -922,12 +938,12 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     memoryFiles: () => listMemoryFiles({ root: config.root, userDir: config.userDir }),
 
     // ─── background tasks ───
-    tasks: (): BackgroundTask[] => taskManager.tasks(),
-    stopTask: (id: string): Promise<void> => taskManager.stopTask(id),
+    tasks: (): BackgroundTask[] => taskHub.tasks(),
+    stopTask: (id: string): Promise<void> => taskHub.stopTask(id),
     async taskOutput(id: string): Promise<string> {
-      return taskManager.taskOutput(id)
+      return taskHub.taskOutput(id)
     },
-    onTasks: (listener) => taskManager.onTasks(listener),
+    onTasks: (listener) => taskHub.onTasks(listener),
 
     // ─── settings and diagnostics ───
     settings: (): Promise<SettingView[]> => settingsMgr.settings(),
@@ -980,7 +996,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
 
     async close(): Promise<void> {
       controller?.abort()
-      await taskManager.stopAll().catch(() => {})
+      taskHub.close()
       await lsp.close().catch(() => {})
       await (await agentsReady).closeAll()
       await saving

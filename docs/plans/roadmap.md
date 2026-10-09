@@ -17,19 +17,19 @@ before implementation.
 
 | Item | Notes |
 |---|---|
-| **Sandbox plugin** (`eharness/sandbox`) | Provides `fs` + `shell` services (conflicts with `filesystem` by design), shell tools, skill materialization via `skill.load` + `locate()`, driver contract (local, Docker, Vercel Sandbox via `@ai-sdk/sandbox-vercel`, AI SDK `experimental_sandbox`). |
+| ~~Sandbox plugin~~ | Done in P31 as `eharness/shell` (`shell()` + `localSandbox()`, Node-only; spec 19, ADR-0036). A Docker / remote driver implements the `Sandbox` interface; skill materialization via `locate()` stays open. |
 | **Loop guard plugin** | Deterministic detection is in core since 0.3 (progress guard, spec 05 §3.2). Remaining: step checkpoints, optional cheap-model auditor. |
-| **Subagents plugin** | Ready-made `subagent()` tool: child session with `SessionOptions.parent`, streamed progress via preliminary results, summary return, `addUsage` (tokens + `costUsd`), depth limit. The core pieces exist since 0.1 (guide: `docs/guides/subagents.md`). |
+| ~~Subagents plugin~~ | Done in P31 (`eharness/subagent`, spec 20, ADR-0035): inline / park / policy approvals, background children, usage and progress. |
 | ~~Todos plugin~~ | Done in 0.3.0 (`eharness/todos`, spec 13). |
 | **Code mode / cache-preserving tool discovery** | Support `@ai-sdk/code-mode` with `toolDiscovery: 'conversation'`. |
 | **AI SDK `Agent` interface adapter** | `agent.asAgent(session)` implementing `agent-v1` so `createAgentUIStream` and `@ai-sdk/tui` work directly. |
 | **HarnessAgent adapter** | Publish `@ai-sdk/harness`-compatible adapter so an eharness agent can run behind `HarnessAgent`. |
-| **Binary files** in `FileSystem` | `readBytes` / `writeBytes`, media types, file parts to the model. |
+| ~~Binary files~~ in `FileSystem` | Done in P31 (`readBytes` / `writeBytes`, `FileMeta.binary`, media outputs; spec 08 §12). |
 | **Cross-process resumable streams** | Turn buffer adapter (Redis etc.) for `attach()` across instances. |
 | **Durable execution** | Suspend/resume a turn across processes (continuation state without secrets), compatible with Workflow DevKit. **Partly done in 0.5.0:** a turn can park at a tool boundary (`externalTool()`, `resolveWait()`, durable timeouts; spec 11 §4.2, ADR-0027) and resume in any instance. Remaining: replaying a turn's earlier steps after a crash and a Workflow DevKit adapter. |
 | ~~Memory plugin~~ | Done in 0.4.0 (`eharness/memory`, spec 14; provider-defined tools are app-supplied via the `tool` option). |
 | **Package split** | Only if an extension needs its own release cadence (ADR-0007). |
-| **Fork** | `session.fork(atMessageId)` → new session id with a copied prefix (needs adapter support or a copy loop). |
+| ~~Fork~~ | Done in P31 (`session.fork()`, `session.children()`; spec 05 §13–14, ADR-0037). |
 | ~~Prune stage~~ | Done in 0.4.0 (`compaction.prune`, spec 06 §5.0, ADR-0019). |
 | ~~Output guardrails: schema~~ | Done in 0.4.0 (structured final output: `send(…, { output: { schema } })`, `'output-invalid'`; spec 05 §3.3, ADR-0023). |
 | **Output guardrails: policy checks** | Policy checks of the final answer (content rules, a reviewer model) beyond schema validation. |
@@ -38,7 +38,7 @@ before implementation.
 | ~~Cross-process queue / wake~~ | Done in 0.4.0 (durable `InboxAdapter`: queue, steer, wake, collect, abort across instances; spec 05 §12, ADR-0024). |
 | **Continuation replay on resume** | `attach()` of a `respond()` continuation replays the stored prefix so `useChat` resume needs no re-fetch. |
 | **Partial approval answers** | `respond()` with a subset of pending approvals. |
-| **Rule-based grants** | `remember` scoped to an input pattern (e.g. `bash: git *`) instead of a whole tool. |
+| ~~Rule-based grants~~ | Done in P31 via `eharness/permissions` (`Tool(spec)` rules such as `Bash(git *)`, spec 18); the core `remember` stays per tool. |
 | ~~Approval classifier guard~~ | Done in 0.5.0 (`eharness/guard`, spec 15, ADR-0030). |
 | **Goal plugin** | Outer loop: re-prompt after a turn until a goal is met (judge model or `update_goal` tool), paused after empty turns and by budgets. |
 | ~~Compaction thrash detection~~ | Done in 0.4.0 (`compaction.thrash`, stop `'context-thrash'`). |
@@ -92,7 +92,7 @@ Handoff to the requester: the 0.4.0 results notes (kept outside the repository).
 ## Found during the 0.4.0 audit (not scheduled)
 
 The audit also re-confirmed three open rows above as the next most requested: **Subagents
-plugin**, **AI SDK `Agent` interface adapter** (`asAgent()`) and **HarnessAgent adapter**.
+plugin** (done in P31), **AI SDK `Agent` interface adapter** (`asAgent()`) and **HarnessAgent adapter**.
 
 | Item | Notes |
 |---|---|

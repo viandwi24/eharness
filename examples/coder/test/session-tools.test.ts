@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import type { UIMessage } from 'ai'
 import {
   assistantText,
-  copySession,
   copyToClipboard,
   createSessionTools,
   exportText,
@@ -82,69 +81,17 @@ describe('session tools', () => {
     expect(assistantText([], 1)).toBeUndefined()
   })
 
-  test('branch copies ALL messages and state into a new, named session; the old one is untouched', async () => {
+  test('nameBranch: the given name, else "<name> (branch)", nothing for an unnamed session', async () => {
     const { config } = await setup()
     const storage = createStorage(config)
-    await storage.messages.save('old', conversation)
-    await storage.state.set('old', {
-      v: 1,
-      rev: 3,
-      core: {
-        usage: { inputTokens: 1, outputTokens: 2, turns: 2 },
-        activeTurn: {
-          turnId: 't',
-          kind: 'send',
-          messageId: 'm4',
-          owner: 'x',
-          startedAt: 1,
-          heartbeatAt: 1,
-        },
-      },
-      plugins: { todos: { list: [] } },
-    })
-    let current = 'old'
-    const tools = await createSessionTools({ config, storage, sessionId: () => current })
-    const id = await tools.branch('experiment')
-    expect(id).not.toBe('old')
-    expect((await storage.messages.load({ sessionId: id })).map((m) => m.id)).toEqual([
-      'm1',
-      'm2',
-      'm3',
-      'm4',
-    ])
-    const state = await storage.state.get(id)
-    expect(state?.core.usage?.turns).toBe(2)
-    expect(state?.core.activeTurn).toBeUndefined()
-    expect(state?.plugins).toEqual({ todos: { list: [] } })
-    expect(tools.names.nameOf(id)).toBe('experiment')
+    const tools = await createSessionTools({ config, storage, sessionId: () => 'old' })
+    await tools.nameBranch('old', 'b1')
+    expect(tools.names.nameOf('b1')).toBeUndefined()
+    await tools.nameBranch('old', 'b2', 'experiment')
+    expect(tools.names.nameOf('b2')).toBe('experiment')
     expect(tools.names.nameOf('old')).toBeUndefined()
-    expect((await storage.messages.load({ sessionId: 'old' })).length).toBe(4)
-
-    // branching a named session without a name derives one
-    current = id
-    expect(tools.sessionName()).toBe('experiment')
-    const again = await tools.branch()
-    expect(tools.names.nameOf(again)).toBe('experiment (branch)')
-  })
-
-  test('copySession keeps the compaction pointer only when its messages are copied', async () => {
-    const { config } = await setup()
-    const storage = createStorage(config)
-    await storage.messages.save('s', [user('a', '1'), user('b', '2'), user('c', '3')])
-    await storage.state.set('s', {
-      v: 1,
-      rev: 1,
-      core: { compaction: { markerId: 'c', resumeFromId: 'b' } },
-      plugins: {},
-    })
-    await copySession(storage, 's', 'all')
-    expect((await storage.state.get('all'))?.core.compaction?.markerId).toBe('c')
-    await copySession(storage, 's', 'early', { beforeId: 'c' })
-    expect((await storage.messages.load({ sessionId: 'early' })).map((m) => m.id)).toEqual([
-      'a',
-      'b',
-    ])
-    expect((await storage.state.get('early'))?.core.compaction).toBeUndefined()
+    await tools.nameBranch('b2', 'b3')
+    expect(tools.names.nameOf('b3')).toBe('experiment (branch)')
   })
 
   test('names persist in session-names.json, show in listSessions via withNames, empty removes', async () => {

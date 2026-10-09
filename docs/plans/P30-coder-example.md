@@ -1,6 +1,6 @@
 # P30 — Coding agent example (`examples/coder`)
 
-Status: review (implementation done, awaiting maintainer confirmation) · Owner: — · Branch: `main` (direct commits, see the board)
+Status: review (implementation done; migrated to the shipped P31 modules, awaiting maintainer confirmation) · Owner: — · Branch: `main` (direct commits, see the board)
 
 ## Goal
 
@@ -12,9 +12,11 @@ parallel). It is the first of the two benchmark applications for "eharness is fl
 second is a team-agent app, a later phase). Everything it needs that eharness lacks is recorded
 under [Requests to the library](#requests-to-the-library) instead of being hacked around silently.
 
-It lives in `examples/` and is never published. Pieces that prove themselves here (disk
-filesystem, shell, subagents, permission rules) move into library subpaths later, each with a
-spec and an ADR (a follow-up phase, not this one).
+It lives in `examples/` and is never published. Pieces that proved themselves here (disk
+filesystem, shell, subagents, permission rules, ask, web) moved into library subpaths in
+[P31](P31-library-from-coder.md); the example now consumes them
+([Migration to the shipped modules](#migration-to-the-shipped-modules)) and keeps only product and UI
+policy.
 
 ## Specs
 
@@ -231,10 +233,13 @@ examples/coder/
   README.md               # how to run, keys, settings, safety model, known limits
   src/
     main.tsx              # Commander program → interactive (Ink) or print mode; signals, trust prompt
-    contracts.ts          # shared types: config, controller, engine, broker, tool names, TOOL_ORDER
+    contracts.ts          # shared types: config, controller, engine, broker, tool names
     print.ts              # headless mode: text | json | stream-json
     app/
-      agent.ts            # builds the main HarnessAgent and subagent agents (cached per name:depth)
+      agent.ts            # composes the shipped plugins into the main agent and the subagent agents
+      checkpoints.ts      # /rewind and /branch policy over rewindFiles, checkpointsSince, session.fork
+      tasks.ts            # the /tasks list: shellTasks service + background subagents from stored state
+      web-search.ts       # turndown, DNS lookup, the provider-specific search function
       config.ts           # settings files + CLI flags + project trust → one resolved Config
       controller.ts       # CoderController: session, run, shell, resume, setModel, stats
       models.ts           # models.dev catalog: cache, refresh, offline
@@ -242,26 +247,18 @@ examples/coder/
       project-memory.ts   # AGENTS.md (and CLAUDE.md fallback) loading
       sessions.ts         # storage location, listing, newest session
     workspace/
-      disk-fs.ts          # FileSystem over a real directory, with the path guard
-      mount-fs.ts         # composite FileSystem: / = project, /@dirs/<n>/, /.coder/tool-outputs/
-      guard.ts            # realpath containment, ignore rules
+      index.ts            # nodeWorkspace() over the config (library: eharness/filesystem/node)
       dir-access.ts       # request_directory_access tool (always asks)
-    shell/
-      sandbox-local.ts    # Experimental_SandboxSession over child_process (own process group)
-      bash-tool.ts        # bash tool: timeout, output cap, live output, abort
     permissions/
-      bash-match.ts       # split into subcommands, strip wrappers, redirects, complex detection
-      readonly-commands.ts# read-only commands with per-command argument allow-lists
-      rules.ts            # parse + match Tool(spec) rules
-      engine.ts           # modes, evaluation order, "don't ask again" suggestions, rule edits
-      plugin.ts           # definePlugin: tool.approve, step.prepare, tool.after, exit_plan_mode, audit
+      engine.ts           # the library engine configured for the app: tool kinds, protected paths, rule scopes
+      audit.ts            # onDecision → audit.jsonl
       broker.ts           # in-process question queue for the UI (main agent and subagents, §6.4)
       describe.ts         # title, detail and suggested rule of a pending call
     agents/
       builtin.ts          # general-purpose, explore, plan
       load.ts             # .coder/agents/*.md, ~/.coder/agents/*.md, --agents JSON
-      agent-tool.ts       # the `agent` tool: child sessions, parallel, progress, usage
-      drive.ts            # answers tool-pending stops through the broker (main agent and children)
+      subagents.ts        # the `answer` callback of eharness/subagent (broker, "don't ask again")
+      drive.ts            # answers tool-pending stops of the main agent (approvals, questions)
     ui/
       App.tsx  run-interactive.tsx  driver.ts   # layout, entry, stream/session-event driver
       Transcript.tsx  MessageView.tsx  ToolCard.tsx  DiffView.tsx  tool-summary.ts
@@ -271,13 +268,13 @@ examples/coder/
       slash.ts            # slash command registry
       state.ts            # view model reducer over UI message chunks + session events
   test/                   # <name>.test.ts, plus helpers.ts and fake-controller.ts
-    disk-fs guard mount-fs dir-access workspace bash-tool sandbox bash-match
-    rules engine permissions-plugin broker describe drive agent-tool agents-load config
+    dir-access workspace engine permissions-plugin broker describe drive agent-tool tasks
+    checkpoints agents-load config
     models prompt project-memory sessions controller print.e2e ui-render(.tsx) ui-state
     ui-slash ui-editor ui-mentions ui-tool-summary
 ```
 
-Rule: `app/`, `workspace/`, `shell/`, `permissions/` and `agents/` never import Ink or React. The UI
+Rule: `app/`, `workspace/`, `permissions/` and `agents/` never import Ink or React. The UI
 and print mode are two consumers of the same `HarnessRun` streams and session events, so the
 whole agent is testable headless.
 
@@ -903,16 +900,16 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 
 | # | Request | Workaround in P30 |
 |---|---|---|
-| R1 | **Nested approvals across processes**: park the parent turn while a child session waits for an approval, resume both later from any instance | the `agent` tool awaits the child's approvals in process (§6.4) |
+| R1 | **Nested approvals across processes**: park the parent turn while a child session waits for an approval, resume both later from any instance | **Done in the library (P31): `subagents({ approvals: 'park' })` (ADR-0035).** The app uses `approvals: 'inline'` (profile b: one process), `answer` is the broker |
 | R2 | `edit_file` with several edits in one call (atomic, one read check) | **Done in the library (P31): `edit_file({ path, edits: [...] })`.** The app's approval diff, tool card and summary handle `edits[]` |
 | R3 | `glob` tool in `eharness/filesystem` (uses `list`, adapter fast path) | **Done in the library (P31): the `glob` tool.** The app's own tool was removed |
-| R4 | Node-only `eharness/filesystem/node` disk adapter with the containment rules of §5 (ADR: first Node-only module) | `examples/coder/src/workspace/disk-fs.ts` |
-| R5 | Pass `experimental_sandbox` through to `streamText` / tools; a shell plugin over `Experimental_SandboxSession` (roadmap "Sandbox plugin") | sandbox held in a closure |
-| R6 | `eharness/subagent` helper (child session, progress, usage, depth, cleanup) | `agents/agent-tool.ts` |
-| R7 | Rule-based grants (`Bash(git *)`) in core approvals (roadmap row) | rules in the app plugin |
+| R4 | Node-only `eharness/filesystem/node` disk adapter with the containment rules of §5 (ADR: first Node-only module) | **Done in the library (P31): `diskFs`, `mountFs`, `nodeWorkspace`.** `workspace/disk-fs.ts`, `guard.ts` and `mount-fs.ts` were removed; the tool-outputs mount is the library default `/.eharness/tool-outputs/` |
+| R5 | Pass `experimental_sandbox` through to `streamText` / tools; a shell plugin over `Experimental_SandboxSession` (roadmap "Sandbox plugin") | **Done in the library (P31): `eharness/shell` (`shell`, `localSandbox`, `shellTasks`).** `shell/` and `app/background-bash.ts` were removed |
+| R6 | `eharness/subagent` helper (child session, progress, usage, depth, cleanup) | **Done in the library (P31): `eharness/subagent`.** `agents/agent-tool.ts` was removed; background mode and `data-subagent.run` parts come with it |
+| R7 | Rule-based grants (`Bash(git *)`) in core approvals (roadmap row) | **Done in the library (P31): `eharness/permissions`.** `permissions/{engine,rules,bash-match,readonly-commands,plugin}.ts` were replaced by a 183-line configuration of it |
 | R8 | `addUsage` accepting the eharness `TurnResult.usage` shape directly | **Done in the library (P31): `addUsage()` takes `TurnResult['usage']` (`PlainUsage`).** The conversion helper was removed |
-| R9 | Binary files / images in `FileSystem` (screenshots, PDFs) | text only |
-| R10 | Subagent transcripts after a resume: the final tool output of a child carries no session id, so the UI cannot reopen runs of an earlier process (an output part or `providerMetadata` with the child session id, or a `parent` index in the session API) | the session id is only in the live preliminary outputs; `/agents` lists runs seen live |
+| R9 | Binary files / images in `FileSystem` (screenshots, PDFs) | **Done in the library (P31): `readBytes` / `writeBytes`, `read_file` shows images.** The tool card prints the media reference's `Image <path> (…)` line |
+| R10 | Subagent transcripts after a resume: the final tool output of a child carries no session id, so the UI cannot reopen runs of an earlier process (an output part or `providerMetadata` with the child session id, or a `parent` index in the session API) | **Done in the library (P31): the persisted `data-subagent.run` part and `session.children()`.** `/agents` lists runs from the stored parts after a resume |
 | R11 | `step.prepare` cannot see that an approved tool of the continuation will change the active tools (the first step of a `respond()` is prepared before the approved tool runs) | **Done in the library (P31): `StepPrepareEvent.continuing`.** The permissions plugin reads `e.continuing?.approved` |
 | R12 | Per-agent `toolOrder` (the core has one global order; plugin tools always come after root tools) | **Done in the library (P31): `config.toolOrder`.** The app has not adopted it yet (it keeps "root tools, then plugins", §6.1); unknown names warn `W_TOOL_ORDER`, so a per-agent list is needed first |
 | R13 | Adapter exceptions from `FileSystem` become `Error: ...` tool errors (spec 08 §3) instead of an `ERROR:` string; an option to catch and format them in the filesystem plugin (or a per-tool `toolErrorText`) | **Done in the library (P31): adapter exceptions reach the model as `ERROR: …` (`onAdapterError`).** `disk-fs.ts` keeps throwing plain sentences |
@@ -923,6 +920,58 @@ Gaps this example works around; each becomes a roadmap row or a phase with a spe
 | R18 | The tool input of a pending client-tool call in `PendingState.clientTools` (only `toolCallId` and `toolName` today) | **Done in the library (P31): `PendingState.clientTools[].input` (`inputTruncated` above 16 KB).** The stored part is read only for a truncated input |
 | R19 | A steer API that reports what happened to the input: delivered at a step of the running turn, fell back to a queued turn, or was dropped because the turn waits for an approval (today `send({ ifBusy: 'steer' })` returns a run and the app infers the outcome from `session.attach()` and `input-dropped` session events) | **Done in the library (P31): `HarnessRun.delivery` (`'step' \| 'turn' \| 'dropped'`).** `steer()` reads it instead of watching `input-dropped`; it still checks `session.running` first, because a send while the turn waits for an approval would auto-deny it |
 | R20 | Duration of a reasoning part in UI messages (only the message-level `durationMs` exists; a part carries no start/end time) | **Done in the library (P31): `providerMetadata.eharness.durationMs` on reasoning parts.** `partDuration` reads it, so stored and replayed reasoning shows `Thought for Ns`; the live measurement is only a fallback |
+
+## Migration to the shipped modules
+
+Done after P31 shipped the modules the example had proven (`35f17f6`). The example imports them and
+deleted its own copies; what remains is product and UI policy.
+
+| Was (example) | Now (library) | App-only part that stays |
+|---|---|---|
+| `workspace/{disk-fs,guard,mount-fs,index}.ts` | `eharness/filesystem/node`: `nodeWorkspace` | `request_directory_access` (`workspace/dir-access.ts`) |
+| `app/checkpoints.ts` (JSON store, plugin, copy) | `filesystem({ checkpoints: nodeCheckpointStore(dir) })`, `rewindFiles`, `checkpointsSince`, `session.fork({ beforeMessageId })` | which prompts `/rewind` lists, walking the subagent sessions, copying checkpoints into a fork; session names |
+| `shell/*`, `app/background-bash.ts`, shell part of `app/tasks.ts` | `eharness/shell`: `shell({ background: true })`, `localSandbox`, `shellTasks` | `app/tasks.ts` (task list for the UI), the sandbox setting and its line in the turn reminder |
+| `permissions/{engine,rules,bash-match,readonly-commands,plugin}.ts` | `eharness/permissions` | `permissions/engine.ts` (app tool kinds, `.coder` protected paths, rule scopes in `settings.local.json`, always-ask directory access), broker, `describe.ts`, audit log |
+| `agents/agent-tool.ts`, child part of `agents/drive.ts` | `eharness/subagent` (`approvals: 'inline'`, `background: true` on the main agent) | agent definitions from files, `agents/subagents.ts` (`answer` = broker), main-agent `driveTurn` |
+| `agents/ask-tool.ts` | `eharness/ask`: `askUser`, `pendingQuestions`, `answerOutput` | the question dialog, the answer timeout |
+| `app/web-tools.ts` | `eharness/web`: `webFetch`, `webSearch` | turndown, DNS lookup, provider search (`app/web-search.ts`) |
+
+Behaviour differences (all deliberate or library behaviour):
+
+- Tool-output eviction directory is `/.eharness/tool-outputs/` (was `/.coder/tool-outputs/`); the prompt,
+  README and the permission roots follow.
+- `bash` description no longer carries the sandbox state; the turn reminder does (`Sandbox: ON …`), so a
+  toggle applies at the next turn without reopening the session.
+- "Don't ask again" for `bun test …` offers the exact command (`bun` is an interpreter for the library
+  engine); an invalid rule in a settings file is still dropped silently, an invalid `/permissions` rule
+  is rejected with the library's message.
+- Tool list order changed (app tools, `bash`, `agent`, filesystem tools, `todo_write`, web, ask, MCP,
+  `exit_plan_mode`); it is stable per agent.
+- `agent` tool: an unknown `subagent_type` is an invalid tool call (the input schema is an enum); the
+  tool description is the library's. Background agents exist on the main agent only; a stopped
+  background agent reports `aborted` to the main agent. Background shells exist on the main agent
+  only (a child's would die with its session).
+- `web_fetch` private-host refusal does not mention the `WebFetch(domain:…)` rule; the `web_search`
+  fallback text is `ERROR: web search failed: web search is not available`.
+- Old checkpoint files (`checkpoints/<session>/<message>.json`) are not read; the library store has its
+  own layout.
+- `request_directory_access` is denied (not asked) in plan mode, where the tool is hidden anyway.
+
+Remaining app-only parts: the Ink UI and its state, commands and slash registry, settings and trust,
+hooks, output styles, models catalog, LSP, session storage and names, memory files, recap, side
+questions, status line, notifications, the approval broker and its diff descriptions, and the
+agent-definition loader.
+
+Lines of code (`*.ts`/`*.tsx` under `examples/coder`, before → after): sources 24 442 → 19 336
+(−5 106), tests 16 612 → 13 963 (−2 649), total 41 054 → 33 299 (−7 755). By folder (`src/`):
+`workspace/` 755 → 89, `shell/` 634 → 0 (the library's `shell` replaces it), `permissions/` 2 983 → 566
+(engine 773 → 183, the rules / shell parser / read-only grammars / plugin are gone), `agents/` 950 →
+447, `app/web-tools.ts` 463 → `app/web-search.ts` 139, `app/background-bash.ts` 314 → 0,
+`app/checkpoints.ts` 365 → 132, `app/tasks.ts` 198 → 235 (it now also derives background subagents).
+15 source files were deleted (4 419 lines). 10 test files (1 876 lines) that the library covers were
+deleted (`bash-match`, `bash-tool`, `disk-fs`, `guard`, `mount-fs`, `os-sandbox`, `sandbox`, `rules`,
+`web-fetch`, the old `tasks`); `engine.test.ts` shrank 1 260 → 461 (the app's policy only), and
+`checkpoints`, `agent-tool`, `ask-tool`, `web-search` and `session-tools` tests were adapted.
 
 ## Open questions
 

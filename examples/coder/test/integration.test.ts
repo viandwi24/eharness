@@ -6,12 +6,12 @@
  */
 import { describe, expect, test } from 'bun:test'
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { detectOsSandbox } from 'eharness/shell'
 import { scriptedModel } from 'eharness/testing'
 import { QUESTION_TIMEOUT_NOTE } from '../src/app/ask-timeout.ts'
 import type { CoderController, RunHooks } from '../src/contracts.ts'
-import { detectOsSandbox } from '../src/shell/index.ts'
 import { makeController, onCleanup, routerModel, tempDir } from './helpers.ts'
 
 const FAKE_LSP = join(import.meta.dir, 'fixtures', 'fake-lsp.ts')
@@ -254,8 +254,7 @@ describe('background tasks', () => {
   test('background agent: completion is injected and the woken turn sees the report', async () => {
     const model = routerModel((route) => {
       if (route.isChild) return { text: 'CHILD REPORT 42', delayMs: 300 }
-      if (route.conversation.includes('Background agent agent-1'))
-        return { text: 'noted the report' }
+      if (route.conversation.includes('Background subagent')) return { text: 'noted the report' }
       if (route.toolResults === 0) {
         return {
           toolCalls: [
@@ -288,6 +287,41 @@ describe('background tasks', () => {
     expect(model.routes.some((r) => !r.isChild && r.conversation.includes('CHILD REPORT 42'))).toBe(
       true,
     )
+  })
+})
+
+describe('subagent runs', () => {
+  test('the run part is stored, so /agents can open the transcript after a resume', async () => {
+    const model = routerModel((route) => {
+      if (route.isChild) return { text: 'CHILD ANSWER' }
+      return route.toolResults === 0
+        ? {
+            toolCalls: [
+              {
+                toolName: 'agent',
+                input: { subagent_type: 'explore', description: 'look around', prompt: 'look' },
+              },
+            ],
+          }
+        : { text: 'done' }
+    })
+    const { controller } = await makeController({
+      model,
+      flags: { permissionMode: 'bypassPermissions' },
+    })
+    await turn(controller, 'explore')
+    const id = controller.sessionId
+    await controller.clear()
+    await controller.resume(id)
+    const part = (await controller.messages())
+      .flatMap((m) => m.parts)
+      .find((p) => (p.type as string) === 'data-subagent.run') as unknown as {
+      data: { sessionId: string; agent: string; status: string }
+    }
+    expect(part.data).toMatchObject({ agent: 'explore', status: 'done' })
+    expect(part.data.sessionId).toBe(`${id}:agent:call-0-0`)
+    const child = await controller.messagesOf(part.data.sessionId)
+    expect(JSON.stringify(child)).toContain('CHILD ANSWER')
   })
 })
 
@@ -522,20 +556,16 @@ describe('sandbox', () => {
     expect(off.kind).toBe(kind)
 
     await turn(controller, 'one')
-    const description = (route: (typeof model.routes)[number]): string =>
-      JSON.stringify(
-        (route.call.tools as Array<{ name: string; description?: string }>).find(
-          (t) => t.name === 'bash',
-        ),
-      )
-    expect(description(model.routes.at(-1) as never)).toContain('Sandbox: off')
+    // the model is told in the turn reminder (the library's bash description does not carry it)
+    const reminder = (route: (typeof model.routes)[number]): string => route.conversation
+    expect(reminder(model.routes.at(-1) as never)).toContain('Sandbox: off')
 
     await controller.updateSetting('sandbox.enabled', true, 'local')
     const on = (await controller.status()).sandbox
     if (kind === 'seatbelt') expect(on.enabled).toBe(true)
     await turn(controller, 'two')
     if (on.enabled) {
-      expect(description(model.routes.at(-1) as never)).toContain('Sandbox: ON')
+      expect(reminder(model.routes.at(-1) as never)).toContain('Sandbox: ON')
     }
     await controller.updateSetting('sandbox.enabled', false, 'local')
     expect((await controller.status()).sandbox.enabled).toBe(false)
@@ -556,6 +586,25 @@ describe('image input', () => {
     const first = (await controller.messages())[0]
     expect(first?.parts.map((p) => p.type)).toEqual(['text', 'file'])
     expect(JSON.stringify(model.prompts[0])).toContain('image/png')
+  })
+
+  test('read_file shows an image file to the model; the stored output is a small reference', async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'read_file', input: { path: '/shot.png' } }] },
+      { text: 'a pixel' },
+    ])
+    const { controller, root } = await makeController({ model })
+    await writeFile(join(root, 'shot.png'), Buffer.from(png.split(',')[1] as string, 'base64'))
+    const { result } = await turn(controller, 'look at shot.png')
+    expect(result.stop).toBe('complete')
+    const wire = JSON.stringify(model.prompts[1])
+    expect(wire).toContain('Image /shot.png (1x1, 70 bytes, image/png)')
+    expect(wire).toContain('image/png')
+    const part = (await controller.messages())
+      .flatMap((m) => m.parts)
+      .find((p) => p.type === 'tool-read_file') as { output?: { type?: string; text?: string } }
+    expect(part.output?.type).toBe('media-ref')
+    expect(part.output?.text).toStartWith('Image /shot.png (1x1')
   })
 
   test('a data URL over 5 MB is a run error, not a throw', async () => {

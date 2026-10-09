@@ -1,8 +1,8 @@
 /** `/doctor`: environment and configuration checks. Every dependency is injectable for tests. */
 import { access, constants, mkdir } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
+import { detectOsSandbox } from 'eharness/shell'
 import type { CoderConfig, CoderSettings, DoctorCheck, ModelOption } from '../contracts.ts'
-import { detectOsSandbox } from '../shell/os-sandbox.ts'
 import { readSettingsFile } from './config.ts'
 import { KEY_ENV, missingKeyError } from './provider.ts'
 

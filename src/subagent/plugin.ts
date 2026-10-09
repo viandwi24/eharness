@@ -134,6 +134,13 @@ export interface SubagentsOptions {
   policy?: 'deny' | 'approve'
   /** Child session id. Default `<parentId>:agent:<toolCallId>`. */
   childSessionId?: (parentSessionId: string, toolCallId: string) => string
+  /**
+   * `'park'`: the agent that owns this plugin's sessions. When set, `session.start` reconciles the
+   * session's pending subagent waits in the background ({@link reconcileSubagentWaits}, children
+   * opened on the catalog agents): a crash between a child finishing and its hook is healed when
+   * the session opens. Best effort, never awaited by the open; failures are logged.
+   */
+  selfAgent?: () => AnyAgent
   /** `'park'`: timeout of the parent's wait in ms. Default none. */
   timeoutMs?: number
   /**
@@ -451,6 +458,145 @@ const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout
 /** The wait id of an `agent` tool call (`externalTool()` uses `w_<toolCallId>`). */
 export const subagentWaitId = (toolCallId: string): string => `w_${toolCallId}`
 
+/** The wait result for a child turn that ended with `stop` (spec 20 §3 step 5). */
+function waitResultFor(
+  stop: string,
+  text: string,
+  errorMessage: string | undefined,
+): { output: unknown } | { errorText: string } {
+  if (stop === 'complete') return { output: text === '' ? '(the subagent returned no text)' : text }
+  if (stop === 'error' || stop === 'aborted') {
+    return {
+      errorText: `ERROR: subagent ${stop === 'aborted' ? 'was aborted' : 'failed'}${
+        errorMessage === undefined ? '' : `: ${errorMessage}`
+      }${text === '' ? '' : `\n${text}`}`,
+    }
+  }
+  return { output: stoppedText(stop, text) }
+}
+
+/** `resolveWait()` plus the continuation run handling; `'busy'` when the parent runs a turn. */
+async function settleWait(
+  parentSession: AnySession,
+  waitId: string,
+  result: { output: unknown } | { errorText: string },
+  o: {
+    onParentRun: ((run: AnyRun, parentSessionId: string) => void) | undefined
+    parentSessionId: string
+    log: { warn(message: string, data?: Record<string, unknown>): void }
+  },
+): Promise<'done' | 'busy'> {
+  try {
+    const out = await parentSession.resolveWait(waitId, result)
+    if (out.status === 'continued') {
+      const run = out.run as AnyRun
+      if (o.onParentRun !== undefined) o.onParentRun(run, o.parentSessionId)
+      else {
+        void (async () => {
+          try {
+            for await (const _ of run.stream as AsyncIterable<unknown>) {
+              // drained: the continuation is stored by the turn itself
+            }
+          } catch {
+            // surfaces through run.result
+          }
+        })()
+        void run.result.catch(() => {})
+      }
+    }
+    return 'done'
+  } catch (error) {
+    if (isHarnessError(error) && error.code === 'EH_SESSION_BUSY') return 'busy'
+    o.log.warn('subagent: resolving the parent wait failed', { error: errText(error) })
+    return 'done'
+  }
+}
+
+/** Outcome of one wait in {@link reconcileSubagentWaits}. */
+export interface SubagentReconcileEntry {
+  waitId: string
+  childSessionId: string
+  /** `resolved`: this call resolved it; `busy`: the parent runs a turn (retry later); `skipped`: the child is not finished (or not found). */
+  status: 'resolved' | 'busy' | 'skipped'
+}
+
+/**
+ * Crash recovery for `approvals: 'park'` (ADR-0035): resolves the parent's pending subagent waits
+ * whose child already finished, exactly like the child's `turn.end` hook would. Use it when a
+ * parent session opens, on a timer, or from an admin endpoint. Idempotent: the first result of a
+ * wait wins, so racing the hook or another instance is harmless.
+ *
+ * A wait is considered when it has no result and names a child session (payload
+ * `childSessionId` or the `correlationId`); the child is opened with `openChild`. It is skipped
+ * while the child has pending approvals, an active turn, no assistant message yet, or its last
+ * turn stopped `tool-pending`.
+ */
+export async function reconcileSubagentWaits(
+  parentSession: AnySession,
+  options: {
+    openChild: (childSessionId: string, info: { agent?: string; toolCallId: string }) => AnySession
+    onParentRun?: (run: AnyRun, parentSessionId: string) => void
+    log?: { warn(message: string, data?: Record<string, unknown>): void }
+  },
+): Promise<SubagentReconcileEntry[]> {
+  const log = options.log ?? { warn() {} }
+  const out: SubagentReconcileEntry[] = []
+  const waits = await parentSession.pendingWaits()
+  const children = await parentSession.children()
+  for (const wait of waits) {
+    if (wait.result !== undefined || !wait.waitId.startsWith('w_')) continue
+    const payload = wait.payload as { childSessionId?: unknown } | undefined
+    const toolCallId = wait.waitId.slice(2)
+    const childSessionId =
+      typeof payload?.childSessionId === 'string'
+        ? payload.childSessionId
+        : (children.find((c) => c.toolCallId === toolCallId)?.sessionId ?? wait.correlationId)
+    if (childSessionId === undefined) continue
+    const entry = { waitId: wait.waitId, childSessionId }
+    try {
+      const agent = (payload as { agent?: unknown } | undefined)?.agent
+      const child = options.openChild(childSessionId, {
+        toolCallId,
+        ...(typeof agent === 'string' ? { agent } : {}),
+      })
+      const stats = await child.stats()
+      if (stats.pending !== null || stats.activeTurn !== null) {
+        out.push({ ...entry, status: 'skipped' })
+        continue
+      }
+      const stored = (await child.messages()) as unknown as Array<
+        MessageLike & {
+          metadata?: { eharness?: { stop?: string; error?: { message: string } } }
+        }
+      >
+      const last = stored.findLast((m) => m.role === 'assistant')
+      const stop = last?.metadata?.eharness?.stop
+      if (last === undefined || stop === undefined || stop === 'tool-pending') {
+        out.push({ ...entry, status: 'skipped' })
+        continue
+      }
+      const result = waitResultFor(
+        stop,
+        textOf(last, true),
+        last.metadata?.eharness?.error?.message,
+      )
+      const status = await settleWait(parentSession, wait.waitId, result, {
+        onParentRun: options.onParentRun,
+        parentSessionId: parentSession.id,
+        log,
+      })
+      out.push({ ...entry, status: status === 'busy' ? 'busy' : 'resolved' })
+    } catch (error) {
+      log.warn('subagent: reconciling a wait failed', {
+        waitId: wait.waitId,
+        error: errText(error),
+      })
+      out.push({ ...entry, status: 'skipped' })
+    }
+  }
+  return out
+}
+
 /**
  * Child side of `'park'`: when a child's turn ends (not `tool-pending`), resolve the parent's wait
  * with its report. Returns the settle function; the first attempt is awaited, a busy parent (the
@@ -476,43 +622,13 @@ function createParkHook(options: {
     const wait = waits.find((w) => w.waitId === waitId)
     // not a parked child (inline, policy, background), or already resolved
     if (wait === undefined || wait.result !== undefined) return
-    const text = finalText(e)
-    const result: { output: unknown } | { errorText: string } =
-      e.stop === 'complete'
-        ? { output: text === '' ? '(the subagent returned no text)' : text }
-        : e.stop === 'error' || e.stop === 'aborted'
-          ? {
-              errorText: `ERROR: subagent ${e.stop === 'aborted' ? 'was aborted' : 'failed'}${
-                e.error?.message === undefined ? '' : `: ${e.error.message}`
-              }${text === '' ? '' : `\n${text}`}`,
-            }
-          : { output: stoppedText(e.stop, text) }
-    const settle = async (): Promise<'done' | 'busy'> => {
-      try {
-        const out = await parentSession.resolveWait(waitId, result)
-        if (out.status === 'continued') {
-          const run = out.run as AnyRun
-          if (options.onParentRun !== undefined) options.onParentRun(run, parent.sessionId)
-          else {
-            void (async () => {
-              try {
-                for await (const _ of run.stream as AsyncIterable<unknown>) {
-                  // drained: the continuation is stored by the turn itself
-                }
-              } catch {
-                // surfaces through run.result
-              }
-            })()
-            void run.result.catch(() => {})
-          }
-        }
-        return 'done'
-      } catch (error) {
-        if (isHarnessError(error) && error.code === 'EH_SESSION_BUSY') return 'busy'
-        ctx.log.warn('subagent: resolving the parent wait failed', { error: errText(error) })
-        return 'done'
-      }
-    }
+    const result = waitResultFor(e.stop, finalText(e), e.error?.message)
+    const settle = (): Promise<'done' | 'busy'> =>
+      settleWait(parentSession, waitId, result, {
+        onParentRun: options.onParentRun,
+        parentSessionId: parent.sessionId,
+        log: ctx.log,
+      })
     if ((await settle()) === 'busy') {
       // the parent turn that started this child is still running here: retry after it ended
       void (async () => {
@@ -646,7 +762,31 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     dataParts: { run: runPart },
     session: (ctx) => {
       const depth = ctx.session.parent?.depth ?? 0
-      const hooks = { 'turn.end': parkHook }
+      const hooks: Record<string, unknown> = { 'turn.end': parkHook }
+      if (options.approvals === 'park' && options.selfAgent !== undefined) {
+        const self = options.selfAgent
+        hooks['session.start'] = () => {
+          // detached: opening the session must not wait for (or fail on) the reconcile
+          void (async () => {
+            await sleep(0)
+            if (ctx.signal.aborted) return
+            const parentSession = self().session(ctx.session.id) as AnySession
+            const catalog = resolveCatalog(options.agents)
+            await reconcileSubagentWaits(parentSession, {
+              openChild: (id, info) => {
+                const def =
+                  (info.agent === undefined ? undefined : catalog[info.agent]) ??
+                  Object.values(catalog)[0]
+                return (def as SubagentDefinition).agent.session(id) as AnySession
+              },
+              ...(options.onParentRun === undefined ? {} : { onParentRun: options.onParentRun }),
+              log: ctx.log,
+            })
+          })().catch((error) =>
+            ctx.log.warn('subagent: reconcile on open failed', { error: errText(error) }),
+          )
+        }
+      }
       if (depth >= maxDepth) return { hooks } as SessionContribution
       const defs = resolveCatalog(options.agents)
       const names = Object.keys(defs)

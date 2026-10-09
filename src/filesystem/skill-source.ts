@@ -14,6 +14,7 @@ import {
   type SkillSource,
   validateSkillPath,
 } from '../index.ts'
+import { detectMediaType, looksBinary } from './media.ts'
 import { dirPrefix, joinPath, normalizePath } from './paths.ts'
 import type { FileEntry, FileSystem } from './types.ts'
 
@@ -162,7 +163,24 @@ export function fsSkillSource(fs: FileSystem, opts: FsSkillSourceOptions): Skill
       // defence in depth: the core validates before calling
       const valid = validateSkillPath(path)
       if (!valid.ok) return null
-      const entry = await fs.read(joinPath(skillDir(name), valid.path))
+      const full = joinPath(skillDir(name), valid.path)
+      if (fs.readBytes !== undefined) {
+        // binary assets (images, PDFs, …) come back as bytes (spec 07 `SkillFileContent`)
+        const file = await fs.readBytes(full)
+        if (file === null) return null
+        if (!looksBinary(file.bytes))
+          return { type: 'text', text: new TextDecoder().decode(file.bytes) }
+        return {
+          type: 'binary',
+          mediaType:
+            file.mediaType ??
+            file.meta.mediaType ??
+            detectMediaType(file.bytes, full) ??
+            'application/octet-stream',
+          data: file.bytes,
+        }
+      }
+      const entry = await fs.read(full)
       return entry === null ? null : { type: 'text', text: entry.content }
     },
 

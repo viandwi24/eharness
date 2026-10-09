@@ -12,6 +12,7 @@ import { memoryMessages, memoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import {
   pendingSubagentApprovals,
+  reconcileSubagentWaits,
   SUBAGENT_NO_USER,
   type SubagentApprovalRequest,
   type SubagentsOptions,
@@ -496,6 +497,103 @@ describe("approvals: 'park'", () => {
     )
     const part = agentOutput(await session.messages())
     expect(String(part?.errorText ?? part?.output)).toContain('ERROR: subagent failed')
+    await main.close()
+    await worker.close()
+  })
+})
+
+describe('reconcileSubagentWaits (crash between the child finishing and its hook)', () => {
+  /** Parks the parent, then finishes the child through an agent WITHOUT the child plugin (the hook never runs). */
+  async function crashed(storage: Storage, steps: Parameters<typeof scriptedModel>[0]) {
+    const holder: { main?: Agent } = {}
+    const worker = childAgent(storage, {
+      plugins: [subagentChild({ parent: () => holder.main as Agent })],
+    })
+    const main = parentAgent(storage, worker, { approvals: 'park' })
+    holder.main = main
+    expect((await main.session('p1').send('go').result).stop).toBe('tool-pending')
+    await main.close()
+    await worker.close()
+    const childId = 'p1:agent:call-0-0'
+    const bare = childAgent(storage, { steps }) // no subagentChild: no hook
+    const pending = (await bare.session(childId).stats()).pending
+    const run = bare
+      .session(childId)
+      .respond({ approvals: [{ id: pending?.approvals[0]?.approvalId as string, approved: true }] })
+    await run.result
+    await bare.close()
+    return childId
+  }
+
+  test('resolves the wait from the finished child; the parent continues; idempotent', async () => {
+    const storage = shared()
+    const childId = await crashed(storage, [
+      { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
+      { text: 'late report' },
+    ])
+    const worker = childAgent(storage)
+    const main = parentAgent(storage, worker, { approvals: 'park' }, [{ text: 'parent done' }])
+    const session = main.session('p1')
+    expect(await session.pendingWaits()).toHaveLength(1)
+    const opened: string[] = []
+    const out = await reconcileSubagentWaits(session, {
+      openChild: (id) => {
+        opened.push(id)
+        return worker.session(id)
+      },
+    })
+    expect(opened).toEqual([childId])
+    expect(out).toEqual([{ waitId: 'w_call-0-0', childSessionId: childId, status: 'resolved' }])
+    await until('parent continued', async () =>
+      JSON.stringify(await session.messages()).includes('parent done'),
+    )
+    expect(agentOutput(await session.messages())?.output).toBe('late report')
+    // nothing left to resolve
+    expect(
+      await reconcileSubagentWaits(session, { openChild: (id) => worker.session(id) }),
+    ).toEqual([])
+    await main.close()
+    await worker.close()
+  })
+
+  test('a child that is still waiting for its approval is skipped', async () => {
+    const storage = shared()
+    const holder: { main?: Agent } = {}
+    const worker = childAgent(storage, {
+      plugins: [subagentChild({ parent: () => holder.main as Agent })],
+    })
+    const main = parentAgent(storage, worker, { approvals: 'park' })
+    holder.main = main
+    const session = main.session('p1')
+    await session.send('go').result
+    const out = await reconcileSubagentWaits(session, { openChild: (id) => worker.session(id) })
+    expect(out.map((e) => e.status)).toEqual(['skipped'])
+    expect(await session.pendingWaits()).toHaveLength(1)
+    await main.close()
+    await worker.close()
+  })
+
+  test('selfAgent: the wait is healed when the parent session opens', async () => {
+    const storage = shared()
+    await crashed(storage, [
+      { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
+      { text: 'late report' },
+    ])
+    const worker = childAgent(storage)
+    const holder: { main?: Agent } = {}
+    const main = parentAgent(
+      storage,
+      worker,
+      { approvals: 'park', selfAgent: () => holder.main as Agent },
+      [{ text: 'parent done' }],
+    )
+    holder.main = main
+    const session = main.session('p1')
+    await session.ready() // opens the session: the hook starts the reconcile
+    await until('parent continued', async () =>
+      JSON.stringify(await session.messages()).includes('parent done'),
+    )
+    expect(agentOutput(await session.messages())?.output).toBe('late report')
     await main.close()
     await worker.close()
   })

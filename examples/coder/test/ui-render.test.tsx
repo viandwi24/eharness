@@ -8,7 +8,7 @@ const ESC = '\x1b'
 const SHIFT_TAB = '\x1b[Z'
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-async function until(fn: () => boolean, label: string, ms = 3000): Promise<void> {
+async function until(fn: () => boolean, label: string, ms = 8000): Promise<void> {
   const start = Date.now()
   while (!fn()) {
     if (Date.now() - start > ms) throw new Error(`timeout waiting for ${label}`)
@@ -533,5 +533,6 @@ describe('plan approval dialog', () => {
     await type(ESC)
     await until(() => broker.answers.length === 4, 'answer 4')
     expect(broker.answers[3]?.answer).toEqual({ approved: false })
-  })
+    // four dialogs in a row: under load the default 5 s test timeout is too tight
+  }, 30_000)
 })

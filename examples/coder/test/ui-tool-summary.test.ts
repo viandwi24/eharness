@@ -81,6 +81,24 @@ describe('parseBashFooter: the three footers', () => {
 })
 
 describe('describeTool', () => {
+  test('read_file of an image: the media reference reads as `Image <path> (…)`', () => {
+    const ref = {
+      type: 'media-ref',
+      path: '/shots/a.png',
+      version: 'v1',
+      mediaType: 'image/png',
+      bytes: 67,
+      text: 'Image /shots/a.png (1x1, 67 bytes, image/png)',
+    }
+    const d = describeTool(view(TOOL.read, { path: '/shots/a.png' }, { output: ref }))
+    expect(d).toMatchObject({
+      label: 'Read',
+      target: 'shots/a.png',
+      status: 'ok',
+      summary: 'Image /shots/a.png (1x1, 67 bytes, image/png)',
+    })
+  })
+
   test('read_file: Read(path) and a line count', () => {
     const d = describeTool(view(TOOL.read, { path: '/src/a.ts' }, { output: 'a\nb\nc' }))
     expect(d).toMatchObject({ label: 'Read', target: 'src/a.ts', summary: 'Read 3 lines' })

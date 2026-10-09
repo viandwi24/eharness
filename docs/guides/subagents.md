@@ -91,6 +91,13 @@ and the answer loses nothing. There is no live progress and no `run_in_backgroun
 strategy. The continuation run that the child's completion starts on the parent is drained and
 stored; pass `onParentRun` to stream it to the user.
 
+**Crash recovery.** If the process dies after a child finished and before its hook resolved the
+parent's wait, the parent would stay parked until `timeoutMs`.
+`reconcileSubagentWaits(parentSession, { openChild })` resolves such waits from the child's stored
+result (idempotent, safe to call from a timer or an admin endpoint). With
+`subagents({ approvals: 'park', selfAgent: () => parentAgent })` it also runs, detached and best
+effort, whenever a parent session opens. Spec 20 §3.4.
+
 ## Background children
 
 `background: true` (inline and policy only) adds `run_in_background`. The call returns at once; when

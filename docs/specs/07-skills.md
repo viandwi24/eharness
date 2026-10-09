@@ -151,6 +151,8 @@ nothing.
 |---|---|---|
 | `load_skill` | `{ name }` | frontmatter summary + body + `Files:` manifest list (+ notes from `skill.load` hooks) |
 | `read_skill_file` | `{ name, path }` | file text (binary → `[binary <mediaType>, N bytes]`), or `ERROR: …` |
+
+`fsSkillSource` (spec 08) returns `{ type: 'binary', mediaType, data }` for a binary supporting file when the file system has `readBytes` (media type from the adapter, the magic bytes or the extension, else `application/octet-stream`); text files stay `{ type: 'text' }`. Without `readBytes` a binary file is not readable.
 | `search_skills` | `{ query }` | when the session can reach search mode (see below) |
 
 Errors are returned as strings (`ERROR: skill "x" not found`, `ERROR: invalid path`). Skill content
