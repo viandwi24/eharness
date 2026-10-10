@@ -168,7 +168,7 @@
 				</Sidebar.MenuButton>
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
-		<ApprovalsPopover />
 		<ThemeToggle />
+		<ApprovalsPopover />
 	</div>
 </div>

@@ -157,7 +157,7 @@
 
 {#snippet taskRow(t: Task)}
 	{@const b = badgeFor(t.status)}
-	<Item.Root size="xs" class="px-2 py-1.5">
+	<Item.Root variant="outline" size="xs" class="px-3 py-2 hover:bg-accent/50">
 		{#snippet child({ props })}
 			<button type="button" {...props} class="{props.class} cursor-pointer text-left" onclick={() => openTask(t.id)}>
 				<Item.Content>
@@ -262,13 +262,13 @@
 			{#if owned.length}
 				<section>
 					{@render heading('Runs')}
-					<div class="flex flex-col gap-0.5">{#each owned as t (t.id)}{@render taskRow(t)}{/each}</div>
+					<div class="flex flex-col gap-1.5">{#each owned as t (t.id)}{@render taskRow(t)}{/each}</div>
 				</section>
 			{/if}
 			{#if delegated.length}
 				<section>
 					{@render heading('Delegated')}
-					<div class="flex flex-col gap-0.5">{#each delegated as t (t.id)}{@render taskRow(t)}{/each}</div>
+					<div class="flex flex-col gap-1.5">{#each delegated as t (t.id)}{@render taskRow(t)}{/each}</div>
 				</section>
 			{/if}
 			{#if sessions && !owned.length && !delegated.length}
@@ -295,10 +295,10 @@
 		<Tabs.Content value="files" class="flex flex-col gap-3">
 			{#if contextError}{@render errorLine(contextError)}{/if}
 			{#if context && context.files.length}
-				<div class="flex flex-col gap-0.5">
+				<div class="flex flex-col gap-1.5">
 					{#each context.files as f (f.path)}
 						{@const Icon = iconFor(f.path)}
-						<Item.Root size="xs" class="px-2 py-1.5">
+						<Item.Root variant="outline" size="xs" class="px-3 py-2 hover:bg-accent/50">
 							{#snippet child({ props })}
 								<a {...props} href="/files?path={encodeURIComponent(f.path)}" title="Open in Files">
 									<Item.Media><Icon class="size-4 text-muted-foreground" /></Item.Media>
