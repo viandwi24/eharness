@@ -322,7 +322,7 @@
 		</div>
 
 		<div
-			class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-60% to-transparent pt-6"
+			class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-card from-50% via-card/80 to-transparent pt-12"
 			bind:clientHeight={dockHeight}
 		>
 			<div class="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3">
@@ -363,7 +363,7 @@
 	</div>
 	{#if wide && panelOpen}
 		<!-- Second column of the same surface: the floating session card scrolls on its own. -->
-		<aside class="hidden w-[340px] shrink-0 overflow-y-auto p-3 pl-0 lg:block" aria-label="Agent session">
+		<aside class="hidden w-[352px] shrink-0 overflow-y-auto p-3 lg:block" aria-label="Agent session">
 			<SessionContext {agentId} onClose={onTogglePanel} />
 		</aside>
 	{/if}

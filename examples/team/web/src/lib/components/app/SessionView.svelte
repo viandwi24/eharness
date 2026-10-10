@@ -276,7 +276,7 @@
 
 		{#if task}
 			<div
-				class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-60% to-transparent pt-6"
+				class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-popover from-50% via-popover/80 to-transparent pt-12"
 				bind:clientHeight={dockHeight}
 			>
 				<div class="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3">
