@@ -178,6 +178,7 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('loop.progress.repeats', progress?.repeats, 'positive-int')
   checkNumber('loop.progress.window', progress?.window, 'positive-int')
   checkNumber('loop.progress.errorStreak', progress?.errorStreak, 'positive-int')
+  checkNumber('loop.progress.toolErrorStreak', progress?.toolErrorStreak, 'positive-int')
   checkNumber('loop.progress.nudges', progress?.nudges, 'non-negative-int')
   const compaction = config.compaction === false ? undefined : config.compaction
   checkNumber('compaction.summarizeAt', compaction?.summarizeAt, 'ratio-open')

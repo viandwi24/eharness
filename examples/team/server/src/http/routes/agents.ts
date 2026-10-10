@@ -130,5 +130,19 @@ export function agentRoutes(deps: Deps): OpenAPIHono {
       c.json(redactAgent(updateAgent(deps, c.req.valid('param').id, c.req.valid('json'))), 200),
     )
     .openapi(remove, (c) => c.json(redactAgent(archiveAgent(deps, c.req.valid('param').id)), 200))
-    .openapi(tools, (c) => c.json(TOOL_CATALOG_VALUE, 200))
+    .openapi(tools, (c) => {
+      const off = deps.unavailableTools ?? []
+      if (off.length === 0) return c.json(TOOL_CATALOG_VALUE, 200)
+      const names = new Set(off.map((t) => t.name))
+      return c.json(
+        {
+          tools: TOOL_CATALOG_VALUE.tools.filter((t) => !names.has(t.name)),
+          unavailable: off as Array<{
+            name: (typeof TOOL_CATALOG_VALUE.tools)[number]['name']
+            reason: string
+          }>,
+        },
+        200,
+      )
+    })
 }

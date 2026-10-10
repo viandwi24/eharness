@@ -666,6 +666,25 @@
                 "description"
               ]
             }
+          },
+          "unavailable": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "$ref": "#/components/schemas/ToolName"
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "reason"
+              ]
+            },
+            "description": "Catalog tools left out because the server has no backend for them."
           }
         },
         "required": [

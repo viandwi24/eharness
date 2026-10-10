@@ -256,6 +256,8 @@ export interface ProgressConfig {
   window?: number
   /** Default 5 — steps in a row whose tool calls all failed. */
   errorStreak?: number
+  /** Default 8 — failed results in a row of one tool (any inputs), with no success of it between. */
+  toolErrorStreak?: number
   /** Default 1 — reminders before the turn stops with `'stuck'`. 0 stops at once. */
   nudges?: number
   /** Tools that may legitimately repeat (polling, waiting); ignored by the guard. */

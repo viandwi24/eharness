@@ -7,6 +7,7 @@ import { readFileSync } from 'node:fs'
 import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import type { LanguageModel } from 'ai'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
+import { createSearchFn, type SearchFn } from './web-search.ts'
 
 export type ModelProviderName = 'openrouter' | 'gateway' | 'scripted'
 
@@ -23,6 +24,8 @@ export interface ModelConfig {
   defaultModel: string
   /** Resolve a model id (or the default) to a model. */
   resolve(id: string | null): LanguageModel
+  /** Provider web search for `web_search`; absent (scripted model) = the tool is not offered. */
+  search?: SearchFn
 }
 
 /**
@@ -50,7 +53,13 @@ export function createModelConfig(env: Env = process.env): ModelConfig {
         'no model provider: set OPENROUTER_API_KEY, AI_GATEWAY_API_KEY or TEAM_SCRIPTED_MODEL',
       )
     }
-    return { provider, defaultModel, resolve: (id) => id ?? defaultModel }
+    const resolve = (id: string | null): LanguageModel => id ?? defaultModel
+    return {
+      provider,
+      defaultModel,
+      resolve,
+      search: createSearchFn({ provider, resolveModel: (id) => resolve(id) }),
+    }
   }
   if (!env.OPENROUTER_API_KEY) {
     throw new Error('provider "openrouter" needs OPENROUTER_API_KEY')
@@ -60,18 +69,20 @@ export function createModelConfig(env: Env = process.env): ModelConfig {
     ...(env.OPENROUTER_BASE_URL ? { baseURL: env.OPENROUTER_BASE_URL } : {}),
   })
   const cache = new Map<string, LanguageModel>()
+  const resolve = (id: string | null): LanguageModel => {
+    const wanted = id ?? defaultModel
+    let model = cache.get(wanted)
+    if (model === undefined) {
+      model = openrouter(wanted) as unknown as LanguageModel
+      cache.set(wanted, model)
+    }
+    return model
+  }
   return {
     provider,
     defaultModel,
-    resolve(id) {
-      const wanted = id ?? defaultModel
-      let model = cache.get(wanted)
-      if (model === undefined) {
-        model = openrouter(wanted) as unknown as LanguageModel
-        cache.set(wanted, model)
-      }
-      return model
-    },
+    resolve,
+    search: createSearchFn({ provider, resolveModel: (id) => resolve(id) }),
   }
 }
 

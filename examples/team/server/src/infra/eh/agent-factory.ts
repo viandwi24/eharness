@@ -73,7 +73,7 @@ export interface TeamLimits {
   spawnCap?: number
   /** Children one session may start over its lifetime (`subagents({ maxChildren })`). Default none. */
   maxChildren?: number
-  /** Steps a role agent may take per delegated run. Default 30. */
+  /** Steps a role agent may take per delegated run. Default 25. */
   childMaxTurns?: number
   /** How long the lead stays parked on a task before the wait times out (ms). Default 24 h. */
   parkTimeoutMs?: number
@@ -169,7 +169,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   const workspaceId = deps.workspaceId ?? 'default'
   const ledger = sqliteBudgetLedger(sqlite)
   const fixed = {
-    childMaxTurns: deps.limits?.childMaxTurns ?? 30,
+    childMaxTurns: deps.limits?.childMaxTurns ?? 25,
     parkTimeoutMs: deps.limits?.parkTimeoutMs ?? 24 * 60 * 60 * 1000,
     maxChildren: deps.limits?.maxChildren,
   }
@@ -301,14 +301,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         : []),
       ...(has(def, 'todos') ? [todos()] : []),
       ...(has(def, 'web_fetch') ? [webFetch({})] : []),
-      ...(has(def, 'web_search')
-        ? [
-            webSearch({
-              search: async () => {
-                throw new Error('web search is not configured on this server')
-              },
-            }),
-          ]
+      // offered only with a real backend: a tool that always fails makes models retry forever
+      ...(has(def, 'web_search') && deps.models.search !== undefined
+        ? [webSearch({ search: deps.models.search })]
         : []),
       permissionsPlugin({ engine }),
       ...(has(def, 'ask_user') ? [askUser()] : []),
@@ -418,7 +413,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         },
       },
       ...(mcpSources.length > 0 ? { mcp: mcpSources } : {}),
-      loop: { maxSteps: 40 },
+      // role agents are bounded by the same cap as a delegated run (also when a chat opens them directly)
+      loop: { maxSteps: def.role === 'lead' ? 40 : fixed.childMaxTurns },
       // uploads are checked by the chat route; the core caps data URLs at the same size
       inputFiles: {
         protocols: ['data:', 'https:', 'library:'],

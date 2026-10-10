@@ -310,6 +310,8 @@ export interface Deps {
   clock: Clock
   ids: IdGenerator
   workspaceId: string
+  /** Catalog tools this server cannot offer (no backend configured), with the reason. */
+  unavailableTools?: Array<{ name: string; reason: string }>
   /** How often the SSE feed polls the events table (ms). Default 500. */
   eventsPollMs?: number
 }

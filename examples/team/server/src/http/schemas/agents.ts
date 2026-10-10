@@ -121,6 +121,12 @@ export const AgentListSchema = z
 export const ToolCatalogSchema = z
   .object({
     tools: z.array(z.object({ name: ToolName, description: z.string() })),
+    unavailable: z
+      .array(z.object({ name: ToolName, reason: z.string() }))
+      .optional()
+      .openapi({
+        description: 'Catalog tools left out because the server has no backend for them.',
+      }),
   })
   .openapi('ToolCatalog')
 

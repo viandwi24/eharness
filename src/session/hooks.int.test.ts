@@ -432,6 +432,32 @@ describe('progress guard (spec 05 §3.2)', () => {
     expect(JSON.stringify(model.calls[4]?.prompt)).not.toContain('You are not making progress')
   })
 
+  test('a tool that keeps returning ERROR: strings, alternating with a working tool, is stuck', async () => {
+    let n = 0
+    const search = tool({
+      inputSchema: z.object({ q: z.string() }),
+      execute: async () => 'ERROR: web search is not configured',
+    })
+    const fetchPage = tool({
+      inputSchema: z.object({ u: z.string() }),
+      execute: async ({ u }) => `page ${u}`,
+    })
+    const model = scriptedModel(
+      Array.from({ length: 60 }, (_, i) =>
+        i % 2 === 0
+          ? { toolCalls: [{ toolName: 'search', input: { q: `q${n++}` } }] }
+          : { toolCalls: [{ toolName: 'fetchPage', input: { u: `u${i}` } }] },
+      ),
+    )
+    const { agent, warnings } = setup({ model, tools: { search, fetchPage } })
+    const result = await agent.session('s1').send('go').result
+    expect(result.stop).toBe('stuck')
+    expect(result.steps).toBeLessThan(40)
+    const stuck = warnings.filter((w) => w.code === 'W_LOOP_STUCK')
+    expect(stuck).toHaveLength(1)
+    expect(stuck[0]?.details).toMatchObject({ kind: 'tool-errors', toolName: 'search' })
+  })
+
   test('nudges: 0 stops at the first detection; progress: false disables it', async () => {
     const first = setup({ model: repeating(), tools: { look }, loop: { progress: { nudges: 0 } } })
     expect((await first.agent.session('s1').send('go').result).stop).toBe('stuck')

@@ -186,6 +186,16 @@ export function compose(config: ServerConfig): Server {
     clock: { now: () => Date.now() },
     ids: { next: () => newId() },
     workspaceId: WORKSPACE_ID,
+    ...(models.search === undefined
+      ? {
+          unavailableTools: [
+            {
+              name: 'web_search' as const,
+              reason: 'no web search backend: needs a provider key (OpenRouter or AI Gateway)',
+            },
+          ],
+        }
+      : {}),
     ...(config.eventsPollMs === undefined ? {} : { eventsPollMs: config.eventsPollMs }),
   }
   if (config.seed !== false) seedAgents(deps)

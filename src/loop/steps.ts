@@ -1353,9 +1353,13 @@ function fileResolution(rt: SessionRuntime): {
 }
 
 function describeStuck(stuck: StuckReason): string {
-  return stuck.kind === 'repeat'
-    ? `'${stuck.toolName}' was called ${stuck.count} times with the same input and the same result`
-    : `the last ${stuck.count} steps' tool calls all failed`
+  if (stuck.kind === 'repeat') {
+    return `'${stuck.toolName}' was called ${stuck.count} times with the same input and the same result`
+  }
+  if (stuck.kind === 'tool-errors') {
+    return `'${stuck.toolName}' failed ${stuck.count} times in a row (it may be unavailable or misconfigured)`
+  }
+  return `the last ${stuck.count} steps' tool calls all failed`
 }
 
 function abortReasonText(signal: AbortSignal): string {

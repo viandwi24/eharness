@@ -79,6 +79,7 @@ JSON with sorted keys. Denied calls and `ignoreTools` are skipped.
 - **Repeat:** the same key `repeats` (3) times within the last `window` (20) tool steps — this also
   catches A → B → A → B cycles.
 - **Error streak:** `errorStreak` (5) steps in a row whose tool calls all returned errors.
+- **Tool error streak:** `toolErrorStreak` (8) failed results in a row of one tool, whatever the inputs.
 
 The first time, the next step gets the reminder `PROGRESS_NUDGE` ("You are not making progress: …
 Try a different approach, or stop and explain what blocks you.") and `W_LOOP_STUCK` is raised with

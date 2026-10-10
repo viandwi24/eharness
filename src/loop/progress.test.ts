@@ -90,3 +90,64 @@ describe('progress tracker', () => {
     expect(t.novel).toBe(2)
   })
 })
+
+describe('tool error streak', () => {
+  test('one tool failing with varying inputs while another succeeds is caught', () => {
+    const t = createProgressTracker({ toolErrorStreak: 4 })
+    let n = 0
+    let last: ReturnType<typeof t.observe>
+    for (let i = 0; i < 4; i++) {
+      last = t.observe(
+        step([
+          {
+            tool: 'web_search',
+            input: { q: `query ${n}` },
+            output: 'ERROR: not configured',
+            error: true,
+          },
+        ]),
+      )
+      // a different tool succeeds with new input each time: the step-level streak resets
+      expect(
+        t.observe(step([{ tool: 'web_fetch', input: { u: n++ }, output: `page ${n}` }])),
+      ).toBeUndefined()
+    }
+    expect(last).toEqual({ kind: 'tool-errors', toolName: 'web_search', count: 4 })
+  })
+
+  test('returned `ERROR:` strings count as failures', () => {
+    const t = createProgressTracker({ errorStreak: 2 })
+    const fail = (n: number) => [
+      {
+        role: 'assistant' as const,
+        content: [{ type: 'tool-call' as const, toolCallId: `e${n}`, toolName: 'x', input: n }],
+      },
+      {
+        role: 'tool' as const,
+        content: [
+          {
+            type: 'tool-result' as const,
+            toolCallId: `e${n}`,
+            toolName: 'x',
+            output: { type: 'text' as const, value: 'ERROR: nope' },
+          },
+        ],
+      },
+    ]
+    t.observe(fail(1))
+    expect(t.observe(fail(2))).toEqual({ kind: 'errors', count: 2 })
+    expect(t.novel).toBe(0)
+  })
+
+  test('a success of the same tool clears its streak; reset clears all', () => {
+    const t = createProgressTracker({ toolErrorStreak: 3 })
+    const fail = (n: number) => step([{ tool: 's', input: n, output: 'ERROR', error: true }])
+    t.observe(fail(1))
+    t.observe(fail(2))
+    t.observe(step([{ tool: 's', input: 3, output: 'ok' }]))
+    t.observe(fail(4))
+    t.observe(fail(5))
+    t.reset()
+    expect(t.observe(fail(6))).toBeUndefined()
+  })
+})

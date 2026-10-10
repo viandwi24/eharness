@@ -505,13 +505,20 @@ last `progress.window` (20) steps that called tools are kept.
 
 - **Repeat:** a key occurring `progress.repeats` (3) times in the window (this also catches A/B
   cycles).
+- **Failed result** (for the error rules below and for progress): an `error-text` / `error-json`
+  output, or a text / JSON-string output starting with `ERROR:` (the convention for tool
+  failures that are returned, not thrown).
 - **Error streak:** `progress.errorStreak` (5) steps in a row whose tool calls all failed
   (`error-text` / `error-json` results).
+- **Tool error streak:** `progress.toolErrorStreak` (8) failed results in a row of the same tool
+  name, whatever the inputs, with no successful call of that tool between (other tools may
+  succeed in between). Catches a tool that is broken or unavailable while the model keeps varying
+  its input or alternates with other tools, which neither rule above sees.
 
 When the rules of §3.1 would continue and the turn is stuck: while fewer than `progress.nudges`
 (1) reminders were given, the next step gets the step reminder `PROGRESS_NUDGE` (spec 10 §5,
 never stored), the window and streak are cleared, and `W_LOOP_STUCK` is raised with
-`details: { kind, toolName?, count, stepIndex }`. Otherwise the turn stops with `'stuck'`. A step
+`details: { kind: 'repeat' | 'errors' | 'tool-errors', toolName?, count, stepIndex }`. Otherwise the turn stops with `'stuck'`. A step
 that ends the turn anyway (§3.1 rules 1–7) is not affected. `loop.progress: false` disables the
 guard.
 

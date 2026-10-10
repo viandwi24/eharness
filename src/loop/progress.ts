@@ -1,6 +1,6 @@
 /**
  * Progress tracking of a turn (internal): detects a model that repeats itself (the same call with
- * the same result) or keeps failing, and measures whether steps still produce something new —
+ * the same result), keeps failing, or keeps failing with one tool, and measures whether steps still produce something new —
  * used to stop stuck turns and to bound `turn.beforeEnd` continuations by progress instead of by
  * a fixed count.
  *
@@ -14,6 +14,7 @@ export const DEFAULT_PROGRESS = {
   repeats: 3,
   window: 20,
   errorStreak: 5,
+  toolErrorStreak: 8,
   nudges: 1,
 } as const
 
@@ -21,6 +22,7 @@ export const DEFAULT_PROGRESS = {
 export type StuckReason =
   | { kind: 'repeat'; toolName: string; count: number }
   | { kind: 'errors'; count: number }
+  | { kind: 'tool-errors'; toolName: string; count: number }
 
 /** Progress state of one turn. */
 export interface ProgressTracker {
@@ -53,6 +55,18 @@ function hash(text: string): string {
   return (h >>> 0).toString(36)
 }
 
+/**
+ * A failed result: an `error-text` / `error-json` output, or — since tools return expected
+ * failures as strings (spec 01 §6) — a text (or JSON string) output that starts with `ERROR:`.
+ */
+function isErrorOutput(output: { type?: string; value?: unknown } | undefined): boolean {
+  if (output?.type === 'error-text' || output?.type === 'error-json') return true
+  if (output?.type === 'text' || output?.type === 'json') {
+    return typeof output.value === 'string' && output.value.trimStart().startsWith('ERROR:')
+  }
+  return false
+}
+
 interface Call {
   key: string
   toolName: string
@@ -76,7 +90,7 @@ function callsOf(response: readonly ModelMessage[], ignore: ReadonlySet<string>)
         calls.push({
           key: hash(`${toolName}\u0000${stable(call?.input)}\u0000${stable(output)}`),
           toolName,
-          error: output?.type === 'error-text' || output?.type === 'error-json',
+          error: isErrorOutput(output),
         })
       }
     }
@@ -89,10 +103,13 @@ export function createProgressTracker(config: ProgressConfig = {}): ProgressTrac
   const repeats = Math.max(2, config.repeats ?? DEFAULT_PROGRESS.repeats)
   const window = Math.max(1, config.window ?? DEFAULT_PROGRESS.window)
   const errorStreak = Math.max(1, config.errorStreak ?? DEFAULT_PROGRESS.errorStreak)
+  const toolErrorStreak = Math.max(1, config.toolErrorStreak ?? DEFAULT_PROGRESS.toolErrorStreak)
   const ignore = new Set(config.ignoreTools ?? [])
   /** Keys of the calls of the last `window` steps that called tools. */
   let steps: string[][] = []
   let failing = 0
+  /** Consecutive failed results per tool name (inputs may differ); a success of that tool clears it. */
+  const failsByTool = new Map<string, number>()
   let novel = 0
 
   return {
@@ -109,6 +126,15 @@ export function createProgressTracker(config: ProgressConfig = {}): ProgressTrac
         const count = (seen.get(call.key) ?? 0) + 1
         seen.set(call.key, count)
         if (count === 1 && !call.error) novel++
+        if (call.error) {
+          const fails = (failsByTool.get(call.toolName) ?? 0) + 1
+          failsByTool.set(call.toolName, fails)
+          if (fails >= toolErrorStreak && stuck === undefined) {
+            stuck = { kind: 'tool-errors', toolName: call.toolName, count: fails }
+          }
+        } else {
+          failsByTool.delete(call.toolName)
+        }
         if (count >= repeats && stuck === undefined) {
           stuck = { kind: 'repeat', toolName: call.toolName, count }
         }
@@ -122,6 +148,7 @@ export function createProgressTracker(config: ProgressConfig = {}): ProgressTrac
     reset() {
       steps = []
       failing = 0
+      failsByTool.clear()
     },
   }
 }
