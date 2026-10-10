@@ -14,10 +14,8 @@
 
 	let busy = $state(false);
 	const summary = $derived(summarizeApproval(approval.toolName, approval.input));
-	// The title already says it for a one-field input ("Search the web for <query>"): skip the rows then.
-	const rows = $derived(
-		summary.rows.length === 1 && summary.title.includes(summary.rows[0]?.value ?? '\u0000') ? [] : summary.rows
-	);
+	// The parameters always show in their own (darker) box, even when the title repeats one of them.
+	const rows = $derived(summary.rows);
 	const riskVariant = { read: 'success', write: 'warning', external: 'destructive', unknown: 'outline' } as const;
 
 	async function run(body: Parameters<typeof live.answer>[1]): Promise<void> {
