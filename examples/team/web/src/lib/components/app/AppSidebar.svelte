@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SidebarToggle from './SidebarToggle.svelte';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlass';
@@ -55,8 +56,8 @@
 
 <div class="flex h-full min-h-0 flex-col">
 	<div class="flex flex-col gap-3 px-3 pt-3 pb-2">
-		<div class="flex items-center justify-between">
-			<a href="/" class="px-1 font-brand text-base">Team</a>
+		<div class="flex items-center gap-1">
+			<a href="/" class="mr-auto px-1 font-brand text-base">Team</a>
 			<Tooltip.Root>
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
@@ -67,6 +68,7 @@
 				</Tooltip.Trigger>
 				<Tooltip.Content>New agent</Tooltip.Content>
 			</Tooltip.Root>
+			<SidebarToggle />
 		</div>
 		<div class="relative">
 			<MagnifyingGlassIcon class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />

@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+	import SidebarToggle from './SidebarToggle.svelte';
 	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeft';
 	import type { Snippet } from 'svelte';
 	import * as Breadcrumb from '#lib/components/ui/breadcrumb/index.js';
@@ -37,6 +38,7 @@
 	<Button href={backHref} variant="ghost" size="icon-sm" class="md:hidden" aria-label="Back">
 		<CaretLeftIcon class="size-4" />
 	</Button>
+	<SidebarToggle whenCollapsed />
 	<div class="flex min-w-0 flex-1 flex-col justify-center">
 		{#if breadcrumb?.length}
 			<Breadcrumb.Root>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import SidebarToggle from './SidebarToggle.svelte';
 	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeft';
 	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimple';
 	import DotsThreeIcon from 'phosphor-svelte/lib/DotsThree';
@@ -155,6 +156,7 @@
 		<Button href="/" variant="ghost" size="icon-sm" class="md:hidden" aria-label="Back to agents">
 			<CaretLeftIcon class="size-4" />
 		</Button>
+		<SidebarToggle whenCollapsed />
 		{#if agent}
 			<button
 				type="button"

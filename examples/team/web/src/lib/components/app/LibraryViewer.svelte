@@ -59,6 +59,7 @@
 
 	const info = $derived(meta ?? entry);
 	const kind = $derived(info ? fileKind(info) : fileKind({ path, mediaType: null, binary: false }));
+	const kindLabel: Record<string, string> = { markdown: 'Markdown', code: 'Code', text: 'Text', image: 'Image', pdf: 'PDF', other: 'File' };
 	const textual = $derived(kind === 'markdown' || kind === 'code' || kind === 'text');
 	const creator = $derived(info?.createdBy ?? null);
 
@@ -220,7 +221,7 @@
 				{/if}
 				<span>{creator ? creator.name : 'You'}</span>
 				<span aria-hidden="true">·</span><span>{formatBytes(info.size)}</span>
-				<span aria-hidden="true">·</span><span>{info.mediaType ?? 'unknown type'}</span>
+				<span aria-hidden="true">·</span><span>{info.mediaType ?? kindLabel[kind]}</span>
 				<span aria-hidden="true">·</span><span>updated {formatTime(info.updatedAt)}</span>
 			</div>
 		{/if}

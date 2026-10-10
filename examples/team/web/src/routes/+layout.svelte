@@ -15,6 +15,11 @@
 
 	let { children }: LayoutProps = $props();
 
+	// Desktop sidebar collapsed / expanded (⌘B); the edmi provider stores it in a cookie.
+	let sidebarOpen = $state(
+		typeof document === 'undefined' || !/(?:^|;\s*)sidebar_state=false\b/.test(document.cookie)
+	);
+
 	onMount(() => startLive());
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
@@ -28,14 +33,14 @@
 
 <ElevationProvider mode="layered">
 	<!-- md+: the page sits in an inset panel on the sidebar surface (edmi-ui sidebar "inset" look). -->
-	<Sidebar.Provider class="h-svh min-h-0 bg-background text-foreground md:bg-sidebar">
+	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 bg-background text-foreground md:bg-sidebar">
 		<aside
-			class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex md:w-72 lg:w-80"
+			class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {sidebarOpen ? 'md:flex' : 'md:hidden'} md:w-72 lg:w-80"
 		>
 			<AppSidebar />
 		</aside>
 		<main
-			class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-sm"
+			class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 bg-background md:my-2 md:mr-2 {sidebarOpen ? '' : 'md:ml-2'} md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-sm"
 		>
 			{@render children()}
 		</main>
