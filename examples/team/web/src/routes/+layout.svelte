@@ -24,13 +24,16 @@
 </svelte:head>
 
 <ElevationProvider mode="layered">
-	<div class="flex h-svh bg-background text-foreground">
+	<!-- md+: the page sits in an inset panel on the sidebar surface (edmi-ui sidebar "inset" look). -->
+	<div class="flex h-svh bg-background text-foreground md:bg-sidebar">
 		<aside
-			class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col border-r border-border bg-sidebar text-sidebar-foreground md:flex md:w-72 lg:w-80"
+			class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex md:w-72 lg:w-80"
 		>
 			<AgentList />
 		</aside>
-		<main class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 md:flex">
+		<main
+			class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-sm"
+		>
 			{@render children()}
 		</main>
 	</div>
