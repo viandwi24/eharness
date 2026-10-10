@@ -48,6 +48,14 @@ runs in a **child session** (`<leadSession>:agent:<toolCallId>`), so a task has 
 its approvals do not block the DM. Routines run in the agent's DM or in their own session
 (`routine:<id>:<slot>`), per routine.
 
+**Background delegation (default).** The lead's `subagents` also has `background: { default: true }`
+([ADR-0046](../../../docs/decisions/0046-durable-background-subagents-in-park-mode.md)): the `agent`
+call starts the role agent through its durable inbox and returns at once, so the lead stays free to
+chat and a new user message cancels nothing. The role agent's approvals are answered on its own
+session from any instance; when its turn ends, the report wakes the lead as an event. The card in
+the chat opens the child session (the `data-subagent.run` marker carries its id) and its status
+follows the task row. `run_in_background: false` gives the foreground park below.
+
 **Park delegation.** The lead uses `subagents({ approvals: 'park' })`. When a role agent needs an
 approval, the lead's turn ends parked and the child waits in storage. The user answers on the
 board (`POST /approvals/{id}`) on any instance; the child continues and, when it ends, the lead

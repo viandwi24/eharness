@@ -443,6 +443,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                     ]),
                 ),
               approvals: 'park',
+              // durable background delegation (ADR-0046): the lead stays free to chat while the
+              // role agents work; their reports arrive as events and wake it
+              background: { default: true },
               parkTimeoutMs: limits.parkTimeoutMs,
               maxConcurrent: limits.spawnCap,
               ...(limits.maxChildren === undefined ? {} : { maxChildren: limits.maxChildren }),

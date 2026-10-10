@@ -117,7 +117,13 @@ const fetchPage = (n = 1) => ({
 const delegate = {
   toolName: 'agent',
   toolCallId: 'call-1',
-  input: { subagent_type: 'researcher', description: 'Clean up', prompt: 'Remove old', name: 'c' },
+  input: {
+    subagent_type: 'researcher',
+    description: 'Clean up',
+    prompt: 'Remove old',
+    name: 'c',
+    run_in_background: false,
+  },
 }
 
 async function chat(s: Server, agent: string, text: string): Promise<void> {

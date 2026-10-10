@@ -111,6 +111,18 @@ const userMessage = (text: string) => ({
 const delegate = (name: string, toolCallId: string, prompt = 'Remove /library/old.md') => ({
   toolName: 'agent',
   toolCallId,
+  input: {
+    subagent_type: 'researcher',
+    description: 'Clean up',
+    prompt,
+    name,
+    run_in_background: false,
+  },
+})
+/** The lead's default: a durable background delegation (ADR-0046). */
+const delegateBg = (name: string, toolCallId: string, prompt = 'Remove /library/old.md') => ({
+  toolName: 'agent',
+  toolCallId,
   input: { subagent_type: 'researcher', description: 'Clean up', prompt, name },
 })
 const deleteOld = { toolName: 'delete_file', input: { path: '/library/old.md' } }
@@ -273,6 +285,62 @@ describe('delegation with park', () => {
       tasks: Task[]
     }
     expect(researcherSessions.tasks.map((t) => t.id)).toEqual([task.id])
+  })
+
+  test('background delegation: the lead keeps chatting, B answers the child, the report wakes the lead', async () => {
+    const dir = tmp()
+    const a = instance(
+      dir,
+      {
+        lead: [
+          { toolCalls: [delegateBg('cleaner', 'call-1')] },
+          { text: 'Delegated.' },
+          { text: 'Still working on it.' },
+          { text: 'Report received.' },
+        ],
+        researcher: [{ toolCalls: [deleteOld] }],
+      },
+      { first: true },
+    )
+    await libraryFs(a.server.conn.sqlite).write('/library/old.md', 'old\n')
+    const res = await a.app.request('/agents/lead/chat', post(userMessage('Clean up the library')))
+    expect(res.status).toBe(200)
+    await res.text()
+    await until('delegated', async () => (await dmText(a.app)).includes('Delegated.'))
+    expect(await dmText(a.app)).toContain('Started background subagent')
+
+    // the child waits for a person; the lead is free: a new message is answered normally
+    await until(
+      'task waiting',
+      async () => (await tasks(a.app, '?status=needs_action')).length === 1,
+    )
+    const chat = await a.app.request('/agents/lead/chat', post(userMessage('How is it going?')))
+    expect(chat.status).toBe(200)
+    await chat.text()
+    await until('lead answered', async () => (await dmText(a.app)).includes('Still working on it.'))
+    expect(await dmText(a.app)).not.toContain('Cancelled')
+    // the delegation marker carries the child session id
+    const lead = a.server.deps.agents.getBySlug('lead')
+    expect(await dmText(a.app)).toContain(`dm:${lead?.id}:agent:call-1`)
+
+    const b = instance(
+      dir,
+      { lead: [{ text: 'Report received.' }], researcher: [{ text: 'Done: handled old.md.' }] },
+      {},
+    )
+    await b.server.ready
+    const pending = await approvals(b.app)
+    expect(pending).toHaveLength(1)
+    const answered = await b.app.request(
+      `/approvals/${(pending[0] as ApprovalItem).id}`,
+      post({ approved: true }),
+    )
+    expect(answered.status).toBe(202)
+    await until('task done', async () => (await tasks(b.app, '?status=done')).length === 1)
+    await until('lead woke with the report', async () =>
+      (await dmText(b.app)).includes('Report received.'),
+    )
+    expect(await dmText(b.app)).toContain('Done: handled old.md.')
   })
 
   test('sidebar data: last activity, preview and unread, cleared by POST /agents/{id}/read', async () => {
@@ -586,7 +654,9 @@ describe('delegation with park', () => {
     await until('lead finished', async () => (await dmText(a.app)).includes('Grant used.'))
     expect(await approvals(a.app)).toEqual([])
     // a bad scope is rejected
-    expect((await a.app.request('/approvals/x', post({ approved: true, remember: 'forever' }))).status).toBe(400)
+    expect(
+      (await a.app.request('/approvals/x', post({ approved: true, remember: 'forever' }))).status,
+    ).toBe(400)
   })
 
   test('answer validation: unknown id and wrong body kind', async () => {
