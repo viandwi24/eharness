@@ -1,9 +1,11 @@
 <script lang="ts">
-	import AgentEditor from '#lib/components/app/AgentEditor.svelte';
-	import PageHeader from '#lib/components/app/PageHeader.svelte';
-</script>
+	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
+	import { openNewAgent } from '#lib/stores/dialogs.svelte.js';
 
-<div class="flex min-w-0 flex-1 flex-col overflow-y-auto">
-	<PageHeader title="New agent" />
-	<AgentEditor />
-</div>
+	// Old deep link: the form is a dialog now.
+	onMount(() => {
+		openNewAgent();
+		void goto('/', { replaceState: true });
+	});
+</script>

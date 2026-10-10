@@ -107,7 +107,7 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section
 	bind:this={root}
-	class="flex max-h-[min(45vh,28rem)] flex-col gap-2 rounded-lg border border-border bg-card p-3 text-sm"
+	class="flex max-h-[min(45vh,28rem)] flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm shadow-sm"
 	data-testid="question-card"
 	aria-label="Question from {approval.agentName}"
 	{onkeydown}

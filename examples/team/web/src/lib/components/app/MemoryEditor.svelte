@@ -5,6 +5,7 @@
 	import type { components } from '#lib/api/schema.js';
 	import { MessageResponse } from '#lib/components/ai/message/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { cleanPath, formatBytes } from '#lib/files/helpers.js';
@@ -114,18 +115,26 @@
 
 <div class="flex flex-col gap-3 {compact ? 'text-sm' : ''}">
 	{#if listError}<p class="text-xs text-destructive-text">{listError}</p>{/if}
-	{#if !loaded && !listError}<p class="text-muted-foreground">Loading…</p>{/if}
-	{#if loaded && !files.length}<p class="text-muted-foreground">No memory files yet.</p>{/if}
-	<div class="flex flex-col gap-1">
+	{#if !loaded && !listError}
+		<div class="flex flex-col gap-1.5" aria-busy="true" aria-label="Loading memory">
+			{#each [0, 1, 2] as i (i)}<Skeleton class="h-8 w-full rounded-lg" />{/each}
+		</div>
+	{/if}
+	{#if loaded && !files.length}
+		<p class="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+			No memory files yet. Notes the agent saves, or you add, appear here.
+		</p>
+	{/if}
+	<div class="flex flex-col gap-0.5">
 		{#each files as f (f.path)}
 			<button
 				type="button"
-				class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent {selected === f.path ? 'bg-accent' : ''}"
+				class="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring {selected === f.path ? 'bg-accent' : ''}"
 				onclick={() => void open(f.path)}
 			>
 				<FileTextIcon class="size-4 shrink-0 text-muted-foreground" />
-				<span class="min-w-0 flex-1 truncate font-mono text-xs">{f.path}</span>
-				<span class="text-xs text-muted-foreground">{formatBytes(f.size)} · {formatTime(f.updatedAt)}</span>
+				<span class="min-w-0 flex-1 truncate font-mono text-xs" title={f.path}>{f.path}</span>
+				<span class="shrink-0 text-[11px] text-muted-foreground">{formatBytes(f.size)} · {formatTime(f.updatedAt)}</span>
 			</button>
 		{/each}
 	</div>
@@ -144,7 +153,7 @@
 	{/if}
 
 	{#if selected}
-		<div class="flex flex-col gap-2 rounded-lg border border-border p-3">
+		<div class="flex flex-col gap-2 rounded-xl border border-border p-3">
 			<div class="flex items-center gap-2">
 				<span class="min-w-0 flex-1 truncate font-mono text-xs font-medium">{selected}</span>
 				{#if file && !editing}

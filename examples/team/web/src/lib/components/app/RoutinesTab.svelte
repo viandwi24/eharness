@@ -1,85 +1,113 @@
 <script lang="ts">
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
+	import PauseIcon from 'phosphor-svelte/lib/Pause';
+	import PlayIcon from 'phosphor-svelte/lib/Play';
+	import LightningIcon from 'phosphor-svelte/lib/Lightning';
+	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import { api } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { toast } from '#lib/components/ui/sonner/index.js';
+	import * as Empty from '#lib/components/ui/empty/index.js';
+	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
+	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
+	import { routineAction } from '#lib/routines/actions.js';
 	import { describeSpec, relativeTime, routineBadge } from '#lib/routines/schedule.js';
-	import RoutineEditor from './RoutineEditor.svelte';
-	import RoutineRuns from './RoutineRuns.svelte';
+	import { openEditRoutine, openNewRoutine } from '#lib/stores/dialogs.svelte.js';
+	import { live } from '#lib/stores/live.svelte.js';
 
 	type Routine = components['schemas']['Routine'];
 
-	let { agentId, routines, onChange }: { agentId: string; routines: Routine[]; onChange: () => void } = $props();
+	// `routines` / `onChange` are accepted for older callers; the tab loads and refreshes itself.
+	let { agentId }: { agentId: string; routines?: Routine[]; onChange?: () => void } = $props();
 
-	let editorOpen = $state(false);
-	let editing = $state<Routine | undefined>(undefined);
-	let runsFor = $state<Routine | null>(null);
+	let routines = $state<Routine[] | null>(null);
+	let error = $state('');
 	let busy = $state<string | null>(null);
+	let seq = 0;
 
-	function edit(r?: Routine): void {
-		editing = r;
-		editorOpen = true;
+	async function load(): Promise<void> {
+		const mine = ++seq;
+		try {
+			const r = await api.get('/routines', { query: { agentId } });
+			if (mine !== seq) return;
+			routines = r.routines;
+			error = '';
+		} catch (e) {
+			if (mine === seq) error = e instanceof Error ? e.message : 'Could not load routines';
+		}
 	}
+
+	$effect(() => {
+		void agentId;
+		void live.state.revs.routines;
+		void load();
+	});
 
 	async function act(r: Routine, action: 'pause' | 'resume' | 'run'): Promise<void> {
 		busy = r.id;
-		try {
-			await api.post(`/routines/{id}/${action}`, { params: { id: r.id } });
-			if (action === 'run') toast.success(`${r.name} started`);
-			onChange();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : `Could not ${action} the routine`);
-		} finally {
-			busy = null;
-		}
-	}
-
-	async function remove(r: Routine): Promise<void> {
-		if (!confirm(`Delete routine "${r.name}"? Its run history is removed too.`)) return;
-		try {
-			await api.delete('/routines/{id}', { params: { id: r.id } });
-			onChange();
-		} catch (e) {
-			toast.error(e instanceof Error ? e.message : 'Could not delete the routine');
-		}
+		await routineAction(r, action);
+		busy = null;
 	}
 </script>
 
-<div class="flex flex-col gap-2">
-	{#each routines as r (r.id)}
-		{@const b = routineBadge(r)}
-		<div class="flex flex-col gap-2 rounded-lg border border-border bg-card p-3">
-			<div class="flex items-center gap-2">
-				<ClockIcon class="size-4 shrink-0 text-muted-foreground" />
-				<div class="min-w-0 flex-1">
-					<div class="truncate font-medium">{r.name}</div>
-					<div class="text-xs text-muted-foreground">{describeSpec(r.schedule)}</div>
-				</div>
-				<Badge variant={b.variant}>{b.label}</Badge>
-			</div>
-			<div class="text-xs text-muted-foreground">
-				{#if r.status === 'active'}Next {relativeTime(r.nextFireAt)}{:else}Not scheduled{/if}
-				· Last {r.lastFireAt ? `${relativeTime(r.lastFireAt)}${r.lastStatus ? `, ${r.lastStatus.replace('_', ' ')}` : ''}` : 'never'}
-			</div>
-			<div class="flex flex-wrap gap-1.5">
-				{#if r.status === 'active'}
-					<Button size="sm" variant="outline" disabled={busy === r.id} onclick={() => void act(r, 'pause')}>Pause</Button>
-				{:else}
-					<Button size="sm" variant="outline" disabled={busy === r.id} onclick={() => void act(r, 'resume')}>Resume</Button>
-				{/if}
-				<Button size="sm" variant="outline" disabled={busy === r.id} onclick={() => void act(r, 'run')}>Run now</Button>
-				<Button size="sm" variant="ghost" onclick={() => (runsFor = r)}>Runs</Button>
-				<Button size="sm" variant="ghost" onclick={() => edit(r)}>Edit</Button>
-				<Button size="sm" variant="ghost" onclick={() => void remove(r)}>Delete</Button>
-			</div>
-		</div>
-	{:else}
-		<p class="text-muted-foreground">No routines for this agent.</p>
-	{/each}
-	<Button size="sm" variant="outline" class="self-start" onclick={() => edit()}>New routine</Button>
-</div>
+{#snippet iconAction(label: string, disabled: boolean, onclick: () => void, icon: typeof PlayIcon)}
+	<Tooltip.Root>
+		<Tooltip.Trigger>
+			{#snippet child({ props })}
+				<Button {...props} variant="ghost" size="icon-sm" aria-label={label} {disabled} {onclick}>
+					{@const Icon = icon}
+					<Icon class="size-4" />
+				</Button>
+			{/snippet}
+		</Tooltip.Trigger>
+		<Tooltip.Content>{label}</Tooltip.Content>
+	</Tooltip.Root>
+{/snippet}
 
-<RoutineEditor bind:open={editorOpen} {agentId} routine={editing} onSaved={() => onChange()} />
-<RoutineRuns bind:routine={runsFor} />
+<Tooltip.Provider>
+	<div class="flex flex-col gap-2 text-sm">
+		<div class="flex items-center justify-between">
+			<span class="text-xs text-muted-foreground">{routines ? `${routines.length} routine${routines.length === 1 ? '' : 's'}` : ''}</span>
+			<Button size="sm" variant="outline" onclick={() => openNewRoutine(agentId)}><PlusIcon class="size-4" /> New routine</Button>
+		</div>
+
+		{#if error}
+			<p class="text-xs text-destructive-text" role="alert">{error} <button class="underline underline-offset-4" onclick={() => void load()}>Retry</button></p>
+		{:else if !routines}
+			<Skeleton class="h-14 w-full" />
+			<Skeleton class="h-14 w-full" />
+		{:else if !routines.length}
+			<Empty.Root class="border border-dashed border-border p-6">
+				<Empty.Header>
+					<Empty.Media variant="icon"><ClockIcon /></Empty.Media>
+					<Empty.Title>No routines yet</Empty.Title>
+					<Empty.Description>Schedule a prompt and this agent runs it on its own.</Empty.Description>
+				</Empty.Header>
+			</Empty.Root>
+		{:else}
+			<ul class="flex flex-col divide-y divide-border rounded-lg border border-border bg-card">
+				{#each routines as r (r.id)}
+					{@const b = routineBadge(r)}
+					<li class="flex items-center gap-1 pr-1.5 pl-3">
+						<button type="button" class="flex min-w-0 flex-1 flex-col gap-0.5 py-2.5 text-left outline-none focus-visible:underline" onclick={() => openEditRoutine(r.id)}>
+							<span class="flex items-center gap-2">
+								<span class="truncate font-medium">{r.name}</span>
+								<Badge variant={b.variant} class="shrink-0">{b.label}</Badge>
+							</span>
+							<span class="truncate text-xs text-muted-foreground">
+								{describeSpec(r.schedule)} · {r.status === 'active' ? `next ${relativeTime(r.nextFireAt)}` : 'not scheduled'}
+							</span>
+						</button>
+						{#if r.status === 'active'}
+							{@render iconAction('Pause', busy === r.id, () => void act(r, 'pause'), PauseIcon)}
+						{:else}
+							{@render iconAction('Resume', busy === r.id, () => void act(r, 'resume'), PlayIcon)}
+						{/if}
+						{@render iconAction('Run now', busy === r.id, () => void act(r, 'run'), LightningIcon)}
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</div>
+</Tooltip.Provider>

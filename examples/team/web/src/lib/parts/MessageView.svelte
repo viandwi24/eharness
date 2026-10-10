@@ -26,12 +26,15 @@
 	let {
 		message,
 		agent,
+		showHeader = true,
 		onApproval,
 		onOpenSession
 	}: {
 		message: UIMessage;
 		/** Author of an assistant message (multi-agent header). `id` seeds the avatar. */
 		agent?: { id: string; name: string; color?: string };
+		/** Show the avatar + name line; the chat hides it for follow-up messages of the same author. */
+		showHeader?: boolean;
 		onApproval?: (answer: ApprovalAnswer) => void;
 		onOpenSession?: (sessionId: string) => void;
 	} = $props();
@@ -101,7 +104,7 @@
 	{/each}
 {:else if visible}
 	<Message from={message.role === 'user' ? 'user' : 'assistant'}>
-		{#if message.role !== 'user' && agent}
+		{#if message.role !== 'user' && agent && showHeader}
 			<MessageHeader>
 				<MessageAvatar><AgentAvatar seed={agent.id} color={agent.color} size={22} /></MessageAvatar>
 				{agent.name}

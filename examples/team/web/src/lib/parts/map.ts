@@ -283,3 +283,15 @@ export function messageKind(message: UIMessage): string | undefined {
 	const meta = message.metadata as { eharness?: { kind?: unknown } } | undefined;
 	return typeof meta?.eharness?.kind === 'string' ? meta.eharness.kind : undefined;
 }
+
+/**
+ * Whether message `i` starts a new author run, so its avatar + name header shows: the first
+ * message, or one whose previous message was written by someone else (a user turn or a divider).
+ */
+export function startsAuthorRun(messages: readonly UIMessage[], i: number): boolean {
+	const m = messages[i];
+	if (!m || m.role === 'user') return false;
+	const prev = messages[i - 1];
+	if (!prev) return true;
+	return prev.role !== m.role || messageKind(prev) !== undefined;
+}

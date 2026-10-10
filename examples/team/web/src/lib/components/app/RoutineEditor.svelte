@@ -1,8 +1,8 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { api, fieldErrors } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
-	import { Button } from '#lib/components/ui/button/index.js';
-	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
@@ -24,11 +24,21 @@
 	type Routine = components['schemas']['Routine'];
 
 	let {
-		open = $bindable(false),
-		agentId,
+		agentId = '',
 		routine,
+		formId = 'routine-form',
+		saving = $bindable(false),
+		valid = $bindable(false),
 		onSaved
-	}: { open: boolean; agentId: string; routine?: Routine | undefined; onSaved?: (r: Routine) => void } = $props();
+	}: {
+		/** Preset agent for a new routine; with none the form shows an agent picker. */
+		agentId?: string;
+		routine?: Routine | undefined;
+		formId?: string;
+		saving?: boolean;
+		valid?: boolean;
+		onSaved?: (r: Routine) => void;
+	} = $props();
 
 	let name = $state('');
 	let prompt = $state('');
@@ -39,20 +49,27 @@
 	let maxFailures = $state(3);
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
-	let saving = $state(false);
 
-	// Reset the form each time the dialog opens (for the routine being edited, or a blank one).
+	// svelte-ignore state_referenced_locally
+	let pickedAgent = $state(routine?.agentId ?? agentId);
+	// svelte-ignore state_referenced_locally
+	name = routine?.name ?? '';
+	// svelte-ignore state_referenced_locally
+	prompt = routine?.prompt ?? '';
+	// svelte-ignore state_referenced_locally
+	schedule = routine ? parseSpec(routine.schedule) : defaultScheduleForm();
+	// svelte-ignore state_referenced_locally
+	sessionMode = routine?.sessionMode ?? 'dm';
+	// svelte-ignore state_referenced_locally
+	overlap = routine?.overlap ?? 'skip';
+	// svelte-ignore state_referenced_locally
+	catchUp = String(routine?.catchUpWindowMs ?? null);
+	// svelte-ignore state_referenced_locally
+	maxFailures = routine?.maxFailures ?? 3;
+
+	onMount(() => void agentsStore.load());
 	$effect(() => {
-		if (!open) return;
-		name = routine?.name ?? '';
-		prompt = routine?.prompt ?? '';
-		schedule = routine ? parseSpec(routine.schedule) : defaultScheduleForm();
-		sessionMode = routine?.sessionMode ?? 'dm';
-		overlap = routine?.overlap ?? 'skip';
-		catchUp = String(routine?.catchUpWindowMs ?? null);
-		maxFailures = routine?.maxFailures ?? 3;
-		errors = {};
-		formError = '';
+		valid = !!name.trim() && !!prompt.trim() && !!pickedAgent;
 	});
 
 	const zones = $derived(timezones(schedule.tz));
@@ -82,9 +99,8 @@
 		try {
 			const saved = routine
 				? await api.patch('/routines/{id}', { params: { id: routine.id }, body: common })
-				: await api.post('/routines', { body: { agentId, ...common } });
+				: await api.post('/routines', { body: { agentId: pickedAgent, ...common } });
 			toast.success(routine ? 'Routine saved' : 'Routine created');
-			open = false;
 			onSaved?.(saved);
 		} catch (err) {
 			errors = fieldErrors(err);
@@ -95,13 +111,19 @@
 	}
 </script>
 
-<Dialog.Root bind:open>
-	<Dialog.Content class="max-h-[90svh] overflow-y-auto sm:max-w-lg">
-		<Dialog.Header>
-			<Dialog.Title>{routine ? 'Edit routine' : 'New routine'}</Dialog.Title>
-			<Dialog.Description>The agent runs the prompt on a schedule, with a fresh context each time plus its memory.</Dialog.Description>
-		</Dialog.Header>
-		<form class="flex flex-col gap-3 text-sm" onsubmit={submit}>
+<form id={formId} class="flex flex-col gap-4 text-sm" onsubmit={submit}>
+			{#if !routine}
+				<label class="flex flex-col gap-1">
+					<span class="font-medium">Agent</span>
+					<NativeSelect bind:value={pickedAgent} aria-invalid={!!errors.agentId}>
+						<NativeSelectOption value="" disabled>Choose an agent…</NativeSelectOption>
+						{#each agentsStore.state.agents as a (a.id)}
+							<NativeSelectOption value={a.id}>{a.name}</NativeSelectOption>
+						{/each}
+					</NativeSelect>
+					{#if errors.agentId}<span class="text-xs text-destructive-text">{errors.agentId}</span>{/if}
+				</label>
+			{/if}
 			<label class="flex flex-col gap-1">
 				<span class="font-medium">Name</span>
 				<Input bind:value={name} placeholder="Morning briefing" aria-invalid={!!errors.name} />
@@ -194,10 +216,4 @@
 			</div>
 
 			{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}
-			<Dialog.Footer>
-				<Button type="button" variant="ghost" onclick={() => (open = false)}>Cancel</Button>
-				<Button type="submit" disabled={saving || !name.trim() || !prompt.trim()}>{saving ? 'Saving…' : routine ? 'Save routine' : 'Create routine'}</Button>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+</form>

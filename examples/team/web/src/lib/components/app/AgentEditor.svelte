@@ -15,7 +15,25 @@
 	import { toolsStore } from '#lib/stores/tools.svelte.js';
 
 	/** Without `agent` the editor creates one; with it, it edits (the lead cannot be archived). */
-	let { agent, compact = false }: { agent?: Agent; compact?: boolean } = $props();
+	let {
+		agent,
+		compact = false,
+		bare = false,
+		formId = 'agent-editor-form',
+		saving = $bindable(false),
+		valid = $bindable(false),
+		onDone
+	}: {
+		agent?: Agent;
+		compact?: boolean;
+		/** Dialog mode: no padding or footer; the host renders submit buttons with `form={formId}`. */
+		bare?: boolean;
+		formId?: string;
+		saving?: boolean;
+		valid?: boolean;
+		/** Called after a successful create, save or archive. */
+		onDone?: (result: 'created' | 'saved' | 'archived') => void;
+	} = $props();
 
 	// svelte-ignore state_referenced_locally
 	let name = $state(agent?.name ?? '');
@@ -33,7 +51,10 @@
 	let modeChoice = $state<AgentChoice>(agentChoiceOf(agent?.permissionMode));
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
-	let saving = $state(false);
+
+	$effect(() => {
+		valid = !!name.trim() && !!instructions.trim();
+	});
 
 	const isLead = $derived(agent?.role === 'lead');
 	const models = $derived(
@@ -67,9 +88,11 @@
 			if (agent) {
 				await agentsStore.update(agent.id, body);
 				toast.success('Agent saved');
+				onDone?.('saved');
 			} else {
 				const created = await agentsStore.create(body);
 				toast.success(`${created.name} created`);
+				onDone?.('created');
 				await goto(`/a/${created.id}`);
 			}
 		} catch (err) {
@@ -85,6 +108,7 @@
 		try {
 			await agentsStore.archive(agent.id);
 			toast.success('Agent archived');
+			onDone?.('archived');
 			await goto('/');
 		} catch (err) {
 			formError = err instanceof Error ? err.message : String(err);
@@ -92,7 +116,7 @@
 	}
 </script>
 
-<form class="flex flex-col gap-4 {compact ? 'text-sm' : 'max-w-xl p-4'}" onsubmit={submit}>
+<form id={formId} class="flex flex-col gap-4 {compact || bare ? 'text-sm' : 'max-w-xl p-4'}" onsubmit={submit}>
 	<div class="flex items-center gap-3">
 		<AgentAvatar seed={agent?.id ?? (name || 'new')} {color} size={compact ? 40 : 56} label="Avatar preview" />
 		<div class="flex flex-wrap gap-1.5" role="radiogroup" aria-label="Avatar color">
@@ -167,27 +191,26 @@
 		</span>
 	</label>
 
-	{#if agent}
-		<a href="/a/{agent.id}" class="text-xs text-info-text underline underline-offset-4">Routines and files are in the chat side panel</a>
-	{/if}
-
 	{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}
 
-	<div class="flex items-center gap-2">
-		<Button type="submit" disabled={saving || !name.trim() || !instructions.trim()}>
-			{saving ? 'Saving…' : agent ? 'Save changes' : 'Create agent'}
-		</Button>
-		{#if agent}
-			<Button
-				type="button"
-				variant="outline"
-				class="ml-auto"
-				disabled={isLead}
-				title={isLead ? 'The lead cannot be archived' : undefined}
-				onclick={archive}
-			>
-				Archive
+	{#if !bare}
+		<div class="flex items-center gap-2">
+			<Button type="submit" disabled={saving || !valid}>
+				{saving ? 'Saving…' : agent ? 'Save changes' : 'Create agent'}
 			</Button>
-		{/if}
-	</div>
+			{#if agent}
+				<Button type="button" variant="outline" class="ml-auto" disabled={isLead} title={isLead ? 'The lead cannot be archived' : undefined} onclick={archive}>
+					Archive
+				</Button>
+			{/if}
+		</div>
+	{:else if agent && !isLead}
+		<div class="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+			<div class="min-w-0">
+				<div class="font-medium">Archive agent</div>
+				<div class="text-xs text-muted-foreground">Hides it from the list. Its history stays readable.</div>
+			</div>
+			<Button type="button" variant="outline" size="sm" onclick={archive}>Archive</Button>
+		</div>
+	{/if}
 </form>

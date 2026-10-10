@@ -1,0 +1,14 @@
+import { expect, test } from 'bun:test';
+import { validateGeneral } from './validate';
+
+test('validateGeneral accepts an empty budget and a cap in range', () => {
+	expect(validateGeneral({ budget: '', spawnCap: '4' })).toEqual({ ok: true, value: { budgetUsd: null, spawnCap: 4 } });
+	expect(validateGeneral({ budget: '12.5', spawnCap: '32' })).toEqual({ ok: true, value: { budgetUsd: 12.5, spawnCap: 32 } });
+});
+
+test('validateGeneral reports field errors', () => {
+	const r = validateGeneral({ budget: '-1', spawnCap: '0' });
+	expect(r.ok).toBe(false);
+	if (!r.ok) expect(Object.keys(r.errors).sort()).toEqual(['budgetUsd', 'spawnCap']);
+	expect(validateGeneral({ budget: 'abc', spawnCap: '2.5' }).ok).toBe(false);
+});

@@ -76,16 +76,16 @@
 			</PromptInputHeader>
 		{/if}
 		<PromptInputBody>
-			<PromptInputTextarea {placeholder} onkeydown={onKeydown} />
+			<PromptInputTextarea {placeholder} onkeydown={onKeydown} class="min-h-12 px-3 pt-2.5 pb-1" />
 		</PromptInputBody>
-		<PromptInputFooter>
+		<PromptInputFooter class="px-1.5 pt-0.5 pb-1.5">
 			<PromptInputTools>
-				<PromptInputButton aria-label="Attach files" onclick={openFileDialog}>
+				<PromptInputButton aria-label="Attach files" title="Attach files" onclick={openFileDialog}>
 					<PaperclipIcon class="size-4" />
 				</PromptInputButton>
 				{#if agentId}<ModeSwitch bind:this={modeSwitch} {agentId} />{/if}
 			</PromptInputTools>
-			<div class="flex items-center gap-1">
+			<div class="flex items-center gap-1.5">
 				{#if agentId}<ContextMeter {agentId} />{/if}
 				<PromptInputSubmit {status} {onStop} />
 			</div>

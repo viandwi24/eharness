@@ -1,7 +1,15 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import type { UIMessage } from 'ai';
 	import XIcon from 'phosphor-svelte/lib/X';
+	import StopIcon from 'phosphor-svelte/lib/Stop';
+	import ChatCircleIcon from 'phosphor-svelte/lib/ChatCircle';
+	import WarningCircleIcon from 'phosphor-svelte/lib/WarningCircle';
+	import { goto } from '$app/navigation';
+	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
+	import * as Empty from '#lib/components/ui/empty/index.js';
+	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
+	import { startsAuthorRun } from '#lib/parts/map.js';
 	import type { Approval, TaskDetail } from '#lib/api/client.js';
 	import { api, apiBase, getToken } from '#lib/api/index.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
@@ -9,7 +17,7 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { badgeFor } from '#lib/board/board.js';
-	import { formatTime } from '#lib/format.js';
+	import { relativeTime } from '#lib/routines/schedule.js';
 	import MessageView from '#lib/parts/MessageView.svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
@@ -18,8 +26,7 @@
 	import {
 		Conversation,
 		ConversationContent,
-		ConversationEmptyState,
-		ConversationItem,
+			ConversationItem,
 		ConversationScrollButton
 	} from '#lib/components/ai/conversation/index.js';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
@@ -83,6 +90,14 @@
 		});
 		void load(id);
 	});
+
+	// Turns the server starts in this task's session (a subagent report, a routine, a message from
+	// another agent) arrive as live events: re-read at once so the stream loop below picks them up.
+	onMount(() =>
+		live.onChatEvent((e) => {
+			if (e.sessionId && e.sessionId === detail?.task.sessionId) void load(taskId);
+		})
+	);
 
 	const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -159,43 +174,100 @@
 	}
 </script>
 
+<Tooltip.Provider delayDuration={300}>
 <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-	<header class="flex h-14 shrink-0 items-center gap-3 border-b border-border px-3">
-		{#if task}<AgentAvatar seed={task.agentId} color={agent?.color} size={32} label={agent?.name ?? task.agentId} />{/if}
+	<header class="flex h-14 shrink-0 items-center gap-2.5 border-b border-border px-3">
+		{#if task}
+			<AgentAvatar seed={task.agentId} color={agent?.color} size={32} label={agent?.name ?? task.agentId} />
+		{:else}
+			<Skeleton class="size-8 rounded-lg" />
+		{/if}
 		<div class="min-w-0 flex-1">
-			<h2 class="truncate text-sm font-medium">{task?.title ?? 'Task'}</h2>
-			<p class="truncate text-xs text-muted-foreground">
-				{agent?.name ?? task?.agentId ?? ''}{task ? ` · ${formatTime(task.lastActivityAt)}` : ''}{streaming ? ' · live' : ''}
+			<h2 class="truncate text-sm leading-tight font-medium">{task?.title ?? 'Task'}</h2>
+			<p class="truncate text-xs leading-tight text-muted-foreground">
+				{agent?.name ?? task?.agentId ?? ''}{task ? ` · ${relativeTime(task.lastActivityAt)}` : ''}{streaming ? ' · live' : ''}
 			</p>
 		</div>
 		{#if task}{@const b = badgeFor(task.status)}<Badge variant={b.variant}>{b.label}</Badge>{/if}
-		{#if onClose}
-			<Button size="icon-sm" variant="ghost" aria-label="Close" onclick={onClose}><XIcon class="size-4" /></Button>
-		{/if}
+		<div class="flex shrink-0 items-center gap-0.5">
+			{#if running}
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						{#snippet child({ props })}
+							<Button {...props} size="icon-sm" variant="ghost" aria-label="Stop task" disabled={aborting} onclick={() => void abort()}>
+								<StopIcon class="size-4" weight="fill" />
+							</Button>
+						{/snippet}
+					</Tooltip.Trigger>
+					<Tooltip.Content>Stop task</Tooltip.Content>
+				</Tooltip.Root>
+			{/if}
+			{#if task}
+				<Tooltip.Root>
+					<Tooltip.Trigger>
+						{#snippet child({ props })}
+							<Button
+								{...props}
+								size="icon-sm"
+								variant="ghost"
+								aria-label="Open agent chat"
+								onclick={() => {
+									const to = agent?.slug ?? task.agentId;
+									onClose?.();
+									void goto(`/a/${to}`);
+								}}
+							>
+								<ChatCircleIcon class="size-4" />
+							</Button>
+						{/snippet}
+					</Tooltip.Trigger>
+					<Tooltip.Content>Open agent chat</Tooltip.Content>
+				</Tooltip.Root>
+			{/if}
+			{#if onClose}
+				<Button size="icon-sm" variant="ghost" aria-label="Close" onclick={onClose}><XIcon class="size-4" /></Button>
+			{/if}
+		</div>
 	</header>
 
 	<!-- Same anatomy as ChatPane: scroller to the bottom, pending cards and composer float as a dock. -->
 	<div class="relative flex min-h-0 flex-1 flex-col">
 		<div class="flex min-h-0 flex-1 flex-col">
 			<Conversation class="min-h-0 flex-1">
-				<ConversationContent class="mx-auto w-full max-w-3xl gap-6 px-4 pt-6" style={`padding-bottom: ${dockHeight + 24}px`}>
+				<ConversationContent class="mx-auto w-full max-w-3xl gap-5 px-4 pt-6" style={`padding-bottom: ${dockHeight + 24}px`}>
 					{#if error}
-						<p class="text-sm text-destructive-text">{error}</p>
-					{:else if loading}
-						<p class="text-sm text-muted-foreground">Loading…</p>
-					{:else if detail}
-						{#each messages as m (m.id)}
-							<ConversationItem messageId={m.id}>
+						<div class="flex items-center gap-2 rounded-lg bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert">
+							<WarningCircleIcon class="size-4 shrink-0" /><span class="min-w-0 flex-1">{error}</span>
+							<Button size="xs" variant="ghost" onclick={() => void load(taskId)}>Retry</Button>
+						</div>
+					{:else if loading || !detail}
+						<div class="flex flex-col gap-6 pt-2" aria-busy="true" aria-label="Loading task">
+							<Skeleton class="ml-auto h-9 w-2/5 rounded-xl" />
+							<div class="flex flex-col gap-2"><Skeleton class="h-3.5 w-1/3" /><Skeleton class="h-3.5 w-4/5" /><Skeleton class="h-3.5 w-3/5" /></div>
+						</div>
+					{:else}
+						{#each messages as m, i (m.id)}
+							{@const head = startsAuthorRun(messages, i)}
+							<ConversationItem messageId={m.id} class={m.role !== 'user' && !head && i > 0 ? '-mt-2' : ''}>
 								<MessageView
 									message={m}
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
+									showHeader={head}
 									onApproval={answerFromPart}
 									onOpenSession={(sid) => void openSession(sid)}
 								/>
 							</ConversationItem>
 						{:else}
-							<ConversationEmptyState title="No messages yet" description="This task has not produced anything yet." />
+							<Empty.Root class="border-0 py-16">
+								<Empty.Header>
+									<Empty.Title>No messages yet</Empty.Title>
+									<Empty.Description>This task has not produced anything yet.</Empty.Description>
+								</Empty.Header>
+							</Empty.Root>
 						{/each}
+						{#if running && !streaming && messages.at(-1)?.role === 'user'}
+							<div class="text-sm text-muted-foreground" role="status">Working…</div>
+						{/if}
 					{/if}
 				</ConversationContent>
 				<ConversationScrollButton style={`bottom: ${dockHeight + 12}px`} />
@@ -207,7 +279,7 @@
 				class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-60% to-transparent pt-6"
 				bind:clientHeight={dockHeight}
 			>
-				<div class="pointer-events-auto mx-auto w-full max-w-3xl p-3">
+				<div class="pointer-events-auto mx-auto w-full max-w-3xl px-3 pb-3">
 					{#if approvals.length}
 						<div class="mb-2 flex flex-col gap-2" role="region" aria-label="Waiting for your answer">
 							{#each approvals as a (a.sessionId + a.id)}
@@ -226,3 +298,4 @@
 		{/if}
 	</div>
 </div>
+</Tooltip.Provider>

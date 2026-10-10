@@ -1,37 +1,52 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { untrack } from 'svelte';
-	import PageHeader from '#lib/components/app/PageHeader.svelte';
-	import MemoryEditor from '#lib/components/app/MemoryEditor.svelte';
+	import BrainIcon from 'phosphor-svelte/lib/Brain';
+	import ChartBarIcon from 'phosphor-svelte/lib/ChartBar';
+	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
+	import SlidersIcon from 'phosphor-svelte/lib/Sliders';
 	import { api, fieldErrors, getToken, setToken } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
+	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
+	import MemoryEditor from '#lib/components/app/MemoryEditor.svelte';
+	import PageHeader from '#lib/components/app/PageHeader.svelte';
+	import * as AllocationBar from '#lib/components/ui/allocation-bar/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import * as Card from '#lib/components/ui/card/index.js';
+	import * as Empty from '#lib/components/ui/empty/index.js';
+	import * as Field from '#lib/components/ui/field/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
+	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
+	import { StatTile } from '#lib/components/ui/stat-tile/index.js';
+	import * as Table from '#lib/components/ui/table/index.js';
 	import { modelOptions } from '#lib/models.js';
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { sumUsage, type Usage } from '#lib/settings/usage.js';
+	import { validateGeneral } from '#lib/settings/validate.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
+	import { formatUsd } from '#lib/time.js';
 
 	type Settings = components['schemas']['Settings'];
 
-	let token = $state(getToken() ?? '');
-	let tokenSaved = $state(false);
+	const sections = [
+		{ id: 'general', label: 'General', icon: SlidersIcon },
+		{ id: 'usage', label: 'Usage', icon: ChartBarIcon },
+		{ id: 'memory', label: 'Memory', icon: BrainIcon },
+		{ id: 'connection', label: 'Connection', icon: PlugsConnectedIcon }
+	] as const;
+	type SectionId = (typeof sections)[number]['id'];
 
-	function saveToken() {
-		setToken(token.trim());
-		tokenSaved = true;
-		void agentsStore.load();
-		void loadSettings();
-		void loadUsage();
-	}
+	const section = $derived<SectionId>(sections.find((s) => s.id === page.url.searchParams.get('section'))?.id ?? 'general');
 
+	// --- general ---------------------------------------------------------------------------
 	let settings = $state<Settings | null>(null);
 	let loadError = $state('');
 	let mode = $state<Settings['defaultPermissionMode']>('default');
 	let budget = $state('');
-	let spawnCap = $state(4);
+	let spawnCap = $state('4');
 	let model = $state('');
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
@@ -43,36 +58,52 @@
 			: modelOptions
 	);
 
+	const dirty = $derived(
+		!!settings &&
+			(mode !== settingsModeOf(settings.defaultPermissionMode) ||
+				budget.trim() !== (settings.budgetUsd === null ? '' : String(settings.budgetUsd)) ||
+				spawnCap.trim() !== String(settings.spawnCap) ||
+				model !== (settings.defaultModel ?? ''))
+	);
+
 	function fill(s: Settings): void {
 		settings = s;
 		mode = settingsModeOf(s.defaultPermissionMode);
 		budget = s.budgetUsd === null ? '' : String(s.budgetUsd);
-		spawnCap = s.spawnCap;
+		spawnCap = String(s.spawnCap);
 		model = s.defaultModel ?? '';
 	}
 
 	async function loadSettings(): Promise<void> {
 		try {
-			fill(await api.get('/settings'));
+			const s = await api.get('/settings');
+			// Another tab's change refreshes the form only when there is nothing unsaved here.
+			if (!settings || !dirty) fill(s);
+			else settings = s;
 			loadError = '';
 		} catch (e) {
 			loadError = e instanceof Error ? e.message : 'Could not load settings';
 		}
 	}
 
-	async function save(e: SubmitEvent): Promise<void> {
-		e.preventDefault();
+	function discard(): void {
+		if (settings) fill(settings);
 		errors = {};
 		formError = '';
-		const b = budget.trim();
-		const n = b === '' ? null : Number(b);
-		if (n !== null && (!Number.isFinite(n) || n < 0)) {
-			errors = { budgetUsd: 'Enter a positive amount, or leave empty for no limit' };
+	}
+
+	async function save(e: SubmitEvent): Promise<void> {
+		e.preventDefault();
+		formError = '';
+		const v = validateGeneral({ budget, spawnCap });
+		if (!v.ok) {
+			errors = v.errors;
 			return;
 		}
+		errors = {};
 		saving = true;
 		try {
-			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, budgetUsd: n, spawnCap: Math.floor(spawnCap), defaultModel: model || null } }));
+			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, defaultModel: model || null } }));
 			toast.success('Settings saved');
 		} catch (err) {
 			errors = fieldErrors(err);
@@ -82,7 +113,8 @@
 		}
 	}
 
-	let usage = $state<{ total: Usage; rows: { id: string; name: string; usage: Usage }[] } | null>(null);
+	// --- usage -----------------------------------------------------------------------------
+	let usage = $state<{ total: Usage; rows: { id: string; name: string; color?: string; usage: Usage }[] } | null>(null);
 	let usageError = $state('');
 	let useq = 0;
 	async function loadUsage(): Promise<void> {
@@ -93,6 +125,7 @@
 				agentsStore.state.agents.map(async (a) => ({
 					id: a.id,
 					name: a.name,
+					color: a.color,
 					usage: (await api.get('/agents/{id}/stats', { params: { id: a.id } })).usage
 				}))
 			);
@@ -104,6 +137,29 @@
 		}
 	}
 
+	const costSegments = $derived(
+		(usage?.rows ?? [])
+			.filter((r) => r.usage.costUsd > 0)
+			.sort((a, b) => b.usage.costUsd - a.usage.costUsd)
+			.slice(0, 5)
+			.map((r) => ({ label: r.name, value: Math.max(1, Math.round((r.usage.costUsd / (usage?.total.costUsd || 1)) * 100)) }))
+	);
+
+	// --- connection ------------------------------------------------------------------------
+	let token = $state(getToken() ?? '');
+	let tokenSaved = $state(getToken() ?? '');
+	const tokenDirty = $derived(token.trim() !== tokenSaved);
+
+	function saveToken(e: SubmitEvent): void {
+		e.preventDefault();
+		setToken(token.trim());
+		tokenSaved = token.trim();
+		toast.success('Token saved in this browser');
+		void agentsStore.load();
+		void loadSettings();
+		void loadUsage();
+	}
+
 	// Initial load, and a refresh when another tab changes settings.
 	$effect(() => {
 		void live.state.revs.settings;
@@ -113,100 +169,183 @@
 		});
 	});
 
-	const usd = (n: number): string => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 	const num = (n: number): string => n.toLocaleString();
+	const modeHint = $derived(modeInfo(settingsModes.find((m) => m.id === mode)?.mode ?? 'manual').hint);
 </script>
 
-<div class="flex min-w-0 flex-1 flex-col overflow-y-auto">
-	<PageHeader title="Settings" />
-	<div class="flex max-w-2xl flex-col gap-8 p-4 text-sm">
-		<form class="flex flex-col gap-3" onsubmit={save}>
-			<h2 class="text-base font-medium">Workspace defaults</h2>
-			{#if loadError}<p class="text-destructive-text">{loadError}</p>{/if}
-			<label class="flex flex-col gap-1">
-				<span class="font-medium">Default permission mode</span>
-				<NativeSelect bind:value={mode} disabled={!settings}>
-					{#each settingsModes as m (m.id)}
-						<NativeSelectOption value={m.id}>{modeInfo(m.mode).label}</NativeSelectOption>
-					{/each}
-				</NativeSelect>
-				<span class="text-xs text-muted-foreground">The starting mode of every chat whose agent has no mode of its own (and of routine runs). {modeInfo(settingsModes.find((m) => m.id === mode)?.mode ?? 'manual').hint}</span>
-				{#if errors.defaultPermissionMode}<span class="text-xs text-destructive-text">{errors.defaultPermissionMode}</span>{/if}
-			</label>
-			<label class="flex flex-col gap-1">
-				<span class="font-medium">Monthly budget (USD)</span>
-				<Input type="number" min="0" step="0.01" bind:value={budget} placeholder="No limit" disabled={!settings} aria-invalid={!!errors.budgetUsd} />
-				<span class="text-xs text-muted-foreground">Cost is always tracked; with a limit, agents stop starting turns when it is reached.</span>
-				{#if errors.budgetUsd}<span class="text-xs text-destructive-text">{errors.budgetUsd}</span>{/if}
-			</label>
-			<label class="flex flex-col gap-1">
-				<span class="font-medium">Delegation cap</span>
-				<Input type="number" min="1" max="32" bind:value={spawnCap} disabled={!settings} aria-invalid={!!errors.spawnCap} />
-				<span class="text-xs text-muted-foreground">How many delegated tasks the lead runs at once.</span>
-				{#if errors.spawnCap}<span class="text-xs text-destructive-text">{errors.spawnCap}</span>{/if}
-			</label>
-			<label class="flex flex-col gap-1">
-				<span class="font-medium">Default model</span>
-				<NativeSelect bind:value={model} disabled={!settings}>
-					{#each models as m (m.id ?? '')}
-						<NativeSelectOption value={m.id ?? ''}>{m.id === null ? 'Server default' : m.label}</NativeSelectOption>
-					{/each}
-				</NativeSelect>
-				<span class="text-xs text-muted-foreground">For agents without their own model.</span>
-			</label>
-			{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}
-			<Button type="submit" class="self-start" disabled={saving || !settings}>{saving ? 'Saving…' : 'Save defaults'}</Button>
-		</form>
+<div class="flex min-h-0 min-w-0 flex-1 flex-col">
+	<PageHeader title="Settings" description="Workspace-wide defaults for every agent" />
 
-		<section class="flex flex-col gap-3">
-			<h2 class="text-base font-medium">Usage</h2>
-			{#if usageError}<p class="text-destructive-text">{usageError}</p>{/if}
-			{#if !usage && !usageError}<p class="text-muted-foreground">Loading…</p>{/if}
-			{#if usage}
-				<dl class="grid grid-cols-2 gap-2 sm:grid-cols-4">
-					{#each [['Cost', usd(usage.total.costUsd)], ['Turns', num(usage.total.turns)], ['Input tokens', num(usage.total.inputTokens)], ['Output tokens', num(usage.total.outputTokens)]] as [label, value] (label)}
-						<div class="rounded-lg border border-border bg-card p-3">
-							<dt class="text-xs text-muted-foreground">{label}</dt>
-							<dd class="text-lg font-medium">{value}</dd>
+	<div class="flex min-h-0 flex-1 flex-col md:flex-row">
+		<nav aria-label="Settings sections" class="flex shrink-0 gap-1 overflow-x-auto border-b border-border p-2 md:w-52 md:flex-col md:overflow-visible md:border-r md:border-b-0 md:p-3">
+			{#each sections as s (s.id)}
+				<a
+					href="?section={s.id}"
+					aria-current={s.id === section ? 'page' : undefined}
+					class="flex h-8 shrink-0 items-center gap-2 rounded-[7px] px-2.5 text-[13px] font-medium whitespace-nowrap text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring aria-[current=page]:bg-accent aria-[current=page]:text-foreground"
+				>
+					<s.icon class="size-4" />{s.label}
+				</a>
+			{/each}
+		</nav>
+
+		<div class="min-h-0 min-w-0 flex-1 overflow-y-auto">
+			<div class="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 md:p-6">
+				{#if section === 'general'}
+					<form id="general" onsubmit={save} class="flex flex-col gap-4">
+						<Card.Root>
+							<Card.Header>
+								<Card.Title>General</Card.Title>
+								<Card.Description>Defaults used by chats and routines whose agent does not set its own.</Card.Description>
+							</Card.Header>
+							<Card.Content>
+								{#if loadError}
+									<p class="mb-4 text-sm text-destructive-text" role="alert">{loadError}</p>
+								{/if}
+								<Field.Group>
+									<Field.Field data-invalid={!!errors.defaultModel}>
+										<Field.Label for="s-model">Default model</Field.Label>
+										{#if !settings}<Skeleton class="h-9 w-full max-w-sm" />{:else}
+											<NativeSelect id="s-model" bind:value={model} class="w-full max-w-sm">
+												{#each models as m (m.id ?? '')}
+													<NativeSelectOption value={m.id ?? ''}>{m.id === null ? 'Server default' : m.label}</NativeSelectOption>
+												{/each}
+											</NativeSelect>
+										{/if}
+										<Field.Description>Used for agents without their own model.</Field.Description>
+										{#if errors.defaultModel}<Field.Error>{errors.defaultModel}</Field.Error>{/if}
+									</Field.Field>
+									<Field.Field data-invalid={!!errors.defaultPermissionMode}>
+										<Field.Label for="s-mode">Default permission mode</Field.Label>
+										{#if !settings}<Skeleton class="h-9 w-full max-w-sm" />{:else}
+											<NativeSelect id="s-mode" bind:value={mode} class="w-full max-w-sm">
+												{#each settingsModes as m (m.id)}
+													<NativeSelectOption value={m.id}>{modeInfo(m.mode).label}</NativeSelectOption>
+												{/each}
+											</NativeSelect>
+										{/if}
+										<Field.Description>The starting mode of every chat whose agent has no mode of its own, and of routine runs. {modeHint}</Field.Description>
+										{#if errors.defaultPermissionMode}<Field.Error>{errors.defaultPermissionMode}</Field.Error>{/if}
+									</Field.Field>
+									<Field.Field data-invalid={!!errors.budgetUsd}>
+										<Field.Label for="s-budget">Monthly budget (USD)</Field.Label>
+										<Input id="s-budget" type="number" min="0" step="0.01" inputmode="decimal" bind:value={budget} placeholder="No limit" disabled={!settings} aria-invalid={!!errors.budgetUsd} class="max-w-sm" />
+										<Field.Description>Cost is always tracked. With a limit, agents stop starting turns when it is reached.</Field.Description>
+										{#if errors.budgetUsd}<Field.Error>{errors.budgetUsd}</Field.Error>{/if}
+									</Field.Field>
+									<Field.Field data-invalid={!!errors.spawnCap}>
+										<Field.Label for="s-cap">Delegation cap</Field.Label>
+										<Input id="s-cap" type="number" min="1" max="32" step="1" inputmode="numeric" bind:value={spawnCap} disabled={!settings} aria-invalid={!!errors.spawnCap} class="max-w-32" />
+										<Field.Description>How many delegated tasks the lead runs at once (1 to 32).</Field.Description>
+										{#if errors.spawnCap}<Field.Error>{errors.spawnCap}</Field.Error>{/if}
+									</Field.Field>
+								</Field.Group>
+								{#if formError && !Object.keys(errors).length}<p class="mt-4 text-sm text-destructive-text" role="alert">{formError}</p>{/if}
+							</Card.Content>
+						</Card.Root>
+
+						<div class="sticky bottom-0 -mx-1 flex items-center justify-end gap-2 rounded-xl border border-border bg-card/95 px-3 py-2 shadow-sm backdrop-blur {dirty ? '' : 'hidden'}" role="status">
+							<span class="mr-auto text-[13px] text-muted-foreground">Unsaved changes</span>
+							<Button type="button" variant="ghost" size="sm" onclick={discard} disabled={saving}>Discard</Button>
+							<Button type="submit" size="sm" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</Button>
 						</div>
-					{/each}
-				</dl>
-				{#if settings?.budgetUsd !== null && settings?.budgetUsd !== undefined}
-					<p class="text-xs text-muted-foreground">Budget {usd(settings.budgetUsd)} per month. The total above is all-time across agent chats.</p>
+					</form>
+				{:else if section === 'usage'}
+					<Card.Root>
+						<Card.Header>
+							<Card.Title>Usage</Card.Title>
+							<Card.Description>
+								All-time totals across agent chats.
+								{#if settings?.budgetUsd !== null && settings?.budgetUsd !== undefined}Monthly budget: {formatUsd(settings.budgetUsd)}.{/if}
+							</Card.Description>
+						</Card.Header>
+						<Card.Content class="flex flex-col gap-5">
+							{#if usageError}
+								<p class="text-sm text-destructive-text" role="alert">{usageError}</p>
+							{:else if !usage}
+								<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+									{#each [0, 1, 2, 3] as n (n)}<Skeleton class="h-24 rounded-xl" />{/each}
+								</div>
+							{:else}
+								<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+									<StatTile class="w-full px-4 py-3.5" label="Cost" value={formatUsd(usage.total.costUsd)} />
+									<StatTile class="w-full px-4 py-3.5" label="Turns" value={num(usage.total.turns)} />
+									<StatTile class="w-full px-4 py-3.5" label="Input tokens" value={num(usage.total.inputTokens)} />
+									<StatTile class="w-full px-4 py-3.5" label="Output tokens" value={num(usage.total.outputTokens)} />
+								</div>
+								{#if costSegments.length > 1}
+									<div class="flex flex-col gap-1.5">
+										<h3 class="text-[13px] font-medium">Cost by agent</h3>
+										<AllocationBar.AllocationBar segments={costSegments} />
+									</div>
+								{/if}
+								{#if !usage.rows.length}
+									<Empty.Root class="border p-6">
+										<Empty.Header>
+											<Empty.Title class="text-sm">No agents yet</Empty.Title>
+											<Empty.Description>Usage shows up once agents have run.</Empty.Description>
+										</Empty.Header>
+									</Empty.Root>
+								{:else}
+									<div class="overflow-hidden rounded-lg border border-border">
+										<Table.Root>
+											<Table.Header>
+												<Table.Row class="hover:bg-transparent">
+													<Table.Head>Agent</Table.Head>
+													<Table.Head class="text-right">Turns</Table.Head>
+													<Table.Head class="text-right">Tokens</Table.Head>
+													<Table.Head class="text-right">Cost</Table.Head>
+												</Table.Row>
+											</Table.Header>
+											<Table.Body>
+												{#each usage.rows as r (r.id)}
+													<Table.Row>
+														<Table.Cell>
+															<span class="flex items-center gap-2"><AgentAvatar seed={r.id} color={r.color} size={18} />{r.name}</span>
+														</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(r.usage.turns)}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(r.usage.totalTokens)}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{formatUsd(r.usage.costUsd)}</Table.Cell>
+													</Table.Row>
+												{/each}
+											</Table.Body>
+										</Table.Root>
+									</div>
+								{/if}
+							{/if}
+						</Card.Content>
+					</Card.Root>
+				{:else if section === 'memory'}
+					<Card.Root>
+						<Card.Header>
+							<Card.Title>Workspace memory</Card.Title>
+							<Card.Description>
+								Shared by every agent. Agents read it each turn; the lead and explicit roles can write it. If an agent edited a file while you were typing, saving shows the conflict.
+							</Card.Description>
+						</Card.Header>
+						<Card.Content><MemoryEditor scope="workspace" /></Card.Content>
+					</Card.Root>
+				{:else}
+					<form onsubmit={saveToken}>
+						<Card.Root>
+							<Card.Header>
+								<Card.Title>Connection</Card.Title>
+								<Card.Description>How this browser authenticates with the team server.</Card.Description>
+							</Card.Header>
+							<Card.Content>
+								<Field.Field>
+									<Field.Label for="s-token">Server token</Field.Label>
+									<Input id="s-token" type="password" bind:value={token} placeholder="TEAM_TOKEN (empty if the server is open)" autocomplete="off" class="max-w-md" />
+									<Field.Description>Stored in this browser only. PUBLIC_TEAM_TOKEN overrides it.</Field.Description>
+								</Field.Field>
+							</Card.Content>
+							<Card.Footer class="justify-end gap-2 border-t border-border pt-4">
+								<Button type="submit" size="sm" disabled={!tokenDirty}>Save token</Button>
+							</Card.Footer>
+						</Card.Root>
+					</form>
 				{/if}
-				<table class="w-full text-left text-xs">
-					<thead class="text-muted-foreground">
-						<tr><th class="py-1 font-normal">Agent</th><th class="py-1 text-right font-normal">Turns</th><th class="py-1 text-right font-normal">Tokens</th><th class="py-1 text-right font-normal">Cost</th></tr>
-					</thead>
-					<tbody>
-						{#each usage.rows as r (r.id)}
-							<tr class="border-t border-border">
-								<td class="py-1">{r.name}</td>
-								<td class="py-1 text-right">{num(r.usage.turns)}</td>
-								<td class="py-1 text-right">{num(r.usage.totalTokens)}</td>
-								<td class="py-1 text-right">{usd(r.usage.costUsd)}</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			{/if}
-		</section>
-
-		<section class="flex flex-col gap-3">
-			<h2 class="text-base font-medium">Workspace memory</h2>
-			<p class="text-xs text-muted-foreground">Shared by every agent. Agents read it each turn; the lead and explicit roles can write it. If an agent edited a file while you were typing, saving shows the conflict.</p>
-			<MemoryEditor scope="workspace" />
-		</section>
-
-		<form class="flex flex-col gap-3" onsubmit={(e) => (e.preventDefault(), saveToken())}>
-			<h2 class="text-base font-medium">Connection</h2>
-			<label class="flex flex-col gap-1">
-				<span class="font-medium">Server token</span>
-				<Input type="password" bind:value={token} placeholder="TEAM_TOKEN (empty if the server is open)" autocomplete="off" />
-				<span class="text-xs text-muted-foreground">Stored in this browser only. PUBLIC_TEAM_TOKEN overrides it.</span>
-			</label>
-			<Button type="submit" class="self-start">Save token</Button>
-			{#if tokenSaved}<span class="text-xs text-muted-foreground">Saved.</span>{/if}
-		</form>
+			</div>
+		</div>
 	</div>
 </div>

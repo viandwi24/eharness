@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import type { UIMessage } from 'ai';
-import { hasVisibleParts, messageKind, toolTitle, viewModel } from './map.ts';
+import { hasVisibleParts, messageKind, startsAuthorRun, toolTitle, viewModel } from './map.ts';
 
 const msg = (parts: unknown[], extra: Partial<UIMessage> = {}): UIMessage =>
 	({ id: 'm1', role: 'assistant', parts, ...extra }) as UIMessage;
@@ -111,4 +111,11 @@ test('toolTitle fallbacks', () => {
 test('hasVisibleParts', () => {
 	expect(hasVisibleParts(viewModel(msg([{ type: 'text', text: '', state: 'streaming' }])))).toBe(false);
 	expect(hasVisibleParts(viewModel(msg([{ type: 'text', text: 'a' }])))).toBe(true);
+});
+
+test('startsAuthorRun shows the header only when the author changes', () => {
+	const a = (id: string, role: 'user' | 'assistant' = 'assistant') => ({ id, role, parts: [] }) as UIMessage;
+	const list = [a('1', 'user'), a('2'), a('3'), a('4', 'user'), a('5')];
+	expect(list.map((_, i) => startsAuthorRun(list, i))).toEqual([false, true, false, false, true]);
+	expect(startsAuthorRun([a('x')], 0)).toBe(true);
 });
