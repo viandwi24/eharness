@@ -90,7 +90,6 @@
 	</div>
 
 	<Sidebar.Menu class="gap-0.5 px-2" aria-label="Workspace">
-		<ApprovalsPopover />
 		{#each nav as n (n.href)}
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton isActive={page.url.pathname.startsWith(n.href)}>
@@ -169,6 +168,7 @@
 				</Sidebar.MenuButton>
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
+		<ApprovalsPopover />
 		<ThemeToggle />
 	</div>
 </div>
