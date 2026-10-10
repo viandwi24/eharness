@@ -135,7 +135,7 @@ const answerRoute = createRoute({
   description: [
     '`respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: "recorded"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: "resumed"`). Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.',
     '',
-    '- Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).',
+    '- Approval: `{ approved, reason?, note?, remember?, endTurn? }`. `remember: "session"` grants the tool for the rest of the session. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).',
     '- Question: `{ answers }` (one per question, `null` dismisses).',
     '',
     'An item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.',
@@ -323,6 +323,7 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
               ...(body.reason === undefined ? {} : { reason: body.reason }),
               ...(body.note === undefined ? {} : { note: body.note }),
               ...(body.endTurn === undefined ? {} : { endTurn: body.endTurn }),
+              ...(body.remember === undefined ? {} : { remember: body.remember }),
             },
         body.sessionId,
       )

@@ -152,9 +152,10 @@
 		}
 	}
 
-	function answerFromPart(a: { id: string; approved: boolean; reason?: string }): void {
-		const item = approvals.find((x) => x.id === a.id);
-		if (item) void live.answer(item, { approved: a.approved, ...(a.reason ? { reason: a.reason } : {}) }).catch(() => {});
+	function answerFromPart(a: { id: string } & Parameters<typeof live.answer>[1]): void {
+		const { id, ...body } = a;
+		const item = approvals.find((x) => x.id === id);
+		if (item) void live.answer(item, body).catch(() => {});
 	}
 </script>
 

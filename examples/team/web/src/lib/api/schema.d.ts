@@ -1358,7 +1358,7 @@ export interface paths {
          * Answer an approval or a question
          * @description `respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: "recorded"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: "resumed"`). Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.
          *
-         *     - Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).
+         *     - Approval: `{ approved, reason?, note?, remember?, endTurn? }`. `remember: "session"` grants the tool for the rest of the session. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).
          *     - Question: `{ answers }` (one per question, `null` dismisses).
          *
          *     An item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.
@@ -3670,6 +3670,11 @@ export interface components {
             reason?: string;
             /** @description A free-text note of the person about this call: the model reads it right after the result (approved) or as part of the reason (denied). */
             note?: string;
+            /**
+             * @description With `approved: true`: also allow this tool without asking for the rest of the session (a library grant, spec 11 §3.1; it applies from the step after the continuation starts). With `approved: false`: never allow it in this session.
+             * @enum {string}
+             */
+            remember?: "session";
             /**
              * @description End the turn after the answer without calling the model again (spec 11): always, or only when denied.
              * @enum {string}

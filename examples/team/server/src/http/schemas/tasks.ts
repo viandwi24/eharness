@@ -107,6 +107,10 @@ export const ApprovalDecisionSchema = z
       description:
         'A free-text note of the person about this call: the model reads it right after the result (approved) or as part of the reason (denied).',
     }),
+    remember: z.literal('session').optional().openapi({
+      description:
+        'With `approved: true`: also allow this tool without asking for the rest of the session (a library grant, spec 11 §3.1; it applies from the step after the continuation starts). With `approved: false`: never allow it in this session.',
+    }),
     endTurn: z.enum(['after-answers', 'if-denied']).optional().openapi({
       description:
         'End the turn after the answer without calling the model again (spec 11): always, or only when denied.',

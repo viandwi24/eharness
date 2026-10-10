@@ -220,6 +220,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
               approved: body.approved,
               ...(body.reason === undefined ? {} : { reason: body.reason }),
               ...(body.note === undefined ? {} : { note: body.note }),
+              ...(body.remember === undefined ? {} : { remember: body.remember }),
               actor: { id: actor.id, ...(actor.name === undefined ? {} : { name: actor.name }) },
             },
           ],

@@ -33,6 +33,25 @@
 	const ac = $derived(agentChat(agentId));
 	const chat = $derived(ac.chat);
 
+	/**
+	 * An inline tool approval. Plain approve / deny (with a reason) ride the chat stream; "Always
+	 * allow" and notes only exist on `POST /approvals`, so those go there and the chat then follows
+	 * the continuation the server runs.
+	 */
+	async function answerInline(a: { id: string; approved: boolean; reason?: string; note?: string; remember?: 'session' }): Promise<void> {
+		const { id, ...body } = a;
+		if (body.remember === undefined && body.note === undefined) return ac.approve(a);
+		const item = live.state.approvals.find((x) => x.id === id);
+		if (!item) return ac.approve(a);
+		try {
+			await live.answer(item, body);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not send the answer');
+			return;
+		}
+		await followAfterAnswer();
+	}
+
 	async function send(m: PromptInputMessage): Promise<void> {
 		const text = m.text.trim();
 		if (!text && m.files.length === 0) return;
@@ -127,7 +146,7 @@
 							<MessageView
 								message={m}
 								agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
-								onApproval={(a) => void ac.approve(a)}
+								onApproval={(a) => void answerInline(a)}
 								onOpenSession={(sid) => void openSession(sid)}
 							/>
 						</ConversationItem>

@@ -560,6 +560,35 @@ describe('delegation with park', () => {
     expect(await approvals(b.app)).toEqual([])
   })
 
+  test("remember: 'session' grants the tool: the next call of it in the continuation asks nothing", async () => {
+    const dir = tmp()
+    const a = instance(
+      dir,
+      {
+        lead: [{ toolCalls: [delegate('cleaner', 'call-1')] }, { text: 'Grant used.' }],
+        researcher: [
+          { toolCalls: [deleteOld] },
+          // the grant applies from the step after the continuation's first one
+          { toolCalls: [{ toolName: 'read_file', input: { path: '/library/old.md' } }] },
+          { toolCalls: [{ toolName: 'delete_file', input: { path: '/library/old2.md' } }] },
+          { text: 'Both gone.' },
+        ],
+      },
+      { first: true },
+    )
+    await parkLead(a)
+    const [item] = await approvals(a.app)
+    const res = await a.app.request(
+      `/approvals/${item?.id}`,
+      post({ approved: true, remember: 'session' }),
+    )
+    expect(res.status).toBe(202)
+    await until('lead finished', async () => (await dmText(a.app)).includes('Grant used.'))
+    expect(await approvals(a.app)).toEqual([])
+    // a bad scope is rejected
+    expect((await a.app.request('/approvals/x', post({ approved: true, remember: 'forever' }))).status).toBe(400)
+  })
+
   test('answer validation: unknown id and wrong body kind', async () => {
     const dir = tmp()
     const a = instance(

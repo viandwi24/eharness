@@ -42,6 +42,8 @@ export type ApprovalAnswer =
       reason?: string
       note?: string
       endTurn?: 'after-answers' | 'if-denied'
+      /** `session`: also allow this tool without asking for the rest of the session (library grant). */
+      remember?: 'session'
     }
   | {
       kind: 'question'
