@@ -88,14 +88,13 @@
 {/snippet}
 
 <Tabs.Root value="routines" class="flex h-full min-h-0 flex-col">
-	<div class="border-b border-border p-2">
-		<Tabs.List variant="line" class="gap-4 border-b-0">
-			<Tabs.Trigger value="routines">Routines</Tabs.Trigger>
-			<Tabs.Trigger value="files">Files</Tabs.Trigger>
-			<Tabs.Trigger value="tasks">Tasks</Tabs.Trigger>
-			<Tabs.Trigger value="settings">Settings</Tabs.Trigger>
-		</Tabs.List>
-	</div>
+	<!-- The tab strip is the panel header: same height and single bottom border as the chat header;
+	     triggers stretch over the border (-mb-px) so the active underline replaces it. -->
+	<Tabs.List variant="line" class="h-14 shrink-0 items-stretch gap-4 border-b px-3">
+		{#each [['routines', 'Routines'], ['files', 'Files'], ['tasks', 'Tasks'], ['settings', 'Settings']] as [v, label] (v)}
+			<Tabs.Trigger value={v} class="items-center pb-0">{label}</Tabs.Trigger>
+		{/each}
+	</Tabs.List>
 	<div class="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
 		<Tabs.Content value="routines">
 			{#if contextError}<p class="text-destructive-text">{contextError}</p>{/if}

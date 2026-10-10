@@ -117,7 +117,12 @@
 			</AlertDialogHeader>
 			<AlertDialogFooter>
 				<AlertDialogCancel>Cancel</AlertDialogCancel>
-				<AlertDialogAction onclick={() => void apply('bypass')}>Switch to Bypass</AlertDialogAction>
+				<AlertDialogAction
+					onclick={() => {
+						confirmBypass = false;
+						void apply('bypass');
+					}}
+				>Switch to Bypass</AlertDialogAction>
 			</AlertDialogFooter>
 		</AlertDialogContent>
 	</AlertDialog>

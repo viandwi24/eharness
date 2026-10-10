@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { tick, untrack } from 'svelte';
+	import { untrack } from 'svelte';
 	import type { UIMessage } from 'ai';
 	import XIcon from 'phosphor-svelte/lib/X';
 	import type { Approval, TaskDetail } from '#lib/api/client.js';
@@ -8,7 +8,6 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
-	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { badgeFor } from '#lib/board/board.js';
 	import { formatTime } from '#lib/format.js';
 	import MessageView from '#lib/parts/MessageView.svelte';
@@ -16,6 +15,15 @@
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { followTaskStream, isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
+	import {
+		Conversation,
+		ConversationContent,
+		ConversationEmptyState,
+		ConversationItem,
+		ConversationScrollButton
+	} from '#lib/components/ai/conversation/index.js';
+	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
+	import ChatComposer from './ChatComposer.svelte';
 	import PendingCard from './PendingCard.svelte';
 
 	/**
@@ -114,21 +122,7 @@
 		return () => ctl.abort();
 	});
 
-	// Auto-follow: stay at the bottom while the user is there.
-	let scroller = $state<HTMLDivElement | undefined>();
-	let pinned = true;
-	function onScroll(): void {
-		if (!scroller) return;
-		pinned = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
-	}
-	$effect(() => {
-		void messages;
-		void approvals.length;
-		if (pinned && scroller) void tick().then(() => scroller && (scroller.scrollTop = scroller.scrollHeight));
-	});
-
-	let note = $state('');
-	let sending = $state(false);
+	let dockHeight = $state(0);
 	let aborting = $state(false);
 
 	async function abort(): Promise<void> {
@@ -145,21 +139,16 @@
 		}
 	}
 
-	async function sendNote(e: SubmitEvent): Promise<void> {
-		e.preventDefault();
-		const text = note.trim();
+	async function sendNote(m: PromptInputMessage): Promise<void> {
+		const text = m.text.trim();
 		if (!task || !text) return;
-		sending = true;
 		try {
 			await api.post('/tasks/{id}/messages', { params: { id: task.id }, body: { text } });
-			note = '';
-			pinned = true;
 			toast.success(running ? 'Sent to the running task' : 'Message queued');
 			void load(task.id);
 		} catch (err) {
 			toast.error(err instanceof Error ? err.message : 'Could not send the message');
-		} finally {
-			sending = false;
+			throw err; // keeps the text in the composer
 		}
 	}
 
@@ -169,61 +158,70 @@
 	}
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col">
-	<header class="flex items-center gap-3 border-b border-border p-4">
+<div class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
+	<header class="flex h-14 shrink-0 items-center gap-3 border-b border-border px-3">
 		{#if task}<AgentAvatar seed={task.agentId} color={agent?.color} size={32} label={agent?.name ?? task.agentId} />{/if}
 		<div class="min-w-0 flex-1">
-			<h2 class="truncate text-sm font-semibold">{task?.title ?? 'Task'}</h2>
+			<h2 class="truncate text-sm font-medium">{task?.title ?? 'Task'}</h2>
 			<p class="truncate text-xs text-muted-foreground">
 				{agent?.name ?? task?.agentId ?? ''}{task ? ` · ${formatTime(task.lastActivityAt)}` : ''}{streaming ? ' · live' : ''}
 			</p>
 		</div>
 		{#if task}{@const b = badgeFor(task.status)}<Badge variant={b.variant}>{b.label}</Badge>{/if}
-		{#if running}
-			<Button size="sm" variant="outline" disabled={aborting} onclick={abort}>{aborting ? 'Stopping…' : 'Stop'}</Button>
-		{/if}
 		{#if onClose}
 			<Button size="icon-sm" variant="ghost" aria-label="Close" onclick={onClose}><XIcon class="size-4" /></Button>
 		{/if}
 	</header>
 
-	<div bind:this={scroller} onscroll={onScroll} class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
-		{#if error}
-			<p class="text-sm text-destructive-text">{error}</p>
-		{:else if loading}
-			<p class="text-sm text-muted-foreground">Loading…</p>
-		{:else if detail}
-			{#each messages as m (m.id)}
-				<MessageView
-					message={m}
-					agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
-					onApproval={answerFromPart}
-					onOpenSession={(sid) => void openSession(sid)}
-				/>
-			{:else}
-				<p class="text-sm text-muted-foreground">No messages yet.</p>
-			{/each}
-			{#each approvals as a (a.sessionId + a.id)}
-				<PendingCard approval={a} />
-			{/each}
+	<!-- Same anatomy as ChatPane: scroller to the bottom, pending cards and composer float as a dock. -->
+	<div class="relative flex min-h-0 flex-1 flex-col">
+		<div class="flex min-h-0 flex-1 flex-col">
+			<Conversation class="min-h-0 flex-1">
+				<ConversationContent class="mx-auto w-full max-w-3xl gap-6 px-4 pt-6" style={`padding-bottom: ${dockHeight + 24}px`}>
+					{#if error}
+						<p class="text-sm text-destructive-text">{error}</p>
+					{:else if loading}
+						<p class="text-sm text-muted-foreground">Loading…</p>
+					{:else if detail}
+						{#each messages as m (m.id)}
+							<ConversationItem messageId={m.id}>
+								<MessageView
+									message={m}
+									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
+									onApproval={answerFromPart}
+									onOpenSession={(sid) => void openSession(sid)}
+								/>
+							</ConversationItem>
+						{:else}
+							<ConversationEmptyState title="No messages yet" description="This task has not produced anything yet." />
+						{/each}
+					{/if}
+				</ConversationContent>
+				<ConversationScrollButton style={`bottom: ${dockHeight + 12}px`} />
+			</Conversation>
+		</div>
+
+		{#if task}
+			<div
+				class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-60% to-transparent pt-6"
+				bind:clientHeight={dockHeight}
+			>
+				<div class="pointer-events-auto mx-auto w-full max-w-3xl p-3">
+					{#if approvals.length}
+						<div class="mb-2 flex flex-col gap-2" role="region" aria-label="Waiting for your answer">
+							{#each approvals as a (a.sessionId + a.id)}
+								<PendingCard approval={a} />
+							{/each}
+						</div>
+					{/if}
+					<ChatComposer
+						onSend={sendNote}
+						onStop={() => void abort()}
+						status={running ? 'streaming' : 'ready'}
+						placeholder={running ? 'Message the running task…' : 'Send a follow-up to this task…'}
+					/>
+				</div>
+			</div>
 		{/if}
 	</div>
-	{#if task}
-		<form class="flex gap-2 border-t border-border p-3" onsubmit={sendNote}>
-			<Textarea
-				bind:value={note}
-				rows={2}
-				class="min-h-0 flex-1"
-				placeholder={running ? 'Message the running task…' : 'Send a follow-up to this task…'}
-				aria-label="Message to the task"
-				onkeydown={(e) => {
-					if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-						e.preventDefault();
-						e.currentTarget.form?.requestSubmit();
-					}
-				}}
-			/>
-			<Button type="submit" disabled={sending || !note.trim()} class="self-end">{sending ? 'Sending…' : 'Send'}</Button>
-		</form>
-	{/if}
 </div>

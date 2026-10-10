@@ -38,3 +38,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 docs/tmp/
 .coder
+
+# local SQLite database of the team example (WAL files too)
+examples/team/server/data/
