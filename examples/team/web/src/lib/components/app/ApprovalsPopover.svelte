@@ -7,6 +7,8 @@
 	import { live } from '#lib/stores/live.svelte.js';
 	import PendingCard from './PendingCard.svelte';
 
+	/** Where the list opens from the bell (the rail opens it to the right). */
+	let { side = 'top', align = 'end' }: { side?: 'top' | 'right' | 'bottom' | 'left'; align?: 'start' | 'center' | 'end' } = $props();
 	const count = $derived(live.state.approvals.length);
 	let open = $state(false);
 </script>
@@ -22,7 +24,7 @@
 			</Button>
 		{/snippet}
 	</Popover.Trigger>
-	<Popover.Content side="top" align="end" class="flex max-h-[70svh] w-[min(92vw,24rem)] flex-col gap-2 overflow-y-auto p-2">
+	<Popover.Content {side} {align} class="flex max-h-[70svh] w-[min(92vw,24rem)] flex-col gap-2 overflow-y-auto p-2">
 		<div class="px-1 pt-1 text-sm font-medium">Needs your approval</div>
 		{#each live.state.approvals as a (a.sessionId + a.id)}
 			<PendingCard

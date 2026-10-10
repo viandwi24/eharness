@@ -5,21 +5,14 @@
 	import { onMount } from 'svelte';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlass';
 	import PlusIcon from 'phosphor-svelte/lib/Plus';
-	import GearIcon from 'phosphor-svelte/lib/Gear';
-	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
-	import ClockIcon from 'phosphor-svelte/lib/Clock';
-	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
-	import PulseIcon from 'phosphor-svelte/lib/Pulse';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
-	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openNewAgent } from '#lib/stores/dialogs.svelte.js';
 	import { formatTime } from '#lib/format.js';
-	import ThemeToggle from './ThemeToggle.svelte';
 
 	let query = $state('');
 	let searchEl = $state<HTMLInputElement | null>(null);
@@ -37,12 +30,6 @@
 
 	onMount(() => void agentsStore.load());
 
-	const nav = [
-		{ href: '/tasks', label: 'Tasks', icon: ListChecksIcon },
-		{ href: '/routines', label: 'Routines', icon: ClockIcon },
-		{ href: '/files', label: 'Files', icon: FolderOpenIcon },
-		{ href: '/logs', label: 'Logs', icon: PulseIcon }
-	];
 
 	function onKeydown(e: KeyboardEvent): void {
 		if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -58,7 +45,7 @@
 <div class="flex h-full min-h-0 flex-col">
 	<div class="flex flex-col gap-3 px-3 pt-3 pb-2">
 		<div class="flex items-center gap-1">
-			<a href="/" class="mr-auto px-1 font-brand text-base">Team</a>
+			<h2 class="mr-auto px-1 text-base font-semibold">Agents</h2>
 			<Tooltip.Root>
 				<Tooltip.Trigger>
 					{#snippet child({ props })}
@@ -69,6 +56,8 @@
 				</Tooltip.Trigger>
 				<Tooltip.Content>New agent</Tooltip.Content>
 			</Tooltip.Root>
+			<!-- mobile has no rail: notifications live in this header there -->
+			<span class="md:hidden"><ApprovalsPopover side="bottom" align="end" /></span>
 			<SidebarToggle />
 		</div>
 		<div class="relative">
@@ -89,36 +78,7 @@
 		</div>
 	</div>
 
-	<Sidebar.Menu class="gap-0.5 px-2" aria-label="Workspace">
-		{#each nav as n (n.href)}
-			<Sidebar.MenuItem>
-				<Sidebar.MenuButton isActive={page.url.pathname.startsWith(n.href)}>
-					{#snippet child({ props })}
-						<a href={n.href} {...props}>
-							<n.icon />
-							<span>{n.label}</span>
-						</a>
-					{/snippet}
-				</Sidebar.MenuButton>
-			</Sidebar.MenuItem>
-		{/each}
-	</Sidebar.Menu>
-
-	<div class="mt-2 flex items-center justify-between px-3">
-		<span class="px-1 text-xs font-semibold text-sidebar-foreground/70">Agents</span>
-		<Tooltip.Root>
-			<Tooltip.Trigger>
-				{#snippet child({ props })}
-					<Button {...props} variant="ghost" size="icon-xs" aria-label="New agent" onclick={openNewAgent}>
-						<PlusIcon class="size-3.5" />
-					</Button>
-				{/snippet}
-			</Tooltip.Trigger>
-			<Tooltip.Content>New agent</Tooltip.Content>
-		</Tooltip.Root>
-	</div>
-
-	<nav class="mt-1 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2" aria-label="Agents">
+	<nav class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2" aria-label="Agents">
 		{#each shown as a (a.id)}
 			{@const active = page.params.agentId === a.id || page.params.agentId === a.slug}
 			{@const act = agentsStore.state.activity[a.id]}
@@ -155,20 +115,4 @@
 		{/each}
 	</nav>
 
-	<div class="flex items-center gap-1 border-t border-border p-2">
-		<Sidebar.Menu class="flex-1">
-			<Sidebar.MenuItem>
-				<Sidebar.MenuButton isActive={page.url.pathname.startsWith('/settings')}>
-					{#snippet child({ props })}
-						<a href="/settings" {...props}>
-							<GearIcon />
-							<span>Settings</span>
-						</a>
-					{/snippet}
-				</Sidebar.MenuButton>
-			</Sidebar.MenuItem>
-		</Sidebar.Menu>
-		<ThemeToggle />
-		<ApprovalsPopover />
-	</div>
 </div>

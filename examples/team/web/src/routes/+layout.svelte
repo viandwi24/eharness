@@ -6,7 +6,9 @@
 	import { Toaster } from '#lib/components/ui/sonner/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import AgentDialog from '#lib/components/app/AgentDialog.svelte';
-	import AppSidebar from '#lib/components/app/AppSidebar.svelte';
+	import AgentListPanel from '#lib/components/app/AgentListPanel.svelte';
+	import AppRail from '#lib/components/app/AppRail.svelte';
+	import { hasSubSidebar } from '#lib/nav/sections.js';
 	import RoutineDialog from '#lib/components/app/RoutineDialog.svelte';
 	import TaskDrawer from '#lib/components/app/TaskDrawer.svelte';
 	import { startLive } from '#lib/stores/live.svelte.js';
@@ -24,6 +26,10 @@
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
 	const isHome = $derived(page.url.pathname === '/');
+	// Desktop: [icon rail] [agent list, agents section only] [page]. ⌘B hides the agent list.
+	const listShown = $derived(hasSubSidebar(page.url.pathname) && sidebarOpen);
+	// Mobile bottom bar on top-level pages; a chat (/a/…) gets the whole screen.
+	const barShown = $derived(!page.url.pathname.startsWith('/a/'));
 </script>
 
 <svelte:head>
@@ -32,18 +38,21 @@
 </svelte:head>
 
 <ElevationProvider mode="layered">
-	<!-- md+: the page sits in an inset panel on the sidebar surface (edmi-ui sidebar "inset" look). -->
-	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 bg-background text-foreground md:bg-sidebar">
-		<aside
-			class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {sidebarOpen ? 'md:flex' : 'md:hidden'} md:w-72 lg:w-80"
-		>
-			<AppSidebar />
-		</aside>
-		<main
-			class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 bg-background md:my-2 md:mr-2 {sidebarOpen ? '' : 'md:ml-2'} md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-sm"
-		>
-			{@render children()}
-		</main>
+	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 flex-col bg-background text-foreground md:flex-row md:bg-sidebar">
+		<div class="hidden md:flex"><AppRail /></div>
+		<div class="flex min-h-0 min-w-0 flex-1">
+			<aside
+				class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {listShown ? 'md:flex' : 'md:hidden'} md:my-2 md:mr-2 md:h-auto md:w-72 md:overflow-hidden md:rounded-xl md:border md:border-border lg:w-80"
+			>
+				<AgentListPanel />
+			</aside>
+			<main
+				class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-sm"
+			>
+				{@render children()}
+			</main>
+		</div>
+		{#if barShown}<div class="md:hidden"><AppRail bar /></div>{/if}
 	</Sidebar.Provider>
 	<TaskDrawer />
 	<AgentDialog />

@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { page } from '$app/state';
+	import { hasSubSidebar } from '#lib/nav/sections.js';
 	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimple';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Kbd, KbdGroup } from '#lib/components/ui/kbd/index.js';
@@ -11,10 +13,12 @@
 	 */
 	let { whenCollapsed = false }: { whenCollapsed?: boolean } = $props();
 	const sidebar = useSidebar();
+	// it toggles the agent list column, which only the agents section has
+	const shown = $derived(hasSubSidebar(page.url.pathname));
 	const mac = typeof navigator !== 'undefined' && /Mac|iP(hone|ad)/.test(navigator.platform);
 </script>
 
-{#if !whenCollapsed || !sidebar.open}
+{#if shown && (!whenCollapsed || !sidebar.open)}
 	<Tooltip.Root>
 		<Tooltip.Trigger>
 			{#snippet child({ props })}
@@ -23,7 +27,7 @@
 					variant="ghost"
 					size="icon-sm"
 					class="hidden shrink-0 text-muted-foreground md:inline-flex"
-					aria-label={sidebar.open ? 'Hide sidebar' : 'Show sidebar'}
+					aria-label={sidebar.open ? 'Hide agent list' : 'Show agent list'}
 					aria-expanded={sidebar.open}
 					onclick={() => sidebar.setOpen(!sidebar.open)}
 				>
@@ -32,7 +36,7 @@
 			{/snippet}
 		</Tooltip.Trigger>
 		<Tooltip.Content side="bottom" class="flex items-center gap-2">
-			{sidebar.open ? 'Hide sidebar' : 'Show sidebar'}
+			{sidebar.open ? 'Hide agent list' : 'Show agent list'}
 			<KbdGroup><Kbd>{mac ? '⌘' : 'Ctrl'}</Kbd><Kbd>B</Kbd></KbdGroup>
 		</Tooltip.Content>
 	</Tooltip.Root>
