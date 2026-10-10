@@ -281,10 +281,33 @@ export interface ConnectionView {
   settings: Record<string, unknown>
   authorized: boolean
   builtin: boolean
+  /** Which agents use it (absent for built-in connections). */
+  access?: ConnectionAccess
   /** A custom (remote MCP) connection: shown as its own connector under its own name. */
   custom: boolean
   createdAt: number
   updatedAt: number
+}
+
+/**
+ * Who uses a connection, as one user-facing concept. `all`: a workspace connection with
+ * `defaultEnabled` (agents may still turn it off: `excludedAgentIds`). `selected`: used only by
+ * `agentIds` (an agent-scoped connection is `selected` with its one agent; empty means registered
+ * but unused). `agentIds` always lists the agents that use it now (every agent but the excluded
+ * ones in `all` mode).
+ */
+export interface ConnectionAccess {
+  mode: 'all' | 'selected'
+  agentIds: string[]
+  excludedAgentIds: string[]
+}
+
+export interface ConnectionAccessInput {
+  mode: 'all' | 'selected'
+  /** `selected`: the agents that use the connection. */
+  agentIds?: string[] | undefined
+  /** `all`: the agents that opt out (default: keep the current ones). */
+  excludedAgentIds?: string[] | undefined
 }
 
 /** A setup flow as a browser sees it; `view` is one of the closed vocabulary (`type`). */
@@ -393,6 +416,8 @@ export interface CustomConnectorInput {
   availableToAll?: boolean | undefined
   scope?: 'workspace' | 'agent' | undefined
   scopeId?: string | undefined
+  /** Workspace scope: the agents that use it from the start (ignored with `availableToAll`). */
+  agentIds?: string[] | undefined
 }
 
 export interface CustomConnectorResult {
@@ -465,5 +490,6 @@ export function parseCustomInput(input: CustomConnectorInput): CustomConnectorIn
     availableToAll: input.availableToAll ?? false,
     scope: input.scope ?? 'workspace',
     ...(input.scopeId === undefined ? {} : { scopeId: input.scopeId }),
+    ...(input.agentIds === undefined ? {} : { agentIds: [...new Set(input.agentIds)] }),
   }
 }

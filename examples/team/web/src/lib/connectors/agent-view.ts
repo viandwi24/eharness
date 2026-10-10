@@ -64,3 +64,24 @@ export function applyChoices(c: AgentConnector, choices: ConnectionChoices | nul
 		})
 	};
 }
+
+/** "All agents", "Selected agents" or "Only this agent": muted text, only for accounts. */
+export function sharingText(c: Pick<AgentConnector, 'ownership' | 'defaultEnabled' | 'source'>): string {
+	if (c.source === 'builtin') return '';
+	return c.ownership === 'agent' ? 'Only this agent' : c.defaultEnabled ? 'All agents' : 'Selected agents';
+}
+
+/** The one muted line under a row's name: account, sharing, status. */
+export function rowSubtitle(c: AgentConnector): string {
+	if (c.source === 'builtin') return c.connectorId === 'memory' ? (c.ownership === 'workspace' ? 'Built in · shared by the whole team' : 'Built in · only this agent') : 'Built in';
+	if (c.status === 'needs-auth') return c.source === 'custom' ? 'Sign in required' : 'Reconnect to use it';
+	if (c.status === 'error') return c.statusMessage || 'Error';
+	const account = [c.label !== c.name ? c.label : '', c.accountLabel ?? ''].filter(Boolean).join(' · ');
+	return [account || 'Connected', sharingText(c)].filter(Boolean).join(' · ');
+}
+
+/** Back to the defaults of the modes, keeping the agent on or off the connection. */
+export const resetChoices = (c: AgentConnector): ConnectionChoices | null => (c.state === 'inherit' ? null : { enabled: c.state });
+
+/** The agent changed a mode of this connection (so "Reset" has an effect). */
+export const isCustomized = (c: AgentConnector): boolean => c.capabilities.some((cap) => cap.override !== undefined || cap.toolModes.some((t) => t.override !== undefined));

@@ -63,19 +63,16 @@
 			</NativeSelect>
 		</div>
 	{:else}
-		<section class="rounded-xl border border-border bg-card p-3" data-testid="tool-access-section">
-			<div class="flex flex-wrap items-center justify-between gap-3">
-				<div class="min-w-0">
-					<h3 class="text-sm font-medium">Tool access</h3>
-					<p class="text-xs text-muted-foreground">How the tools of connected apps reach the model.</p>
-				</div>
-				<NativeSelect value={selectValue} onchange={change} disabled={saving} aria-label="Tool access" class="w-48 shrink-0" data-testid="tool-access-select">
-					<NativeSelectOption value="default">Workspace default ({TOOL_ACCESS_LABEL[workspace ?? 'auto']})</NativeSelectOption>
-					<NativeSelectOption value="auto">{TOOL_ACCESS_LABEL.auto}</NativeSelectOption>
-					<NativeSelectOption value="on-demand">{TOOL_ACCESS_LABEL['on-demand']}</NativeSelectOption>
-				</NativeSelect>
+		<div class="flex items-center justify-between gap-3 border-t border-border pt-3" data-testid="tool-access-section" title={toolAccessHint(effective, tools)}>
+			<div class="min-w-0">
+				<h3 class="text-xs font-medium text-muted-foreground">Tool access</h3>
+				<p class="truncate text-xs text-muted-foreground/80">{effective === 'auto' ? 'Connector tools load up front' : 'Connector tools are found on demand'}</p>
 			</div>
-			<p class="mt-2 text-xs text-muted-foreground">{toolAccessHint(effective, tools)}</p>
-		</section>
+			<NativeSelect value={selectValue} onchange={change} disabled={saving} aria-label="Tool access" title={toolAccessHint(effective, tools)} class="h-8 w-40 shrink-0 text-xs" data-testid="tool-access-select">
+				<NativeSelectOption value="default">Default · {TOOL_ACCESS_LABEL[workspace ?? 'auto']}</NativeSelectOption>
+				<NativeSelectOption value="auto">{TOOL_ACCESS_LABEL.auto}</NativeSelectOption>
+				<NativeSelectOption value="on-demand">{TOOL_ACCESS_LABEL['on-demand']}</NativeSelectOption>
+			</NativeSelect>
+		</div>
 	{/if}
 {/if}

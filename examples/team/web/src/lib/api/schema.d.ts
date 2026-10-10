@@ -3806,6 +3806,87 @@ export interface paths {
         };
         trace?: never;
     };
+    "/connections/{id}/access": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Choose which agents use a connection
+         * @description One concept for workspace and agent connections. `all`: workspace connection available to every agent (agents may still opt out: `excludedAgentIds`). `selected`: only `agentIds` (empty: registered but unused). Moving agents is just changing this list; an agent-scoped connection is converted to workspace scope keeping its id, credentials, tool prefix and the agent's own capability modes. Returns the connection with its `access`.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ConnectionAccessPut"];
+                };
+            };
+            responses: {
+                /** @description The connection, redacted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Connection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Built-in connection */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/{id}/test": {
         parameters: {
             query?: never;
@@ -5982,10 +6063,23 @@ export interface components {
             };
             authorized: boolean;
             builtin: boolean;
+            access?: components["schemas"]["ConnectionAccess"];
             /** @description A custom (remote MCP) connection: its own connector in the directory, under the name its user gave it. */
             custom: boolean;
             createdAt: number;
             updatedAt: number;
+        };
+        /** @description Which agents use it (absent for built-in connections). */
+        ConnectionAccess: {
+            /**
+             * @description `all`: every agent has it unless it opts out. `selected`: only `agentIds` (empty: registered, not used yet). An agent-scoped connection is `selected` with its one agent.
+             * @enum {string}
+             */
+            mode: "all" | "selected";
+            /** @description Agents that use it now. */
+            agentIds: string[];
+            /** @description `all` mode: agents that turned it off. */
+            excludedAgentIds: string[];
         };
         CustomProbe: {
             /**
@@ -6136,6 +6230,8 @@ export interface components {
             /** @enum {string} */
             scope?: "workspace" | "agent";
             scopeId?: string;
+            /** @description Workspace scope without `availableToAll`: the agents that use it from the start (none by default: registered, not used yet). */
+            agentIds?: string[];
         };
         FlowResult: {
             flow: components["schemas"]["ConnectFlow"];
@@ -6200,6 +6296,14 @@ export interface components {
             defaultModes?: {
                 [key: string]: components["schemas"]["CapabilityMode"];
             };
+        };
+        ConnectionAccessPut: {
+            /** @enum {string} */
+            mode: "all" | "selected";
+            /** @description `selected`: the agents that use the connection (ids or slugs). */
+            agentIds?: string[];
+            /** @description `all`: the agents that opt out. Omitted: keep the current ones. */
+            excludedAgentIds?: string[];
         };
         ConnectionTest: {
             ok: boolean;

@@ -50,7 +50,7 @@ secret either; a form value comes back as `{ set, hint }`.
 `GET /connectors` (catalog), `GET /connections`, `POST /connections/flows` + `GET|POST
 /connections/flows/{id}[/act]` (server-driven connect flow: render `view` by `type`, quote its
 `viewId`; a stale view is `409 STALE_VIEW` carrying the current `flow`), `GET /oauth/callback`
-(public; redirects to the web app), `PATCH|DELETE /connections/{id}`, `POST /connections/{id}/test`,
+(public; redirects to the web app), `PATCH|DELETE /connections/{id}`, `PUT /connections/{id}/access` (`{ mode: all|selected, agentIds }`; `GET /connections` returns `access`), `POST /connections/{id}/test`,
 `GET|PUT /agents/{id}/connectors` (what an agent uses and how freely: Allowed / Ask first / Off),
 `PUT|DELETE /connectors/{id}/oauth-client` (OAuth app credentials of a connector). Agents carry
 `connectors` (their own choices) instead of `tools` / `mcpServers`; `GET /tools` is gone.

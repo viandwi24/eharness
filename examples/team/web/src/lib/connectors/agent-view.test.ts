@@ -55,3 +55,18 @@ describe('agent-view', () => {
 		expect(applyChoices(conn({ state: 'off', enabled: false }), null).enabled).toBe(true);
 	});
 });
+
+describe('agent tab rows', () => {
+	test('subtitle, sharing text and reset keep the on/off choice', async () => {
+		const { isCustomized, resetChoices, rowSubtitle, sharingText } = await import('./agent-view');
+		expect(sharingText(conn())).toBe('All agents');
+		expect(sharingText(conn({ defaultEnabled: false }))).toBe('Selected agents');
+		expect(sharingText(conn({ ownership: 'agent' }))).toBe('Only this agent');
+		expect(rowSubtitle(conn({ source: 'builtin' }))).toBe('Built in');
+		expect(rowSubtitle(conn({ accountLabel: 'me' }))).toBe('Work · me · All agents');
+		expect(rowSubtitle(conn({ status: 'needs-auth' }))).toBe('Reconnect to use it');
+		expect(isCustomized(conn())).toBe(true);
+		expect(resetChoices(conn({ state: 'on' }))).toEqual({ enabled: 'on' });
+		expect(resetChoices(conn())).toBeNull();
+	});
+});

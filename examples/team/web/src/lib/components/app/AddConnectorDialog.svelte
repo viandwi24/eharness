@@ -4,8 +4,10 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
-	import { availableToAdd, originLabel, withEnabled } from '#lib/connectors/agent-view.js';
+	import { availableToAdd, withEnabled } from '#lib/connectors/agent-view.js';
 		import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlass';
+	import { accountName, usageText } from '#lib/connectors/access.js';
+	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import ConnectorIcon from './ConnectorIcon.svelte';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import ConnectFlowDialog from './ConnectFlowDialog.svelte';
@@ -35,8 +37,23 @@
 	let flowOpen = $state(false);
 	let flowDefinition = $state<string | undefined>(undefined);
 
-	const available = $derived(availableToAdd(connectors).filter((c) => !q || `${c.name} ${c.label}`.toLowerCase().includes(q)));
+	const matching = $derived(availableToAdd(connectors).filter((c) => !q || `${c.name} ${c.label}`.toLowerCase().includes(q)));
+	const available = $derived(matching.filter((c) => c.source !== 'builtin'));
+	const builtinOff = $derived(matching.filter((c) => c.source === 'builtin'));
 	const connectable = $derived(connectorsStore.state.connectors.filter((c) => !c.builtin && c.source !== 'custom' && c.scopes.includes('agent') && (!q || `${c.name} ${c.description}`.toLowerCase().includes(q))));
+
+	/** "GitHub · work" and who uses it: "used by Writer". */
+	const accountOf = (c: AgentConnector) => connectorsStore.state.connections.find((x) => x.id === c.connectionId);
+	const titleOf = (c: AgentConnector): string => {
+		const conn = accountOf(c);
+		return conn ? accountName(conn, c.source === 'custom' ? undefined : c.name) : c.name;
+	};
+	const usedBy = (c: AgentConnector): string => {
+		const conn = accountOf(c);
+		if (!conn) return '';
+		const text = usageText(conn, agentsStore.state.agents);
+		return text === 'Not used by any agent yet' ? text : text.startsWith('All agents') ? text : `used by ${text}`;
+	};
 
 	async function add(c: AgentConnector): Promise<void> {
 		busy = c.connectionId;
@@ -64,7 +81,7 @@
 	<Dialog.Content elevation="floating" class="flex max-h-[85svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-lg">
 		<Dialog.Header class="gap-1 border-b border-border px-5 py-4 pr-12">
 			<Dialog.Title>Add connector</Dialog.Title>
-			<Dialog.Description>Turn on a connection from your workspace, or connect a new account for this agent only.</Dialog.Description>
+			<Dialog.Description>Add an account you already registered, or connect another one.</Dialog.Description>
 			<div class="relative mt-2">
 				<MagnifyingGlassIcon class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
 				<Input bind:value={query} placeholder="Search connectors" aria-label="Search connectors" class="pl-8" />
@@ -72,27 +89,45 @@
 		</Dialog.Header>
 		<div class="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4">
 			<section class="space-y-2">
-				<h3 class="text-sm font-medium">From your workspace</h3>
+				<h3 class="text-xs font-medium text-muted-foreground">Registered accounts</h3>
 				{#if available.length}
 					<ul class="space-y-1.5">
 						{#each available as c (c.connectionId)}
 							<li class="flex items-center gap-3 rounded-xl border border-border p-2.5">
 								<ConnectorIcon icon={c.icon} size="sm" />
 								<div class="min-w-0 flex-1">
-									<p class="truncate text-sm font-medium">{c.name}</p>
-									<p class="truncate text-xs text-muted-foreground">{c.source === 'custom' ? (c.status === 'needs-auth' ? 'Custom · sign in needed' : 'Custom connector') : c.label}</p>
+									<p class="truncate text-sm font-medium">{titleOf(c)}</p>
+									<p class="truncate text-xs text-muted-foreground">{[c.status === 'needs-auth' ? 'Sign in needed' : '', usedBy(c)].filter(Boolean).join(' · ')}</p>
 								</div>
 								<Button size="sm" variant="outline" disabled={busy === c.connectionId} onclick={() => add(c)}>Add</Button>
 							</li>
 						{/each}
 					</ul>
 				{:else}
-					<p class="text-sm text-muted-foreground">{q ? 'No match in your workspace.' : 'Everything in your workspace is already on for this agent.'}</p>
+					<p class="text-sm text-muted-foreground">{q ? 'No match in your workspace.' : 'Every registered account is already on for this agent.'}</p>
 				{/if}
 			</section>
 
+			{#if builtinOff.length}
+				<section class="space-y-2">
+					<h3 class="text-xs font-medium text-muted-foreground">Built in</h3>
+					<ul class="space-y-1.5">
+						{#each builtinOff as c (c.connectionId)}
+							<li class="flex items-center gap-3 rounded-xl border border-border p-2.5">
+								<ConnectorIcon icon={c.icon} size="sm" />
+								<div class="min-w-0 flex-1">
+									<p class="truncate text-sm font-medium">{c.name}</p>
+									<p class="truncate text-xs text-muted-foreground">Built in</p>
+								</div>
+								<Button size="sm" variant="outline" disabled={busy === c.connectionId} onclick={() => add(c)}>Add</Button>
+							</li>
+						{/each}
+					</ul>
+				</section>
+			{/if}
+
 			<section class="space-y-2">
-				<h3 class="text-sm font-medium">Connect a new account</h3>
+				<h3 class="text-xs font-medium text-muted-foreground">Connect another account</h3>
 				{#if connectable.length}
 					<ul class="space-y-1.5">
 						{#each connectable as c (c.id)}
@@ -101,7 +136,7 @@
 								<ConnectorIcon icon={c.icon} size="sm" />
 								<div class="min-w-0 flex-1">
 									<p class="truncate text-sm font-medium">{c.name}</p>
-									<p class="truncate text-xs text-muted-foreground">{blocked ? 'An admin sets it up on the Connectors page first' : c.description}</p>
+									<p class="truncate text-xs text-muted-foreground">{blocked ? 'An admin sets it up on the Connectors page first' : `New account for this agent only`}</p>
 								</div>
 								<Button size="sm" variant="outline" disabled={blocked} onclick={() => connect(c.id)}>Connect</Button>
 							</li>

@@ -36,6 +36,8 @@ import { type AgentDef, TOOL_ACCESS_AUTO_THRESHOLD, type ToolAccess } from '../.
 import type {
   AgentConnectorView,
   CapabilityMode,
+  ConnectionAccess,
+  ConnectionAccessInput,
   ConnectionChoices,
   ConnectionView,
   ConnectorView,
@@ -292,6 +294,128 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     flow: r.flow as unknown as FlowDto,
     ...(r.connection === undefined ? {} : { connection: toConnection(r.connection) }),
   })
+
+  // --- access: who uses a connection ---------------------------------------------------------
+
+  /** Enablement of every (non-archived) agent, read once per listing. */
+  async function enablementOfAll(): Promise<Map<string, AgentEnablement>> {
+    const out = new Map<string, AgentEnablement>()
+    for (const a of options.agents()) out.set(a.id, await enablement.get(a.id))
+    return out
+  }
+
+  function connectionAccess(
+    r: Pick<ConnectionRecord, 'id' | 'scope' | 'scopeId' | 'defaultEnabled'>,
+    all: Map<string, AgentEnablement>,
+  ): ConnectionAccess {
+    if (r.scope === 'agent') {
+      return {
+        mode: 'selected',
+        agentIds:
+          r.scopeId !== undefined &&
+          all.has(r.scopeId) &&
+          all.get(r.scopeId)?.[r.id]?.enabled !== 'off'
+            ? [r.scopeId]
+            : [],
+        excludedAgentIds: [],
+      }
+    }
+    const ids = [...all.keys()]
+    const state = (id: string) => all.get(id)?.[r.id]?.enabled ?? 'inherit'
+    if (r.defaultEnabled) {
+      const excluded = ids.filter((id) => state(id) === 'off')
+      return {
+        mode: 'all',
+        agentIds: ids.filter((id) => state(id) !== 'off'),
+        excludedAgentIds: excluded,
+      }
+    }
+    return {
+      mode: 'selected',
+      agentIds: ids.filter((id) => state(id) === 'on'),
+      excludedAgentIds: [],
+    }
+  }
+
+  const withAccess = async (
+    views: ConnectionView[],
+    all?: Map<string, AgentEnablement>,
+  ): Promise<ConnectionView[]> => {
+    const map = all ?? (await enablementOfAll())
+    return views.map((v) => (v.builtin ? v : { ...v, access: connectionAccess(v, map) }))
+  }
+
+  /** Keep what the agent chose for capabilities and tools; only the on/off switch changes. */
+  async function setState(agentId: string, connectionId: string, state: 'on' | 'inherit') {
+    const current = (await enablement.get(agentId))[connectionId]
+    if (state === 'on') {
+      if (current?.enabled === 'on') return
+      await enablement.set(agentId, connectionId, { ...(current ?? {}), enabled: 'on' })
+      return
+    }
+    if (current === undefined || (current.enabled ?? 'inherit') === 'inherit') return
+    const { enabled: _drop, ...rest } = current
+    await enablement.set(agentId, connectionId, Object.keys(rest).length === 0 ? undefined : rest)
+  }
+
+  async function setAccess(id: string, input: ConnectionAccessInput): Promise<ConnectionView> {
+    const record = await connections.get(id)
+    if (record === undefined) throw notFound('connection', id)
+    const d = definitionOf(record.definitionId)
+    if (d.source === 'builtin') {
+      throw conflict('built-in connections are included; turn them on per agent', 'BUILTIN')
+    }
+    if (!d.scopes.includes('workspace')) {
+      throw invalid(`${d.name} can not be shared between agents`)
+    }
+    const known = new Set(options.agents().map((a) => a.id))
+    const check = (ids: readonly string[] | undefined): string[] => {
+      for (const a of ids ?? []) if (!known.has(a)) throw invalid(`unknown agent: ${a}`)
+      return [...new Set(ids ?? [])]
+    }
+    const all = await enablementOfAll()
+    if (input.mode === 'selected') {
+      const chosen = new Set(check(input.agentIds))
+      // an agent-scoped connection keeps its agent unless the caller drops it explicitly
+      for (const a of known) {
+        const state = all.get(a)?.[id]?.enabled ?? 'inherit'
+        if (chosen.has(a)) await setState(a, id, 'on')
+        else if (state !== 'inherit') await setState(a, id, 'inherit')
+      }
+    } else {
+      const wasAll = record.scope === 'workspace' && record.defaultEnabled
+      const excluded = new Set(
+        input.excludedAgentIds !== undefined
+          ? check(input.excludedAgentIds)
+          : wasAll
+            ? [...known].filter((a) => all.get(a)?.[id]?.enabled === 'off')
+            : [],
+      )
+      for (const a of known) {
+        const state = all.get(a)?.[id]?.enabled ?? 'inherit'
+        if (excluded.has(a)) {
+          if (state !== 'off') {
+            const cur = all.get(a)?.[id]
+            await enablement.set(a, id, { ...(cur ?? {}), enabled: 'off' })
+          }
+        } else if (state !== 'inherit') await setState(a, id, 'inherit')
+      }
+    }
+    // the connection last (id, credentials, slug and settings stay as they are)
+    const next: ConnectionRecord = { ...record, defaultEnabled: input.mode === 'all' }
+    if (record.scope === 'agent') {
+      next.scope = 'workspace'
+      delete next.scopeId
+    }
+    if (next.scope !== record.scope || next.defaultEnabled !== record.defaultEnabled) {
+      next.updatedAt = Date.now()
+      await connections.put(next)
+    } else {
+      changed()
+    }
+    const saved = (await service.get(id)) as NonNullable<Awaited<ReturnType<typeof service.get>>>
+    return (await withAccess([toConnection(saved)]))[0] as ConnectionView
+  }
 
   // --- activation --------------------------------------------------------------------------
 
@@ -598,12 +722,16 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         throw invalid(result.message ?? 'Could not connect to the server.', 'CONNECT_FAILED')
       }
     }
+    if (scope === 'workspace' && !record.defaultEnabled) {
+      for (const agentId of input.agentIds ?? []) await setState(agentId, id, 'on')
+    }
     const saved = (await service.get(id)) as NonNullable<Awaited<ReturnType<typeof service.get>>>
+    const view = (await withAccess([toConnection(saved)]))[0] as ConnectionView
     if (input.signIn === 'now') {
       const started = await service.reconnect(id)
-      return { connection: toConnection(saved), flow: started.flow as unknown as FlowDto }
+      return { connection: view, flow: started.flow as unknown as FlowDto }
     }
-    return { connection: toConnection(saved) }
+    return { connection: view }
   }
 
   return {
@@ -622,12 +750,15 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
 
     catalog: () => Promise.all(definitions.map(catalogEntry)),
     connections: async (query) =>
-      (
-        await service.list({
-          ...(query?.scope === undefined ? {} : { scope: query.scope }),
-          ...(query?.scopeId === undefined ? {} : { scopeId: query.scopeId }),
-        })
-      ).map(toConnection),
+      withAccess(
+        (
+          await service.list({
+            ...(query?.scope === undefined ? {} : { scope: query.scope }),
+            ...(query?.scopeId === undefined ? {} : { scopeId: query.scopeId }),
+          })
+        ).map(toConnection),
+      ),
+    setAccess: (id, input) => wrap(() => setAccess(id, input)),
     startFlow: async (input) =>
       wrap(async () => {
         await checkStart(input)
@@ -709,9 +840,13 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           record.updatedAt = Date.now()
           await connections.put(record)
         }
-        return toConnection(
-          (await service.get(id)) as NonNullable<Awaited<ReturnType<typeof service.get>>>,
-        )
+        return (
+          await withAccess([
+            toConnection(
+              (await service.get(id)) as NonNullable<Awaited<ReturnType<typeof service.get>>>,
+            ),
+          ])
+        )[0] as ConnectionView
       }),
     removeConnection: async (id) =>
       wrap(async () => {
@@ -736,7 +871,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           ...(result.capabilities === undefined
             ? {}
             : { tools: result.capabilities.reduce((n, c) => n + c.tools.length, 0) }),
-          connection: toConnection(record),
+          connection: (await withAccess([toConnection(record)]))[0] as ConnectionView,
         }
       }),
     probeCustom,

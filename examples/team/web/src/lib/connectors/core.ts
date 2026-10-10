@@ -2,7 +2,8 @@
 // the per-agent view (`GET /agents/{id}/connectors`). Framework-free: the `.svelte.ts` wrapper hands
 // it a reactive state object. Plain words only: capability titles, never tool names, except under
 // the "Advanced" disclosure of a connection.
-import type { AgentConnector, ApiClient, Capability, CapabilityMode, Connection, ConnectionChoices, Connector } from '../api/client';
+import { applyAccess } from './access';
+import type { AgentConnector, ConnectionAccessPut, ApiClient, Capability, CapabilityMode, Connection, ConnectionChoices, Connector } from '../api/client';
 
 export type ConnectorsState = {
 	connectors: Connector[];
@@ -97,6 +98,20 @@ export function createConnectorsCore(api: ApiClient, state: ConnectorsState) {
 			const next = await api.patch('/connections/{id}', { params: { id }, body: patch });
 			state.connections = state.connections.map((c) => (c.id === id ? next : c));
 			return next;
+		},
+
+		/** Choose who uses an account. Optimistic: the list changes at once and is restored when the call fails. */
+		async setAccess(id: string, input: ConnectionAccessPut, allAgentIds: string[]): Promise<Connection> {
+			const before = state.connections;
+			state.connections = before.map((c) => (c.id === id ? applyAccess(c, input, allAgentIds) : c));
+			try {
+				const next = await api.put('/connections/{id}/access', { params: { id }, body: input });
+				state.connections = state.connections.map((c) => (c.id === id ? next : c));
+				return next;
+			} catch (e) {
+				state.connections = before;
+				throw e;
+			}
 		},
 
 		async remove(id: string): Promise<void> {

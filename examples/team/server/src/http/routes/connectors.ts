@@ -11,6 +11,7 @@ import {
   putAgentConnectors,
   removeConnection,
   removeOAuthClient,
+  setConnectionAccess,
   setOAuthClient,
   startConnectFlow,
   testConnection,
@@ -22,6 +23,7 @@ import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
 import {
   AgentConnectorsPutSchema,
   AgentConnectorsSchema,
+  ConnectionAccessPutSchema,
   ConnectionIdParam,
   ConnectionListSchema,
   ConnectionPatchSchema,
@@ -149,6 +151,26 @@ const patch = createRoute({
   request: {
     params: ConnectionIdParam,
     body: { required: true, content: content(ConnectionPatchSchema) },
+  },
+  responses: {
+    200: { description: 'The connection, redacted', content: content(ConnectionSchema) },
+    404: jsonError('Unknown connection'),
+    409: jsonError('Built-in connection'),
+    ...errorResponses,
+  },
+})
+
+const accessPut = createRoute({
+  method: 'put',
+  path: '/connections/{id}/access',
+  tags: ['connectors'],
+  summary: 'Choose which agents use a connection',
+  description:
+    "One concept for workspace and agent connections. `all`: workspace connection available to every agent (agents may still opt out: `excludedAgentIds`). `selected`: only `agentIds` (empty: registered but unused). Moving agents is just changing this list; an agent-scoped connection is converted to workspace scope keeping its id, credentials, tool prefix and the agent's own capability modes. Returns the connection with its `access`.",
+  security,
+  request: {
+    params: ConnectionIdParam,
+    body: { required: true, content: content(ConnectionAccessPutSchema) },
   },
   responses: {
     200: { description: 'The connection, redacted', content: content(ConnectionSchema) },
@@ -362,6 +384,12 @@ export function connectorRoutes(deps: Deps): OpenAPIHono {
     })
     .openapi(patch, async (c) =>
       c.json(await updateConnection(deps, c.req.valid('param').id, c.req.valid('json')), 200),
+    )
+    .openapi(accessPut, async (c) =>
+      c.json(
+        (await setConnectionAccess(deps, c.req.valid('param').id, c.req.valid('json'))) as never,
+        200,
+      ),
     )
     .openapi(remove, async (c) => {
       await removeConnection(deps, c.req.valid('param').id)

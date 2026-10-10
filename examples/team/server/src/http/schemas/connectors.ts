@@ -78,6 +78,31 @@ export const ConnectorListSchema = z
   .object({ connectors: z.array(ConnectorSchema) })
   .openapi('ConnectorList')
 
+export const ConnectionAccessSchema = z
+  .object({
+    mode: z.enum(['all', 'selected']).openapi({
+      description:
+        '`all`: every agent has it unless it opts out. `selected`: only `agentIds` (empty: registered, not used yet). An agent-scoped connection is `selected` with its one agent.',
+    }),
+    agentIds: z.array(z.string()).openapi({ description: 'Agents that use it now.' }),
+    excludedAgentIds: z.array(z.string()).openapi({
+      description: '`all` mode: agents that turned it off.',
+    }),
+  })
+  .openapi('ConnectionAccess')
+
+export const ConnectionAccessPutSchema = z
+  .object({
+    mode: z.enum(['all', 'selected']),
+    agentIds: z.array(z.string()).max(500).optional().openapi({
+      description: '`selected`: the agents that use the connection (ids or slugs).',
+    }),
+    excludedAgentIds: z.array(z.string()).max(500).optional().openapi({
+      description: '`all`: the agents that opt out. Omitted: keep the current ones.',
+    }),
+  })
+  .openapi('ConnectionAccessPut')
+
 export const ConnectionSchema = z
   .object({
     id: z.string(),
@@ -101,6 +126,9 @@ export const ConnectionSchema = z
     }),
     authorized: z.boolean(),
     builtin: z.boolean(),
+    access: ConnectionAccessSchema.optional().openapi({
+      description: 'Which agents use it (absent for built-in connections).',
+    }),
     custom: z.boolean().openapi({
       description:
         'A custom (remote MCP) connection: its own connector in the directory, under the name its user gave it.',
@@ -443,6 +471,10 @@ export const CustomConnectorBodySchema = z
       .openapi({ description: 'Every agent gets it (workspace scope).' }),
     scope: z.enum(['workspace', 'agent']).optional(),
     scopeId: z.string().optional(),
+    agentIds: z.array(z.string()).max(500).optional().openapi({
+      description:
+        'Workspace scope without `availableToAll`: the agents that use it from the start (none by default: registered, not used yet).',
+    }),
   })
   .openapi('CustomConnectorBody')
 

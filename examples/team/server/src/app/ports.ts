@@ -4,6 +4,7 @@ import type { ApprovalAnswer, ApprovalOutcome, ApprovalView } from '../domain/ap
 import type {
   AgentConnectors,
   AgentConnectorView,
+  ConnectionAccessInput,
   ConnectionChoices,
   ConnectionPatchInput,
   ConnectionTestResult,
@@ -446,6 +447,8 @@ export interface ConnectorsPort {
   }): Promise<{ flowId?: string; error?: string }>
   updateConnection(id: string, patch: ConnectionPatchInput): Promise<ConnectionView>
   removeConnection(id: string): Promise<void>
+  /** Who uses a connection (see `ConnectionAccess`); converts an agent-scoped one to workspace scope. */
+  setAccess(id: string, input: ConnectionAccessInput): Promise<ConnectionView>
   testConnection(id: string): Promise<ConnectionTestResult>
   /** Every connection this agent can use, with its effective state and modes. */
   agentConnectors(agent: AgentDef): Promise<AgentConnectorView[]>

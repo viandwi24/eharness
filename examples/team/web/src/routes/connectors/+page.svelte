@@ -9,6 +9,8 @@
 	import type { ConnectFlow, Connection, Connector } from '#lib/api/index.js';
 	import AddCustomConnectorDialog from '#lib/components/app/AddCustomConnectorDialog.svelte';
 	import ConnectFlowDialog from '#lib/components/app/ConnectFlowDialog.svelte';
+	import AgentStack from '#lib/components/app/AgentStack.svelte';
+	import ConnectorsByAgent from '#lib/components/app/ConnectorsByAgent.svelte';
 	import ConnectorDetail from '#lib/components/app/ConnectorDetail.svelte';
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
@@ -17,6 +19,7 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
+	import { cardUsage, distinctUsers, usageText, usersOf } from '#lib/connectors/access.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
 	import { categoriesOf, categoryLabel, directorySections } from '#lib/connectors/core.js';
 	import { authLabel, CUSTOM_STATE_LABEL, customConnections, customState, hostOf, initialsOf, matchesCustom } from '#lib/connectors/custom.js';
@@ -39,7 +42,8 @@
 	const connectedCount = $derived(sections.connected.length + customs.length);
 	const categories = $derived(categoriesOf(store.connectors, store.connections));
 	const total = $derived(sections.connected.length + sections.available.length + sections.included.length + customs.length);
-	const accountOf = (c: Connector): string | undefined => store.connections.find((x) => x.definitionId === c.id && x.accountLabel)?.accountLabel;
+	const agents = $derived(agentsStore.state.agents);
+	let view = $state<'connectors' | 'agents'>('connectors');
 	const countOf = (c: Connector): number => store.connections.filter((x) => x.definitionId === c.id).length;
 
 	// first load, and a refetch when another tab or instance changes a connection
@@ -70,6 +74,12 @@
 		selectedId = c.definitionId;
 		selectedConnectionId = c.id;
 		detailOpen = true;
+	}
+
+	function openAccount(c: Connection): void {
+		const connector = store.connectors.find((x) => x.id === c.definitionId);
+		if (c.custom || !connector) openCustom(c);
+		else openDetail(connector);
 	}
 
 	// --- add a custom connector ------------------------------------------------------------
@@ -122,7 +132,6 @@
 </script>
 
 {#snippet card(c: Connector)}
-	{@const account = accountOf(c)}
 	{@const n = countOf(c)}
 	<div class="group relative flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent/40 focus-within:outline-2 focus-within:outline-ring">
 		<div class="flex items-start gap-3">
@@ -141,7 +150,8 @@
 			{:else if n > 0}
 				<span class="flex min-w-0 items-center gap-1.5 text-xs">
 					<span class="size-1.5 shrink-0 rounded-full bg-success"></span>
-					<span class="truncate text-muted-foreground">{account ?? 'Connected'}{n > 1 ? ` +${n - 1}` : ''}</span>
+					<span class="truncate text-muted-foreground">{cardUsage(store.connections.filter((x) => x.definitionId === c.id), agents)}</span>
+					<AgentStack agents={distinctUsers(store.connections.filter((x) => x.definitionId === c.id), agents)} />
 				</span>
 				<Button size="sm" variant="ghost" onclick={() => openDetail(c)}>Manage</Button>
 			{:else}
@@ -164,11 +174,12 @@
 				<p class="truncate text-xs text-muted-foreground">Custom · {hostOf(c) || 'remote MCP server'}</p>
 			</div>
 		</div>
-		<p class="line-clamp-2 flex-1 text-[13px] leading-snug text-muted-foreground">{authLabel(c)}{c.scope === 'agent' ? ' · one agent only' : ''}</p>
+		<p class="line-clamp-2 flex-1 text-[13px] leading-snug text-muted-foreground">{authLabel(c)}</p>
 		<div class="relative z-10 flex min-h-7 items-center justify-between gap-2">
 			<span class="flex min-w-0 items-center gap-1.5 text-xs">
 				<span class="size-1.5 shrink-0 rounded-full {state === 'connected' ? 'bg-success' : state === 'error' ? 'bg-destructive' : 'bg-warning'}"></span>
-				<span class="truncate text-muted-foreground">{CUSTOM_STATE_LABEL[state]}</span>
+				<span class="truncate text-muted-foreground">{CUSTOM_STATE_LABEL[state]} · {usageText(c, agents)}</span>
+				<AgentStack agents={usersOf(c, agents)} />
 			</span>
 			{#if state === 'needs-sign-in'}
 				<Button size="sm" variant="outline" onclick={() => signIn(c)}>Sign in</Button>
@@ -218,6 +229,15 @@
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		<div class="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 md:p-6">
+			<div role="tablist" aria-label="View" class="inline-flex w-fit rounded-lg border border-border p-0.5">
+				{#each [['connectors', 'Connectors'], ['agents', 'By agent']] as const as [v, label] (v)}
+					<button type="button" role="tab" aria-selected={view === v} onclick={() => (view = v)} class={cn('h-7 rounded-md px-3 text-xs font-medium transition-colors outline-none focus-visible:outline-2 focus-visible:outline-ring', view === v ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}>{label}</button>
+				{/each}
+			</div>
+
+			{#if view === 'agents'}
+				<ConnectorsByAgent onOpenAccount={openAccount} />
+			{:else}
 			<div class="flex flex-col gap-3 sm:flex-row sm:items-center">
 				<div class="relative w-full sm:max-w-xs">
 					<MagnifyingGlassIcon class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -272,6 +292,7 @@
 				{@render group('Connected', 'Ready to use by your agents', sections.connected, customs)}
 				{@render group('Available', 'Connect with your account', sections.available, undefined, !query && (!category || category === 'custom'))}
 				{@render group('Included', 'Built in, nothing to connect', sections.included)}
+			{/if}
 			{/if}
 		</div>
 	</div>

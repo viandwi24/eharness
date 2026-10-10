@@ -119,7 +119,12 @@ not by a tool checklist. The built-ins (Files, Memory, Planning, Web, Ask the us
 included; GitHub (remote MCP, OAuth app or a personal access token) and the custom connector (any
 remote MCP URL) are connected from the Connectors page. A **connection** is workspace scoped
 (connected once, "available to all agents" = `defaultEnabled`, inherited; an agent may override it)
-or agent scoped. Per agent and connection the choices live in `agent_connectors`: on / off /
+or agent scoped. The UI shows one concept per account, **Access**: "All agents" (workspace +
+`defaultEnabled`, agents may opt out) or "Selected agents" (`defaultEnabled` false + `on` rows in
+`agent_connectors`; an agent-scoped connection reads as Selected = its agent). `PUT
+/connections/{id}/access` maps it back and converts agent scope to workspace scope in place (same
+id, credentials, tool prefix and per-agent modes), so accounts can be registered first and moved
+between agents later. Per agent and connection the choices live in `agent_connectors`: on / off /
 inherit, a mode per capability (Allowed / Ask first / Off, plain words) and per-tool overrides under
 "Advanced". `activateConnectors` turns them into plugins, MCP sources, permission rules and a stable
 tool order; the connector rules are merged most-restrictive-wins with the agent's own rules, and

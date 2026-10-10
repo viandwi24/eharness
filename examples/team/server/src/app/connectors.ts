@@ -1,6 +1,7 @@
 /** Connector use cases (the HTTP routes call these; the port does the work). */
 import type {
   AgentConnectors,
+  ConnectionAccessInput,
   ConnectionChoices,
   ConnectionPatchInput,
   CustomConnectorInput,
@@ -40,6 +41,22 @@ export const oauthCallback = (
 export const updateConnection = (deps: Deps, id: string, patch: ConnectionPatchInput) =>
   deps.connectors.updateConnection(id, patch)
 export const removeConnection = (deps: Deps, id: string) => deps.connectors.removeConnection(id)
+export function setConnectionAccess(deps: Deps, id: string, input: ConnectionAccessInput) {
+  const resolve = (ref: string): string => {
+    const found = deps.agents.get(ref)?.id ?? deps.agents.getBySlug(ref)?.id
+    if (found === undefined) throw invalid(`unknown agent: ${ref}`)
+    return found
+  }
+  return deps.connectors.setAccess(id, {
+    mode: input.mode,
+    ...(input.agentIds === undefined
+      ? {}
+      : { agentIds: [...new Set(input.agentIds.map(resolve))] }),
+    ...(input.excludedAgentIds === undefined
+      ? {}
+      : { excludedAgentIds: [...new Set(input.excludedAgentIds.map(resolve))] }),
+  })
+}
 export const testConnection = (deps: Deps, id: string) => deps.connectors.testConnection(id)
 
 export async function getAgentConnectors(deps: Deps, agentId: string) {
@@ -86,6 +103,13 @@ export async function createCustomConnector(deps: Deps, input: CustomConnectorIn
     clean.scopeId = id
   } else if (clean.scopeId !== undefined) {
     throw invalid('workspace scope has no scopeId')
+  }
+  if (clean.agentIds !== undefined) {
+    clean.agentIds = clean.agentIds.map((ref) => {
+      const found = deps.agents.get(ref)?.id ?? deps.agents.getBySlug(ref)?.id
+      if (found === undefined) throw invalid(`unknown agent: ${ref}`)
+      return found
+    })
   }
   return deps.connectors.createCustom(clean)
 }

@@ -17,6 +17,7 @@
 	import TestButton from '#lib/components/app/config/TestButton.svelte';
 	import TestResult from '#lib/components/app/config/TestResult.svelte';
 	import ModeControl from '#lib/components/app/config/ModeControl.svelte';
+	import AccessControl from '#lib/components/app/AccessControl.svelte';
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -32,7 +33,7 @@
 	import { capabilitiesOf, categoryLabel, MODE_LABEL } from '#lib/connectors/core.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
 	import { authLabel, customState, hostOf, initialsOf, toolCount } from '#lib/connectors/custom.js';
-	import { alwaysAsks, KIND_LABEL, KIND_VARIANT, modeOf, OAUTH_CLIENT_NEEDS_SETUP, scopeLabel, splitMemory } from '#lib/connectors/view.js';
+	import { alwaysAsks, KIND_LABEL, KIND_VARIANT, modeOf, OAUTH_CLIENT_NEEDS_SETUP, splitMemory } from '#lib/connectors/view.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	
 	/** One connector in a wide dialog: what it can do, its connections, default permissions and actions. */
@@ -139,14 +140,6 @@
 		}
 	}
 
-	async function setDefaultEnabled(c: Connection, on: boolean): Promise<void> {
-		try {
-			await connectorsStore.update(c.id, { defaultEnabled: on });
-		} catch (err) {
-			toast.error(message(err));
-		}
-	}
-
 	async function setMode(c: Connection, cap: Capability, mode: CapabilityMode): Promise<void> {
 		const next = Object.fromEntries(capabilitiesOf(connector, c).map((k) => [k.id, modeOf(c, k)])) as Record<string, CapabilityMode>;
 		next[cap.id] = mode;
@@ -210,7 +203,6 @@
 						<span class="truncate text-sm font-medium">{title ?? c.label}</span>
 						{#if badge}<Badge variant="brand">{badge}</Badge>{/if}
 						{#if c.custom && customState(c) === 'needs-sign-in'}<StatusBadge status="needs-auth" label="Sign in needed" />{:else}<StatusBadge status={connectionStatus(c)} />{/if}
-						{#if !c.builtin && c.scope !== 'workspace'}<Badge variant="outline">{scopeLabel(c, agentName)}</Badge>{/if}
 					</div>
 					{#if c.accountLabel}<p class="mt-0.5 truncate text-xs text-muted-foreground">Signed in as {c.accountLabel}</p>{/if}
 				{/if}
@@ -244,14 +236,7 @@
 		{#if c.statusMessage && c.status !== 'connected'}<p class="px-3.5 pb-3 text-xs text-destructive-text" role="alert">{c.statusMessage}</p>{/if}
 		{#if res}<div class="px-3.5 pb-3"><TestResult result={res} /></div>{/if}
 
-		{#if c.scope === 'workspace' && !c.builtin}
-			<label class="flex items-center justify-between gap-3 border-t border-border px-3.5 py-2.5 text-sm">
-				<span class="flex flex-col"
-					><span>Available to all agents</span><span class="text-xs text-muted-foreground">Off: agents use it only when you add it to them.</span></span
-				>
-				<Switch checked={c.defaultEnabled} onCheckedChange={(v) => setDefaultEnabled(c, v)} aria-label="Available to all agents" />
-			</label>
-		{/if}
+		{#if !c.builtin}<AccessControl connection={c} />{/if}
 
 		{#if c.custom && caps.length === 0}
 			<p class="border-t border-border px-3.5 py-3 text-xs text-muted-foreground">
@@ -467,7 +452,7 @@
 							<span>Make it available to all agents <span class="text-muted-foreground">once connected</span></span>
 						</label>
 					{:else}
-						<span class="text-xs text-muted-foreground">Each account above has its own “Available to all agents” switch.</span>
+						<span class="text-xs text-muted-foreground">Each account above has its own Access setting.</span>
 					{/if}
 					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
 				</div>
