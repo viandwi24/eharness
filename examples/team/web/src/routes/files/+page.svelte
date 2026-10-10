@@ -37,7 +37,7 @@
 		const d = next.dir === undefined ? dir : next.dir;
 		if (d && d !== '/') q.set('dir', d);
 		if (next.path) q.set('path', next.path);
-		void goto(`/library${q.size ? `?${q}` : ''}`);
+		void goto(`/files${q.size ? `?${q}` : ''}`);
 	}
 
 	let seq = 0;
@@ -50,7 +50,7 @@
 			error = '';
 			loaded = true;
 		} catch (e) {
-			if (mine === seq) error = e instanceof Error ? e.message : 'Could not load the library';
+			if (mine === seq) error = e instanceof Error ? e.message : 'Could not load the files';
 		}
 	}
 	$effect(() => {
@@ -96,7 +96,7 @@
 </script>
 
 <div class="flex min-w-0 flex-1 flex-col">
-	<PageHeader title="Library">
+	<PageHeader title="Files">
 		<Button size="sm" variant="outline" onclick={() => ((creating = !creating), (createError = ''))}>New file</Button>
 		<Button size="sm" variant="outline" disabled={uploading} onclick={() => fileInput?.click()}>
 			<UploadSimpleIcon class="size-4" />{uploading ? 'Uploading…' : 'Upload'}

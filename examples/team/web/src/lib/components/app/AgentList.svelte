@@ -4,7 +4,7 @@
 	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import GearIcon from 'phosphor-svelte/lib/Gear';
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
-	import BooksIcon from 'phosphor-svelte/lib/Books';
+	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -28,7 +28,7 @@
 	onMount(() => void agentsStore.load());
 	const nav = [
 		{ href: '/tasks', label: 'Tasks', icon: ListChecksIcon },
-		{ href: '/library', label: 'Library', icon: BooksIcon },
+		{ href: '/files', label: 'Files', icon: FolderOpenIcon },
 		{ href: '/settings', label: 'Settings', icon: GearIcon }
 	];
 </script>

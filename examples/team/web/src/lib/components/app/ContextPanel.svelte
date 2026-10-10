@@ -107,7 +107,7 @@
 		<Tabs.Content value="files" class="flex flex-col gap-1">
 			{#if contextError}<p class="text-destructive-text">{contextError}</p>{/if}
 			{#each context?.files ?? [] as f (f.path)}
-				<a href="/library?path={encodeURIComponent(f.path)}" class="flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-accent">
+				<a href="/files?path={encodeURIComponent(f.path)}" class="flex items-center gap-2 rounded-lg px-2 py-2 hover:bg-accent">
 					<FileTextIcon class="size-4 shrink-0 text-muted-foreground" />
 					<span class="min-w-0 flex-1">
 						<span class="block truncate font-mono text-xs" title={f.path}>{basename(f.path)}</span>
@@ -121,7 +121,7 @@
 			{:else if !context && !contextError}
 				<p class="text-muted-foreground">Loading…</p>
 			{/if}
-			<a href="/library" class="mt-2 inline-block text-xs text-info-text underline underline-offset-4">Open the library</a>
+			<a href="/files" class="mt-2 inline-block text-xs text-info-text underline underline-offset-4">Open files</a>
 		</Tabs.Content>
 		<Tabs.Content value="tasks" class="flex flex-col gap-2">
 			{#if sessions && sessions.dm.pending > 0}
