@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { loadConfig, trustProject } from '../src/app/config.ts'
-import { createModelResolver, missingKeyError } from '../src/app/provider.ts'
+import { missingKeyError } from '../src/app/provider.ts'
 import { isolateHome, setup, tempDir, writeFiles } from './helpers.ts'
 
 describe('loadConfig', () => {
@@ -461,15 +461,5 @@ describe('provider helpers', () => {
     const hint = missingKeyError('openrouter', { AI_GATEWAY_API_KEY: 'secret-key' })
     expect(hint).toContain('--provider gateway')
     expect(hint).not.toContain('secret-key')
-  })
-
-  test('the resolver gives OpenRouter model instances and gateway plain ids', () => {
-    expect(createModelResolver('gateway', {})('a/b')).toBe('a/b')
-    const model = createModelResolver('openrouter', {
-      OPENROUTER_API_KEY: 'k',
-      OPENROUTER_BASE_URL: 'http://localhost:1/api/v1',
-    })('anthropic/claude-sonnet-5.5') as { provider: string; modelId: string }
-    expect(model.modelId).toBe('anthropic/claude-sonnet-5.5')
-    expect(model.provider).toContain('openrouter')
   })
 })

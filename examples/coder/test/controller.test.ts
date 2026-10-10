@@ -555,4 +555,35 @@ describe('context, usage and status', () => {
     const { controller } = await makeController({ model: scriptedModel([{ text: 'x' }]) })
     expect(await controller.models()).toEqual([])
   })
+
+  test('models() lists the cached catalog of the provider from <userDir> (picker mapping)', async () => {
+    const { controller } = await makeController({
+      model: scriptedModel([{ text: 'x' }]),
+      flags: { provider: 'gateway' },
+      homeFiles: {
+        'models.json': JSON.stringify({
+          anthropic: {
+            models: {
+              'claude-x': {
+                name: 'Claude X',
+                tool_call: true,
+                limit: { context: 1000, output: 10 },
+              },
+            },
+          },
+        }),
+      },
+    })
+    expect(await controller.models()).toEqual([
+      {
+        id: 'anthropic/claude-x',
+        name: 'Claude X',
+        provider: 'gateway',
+        contextWindow: 1000,
+        maxOutputTokens: 10,
+        reasoning: false,
+        tools: true,
+      },
+    ])
+  })
 })

@@ -72,7 +72,13 @@ project (see Preferences), then the provider default. `/model <id>` switches ins
 - A switch applies to the next step of every agent, subagents included (a `turn.prepare` plugin
   reads shared state), without rebuilding agents.
 
-Context window and prices come from the [models.dev](https://models.dev) catalog. It is fetched once
+Models come from the `eharness/providers` manager (`app/provider.ts`): one profile per session,
+built from the environment variables above (id = provider name), with file-backed catalog caches at
+the paths below and `CODER_OFFLINE=1` mapped to `catalogs.offline`. Saved profiles in a settings
+file are not supported; the environment is the only source.
+
+Context window and prices come from the [models.dev](https://models.dev) catalog (gateway) or the
+OpenRouter list (see above). Each is fetched once
 at startup (at most 3 s of waiting) and cached in `~/.coder/models.json`. A cache older than 24 h is
 used as is and refreshed in the background for the next start. Set `CODER_OFFLINE=1` to never fetch.
 Without a catalog entry the context window falls back to `contextWindow` (default 200000) and no
@@ -951,7 +957,7 @@ Notes:
 | Folder (`src/`) | Role and eharness features it exercises |
 |---|---|
 | `main.tsx`, `print.ts` | CLI (commander) and headless output; `HarnessRun` streams, `TurnResult.usage` |
-| `app/` | config (settings, trust), controller, agents, prompt, storage, models.dev catalog. `defineHarnessAgent`, `session.send` / `respond` / `fork` / `onRun`, `compaction`, `toolOutput` eviction, turn reminders (mode, extra dirs), cost and context window from the catalog, JSON-file adapters. `agent.ts` composes the shipped plugins per agent; `checkpoints.ts` (rewind policy), `tasks.ts` (task list), `web-search.ts` (provider search) |
+| `app/` | config (settings, trust), controller, agents, prompt, storage, provider manager and model catalogs. `defineHarnessAgent`, `session.send` / `respond` / `fork` / `onRun`, `compaction`, `toolOutput` eviction, turn reminders (mode, extra dirs), cost and context window from the catalog, JSON-file adapters. `agent.ts` composes the shipped plugins per agent; `checkpoints.ts` (rewind policy), `tasks.ts` (task list), `web-search.ts` (provider search) |
 | `workspace/` | `nodeWorkspace()` and the `request_directory_access` tool |
 | `permissions/` | the library engine configured for the app (`engine.ts`: tool kinds, protected paths, rule scopes, always-ask directory access), the approval broker, `describeApproval`, the audit log |
 | `agents/` | `drive.ts` answers `tool-pending` stops of the main agent (approvals, questions); `subagents.ts` is the `answer` callback of the `agent` tool; definitions from files (`load.ts`, `builtin.ts`) |

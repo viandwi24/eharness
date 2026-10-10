@@ -63,10 +63,9 @@ import {
   PROJECT_INSTRUCTIONS_OPTIONS,
 } from './memory-files.ts'
 import type { ModelState } from './model-switch.ts'
-import { loadProviderModels } from './models.ts'
 import { createOutputStyles } from './output-styles.ts'
 import { loadPreferences, savePreferences } from './preferences.ts'
-import { createModelResolver, KEY_ENV } from './provider.ts'
+import { createCoderProviders, KEY_ENV } from './provider.ts'
 import { createRecap } from './recap.ts'
 import { createSessionTools } from './session-tools.ts'
 import { createStorage, latestSessionId, listSessions, newSessionId } from './sessions.ts'
@@ -86,7 +85,7 @@ export interface CreateControllerOptions {
     /** Merged settings files (`LoadedConfig.settings`); `{}` when absent. */
     settings?: CoderSettings
   }
-  /** Model catalog override (tests). Default: the cached catalog of the provider (`app/models.ts`). */
+  /** Model catalog override (tests). Default: the cached catalog of the provider (`app/provider.ts`). */
   models?: ModelCatalog
   /** Model override (offline tests): every agent uses it whatever `setModel()` says. */
   model?: LanguageModel
@@ -124,7 +123,8 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     model: config.model,
     thinking: opts.thinking ?? prefs.thinking ?? 'provider-default',
   }
-  const resolveModel = opts.resolveModel ?? createModelResolver(config.provider)
+  const providers = createCoderProviders({ provider: config.provider, userDir: config.userDir })
+  const resolveModel = opts.resolveModel ?? providers.resolve
   // preference writes are serialized so the last choice wins
   let saving: Promise<void> = Promise.resolve()
   const persist = (...keys: Array<keyof ModelState>): void => {
@@ -177,9 +177,9 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     return commands
   }
   await readCommands()
-  const loaded = opts.models ? undefined : await loadProviderModels(config.provider, config.userDir)
-  const catalog = opts.models ?? loaded?.catalog
-  const modelOptions: ModelOption[] = loaded?.options ?? []
+  if (!opts.models) await providers.load()
+  const catalog = opts.models ?? providers.catalog()
+  const modelOptions: ModelOption[] = opts.models ? [] : await providers.options()
 
   // invalid agent files: reported next to the config warnings
   opts.config.warnings?.push(...warnings)
