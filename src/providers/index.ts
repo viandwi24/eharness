@@ -64,6 +64,12 @@ export {
   type ProviderManagerOptions,
   parseModelRef,
 } from './manager.ts'
+export {
+  SEALED_KEY,
+  type SealedProfileStore,
+  type SealedProfileStoreOptions,
+  sealedProfileStore,
+} from './sealed.ts'
 export { memoryProfileStore } from './store.ts'
 export type {
   AnyProviderDefinition,
@@ -89,7 +95,9 @@ export type {
   PublicConfigProfile,
   PublicProfile,
   SecretStatus,
+  SecretVault,
   SettingsSchema,
   ShowWhen,
   TestResult,
 } from './types.ts'
+export { plaintextVault, type VaultKeys, webCryptoVault } from './vault.ts'

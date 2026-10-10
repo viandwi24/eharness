@@ -52,3 +52,7 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0048](0048-providers-module.md) | `eharness/providers`: definitions, profiles, a manager and a cached catalog loader (module fetches via injected `fetch`) |
 | [0047](0047-model-call-observer.md) | Model call observer: the `model.call` hook, an AI SDK middleware, `observeModel` |
 | [0046](0046-durable-background-subagents-in-park-mode.md) | Durable background subagents in `park` mode: durable start through the child inbox, report events through storage, run marker for every park call |
+| [0049](0049-connectors-module.md) | `eharness/connectors`: definitions, connections, enablement, activation; reuses the providers' config layer |
+| [0050](0050-flow-view-vocabulary.md) | Setup flows are server-driven views from a closed vocabulary (stale-view guard, sealed scratch) |
+| [0051](0051-precedence-and-pinned-ask.md) | Mode precedence, most-restrictive combination and pinned asks under bypass |
+| [0052](0052-generic-secret-vault.md) | One generic `SecretVault` and `sealedProfileStore` for providers and connectors |

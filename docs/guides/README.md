@@ -39,3 +39,4 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Team app example](../../examples/team/README.md) | a web + server team of agents: agents as data, lead and role agents, board and approvals, routines, several instances, SQLite adapters |
 | [Upgrading to 0.7](upgrading.md) | what changes for 0.6 users, with migration snippets, and the known gaps |
 | [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |
+| [Connectors](connectors.md) | `eharness/connectors`: connect tools per workspace or agent, setup flows and OAuth, per-agent enablement and modes, built-in connectors, rendering flows in a UI |

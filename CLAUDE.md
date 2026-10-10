@@ -46,7 +46,7 @@ bunx changeset              # add a changeset (required for every user-facing ch
    (`crypto.subtle`, `TextEncoder`, `ReadableStream`).
 4. **Shipped plugins use only the public API.** `src/filesystem/**`, `src/mcp/**`, `src/storage/**`,
    `src/todos/**`, `src/memory/**`, `src/guard/**`, `src/openapi/**`, `src/group/**`, `src/ask/**`,
-   `src/permissions/**`, `src/providers/**`, `src/shell/**`, `src/subagent/**`, `src/web/**` and `src/testing/**` may import core only through `src/index.ts`
+   `src/permissions/**`, `src/providers/**`, `src/connectors/**` (also `src/providers/index.ts`, ADR-0049), `src/shell/**`, `src/subagent/**`, `src/web/**` and `src/testing/**` may import core only through `src/index.ts`
    (dogfooding, ADR-0008).
 5. **The library ships memory adapters only.** Database/S3/JSON-file adapters are examples in
    `examples/`, never dependencies (ADR-0008).
@@ -90,7 +90,8 @@ src/
   group/            eharness/group
   ask/              eharness/ask
   permissions/      eharness/permissions
-  providers/        eharness/providers (provider definitions, profiles, manager, catalog loader; fetches only via injected fetch)
+  providers/        eharness/providers (provider definitions, profiles, manager, catalog loader, SecretVault; fetches only via injected fetch)
+  connectors/       eharness/connectors (connector definitions, connections, enablement, setup flows, OAuth, activation, built-ins; fetches only via injected fetch)
   shell/            eharness/shell (Node-only)
   subagent/         eharness/subagent
   web/              eharness/web

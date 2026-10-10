@@ -238,3 +238,19 @@ export interface ModelEntry extends ListedModel {
 
 /** A model reference: `{ profile, model }` or `'profile:model'` (split on the first `:`). */
 export type ModelRef = string | { profile: string; model: string }
+
+/**
+ * Encrypts secrets at rest. Generic: `sealedProfileStore` uses it for any profile kind and
+ * `eharness/connectors` for connection credentials and flow scratch. The app supplies a real
+ * implementation (its existing secret box) or uses `webCryptoVault`. `context` is bound to the
+ * ciphertext (row or flow id), so a blob cannot be replayed elsewhere.
+ */
+export interface SecretVault {
+  /** Id of the key new blobs are sealed with (informational, for rotation). */
+  keyId?: string
+  seal(plaintext: string, context: string): Promise<string>
+  /** Rejects (`EH_CONFIG_INVALID`, `details.reason: 'vault-open'`) for a wrong context, key or tampering. */
+  open(sealed: string, context: string): Promise<string>
+  /** True when `sealed` was made with an old key (see `sealedProfileStore().reseal()`). */
+  needsReseal?(sealed: string): boolean
+}

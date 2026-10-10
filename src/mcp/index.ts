@@ -4,6 +4,15 @@
  *
  * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
  */
+
+export {
+  bearerAuthProvider,
+  listRemoteMcpTools,
+  type RemoteMcpSpec,
+  type RemoteMcpTool,
+  remoteMcpSource,
+  remoteMcpTransport,
+} from './remote.ts'
 export {
   clearMcpPins,
   MCP_AUTO_DEFER_THRESHOLD,

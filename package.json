@@ -72,6 +72,7 @@
   "exports": {
     ".": "./dist/index.js",
     "./ask": "./dist/ask/index.js",
+    "./connectors": "./dist/connectors/index.js",
     "./filesystem": "./dist/filesystem/index.js",
     "./filesystem/memory": "./dist/filesystem/memory.js",
     "./filesystem/node": "./dist/filesystem/node.js",

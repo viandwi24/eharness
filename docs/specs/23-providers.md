@@ -175,3 +175,30 @@ Secrets live only in `ProfileStore` rows and in memory of the process that resol
 are never in `PublicProfile`, `describe()`, `ProviderDescription`, warnings, `test()` messages or
 `HarnessError` messages produced here. A `ProfileStore` adapter should encrypt `settings`; the
 library cannot.
+
+## 8. Sealing secrets at rest (generic)
+
+`SecretVault` is the one port that encrypts secrets, shared by providers, connectors and any other
+profile kind (ADR-0052):
+
+```ts
+interface SecretVault {
+  keyId?: string
+  seal(plaintext: string, context: string): Promise<string>   // context is bound to the blob
+  open(sealed: string, context: string): Promise<string>      // rejects: wrong context, key, tampering
+  needsReseal?(sealed: string): boolean                       // blob made with an old key
+}
+```
+
+- `webCryptoVault(key | { keys, current })`: AES-256-GCM over `crypto.subtle`, fresh IV per seal,
+  `context` authenticated, blob `v2.<keyId>.<base64url(iv || ct)>`. Several keys support rotation.
+  `plaintextVault()` is for tests only. An app that already has a secret box implements the
+  three-method port around it.
+- `sealedProfileStore(inner, vault, { kinds?, schemaOf? })` wraps any `ProfileStore`: `put`
+  seals, `get` / `list` open, so the manager and the connector service see plain settings and the
+  database only ciphertext. Default: the whole `settings` JSON becomes `{ "~sealed": blob }`,
+  bound to `profile:<kind>:<id>` (a row cannot be moved to another id). With `schemaOf(profile)`
+  only the `secret` / `secretValues` fields are sealed (the rest stays queryable). `kinds` limits
+  sealing to some kinds. `subscribe` is passed through. `reseal()` rewrites rows sealed with an
+  old key and returns how many. An unopenable row makes `get` / `list` reject with
+  `EH_CONFIG_INVALID` (`details.reason: 'vault-open'`).

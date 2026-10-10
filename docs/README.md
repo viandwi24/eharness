@@ -42,6 +42,7 @@ Using eharness (not contributing)? Start with the [README](../README.md), the [g
 | 20 | [subagent-plugin](specs/20-subagent-plugin.md) | `eharness/subagent`: the `agent` tool, child sessions, approvals inline / park / policy, background agents, `agent_output`, `agent_stop`, Draft agent messaging (`send_message`, names, resume) |
 | 21 | [ask-plugin](specs/21-ask-plugin.md) | `eharness/ask`: `ask_user_question`, client tool or non-interactive fallback |
 | 22 | [web-plugin](specs/22-web-plugin.md) | `eharness/web`: `web_fetch` (SSRF guards, Markdown, framing) and `web_search` (provider-agnostic) |
+| 24 | [connectors](specs/24-connectors.md) | `eharness/connectors`: connector definitions, connections and enablement, setup flow engine, OAuth helpers, activation into plugins, sources and permission rules, built-in connectors |
 | 23 | [providers](specs/23-providers.md) | `eharness/providers`: provider definitions, profiles and store, manager (`resolve`, models, `catalog()`), form spec, secret redaction, cached catalog loader |
 
 ## Status vocabulary

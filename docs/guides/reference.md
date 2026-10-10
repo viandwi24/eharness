@@ -370,3 +370,4 @@ the rest `'write'`. Guides: [guard](guard.md), [group chat](group-chat.md),
 
 Patterns that combine these (ephemeral context, episodic memory, background events, heartbeats,
 several instances, security): [production patterns](production-patterns.md).
+- `eharness/connectors` (spec 24): see the [connectors guide](connectors.md#reference).

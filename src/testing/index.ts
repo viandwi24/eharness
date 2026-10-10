@@ -11,6 +11,16 @@ export {
   budgetLedgerConformance,
 } from './budget-ledger.conformance.ts'
 export {
+  type ConnectionStoreUnderTest,
+  type CredentialStoreUnderTest,
+  connectionStoreConformance,
+  credentialStoreConformance,
+  type EnablementStoreUnderTest,
+  enablementStoreConformance,
+  type FlowStoreUnderTest,
+  flowStoreConformance,
+} from './connectors.conformance.ts'
+export {
   type FileSystemConformanceOptions,
   type FileSystemUnderTest,
   fileSystemConformance,

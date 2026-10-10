@@ -153,6 +153,14 @@ Lifecycle:
 Top-level sugar: `defineHarnessAgent({ mcp: [mcpServer({...})] })` is identical to
 `tools: [mcpServer({...})]` — the `mcp` slot exists for readability.
 
+### 3.x Remote servers with a fresh bearer (`remoteMcpSource`)
+
+`remoteMcpSource({ name, url, headers?, getAccessToken?, allow?, deny?, prefix?, defer?, risk? })`
+is `mcpServer` over a streamable-HTTP transport whose `authProvider` (`bearerAuthProvider`) returns
+`getAccessToken()` for **every** request, so a refreshed OAuth token is used without reconnecting.
+`listRemoteMcpTools(spec)` connects once, returns `{ name, description?, annotations? }` and closes
+the client. Both are used by `eharness/connectors` (spec 24 §9).
+
 ## 4. Tool output limits
 
 Large tool outputs are the main cause of context blow-ups and write amplification. The core limits
