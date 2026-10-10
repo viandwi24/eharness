@@ -91,7 +91,7 @@ function toField(path: string, key: string, raw: Json, required: boolean): FormF
   if (kind === 'enum') {
     field.options = (node.enum as Array<string | number | boolean>).map((value) => ({
       value,
-      label: String(value),
+      label: meta.optionLabels?.[String(value)] ?? String(value),
     }))
   }
   if ('default' in node) field.default = node.default

@@ -71,7 +71,15 @@ const settingsSchema: z.ZodObject = z.object({
     .meta({
       title: 'Authentication',
       description: 'How the server authenticates requests.',
-      ...ehMeta({ group: 'auth', widget: 'radio' }),
+      ...ehMeta({
+        group: 'auth',
+        widget: 'radio',
+        optionLabels: {
+          none: 'No authentication',
+          headers: 'API key or headers',
+          oauth: 'OAuth (sign in)',
+        },
+      }),
     }),
   headers: z
     .record(z.string(), z.string())

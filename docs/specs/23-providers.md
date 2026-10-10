@@ -51,6 +51,7 @@ Field metadata is the standard zod `.meta()`: `title`, `description`, `default`,
 | `widget` | `'password' \| 'textarea' \| 'keyvalue' \| 'radio' \| 'select'`; defaults: secret → `password`, record → `keyvalue`, enum → `select` |
 | `showWhen` | `{ field, equals? , in? }`, show only while another field has a value |
 | `placeholder`, `envHint` | UI hints |
+| `optionLabels` | display labels of enum values (`{ none: 'No authentication' }`); `options[].label` defaults to the value |
 
 `formSpec(schema)` returns `{ fields: FormField[], jsonSchema }` (`z.toJSONSchema(schema,
 { io: 'input' })`; zod v4 schemas, imported from `zod/v4`). `FormField`: `path` (dotted for nested

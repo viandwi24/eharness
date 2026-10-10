@@ -37,6 +37,8 @@ export interface FieldMeta {
   placeholder?: string
   /** Environment variable that can supply the field (shown as a hint; see `envMap`). */
   envHint?: string
+  /** For an enum field: display labels by value (`{ none: 'No authentication' }`); default: the value. */
+  optionLabels?: Record<string, string>
 }
 
 /** Context of the network calls of a provider (`listModels`, `test`). */

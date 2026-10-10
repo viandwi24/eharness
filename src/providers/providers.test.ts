@@ -62,6 +62,18 @@ const schema = z.object({
 const KEY = 'sk-super-secret-1234567890'
 
 describe('form spec', () => {
+  test('enum option labels come from optionLabels, else the value', () => {
+    const labelled = z.object({
+      auth: z
+        .enum(['none', 'oauth'])
+        .meta({ ...ehMeta({ optionLabels: { none: 'No authentication' } }) }),
+    })
+    const [field] = formSpec(labelled).fields
+    expect(field?.options).toEqual([
+      { value: 'none', label: 'No authentication' },
+      { value: 'oauth', label: 'oauth' },
+    ])
+  })
   const spec = formSpec(schema)
   const byPath = Object.fromEntries(spec.fields.map((f) => [f.path, f]))
   test('fields, kinds, labels and groups', () => {
