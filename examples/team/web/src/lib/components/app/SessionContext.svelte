@@ -43,7 +43,7 @@
 	let {
 		agentId,
 		onClose,
-		elevation = 'floating',
+		elevation = 'raised',
 		class: className
 	}: { agentId: string; onClose?: () => void; elevation?: Elevation; class?: string } = $props();
 
