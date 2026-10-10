@@ -31,7 +31,18 @@ function mount(opts: Parameters<typeof fakeController>[0] = {}) {
     app.stdin.write(text)
     await tick()
   }
-  return { ...fake, app, frame, type }
+  // A key typed right after a dialog appears can arrive before Ink subscribes its input handler
+  // (slow CI runners): retype until the expected effect shows up.
+  const press = async (key: string, done: () => boolean, label: string): Promise<void> => {
+    const start = Date.now()
+    while (!done()) {
+      if (Date.now() - start > 8000) throw new Error(`timeout waiting for ${label}`)
+      app.stdin.write(key)
+      const sent = Date.now()
+      while (!done() && Date.now() - sent < 400) await tick(10)
+    }
+  }
+  return { ...fake, app, frame, type, press }
 }
 
 describe('render', () => {
@@ -160,30 +171,27 @@ describe('permission prompt', () => {
   })
 
   test('key 1 answers approved', async () => {
-    const { frame, broker, type } = mount()
+    const { frame, broker, press } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
-    await type('1')
-    await until(() => broker.answers.length === 1, 'answer')
+    await press('1', () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]).toEqual({ id: 'ap1', answer: { approved: true } })
     await until(() => !frame().includes('Bash command'), 'prompt gone')
   })
 
   test('key 2 remembers for the session', async () => {
-    const { frame, broker, type } = mount()
+    const { frame, broker, press } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
-    await type('2')
-    await until(() => broker.answers.length === 1, 'answer')
+    await press('2', () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]?.answer).toEqual({ approved: true, remember: 'session' })
   })
 
   test('key 4 denies; Tab on No then feedback + Enter denies with the feedback', async () => {
-    const { frame, broker, type } = mount()
+    const { frame, broker, type, press } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
-    await type('4')
-    await until(() => broker.answers.length === 1, 'answer')
+    await press('4', () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]).toEqual({ id: 'ap1', answer: { approved: false } })
     broker.push({ ...request, id: 'ap3' })
     await until(() => frame().includes('Bash command'), 'prompt 2')
@@ -200,12 +208,11 @@ describe('permission prompt', () => {
   })
 
   test('Esc denies; without a rule option 2 is No', async () => {
-    const { frame, broker, type } = mount()
+    const { frame, broker, press } = mount()
     broker.push({ ...request, id: 'ap2', suggestedRule: undefined })
     await until(() => frame().includes('Bash command'), 'prompt')
     expect(frame()).not.toContain('3.')
-    await type(ESC)
-    await until(() => broker.answers.length === 1, 'answer')
+    await press(ESC, () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]).toEqual({ id: 'ap2', answer: { approved: false } })
   })
 
@@ -302,15 +309,14 @@ describe('review fixes', () => {
   }
 
   test('Shift+Tab is ignored while a permission prompt is open', async () => {
-    const { frame, broker, type, calls } = mount()
+    const { frame, broker, type, press, calls } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
     await type(SHIFT_TAB)
     await tick(50)
     expect(calls).not.toContain('cycleMode')
     expect(frame()).toContain('❯ 1. Yes')
-    await type('1')
-    await until(() => broker.answers.length === 1, 'answer')
+    await press('1', () => broker.answers.length === 1, 'answer')
     await type(SHIFT_TAB)
     await until(() => calls.includes('cycleMode'), 'cycle after prompt')
   })
@@ -488,21 +494,18 @@ describe('plan approval dialog', () => {
   })
 
   test('1 approves with acceptEdits, 2 with default', async () => {
-    const { broker, type } = await open()
-    await type('1')
-    await until(() => broker.answers.length === 1, 'answer')
+    const { broker, press } = await open()
+    await press('1', () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]?.answer).toEqual({ approved: true, mode: 'acceptEdits' })
     broker.push({ ...plan, id: 'pl2' })
     await tick(60)
-    await type('2')
-    await until(() => broker.answers.length === 2, 'answer 2')
+    await press('2', () => broker.answers.length === 2, 'answer 2')
     expect(broker.answers[1]?.answer).toEqual({ approved: true, mode: 'default' })
   })
 
   test('3 keeps planning; Tab on 3 sends feedback; Tab on 1 adds a note; Esc is option 3', async () => {
-    const { broker, type, frame } = await open()
-    await type('3')
-    await until(() => broker.answers.length === 1, 'answer')
+    const { broker, type, frame, press } = await open()
+    await press('3', () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]?.answer).toEqual({ approved: false })
 
     broker.push({ ...plan, id: 'pl2' })

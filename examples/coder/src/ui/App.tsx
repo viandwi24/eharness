@@ -136,12 +136,6 @@ function isThinkingKey(input: string, meta: boolean): boolean {
   return (meta && input === 't') || input === '†'
 }
 
-function messageEntries(messages: CoderMessage[]): Entry[] {
-  return messages
-    .filter((m) => m.parts.length > 0)
-    .map((message): Entry => ({ kind: 'message', id: `m:${message.id}`, message }))
-}
-
 /** Rough output-token estimate of the live message for the thinking line (4 chars a token). */
 function liveTokens(message: CoderMessage | null): number | undefined {
   if (!message) return undefined
