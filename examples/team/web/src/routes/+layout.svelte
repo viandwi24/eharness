@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Surface from '#lib/components/app/Surface.svelte';
+	import * as InsetPanel from '#lib/components/ui/inset-panel/index.js';
 	import './layout.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import { page } from '$app/state';
@@ -42,18 +42,20 @@
 	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 flex-col bg-background text-foreground md:flex-row md:bg-sidebar">
 		<div class="hidden md:flex"><AppRail /></div>
 		<div class="flex min-h-0 min-w-0 flex-1">
-			<Surface
-				as="aside"
-				class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col rounded-none border-0 bg-sidebar text-sidebar-foreground max-md:shadow-none {listShown ? 'md:flex' : 'md:hidden'} md:my-2 md:mr-2 md:h-auto md:w-72 md:overflow-hidden md:rounded-xl md:border lg:w-80"
+			<!-- the agent list sits on the shell background next to the rail (no card); only the page is a panel -->
+			<aside
+				class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {listShown ? 'md:flex' : 'md:hidden'} md:w-72 lg:w-80"
 			>
 				<AgentListPanel />
-			</Surface>
-			<Surface
-				as="main"
-				class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 rounded-none border-0 bg-background text-foreground max-md:shadow-none md:my-2 md:mr-2 md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border"
+			</aside>
+			<!-- the page is an edmi inset panel: a shell with the content plate inset in it -->
+			<InsetPanel.Root
+				class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 max-md:rounded-none max-md:border-0 md:my-2 md:mr-2 md:flex md:h-auto"
 			>
-				{@render children()}
-			</Surface>
+				<InsetPanel.Body class="mt-0.5 flex min-h-0 text-foreground max-md:m-0 max-md:rounded-none max-md:border-0">
+					{@render children()}
+				</InsetPanel.Body>
+			</InsetPanel.Root>
 		</div>
 		{#if barShown}<div class="md:hidden"><AppRail bar /></div>{/if}
 	</Sidebar.Provider>
