@@ -353,6 +353,9 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
         streamSSE(c, async (stream) => {
           let quiet = 0
           try {
+            // Flush the response at once (proxies and fetch() resolve only on the first bytes):
+            // a reconnect delay hint plus a comment, before the first poll.
+            await stream.write('retry: 3000\n: connected\n\n')
             while (!stream.aborted && !stream.closed) {
               const { events } = listEvents(deps, { after: cursor, limit: 200 })
               for (const event of events) {

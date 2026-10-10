@@ -22,6 +22,8 @@ export function startLive(): () => void {
 			onResync: () => void live.resync(),
 			onStatus: (s) => (state.connection = s)
 		});
+		// Load what the page shows right away; the stream's resync (on connect) only refreshes it.
+		void live.resync();
 		if (typeof document !== 'undefined') {
 			document.addEventListener('visibilitychange', () => {
 				if (document.visibilityState === 'visible' && state.viewing) void live.markRead(state.viewing);
