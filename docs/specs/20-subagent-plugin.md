@@ -3,7 +3,7 @@
 Status: **Draft (0.7)**. Module: `src/subagent/*`. Built only with the public core API (ADR-0008).
 Design: ADR-0034 (three deployment profiles), ADR-0035 (nested approvals park the parent), ADR-0037
 (parent / child index), ADR-0027 (external waits), ADR-0038 (agent messaging: `send_message`, names,
-resume), ADR-0041 (messaging in park mode).
+resume), ADR-0041 (messaging in park mode), ADR-0046 (durable background in park mode).
 
 `subagents(options)` adds the `agent` tool: the model delegates a self-contained task to another
 agent, which runs as a **child session** (spec 05 §13) and returns a final report.
@@ -34,7 +34,7 @@ subagents({
   stopTool?: boolean | { name?: string }       // agent_stop (§5.8): same default as outputTool
   maxReportChars?: number                      // 16 000: cap of a background report (§2.2)
   messageLimits?: { perWindow?: number; windowMs?: number; duplicateWindowMs?: number; maxQueued?: number }   // §5.4
-  background?: boolean | { default?: boolean; inChildren?: boolean }   // false; 'inline' and 'policy' only (§2.2)
+  background?: boolean | { default?: boolean; inChildren?: boolean }   // false; all strategies, durable in 'park' (§2.2, §3.5)
                                                //   true: run_in_background offered, foreground unless asked, root session only
                                                //   default: omitted run_in_background runs in the background (default false)
                                                //   inChildren: also offered in child sessions (default false)
@@ -61,8 +61,8 @@ type SubagentApprovalAnswer =
   | { output: unknown } | { errorText: string }                                            // client tools
 ```
 
-`subagents()` throws `TypeError` for `'inline'` without `answer` and for `'park'` with
-`background` (`true` or an object).
+`subagents()` throws `TypeError` for `'inline'` without `answer`. `background` is allowed with `'park'`
+(§3.5).
 
 The tool-name constants match the tool names (`AGENT_TOOL` `'agent'`, `SEND_MESSAGE_TOOL`
 `'send_message'`, `AGENT_OUTPUT_TOOL` `'agent_output'`, `AGENT_STOP_TOOL` `'agent_stop'`); the limit
@@ -111,7 +111,7 @@ Final output (model-visible): the child's final text, or `(the subagent returned
 `ERROR: subagent failed: <message>` on a child error; `ERROR: subagent was aborted before it
 started.` when aborted while waiting for a slot. Tools return errors as strings, never throw.
 
-### 2.2 Background (`run_in_background`, `'inline'` / `'policy'`)
+### 2.2 Background (`run_in_background`; `'inline'` / `'policy'` here, `'park'` in §3.5)
 
 With `background: { default: true }` an `agent` call that omits
 `run_in_background` runs in the background, like Claude Code's interactive default; the field's
@@ -221,7 +221,7 @@ the parent / root sessions opened from a child or by the plugin (`parentAgent`, 
 
 The tool is an `externalTool()` (spec 11 §4.2): a tool **without `execute`**, so the parent turn
 always stops `'tool-pending'` at the call, with an external wait `w_<toolCallId>`. No progress
-(preliminary outputs) and no background mode in this strategy.
+(preliminary outputs); background calls are answered at once and run durably (§3.5).
 
 Sequence:
 
@@ -324,6 +324,49 @@ never fails on it (failures are logged as warnings). The option exists because t
 has no session object. Manual use (an admin endpoint, a timer, a `ready()` after a deploy) needs no
 option. A session is opened by `send()`, `stats()`, `ready()`, …; reading `messages()` alone does
 not open it.
+
+### 3.5 Durable background children (`background` with `'park'`, ADR-0046)
+
+`run_in_background: true` (or `background.default`; root session, or `background.inChildren`) makes
+the call a **background start**; a call without it stays the foreground external wait above.
+
+- **Start.** The tool's `start` (after the commit) opens the child with `parent`, awaits `ready()`
+  (child index registration, spec 05 §13) and calls `child.enqueue(prompt, { mode: 'queue', id:
+  'subagent-bg:<toolCallId>' })` (spec 05 §12 rule 17: idempotent; a child that already has messages
+  is not enqueued again). The instance that holds the child drains the inbox and runs the turn
+  (the enqueuing instance by default, any other after a restart / sweep). `maxTurns` is not applied.
+- **Answer.** `start` returns an already-due `onTimeout` `{ output: 'Started background subagent
+  <id> ["<name>"] (<type>): <description>. You will be notified when it finishes.' }` and payload
+  `{ childSessionId, agent, description, status: 'running', background: true }`; the wait resolves
+  at once and the parent turn continues in the same message. `<id>` is the child session id (no
+  in-memory task ids in park mode). The parent turn is `tool-pending` only for that short window,
+  in which a user message can still be denied (`WAIT_CANCELLED_NEW_INPUT`); the child already
+  runs and reports. `reconcileSubagentWaits` skips these waits (payload `background: true`).
+- **Report.** `turn.start` of the child's plugin (`subagents()` with `parentAgent`, or
+  `subagentChild()`) stores a flag in the child's plugin state when the turn's inbox key is the
+  `subagent-bg:` key. Every later turn end of that session, in any instance, then calls
+  `parentAgent().session(<core.parent>).inject('eh.event', { name: 'subagent', text, data: {
+  sessionId, agent, status, taskId, name? } }, { deliver: 'next-step', wake: true })`. `text`:
+  `Background subagent <id> ["<name>"] (<type>: <description>) finished.` (`failed`, `was
+  stopped` for an aborted turn), then the report capped at `maxReportChars` (cut hint names
+  `agent_output`); `data.taskId` is the child session id. A turn that stops `tool-pending` sends the
+  same event with `status: 'waiting'` and **no `wake`** (the child waits for a person; the lead
+  reads it at its next turn). A turn the launcher started with a `relation="launcher"` frame
+  reports as `Resumed subagent …` (§5.9).
+- **Marker.** A `step.end` hook writes `data-subagent.run` `{ toolCallId, sessionId, agent, status:
+  'running', name?, background? }` for every `agent` call in park mode (foreground and background),
+  using the deterministic child id. The stored message is not amended later: the current status is
+  read from the child (`children()`, `peek(child).stats()`), the report event (`data.status`) and
+  `agent_output`.
+- **Limits.** `maxChildren` as in §2.3. `maxConcurrent`: a start counts the session's children
+  with an active turn or pending state from storage (newest 100, only when the index holds at
+  least `maxConcurrent` entries; needs `selfAgent`) and answers `ERROR: N background subagents are
+  already running (limit M). …` instead of starting; not enforceable across instances without a
+  shared counter (best effort). The child's usage is not added to the lead's turn.
+- **Tools.** `agent_output`, `agent_stop` (`requestAbort('stopped')`, cross-process; a child waiting
+  for an approval refuses) and `send_message` work as in §5.9.
+- **New user input.** Foreground waits are still cancelled by a new user message under
+  `onNewInput: 'deny'` (spec 11 §4.1); delegate in the background to keep the lead free.
 
 ## 4. Multi-instance and restarts
 
@@ -487,6 +530,7 @@ park (another instance answers; parent process restart; child finishes at once; 
 `reconcileSubagentWaits` (child finished without the hook, still waiting, `selfAgent` on open),
 `pendingSubagentApprovals`, `subagentTasks` (list / tail / stop / `run` part), `background.inChildren`.
 `src/subagent/park-messaging.test.ts`: two instances over shared storage (park on a child, answer it from the other instance, message the finished agent by name, report reaches the parent), steer into a running child, child to main, throttling, refusals, `agent_stop`.
+`src/subagent/background-park.test.ts`: durable background start (answered at once, marker with the child id, a user message not cancelled, approval answered from another instance, report wakes the parent), an instance that cannot claim the child (B drains the inbox and reports), a close mid-turn (stopped report), `agent_output` / `agent_stop`, foreground unchanged, `background.default`.
 `src/subagent/messaging.test.ts`: running target (`data-eh.input`, model order), resume with full history and the report to the sender, subagent → main wake, subagent → sibling, user-stopped refusal, one-shot refusal, unknown target, name collision / validation, throttling and queue cap, spoofed tags, `subagentTasks.send`, roster, `messageTool: false`, tool options (`{ name }` / `false`), agent directory isolation between two agents that reuse a session id, rebuild after reopening the root session.
 `src/subagent/child-session.test.ts`: `childSession` / `parentSession` options and identity on `ctx.session.parent`, `maxChildren`, identity in `children()` / `pendingSubagentApprovals`, `peek` use.
 Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`), `src/session/peek.int.test.ts` (`agent.peek`).

@@ -66,7 +66,7 @@ this in the lead's instructions (the example's version is `LEAD_PLAYBOOK` in
 |---|---|---|
 | Child asks for an approval | the parent turn streams it (inline) or a policy answers (policy) | the parent **stops** `tool-pending`; the child waits in storage |
 | Survives a restart, several instances | no (in-process) | yes (ADR-0035) |
-| Live progress, background children | yes | no live progress, no `run_in_background` |
+| Live progress, background children | yes (in process) | no live progress; durable background children with `background` ([ADR-0046](../decisions/0046-durable-background-subagents-in-park-mode.md)) |
 | Use when | one process, a CLI, short tasks | a web + server product ([ADR-0034](../decisions/0034-deployment-profiles.md)) |
 
 With park, list what waits from any instance and answer it on the child session; the child's
@@ -84,6 +84,16 @@ await roleAgent.session(waiting[0].sessionId).respond({ approvals: [{ id, approv
 
 Read without waking anything: `agent.peek(sessionId)` gives messages, pending, usage and children
 with no `session.start` hooks (a plain `session()` open can resume a parked lead).
+
+
+**A lead that stays free to chat.** A foreground park (`run_in_background: false`) holds the lead's
+turn on an external wait, and a new user message cancels that wait (`onNewInput: 'deny'`, spec 11
+§4.1). For a lead that delegates and keeps talking, set `background: { default: true }` on its
+`subagents({ approvals: 'park', ... })` and tell it in the prompt that delegations run in the
+background and reports arrive later as events (it must not wait for them or poll). The child runs
+from its durable inbox in any instance, its approvals are answered on the child session, and its
+report wakes the lead through storage. The `agent` call stores a `data-subagent.run` marker with the
+child session id, so a UI can open the child transcript.
 
 ## 4. Follow-ups: `send_message`, names and resume
 

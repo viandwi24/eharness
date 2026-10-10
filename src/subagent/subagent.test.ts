@@ -385,8 +385,8 @@ describe('failures, limits and abort', () => {
     await main.close()
   })
 
-  test("background is not available with 'park'", () => {
-    expect(() => subagents({ agents: {}, approvals: 'park', background: true })).toThrow(/park/)
+  test("background is accepted with 'park' (durable, ADR-0043)", () => {
+    expect(() => subagents({ agents: {}, approvals: 'park', background: true })).not.toThrow()
   })
 })
 

@@ -28,6 +28,7 @@ import {
   type SessionContribution,
   type SessionOptions,
   type SessionPeek,
+  type StepEndEvent,
   type ToolInput,
   type TurnResult,
 } from '../index.ts'
@@ -93,6 +94,12 @@ export interface SubagentChildInfo {
 
 /** Default cap of the report injected into the parent when a background child finishes. */
 export const AGENT_REPORT_MAX_CHARS = 16000
+
+/** Inbox key prefix of the first turn of a durable background child (ADR-0046). */
+const BACKGROUND_KEY = 'subagent-bg:'
+
+/** Plugin state key in the child session marking a durable background child. */
+const BACKGROUND_STATE = 'background'
 
 /** Default name of the tool that reads a subagent's full final report. */
 export const AGENT_OUTPUT_TOOL = 'agent_output'
@@ -199,10 +206,11 @@ export interface SubagentsOptions {
    */
   parentSession?: (sessionId: string) => Omit<SessionOptions, 'parent'> | undefined
   /**
-   * Offer `run_in_background` (`'inline'` and `'policy'` only, never with `approvals: 'park'`): the
-   * child runs detached and its report is injected into the parent as an `eh.event` with
-   * `wake: true`. `true` offers the field in the root session, foreground unless the model asks.
-   * Default `false`.
+   * Offer `run_in_background`: the child runs detached and its report is injected into the parent
+   * as an `eh.event` with `wake: true`. `true` offers the field in the root session, foreground
+   * unless the model asks. Default `false`. With `approvals: 'park'` the child is started
+   * **durably** (ADR-0046): its first turn goes through the child's durable inbox, the parent's
+   * call is answered at once and the report arrives from whichever instance finishes the child.
    *
    * - `default`: an `agent` call that omits `run_in_background` runs in the background (Claude
    *   Code's interactive default); the model passes `run_in_background: false` when it needs the
@@ -300,6 +308,8 @@ export interface SubagentRunData {
   name?: string
   /** Background task id (`agent-<n>`), when the agent has one (restores the id after a restart). */
   taskId?: string
+  /** `'park'`: the child runs durably in the background (ADR-0046); its report arrives as an event. */
+  background?: boolean
 }
 
 const runSchema: FlexibleSchema<SubagentRunData> = z.object({
@@ -309,6 +319,7 @@ const runSchema: FlexibleSchema<SubagentRunData> = z.object({
   status: z.enum(['running', 'waiting', 'completed', 'failed', 'stopped']),
   name: z.string().optional(),
   taskId: z.string().optional(),
+  background: z.boolean().optional(),
 }) as never
 
 /** The data parts of the subagent plugin. */
@@ -684,7 +695,9 @@ export async function reconcileSubagentWaits(
   const children = await parentSession.children()
   for (const wait of waits) {
     if (wait.result !== undefined || !wait.waitId.startsWith('w_')) continue
-    const payload = wait.payload as { childSessionId?: unknown } | undefined
+    const payload = wait.payload as { childSessionId?: unknown; background?: unknown } | undefined
+    // a durable background child answered its call at once: its report is an event (ADR-0046)
+    if (payload?.background === true) continue
     const toolCallId = wait.waitId.slice(2)
     const childSessionId =
       typeof payload?.childSessionId === 'string'
@@ -747,7 +760,90 @@ function createParkHook(options: {
   parentSession: ((sessionId: string) => SessionOptions | undefined) | undefined
   /** `'park'` messaging: the report of a turn started by the launcher's message goes back to it. */
   reportResumes: boolean
-}): (ctx: HarnessContext, e: TurnResult) => Promise<void> {
+  /** Cap of a background report (default {@link AGENT_REPORT_MAX_CHARS}). */
+  maxReportChars?: number
+  /** Name of the `agent_output` tool, named in the hint of a cut report (none: no hint). */
+  outputToolName?: string
+}): {
+  start: (ctx: HarnessContext) => void
+  end: (ctx: HarnessContext, e: TurnResult) => Promise<void>
+} {
+  const reportMax = Math.max(1, options.maxReportChars ?? AGENT_REPORT_MAX_CHARS)
+  /**
+   * A durable background child (ADR-0046) is marked in its own plugin state by the turn that
+   * started it (the inbox key of `subagent-bg:<toolCallId>`), so every later turn end of that
+   * session (also a `respond()` continuation, in any instance) knows to report to the parent.
+   */
+  const start = (ctx: HarnessContext): void => {
+    const key = ctx.turn?.source?.key
+    const toolCallId = ctx.session.parent?.toolCallId
+    if (key !== undefined && toolCallId !== undefined && key === `${BACKGROUND_KEY}${toolCallId}`) {
+      ctx.state.set(BACKGROUND_STATE, { toolCallId })
+    }
+  }
+  /** The report (or the waiting notice) of a durable background child, into its launcher. */
+  const reportBackground = async (
+    ctx: HarnessContext,
+    e: TurnResult,
+    parent: { sessionId: string },
+  ): Promise<void> => {
+    if (options.parentAgent === undefined) return
+    const identity = ctx.session.parent as
+      | { agent?: string; name?: string; description?: string }
+      | undefined
+    const agent = identity?.agent ?? 'agent'
+    const who = `${ctx.session.id}${identity?.name === undefined ? '' : ` "${identity.name}"`}`
+    const what = `(${agent}${identity?.description === undefined ? '' : `: ${identity.description}`})`
+    const waiting = e.stop === 'tool-pending'
+    const status = waiting
+      ? 'waiting'
+      : e.stop === 'aborted'
+        ? 'stopped'
+        : e.stop === 'complete'
+          ? 'completed'
+          : 'failed'
+    const text = finalText(e)
+    const body =
+      e.stop === 'complete' ? text : stoppedText(e.stop, text || (e.error?.message ?? ''))
+    const head = waiting
+      ? `Background subagent ${who} ${what} is waiting for the user to answer a permission request or a question. It continues once that is answered; its report arrives when it finishes.`
+      : `Background subagent ${who} ${what} ${
+          status === 'completed' ? 'finished' : status === 'stopped' ? 'was stopped' : 'failed'
+        }.\n\n${
+          reportOf(
+            neutralizeTags(body, ['agent-message']),
+            reportMax,
+            options.outputToolName === undefined
+              ? undefined
+              : `read the full report with ${options.outputToolName}({ id: "${ctx.session.id}" })`,
+          ) || '(no report)'
+        }`
+    try {
+      await (
+        options
+          .parentAgent()
+          .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession
+      ).inject(
+        'eh.event',
+        {
+          name: 'subagent',
+          text: head,
+          data: {
+            sessionId: ctx.session.id,
+            agent,
+            status,
+            taskId: ctx.session.id,
+            ...(identity?.name === undefined ? {} : { name: identity.name }),
+          },
+        },
+        { deliver: 'next-step', wake: !waiting },
+      )
+    } catch (error) {
+      ctx.log.warn('subagent: could not deliver the report of a background agent', {
+        error: errText(error),
+      })
+    }
+  }
   /**
    * A turn that a launcher's `send_message` started (a framed `to="…"` user message, ADR-0041):
    * enqueue the report into the launcher's session through storage, so it works from any instance.
@@ -791,10 +887,20 @@ function createParkHook(options: {
       })
     }
   }
-  return async (ctx, e) => {
+  const end = async (ctx: HarnessContext, e: TurnResult): Promise<void> => {
     const parent = ctx.session.parent
-    if (parent?.toolCallId === undefined || e.stop === 'tool-pending') return
+    if (parent?.toolCallId === undefined) return
     if (options.parentAgent === undefined) return
+    if (ctx.state.get(BACKGROUND_STATE) !== undefined) {
+      const first = (e.messages as unknown as MessageLike[]).find((m) => m.role === 'user')
+      const frame = first === undefined ? undefined : parseAgentFrame(textOf(first, false))
+      // a turn the launcher started with send_message reports as a resume (ADR-0041)
+      if (frame?.relation === 'launcher' && frame.to !== undefined && e.stop !== 'tool-pending') {
+        await reportResume(ctx, e, parent)
+      } else await reportBackground(ctx, e, parent)
+      return
+    }
+    if (e.stop === 'tool-pending') return
     const parentSession = options
       .parentAgent()
       .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession
@@ -833,6 +939,7 @@ function createParkHook(options: {
       })()
     }
   }
+  return { start, end }
 }
 
 /**
@@ -851,16 +958,23 @@ export function subagentChild(options: {
   onParentRun?: (run: AnyRun, parentSessionId: string) => void
   /** Session options (`lock`, `runtime`, `storage`) for the parent sessions this plugin opens. */
   parentSession?: (sessionId: string) => Omit<SessionOptions, 'parent'> | undefined
+  /** Cap of the report a finished durable background child sends (default 16 000 characters). */
+  maxReportChars?: number
+  /** Name of the `agent_output` tool of the parent, named in the hint of a cut report. */
+  outputToolName?: string
 }): HarnessPlugin<'subagent-child'> {
   const hook = createParkHook({
     parentAgent: options.parent,
     onParentRun: options.onParentRun,
     parentSession: options.parentSession,
     reportResumes: true,
+    ...(options.maxReportChars === undefined ? {} : { maxReportChars: options.maxReportChars }),
+    ...(options.outputToolName === undefined ? {} : { outputToolName: options.outputToolName }),
   })
   return definePlugin({
     name: 'subagent-child',
-    session: () => ({ hooks: { 'turn.end': hook } }) as SessionContribution,
+    session: () =>
+      ({ hooks: { 'turn.start': hook.start, 'turn.end': hook.end } }) as SessionContribution,
   }) as HarnessPlugin<'subagent-child'>
 }
 
@@ -974,11 +1088,6 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     throw new TypeError("subagents({ approvals: 'inline' }) needs an `answer` callback.")
   }
   const backgroundOn = options.background === true || typeof options.background === 'object'
-  if (options.approvals === 'park' && backgroundOn) {
-    throw new TypeError(
-      "subagents({ background }) is not available with approvals: 'park' (a parked call always waits for its child).",
-    )
-  }
   const backgroundDefault =
     typeof options.background === 'object' && options.background.default === true
   const backgroundInChildren =
@@ -1002,13 +1111,6 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   const childIdOf = (parentId: string, toolCallId: string): string =>
     options.childSessionId?.(parentId, toolCallId) ?? `${parentId}:agent:${toolCallId}`
   const park = options.approvals === 'park'
-  const parkHook = createParkHook({
-    parentAgent: options.parentAgent,
-    onParentRun: options.onParentRun,
-    parentSession: options.parentSession,
-    reportResumes: park,
-  })
-
   const nameOf = (v: boolean | { name?: string } | undefined, fallback: string): string =>
     typeof v === 'object' && v.name !== undefined ? v.name : fallback
   const messageToolName = nameOf(options.messageTool, SEND_MESSAGE_TOOL)
@@ -1021,6 +1123,14 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   const stopEnabled =
     options.stopTool !== false && (options.stopTool !== undefined || backgroundOn || messaging)
   const reportMax = Math.max(1, options.maxReportChars ?? AGENT_REPORT_MAX_CHARS)
+  const parkHook = createParkHook({
+    parentAgent: options.parentAgent,
+    onParentRun: options.onParentRun,
+    parentSession: options.parentSession,
+    reportResumes: park,
+    maxReportChars: reportMax,
+    ...(outputEnabled ? { outputToolName } : {}),
+  })
 
   /** Session options that hand the root's directory to a child session (no module-level state). */
   const directoryOptions = (
@@ -1066,6 +1176,43 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   const peekOf = (agent: AnyAgent, id: string, info: SubagentChildInfo): SessionPeek => {
     const storage = childOptions(info).storage
     return agent.peek(id, storage === undefined ? {} : { storage }) as unknown as SessionPeek
+  }
+
+  /** Does this `agent` call run in the background (`run_in_background`, `background.default`)? */
+  const isBackgroundCall = (input: Partial<AgentInput>, canBackground: boolean): boolean =>
+    backgroundOn && canBackground && (input.run_in_background ?? backgroundDefault)
+
+  /**
+   * `'park'` background children: running children of this session counted from the stored child
+   * index (an approximation across instances: no shared counter exists). `undefined` to go on,
+   * or the refusal text.
+   */
+  async function claimSlot(scope: Scope): Promise<string | undefined> {
+    if (options.selfAgent === undefined) return undefined
+    const { ctx } = scope
+    try {
+      const self = options.selfAgent().peek(ctx.session.id, parentOptions(ctx.session.id))
+      const children = await self.children()
+      if (children.length < maxConcurrent) return undefined
+      const defs = scope.defs()
+      let running = 0
+      for (const info of children.slice(-100)) {
+        const def = defs[info.agent ?? ''] ?? Object.values(defs)[0]
+        if (def === undefined) continue
+        const stats = await peekOf(def.agent, info.sessionId, {
+          parentSessionId: ctx.session.id,
+          agent: info.agent ?? '',
+          depth: scope.depth + 1,
+        }).stats()
+        if (stats.activeTurn !== null || stats.pending !== null) running++
+      }
+      if (running >= maxConcurrent) {
+        return `ERROR: ${running} background subagents are already running (limit ${maxConcurrent}). Wait for a report, or stop one${stopEnabled ? ` with ${stopToolName}` : ''}, then start this one again.`
+      }
+    } catch (error) {
+      ctx.log.warn('subagent: could not count the running children', { error: errText(error) })
+    }
+    return undefined
   }
 
   /** Spawn cap (`maxChildren`): `undefined` to go on, or the refusal text. */
@@ -1182,7 +1329,10 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         },
       })
       const services = { subagentTasks: registry as SubagentTasks }
-      const hooks: Record<string, unknown> = { 'turn.end': parkHook }
+      const hooks: Record<string, unknown> = {
+        'turn.start': parkHook.start,
+        'turn.end': parkHook.end,
+      }
       if (options.approvals === 'park' && options.selfAgent !== undefined) {
         const self = options.selfAgent
         hooks['session.start'] = () => {
@@ -1250,9 +1400,44 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             ? { name: z.string().regex(AGENT_NAME_PATTERN).optional().describe(NAME_FIELD) }
             : {}),
         })
+        if (park) {
+          // the run marker of every call, written while the step still streams: the park tool
+          // starts its child after the step ended, when nothing can be written to the message
+          hooks['step.end'] = (hctx: HarnessContext<SubagentDataParts>, e: StepEndEvent): void => {
+            if (!hctx.stream.active) return
+            for (const call of e.toolCalls) {
+              if (call.toolName !== toolName) continue
+              const input = call.input as Partial<AgentInput> | undefined
+              if (input?.subagent_type === undefined || defs[input.subagent_type] === undefined) {
+                continue
+              }
+              const bg = isBackgroundCall(input, canBackground)
+              hctx.stream.data(
+                'run',
+                {
+                  toolCallId: call.toolCallId,
+                  sessionId: childIdOf(ctx.session.id, call.toolCallId),
+                  agent: input.subagent_type,
+                  status: 'running',
+                  ...(input.name === undefined ? {} : { name: input.name }),
+                  ...(bg ? { background: true } : {}),
+                },
+                { id: call.toolCallId },
+              )
+            }
+          }
+        }
         tools[toolName] =
           options.approvals === 'park'
-            ? (parkTool(ctx, defs, depth, description, inputSchema, current) as ToolInput)
+            ? (parkTool(
+                ctx,
+                defs,
+                depth,
+                description,
+                inputSchema,
+                current,
+                canBackground,
+              ) as ToolInput)
             : (runTool(ctx, defs, depth, description, inputSchema, registry, current) as ToolInput)
       }
       if (messaging) tools[messageToolName] = messageTool(current, messageToolName)
@@ -2632,6 +2817,78 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
 
   // ─── park: an external tool whose start runs the child's first turn ─────────────────────
 
+  /**
+   * `'park'` + background (ADR-0046): start the child's first turn through its durable inbox and
+   * answer the parent's call at once. Idempotent by the inbox key: a redispatched `start` neither
+   * sends the prompt twice nor re-registers the child.
+   */
+  async function startDurable(a: {
+    scope: Scope
+    def: SubagentDefinition
+    toolCallId: string
+    sessionId: string
+    agentName: string
+    label: string
+    prompt: string
+    name: string | undefined
+    parentInfo: ParentInfo
+    base: { childSessionId: string; agent: string; description: string }
+  }): Promise<{
+    correlationId: string
+    payload: JSONValue
+    timeoutAt: number
+    onTimeout: { output: string } | { errorText: string }
+  }> {
+    const { scope, def, sessionId, agentName, label, name } = a
+    const fail = (errorText: string) => ({
+      correlationId: sessionId,
+      payload: { ...a.base, status: 'failed', background: true } as JSONValue,
+      timeoutAt: Date.now(),
+      onTimeout: { errorText },
+    })
+    const child = def.agent.session(
+      sessionId,
+      childOptions(
+        {
+          parentSessionId: scope.ctx.session.id,
+          agent: agentName,
+          ...(name === undefined ? {} : { name }),
+          depth: a.parentInfo.depth,
+        },
+        { parent: a.parentInfo },
+      ),
+    ) as AnySession
+    try {
+      // opening links the child: it registers in the parent's child index (spec 05 §13)
+      await child.ready()
+      const stored = await child.messages({ limit: 1 })
+      if (stored.length === 0) {
+        const refused = await claimSlot(scope)
+        if (refused !== undefined) {
+          await def.agent.closeSession(sessionId).catch(() => {})
+          return fail(refused)
+        }
+        await child.enqueue(a.prompt, {
+          mode: 'queue',
+          id: `${BACKGROUND_KEY}${a.toolCallId}`,
+        })
+      }
+    } catch (error) {
+      await def.agent.closeSession(sessionId).catch(() => {})
+      return fail(`ERROR: could not start the subagent: ${errText(error)}`)
+    }
+    // the handle stays open: it drains the child's inbox here unless another instance holds it
+    const id = name === undefined ? sessionId : `${sessionId} "${name}"`
+    return {
+      correlationId: sessionId,
+      payload: { ...a.base, status: 'running', background: true } as JSONValue,
+      timeoutAt: Date.now(),
+      onTimeout: {
+        output: `Started background subagent ${id} (${agentName}): ${label}. You will be notified when it finishes.`,
+      },
+    }
+  }
+
   function parkTool(
     ctx: Ctx,
     defs: Record<string, SubagentDefinition>,
@@ -2639,6 +2896,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     description: string,
     inputSchema: unknown,
     scope: Scope,
+    canBackground: boolean,
   ): ToolInput {
     /** Resolve at once with an error text (through the wait's own timeout path). */
     const failNow = (
@@ -2651,7 +2909,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       description,
       inputSchema: inputSchema as FlexibleSchema<AgentInput>,
       ...(options.parkTimeoutMs === undefined ? {} : { timeoutMs: options.parkTimeoutMs }),
-      async start({ subagent_type, description: label, prompt, name }, event) {
+      async start(input, event) {
+        const { subagent_type, description: label, prompt, name } = input
         const def = defs[subagent_type]
         if (def === undefined) {
           return failNow(
@@ -2694,6 +2953,20 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           }
         }
         const base = { childSessionId: sessionId, agent: subagent_type, description: label }
+        if (isBackgroundCall(input, canBackground)) {
+          return startDurable({
+            scope,
+            def,
+            toolCallId: event.toolCallId,
+            sessionId,
+            agentName: subagent_type,
+            label,
+            prompt,
+            name,
+            parentInfo,
+            base,
+          })
+        }
         const child = def.agent.session(
           sessionId,
           childOptions(

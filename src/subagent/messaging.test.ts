@@ -862,10 +862,10 @@ describe('tool options', () => {
     expect(off).not.toContain('agent_stop')
   })
 
-  test('background cannot be combined with approvals: park', () => {
+  test('background can be combined with approvals: park (ADR-0043)', () => {
     expect(() =>
       subagents({ agents: {}, approvals: 'park', background: { default: true } }),
-    ).toThrow(TypeError)
+    ).not.toThrow()
   })
 })
 

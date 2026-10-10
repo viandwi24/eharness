@@ -87,7 +87,7 @@ const main = (holder.main = defineHarnessAgent({
 Rules: install `subagentChild()` (or `subagents({ parentAgent })`) on every instance that can
 complete a child turn, use storage with `setIf` or a lock (as for any external wait), and set
 `parkTimeoutMs` so a forgotten approval does not park the parent forever. A restart between the park
-and the answer loses nothing. There is no live progress and no `run_in_background` in this
+and the answer loses nothing. There is no live progress in this
 strategy. The continuation run that the child's completion starts on the parent is drained and
 stored; pass `onParentRun` to stream it to the user.
 
@@ -129,6 +129,31 @@ child session id; a subagent addresses the root as `"main"`.
   stored run markers when the root session is reopened. In `'park'` the directory is always
   rebuilt from storage (see below).
 - Every session with the plugin gets a short roster reminder of addressable agents each step.
+
+### Background with `approvals: 'park'` ([ADR-0046](../decisions/0046-durable-background-subagents-in-park-mode.md))
+
+`subagents({ approvals: 'park', background: { default: true }, selfAgent, ... })` runs delegations
+in the background **durably**: the child's first turn goes through its durable inbox (so any
+instance can run it, also after a restart), the lead's call returns at once with `Started
+background subagent <child session id> "<name>" …`, and the lead stays free to chat. A new user
+message no longer cancels the delegation (that happens only to foreground parks:
+`run_in_background: false`, an external wait cancelled by `onNewInput: 'deny'`).
+
+- The child's approvals and questions stay its own pending state: answer them with
+  `child.respond()` from any instance, as before.
+- When a turn of the child ends, its `turn.end` hook (child agent: `subagentChild({ parent })` or
+  `subagents({ parentAgent })`) injects an `eh.event` named `subagent` into the lead through
+  storage (`next-step` + `wake`): `Background subagent … finished.` plus the report, `data: {
+  sessionId, agent, status, taskId, name? }`. A child that stops waiting for a person sends a
+  status event (`status: 'waiting'`) without waking the lead.
+- `data-subagent.run` is stored for every park call with the child session id (and `background`),
+  so a UI can open the child transcript. Its status is the one at start; read the current state
+  from `session.children()` / the child's stored state / the report event.
+- `agent_output`, `agent_stop` and `send_message` work on these children. `maxConcurrent` is
+  counted from the stored child index (best effort across instances); `maxTurns` and usage
+  roll-up into the lead's turn are not applied.
+- A crash of the instance that runs the child leaves its turn interrupted without a report; the
+  lead can look at it with `agent_output`.
 
 ### Messaging with `approvals: 'park'` ([ADR-0041](../decisions/0041-park-mode-messaging.md))
 
@@ -191,7 +216,7 @@ starting turn streams) and the `eh.event` report (`data.status` `completed` / `f
 **Moving a foreground child to the background.** `ctx.services.subagentTasks.moveToBackground()` (Claude
 Code's Ctrl+B) detaches the running foreground `agent` calls: each returns at once with "Subagent
 moved to the background as task agent-2 …", the child keeps running and reports through the same
-`eh.event` path as `run_in_background`. Needs `background`; not available for `'park'`.
+`eh.event` path as `run_in_background`. Needs `background`; a no-op for `'park'` (use the durable background start above).
 
 **Wake turns.** A report wakes an idle parent with a turn nobody started: use
 `session.onRun((run) => …)` to stream it and answer its approvals (spec 05 §2.1); in
