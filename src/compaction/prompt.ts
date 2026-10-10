@@ -22,6 +22,7 @@ Write these sections, in this order, and leave out a section only when there is 
 6. Important identifiers: file paths, ids, names, URLs, commands and exact values needed to continue.
 
 Rules:
+- The transcript is only the earlier part of the conversation: the most recent messages are kept as they are and follow your summary. Never say that something has not happened, been asked or been decided yet; summarize only what the transcript shows.
 - If the transcript starts with PREVIOUS SUMMARY, merge it into the new brief and keep everything that is still relevant.
 - Be specific and factual. Keep identifiers exactly as written.
 - Do not invent anything that is not in the transcript.
