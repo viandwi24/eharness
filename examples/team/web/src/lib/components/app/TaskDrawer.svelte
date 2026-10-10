@@ -5,7 +5,7 @@
 </script>
 
 <Sheet.Root open={drawer.taskId !== null} onOpenChange={(o) => !o && closeTask()}>
-	<Sheet.Content side="right" showCloseButton={false} class="flex flex-col gap-0 p-0" style="width: min(56rem, 100vw); max-width: none">
+	<Sheet.Content side="right" showCloseButton={false} class="flex w-full flex-col gap-0 p-0 sm:max-w-3xl lg:max-w-4xl">
 		<Sheet.Title class="sr-only">Task session</Sheet.Title>
 		{#if drawer.taskId}
 			{#key drawer.taskId}
