@@ -236,6 +236,8 @@ export interface ModelEntry extends ListedModel {
   name: string
   /** Where the entry (or its main data) came from. */
   source: 'extra' | 'live' | 'catalog'
+  /** Only with `models(id, { includeDisabled: true })`: whether the profile's allow/deny lets the model through. */
+  enabled?: boolean
 }
 
 /** A model reference: `{ profile, model }` or `'profile:model'` (split on the first `:`). */

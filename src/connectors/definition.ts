@@ -103,6 +103,12 @@ export function defineConnector<S extends z.ZodObject = z.ZodObject>(
       toolOwner.set(tool, cap.id)
     }
   }
+  for (const key of ['homepage', 'docsUrl'] as const) {
+    const value = definition[key]
+    if (value !== undefined && !/^https?:\/\//.test(value)) {
+      throw connectorError('definition-invalid', `${at}: \`${key}\` must be an http(s) URL.`)
+    }
+  }
   connectorSchema(definition) // throws on a collision
   return definition
 }
@@ -178,6 +184,9 @@ export interface ConnectorDescription {
   name: string
   description: string
   icon?: string
+  publisher?: string
+  homepage?: string
+  docsUrl?: string
   category: string
   source: ConnectorSource
   scopes: ConnectorScope[]
@@ -215,6 +224,9 @@ export function describeConnector(definition: AnyConnectorDefinition): Connector
     capabilities: structuredClone(definition.capabilities),
   }
   if (definition.icon !== undefined) out.icon = definition.icon
+  if (definition.publisher !== undefined) out.publisher = definition.publisher
+  if (definition.homepage !== undefined) out.homepage = definition.homepage
+  if (definition.docsUrl !== undefined) out.docsUrl = definition.docsUrl
   if (definition.scopeDefaults !== undefined)
     out.scopeDefaults = structuredClone(definition.scopeDefaults)
   return out

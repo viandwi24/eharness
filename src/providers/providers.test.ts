@@ -510,6 +510,27 @@ describe('manager', () => {
     expect(list[2]?.source).toBe('live')
   })
 
+  test('includeDisabled lists the models allow/deny hides, marked enabled', async () => {
+    const def = defineProvider({
+      id: 'live',
+      label: 'Live',
+      settings: z.object({}),
+      create: () => ({ languageModel: (id) => id }),
+      listModels: async () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
+    })
+    const store = memoryProfileStore([
+      profile('l', { definitionId: 'live', settings: {}, models: { allow: ['a', 'c'] } }),
+    ])
+    const m = createProviderManager({ definitions: [def], store })
+    expect((await m.models('l')).map((e) => e.id)).toEqual(['a', 'c'])
+    const all = await m.models('l', { includeDisabled: true })
+    expect(all.map((e) => [e.id, e.enabled])).toEqual([
+      ['a', true],
+      ['b', false],
+      ['c', true],
+    ])
+  })
+
   test('catalog-derived list when there is no live listing (OpenRouter), flags and sort', async () => {
     const f = fakeFetch({ 'https://openrouter.ai/api/v1/models': orList })
     const m = createProviderManager({

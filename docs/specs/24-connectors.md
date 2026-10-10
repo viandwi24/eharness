@@ -18,7 +18,7 @@ there is no Node-only code. Apps supply storage, encryption, the OAuth callback 
 
 ```ts
 defineConnector({
-  id, version, name, description, icon?, category,
+  id, version, name, description, icon?, publisher?, homepage?, docsUrl?, category,
   source: 'builtin' | 'curated' | 'custom',
   scopes: Array<'workspace' | 'agent' | 'user'>,        // 'user' is reserved
   auth: { type: 'none' }
@@ -53,6 +53,8 @@ capability), `capabilities` (not `off`), `tools` (not `off`, the connector's own
 authorization step (the custom MCP connector with a header token). Capabilities discovered at
 connect time (`test` returns `capabilities`) are stored on the connection and replace the
 definition's (`capabilitiesOf`).
+
+`publisher` (a name), `homepage` and `docsUrl` (http(s) URLs, validated by `defineConnector`) are display metadata: `describeConnector` passes them to the catalog so a UI can show who runs the service and link to its documentation. They never affect activation.
 
 ## 2. Setup flows
 

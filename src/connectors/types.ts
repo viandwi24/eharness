@@ -263,6 +263,12 @@ export interface ConnectorDefinition<S extends z.ZodObject = z.ZodObject> {
   description: string
   /** An icon name or URL the UI resolves. */
   icon?: string
+  /** Who makes or runs the service ("GitHub", "Anthropic"); shown on the detail page. */
+  publisher?: string
+  /** The service's own site (http(s) URL). */
+  homepage?: string
+  /** Documentation of this connector or its service (http(s) URL). */
+  docsUrl?: string
   category: string
   source: ConnectorSource
   /** Scopes a connection of this connector may have. */

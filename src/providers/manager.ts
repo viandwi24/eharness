@@ -111,7 +111,10 @@ export interface ProviderManager {
   /** `'profile:model'` (first `:` splits) or `{ profile, model }` → model. Sync, cached. */
   resolve(ref: ModelRef): LanguageModel
   /** Merged model list: profile extras > live listing > catalogs. */
-  models(profileId: string, options?: { refresh?: boolean }): Promise<ModelEntry[]>
+  models(
+    profileId: string,
+    options?: { refresh?: boolean; includeDisabled?: boolean },
+  ): Promise<ModelEntry[]>
   /**
    * Load the catalogs the enabled profiles need. `refresh` resolves when a background refresh of
    * stale data finished (the manager then uses the new data).
@@ -534,7 +537,10 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
     }
   }
 
-  async function models(profileId: string, o: { refresh?: boolean } = {}): Promise<ModelEntry[]> {
+  async function models(
+    profileId: string,
+    o: { refresh?: boolean; includeDisabled?: boolean } = {},
+  ): Promise<ModelEntry[]> {
     await ready()
     const profile = profileOf(profileId)
     const def = defOf(profile)
@@ -571,15 +577,20 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
         source: 'extra',
       })
     }
+    const keep = (m: ModelEntry): boolean =>
+      o.includeDisabled === true || allowed(profile.models, m.id)
+    const mark = (m: ModelEntry): ModelEntry =>
+      o.includeDisabled === true ? { ...m, enabled: allowed(profile.models, m.id) } : m
     const rest = [...byId.values()]
-      .filter((m) => allowed(profile.models, m.id))
+      .filter(keep)
+      .map(mark)
       .sort(
         (a, b) =>
           Number(b.tools === true) - Number(a.tools === true) ||
           a.name.localeCompare(b.name) ||
           a.id.localeCompare(b.id),
       )
-    return [...extras.filter((m) => allowed(profile.models, m.id)), ...rest]
+    return [...extras.filter(keep).map(mark), ...rest]
   }
 
   async function test(profileId: string): Promise<TestResult> {

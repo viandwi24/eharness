@@ -125,10 +125,11 @@ createProviderManager({ definitions, store?, fetch?, cache?, catalogs?, env?, se
   full validation, new ids default to the provider id then `-2`, …); returns the redacted profile.
   `deleteProfile`, `listProfiles`, `getProfile`, `describe()` (`{ providers: ProviderDescription[]
   (id, label, doc, defaultModel, form, envMap, canListModels, canTest), profiles }`).
-- `models(profileId, { refresh? })` merges, per model id and field by field: **profile extra >
+- `models(profileId, { refresh?, includeDisabled? })` merges, per model id and field by field: **profile extra >
   live `listModels` > catalogs**. If the live listing is absent or fails (a warning, secrets
   scrubbed), the catalog-derived list is the list; when it succeeds, catalogs only enrich it.
-  `allow` / `deny` apply; extras come first, then models with `tools` first, by name. Live lists
+  `allow` / `deny` apply (`{ includeDisabled: true }` lists the models they hide too, each entry
+  with `enabled: boolean`, for a model-toggle UI); extras come first, then models with `tools` first, by name. Live lists
   are reused for `listTtlMs` (5 min).
 - `loadCatalogs({ refresh? })` loads the catalogs the enabled profiles' definitions need (§5);
   `refresh` resolves when a background refresh of stale data finished and the manager has taken it.
