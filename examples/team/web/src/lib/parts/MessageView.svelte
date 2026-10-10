@@ -12,12 +12,15 @@
 	import SourcePart from './SourcePart.svelte';
 	import SubagentPart from './SubagentPart.svelte';
 	import TextPart from './TextPart.svelte';
+	import ToolGroup from './ToolGroup.svelte';
 	import ToolPart from './ToolPart.svelte';
+	import { isActivityTool, type ToolView } from './activity.js';
 
 	type Block =
 		| { type: 'view'; view: PartView }
 		| { type: 'files'; views: Extract<PartView, { kind: 'file' }>[] }
-		| { type: 'sources'; views: Extract<PartView, { kind: 'source' }>[] };
+		| { type: 'sources'; views: Extract<PartView, { kind: 'source' }>[] }
+		| { type: 'tools'; views: ToolView[] };
 
 	let {
 		message,
@@ -35,7 +38,7 @@
 	const views = $derived(viewModel(message));
 	const kind = $derived(messageKind(message));
 
-	// Consecutive files / sources collapse into one block.
+	// Consecutive files / sources / plain tool calls collapse into one block.
 	const blocks = $derived.by((): Block[] => {
 		const out: Block[] = [];
 		for (const v of views) {
@@ -46,6 +49,9 @@
 			} else if (v.kind === 'source') {
 				if (last?.type === 'sources') last.views.push(v);
 				else out.push({ type: 'sources', views: [v] });
+			} else if (isActivityTool(v)) {
+				if (last?.type === 'tools') last.views.push(v);
+				else out.push({ type: 'tools', views: [v] });
 			} else out.push({ type: 'view', view: v });
 		}
 		return out;
@@ -87,12 +93,14 @@
 				{agent.name}
 			</MessageHeader>
 		{/if}
-		<MessageContent class="flex flex-col gap-3">
+		<MessageContent class="flex flex-col gap-2.5">
 			{#each blocks as b, i (b.type === 'view' ? b.view.key : `${b.type}:${i}`)}
 				{#if b.type === 'files'}
 					<FilePart views={b.views} />
 				{:else if b.type === 'sources'}
 					<SourcePart views={b.views} />
+				{:else if b.type === 'tools'}
+					{#if b.views.length === 1}<ToolPart view={b.views[0]} />{:else}<ToolGroup views={b.views} />{/if}
 				{:else}
 					{@render part(b.view)}
 				{/if}

@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import CaretUpDownIcon from 'phosphor-svelte/lib/CaretUpDown';
 	import { toast } from 'svelte-sonner';
+	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { cycleMode, modeInfo, teamModes, type TeamMode } from '#lib/modes.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { modesStore } from '#lib/stores/modes.svelte.js';
@@ -37,12 +39,17 @@
 		if (st) void pick(cycleMode(st.mode, st.available));
 	}
 
-	const tone = (m: TeamMode, active: boolean): string => {
-		if (!active) return 'text-muted-foreground hover:bg-muted hover:text-foreground';
+	const tone = (m: TeamMode): string => {
 		const t = modeInfo(m).tone;
 		if (t === 'danger') return 'bg-destructive-soft text-destructive-text';
 		if (t === 'info') return 'bg-info-soft text-info-text';
-		return 'bg-muted text-foreground';
+		return 'text-muted-foreground hover:bg-muted hover:text-foreground';
+	};
+	// One-line descriptions for the menu (the full hints stay in Settings).
+	const short: Record<TeamMode, string> = {
+		manual: 'Risky tools ask you first',
+		auto: 'A classifier model decides',
+		bypass: 'Everything runs without asking'
 	};
 	const disabledWhy = (m: TeamMode): string | null => {
 		if (!st || st.available.includes(m)) return null;
@@ -52,29 +59,33 @@
 </script>
 
 {#if st}
-	<div class="flex min-w-0 items-center gap-2">
-		<div
-			role="radiogroup"
-			aria-label="Permission mode"
-			class="inline-flex shrink-0 items-center rounded-md border border-border p-0.5 text-xs"
-			data-testid="mode-switch"
-			data-mode={st.mode}
-		>
-			{#each teamModes as m (m.id)}
-				{@const why = disabledWhy(m.id)}
-				<button
-					type="button"
-					role="radio"
-					aria-checked={st.mode === m.id}
-					disabled={why !== null}
-					title={why ?? m.hint}
-					class="rounded px-2 py-0.5 font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 {tone(m.id, st.mode === m.id)}"
-					onclick={() => void pick(m.id)}
-				>
-					{m.label}
-				</button>
-			{/each}
-		</div>
+	<div class="flex min-w-0 items-center gap-1.5">
+		<DropdownMenu.Root>
+			<DropdownMenu.Trigger
+				class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring {tone(st.mode)}"
+				aria-label="Permission mode: {modeInfo(st.mode).label}"
+				title="{modeInfo(st.mode).hint} (⇧Tab to switch)"
+				data-testid="mode-switch"
+				data-mode={st.mode}
+			>
+				{modeInfo(st.mode).label}
+				<CaretUpDownIcon class="size-3.5 opacity-70" />
+			</DropdownMenu.Trigger>
+			<DropdownMenu.Content side="top" align="start" class="w-64">
+				<DropdownMenu.RadioGroup value={st.mode} onValueChange={(v) => void pick(v as TeamMode)}>
+					{#each teamModes as m (m.id)}
+						{@const why = disabledWhy(m.id)}
+						<DropdownMenu.RadioItem closeOnSelect value={m.id} disabled={why !== null} class="h-auto items-start py-1.5">
+							<span class="flex flex-col gap-0.5">
+								<span class={m.tone === 'danger' ? 'text-destructive-text' : ''}>{m.label}</span>
+								<span class="text-xs text-muted-foreground">{why ?? short[m.id]}</span>
+							</span>
+						</DropdownMenu.RadioItem>
+					{/each}
+				</DropdownMenu.RadioGroup>
+				<p class="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">⇧Tab switches mode</p>
+			</DropdownMenu.Content>
+		</DropdownMenu.Root>
 		{#if st.mode === 'auto' && st.auto.paused}
 			<button
 				type="button"
@@ -85,12 +96,6 @@
 			>
 				auto paused · approve to resume
 			</button>
-		{:else}
-			<span class="hidden truncate text-xs text-muted-foreground sm:inline" title={modeInfo(st.mode).hint}>
-				{st.mode === 'bypass' ? 'Everything runs without asking' : st.mode === 'auto' ? 'A classifier decides' : 'Risky tools ask'}
-				<kbd class="ml-1 rounded border border-border px-1 text-[10px]">⇧Tab</kbd>
-			</span>
 		{/if}
 	</div>
-
 {/if}
