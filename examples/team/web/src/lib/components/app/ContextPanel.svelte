@@ -132,7 +132,7 @@
 			{#if sessionsError}<p class="text-destructive-text">{sessionsError}</p>{/if}
 			{#if owned.length}<h3 class="text-xs font-medium text-muted-foreground">Runs</h3>{/if}
 			{#each owned as t (t.id)}{@render taskRow(t)}{/each}
-			{#if delegated.length}<h3 class="mt-2 text-xs font-medium text-muted-foreground">Delegated</h3>{/if}
+			{#if delegated.length}<h3 class="{owned.length ? 'mt-2' : ''} text-xs font-medium text-muted-foreground">Delegated</h3>{/if}
 			{#each delegated as t (t.id)}{@render taskRow(t)}{/each}
 			{#if sessions && !owned.length && !delegated.length}
 				<p class="text-muted-foreground">No tasks for this agent.</p>

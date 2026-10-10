@@ -56,6 +56,25 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		return agents.find(state.viewing)?.id ?? state.viewing;
 	};
 
+	// A list fetched while a newer event arrived is stale: it must not overwrite what that event
+	// applied. `gen` counts events per list; a fetch that saw a later event refetches, and only the
+	// newest request may write.
+	const gen = { tasks: 0, approvals: 0 };
+	const req = { tasks: 0, approvals: 0 };
+	async function fetchList<K extends 'tasks' | 'approvals'>(key: K, load: () => Promise<LiveState[K]>, done: () => void): Promise<void> {
+		const atGen = gen[key];
+		const mine = ++req[key];
+		try {
+			const list = await load();
+			if (mine !== req[key]) return; // a newer request writes
+			state[key] = list;
+			done();
+			if (atGen !== gen[key]) later(key, key === 'tasks' ? core.loadTasks : core.loadApprovals);
+		} catch (e) {
+			report(e);
+		}
+	}
+
 	const bump = (k: keyof LiveState['revs']) => async (): Promise<void> => {
 		state.revs[k]++;
 	};
@@ -63,22 +82,12 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 	const core = {
 		state,
 
-		async loadApprovals(): Promise<void> {
-			try {
-				state.approvals = (await api.get('/approvals')).approvals;
-				state.approvalsLoaded = true;
-			} catch (e) {
-				report(e);
-			}
+		loadApprovals(): Promise<void> {
+			return fetchList('approvals', async () => (await api.get('/approvals')).approvals, () => (state.approvalsLoaded = true));
 		},
 
-		async loadTasks(): Promise<void> {
-			try {
-				state.tasks = (await api.get('/tasks', { query: { limit: 200 } })).tasks;
-				state.tasksLoaded = true;
-			} catch (e) {
-				report(e);
-			}
+		loadTasks(): Promise<void> {
+			return fetchList('tasks', async () => (await api.get('/tasks', { query: { limit: 200 } })).tasks, () => (state.tasksLoaded = true));
 		},
 
 		async resync(): Promise<void> {
@@ -91,6 +100,10 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			const p = e.payload;
 			// a stored message (turn step or end): context size and usage of the open chat moved
 			if (e.type === 'message-added') later('chat', bump('chat'));
+			if (e.type === 'task-changed' || e.type === 'approval-needed' || e.type === 'approval-decided') {
+				gen.tasks++;
+				gen.approvals++;
+			}
 			if (e.type === 'task-changed') {
 				const id = typeof p.taskId === 'string' ? p.taskId : undefined;
 				const known = id ? state.tasks.find((t) => t.id === id) : undefined;

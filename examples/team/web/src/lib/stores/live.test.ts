@@ -82,3 +82,37 @@ describe('live store', () => {
 		expect(live.state.revs.chat).toBe(1);
 	});
 });
+
+describe('live store: stale task lists', () => {
+	test('a /tasks response that started before a task-changed event does not undo it', async () => {
+		const task = (status: Task['status']): Task => ({ id: 't1', status, title: 'Research', lastActivityAt: 1 }) as Task;
+		let server: Task[] = [task('needs_action')];
+		const gates: Array<() => void> = [];
+		let calls = 0;
+		const api = {
+			get: async (path: string) => {
+				if (path !== '/tasks') return { approvals: [], agents: [] };
+				calls++;
+				const snapshot = server.map((t) => ({ ...t }));
+				await new Promise<void>((r) => gates.push(r));
+				return { tasks: snapshot };
+			},
+			post: async () => ({})
+		} as unknown as ApiClient;
+		const agents = createAgentsCore(api, emptyAgentsState());
+		const live = createLiveCore(api, agents, emptyLiveState(), { setTimeout: (fn) => fn() });
+		live.state.tasks = [task('needs_action')];
+
+		const first = live.loadTasks(); // snapshot: needs_action
+		server = [task('running')];
+		live.handleEvent(ev('task-changed', 'x', { taskId: 't1', status: 'running' }, 2)); // refetch queued
+		expect(live.state.tasks[0]?.status).toBe('running');
+		gates.shift()?.(); // the old response lands last-but-one
+		await first;
+		expect(live.state.tasks[0]?.status).toBe('running');
+		while (gates.length) gates.shift()?.();
+		await new Promise((r) => setTimeout(r, 0));
+		expect(live.state.tasks[0]?.status).toBe('running');
+		expect(calls).toBeGreaterThanOrEqual(2);
+	});
+});
