@@ -544,7 +544,7 @@ export function copyCheckpoints(args: { store; from; to; turnKeys?; beforeTurnKe
 
 ## 12. Binary files and images
 
-*Since 0.7 (P31 R9). Works in every deployment profile (ADR-0034): `Uint8Array`, `TextDecoder`,
+*Since 0.7. Works in every deployment profile (ADR-0034): `Uint8Array`, `TextDecoder`,
 `btoa`; no Node built-ins outside `eharness/filesystem/node`.*
 
 **Contract (optional methods).**
@@ -630,7 +630,11 @@ once past `keepTurns`; the stored reference is untouched. Alternatives rejected:
 stored output (megabytes per message, hits the 50 000-character output limit, duplicated into
 every adapter and reload) and a core change for media outputs (not needed).
 
-## 13. Project instructions
+## 13. Project instructions (Draft)
+
+> **Draft / experimental (0.7).** `projectInstructions()`, `loadProjectInstructions()`, their frame
+> functions and defaults (file names, size caps, the nested list) may change in a minor release
+> ([API stability](../engineering/api-stability.md)).
 
 `projectInstructions(opts?)` (also exported from `eharness/filesystem`) loads the project's
 instruction files (`CLAUDE.md`, `AGENTS.md`) from the `fs` service, so it works on the memory,

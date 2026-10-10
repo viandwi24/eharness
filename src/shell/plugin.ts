@@ -58,6 +58,8 @@ export interface ShellDataParts extends Record<string, DataPartDef> {
   output: DataPartDef<FlexibleSchema<ShellOutputData>>
 }
 
+/** Default name of the `bash` tool. */
+export const BASH_TOOL = 'bash'
 /** Name of `bash_output`. */
 export const BASH_OUTPUT_TOOL = 'bash_output'
 /** Name of `kill_shell`. */
@@ -198,7 +200,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
   const defaultTimeout = options.timeoutMs ?? 120_000
   const maxTimeout = Math.max(options.maxTimeoutMs ?? 600_000, defaultTimeout)
   const maxChars = options.maxOutputChars ?? 30_000
-  const toolName = options.toolName ?? 'bash'
+  const toolName = options.toolName ?? BASH_TOOL
   const risk = options.risk ?? 'external'
   const bgOpts = typeof options.background === 'object' ? options.background : {}
   const background = options.background !== undefined && options.background !== false
@@ -630,7 +632,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
             stop: registry.stop,
             stopAll: registry.stopAll,
             subscribe: registry.subscribe,
-            background: (toolCallId) => {
+            moveToBackground: (toolCallId) => {
               const ids: string[] = []
               const targets = toolCallId === undefined ? [...foreground.keys()] : [toolCallId]
               for (const key of targets) {

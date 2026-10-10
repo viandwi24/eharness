@@ -1,5 +1,0 @@
----
-"eharness": minor
----
-
-`eharness/subagent`: background subagent reports are no longer lost. The cap of the report injected into the parent rises from 4 000 to 16 000 characters (`SUBAGENT_BACKGROUND_REPORT_CHARS`) and is an option (`reportMaxChars`); a cut report says `… [report cut at N of M characters; read the full report with agent_output({ id: "agent-2" })]`. New tool `agent_output({ id, offset?, limit? })` (`outputToolName`, `outputTool`; offered when `background` or messaging is on) reads the full final report of an agent by task id, name or child session id from the child session's stored messages (works after a restart and for one-shot agents), paged by characters, with status and progress for a running agent. New tool `agent_stop({ id })` (`stopTool`, `stopToolName`) stops a running background agent; a model stop keeps it resumable by `send_message`, a user stop still refuses; `kill_shell`'s unknown-id error points to it. Exports `AGENT_STOP_TOOL`, `AGENT_OUTPUT_TOOL`, `AGENT_OUTPUT_PAGE_CHARS`. `eharness/permissions` maps `agent_output` and `agent_stop` to the `safe` tool kind.

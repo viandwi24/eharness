@@ -37,6 +37,11 @@ Using eharness (not contributing)? Start with the [README](../README.md), the [g
 | 15 | [guard-plugin](specs/15-guard-plugin.md) | `eharness/guard`: LLM approval judge — tighten-only, restricted transcript, fast path, verdict cache, circuit breaker, fail closed |
 | 16 | [group-plugin](specs/16-group-plugin.md) | `eharness/group`: should-respond gating, pending history of gated-out messages, speaker metadata, bot-to-bot anti-loop |
 | 17 | [openapi-plugin](specs/17-openapi-plugin.md) | `eharness/openapi`: OpenAPI 3.x → tools — filters, base-URL fence, app-supplied auth, risk from method, `$ref` guard, error strings |
+| 18 | [permissions-plugin](specs/18-permissions-plugin.md) | `eharness/permissions`: `Tool(spec)` rules, modes (incl. Draft `auto` mode and classifier), shell command analysis, protected paths, plan mode, output filtering |
+| 19 | [shell-plugin](specs/19-shell-plugin.md) | `eharness/shell` (Node-only): `bash`, live output, background tasks (`bash_output`, `kill_shell`), `shellTasks`, local sandbox with OS isolation |
+| 20 | [subagent-plugin](specs/20-subagent-plugin.md) | `eharness/subagent`: the `agent` tool, child sessions, approvals inline / park / policy, background agents, `agent_output`, `agent_stop`, Draft agent messaging (`send_message`, names, resume) |
+| 21 | [ask-plugin](specs/21-ask-plugin.md) | `eharness/ask`: `ask_user_question`, client tool or non-interactive fallback |
+| 22 | [web-plugin](specs/22-web-plugin.md) | `eharness/web`: `web_fetch` (SSRF guards, Markdown, framing) and `web_search` (provider-agnostic) |
 
 ## Status vocabulary
 
@@ -47,7 +52,10 @@ Specs carry a status line:
 - **Frozen** — public since a release; changes follow `engineering/api-stability.md`.
 
 Specs 01–11 are **Accepted (reviewed for 0.1.0)** and have been updated with every release since;
-specs 12–13 are **Draft (0.3)** — shipped in 0.3.0 —, spec 14 is **Draft (0.4)** and specs 15–17
-are **Draft (0.5)**, all still open to changes under the 0.x rules.
+specs 12–13 are **Draft (0.3)** — shipped in 0.3.0 —, spec 14 is **Draft (0.4)**, specs 15–17
+are **Draft (0.5)** and specs 18–22 are **Draft (0.7)**, all still open to changes under the 0.x
+rules. Individual sections of an Accepted spec can be marked **Draft** (0.7: spec 02 §3.3 deferred
+tools reminder, spec 03 §10 `<untrusted-content>` frame, spec 08 §13 project instructions); the
+list and the rule are in [api-stability](engineering/api-stability.md#draft-modules-and-sections).
 All become **Frozen** at 1.0 ([api-stability](engineering/api-stability.md)); until then changes
-follow the 0.x rules there. Nothing in the public API is `experimental_`.
+follow the 0.x rules there. Nothing in the public API is `experimental_`; Draft sections are marked `@experimental` in TSDoc instead.

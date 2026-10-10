@@ -65,7 +65,8 @@ export function agentHeader(
   now: number,
 ): { title: string; subtitle: string } {
   const type = task?.agent ?? target.agent
-  const status = task ? STATUS_WORD[task.status] : (target.status ?? 'finished')
+  const state = task?.status ?? target.status
+  const status = state === undefined ? 'finished' : STATUS_WORD[state]
   const elapsed = task ? ` ${fmtDuration(Math.max(0, (task.endedAt ?? now) - task.startedAt))}` : ''
   const who = type && type !== target.name ? `${target.name} · ${type}` : target.name
   const id = task?.id ?? target.taskId

@@ -118,11 +118,11 @@ export interface HarnessSession<
   compact(options?: CompactOptions): Promise<M | null>
   /** Forget session approval grants (spec 11 §3.1). */
   clearGrants(): Promise<void>
-  /** Create a new session from (a prefix of) this one (P31, §14). */
+  /** Create a new session from (a prefix of) this one (§14). */
   fork(options?: ForkOptions): Promise<HarnessSession<M, Kinds>>
-  /** Child sessions registered with this session as `parent`, from the stored state (P31, §13). */
+  /** Child sessions registered with this session as `parent`, from the stored state (§13). */
   children(): Promise<ChildSessionInfo[]>
-  /** The stored `parent` of this session (P31, §13). */
+  /** The stored `parent` of this session (§13). */
   parentInfo(): Promise<ParentInfo | undefined>
 
   /**
@@ -702,11 +702,11 @@ export interface SessionStateSnapshot {
     abortRequest?: { turnId: string; at: number; reason?: string; by?: string }
     /** Ids of the last 100 `wake` inbox items applied to this session (§12 rule 5, dedupe). */
     inboxDelivered?: string[]
-    /** This session is a child session (P31, §13). */
+    /** This session is a child session (§13). */
     parent?: ParentInfo
-    /** Child sessions opened with this session as `parent`; append-only, capped at 500, written by the children (P31, §13). */
+    /** Child sessions opened with this session as `parent`; append-only, capped at 500, written by the children (§13). */
     children?: ChildSessionInfo[]
-    /** This session was created by `session.fork()` (P31, §14). */
+    /** This session was created by `session.fork()` (§14). */
     forkedFrom?: { sessionId: string; beforeMessageId?: string; at: number }
   }
   plugins: Record<string, Record<string, JSONValue>>    // plugins[<plugin name>][key]
@@ -1171,9 +1171,9 @@ The poll interval is the latency without `subscribe` and the safety net for lost
 with it; the core never claims from a session that is not live in its process. `wake` items are
 written by `inject(…, { wake: true })` when a live foreign turn runs (spec 11 §6.3).
 
-## 13. Parent and child sessions (P31)
+## 13. Parent and child sessions
 
-`SessionOptions.parent` is durable and indexed (R10), so that a UI or an operator can list the
+`SessionOptions.parent` is durable and indexed, so that a UI or an operator can list the
 child sessions of a turn from **any** instance, after restarts (ADR-0034 profiles: no in-memory
 index).
 
@@ -1200,7 +1200,7 @@ index).
    and `EH_STORAGE` when the adapter fails; they work without opening the session.
 4. Message metadata `parentId` (spec 03 §3) is unrelated to this.
 
-## 14. Fork (P31)
+## 14. Fork
 
 ```ts
 export interface ForkOptions {

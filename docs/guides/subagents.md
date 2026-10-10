@@ -69,7 +69,7 @@ const worker = defineHarnessAgent({
 })
 const main = (holder.main = defineHarnessAgent({
   model, storage,
-  plugins: [subagents({ agents: { worker: { agent: worker, description: '...' } }, approvals: 'park', timeoutMs: 3_600_000 })],
+  plugins: [subagents({ agents: { worker: { agent: worker, description: '...' } }, approvals: 'park', parkTimeoutMs: 3_600_000 })],
 }))
 ```
 
@@ -86,13 +86,13 @@ const main = (holder.main = defineHarnessAgent({
 
 Rules: install `subagentChild()` (or `subagents({ parentAgent })`) on every instance that can
 complete a child turn, use storage with `setIf` or a lock (as for any external wait), and set
-`timeoutMs` so a forgotten approval does not park the parent forever. A restart between the park
+`parkTimeoutMs` so a forgotten approval does not park the parent forever. A restart between the park
 and the answer loses nothing. There is no live progress and no `run_in_background` in this
 strategy. The continuation run that the child's completion starts on the parent is drained and
 stored; pass `onParentRun` to stream it to the user.
 
 **Crash recovery.** If the process dies after a child finished and before its hook resolved the
-parent's wait, the parent would stay parked until `timeoutMs`.
+parent's wait, the parent would stay parked until `parkTimeoutMs`.
 `reconcileSubagentWaits(parentSession, { openChild })` resolves such waits from the child's stored
 result (idempotent, safe to call from a timer or an admin endpoint). With
 `subagents({ approvals: 'park', selfAgent: () => parentAgent })` it also runs, detached and best
@@ -132,22 +132,23 @@ child session id; a subagent addresses the root as `"main"`.
 
 ## Reading a full report (`agent_output`)
 
-A background report is cut at `reportMaxChars` (default 16 000) and says so. The model reads the
+A background report is cut at `maxReportChars` (default 16 000) and says so. The model reads the
 rest with `agent_output({ id: "agent-2", offset?, limit? })`: it works by task id, name or child
 session id, for one-shot agents and after a restart (it reads the child session's stored final
 text), pages by characters with a `more: …offset=` footer, and returns status plus progress for an
-agent that is still running. Offered when `background` or messaging is on; `outputTool: false`
-turns it off, `outputToolName` renames it.
+agent that is still running. Offered when `background` or `messageTool` is on; `outputTool: false`
+turns it off, `outputTool: { name }` renames it.
 
 ## Stopping an agent (`agent_stop`)
 
 `agent_stop({ id })` lets the model stop a running background agent (id, name or child session
 id). The agent stays resumable by `send_message` (a stop by the user does not); `stopTool: false`
-turns it off, `stopToolName` renames it.
+turns it off, `stopTool: { name }` renames it.
 
 ## Background children
 
-`background: true` (inline and policy only) adds `run_in_background`. The call returns at once; when
+`background: true` (inline and policy only) adds `run_in_background`; `background: { default: true }` makes
+background the default when the model omits the field. The call returns at once; when
 the child finishes, the plugin injects an `eh.event` into the parent with `ctx.session.inject`
 (`deliver: 'next-step'`, `wake: true`): a running parent sees it at its next step, an idle one
 wakes. The report is stored in the history, so it survives a UI restart.
@@ -161,10 +162,10 @@ starting turn streams) and the `eh.event` report (`data.status` `completed` / `f
 `stopped`). `stop()` aborts the child; for an id the process does not know it calls
 `requestAbort()` on the child session, which reaches a child running in another instance.
 
-**Moving a foreground child to the background.** `ctx.services.subagentTasks.background()` (Claude
+**Moving a foreground child to the background.** `ctx.services.subagentTasks.moveToBackground()` (Claude
 Code's Ctrl+B) detaches the running foreground `agent` calls: each returns at once with "Subagent
 moved to the background as task agent-2 …", the child keeps running and reports through the same
-`eh.event` path as `run_in_background`. Needs `background: true`; not available for `'park'`.
+`eh.event` path as `run_in_background`. Needs `background`; not available for `'park'`.
 
 **Wake turns.** A report wakes an idle parent with a turn nobody started: use
 `session.onRun((run) => …)` to stream it and answer its approvals (spec 05 §2.1); in
@@ -172,7 +173,7 @@ multi-instance deployments use `events()` + `attach()`.
 
 **Children of children.** A child session is closed when its turn ends, which aborts the
 background subagents it started, and a report for it would go to a session nobody watches. So
-`run_in_background` is offered to the root session only; set `backgroundInChildren: true` if your
+`run_in_background` is offered to the root session only; set `background: { inChildren: true }` if your
 child sessions stay open. Do the same for shell background tasks: give child agents a `shell()`
 without `background` (a separate child agent definition), so every report reaches the session the
 user sees.

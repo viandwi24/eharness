@@ -273,7 +273,7 @@ describe('ToolCard summaries', () => {
 
   test('SubagentTree final states', () => {
     const base = { agent: 'x', description: 'd', sessionId: 's', steps: 1, text: '' }
-    expect(show(<SubagentTree progress={{ ...base, status: 'done' }} />).text()).toContain(
+    expect(show(<SubagentTree progress={{ ...base, status: 'completed' }} />).text()).toContain(
       'Done (1 step)',
     )
     expect(show(<SubagentTree progress={{ ...base, status: 'failed' }} />).text()).toContain(

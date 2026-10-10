@@ -145,7 +145,7 @@ interface ToolKindSpec {
 `DEFAULT_TOOL_KINDS` describes eharness's own tools: `read_file`, `list_files`, `grep`, `glob`
 (read), `edit_file` (including `edits[]`; only `path` matters), `write_file`, `delete_file`
 (write), `bash` (shell, `eharness/shell`), `bash_output`, `kill_shell`, `todo_write` (safe),
-`web_fetch`, `web_search`, `agent`, `send_message` (safe: it only reaches agents that already run under the same rules, ADR-0038), `ask_user_question`, `exit_plan_mode`. A tool the map does not
+`web_fetch`, `web_search`, the core tools `tool_search`, `load_skill`, `read_skill_file`, `search_skills` (safe, so deferred tools stay discoverable in `plan` mode), `agent`, `send_message` (safe: it only reaches agents that already run under the same rules, ADR-0038), `ask_user_question`, `exit_plan_mode`. A tool the map does not
 know is `other`. Pass `toolKinds` to add or override (`{ run: { kind: 'shell', commandField: 'cmd' } }`).
 
 **`alwaysAsk: true`** (any kind except `ask`/`plan-exit`): the tool's calls are `user-approval` in
@@ -194,6 +194,9 @@ servers (profile a) run in `dontAsk`, so such tools are denied there.
    path. Not in bypass. A directory read recursively (`grep -rn x src`) is **not** covered by the
    built-in ask (it would make every recursive grep prompt); a glob that could name env files
    (`cat .e*`) and explicit paths are. User `Read` rules cover subtrees (steps 5, 6).
+   **Known gap:** a recursive `grep`/`find` through `bash` can therefore read `.env` files without
+   asking. Add `Read(**/.env*)` deny/ask rules (they do cover subtrees) or use the OS sandbox
+   `denyRead` to prevent it.
 9. **mode default** (§3).
 
 A per-call mode (`decide(call, 'plan')`) replaces the engine's mode; the engine's own `dontAsk`
@@ -262,9 +265,9 @@ a repository's own git config (`diff.external`, textconv drivers, pager) can run
 **lexically** against the project root (`..` collapsed, `~/` from `home`, absolute paths as is). It
 auto-approves only if every path is inside a *working directory* (a root with `workingDir !== false`)
 and none is unresolvable: `$` expansion in any argument, `~user`, brace expansion, `xargs` stdin.
-Outside paths ask. `Read` deny/ask rules (and the built-in `.env` ask) are matched against the
-paths: a deny match denies, an ask match asks. A **directory read recursively** (`grep -r KEY .`,
-`rg KEY`) or a **glob** (`cat .e*`) covers its subtree: if any `Read` deny/ask rule *could* match
+Outside paths ask. `Read` deny/ask rules (and the built-in `.env` ask, for explicit paths and globs
+only) are matched against the paths: a deny match denies, an ask match asks. A **directory read recursively** (`grep -r KEY .`,
+`rg KEY`) or a **glob** (`cat .e*`) covers its subtree: if any user `Read` deny/ask rule *could* match
 something there, the command asks. Lexical resolution does not follow symlinks; a file system
 adapter that exposes symlinks must enforce its own path guard (spec 08).
 
@@ -336,7 +339,11 @@ a remembered answer with `persist` or from `suggestRule`; store the continuing m
 `onPlanExit`. A user's session-level "always allow" is the core's `remember: 'session'` grant (spec
 11 §3.1), which this module does not duplicate.
 
-## 12. Auto mode
+## 12. Auto mode (Draft)
+
+> **Draft / experimental (0.7).** The `auto` mode, the `classifier` option, `modelClassifier()`, the
+> auto-pause counters and `AUTO_CLASSIFIER_INSTRUCTIONS` may change in a minor release
+> ([API stability](../engineering/api-stability.md)).
 
 Modelled on Claude Code's auto mode: a classifier model reviews the actions no rule settles, so
 the person is not asked for every shell command and the model still cannot do the dangerous

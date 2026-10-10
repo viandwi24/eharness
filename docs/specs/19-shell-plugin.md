@@ -1,6 +1,6 @@
 # Spec 19 — Shell plugin (`eharness/shell`)
 
-Status: **Draft (0.9, P31)**. Module: `src/shell/*`. Built only with the public core API
+Status: **Draft (0.7)**. Module: `src/shell/*`. Built only with the public core API
 (ADR-0008). Node-only: it uses `node:child_process` and `node:fs` (ADR-0036); never `Bun.*`.
 Design: ADR-0034 (one module, three deployment profiles).
 
@@ -46,7 +46,7 @@ text) and does not touch the prompt-cache prefix: tool order is `bash`, then `ba
 `kill_shell` (only with `background`).
 
 Exports besides the above: `capOutput`, `seatbeltProfile`, `wrapCommand`, `SANDBOX_HINT`,
-`BASH_OUTPUT_TOOL`, `KILL_SHELL_TOOL`, `MAX_TASK_OUTPUT` and the types.
+`BASH_TOOL` (`'bash'`), `BASH_OUTPUT_TOOL`, `KILL_SHELL_TOOL`, `MAX_TASK_OUTPUT` and the types.
 
 ## 2. Tools (model-visible; text changes are a minor change)
 
@@ -120,7 +120,7 @@ interface ShellTasks {
   stop(id: string): Promise<void>           // marks 'stopped', then kills the group
   stopAll(): Promise<void>
   subscribe(listener: (tasks: ShellTask[]) => void): () => void
-  background(toolCallId?: string): string[] // move running foreground bash calls to the background (§4.1)
+  moveToBackground(toolCallId?: string): string[] // move running foreground bash calls to the background (§4.1)
 }
 interface ShellTask {
   id: string; label: string; command: string
@@ -136,7 +136,7 @@ session's `ctx.signal` aborts) every running task is stopped.
 
 ### 4.1 Moving a running foreground command to the background
 
-`background(toolCallId?)` (Ctrl+B in Claude Code) detaches the running foreground `bash` calls of
+`moveToBackground(toolCallId?)` (Ctrl+B in Claude Code) detaches the running foreground `bash` calls of
 the session (all, or only that tool call) and returns the new task ids (`[]` when nothing was
 running, the call was unknown, `maxTasks` is reached, or `background` is not enabled). Each call
 registers a task in the same registry (`bash-<n>`, same id counter as `run_in_background`); the

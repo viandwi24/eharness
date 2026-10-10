@@ -377,7 +377,7 @@ describe('/agents runs and transcripts', () => {
     name: 'explore',
     description: `task ${n}`,
     sessionId: `child-${n}`,
-    status: n === 2 ? 'running' : 'done',
+    status: n === 2 ? 'running' : 'completed',
   })
 
   test('/agents <n> and /transcript <n> open the agent page of the run', async () => {
@@ -387,7 +387,10 @@ describe('/agents runs and transcripts', () => {
     await runSlash('/transcript 1', h.ctx)
     expect(h.pages).toMatchObject([
       { kind: 'agent', target: { sessionId: 'child-2', name: 'explore', status: 'running' } },
-      { kind: 'agent', target: { sessionId: 'child-1', description: 'task 1', status: 'done' } },
+      {
+        kind: 'agent',
+        target: { sessionId: 'child-1', description: 'task 1', status: 'completed' },
+      },
     ])
   })
 

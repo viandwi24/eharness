@@ -158,7 +158,7 @@ describe('AgentPage', () => {
     const m = mount({
       messages: [user('old task'), assistant('a1', [{ type: 'text', text: 'old result' }])],
       tasks: [],
-      target: { sessionId: 'child-2', name: 'explore', description: 'old', status: 'done' },
+      target: { sessionId: 'child-2', name: 'explore', description: 'old', status: 'completed' },
     })
     await until(() => m.frame().includes('old result'), 'stored messages')
     expect(m.frame()).toContain('◆ explore · done')

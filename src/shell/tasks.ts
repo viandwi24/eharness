@@ -46,7 +46,7 @@ export interface ShellTasks {
    * calls, or only `toolCallId`. Returns the new task ids (empty when nothing could be moved or
    * `background` is not enabled).
    */
-  background(toolCallId?: string): string[]
+  moveToBackground(toolCallId?: string): string[]
 }
 
 interface Entry {
@@ -65,7 +65,7 @@ function tailOf(buffer: string): string {
 }
 
 /** @internal The registry behind the {@link ShellTasks} service. */
-export interface TaskRegistry extends Omit<ShellTasks, 'background'> {
+export interface TaskRegistry extends Omit<ShellTasks, 'moveToBackground'> {
   add(init: { label: string; command: string; stop: () => void | Promise<void> }): string
   append(id: string, text: string): void
   complete(id: string, result: { status: 'completed' | 'failed'; exitCode: number | null }): void

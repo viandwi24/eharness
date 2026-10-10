@@ -5,11 +5,14 @@
  */
 import { generateText, type LanguageModel, Output } from 'ai'
 import { z } from 'zod/v4'
+import { neutralizeTags } from '../index.ts'
 import type { AutoAction, AutoClassifier, AutoClassifierContext, AutoVerdict } from './types.ts'
 
 /**
  * The default rules of the model classifier. Extend it (`${AUTO_CLASSIFIER_INSTRUCTIONS}\n…`) or
  * replace it through the `instructions` option.
+ *
+ * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
  */
 export const AUTO_CLASSIFIER_INSTRUCTIONS = `You are the safety classifier of an autonomous coding agent. Decide whether ONE pending action may run without asking the user. Reply allow or block, with a short reason.
 
@@ -93,6 +96,19 @@ function renderAction(action: AutoAction, maxChars: number): string {
   return lines.join('\n')
 }
 
+const BLOCK_TAGS = [
+  'environment',
+  'transcript',
+  'action',
+  'untrusted-content',
+  'system-reminder',
+] as const
+
+/** Wrap text in a classifier block; the frame tags inside the text are neutralised. */
+function block(tag: string, text: string): string {
+  return `<${tag}>\n${neutralizeTags(text, BLOCK_TAGS)}\n</${tag}>`
+}
+
 /**
  * Build an {@link AutoClassifier} from a model. A call that fails, times out or returns an
  * unreadable verdict throws, which the engine turns into a block (fail closed).
@@ -101,6 +117,8 @@ function renderAction(action: AutoAction, maxChars: number): string {
  * ```ts
  * createPermissionEngine({ roots, classifier: modelClassifier({ model: cheapModel }) })
  * ```
+ *
+ * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
  */
 export function modelClassifier(options: ModelClassifierOptions): AutoClassifier {
   const instructions = options.instructions ?? AUTO_CLASSIFIER_INSTRUCTIONS
@@ -111,9 +129,9 @@ export function modelClassifier(options: ModelClassifierOptions): AutoClassifier
     const sections = [
       options.environment === undefined || options.environment.trim() === ''
         ? undefined
-        : `<environment>\n${options.environment.trim()}\n</environment>`,
-      `<transcript>\n${renderTranscript(ctx.transcript, maxEntries, maxChars)}\n</transcript>`,
-      `<action>\n${renderAction(action, 4000)}\n</action>`,
+        : block('environment', options.environment.trim()),
+      block('transcript', renderTranscript(ctx.transcript, maxEntries, maxChars)),
+      block('action', renderAction(action, 4000)),
     ].filter((section): section is string => section !== undefined)
     const signals = [AbortSignal.timeout(timeoutMs)]
     if (ctx.abortSignal !== undefined) signals.push(ctx.abortSignal)

@@ -33,7 +33,7 @@ finish                                  ← normal end
 abort { reason }                        ← instead of `finish` when aborted (user abort, turn timeout)
 ```
 
-Reasoning duration (P31 R20): the core writes `providerMetadata.eharness.durationMs` on every
+Reasoning duration: the core writes `providerMetadata.eharness.durationMs` on every
 `reasoning-end` chunk (milliseconds from the step's `reasoning-start` to `reasoning-end`, measured
 with `Date.now()` in the core's step-chunk copy). It is merged into the chunk's existing
 `providerMetadata` (provider keys are never touched), so the UI reasoning part and the stored

@@ -15,6 +15,7 @@ export {
 } from './os-sandbox.ts'
 export {
   BASH_OUTPUT_TOOL,
+  BASH_TOOL,
   capOutput,
   KILL_SHELL_TOOL,
   type ShellDataParts,

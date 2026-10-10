@@ -4,8 +4,20 @@
 
 Everything a user can observe without reading our source:
 
-1. Every symbol exported from `eharness` and its subpaths (`/filesystem`, `/filesystem/memory`,
-   `/storage/memory`, `/mcp`, `/todos`, `/memory`, `/testing`), including types.
+1. Every symbol exported from `eharness` and its subpaths, including types:
+
+   | Subpath | Notes |
+   |---|---|
+   | `eharness` | core |
+   | `eharness/filesystem`, `eharness/filesystem/memory` | |
+   | `eharness/filesystem/node` | Node-only (ADR-0036) |
+   | `eharness/storage/memory` | |
+   | `eharness/mcp` | optional peer `@ai-sdk/mcp` |
+   | `eharness/todos`, `eharness/memory` | |
+   | `eharness/guard`, `eharness/group`, `eharness/openapi` | |
+   | `eharness/ask`, `eharness/permissions`, `eharness/subagent`, `eharness/web` | since 0.7 |
+   | `eharness/shell` | Node-only (ADR-0036); since 0.7 |
+   | `eharness/testing` | |
 2. **Persisted formats:** `metadata.eharness`, core data part types and payloads (`eh.*`),
    core message kinds and payloads, `SessionStateSnapshot`, plugin data parts of shipped plugins.
 3. **Stream shape:** order and types of chunks the core writes (spec 04 §2).
@@ -41,6 +53,31 @@ Additionally:
 - Named with an `experimental_` prefix and marked `@experimental` in TSDoc.
 - May change or disappear in any minor release (and patch in 0.x). Changeset must mention it.
 - Graduating removes the prefix; the prefixed alias stays as deprecated for one minor.
+
+## Draft modules and sections
+
+A spec marked **Draft** is public but not settled: its API, model-visible texts and persisted
+payloads may change in a **minor** release in 0.x (never in a patch), with a changeset that says so
+(breaking ones start with `**BREAKING:**`). Draft sections of otherwise Accepted specs are marked
+in their heading and carry `@experimental` TSDoc on the main exported symbols; the symbols keep their
+plain names (no `experimental_` prefix). Everything else follows the rules above.
+
+Draft in 0.7:
+
+- Specs 18–22 as modules (`eharness/permissions`, `eharness/shell`, `eharness/subagent`,
+  `eharness/ask`, `eharness/web`), and specs 12–17 as before.
+- The `auto` permission mode and its classifier (`classifier`, `modelClassifier()`,
+  `AUTO_CLASSIFIER_INSTRUCTIONS`, the auto-pause counters; spec 18 §12).
+- Agent messaging in `eharness/subagent`: `send_message`, named agents, resume, the roster reminder,
+  the `<agent-message>` frame (spec 20 §5).
+- The deferred-tools turn reminder format (spec 02 §3.3); the `deferTools` option itself is stable.
+- The `<untrusted-content>` frame format and the helpers `untrustedContent()` and
+  `UNTRUSTED_CONTENT_INSTRUCTIONS` (spec 03 §10).
+- `projectInstructions()` frames and defaults (spec 08 §13).
+
+Names derived from Claude Code are intentionally kept and are not renamed for style:
+`bash_output`, `kill_shell`, `agent`, and the camelCase permission modes (`acceptEdits`,
+`dontAsk`, `bypassPermissions`). They are as stable as any other public name.
 
 ## Deprecation
 

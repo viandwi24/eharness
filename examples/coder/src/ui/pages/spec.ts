@@ -14,7 +14,7 @@ export interface AgentViewTarget {
   /** Background task id (`agent-2`), when it has one. */
   taskId?: string
   /** Status to show when no live task is found (a run of an earlier process). */
-  status?: 'running' | 'done' | 'failed'
+  status?: 'running' | 'completed' | 'failed' | 'stopped'
 }
 
 export type PageSpec =
@@ -53,7 +53,7 @@ export function agentTargetOfTask(task: {
   name?: string
   agent?: string
   label: string
-  status: string
+  status: NonNullable<AgentViewTarget['status']>
 }): AgentViewTarget {
   const at = task.label.indexOf(': ')
   return {
@@ -62,6 +62,6 @@ export function agentTargetOfTask(task: {
     ...(task.agent !== undefined ? { agent: task.agent } : {}),
     description: at > 0 ? task.label.slice(at + 2) : task.label,
     taskId: task.id,
-    status: task.status === 'running' ? 'running' : task.status === 'completed' ? 'done' : 'failed',
+    status: task.status,
   }
 }

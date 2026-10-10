@@ -33,4 +33,5 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Subagents](subagents.md) | the `subagents()` plugin: child sessions, approvals inline / parked / by policy, background children, the manual pattern |
 | [Testing](testing.md) | `scriptedModel`, asserting on prompts and results, conformance suites |
 | [Coding agent example](../../examples/coder/README.md) | a terminal coding agent built only on the public API: virtual workspace, permission rules, subagents, Ink UI |
+| [Upgrading to 0.7](upgrading.md) | what changes for 0.6 users, with migration snippets, and the known gaps |
 | [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |

@@ -94,9 +94,9 @@ export interface ContextStats {
   lastCompaction?: { markerId: string; before: number; after: number; at: number }
   /** Prune stage (§5.0): outputs replaced and characters saved; present only when prune is on. */
   pruned?: { outputs: number; chars: number }
-  /** P31 R15: `instructions` by owner and refresh class, in prompt order. Sum = `instructions` within rounding. */
+  /** `instructions` by owner and refresh class, in prompt order. Sum = `instructions` within rounding. */
   instructionBlocks?: Array<{ owner: string; refresh: 'static' | 'session' | 'turn'; tokens: number }>
-  /** P31 R15: `tools` by source, in order of first appearance. Sum = `tools` within rounding. */
+  /** `tools` by source, in order of first appearance. Sum = `tools` within rounding. */
   toolSources?: Array<{ source: string; tools: number; tokens: number }>
 }
 ```
@@ -108,7 +108,7 @@ reminder). `toolSources[].source` uses the labels of `SessionToolInfo.source` (s
 are calibrated like the totals and rounded per entry, so a sum may differ from the total by up to
 one token per entry. `session.stats()` (idle) resolves the registry like `session.tools()` does, so
 `instructions` and `tools` cover the whole next request (skills index, turn-refresh text, skill and
-source tools), not only the static part (P31; before, the idle totals counted static
+source tools), not only the static part (before, the idle totals counted static
 instructions, the session block and static tools only). The `data-eh.context` part of a turn
 carries the same split for the request it measured.
 

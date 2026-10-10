@@ -323,7 +323,7 @@ describe('subagent runs', () => {
       .find((p) => (p.type as string) === 'data-subagent.run') as unknown as {
       data: { sessionId: string; agent: string; status: string }
     }
-    expect(part.data).toMatchObject({ agent: 'explore', status: 'done' })
+    expect(part.data).toMatchObject({ agent: 'explore', status: 'completed' })
     expect(part.data.sessionId).toBe(`${id}:agent:call-0-0`)
     const child = await controller.messagesOf(part.data.sessionId)
     expect(JSON.stringify(child)).toContain('CHILD ANSWER')

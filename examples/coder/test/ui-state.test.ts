@@ -208,7 +208,7 @@ describe('subagent run tracking', () => {
     ])
     s = live(s, agentPart('output-available', 'final answer'))
     expect(s.subagents).toHaveLength(1)
-    expect(s.subagents[0]?.status).toBe('done')
+    expect(s.subagents[0]?.status).toBe('completed')
     expect(s.subagents[0]?.sessionId).toBe('child-1')
   })
 
@@ -222,7 +222,7 @@ describe('subagent run tracking', () => {
     const s = reduce(initialState(), {
       type: 'load',
       messages: [
-        message('m1', [agentPart('output-available', 'final answer'), run('done')]),
+        message('m1', [agentPart('output-available', 'final answer'), run('completed')]),
         message('m2', [run('running', 'a2', 'child-2')]),
       ],
     })
@@ -232,7 +232,7 @@ describe('subagent run tracking', () => {
         name: 'explore',
         description: 'look',
         sessionId: 'child-1',
-        status: 'done',
+        status: 'completed',
       },
       // stored as running: the run was interrupted
       {

@@ -6,6 +6,8 @@ import {
   htmlToText,
   isPrivateHost,
   matchHost,
+  WEB_FETCH_TOOL,
+  WEB_SEARCH_TOOL,
   type WebFetchOptions,
   webFetch,
   webSearch,
@@ -296,5 +298,12 @@ describe('web_search', () => {
         { query: 'abc' },
       ),
     ).toBe('ERROR: web search failed: 402 payment required')
+  })
+})
+
+describe('tool name constants', () => {
+  test('default to the documented names and are the tool keys', () => {
+    expect(WEB_FETCH_TOOL).toBe('web_fetch')
+    expect(WEB_SEARCH_TOOL).toBe('web_search')
   })
 })

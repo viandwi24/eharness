@@ -6,6 +6,7 @@
  */
 import type { FilePart, FlexibleSchema, InferSchema, TextPart } from 'ai'
 import { z } from 'zod/v4'
+import { escapeAttribute, neutralizeTags } from './framing.ts'
 import { uuidv7 } from './ids.ts'
 import type {
   CompactionPayload,
@@ -105,6 +106,13 @@ const flushSchema = z.looseObject({
 })
 
 /**
+ * Frame tags neutralised inside kind payload text (spec 03 §5.3). `agent-message` is not in the
+ * list: `eharness/subagent` frames agent messages itself inside event text and neutralises that
+ * tag in the bodies it carries (agent messages, subagent reports).
+ */
+const FRAME_TAGS = ['event', 'system-reminder', 'untrusted-content'] as const
+
+/**
  * Core message kinds (`eh.*`).
  *
  * @see docs/specs/03-messages.md#53-core-kinds
@@ -120,13 +128,15 @@ export const coreMessageKinds: {
     role: 'user',
     schema: compactionSchema as FlexibleSchema<CompactionPayload>,
     boundary: true,
-    model: (data) => `<conversation-summary>${data.summary}</conversation-summary>`,
+    model: (data) =>
+      `<conversation-summary>${neutralizeTags(data.summary, [...FRAME_TAGS, 'conversation-summary'])}</conversation-summary>`,
   },
   'eh.notice': { role: 'assistant', schema: noticeSchema as FlexibleSchema<NoticePayload> },
   'eh.event': {
     role: 'user',
     schema: eventSchema as FlexibleSchema<EventPayload>,
-    model: (data) => `<event name="${data.name}">${data.text}</event>`,
+    model: (data) =>
+      `<event name="${escapeAttribute(data.name)}">${neutralizeTags(data.text, FRAME_TAGS)}</event>`,
   },
   'eh.rewind': { role: 'user', schema: rewindSchema as FlexibleSchema<RewindPayload> },
   // audit record of a pre-compaction flush: never projected (spec 06 §5.2a)

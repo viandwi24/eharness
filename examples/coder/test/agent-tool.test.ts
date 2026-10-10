@@ -183,7 +183,7 @@ describe('agent tool', () => {
     expect(preliminary[0]?.sessionId).toBe('main-1:agent:cx')
     expect(preliminary.some((p) => p.status === 'running')).toBe(true)
     expect(preliminary.some((p) => p.lastTool?.startsWith('read_file'))).toBe(true)
-    expect(preliminary.at(-1)?.status).toBe('done')
+    expect(preliminary.at(-1)?.status).toBe('completed')
     expect(preliminary.at(-1)?.text).toBe('FINAL REPORT')
     expect(outputs.at(-1)?.preliminary).not.toBe(true)
     expect(outputs.at(-1)?.output).toBe('FINAL REPORT')

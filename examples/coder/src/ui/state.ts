@@ -171,10 +171,11 @@ function withSubagents(runs: SubagentRun[], message: CoderMessage): SubagentRun[
         description: view.output.description,
         sessionId: view.output.sessionId,
         // a finished tool call with a progress record as output (non-preliminary) is done
-        status: view.preliminary || view.state !== 'output-available' ? view.output.status : 'done',
+        status:
+          view.preliminary || view.state !== 'output-available' ? view.output.status : 'completed',
       }
     } else if (known && view.state === 'output-available' && !view.preliminary) {
-      run = { ...known, status: known.status === 'failed' ? 'failed' : 'done' }
+      run = { ...known, status: known.status === 'failed' ? 'failed' : 'completed' }
     } else if (known && (view.state === 'output-error' || view.state === 'output-denied')) {
       run = { ...known, status: 'failed' }
     }

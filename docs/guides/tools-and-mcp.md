@@ -112,6 +112,21 @@ const catalog = defineToolSource({
 
 Each discovery changes the provider-visible tool list, so it costs one prompt-cache miss.
 
+Defer tools you do not own by name with `deferTools` (0.7): app, plugin and source tools alike. When
+any tool is deferred, the core adds a turn reminder that lists the deferred tools by name with a
+one-line description, so the model knows they exist (the exact format is Draft). Deferred tools do
+not count toward `session.stats()` token totals; `session.tools()` still reports their size.
+
+```ts
+defineHarnessAgent({ model, plugins: [shell({ sandbox })], deferTools: ['kill_shell', 'bash_output'] })
+```
+
+### Tool order
+
+`toolOrder: ['read_file', 'bash']` lists final tool names first, in that order; every other tool
+keeps the default order. A name that matches no tool warns once per session (`W_TOOL_ORDER`). Keep
+the list stable across turns: a changed order busts the prompt cache.
+
 ## MCP servers (`eharness/mcp`)
 
 `mcpServer()` turns an MCP server into a tool source over `@ai-sdk/mcp` (an optional peer

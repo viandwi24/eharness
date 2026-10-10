@@ -6,10 +6,13 @@
 [![CI](https://github.com/viandwi24/eharness/actions/workflows/ci.yml/badge.svg)](https://github.com/viandwi24/eharness/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/eharness)](https://www.npmjs.com/package/eharness)
 
-**Status: 0.5.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before
-1.0, breaking changes ship only in minor versions (`0.5 → 0.6`) with a migration note in the
-[changelog](CHANGELOG.md), so `^0.5.0` is safe to depend on
-([API stability](docs/engineering/api-stability.md)).
+**Status: 0.7.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before
+1.0, breaking changes ship only in minor versions (`0.7 → 0.8`) with a migration note in the
+[changelog](CHANGELOG.md), so `^0.7.0` is safe to depend on
+([API stability](docs/engineering/api-stability.md)). Coming from 0.6? Read
+[Upgrading to 0.7](docs/guides/upgrading.md). Modules and sections marked *Draft* in the specs
+(auto permission mode, agent messaging, the `<untrusted-content>` frame, project instructions) may
+still change in a minor release.
 
 ## Install
 
@@ -378,7 +381,7 @@ thin and idiomatic:
   and a dead-letter for poison inbox items.
 - **Beyond one-to-one chat (0.5):** group-chat gating and anti-loop (`eharness/group`) and
   OpenAPI operations as tools (`eharness/openapi`).
-- **Coding-agent building blocks (P31):** real-disk and mounted file systems with checkpoints and
+- **Coding-agent building blocks (0.7):** real-disk and mounted file systems with checkpoints and
   binary files (`eharness/filesystem/node`), a bash tool over a local sandbox
   (`eharness/shell`), rule-based permissions and plan mode (`eharness/permissions`), subagents with
   nested approvals that survive restarts (`eharness/subagent`), user questions (`eharness/ask`),
@@ -472,9 +475,14 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 [Memory](docs/guides/memory.md) ·
 [OpenAPI tools](docs/guides/openapi-tools.md) ·
 [Group chat](docs/guides/group-chat.md) ·
+[Permissions](docs/guides/permissions.md) ·
+[Shell](docs/guides/shell.md) ·
+[Ask the user](docs/guides/ask.md) ·
+[Web fetch and search](docs/guides/web.md) ·
 [Subagents](docs/guides/subagents.md) ·
 [Testing](docs/guides/testing.md) ·
-[Reference](docs/guides/reference.md)
+[Reference](docs/guides/reference.md) ·
+[Upgrading to 0.7](docs/guides/upgrading.md)
 
 Reference: [concept](docs/concept.md) · [architecture](docs/architecture.md) ·
 [specs](docs/specs) (the contracts) · [decisions (ADRs)](docs/decisions) ·
@@ -492,6 +500,8 @@ what to do: [production patterns → security](docs/guides/production-patterns.m
 
 | eharness | ai | zod | @ai-sdk/mcp (optional) | Runtime |
 |---|---|---|---|---|
+| 0.7.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
+| 0.6.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
 | 0.5.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
 | 0.4.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
 | 0.3.x | ^7.0.123 | ^3.25.76 \|\| ^4.1.8 | ^2.0.63 | Node ≥ 22, Bun |

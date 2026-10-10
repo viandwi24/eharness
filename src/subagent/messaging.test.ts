@@ -654,10 +654,10 @@ describe('send_message', () => {
     await m.close()
   })
 
-  test('messaging: false removes the tool and the name field', async () => {
+  test('messageTool: false removes the tool and the name field', async () => {
     const storage = shared()
     const w = worker(storage, [{ text: 'x' }])
-    const m = main(storage, w.agent, [{ text: 'hi' }], { messaging: false })
+    const m = main(storage, w.agent, [{ text: 'hi' }], { messageTool: false })
     const session = m.session('p1')
     const names = (await session.tools()).map((t) => t.name)
     expect(names).toContain('agent')
@@ -733,7 +733,7 @@ describe('agent_output and the report cap', () => {
         },
         { text: 'read' },
       ],
-      { reportMaxChars: 50 },
+      { maxReportChars: 50 },
       { resumable: false },
     )
     const session = m.session('p1')
@@ -770,7 +770,7 @@ describe('agent_output and the report cap', () => {
         subagents({
           agents: { worker: { agent: w.agent, description: 'd' } },
           approvals: 'policy',
-          messaging: false,
+          messageTool: false,
         }),
       ] as never,
     })
@@ -836,5 +836,79 @@ describe('agent_stop', () => {
       (outputs(await session.messages(), 'send_message').sm1 ?? '').includes('resumed'),
     )
     await m.close()
+  })
+})
+
+describe('tool options', () => {
+  test('messageTool / outputTool / stopTool take { name } and false removes them', async () => {
+    const storage = shared()
+    const w = worker(storage, [{ text: 'x' }])
+    const names = async (options: Partial<SubagentsOptions>): Promise<string[]> => {
+      const m = main(storage, w.agent, [{ text: 'hi' }], options)
+      const out = (await m.session(`names-${Math.random()}`).tools()).map((t) => t.name)
+      await m.close()
+      return out
+    }
+    const renamed = await names({
+      messageTool: { name: 'tell' },
+      outputTool: { name: 'read_agent' },
+      stopTool: { name: 'halt' },
+    })
+    expect(renamed).toEqual(expect.arrayContaining(['agent', 'tell', 'read_agent', 'halt']))
+    expect(renamed).not.toContain('send_message')
+    const off = await names({ outputTool: false, stopTool: false })
+    expect(off).toContain('send_message')
+    expect(off).not.toContain('agent_output')
+    expect(off).not.toContain('agent_stop')
+  })
+
+  test('background cannot be combined with approvals: park', () => {
+    expect(() =>
+      subagents({ agents: {}, approvals: 'park', background: { default: true } }),
+    ).toThrow(TypeError)
+  })
+})
+
+describe('agent directory isolation', () => {
+  test('two agents that reuse a session id and child ids do not see each other’s agents', async () => {
+    const run = async (names: [string, string]) => {
+      const storage = shared()
+      const g = gate()
+      const w = worker(
+        storage,
+        [
+          { toolCalls: [{ toolName: 'wait', input: {} }] },
+          { toolCalls: [{ toolName: 'wait', input: {} }] },
+          { text: 'child done' },
+          { text: 'child done' },
+        ],
+        { tools: { wait: waitTool(g) }, plugins: [messenger()] },
+      )
+      const m = main(storage, w.agent, [
+        { toolCalls: [spawnCall('c1', { name: names[0] }), spawnCall('c2', { name: names[1] })] },
+        { text: 'started' },
+        { text: 'seen' },
+        { text: 'seen' },
+      ])
+      const session = m.session('p1')
+      await session.send('go').result
+      return { g, w, m }
+    }
+    const a = await run(['alpha', 'beta'])
+    const b = await run(['gamma', 'delta'])
+    a.g.open()
+    b.g.open()
+    await until(
+      'children done',
+      () => a.w.model.prompts.length >= 3 && b.w.model.prompts.length >= 3,
+    )
+    const wireA = JSON.stringify(a.w.model.prompts)
+    const wireB = JSON.stringify(b.w.model.prompts)
+    expect(wireA).toMatch(/alpha|beta/)
+    expect(wireA).not.toMatch(/gamma|delta/)
+    expect(wireB).toMatch(/gamma|delta/)
+    expect(wireB).not.toMatch(/alpha|beta/)
+    await a.m.close()
+    await b.m.close()
   })
 })

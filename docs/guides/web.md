@@ -23,7 +23,16 @@ Safety, all `ERROR:` strings for the model:
   is trusted with `allow` (for a local docs server: `allow: ['localhost']`).
 - The library has no DNS. To refuse names that resolve to private addresses, inject a resolver:
   `resolveHost: async (host) => (await dns.lookup(host, { all: true })).map((e) => e.address)`
-  (Node `node:dns/promises`; on Bun the same).
+  **Without `resolveHost`, a public hostname that resolves to a private address is not blocked**
+  (DNS-based SSRF), so set it on any server that fetches for untrusted users. Node (and Bun):
+
+  ```ts
+  import { lookup } from 'node:dns/promises'
+
+  webFetch({
+    resolveHost: async (host) => (await lookup(host, { all: true })).map((e) => e.address),
+  })
+  ```
 - `deny` always wins; `onlyAllowed: true` turns `allow` into a strict allow-list (the right setup
   for an autonomous server). `allow` can be a predicate wired to your own permission system.
 - Cross-host redirects are returned as `REDIRECT: <url>` so the model's next call is checked again.

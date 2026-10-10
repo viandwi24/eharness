@@ -1,6 +1,6 @@
 # Spec 21 — Ask plugin (`eharness/ask`)
 
-Status: **Draft (P31)**. Module: `src/ask/*`. Built only with the public core API (ADR-0008).
+Status: **Draft (0.7)**. Module: `src/ask/*`. Built only with the public core API (ADR-0008).
 Design principle: ADR-0034 (every module works in three deployment profiles).
 
 `askUser(options)` adds `ask_user_question`, a multiple-choice question tool. The model asks 1–4

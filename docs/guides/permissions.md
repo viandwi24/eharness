@@ -34,6 +34,10 @@ In `default` mode reads are free, `src/**` edits and `bun test` run without aski
 asks, writes elsewhere ask, and `.env*` reads ask (built in; an allow rule can lift it). A deny
 rule applies in every mode.
 
+> **Known gap:** the built-in `.env*` ask does not cover recursive directory reads, so a recursive
+> `grep`/`find` through `bash` can read `.env` files without asking. Add `Read(**/.env*)` deny/ask
+> rules (they cover subtrees) or use the OS sandbox `denyRead`.
+
 ## Rules in practice
 
 - `Bash(npm run *)`: `*` is any text and a trailing ` *` also matches the bare command. An allow

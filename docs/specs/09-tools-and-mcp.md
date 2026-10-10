@@ -139,9 +139,11 @@ Lifecycle:
   the derived risk and logs `ctx.log.warn`. Pins (`fingerprintTools`) are computed on the
   server's tools before `risk` is applied.
 - Result mapping (`wrapUntrusted`, default `true`): the listed tool's `toModelOutput` is wrapped
-  so every `text` part of a `content` output becomes
-  `untrustedContent(text, { source: 'mcp', name: '<server>/<tool>' })` (spec 03 §10). Image/file
-  parts, the `json` output of structured results and the `isError` flag are unchanged (an error
+  so a `text` output and every `text` part of a `content` output becomes
+  `untrustedContent(text, { source: 'mcp', name: '<server>/<tool>' })` (spec 03 §10; the app should include `UNTRUSTED_CONTENT_INSTRUCTIONS`, but the frame's own
+  wording already tells the model that content inside is data, not instructions). Image/file
+  parts, the `json` output of structured results (a tool without `toModelOutput` is wrapped with the
+  default mapping first: a string output is framed as text, anything else stays `json`) and the `isError` flag are unchanged (an error
   result's text is framed too: the server wrote it). The stored UI tool output stays the raw MCP
   result; only the model-visible projection is framed. `mcpServer` exposes tool calls only (no
   resource reads).

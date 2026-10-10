@@ -368,7 +368,7 @@ interface PlainUsage {
 }
 ```
 
-Plain usage (P31 R8) lets a plugin pass a child run's `TurnResult.usage` directly. A missing
+Plain usage lets a plugin pass a child run's `TurnResult.usage` directly. A missing
 `totalTokens` is `inputTokens + outputTokens`. Cost precedence: `options.costUsd`, then
 `usage.costUsd`, then `options.model` priced from `models`.
 ```ts

@@ -8,12 +8,14 @@ export {
   htmlToText,
   isPrivateHost,
   matchHost,
+  WEB_FETCH_TOOL,
   type WebFetchOptions,
   webFetch,
 } from './fetch.ts'
 export {
   type SearchOptions,
   type SearchResult,
+  WEB_SEARCH_TOOL,
   type WebSearchOptions,
   webSearch,
 } from './search.ts'

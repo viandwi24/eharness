@@ -90,10 +90,16 @@ set by the developer), the core adds AI SDK's `toolSearch()` under the reserved 
 so app, plugin and source tools (for example a plugin's rarely used tool) can be deferred by the
 app. Names that match no tool are ignored.
 
+> **Draft / experimental (0.7).** The `deferTools` option is stable; the exact format of the deferred
+> tools turn reminder (`core:tools`: one line per deferred tool with a short description) may change
+> in a minor release ([API stability](../engineering/api-stability.md)).
+
 **The model learns the names from the turn reminder.** When any tool is deferred, the core appends
 a dynamic block (owner `core:tools`, refresh `turn`, never in `instructions`) after the plugins'
 reminders: a `Deferred tools` header followed by one `- name: first line of the description` line
-per deferred tool (description cut to 100 characters), in tool order. Tools already discovered
+per deferred tool (description cut to 100 characters, newlines collapsed, and `system-reminder`,
+`untrusted-content`, `event`, `agent-message` tags neutralised since MCP descriptions are
+third-party), in tool order. Tools already discovered
 stay in the list (they are callable, the list is only a catalog). Deferred tools count 0 tokens in
 `session.stats()` (`instructions`/`tools`, `toolSources[].tokens`) until discovered;
 `session.tools()` still reports their definition size so an app can show what deferral saves.
@@ -130,7 +136,7 @@ interface SessionToolInfo {
 session.tools(): Promise<SessionToolInfo[]>
 ```
 
-`session.tools()` (P31 R14) resolves the registry the way the next turn would, without running a
+`session.tools()` resolves the registry the way the next turn would, without running a
 turn, and lists the tools **in request order** (§6 rule 1, `config.toolOrder` applied). `source` is
 `'app'` (agent config), `plugin:<name>`, `source:<tool source id>` (e.g. `source:mcp:github`) or
 `'core'` (`load_skill`, `read_skill_file`, `search_skills`, `tool_search`). Deferred tools are
@@ -191,7 +197,7 @@ earlier in that order invalidates everything after it. Rules:
    (0.4.0, spec 05 §3.3; last, so turns without it keep the whole prefix). `activeTools` changes and tool-search discoveries change the tool list
    and therefore bust the whole cache; the core warns `W_CACHE_BUST` once per turn when
    `activeTools` differs from the previous step. Prefer `toolChoice` or `tool.approve` denials for
-   per-step restrictions. `config.toolOrder: string[]` (P31 R12) overrides the order: the listed final
+   per-step restrictions. `config.toolOrder: string[]` overrides the order: the listed final
    tool names come first in the listed order, every other tool follows in the default order above;
    names that match no tool are ignored and reported once per session (`W_TOOL_ORDER`, spec 10 §2).
    It applies to the final names of the whole set (including `tool_search` and request tools; the

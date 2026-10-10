@@ -1,6 +1,6 @@
 # Spec 20 — Subagent plugin (`eharness/subagent`)
 
-Status: **Draft (P31)**. Module: `src/subagent/*`. Built only with the public core API (ADR-0008).
+Status: **Draft (0.7)**. Module: `src/subagent/*`. Built only with the public core API (ADR-0008).
 Design: ADR-0034 (three deployment profiles), ADR-0035 (nested approvals park the parent), ADR-0037
 (parent / child index), ADR-0027 (external waits), ADR-0038 (agent messaging: `send_message`, names,
 resume).
@@ -13,7 +13,10 @@ agent, which runs as a **child session** (spec 05 §13) and returns a final repo
 ```ts
 import {
   subagents, subagentChild, pendingSubagentApprovals, subagentWaitId,
-  SUBAGENT_TOOL, SUBAGENT_NO_USER, SUBAGENT_NO_CLIENT,
+  AGENT_TOOL, SEND_MESSAGE_TOOL, AGENT_OUTPUT_TOOL, AGENT_STOP_TOOL,            // default tool names
+  AGENT_REPORT_MAX_CHARS, AGENT_MESSAGE_MAX_CHARS, AGENT_OUTPUT_PAGE_CHARS,     // 16 000, 8 000, 16 000
+  AGENT_NAME_PATTERN, AGENT_MESSAGE_INSTRUCTIONS,
+  SUBAGENT_NO_USER, SUBAGENT_NO_CLIENT, SUBAGENT_DENIED,                        // texts
 } from 'eharness/subagent'
 
 subagents({
@@ -22,22 +25,22 @@ subagents({
   toolName?: string                            // 'agent'
   maxDepth?: number                            // 2: the root is depth 0; a session at maxDepth has no tool
   maxConcurrent?: number                       // 8, per nesting depth and plugin instance
-  messaging?: boolean                          // true: send_message + the `name` field (§5); never with 'park'
-  messageToolName?: string                     // 'send_message'
-  stopTool?: boolean                           // like outputTool: agent_stop (§5.8)
-  stopToolName?: string                        // 'agent_stop'
-  outputTool?: boolean                         // true when background or messaging is on; never with 'park' (§5.7)
-  outputToolName?: string                      // 'agent_output'
-  reportMaxChars?: number                      // 16 000: cap of a background report (§2.2)
+  // tools (one pattern: `false` removes the tool, `{ name }` renames it; never with 'park')
+  messageTool?: boolean | { name?: string }    // true: send_message + the `name` field of `agent` (§5); false removes both
+  outputTool?: boolean | { name?: string }     // agent_output (§5.7): on when background or messageTool is on; true / { name } forces it on
+  stopTool?: boolean | { name?: string }       // agent_stop (§5.8): same default as outputTool
+  maxReportChars?: number                      // 16 000: cap of a background report (§2.2)
   messageLimits?: { perWindow?: number; windowMs?: number; duplicateWindowMs?: number; maxQueued?: number }   // §5.4
-  background?: boolean                         // false; 'inline' and 'policy' only
-  backgroundInChildren?: boolean               // false: run_in_background only in sessions without a parent (§2.2)
+  background?: boolean | { default?: boolean; inChildren?: boolean }   // false; 'inline' and 'policy' only (§2.2)
+                                               //   true: run_in_background offered, foreground unless asked, root session only
+                                               //   default: omitted run_in_background runs in the background (default false)
+                                               //   inChildren: also offered in child sessions (default false)
   approvals: 'inline' | 'park' | 'policy'
   answer?: (request: SubagentApprovalRequest, signal: AbortSignal)
             => Promise<SubagentApprovalAnswer> | SubagentApprovalAnswer   // required for 'inline'
   policy?: 'deny' | 'approve'                  // 'policy': default 'deny'
   childSessionId?: (parentSessionId: string, toolCallId: string) => string   // `${parent}:agent:${toolCallId}`
-  timeoutMs?: number                           // 'park': timeout of the parent's wait (default none)
+  parkTimeoutMs?: number                       // 'park': timeout of the parent's wait (default none)
   parentAgent?: () => HarnessAgent             // see §3.1 (the agent is itself a child of a 'park' parent)
   selfAgent?: () => HarnessAgent               // this agent: 'park' reconciles waits on open (§3.4); any strategy rebuilds names / finished agents (§5.6)
   onParentRun?: (run: HarnessRun, parentSessionId: string) => void   // 'park', see §4
@@ -56,13 +59,19 @@ type SubagentApprovalAnswer =
 ```
 
 `subagents()` throws `TypeError` for `'inline'` without `answer` and for `'park'` with
-`background: true`.
+`background` (`true` or an object).
+
+The tool-name constants match the tool names (`AGENT_TOOL` `'agent'`, `SEND_MESSAGE_TOOL`
+`'send_message'`, `AGENT_OUTPUT_TOOL` `'agent_output'`, `AGENT_STOP_TOOL` `'agent_stop'`); the limit
+constants sit next to them (`AGENT_REPORT_MAX_CHARS`, `AGENT_MESSAGE_MAX_CHARS`,
+`AGENT_OUTPUT_PAGE_CHARS`). The status words are the task registry's everywhere: `'running' |
+'completed' | 'failed' | 'stopped'` (`data-subagent.run` also has `'waiting'`).
 
 ## 2. The tool
 
 Input `{ subagent_type, description, prompt, run_in_background? }`. `subagent_type` is an enum of the
 catalog keys, so an unknown type is an invalid tool call the model corrects. `run_in_background`
-exists only with `background: true`. The description lists the types (resolved once per session, so
+exists only with `background`. The description lists the types (resolved once per session, so
 the prompt-cache prefix is stable).
 
 - The child session id is deterministic (`childSessionId`). It is opened on `def.agent` with
@@ -80,7 +89,7 @@ the prompt-cache prefix is stable).
 An async-generator tool: it yields `SubagentProgress` objects as **preliminary outputs** (UI only:
 status, steps, last tool, latest text) and its last value is the final output the model sees. It also
 writes the persisted part `data-subagent.run` (id = tool call id) `{ toolCallId, sessionId, agent,
-status: 'running' | 'done' | 'failed' }` so a UI can open the child transcript after a reload.
+status: 'running' | 'completed' | 'failed' | 'stopped' }` so a UI can open the child transcript after a reload.
 
 The child turn is driven until it ends: each `tool-pending` stop is answered and continued with
 `respond()` on the child.
@@ -101,7 +110,7 @@ started.` when aborted while waiting for a slot. Tools return errors as strings,
 
 ### 2.2 Background (`run_in_background`, `'inline'` / `'policy'`)
 
-With `backgroundByDefault: true` (and `background: true`) an `agent` call that omits
+With `background: { default: true }` an `agent` call that omits
 `run_in_background` runs in the background, like Claude Code's interactive default; the field's
 description tells the model to pass `false` only when it needs the result before continuing.
 Default `false`: omitted means foreground.
@@ -114,7 +123,7 @@ parent session closes) and on completion the plugin calls `ctx.session.inject('e
 running parent sees it at its next step boundary, an idle one wakes. The event is a stored message,
 so it survives restarts of the UI process. `text` starts `Background subagent <task id> ["<name>"] (<type>:
 <description>) finished.` (`Resumed subagent …` after a resume, `failed` / `was stopped`), then the report; it
-names the task id and agent name, never the child session id (that stays in `data`). The report is capped at `reportMaxChars` (default 16 000); a cut report ends `… [report cut at N of M characters; read the full report with agent_output({ id: "agent-2" })]` (without the hint when `agent_output` is off). An inject that
+names the task id and agent name, never the child session id (that stays in `data`). The report is capped at `maxReportChars` (default `AGENT_REPORT_MAX_CHARS`, 16 000); a cut report ends `… [report cut at N of M characters; read the full report with agent_output({ id: "agent-2" })]` (without the hint when `agent_output` is off). An inject that
 fails (parent closed) is logged. Approvals follow the configured strategy; a wake run is not driven
 by anyone — observe it with `session.onRun()` (in process, spec 05 §2.1) or `session.events()`.
 
@@ -134,7 +143,7 @@ interface SubagentTasks {
   list(): SubagentTask[]; get(id: string): SubagentTask | undefined   // task id or child session id
   stop(id: string): Promise<void>; stopAll(): Promise<void>
   subscribe(listener: (tasks: SubagentTask[]) => void): () => void   // tail updates throttled to 100 ms
-  background(toolCallId?: string): string[]   // move running foreground agent calls to the background
+  moveToBackground(toolCallId?: string): string[]   // move running foreground agent calls to the background
 }
 ```
 
@@ -145,9 +154,9 @@ process is taken for a child session id: the plugin calls `requestAbort('stopped
 the catalog agents (spec 05 §9.1), which reaches a child running in another instance. Closing the
 parent session stops every running task (`dispose`).
 
-**Moving a foreground run to the background.** With `background: true` (same rules as
-`run_in_background`: root session, or `backgroundInChildren`; `'inline'` and `'policy'`, not
-`'park'`, where it is a no-op) `subagentTasks.background(toolCallId?)` detaches the running
+**Moving a foreground run to the background.** With `background` on (same rules as
+`run_in_background`: root session, or `background.inChildren`; `'inline'` and `'policy'`, not
+`'park'`, where it is a no-op) `subagentTasks.moveToBackground(toolCallId?)` detaches the running
 foreground `agent` calls (Ctrl+B in Claude Code) and returns the new task ids (`[]` when none).
 The tool call resolves at once with `Subagent moved to the background as task <id> (<type>):
 <description>, by the user. Progress so far: <latest text or tool> You will be notified when it
@@ -158,15 +167,15 @@ follows the background path above (task `agent-<n>`, `eh.event` report, `wake`, 
 parent turn when it is still open, concurrency slot released at the end).
 
 **Persisted marker.** The tool writes `data-subagent.run` `{ toolCallId, sessionId, agent,
-status: 'running' }` (id = tool call id) when the background child starts. The final `done` /
-`failed` is written with the same id only while the starting turn still streams; afterwards the
+status: 'running' }` (id = tool call id) when the background child starts. The final `completed` /
+`failed` / `stopped` is written with the same id only while the starting turn still streams; afterwards the
 report event (`eh.event`, `data: { sessionId, agent, status }`) is the durable record, since a
 stored message of an earlier turn cannot be amended.
 
 **Children of children (the rule).** A report is injected into the session that started the
 child. A child session closes when its turn ends, which aborts its background children
 (`ctx.signal`), so a nested background run would be lost. Rule: `run_in_background` is only
-offered in sessions **without a parent** (the root the user sees); `backgroundInChildren: true`
+offered in sessions **without a parent** (the root the user sees); `background: { inChildren: true }`
 offers it in child sessions too, for apps whose child sessions stay open (the report then goes to
 that child). No cross-session injection exists (the root session handle lives in another agent
 and may be in another instance). Shell background tasks follow the same rule by configuration:
@@ -233,19 +242,19 @@ the user, or let it run: by default it is drained and stored; read it with `sess
 - Parent abort while `start` runs: the abort signal is the child's `send` signal. Once the parent is
   parked there is no running parent turn; stop the child with `childSession.abort()` (cross-process
   abort, ADR-0021) — its turn then ends `aborted` and resolves the wait.
-- Timeout: `timeoutMs` (the wait's own timer / inbox timer / `expireWaits()`, ADR-0027); the default
+- Timeout: `parkTimeoutMs` (the wait's own timer / inbox timer / `expireWaits()`, ADR-0027); the default
   `onTimeout` is `WAIT_TIMED_OUT`. A report after a timeout is `already-resolved` and ignored.
 - A `start` precondition failure (unknown type, no turn) resolves the wait at once with an `ERROR:`
   text through an immediately due `onTimeout`.
 - A crash after the child finished and before the hook's `resolveWait()` is healed by
-  `reconcileSubagentWaits` (§3.4); without it the wait stays parked until `timeoutMs` or a manual
-  `resolveWait`, so set `timeoutMs` in production anyway.
+  `reconcileSubagentWaits` (§3.4); without it the wait stays parked until `parkTimeoutMs` or a manual
+  `resolveWait`, so set `parkTimeoutMs` in production anyway.
 - The concurrency slot is held while `start` awaits the child's first turn, not while parked.
 
 ### 3.3 Server recipe
 
 ```ts
-const main = defineHarnessAgent({ ..., plugins: [subagents({ agents: { worker: { agent: worker, description } }, approvals: 'park', timeoutMs: 3_600_000 })] })
+const main = defineHarnessAgent({ ..., plugins: [subagents({ agents: { worker: { agent: worker, description } }, approvals: 'park', parkTimeoutMs: 3_600_000 })] })
 const worker = defineHarnessAgent({ ..., plugins: [subagentChild({ parent: () => main })] })   // same storage
 
 // POST /chat: the parent turn stops 'tool-pending'; show "waiting for approval in <agent>".
@@ -288,9 +297,13 @@ parent / child index (`core.parent`, `core.children`). A restart between the par
 nothing; the answering instance opens the child (and, through the hook, the parent) from storage.
 `'inline'` keeps the child only in process; `'policy'` never parks.
 
-## 5. Agent messaging (`send_message`, names, resume), ADR-0038
+## 5. Agent messaging (`send_message`, names, resume), ADR-0038 (Draft)
 
-Offered with `approvals: 'inline'` / `'policy'` and `messaging !== false` (default). A session that
+> **Draft / experimental (0.7).** `send_message`, named agents, resume, the roster reminder and the
+> `<agent-message>` frame may change in a minor release
+> ([API stability](../engineering/api-stability.md)).
+
+Offered with `approvals: 'inline'` / `'policy'` and `messageTool !== false` (default). A session that
 has the plugin gets `send_message` even without a catalog or at `maxDepth` (leaf agents need it to
 report to `main`); a child agent installs `subagents({ agents: {}, approvals: 'policy' })` for it.
 Not offered with `'park'`: a parked parent cannot call tools while its child runs, and children of
@@ -371,18 +384,18 @@ launched it. Same refusals as §5.2; never throws; not throttled; `to: 'main'` i
 
 ### 5.7 `agent_output`
 
-`agent_output({ id, offset?, limit? })` (name: `outputToolName`; kind `safe` in `eharness/permissions`)
+`agent_output({ id, offset?, limit? })` (name: `outputTool.name`; kind `safe` in `eharness/permissions`)
 returns the full final report of an agent by task id, name or child session id: the last
 non-empty text of the child session's stored assistant messages (after the last `step-start`, the
 same extraction as the report), so it works after a restart and for one-shot agents. Pages of
 `limit` characters (default 16 000) from `offset`; a longer report ends `… [characters A-B of N;
 more: agent_output({ id: "…", offset: B })]`. A running agent returns `<label> (<type>) is still running;
 no final report yet.` with its latest progress. Errors (`ERROR: no agent "x". Known agents: …`) are
-strings. Offered when `background` or messaging is on (`outputTool: false` disables it).
+strings. Offered when `background` or `messageTool` is on (`outputTool: false` disables it, `outputTool: true` forces it on). The tool reads the child through a short-lived session handle and closes it afterwards only when the child is idle: it never closes a child that is running or was resumed meanwhile (checked again after the read).
 
 ### 5.8 `agent_stop`
 
-`agent_stop({ id })` (name: `stopToolName`; kind `safe`; offered with `agent_output`'s condition,
+`agent_stop({ id })` (name: `stopTool.name`; kind `safe`; offered with `agent_output`'s condition,
 `stopTool: false` disables it) stops a running background agent by task id, name or child session
 id, like `subagentTasks.stop`. Unlike a user stop, a model stop leaves the agent resumable (unless
 its type is one-shot): the entry keeps `modelStopped`, so `send_message` resumes it. User stops
@@ -403,6 +416,6 @@ background event text, the `Subagent moved to the background as task …` result
 deny / approve, child error, abort propagation, depth limit, per-depth concurrency, background wake,
 park (another instance answers; parent process restart; child finishes at once; child fails),
 `reconcileSubagentWaits` (child finished without the hook, still waiting, `selfAgent` on open),
-`pendingSubagentApprovals`, `subagentTasks` (list / tail / stop / `run` part), `backgroundInChildren`.
-`src/subagent/messaging.test.ts`: running target (`data-eh.input`, model order), resume with full history and the report to the sender, subagent → main wake, subagent → sibling, user-stopped refusal, one-shot refusal, unknown target, name collision / validation, throttling and queue cap, spoofed tags, `subagentTasks.send`, roster, `messaging: false`, rebuild after reopening the root session.
+`pendingSubagentApprovals`, `subagentTasks` (list / tail / stop / `run` part), `background.inChildren`.
+`src/subagent/messaging.test.ts`: running target (`data-eh.input`, model order), resume with full history and the report to the sender, subagent → main wake, subagent → sibling, user-stopped refusal, one-shot refusal, unknown target, name collision / validation, throttling and queue cap, spoofed tags, `subagentTasks.send`, roster, `messageTool: false`, tool options (`{ name }` / `false`), agent directory isolation between two agents that reuse a session id, rebuild after reopening the root session.
 Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`).

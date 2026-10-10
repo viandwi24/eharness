@@ -22,6 +22,11 @@ export const DEFAULT_TOOL_KINDS: Readonly<ToolKinds> = {
   ask_user_question: { kind: 'ask' },
   exit_plan_mode: { kind: 'plan-exit' },
   todo_write: { kind: 'safe' },
+  // core tools: skills and deferred-tool discovery only read what the app already exposes
+  tool_search: { kind: 'safe' },
+  load_skill: { kind: 'safe' },
+  read_skill_file: { kind: 'safe' },
+  search_skills: { kind: 'safe' },
 }
 
 /**

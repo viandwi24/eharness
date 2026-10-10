@@ -159,7 +159,7 @@ describe("approvals: 'inline'", () => {
       (marker[0] as unknown as { data: { sessionId: string; status: string } }).data,
     ).toMatchObject({
       sessionId: 'p1:agent:call-0-0',
-      status: 'done',
+      status: 'completed',
     })
     // the child session is linked to the parent and closed again
     expect((await session.children()).map((c) => c.sessionId)).toEqual(['p1:agent:call-0-0'])
@@ -350,13 +350,13 @@ describe('failures, limits and abort', () => {
     await main.close()
   })
 
-  test('backgroundByDefault: an agent call without run_in_background runs in the background', async () => {
+  test('background.default: an agent call without run_in_background runs in the background', async () => {
     const storage = shared()
     const worker = childAgent(storage, { steps: [{ text: 'bg report', delayMs: 30 }] })
     const main = parentAgent(
       storage,
       worker,
-      { approvals: 'policy', background: true, backgroundByDefault: true },
+      { approvals: 'policy', background: { default: true } },
       [{ toolCalls: [spawn('later', 'cb')] }, { text: 'started it' }, { text: 'saw the report' }],
     )
     const session = main.session('p1')
@@ -368,13 +368,13 @@ describe('failures, limits and abort', () => {
     await main.close()
   })
 
-  test('backgroundByDefault: run_in_background false still runs in the foreground', async () => {
+  test('background.default: run_in_background false still runs in the foreground', async () => {
     const storage = shared()
     const worker = childAgent(storage, { steps: [{ text: 'fg report' }] })
     const main = parentAgent(
       storage,
       worker,
-      { approvals: 'policy', background: true, backgroundByDefault: true },
+      { approvals: 'policy', background: { default: true } },
       [{ toolCalls: [spawn('now', 'cf', { run_in_background: false })] }, { text: 'done' }],
     )
     const session = main.session('p2')
@@ -767,9 +767,9 @@ describe('background subagents: the subagentTasks service', () => {
           subagents({
             agents: { worker: { agent: leaf, description: 'w' } },
             approvals: 'policy',
-            background: true,
+            background:
+              backgroundInChildren === undefined ? true : { inChildren: backgroundInChildren },
             maxDepth: 3,
-            ...(backgroundInChildren === undefined ? {} : { backgroundInChildren }),
           }),
         ],
       }) as Agent
@@ -787,7 +787,7 @@ describe('background subagents: the subagentTasks service', () => {
 })
 
 describe('moving a running foreground subagent to the background', () => {
-  test('background() detaches it: the call returns at once, the child finishes and reports like run_in_background', async () => {
+  test('moveToBackground() detaches it: the call returns at once, the child finishes and reports like run_in_background', async () => {
     const storage = shared()
     const worker = childAgent(storage, { steps: [{ text: 'late report', delayMs: 400 }] })
     let capture: { services: { subagentTasks: SubagentTasks } } | undefined
@@ -810,11 +810,11 @@ describe('moving a running foreground subagent to the background', () => {
     const run = session.send('go')
     let ids: string[] = []
     await until('detached', () => {
-      ids = tasks.background()
+      ids = tasks.moveToBackground()
       return ids.length > 0
     })
     expect(ids).toEqual(['agent-1'])
-    expect(tasks.background()).toEqual([])
+    expect(tasks.moveToBackground()).toEqual([])
     expect((await run.result).stop).toBe('complete')
     const out = agentOutput(await session.messages(), 'cb')
     expect(out?.state).toBe('output-available')

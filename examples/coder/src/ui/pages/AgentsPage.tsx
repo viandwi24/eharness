@@ -9,8 +9,9 @@ import { Page, Section } from './Page.tsx'
 
 const STATUS: Record<SubagentRun['status'], { mark: string; color: string | undefined }> = {
   running: { mark: '◐', color: color.running },
-  done: { mark: '✓', color: color.ok },
+  completed: { mark: '✓', color: color.ok },
   failed: { mark: '✗', color: color.error },
+  stopped: { mark: '■', color: undefined },
 }
 
 /** Props of {@link AgentsPage}. */

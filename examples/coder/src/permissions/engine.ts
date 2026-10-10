@@ -31,12 +31,7 @@ export const PROTECTED_PATHS: readonly string[] = ['.git', '.coder/settings*.jso
 
 /** What the app's own tools are, on top of the library's defaults for eharness's tools. */
 export const TOOL_KINDS: ToolKinds = {
-  // skills (the core's skill tools) and language servers only read
-  load_skill: { kind: 'safe' },
-  read_skill_file: { kind: 'safe' },
-  search_skills: { kind: 'safe' },
-  // loads the schema of a deferred tool; the tool itself still asks when it is called
-  tool_search: { kind: 'safe' },
+  // language servers only read
   [TOOL.lsp]: { kind: 'safe' },
   // asks in every mode (an allow rule or bypassPermissions never approves it), no rule suggested
   [TOOL.dirAccess]: { kind: 'other', alwaysAsk: true },

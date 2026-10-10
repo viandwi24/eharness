@@ -545,7 +545,7 @@ describe('background tasks', () => {
 })
 
 describe('moving a running foreground command to the background', () => {
-  test('background() detaches it: the call returns at once, the task keeps its output and notifies on exit', async () => {
+  test('moveToBackground() detaches it: the call returns at once, the task keeps its output and notifies on exit', async () => {
     const events: ShellTaskEvent[] = []
     let tasks: import('./tasks.ts').ShellTasks | undefined
     const probe = definePlugin({
@@ -585,10 +585,10 @@ describe('moving a running foreground command to the background', () => {
     await until(() => tasks !== undefined)
     await sleep(150)
     // nothing to move for an unknown tool call id
-    expect(tasks?.background('nope')).toEqual([])
+    expect(tasks?.moveToBackground('nope')).toEqual([])
     // the 400 ms foreground timeout no longer applies once it is a background task
-    expect(tasks?.background()).toEqual(['bash-1'])
-    expect(tasks?.background()).toEqual([])
+    expect(tasks?.moveToBackground()).toEqual(['bash-1'])
+    expect(tasks?.moveToBackground()).toEqual([])
     expect((await run.result).stop).toBe('complete')
     const [text] = await outputs(session, 'bash')
     expect(text).toContain('Command moved to the background as task bash-1 by the user.')
@@ -630,7 +630,7 @@ describe('moving a running foreground command to the background', () => {
     const run = session.send('go')
     await until(() => tasks !== undefined)
     await sleep(100)
-    expect(tasks?.background()).toEqual([])
+    expect(tasks?.moveToBackground()).toEqual([])
     await run.result
     expect((await outputs(session, 'bash'))[0]).toContain('Exit code 0')
     await session.close()

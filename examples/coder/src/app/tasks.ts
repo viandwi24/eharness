@@ -116,7 +116,7 @@ export function createTaskHub(deps: TaskHubDeps): TaskHub {
     backgroundRunning() {
       const services = sessions.get(deps.session())
       if (services === undefined) return []
-      return [...services.shells.background(), ...services.agents.background()]
+      return [...services.shells.moveToBackground(), ...services.agents.moveToBackground()]
     },
     taskOutput(id) {
       const services = sessions.get(deps.session())

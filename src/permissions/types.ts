@@ -5,6 +5,9 @@ import type { GuardTranscriptEntry } from '../index.ts'
 /**
  * How the engine decides when no rule does. `auto` hands the calls no rule or read-only check
  * settles to an {@link AutoClassifier} (spec 18 §12); it needs the engine's `classifier` option.
+ *
+ * @experimental The `auto` mode is Draft in 0.7: it may change in a minor release
+ * (docs/engineering/api-stability.md). The other modes are not affected.
  */
 export type PermissionMode =
   | 'default'
@@ -99,7 +102,11 @@ export interface AutoClassifierContext {
   abortSignal?: AbortSignal
 }
 
-/** A classifier verdict. `reason` is shown to the model when the action is blocked. */
+/**
+ * A classifier verdict. `reason` is shown to the model when the action is blocked.
+ *
+ * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
+ */
 export interface AutoVerdict {
   decision: 'allow' | 'block'
   reason?: string
@@ -108,6 +115,8 @@ export interface AutoVerdict {
 /**
  * Judges one action in `auto` mode. It must be fail-safe: throwing (or returning anything but a
  * well-formed verdict) blocks the action.
+ *
+ * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
  */
 export type AutoClassifier = (
   action: AutoAction,

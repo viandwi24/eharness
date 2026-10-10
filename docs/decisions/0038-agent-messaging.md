@@ -12,7 +12,7 @@ Without this, every follow-up costs a new agent with no context.
 
 ## Decision
 
-**A new tool `send_message({ to, message })`** in `subagents()` (option `messaging`, default
+**A new tool `send_message({ to, message })`** in `subagents()` (option `messageTool`, default
 `true`; not offered with `approvals: 'park'`, see below). `to` is `"main"` (the root session), a
 task id (`agent-2`), a child session id, or a **name**. The `agent` tool gains an optional `name`
 (`^[a-z0-9][a-z0-9-]{0,31}$`, not `main`, not `agent-<n>`), unique among every agent the root
@@ -98,9 +98,9 @@ Cross-process messaging to a child is the core inbox (`enqueue(…, { mode: 'ste
 
 + Follow-ups keep the child's context; reports route to whoever asked.
 + Agent text is never stored as user input and never confused with approvals.
-− Directory and resume are per process. After a restart in `inline` / `policy` modes a child that
+− Directory and resume are per process (the root hands its directory to its child sessions through `SessionOptions.runtime`, so agents that reuse a session id never share one). After a restart in `inline` / `policy` modes a child that
   was running is gone (it is rebuilt as failed and can be resumed).
-− `send_message` is a new default tool of `subagents()` (set `messaging: false` to keep a tool set
+− `send_message` is a new default tool of `subagents()` (set `messageTool: false` to keep a tool set
   byte-identical).
 − A message sent in the instant a child's turn ends stays in the child's history (undelivered) and
   is seen at its next resume.

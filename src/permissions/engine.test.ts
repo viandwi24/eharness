@@ -649,6 +649,15 @@ describe('ask_user_question', () => {
 })
 
 describe('inactiveTools', () => {
+  test('core discovery and skill tools are safe: visible in plan, approved everywhere', () => {
+    for (const name of ['tool_search', 'load_skill', 'read_skill_file', 'search_skills']) {
+      expect(make('plan').inactiveTools()).not.toContain(name)
+      for (const mode of ['default', 'plan', 'dontAsk'] as const) {
+        expect(status(make(mode).decide(call(name, {})))).toBe('approved')
+      }
+    }
+  })
+
   test('default: only exit_plan_mode', () => {
     for (const mode of ['default', 'acceptEdits', 'dontAsk', 'bypassPermissions'] as const) {
       expect(make(mode).inactiveTools()).toEqual([TOOL.exitPlan])

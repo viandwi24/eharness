@@ -59,6 +59,7 @@ import {
   initialState,
   latestTodos,
   reduce,
+  type SubagentRun,
   type ViewState,
 } from './state.ts'
 import { TodoPanel } from './TodoPanel.tsx'
@@ -925,7 +926,7 @@ export function App({
       name: string
       description: string
       sessionId: string
-      status: 'running' | 'done' | 'failed'
+      status: SubagentRun['status']
     }) => {
       pageRef.current.open({
         kind: 'agent',

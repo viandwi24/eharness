@@ -22,6 +22,8 @@ specs in [`../specs`](../specs) are the full contracts.
 | `inbox` | `{ pollMs: 2_000, claimTtlMs: recovery.staleMs, collect: { quietMs: 1_500, maxWaitMs: 10_000, maxItems: 20 } }` | durable inbox drain (`pollMs: 0` = notifications only) and the `collect` debounce (also without an inbox) — [several instances](multi-instance.md) |
 | `inbox.retry` (0.5.0) | off (unlimited redelivery, as 0.4) | `{ maxAttempts?, backoff?: { type?: 'fixed' \| 'exponential' = 'exponential', delayMs? = 1_000, maxDelayMs? = 60_000, jitter? = true }, nonRetryable? = EH_INVALID_INPUT }`: attempts are counted at claim; an item past `maxAttempts` or failing non-retryably is dead-lettered — [poison items](multi-instance.md#poison-items) |
 | `inbox.onDeadLetter` (0.5.0) | none | `(item: DeadInboxItem) => void \| Promise<void>`, called after the adapter stored the dead item; a throw is `W_HOOK_FAILED` |
+| `toolOrder` (0.7.0) | default order | final tool names that go first, in that order; unknown names warn once per session (`W_TOOL_ORDER`); keep it stable (prompt cache) — [tools and MCP](tools-and-mcp.md) |
+| `deferTools` (0.7.0) | none | tool names (app, plugin or source tools) hidden until the model finds them with `tool_search`; the turn reminder lists them by name — [tools and MCP](tools-and-mcp.md) |
 | `compaction` | `{ summarizeAt: 0.75, keepLast: 4, maxSummaryTokens: 4_000 }` | or `false` — [compaction](compaction.md) |
 | `compaction.prune` | off | `{}` = `{ keepTurns: 2, minChars: 2_000 }`; `exclude`, `replaceWith` — view-only pruning of old tool outputs ([compaction](compaction.md#pruning-old-tool-outputs)) |
 | `compaction.thrash` | `{ withinSteps: 2 }` | or `false` — stop `'context-thrash'` when a second compaction within the window cannot get below `summarizeAt` ([compaction](compaction.md#when-a-turn-thrashes)) |
@@ -72,13 +74,19 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 | `resolveWait(waitId, { output } \| { errorText }, options?)` (0.5.0) | record the result of an external wait (validated against `outputSchema`, compare-and-set, first result wins) and continue the same assistant message when nothing is left open → `{ status: 'continued', run }` \| `{ status: 'recorded', remaining }` \| `'already-resolved'` \| `'not-pending'` ([external waits](external-waits.md)) |
 | `expireWaits(now?)` (0.5.0) | apply the `onTimeout` result of every due wait (sweepers) → `{ expired, run? }` |
 | `pendingWaits()` (0.5.0) | the stored external waits (`PendingExternal[]`) for UIs and sweepers |
-| `compact()` | manual compaction (idle only) |
+| `compact(options?)` | manual compaction (idle only); `{ keepLast?, instructions? }` apply to this call only: `keepLast` overrides `compaction.keepLast` (`0` summarizes everything), `instructions` adds a focus line to the summarizer context (0.7.0) |
+| `fork(options?)` (0.7.0) | new session from a prefix of the history (`beforeMessageId`, `id`, `runtime`, `copyState: 'all' \| 'none'`); returns its opened handle; `EH_SESSION_BUSY` while a turn runs |
+| `children()`, `parentInfo()` (0.7.0) | child sessions registered with this session as `parent` (`ChildSessionInfo[]`), and the stored parent link (`ParentInfo`) |
+| `tools(options?)` (0.7.0) | the tools of the next request in request order: `{ name, description?, inputSchema, source, deferred, tokens }` (`source`: `'app' \| 'core' \| 'plugin:<name>' \| 'source:<id>'`) |
+| `onRun(listener)` (0.7.0) | called synchronously whenever any turn of this session starts in this process (`send`, `respond`, queued turns, wakes); each listener gets its own `HarnessRun` |
 | `clearGrants()` | forget `remember: 'session'` grants |
 | `messages({ beforeId?, limit?, includeHidden? })` | stored history for UIs (pages past hidden messages until `limit` visible ones) |
 | `stats()` | `ContextStats` + `pending` + `activeTurn` |
 | `events()` | long-lived stream of `SessionEvent`s |
 | `idle()` | resolves when no turn runs and nothing is queued (nor a `collect` burst or inbox drain pending) |
 | `ready()`, `close()`, `running`, `id` | open now (configuration errors as exceptions), close, state |
+
+`respond(…)` (0.7.0): `approvals: [{ id, approved, note? }]` — a note (max 4 000 characters) is read by the model after the tool result as `<user-note …>`; `endTurn: 'after-answers' \| 'if-denied'` records the answers and runs the approved tools without calling the model (the turn stops `'complete'` with `steps: 0`). `send(input, { ifBusy: 'steer' })` returns a run whose `delivery` promise resolves `'step' \| 'turn' \| 'dropped'` (`SteerDelivery`). Plugins call `ctx.session.inject(kind, data, { deliver?, wake? })` for the plugin's own session (tools, hooks, background work).
 
 `SendOptions`: `ifBusy` (`'reject'` default; `'queue'`, `'steer'` for `send`; `'collect'` for
 `send`: merge a burst into one queued turn, debounced by `collect: { quietMs: 1_500, maxWaitMs:
@@ -203,6 +211,7 @@ their own with `ctx.warn()`. Codes (`WarningCode`, spec 10 §2):
 | Messages and parts | `W_INVALID_MESSAGE`, `W_UNKNOWN_DATA_PART`, `W_UNKNOWN_STORED_PART`, `W_WRITE_OUTSIDE_TURN`, `W_TRANSIENT_OVERRIDE` |
 | API use | `W_HOOK_FAILED`, `W_DEPRECATED`, `W_SESSION_OPTIONS_IGNORED` |
 | Sessions | `W_ABORT_UNSUPPORTED`, `W_INBOX_FAILED` (operations incl. `deadLetter`, 0.5.0), `W_INBOX_DEAD_LETTER` (0.5.0) |
+| Tools | `W_TOOL_ORDER` (0.7.0, `toolOrder` names no tool) |
 | Plugins | `W_GUARD_UNAVAILABLE` (0.5.0, `eharness/guard`: the judge failed and the call went to a person) |
 
 ## Request-scoped client tools and page context (0.5.0)
@@ -344,9 +353,9 @@ tools) and `PAGE_CONTEXT_PREAMBLE` (the framing of page context). `eharness/guar
 | `eharness/filesystem/node` (Node-only) | `diskFs(root, opts?)`, `mountFs(mounts)`, `nodeWorkspace(opts)`, `nodeCheckpointStore(opts)`, `compileIgnore()` | `diskFs`: `maxFileBytes`, `maxBinaryBytes`, `.gitignore` subset; spec 08 §8 | none (a `FileSystem` for `filesystem()`) |
 | `eharness/shell` (Node-only) | `shell({ sandbox, … })`, `localSandbox(root, opts?)` | `timeoutMs` (120 000), `maxTimeoutMs` (600 000), `maxOutputChars` (30 000), `background` (false), `onTaskEvent`, `toolName` (`bash`), `risk` (`'external'`); sandbox `os`, `env`, `shell` | `bash`, with `background`: `bash_output`, `kill_shell`; service `shellTasks`, part `data-shell.output` |
 | `eharness/permissions` | `permissionsPlugin({ engine })`, `createPermissionEngine({ roots, … })` | `mode` (`'default'`), `rules`, `protectedPaths` (`['.git']`), `builtinAsk`, `readOnlyCommands`, `toolKinds`, `aliases`, `modeCycle`, `persist` | none (a `tool.approve` hook, plan mode, output filter) |
-| `eharness/subagent` | `subagents({ agents, approvals, … })`, `subagentChild({ parent })`, `reconcileSubagentWaits()` | `toolName` (`agent`), `maxDepth` (2), `maxConcurrent` (8), `background` (false), `answer`, `policy` (`'deny'`), `timeoutMs`, `selfAgent`, `parentAgent`, `onParentRun` | `agent` (`subagent_type`, `description`, `prompt`); part `data-subagent.run` |
+| `eharness/subagent` | `subagents({ agents, approvals, … })`, `subagentChild({ parent })`, `reconcileSubagentWaits()` | `toolName` (`agent`), `maxDepth` (2), `maxConcurrent` (8), `background` (`false`; `true` or `{ default, inChildren }`), `messageTool`, `outputTool`, `stopTool` (each `boolean \| { name }`), `maxReportChars` (16 000), `messageLimits`, `answer`, `policy` (`'deny'`), `parkTimeoutMs`, `selfAgent`, `parentAgent`, `onParentRun` | `agent` (`subagent_type`, `description`, `prompt`, `name?`, `run_in_background?`), `send_message`, `agent_output`, `agent_stop`; service `subagentTasks`; part `data-subagent.run` |
 | `eharness/ask` | `askUser(options?)`, `pendingQuestions()`, `answerOutput()` | `toolName`, `maxQuestions` (4), `interactive` (true), `whenNoHuman` (`'dismiss'`) | `ask_user_question` (a client tool, or executed with `interactive: false`) |
-| `eharness/web` | `webFetch(options?)`, `webSearch({ search, … })` | `webFetch`: `allow`, `deny`, `onlyAllowed`, `maxBytes` (5 MiB), `maxChars` (30 000), `timeoutMs` (15 000), `maxRedirects` (5), `toMarkdown`, `resolveHost`, `fetch` | `web_fetch`, `web_search` (risk `'external'`) |
+| `eharness/web` | `webFetch(options?)`, `webSearch({ search, … })`, constants `WEB_FETCH_TOOL`, `WEB_SEARCH_TOOL` | `webFetch`: `allow`, `deny`, `onlyAllowed`, `maxBytes` (5 MiB), `maxChars` (30 000), `timeoutMs` (15 000), `maxRedirects` (5), `toMarkdown`, `resolveHost`, `fetch` | `web_fetch`, `web_search` (risk `'external'`) |
 
 `riskFromMethod(method)`: `GET`, `HEAD`, `OPTIONS` give `'read'`, `DELETE` gives `'destructive'`,
 the rest `'write'`. Guides: [guard](guard.md), [group chat](group-chat.md),

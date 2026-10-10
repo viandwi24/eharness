@@ -12,6 +12,7 @@
 import type { GenericToolApprovalFunction, Tool, ToolInputRefinement, ToolSet } from 'ai'
 import type { ApprovalConfig, ToolErrorTextFn, ToolOutputConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
+import { neutralizeTags } from '../messages/framing.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
 import type { SkillIndexEntry } from '../skills/registry.ts'
@@ -134,7 +135,12 @@ export function deferredToolsReminder(entries: readonly TurnToolEntry[]): string
     .filter((entry) => entry.tool.deferLoading === true)
     .map((entry) => {
       const description = typeof entry.tool.description === 'string' ? entry.tool.description : ''
-      const first = description.split('\n')[0]?.trim() ?? ''
+      const first = neutralizeTags(description.split('\n')[0]?.trim() ?? '', [
+        'system-reminder',
+        'untrusted-content',
+        'event',
+        'agent-message',
+      ]).replace(/[\r\n]+/g, ' ')
       const short = first.length > 100 ? `${first.slice(0, 99)}…` : first
       return short === '' ? `- ${entry.name}` : `- ${entry.name}: ${short}`
     })

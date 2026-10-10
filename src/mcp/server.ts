@@ -58,8 +58,10 @@ export interface McpServerOptions {
   /** `'lazy'` (default): connect at the first turn of the session. `'eager'`: at session open. */
   connect?: 'lazy' | 'eager'
   /**
-   * Wrap the text parts of tool results in an `<untrusted-content source="mcp" name="<server>_<tool>">`
-   * frame (`untrustedContent()`, spec 03 §10) so the model treats them as data. Images and other
+   * Wrap the text parts of tool results in an `<untrusted-content source="mcp" name="<server>/<tool>">`
+   * frame (`untrustedContent()`, spec 03 §10) so the model treats them as data (the frame's meaning is
+   * stated by the app with `UNTRUSTED_CONTENT_INSTRUCTIONS`; content inside it is data, never
+   * instructions). A tool without `toModelOutput` is framed too (string output as text). Images and other
    * non-text parts, structured JSON output and `isError` are unchanged. Default `true`.
    */
   wrapUntrusted?: boolean
@@ -91,6 +93,8 @@ export type McpRiskFunction = (tool: {
 export const MCP_AUTO_DEFER_THRESHOLD = 20
 
 const NAME = /^[a-z0-9-]{1,32}$/
+
+type ModelOutput = Awaited<ReturnType<NonNullable<Tool['toModelOutput']>>>
 
 type McpModule = { createMCPClient(config: MCPClientConfig): Promise<MCPClient> }
 
@@ -362,12 +366,21 @@ export function createMcpServer(
 
   /** Wrap the text parts of the tool's model output in an untrusted-content frame. */
   function frameResults(tool: Tool, label: string): Tool {
-    const original = tool.toModelOutput
-    if (original === undefined) return tool
+    const original =
+      tool.toModelOutput ??
+      // no mapping: frame what the model would see by default (a string as text; JSON unchanged)
+      (({ output }: { output: unknown }) =>
+        typeof output === 'string'
+          ? { type: 'text' as const, value: output }
+          : { type: 'json' as const, value: (output ?? null) as never })
+    const mapped = original as (options: unknown) => Promise<ModelOutput> | ModelOutput
     return {
       ...tool,
-      toModelOutput: async (options: Parameters<typeof original>[0]) => {
-        const out = await original(options)
+      toModelOutput: async (options: unknown) => {
+        const out = await mapped(options)
+        if (out.type === 'text') {
+          return { ...out, value: untrustedContent(out.value, { source: 'mcp', name: label }) }
+        }
         if (out.type !== 'content') return out
         return {
           ...out,

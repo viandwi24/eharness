@@ -327,9 +327,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
           ? { maxConcurrent: deps.maxConcurrentAgents }
           : {}),
         // a child's own background reports would die with its session: main agent only
-        ...(background
-          ? { background: true, backgroundByDefault: config.print === undefined }
-          : {}),
+        ...(background ? { background: { default: config.print === undefined } } : {}),
         // rebuilds agent names and finished agents when a stored session is reopened
         selfAgent: () => self.agent as HarnessAgent,
       }),

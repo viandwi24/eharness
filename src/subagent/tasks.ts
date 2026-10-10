@@ -55,7 +55,7 @@ export interface SubagentTasks {
    * task ids (empty when nothing could be moved; not available with `approvals: 'park'` or
    * without `background: true`).
    */
-  background(toolCallId?: string): string[]
+  moveToBackground(toolCallId?: string): string[]
   /**
    * Message an agent as the USER (or by id / child session id / name): a running agent gets it as
    * input at its next step (a steer, `source: 'user'`); a finished resumable one is resumed in the
@@ -188,7 +188,7 @@ export function createSubagentTaskRegistry(options: {
       fire()
     },
     foreground: new Map(),
-    background(toolCallId) {
+    moveToBackground(toolCallId) {
       const ids: string[] = []
       const keys = toolCallId === undefined ? [...registry.foreground.keys()] : [toolCallId]
       for (const key of keys) {

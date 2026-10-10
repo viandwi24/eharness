@@ -1,6 +1,6 @@
 # P31 — Library improvements found by the coding-agent benchmark
 
-Status: review (L1, L2 and L3 shipped; the coder example migration and the final review remain) · Owner: — · Branch: `main` (direct commits)
+Status: done (shipped in 0.7.0) · Owner: — · Branch: `main` (direct commits)
 
 ## Goal
 

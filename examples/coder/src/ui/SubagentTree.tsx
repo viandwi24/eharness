@@ -19,9 +19,13 @@ export function SubagentTree({ progress }: { progress: AgentProgress }): ReactEl
           <Text wrap="truncate-end" dimColor>
             {sym.arrow} {progress.lastTool ?? 'starting'} ({steps}) · {progress.agent}
           </Text>
-        ) : progress.status === 'done' ? (
+        ) : progress.status === 'completed' ? (
           <Text wrap="truncate-end" dimColor>
             Done ({steps}) · {progress.agent}
+          </Text>
+        ) : progress.status === 'stopped' ? (
+          <Text wrap="truncate-end" dimColor>
+            Stopped ({steps}) · {progress.agent}
           </Text>
         ) : (
           <Text wrap="truncate-end" color={color.error}>

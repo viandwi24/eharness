@@ -1,11 +1,13 @@
 # Spec 22 — Web plugins (`eharness/web`)
 
-Status: **Draft (P31)**. Module: `src/web/*`. Built only with the public core API (ADR-0008) and
+Status: **Draft (0.7)**. Module: `src/web/*`. Built only with the public core API (ADR-0008) and
 Web APIs (`fetch`, `URL`, `TextDecoder`); no `node:` imports, so the library cannot resolve DNS —
 the resolver is injectable. Design principle: ADR-0034.
 
 Both tools carry `metadata.risk: 'external'` (spec 11 §3: approval policy and risk rules apply).
-Failures are returned as `ERROR:` strings (hard rule 6).
+Failures are returned as `ERROR:` strings (hard rule 6). The default tool names are exported as the
+constants `WEB_FETCH_TOOL` (`'web_fetch'`) and `WEB_SEARCH_TOOL` (`'web_search'`), like `BASH_TOOL` in
+`eharness/shell`.
 
 ## 1. Profiles
 
@@ -30,7 +32,7 @@ webFetch({
   resolveHost?: (host: string) => Promise<string[]>
   fetch?: typeof fetch
   wrapUntrusted?: boolean   // true: frame the page content (spec 03 §10)
-  toolName?: string         // 'web_fetch'
+  toolName?: string         // WEB_FETCH_TOOL = 'web_fetch'
   userAgent?: string
 })
 ```
@@ -45,15 +47,17 @@ Tool input `{ url, prompt? }`. Rules, in order:
 3. A host not trusted by `allow` (or any host when `onlyAllowed` and not in `allow`: `ERROR: <host> is not in the allow list`):
    - IP literals and local names (`localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan`,
      single-label names) in private, loopback, link-local, CGNAT, unspecified or multicast ranges
-     (IPv4, IPv6, IPv4-mapped) → `ERROR: <host> is a private or local host and is not allowed. Add it to the web_fetch allow list (allow: ['<host>']) to fetch it.` (`web_fetch` is the literal text). **Always** applied to untrusted hosts, with or without
+     (IPv4, IPv6, IPv4-mapped) → `ERROR: <host> is a private or local host and is not allowed. Add it to the <toolName> allow list (allow: ['<host>']) to fetch it.` (`<toolName>` is the configured `toolName`, default `web_fetch`). **Always** applied to untrusted hosts, with or without
      `resolveHost`.
    - ports other than 80/443 → refused.
    - with `resolveHost`: any resolved address in a private range → refused. A resolver error is
-     ignored (the fetch reports it).
+     ignored (the fetch reports it). **Without `resolveHost` a public hostname that resolves to a
+     private address is NOT blocked** (DNS-based SSRF; the library has no DNS, it is runtime-neutral):
+     servers fetching on behalf of untrusted users must pass `resolveHost` (guide: `docs/guides/web.md`).
    - `http` is upgraded to `https`.
    Trusted hosts skip all of rule 3 (their private addresses, odd ports and `http` are fetched).
 4. Redirects are handled manually: a same-host redirect is followed (re-checked, never downgraded
-   from https), another host returns `REDIRECT: <url> — call web_fetch again with this URL` (so the
+   from https), another host returns `REDIRECT: <url> — call <toolName> again with this URL` (so the
    model's next call is checked again), more than `maxRedirects` hops → `ERROR: too many redirects`.
 5. Non-2xx → `ERROR: <url> returned HTTP <status> <text>`. Content types: `text/*`, `*json*`,
    `*xml*`, `application/javascript` and none; others → `ERROR: unsupported content type <type> …`.
@@ -83,7 +87,7 @@ webSearch({
   search: (query: string, o: { allowedDomains?: string[]; blockedDomains?: string[]; signal?: AbortSignal })
     => Promise<{ text: string; sources: { title?: string; url: string }[]; usage?: AddUsageInput; model?: LanguageModel }>
   wrapUntrusted?: boolean    // true: frame the findings and sources (spec 03 §10)
-  toolName?: string          // 'web_search'
+  toolName?: string          // WEB_SEARCH_TOOL = 'web_search'
 })
 ```
 
