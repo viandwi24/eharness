@@ -329,6 +329,8 @@ adapter. `updatedAt` is set on every write.
 
 ## 7. Writing your own adapter (guide excerpt)
 
+**Grep helpers.** `splitLines(content)` (split on `\n`, trailing `\r` removed), `statelessPattern(regex)` (drops `g`/`y`) and `GREP_SCAN_CHARS` (2000, characters of a line a pattern is matched against) are exported from `eharness/filesystem`, so an adapter's optional `grep` behaves like `memoryFs`. `fileSystemConformance`'s factory must return an empty, isolated adapter per call.
+
 ```ts
 import type { FileSystem } from 'eharness/filesystem'
 import { contentVersion } from 'eharness/filesystem'

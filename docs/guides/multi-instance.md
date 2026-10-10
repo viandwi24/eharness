@@ -60,6 +60,8 @@ are acknowledged only after their effect is stored, and an item that comes back 
 died, an ack was lost) is recognised by its id and skipped — at-least-once delivery, applied
 exactly once. While approvals are pending, queued items wait (like the in-memory queue).
 
+**Cost of polling.** An `InboxAdapter` without `notify`/`subscribe` (e.g. SQLite) is supported but every holder polls: one `claim` per `pollMs` (default 2000) per session whose turn runs, and a new item can wait up to `pollMs` before it is seen. Tune `inbox.pollMs` (latency against query load); the claim TTL (`claimTtlMs`) decides how long a crashed holder's items stay hidden, so keep it above `pollMs` plus the longest step. See "Writing a storage adapter".
+
 `send()` is unchanged. A chat route that wants cross-instance queuing calls `enqueue()` itself:
 
 ```ts

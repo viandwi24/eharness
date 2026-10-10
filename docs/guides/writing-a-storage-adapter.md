@@ -152,6 +152,14 @@ const inbox: InboxAdapter = {
 }
 ```
 
+**Without `notify`/`subscribe` the holder polls.** The instance running a session's turn then
+learns about new inbox items only every `inbox.pollMs` (default 2000 ms): each poll is one
+`claim` call per session with a running turn, and an item waits up to `pollMs` before a `steer`
+or a queued message is seen. That is fine for SQLite or a single process; lower `pollMs` for
+latency (more queries), raise it for many idle holders. `claimTtlMs` bounds how long a dead
+holder's items stay invisible, so keep it well above `pollMs` plus a turn's longest step. With
+Postgres, `LISTEN`/`NOTIFY` in `notify`/`subscribe` removes the wait.
+
 `claim` must give each item to exactly one claimer, oldest first, and never return an item behind
 an older item of the session that another owner still holds (head of line: the core keeps the
 items after a running unit claimed, so no other instance starts them out of order). A claim by an

@@ -22,6 +22,14 @@ export const DEFAULT_TOOL_KINDS: Readonly<ToolKinds> = {
   ask_user_question: { kind: 'ask' },
   exit_plan_mode: { kind: 'plan-exit' },
   todo_write: { kind: 'safe' },
+  // `eharness/memory`: the memory plugin confines every path to the agent's own memory roots (not
+  // the project), so its tools are `safe`: approved in every mode, plan mode included
+  memory_view: { kind: 'safe' },
+  memory_create: { kind: 'safe' },
+  memory_str_replace: { kind: 'safe' },
+  memory_insert: { kind: 'safe' },
+  memory_delete: { kind: 'safe' },
+  memory_rename: { kind: 'safe' },
   // core tools: skills and deferred-tool discovery only read what the app already exposes
   tool_search: { kind: 'safe' },
   load_skill: { kind: 'safe' },

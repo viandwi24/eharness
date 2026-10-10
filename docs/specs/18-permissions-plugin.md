@@ -145,6 +145,7 @@ interface ToolKindSpec {
 `DEFAULT_TOOL_KINDS` describes eharness's own tools: `read_file`, `list_files`, `grep`, `glob`
 (read), `edit_file` (including `edits[]`; only `path` matters), `write_file`, `delete_file`
 (write), `bash` (shell, `eharness/shell`), `bash_output`, `kill_shell`, `todo_write` (safe),
+`memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`, `memory_delete`, `memory_rename` (safe: `eharness/memory` confines them to the agent's own memory roots, not the project, so they are approved in every mode including `plan`; use `toolKinds` to make them `write` or `alwaysAsk` when notes need approval),
 `web_fetch`, `web_search`, the core tools `tool_search`, `load_skill`, `read_skill_file`, `search_skills` (safe, so deferred tools stay discoverable in `plan` mode), `agent`, `send_message` (safe: it only reaches agents that already run under the same rules, ADR-0038), `ask_user_question`, `exit_plan_mode`. A tool the map does not
 know is `other`. Pass `toolKinds` to add or override (`{ run: { kind: 'shell', commandField: 'cmd' } }`).
 

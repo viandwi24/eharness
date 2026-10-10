@@ -99,8 +99,9 @@ function metaOf(meta: MetaUnderTest): { path: string; version: string; size: num
  * (recursive, sorted, prefix, metadata only), copies on read, and `stat` / `grep` when
  * implemented, and `move` when implemented.
  *
- * `factory` is called once per case and must return an **empty** file system (e.g. a fresh
- * namespace in a shared database). Paths used are normalized absolute POSIX paths.
+ * `factory` is called once per case and must return an **empty, isolated** file system on every
+ * call (e.g. a fresh namespace or database in shared storage): cases write files and assume nothing
+ * else exists, so a factory that returns the same shared instance fails on leftovers. Paths used are normalized absolute POSIX paths.
  *
  * @example
  * ```ts

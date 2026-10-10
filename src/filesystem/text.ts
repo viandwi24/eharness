@@ -1,6 +1,9 @@
-/** Text helpers shared by `memoryFs` and the file tools (internal to `src/filesystem`). */
+/** Text helpers shared by `memoryFs` and the file tools; the grep helpers are exported for adapter authors. */
 
-/** Lines of a text for grep: split on `\n`, a trailing `\r` removed. */
+/**
+ * Lines of a text for grep: split on `\n`, a trailing `\r` removed. Use it in a `FileSystem.grep`
+ * implementation so line numbers match the file tools.
+ */
 export function splitLines(content: string): string[] {
   return content.split('\n').map((line) => (line.endsWith('\r') ? line.slice(0, -1) : line))
 }
@@ -105,7 +108,10 @@ export function unsafePatternReason(source: string): string | undefined {
   return undefined
 }
 
-/** A copy of `pattern` without the stateful `g` / `y` flags (so `test` has no `lastIndex`). */
+/**
+ * A copy of `pattern` without the stateful `g` / `y` flags (so `test` has no `lastIndex`). Use it
+ * in a `FileSystem.grep` implementation before matching line after line.
+ */
 export function statelessPattern(pattern: RegExp): RegExp {
   return new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ''))
 }

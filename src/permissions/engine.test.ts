@@ -1361,6 +1361,22 @@ describe('options', () => {
     expect(engine.expandRuleTool('Tools')).toEqual(['scratch', 'web_fetch'])
   })
 
+  test('memory tools are safe: approved in every mode, plan mode included', () => {
+    const inputs: Record<string, unknown> = {
+      memory_view: { path: '/memories' },
+      memory_create: { path: '/memories/a.md', file_text: 'x' },
+      memory_str_replace: { path: '/memories/a.md', old_str: 'x', new_str: 'y' },
+      memory_insert: { path: '/memories/a.md', insert_line: 0, insert_text: 'x' },
+      memory_delete: { path: '/memories/a.md' },
+      memory_rename: { old_path: '/memories/a.md', new_path: '/memories/b.md' },
+    }
+    for (const mode of PERMISSION_MODES) {
+      for (const [name, input] of Object.entries(inputs)) {
+        expect(make(mode).decide(call(name, input))).toEqual({ status: 'approved' })
+      }
+    }
+  })
+
   test('a safe tool is approved in every mode; kindOf and toolsOfKind', () => {
     for (const mode of PERMISSION_MODES) {
       expect(make(mode).decide(call('todo_write', { todos: [] }))).toEqual({ status: 'approved' })

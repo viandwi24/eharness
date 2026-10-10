@@ -127,6 +127,11 @@ files from your app with `fs.writeBytes(path, bytes)`. A custom adapter adds `re
 `writeBytes` and `FileMeta.binary` and checks them with
 `fileSystemConformance(factory, { requireBytes: true })`. See spec 08 §12.
 
+`fileSystemConformance(factory)` calls `factory` once per case: it must return an **empty,
+isolated** adapter every time (a fresh in-memory map, a new database or namespace), not a shared
+instance. A custom `grep` can reuse `splitLines`, `statelessPattern` and `GREP_SCAN_CHARS` from
+`eharness/filesystem` so its line numbers and per-line scan limit match the file tools.
+
 ## Real directories: `eharness/filesystem/node`
 
 For an agent that works on files on disk (a CLI, a server with a checkout), `diskFs(root)` is a

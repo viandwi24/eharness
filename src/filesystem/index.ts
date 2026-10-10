@@ -49,6 +49,7 @@ export {
   projectInstructions,
 } from './project-instructions.ts'
 export { type FsSkillSourceOptions, fsSkillSource } from './skill-source.ts'
+export { GREP_SCAN_CHARS, splitLines, statelessPattern } from './text.ts'
 export { type FileMediaRef, isFileMediaRef } from './tools.ts'
 export type {
   BinaryFile,
