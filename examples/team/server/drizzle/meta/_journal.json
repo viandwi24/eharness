@@ -64,6 +64,20 @@
       "when": 1791645126725,
       "tag": "0008_black_scarecrow",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791647229270,
+      "tag": "0009_stormy_cerise",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791648445881,
+      "tag": "0010_colossal_mockingbird",
+      "breakpoints": true
     }
   ]
 }

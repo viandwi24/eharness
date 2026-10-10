@@ -18,6 +18,7 @@ interface Row {
   label: string
   settings: string
   models: string | null
+  extra: string | null
   enabled: number
   updated_at: number
 }
@@ -25,6 +26,12 @@ interface Row {
 export interface ProfileStoreOptions {
   /** Called after a put / delete (append the `providers-changed` event here). */
   onChange?: (change: { kind: string; id: string; action: 'put' | 'delete' }) => void
+  /**
+   * Kinds whose `settings` the box seals here (default: every kind). Pass `['provider']` when the
+   * other kinds are sealed by `sealedProfileStore` (connections, credentials), so nothing is
+   * encrypted twice.
+   */
+  sealKinds?: readonly string[]
   /** A row that cannot be opened (lost key, corrupted) is skipped; say why (never the value). */
   warn?: (message: string) => void
 }
@@ -44,10 +51,14 @@ export function sqliteProfileStore(
       }
     }
   }
+  const seals = (kind: string): boolean =>
+    options.sealKinds === undefined || options.sealKinds.includes(kind)
   const unrow = async (row: Row): Promise<ConfigProfile | undefined> => {
     let settings: Record<string, unknown>
     try {
-      settings = JSON.parse(await box.open(row.settings)) as Record<string, unknown>
+      settings = JSON.parse(
+        seals(row.kind) ? await box.open(row.settings) : row.settings,
+      ) as Record<string, unknown>
     } catch (error) {
       options.warn?.(
         `profile "${row.id}" is unreadable and was skipped: ${error instanceof Error ? error.message : String(error)}`,
@@ -55,6 +66,7 @@ export function sqliteProfileStore(
       return undefined
     }
     return {
+      ...(row.extra === null ? {} : (JSON.parse(row.extra) as Record<string, unknown>)),
       id: row.id,
       kind: row.kind,
       definitionId: row.definition_id,
@@ -90,25 +102,39 @@ export function sqliteProfileStore(
       return row === null ? undefined : unrow(row)
     },
     async put(profile) {
-      const sealed = await box.seal(JSON.stringify(profile.settings ?? {}))
-      const models = (profile as { models?: unknown }).models
+      const text = JSON.stringify(profile.settings ?? {})
+      const sealed = seals(profile.kind) ? await box.seal(text) : text
+      const {
+        id,
+        kind,
+        definitionId,
+        label,
+        settings: _s,
+        enabled,
+        updatedAt,
+        models,
+        ...rest
+      } = profile as ConfigProfile & Record<string, unknown>
+      const extra = Object.keys(rest).length === 0 ? null : JSON.stringify(rest)
       sqlite
         .query(
-          `INSERT INTO config_profiles (kind, id, definition_id, label, settings, models, enabled, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO config_profiles (kind, id, definition_id, label, settings, models, extra, enabled, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT (kind, id) DO UPDATE SET definition_id = excluded.definition_id,
              label = excluded.label, settings = excluded.settings, models = excluded.models,
+             extra = excluded.extra,
              enabled = excluded.enabled, updated_at = excluded.updated_at`,
         )
         .run(
-          profile.kind,
-          profile.id,
-          profile.definitionId,
-          profile.label,
+          kind,
+          id,
+          definitionId,
+          label,
           sealed,
           models === undefined ? null : JSON.stringify(models),
-          profile.enabled ? 1 : 0,
-          profile.updatedAt,
+          extra,
+          enabled ? 1 : 0,
+          updatedAt,
         )
       options.onChange?.({ kind: profile.kind, id: profile.id, action: 'put' })
       notify()

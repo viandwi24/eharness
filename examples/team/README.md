@@ -29,7 +29,7 @@ docs/     architecture, API, operations
 - **Library and memory**: shared files agents write and you edit (stale edits lose to agent writes),
   workspace and per-agent memory.
 - **Routines**: cron / interval / one-shot prompts, safe with several instances.
-- **MCP per agent**: remote MCP servers (HTTP / SSE) configured per agent; tools are deferred.
+- **Connectors** (Claude style): built-in Files, Memory, Planning, Web, Ask the user and Team; GitHub and any remote MCP URL, connected once for the workspace (available to all agents, each agent may override) or for one agent; per agent each capability is Allowed, Ask first or Off. Secrets are encrypted, writes of external connectors always ask, even in Bypass mode.
 - **Cost controls**: a per-workspace USD budget on a shared ledger and a cap on concurrent
   delegations. Multi-agent runs cost many times a chat, see the
   [lead and role agents guide](../../docs/guides/lead-and-role-agents.md).

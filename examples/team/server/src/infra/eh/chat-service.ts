@@ -29,11 +29,14 @@ export function createChatService(
   factory: AgentFactory,
   deps: Pick<Deps, 'workspaceId'>,
 ): ChatPort {
-  const sessionFor = (def: AgentDef): HarnessSession =>
-    factory.agentFor(def).session(dmSessionId(def.id), {
+  /** Connectors are activated asynchronously (`factory.prepare`); the agent itself is synchronous. */
+  const sessionFor = async (def: AgentDef): Promise<HarnessSession> => {
+    await factory.prepare(def)
+    return factory.agentFor(def).session(dmSessionId(def.id), {
       lock: factory.lock,
       runtime: { workspaceId: deps.workspaceId, agentId: def.id },
     }) as HarnessSession
+  }
 
   const modelOf = (def: AgentDef): ChatStats['model'] => {
     const { id, profileId, contextWindow, maxOutputTokens, pricing } = factory.modelInfo(def)
@@ -57,7 +60,7 @@ export function createChatService(
 
   return {
     async chat(def, input, { actor, ifBusy }) {
-      const session = sessionFor(def)
+      const session = await sessionFor(def)
       const body = input as unknown as ChatRequestBody
       const last = input.messages.at(-1)
       const isSend =
@@ -86,12 +89,13 @@ export function createChatService(
       return { kind: 'stream', response: await run.toHttpResponse() }
     },
 
-    resume: (def, request) => handleResumeRequest(sessionFor(def), request),
+    resume: async (def, request) => handleResumeRequest(await sessionFor(def), request),
 
-    abort: (def, reason) => sessionFor(def).requestAbort(reason),
+    abort: async (def, reason) => (await sessionFor(def)).requestAbort(reason),
 
     async messages(def, { before, limit }) {
       // a pure read: no session.start hooks (agent.peek)
+      await factory.prepare(def)
       const page = await factory
         .agentFor(def)
         .peek(dmSessionId(def.id))
@@ -105,14 +109,14 @@ export function createChatService(
     },
 
     async compact(def) {
-      const message = await sessionFor(def).compact()
+      const message = await (await sessionFor(def)).compact()
       return { compacted: message !== null, message: message === null ? null : asMessage(message) }
     },
 
-    stats: (def) => statsOf(sessionFor(def), modelOf(def)),
+    stats: async (def) => statsOf(await sessionFor(def), modelOf(def)),
 
     async context(def) {
-      const session = sessionFor(def)
+      const session = await sessionFor(def)
       const [stats, tools] = await Promise.all([statsOf(session, modelOf(def)), session.tools()])
       return {
         stats,

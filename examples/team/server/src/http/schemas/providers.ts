@@ -1,6 +1,6 @@
 import { z } from '@hono/zod-openapi'
 
-const SecretStatus = z
+export const SecretStatusSchema = z
   .object({
     set: z.boolean().openapi({ description: 'A value is stored.' }),
     hint: z.string().optional().openapi({

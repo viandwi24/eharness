@@ -11,6 +11,7 @@ import { DomainError } from '../app/errors.ts'
 import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { chatRoutes } from './routes/chat.ts'
+import { connectorRoutes } from './routes/connectors.ts'
 import { healthRoutes } from './routes/health.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
@@ -85,7 +86,7 @@ const EH_STATUS: Record<string, number> = {
 }
 
 /** Paths that need no token. */
-const PUBLIC = new Set(['/health', '/openapi.json', '/docs'])
+const PUBLIC = new Set(['/health', '/openapi.json', '/docs', '/oauth/callback'])
 
 export function createApp(options: AppOptions): OpenAPIHono {
   const app = new OpenAPIHono({
@@ -177,6 +178,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', libraryRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
   app.route('/', providerRoutes(options.deps))
+  app.route('/', connectorRoutes(options.deps))
   app.route('/', routineRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
 

@@ -336,60 +336,6 @@ export interface paths {
         };
         trace?: never;
     };
-    "/tools": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The fixed tool catalog a definition can choose from */
-        get: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Tool names with descriptions */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ToolCatalog"];
-                    };
-                };
-                /** @description Invalid request */
-                400: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-                /** @description Missing or wrong bearer token */
-                401: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["Error"];
-                    };
-                };
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/agents/{id}/mode": {
         parameters: {
             query?: never;
@@ -3064,6 +3010,847 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The connector catalog
+         * @description Built-in connectors (Files, Memory, Planning, Web, Ask the user, Team: included, no connect step), curated third-party connectors (GitHub) and the custom connector (any remote MCP URL). Each carries its settings form, what it can do (capabilities, in plain words), how it authenticates and, for OAuth apps, whether the admin credentials are configured.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Connectors */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ConnectorList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connections (workspace and agent scoped)
+         * @description Secrets are redacted (`{ set, hint }`). A workspace connection is connected once; `defaultEnabled` makes it available to every agent. Built-in connectors have one workspace connection each (`builtin: true`).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    scope?: "workspace" | "agent";
+                    /** @description With `scope=agent`: the agent id. */
+                    scopeId?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Connections */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ConnectionList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/flows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start connecting (or reconnecting) a connector
+         * @description Returns a flow whose `view` says what to show: a form, an OAuth authorization to open in a popup, a device code, a choice, a confirmation or the end. Answer it with `POST /connections/flows/{id}/act`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FlowStart"];
+                };
+            };
+            responses: {
+                /** @description The flow */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FlowResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connector, connection or agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Built-in connector (nothing to connect) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/flows/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The current state of a flow
+         * @description A reload (or the OAuth redirect back to the app) resumes here.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The flow */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FlowResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown or expired flow */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/flows/{id}/act": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer the current view of a flow
+         * @description Quote the `viewId` of the view you answer. A stale `viewId` (a double submit, another tab) is a 409 `STALE_VIEW` that carries the current `flow`: re-render it. A finished flow returns the saved `connection`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FlowAct"];
+                };
+            };
+            responses: {
+                /** @description The next state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FlowResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown or expired flow */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Stale view, expired or already finished (with the current flow) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["FlowConflict"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/oauth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * OAuth redirect target
+         * @description Register this URL with the OAuth app. Not authenticated (a browser redirect cannot carry the token; the single-use `state` is the proof). Completes the flow and redirects to the web app at `/connectors?flow=<id>`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    state?: string;
+                    code?: string;
+                    error?: string;
+                    error_description?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Redirect to the web app */
+                302: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connections/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disconnect
+         * @description Deletes the connection, its stored credentials and every agent's choices for it. Built-in connections can not be removed.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Disconnected */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Built-in connection */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit a connection
+         * @description Label, settings (keep-secret semantics), scope, availability to all agents (`defaultEnabled`) and the default mode per capability.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ConnectionPatch"];
+                };
+            };
+            responses: {
+                /** @description The connection, redacted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Connection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Built-in connection */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/connections/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test a connection
+         * @description Never fails with an error status for a bad key: `ok: false` carries the reason. Records the status, the account and the tools found.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ConnectionTest"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/connectors": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The connectors an agent can use
+         * @description Every connection available to the agent: workspace connections (`ownership: "workspace"`, "From workspace") and its own (`"agent"`, "This agent only"), with the effective state and the effective mode per capability. Technical tool names are only in `toolModes` (Advanced).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Connectors */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConnectorList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        /**
+         * Change what an agent uses
+         * @description Replaces the agent's choices for each connection given (`null` goes back to inherit) and returns the new view. Stricter of the agent's own rules and these modes wins; writes of non-built-in connectors that ask always ask, even in Bypass mode.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["AgentConnectorsPut"];
+                };
+            };
+            responses: {
+                /** @description Connectors */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentConnectorList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/{id}/oauth-client": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Save the OAuth app credentials of a connector
+         * @description For connectors that need an OAuth app (GitHub): the client id and secret are stored encrypted and never returned. `TEAM_<CONNECTOR>_CLIENT_ID` / `_CLIENT_SECRET` in the environment win.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Connector id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["OAuthClientPut"];
+                };
+            };
+            responses: {
+                /** @description Saved */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connector */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Remove the saved OAuth app credentials */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Connector id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Removed */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connector */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/routines": {
         parameters: {
             query?: never;
@@ -3922,29 +4709,29 @@ export interface components {
         AgentListItem: components["schemas"]["Agent"] & {
             lastActivity: components["schemas"]["AgentActivity"];
         };
-        /** @enum {string} */
-        ToolName: "library_read" | "library_write" | "memory" | "todos" | "web_search" | "web_fetch" | "ask_user" | "delegate" | "send_message" | "mcp";
-        /** @description A remote MCP server of an agent (secrets redacted). Its tools are deferred. */
-        McpServer: {
+        ConnectionChoices: {
             /**
-             * @description Tool prefix: tools are `<name>_<tool>`.
-             * @example github
+             * @description `on` / `off` forces it; `inherit` (default) follows the connection: a workspace connection with `defaultEnabled` is available to every agent, an agent's own connection to that agent.
+             * @enum {string}
              */
-            name: string;
-            transport: {
-                /**
-                 * @description Remote transports only (no stdio).
-                 * @enum {string}
-                 */
-                type: "http" | "sse";
-                /** Format: uri */
-                url: string;
-                /** @description Names of the stored request headers. Values are never returned. */
-                headerNames: string[];
+            enabled?: "inherit" | "on" | "off";
+            /** @description Mode per capability id ("Read files", "Edit files"). */
+            capabilities?: {
+                [key: string]: components["schemas"]["CapabilityMode"];
             };
-            allow?: string[];
-            deny?: string[];
+            /** @description Mode per individual tool (Advanced). Rarely needed. */
+            tools?: {
+                [key: string]: components["schemas"]["CapabilityMode"];
+            };
+            choices?: {
+                [key: string]: unknown;
+            };
         };
+        /**
+         * @description `allow` = Allowed, `ask` = Ask first, `off` = Off.
+         * @enum {string}
+         */
+        CapabilityMode: "allow" | "ask" | "off";
         /** @description Permission rules in `Tool(spec)` form (eharness/permissions). */
         PermissionRules: {
             /** @default [] */
@@ -3978,10 +4765,11 @@ export interface components {
             model: string | null;
             /** @description Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile. */
             modelProfile: string | null;
-            tools: components["schemas"]["ToolName"][];
+            /** @description This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view. */
+            connectors: {
+                [key: string]: components["schemas"]["ConnectionChoices"];
+            };
             skills: string[];
-            mcp: string[];
-            mcpServers: components["schemas"]["McpServer"][];
             /** @enum {string} */
             permissionMode: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             rules: components["schemas"]["PermissionRules"];
@@ -4020,10 +4808,11 @@ export interface components {
             model?: string | null;
             /** @description Provider profile id from `GET /providers`; null = the default profile. */
             modelProfile?: string | null;
-            tools?: components["schemas"]["ToolName"][];
+            /** @description Replaces the whole enablement. Default for a new agent: Files (read only), Memory and Planning. Prefer `PUT /agents/{id}/connectors`. */
+            connectors?: {
+                [key: string]: components["schemas"]["ConnectionChoices"];
+            };
             skills?: string[];
-            mcp?: string[];
-            mcpServers?: components["schemas"]["McpServerInput"][];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             rules?: {
@@ -4034,21 +4823,6 @@ export interface components {
                 /** @default [] */
                 deny: string[];
             };
-        };
-        McpServerInput: {
-            name: string;
-            transport: {
-                /** @enum {string} */
-                type: "http" | "sse";
-                /** Format: uri */
-                url: string;
-                /** @description Request headers such as `Authorization`. Omitted: the stored headers of the server with the same name are kept. `{}` clears them. */
-                headers?: {
-                    [key: string]: string;
-                };
-            };
-            allow?: string[];
-            deny?: string[];
         };
         /** @description Only the given fields change; `version` bumps. */
         AgentPatch: {
@@ -4061,10 +4835,11 @@ export interface components {
             model?: string | null;
             /** @description Provider profile id from `GET /providers`; null = the default profile. */
             modelProfile?: string | null;
-            tools?: components["schemas"]["ToolName"][];
+            /** @description Replaces the whole enablement. Default for a new agent: Files (read only), Memory and Planning. Prefer `PUT /agents/{id}/connectors`. */
+            connectors?: {
+                [key: string]: components["schemas"]["ConnectionChoices"];
+            };
             skills?: string[];
-            mcp?: string[];
-            mcpServers?: components["schemas"]["McpServerInput"][];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             rules?: {
@@ -4075,17 +4850,6 @@ export interface components {
                 /** @default [] */
                 deny: string[];
             };
-        };
-        ToolCatalog: {
-            tools: {
-                name: components["schemas"]["ToolName"];
-                description: string;
-            }[];
-            /** @description Catalog tools left out because the server has no backend for them. */
-            unavailable?: {
-                name: components["schemas"]["ToolName"];
-                reason: string;
-            }[];
         };
         ModeState: {
             /**
@@ -4375,7 +5139,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "turn-started" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed";
+            type: "message-added" | "turn-started" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -4812,6 +5576,312 @@ export interface components {
              * @enum {string}
              */
             source: "extra" | "live" | "catalog";
+        };
+        ConnectorList: {
+            connectors: components["schemas"]["Connector"][];
+        };
+        Connector: {
+            /** @example github */
+            id: string;
+            /** @example GitHub */
+            name: string;
+            description: string;
+            /** @description An icon name the UI resolves. */
+            icon?: string;
+            category: string;
+            /** @enum {string} */
+            source: "builtin" | "curated" | "custom";
+            scopes: ("workspace" | "agent" | "user")[];
+            auth: {
+                /** @enum {string} */
+                type: "none" | "apiKey" | "oauth2" | "deviceCode";
+                scopes?: string[];
+            };
+            /** @description The settings form of the connector. */
+            fields: components["schemas"]["ProviderField"][];
+            capabilities: components["schemas"]["Capability"][];
+            /** @description Included: there is no connect step. */
+            builtin: boolean;
+            leadOnly: boolean;
+            oauthClient?: components["schemas"]["OAuthClientState"];
+        };
+        Capability: {
+            /** @example read */
+            id: string;
+            /** @example Read files */
+            title: string;
+            description: string;
+            /** @enum {string} */
+            kind: "read" | "write" | "destructive" | "external";
+            /** @description Technical tool names (Advanced only). */
+            tools: string[];
+            defaultMode: components["schemas"]["CapabilityMode"];
+        };
+        OAuthClientState: {
+            required: boolean;
+            configured: boolean;
+            /** @enum {string|null} */
+            source: "env" | "stored" | null;
+            /** @description Register this callback URL with the OAuth app. */
+            redirectUri: string;
+            envVars: string[];
+        };
+        ConnectionList: {
+            connections: components["schemas"]["Connection"][];
+        };
+        Connection: {
+            id: string;
+            definitionId: string;
+            label: string;
+            enabled: boolean;
+            /** @enum {string} */
+            scope: "workspace" | "agent" | "user";
+            scopeId?: string;
+            /** @enum {string} */
+            status: "connected" | "needs-auth" | "error" | "disabled";
+            statusMessage?: string;
+            accountLabel?: string;
+            /** @description Workspace scope: every agent has the connection unless it opts out. */
+            defaultEnabled: boolean;
+            defaultModes?: {
+                [key: string]: components["schemas"]["CapabilityMode"];
+            };
+            /** @description Discovered at connect time (replace the connector list). */
+            capabilities?: components["schemas"]["Capability"][];
+            /** @description Secrets are `{ set, hint? }`; the value is never returned. */
+            settings: {
+                [key: string]: unknown;
+            };
+            authorized: boolean;
+            builtin: boolean;
+            createdAt: number;
+            updatedAt: number;
+        };
+        FlowResult: {
+            flow: components["schemas"]["ConnectFlow"];
+            connection?: components["schemas"]["Connection"] & unknown;
+        };
+        ConnectFlow: {
+            id: string;
+            definitionId: string;
+            /** @enum {string} */
+            scope: "workspace" | "agent" | "user";
+            scopeId?: string;
+            label: string;
+            connectionId?: string;
+            /** @enum {string} */
+            status: "active" | "done" | "failed" | "cancelled";
+            step: string;
+            rev: number;
+            view: components["schemas"]["FlowView"];
+            createdAt: number;
+            updatedAt: number;
+            expiresAt: number;
+        };
+        /** @description What to show now. A closed vocabulary: render by `type`. Every action quotes the `viewId` of the view it answers. */
+        FlowView: {
+            /** @enum {string} */
+            type: "form";
+            viewId: string;
+            step: string;
+            title: string;
+            description?: string;
+            fields: components["schemas"]["ProviderField"][];
+            /** @description Current values; a secret is `{ set, hint? }`. */
+            values: {
+                [key: string]: unknown;
+            };
+            errors?: {
+                [key: string]: string;
+            };
+            message?: string;
+            submitLabel: string;
+        } | {
+            /** @enum {string} */
+            type: "oauth";
+            viewId: string;
+            step: string;
+            title: string;
+            authorizeUrl: string;
+            pollIntervalMs: number;
+            expiresAt: number;
+        } | {
+            /** @enum {string} */
+            type: "deviceCode";
+            viewId: string;
+            step: string;
+            title: string;
+            userCode: string;
+            verificationUrl: string;
+            verificationUrlComplete?: string;
+            expiresAt: number;
+            pollIntervalMs: number;
+        } | {
+            /** @enum {string} */
+            type: "choose";
+            viewId: string;
+            step: string;
+            title: string;
+            description?: string;
+            options: {
+                value: string;
+                label: string;
+                description?: string;
+            }[];
+            multiple: boolean;
+            selected: string[];
+            min: number;
+            errors?: {
+                [key: string]: string;
+            };
+            message?: string;
+        } | {
+            /** @enum {string} */
+            type: "confirm";
+            viewId: string;
+            step: string;
+            title: string;
+            message: string;
+            confirmLabel: string;
+            cancelLabel: string;
+        } | {
+            /** @enum {string} */
+            type: "status";
+            viewId: string;
+            step: string;
+            /** @enum {string} */
+            state: "running" | "success";
+            message: string;
+            account?: string;
+        } | {
+            /** @enum {string} */
+            type: "error";
+            viewId: string;
+            step: string;
+            message: string;
+            retryable: boolean;
+        };
+        FlowStart: {
+            /** @description Connect a new connection of this connector. */
+            definitionId?: string;
+            /** @description Or re-authorize this connection. */
+            connectionId?: string;
+            /**
+             * @description Default `workspace`.
+             * @enum {string}
+             */
+            scope?: "workspace" | "agent";
+            /** @description The agent id or slug (agent scope). */
+            scopeId?: string;
+            label?: string;
+            /** @description Workspace scope: available to all agents. Default false. */
+            defaultEnabled?: boolean;
+        };
+        FlowConflict: {
+            error: {
+                /**
+                 * @description Stable machine-readable code (eharness codes pass through).
+                 * @example NOT_FOUND
+                 */
+                code: string;
+                /** @example agent not found: abc */
+                message: string;
+                details?: unknown;
+            };
+            flow?: components["schemas"]["ConnectFlow"] & unknown;
+            connection?: components["schemas"]["Connection"];
+        };
+        FlowAct: {
+            viewId: string;
+            /** @enum {string} */
+            action: "submit" | "poll" | "back" | "cancel" | "retry";
+            /** @description `form`: the values (a secret may be `{ keep: true }`); `choose`: `{ selected }`. */
+            data?: {
+                [key: string]: unknown;
+            };
+        };
+        ConnectionPatch: {
+            label?: string;
+            /** @description False switches the connection off for everyone. */
+            enabled?: boolean;
+            /** @description Keep-secret semantics: a secret omitted, `""` or `{ "keep": true }` keeps the stored value; `null` removes a value. */
+            settings?: {
+                [key: string]: unknown;
+            };
+            /**
+             * @description Move between scopes.
+             * @enum {string}
+             */
+            scope?: "workspace" | "agent";
+            /** @description The agent (with `scope: "agent"`). */
+            scopeId?: string;
+            defaultEnabled?: boolean;
+            /** @description Default mode per capability for agents that do not choose. */
+            defaultModes?: {
+                [key: string]: components["schemas"]["CapabilityMode"];
+            };
+        };
+        ConnectionTest: {
+            ok: boolean;
+            message?: string;
+            accountLabel?: string;
+            tools?: number;
+            connection: components["schemas"]["Connection"];
+        };
+        AgentConnectorList: {
+            connectors: components["schemas"]["AgentConnector"][];
+        };
+        AgentConnector: {
+            connectionId: string;
+            connectorId: string;
+            /** @example GitHub */
+            name: string;
+            icon?: string;
+            category: string;
+            /** @enum {string} */
+            source: "builtin" | "curated" | "custom";
+            label: string;
+            accountLabel?: string;
+            /** @enum {string} */
+            status: "connected" | "needs-auth" | "error" | "disabled";
+            statusMessage?: string;
+            /** @enum {string} */
+            scope: "workspace" | "agent";
+            /**
+             * @description `workspace`: "From workspace"; `agent`: "This agent only".
+             * @enum {string}
+             */
+            ownership: "workspace" | "agent";
+            defaultEnabled: boolean;
+            /**
+             * @description This agent's own switch.
+             * @enum {string}
+             */
+            state: "inherit" | "on" | "off";
+            /** @description Whether the agent uses it now. */
+            enabled: boolean;
+            capabilities: (components["schemas"]["Capability"] & {
+                mode: components["schemas"]["CapabilityMode"] & unknown;
+                inherited: components["schemas"]["CapabilityMode"] & unknown;
+                override?: components["schemas"]["CapabilityMode"];
+                /** @description Always asks, even in Bypass mode (write or destructive, not built in). */
+                pinned: boolean;
+                toolModes: {
+                    name: string;
+                    mode: components["schemas"]["CapabilityMode"];
+                    override?: components["schemas"]["CapabilityMode"];
+                }[];
+            })[];
+        };
+        AgentConnectorsPut: {
+            /** @description Connection id to its new choices (replaces that entry); `null` removes it (back to inherit). */
+            connections: {
+                [key: string]: components["schemas"]["ConnectionChoices"] & (Record<string, never> | null);
+            };
+        };
+        OAuthClientPut: {
+            clientId: string;
+            clientSecret?: string;
         };
         RoutineList: {
             routines: components["schemas"]["Routine"][];

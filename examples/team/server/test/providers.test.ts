@@ -210,7 +210,9 @@ describe('profiles API', () => {
     // the database never holds a plaintext secret
     server.conn.sqlite.run('PRAGMA wal_checkpoint(TRUNCATE)')
     const rows = server.conn.sqlite
-      .query<{ settings: string; label: string }, []>('SELECT settings, label FROM config_profiles')
+      .query<{ settings: string; label: string }, []>(
+        "SELECT settings, label FROM config_profiles WHERE kind = 'provider'",
+      )
       .all()
     expect(rows).toHaveLength(2)
     for (const row of rows) {
@@ -461,6 +463,7 @@ describe('agents on store profiles', () => {
     const model =
       server.deps.agents.get(agent.id) && (await import('../src/infra/eh/provider.ts')) && undefined
     expect(model).toBeUndefined()
+    await server.factory.prepare(def)
     server.factory.agentFor(def)
     const stats = (await (await app.request(`/agents/${agent.id}/stats`)).json()) as {
       model: { id: string; profileId: string; contextWindow: number; pricing: { input: number } }
@@ -523,6 +526,7 @@ describe('agents on store profiles', () => {
     const server = await withProfile()
     const writer = server.deps.agents.getBySlug('writer')
     if (writer === undefined) throw new Error('seed')
+    await server.factory.prepare(writer)
     const before = server.factory.agentFor(writer)
     expect(server.factory.agentFor(writer)).toBe(before)
     await server.app.request(
@@ -614,6 +618,7 @@ describe('legacy model strings', () => {
     expect(await res.text()).toContain('NO_PROVIDER')
     const writer = server.deps.agents.getBySlug('writer')
     if (writer === undefined) throw new Error('seed')
+    await server.factory.prepare(writer)
     expect(() => server.factory.agentFor(writer)).toThrow(/Settings > Providers/)
   })
 })

@@ -8,6 +8,7 @@
 	import { agentDialog, closeAgentDialog } from '#lib/stores/dialogs.svelte.js';
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import AgentEditor from './AgentEditor.svelte';
+	import AgentConnectors from './AgentConnectors.svelte';
 	import MemoryEditor from './MemoryEditor.svelte';
 
 	const FORM_ID = 'agent-dialog-form';
@@ -18,7 +19,7 @@
 	let valid = $state(false);
 	// Bumped on every open so the editor remounts with fresh form state.
 	let session = $state(0);
-	let tab = $state<'settings' | 'memory'>('settings');
+	let tab = $state<'settings' | 'memory' | 'connectors'>('settings');
 
 	const editing = $derived(agentDialog.mode === 'edit');
 
@@ -58,6 +59,7 @@
 				<Tabs.List variant="line" class="h-10 shrink-0 gap-4 border-b border-border px-5">
 					<Tabs.Trigger value="settings">Settings</Tabs.Trigger>
 					<Tabs.Trigger value="memory">Memory</Tabs.Trigger>
+					<Tabs.Trigger value="connectors">Connectors</Tabs.Trigger>
 				</Tabs.List>
 			{/if}
 			<!-- Both panes stay mounted (the form keeps its edits while the memory tab is open). -->
@@ -80,11 +82,16 @@
 						<MemoryEditor scope="agent" agentId={agent.id} compact />
 					{/key}
 				</div>
+				<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4" hidden={tab !== 'connectors'}>
+					{#key session}
+						<AgentConnectors agentId={agent.id} compact />
+					{/key}
+				</div>
 			{/if}
 		</Tabs.Root>
 		<Dialog.Footer class="border-t border-border px-5 py-3">
-			<Button type="button" variant="ghost" onclick={closeAgentDialog}>{editing && tab === 'memory' ? 'Close' : 'Cancel'}</Button>
-			<Button type="submit" form={FORM_ID} disabled={saving || !valid || (editing && !agent)} class={editing && tab === 'memory' ? 'hidden' : ''}>
+			<Button type="button" variant="ghost" onclick={closeAgentDialog}>{editing && tab !== 'settings' ? 'Close' : 'Cancel'}</Button>
+			<Button type="submit" form={FORM_ID} disabled={saving || !valid || (editing && !agent)} class={editing && tab !== 'settings' ? 'hidden' : ''}>
 				{saving ? 'Saving…' : editing ? 'Save changes' : 'Create agent'}
 			</Button>
 		</Dialog.Footer>

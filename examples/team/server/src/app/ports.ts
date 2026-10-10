@@ -1,6 +1,19 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalAnswer, ApprovalOutcome, ApprovalView } from '../domain/approvals.ts'
+import type {
+  AgentConnectors,
+  AgentConnectorView,
+  ConnectionChoices,
+  ConnectionPatchInput,
+  ConnectionTestResult,
+  ConnectionView,
+  ConnectorView,
+  FlowActInput,
+  FlowActResult,
+  FlowResult,
+  FlowStartInput,
+} from '../domain/connectors.ts'
 import type { NewEvent, TeamEvent } from '../domain/events.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
 import type {
@@ -36,8 +49,10 @@ export interface AgentRepo {
   get(id: string): AgentDef | undefined
   getBySlug(slug: string): AgentDef | undefined
   insert(def: AgentDef): void
-  /** Replace the row; `expectedVersion` guards concurrent edits (returns false on conflict). */
+  /** Replace the row (not its connector enablement); `expectedVersion` guards concurrent edits (returns false on conflict). */
   update(def: AgentDef, expectedVersion: number): boolean
+  /** Replace the whole connector enablement of an agent (the other enablement writes go through the connectors port). */
+  setConnectors(agentId: string, connectors: AgentDef['connectors'], now: number): void
   count(): number
 }
 
@@ -372,6 +387,46 @@ export interface ProvidersPort {
   models(id: string, options: { refresh: boolean }): Promise<ModelView[]>
 }
 
+/**
+ * Connectors (`infra/eh/connectors.ts` over `eharness/connectors`): the catalog, connections
+ * (workspace or agent scope), server-driven connect flows and per-agent enablement. Secrets and
+ * tokens never leave it: every view is redacted.
+ */
+export interface ConnectorsPort {
+  catalog(): Promise<ConnectorView[]>
+  connections(query?: {
+    scope?: 'workspace' | 'agent'
+    scopeId?: string
+  }): Promise<ConnectionView[]>
+  startFlow(input: FlowStartInput): Promise<FlowResult>
+  getFlow(id: string): Promise<FlowResult | undefined>
+  act(id: string, input: FlowActInput): Promise<FlowActResult>
+  /** The OAuth redirect: the flow it belongs to, or why it failed. */
+  oauthCallback(query: {
+    state?: string
+    code?: string
+    error?: string
+    errorDescription?: string
+  }): Promise<{ flowId?: string; error?: string }>
+  updateConnection(id: string, patch: ConnectionPatchInput): Promise<ConnectionView>
+  removeConnection(id: string): Promise<void>
+  testConnection(id: string): Promise<ConnectionTestResult>
+  /** Every connection this agent can use, with its effective state and modes. */
+  agentConnectors(agent: AgentDef): Promise<AgentConnectorView[]>
+  /** Replace the choices of the given connections (`null` removes the entry: back to inherit). */
+  setAgentConnectors(
+    agent: AgentDef,
+    changes: Record<string, ConnectionChoices | null>,
+  ): Promise<AgentConnectorView[]>
+  setOAuthClient(
+    definitionId: string,
+    input: { clientId: string; clientSecret?: string },
+  ): Promise<void>
+  removeOAuthClient(definitionId: string): Promise<void>
+}
+
+export type { AgentConnectors }
+
 export interface Deps {
   agents: AgentRepo
   chat: ChatPort
@@ -381,6 +436,9 @@ export interface Deps {
   library: LibraryStore
   settings: SettingsStore
   providers: ProvidersPort
+  connectors: ConnectorsPort
+  /** Where the browser app lives (the OAuth callback redirects back to it). */
+  webUrl: string
   modes: ModePort
   routines: RoutineStore
   schedule: ScheduleCalc
@@ -390,8 +448,6 @@ export interface Deps {
   clock: Clock
   ids: IdGenerator
   workspaceId: string
-  /** Catalog tools this server cannot offer (no backend configured), with the reason. */
-  unavailableTools?: Array<{ name: string; reason: string }>
   /** How often the SSE feed polls the events table (ms). Default 500. */
   eventsPollMs?: number
 }

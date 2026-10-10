@@ -19,12 +19,12 @@ import {
   createProviderManager,
   gatewayProvider,
   openRouterProvider,
+  type ProfileStore,
   type ProviderManager,
   type PublicProfile,
 } from 'eharness/providers'
 import type { ProvidersPort } from '../../app/ports.ts'
 import { conflict, DomainError, invalid, notFound } from '../../domain/errors.ts'
-import type { NewEvent } from '../../domain/events.ts'
 import type {
   ModelView,
   ProfileView,
@@ -32,8 +32,6 @@ import type {
   TestResultView,
 } from '../../domain/providers.ts'
 import { sqliteCatalogCache } from './catalog-cache.ts'
-import { sqliteProfileStore } from './profile-store.ts'
-import type { SealOpen } from './secret-box.ts'
 
 type Env = Record<string, string | undefined>
 
@@ -45,14 +43,19 @@ export const DEFAULT_MODEL: Record<string, string> = {
 
 export interface ProviderServiceOptions {
   sqlite: Database
-  box: SealOpen
+  /**
+   * The server's profile store (`sqliteProfileStore`): provider profiles, connections and
+   * credentials share the table and the secret box. The caller appends `providers-changed` for
+   * `provider` rows (with this service's `instance`).
+   */
+  store: ProfileStore
+  /** Id of this instance: its own `providers-changed` events are ignored. */
+  instance?: string
   /** Default `process.env`: env profiles, `TEAM_PROVIDER`, `TEAM_MODEL`. */
   env?: Env
   /** Never fetch the public model catalogs (default: `TEAM_OFFLINE=1`). */
   offline?: boolean
   fetch?: typeof fetch
-  /** Appends to the event feed (`providers-changed`). */
-  events?: { append(event: NewEvent): number }
   /** Reads the event feed (other instances' changes). */
   feed?: {
     lastSeq(): number
@@ -83,8 +86,6 @@ export interface ProviderService extends ProvidersPort {
   close(): void
 }
 
-const PROVIDER_KIND = 'provider'
-
 function mapError(error: unknown): never {
   if (error instanceof DomainError) throw error
   const e = error as { code?: unknown; message?: string; details?: Record<string, unknown> }
@@ -100,20 +101,14 @@ function mapError(error: unknown): never {
   throw error
 }
 
+/** `kind` of provider rows in the profile table. */
+export const PROVIDER_KIND = 'provider'
+
 export function createProviderService(options: ProviderServiceOptions): ProviderService {
   const env = options.env ?? process.env
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
-  const instance = crypto.randomUUID()
-  const store = sqliteProfileStore(options.sqlite, options.box, {
-    warn,
-    onChange: ({ kind, id, action }) => {
-      if (kind !== PROVIDER_KIND) return
-      options.events?.append({
-        type: 'providers-changed',
-        payload: { profileId: id, action, instance },
-      })
-    },
-  })
+  const instance = options.instance ?? crypto.randomUUID()
+  const store = options.store
   const manager = createProviderManager({
     definitions: [openRouterProvider({ createOpenRouter }), gatewayProvider({ createGateway })],
     store,

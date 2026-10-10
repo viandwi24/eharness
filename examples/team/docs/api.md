@@ -40,9 +40,20 @@ code. Reload and retry.
 
 ## Secrets
 
-MCP request headers (`mcpServers[].transport.headers`) are write-only: responses carry
-`headerNames` only. A `PATCH` that lists a server without `headers` keeps the stored ones; `{}`
-clears them.
+Connection secrets (API keys, header values, OAuth tokens, OAuth app credentials) are write-only:
+responses carry `{ set, hint }` only. A `PATCH /connections/{id}` that omits a secret (or sends `""`
+or `{ "keep": true }`) keeps the stored value. Connect flows (`/connections/flows`) never echo a
+secret either; a form value comes back as `{ set, hint }`.
+
+## Connectors
+
+`GET /connectors` (catalog), `GET /connections`, `POST /connections/flows` + `GET|POST
+/connections/flows/{id}[/act]` (server-driven connect flow: render `view` by `type`, quote its
+`viewId`; a stale view is `409 STALE_VIEW` carrying the current `flow`), `GET /oauth/callback`
+(public; redirects to the web app), `PATCH|DELETE /connections/{id}`, `POST /connections/{id}/test`,
+`GET|PUT /agents/{id}/connectors` (what an agent uses and how freely: Allowed / Ask first / Off),
+`PUT|DELETE /connectors/{id}/oauth-client` (OAuth app credentials of a connector). Agents carry
+`connectors` (their own choices) instead of `tools` / `mcpServers`; `GET /tools` is gone.
 
 ## Streaming endpoints
 

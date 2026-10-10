@@ -114,12 +114,40 @@ stale user edit loses to an agent write and the UI shows the conflict.
 limit is a row set from Settings or `TEAM_BUDGET_USD`. The lead's concurrent delegations are
 capped (`maxConcurrent` = Settings spawn cap).
 
-**MCP per agent.** `mcpServers` on a definition (remote `http` / `sse` only, no stdio: a definition
-anyone can edit must not spawn processes on the server, and another instance would not have them).
-Each becomes `mcpServer({ defer: true, wrapUntrusted: true })`: tools are found with `tool_search`,
-results are framed as untrusted data, and unknown tools ask for approval in `default` mode. Request
-headers (for example `Authorization`) are stored server-side and never returned: the API shows the
-header names only; an edit that omits `headers` keeps the stored ones.
+**Connectors** (`eharness/connectors`, spec 24). What an agent can use is decided by connectors,
+not by a tool checklist. The built-ins (Files, Memory, Planning, Web, Ask the user, Team) are
+included; GitHub (remote MCP, OAuth app or a personal access token) and the custom connector (any
+remote MCP URL) are connected from the Connectors page. A **connection** is workspace scoped
+(connected once, "available to all agents" = `defaultEnabled`, inherited; an agent may override it)
+or agent scoped. Per agent and connection the choices live in `agent_connectors`: on / off /
+inherit, a mode per capability (Allowed / Ask first / Off, plain words) and per-tool overrides under
+"Advanced". `activateConnectors` turns them into plugins, MCP sources, permission rules and a stable
+tool order; the connector rules are merged most-restrictive-wins with the agent's own rules, and
+write or destructive tools of non-built-in connectors that ask are pinned (they ask even in Bypass
+mode, through `toolKinds`). Remote MCP tools are deferred (`tool_search`), prefixed `<label>_<tool>`
+and framed as untrusted.
+
+Activation is asynchronous, the agent factory is not: `factory.prepare(def)` activates the
+connectors of an agent, the lead and the roster, `agentFor` / `openSession` use the result (every
+chat, task and routine entry point awaits `prepare` first).
+
+**One secret system.** The server's AES-GCM box (`TEAM_SECRET_KEY`, previous keys for rotation) is
+the library's `SecretVault`. Provider profiles, connections (settings: API keys, header values),
+their OAuth credentials (tokens, client) and the OAuth app credentials an admin saves live in the
+same `config_profiles` table; connector rows are sealed by `sealedProfileStore` (one blob per row,
+bound to its kind and id), flow scratch is sealed with the same vault, and nothing is returned by
+the API except `{ set, hint }`. Several instances: a change of a connection or an enablement
+appends `connectors-changed` (like `providers-changed`) and the others rebuild their agents; token
+refreshes take a lease in `eh_locks` so two instances never refresh one single-use token at once.
+
+**Migration.** Agents from before connectors (`agents.connectors_migrated = 0`) are migrated at boot
+(`infra/eh/connectors-migration.ts`): the tool checklist becomes enablement that reproduces it
+exactly (`domain/connectors.ts` `enablementFromTools`: library_read/write -> Files read / edit +
+delete, memory -> workspace memory (lead writes) + own memory, todos -> Planning, web_* -> Web,
+ask_user -> Ask the user, delegate (+ send_message) -> Team) and every MCP server becomes an
+agent-scoped custom connection `mcp:<agent>:<name>` (headers sealed, tools still `<name>_<tool>`,
+allow / deny lists kept, switched off when the agent never had the `mcp` tool). The legacy columns
+stay in place and are never written again.
 
 ## Multi-instance guarantees and what survives a restart
 

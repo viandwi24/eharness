@@ -25,22 +25,22 @@ const json = (body: unknown): RequestInit => ({
 })
 
 describe('agents API', () => {
-  test('seeds a lead and role agents with distinct tools', async () => {
+  test('seeds a lead and role agents with distinct connector choices', async () => {
     const res = await boot().app.request('/agents')
     expect(res.status).toBe(200)
     const { agents } = (await res.json()) as {
-      agents: Array<{ slug: string; role: string; tools: string[] }>
+      agents: Array<{ slug: string; role: string; connectors: Record<string, unknown> }>
     }
     expect(agents.map((a) => a.slug)).toEqual(['lead', 'researcher', 'writer', 'analyst', 'ops'])
     expect(agents.filter((a) => a.role === 'lead')).toHaveLength(1)
-    expect(new Set(agents.map((a) => a.tools.join(','))).size).toBe(agents.length)
+    expect(new Set(agents.map((a) => JSON.stringify(a.connectors))).size).toBe(agents.length)
   })
 
   test('create, get by slug, patch bumps the version, archive hides it', async () => {
     const { app } = boot()
     const created = await app.request(
       '/agents',
-      json({ name: 'Data Cleaner', instructions: 'Clean data.', tools: ['library_read'] }),
+      json({ name: 'Data Cleaner', instructions: 'Clean data.' }),
     )
     expect(created.status).toBe(201)
     const agent = (await created.json()) as {
@@ -72,7 +72,7 @@ describe('agents API', () => {
     expect(all.agents.some((a) => a.id === agent.id)).toBe(true)
   })
 
-  test('errors use one shape: validation 400, unknown tool 400, 404, slug conflict 409, lead protected', async () => {
+  test('errors use one shape: validation 400, unknown mode 400, 404, slug conflict 409, lead protected', async () => {
     const { app } = boot()
     const bad = await app.request('/agents', json({ name: '', instructions: 'x' }))
     expect(bad.status).toBe(400)
@@ -80,13 +80,21 @@ describe('agents API', () => {
 
     const tool = await app.request(
       '/agents',
-      json({ name: 'X', instructions: 'x', tools: ['rm_rf'] }),
+      json({
+        name: 'X',
+        instructions: 'x',
+        connectors: { 'builtin:files': { capabilities: { read: 'rm_rf' } } },
+      }),
     )
     expect(tool.status).toBe(400)
 
     const delegate = await app.request(
       '/agents',
-      json({ name: 'Y', instructions: 'x', tools: ['delegate'] }),
+      json({
+        name: 'Y',
+        instructions: 'x',
+        connectors: { 'builtin:team': { enabled: 'on' } },
+      }),
     )
     expect(delegate.status).toBe(400)
     expect(((await delegate.json()) as { error: { code: string } }).error.code).toBe('INVALID')
@@ -117,7 +125,13 @@ describe('system routes', () => {
     }
     expect(doc.openapi).toBe('3.1.0')
     expect(Object.keys(doc.paths)).toEqual(
-      expect.arrayContaining(['/health', '/agents', '/agents/{id}', '/tools']),
+      expect.arrayContaining([
+        '/health',
+        '/agents',
+        '/agents/{id}',
+        '/connectors',
+        '/agents/{id}/connectors',
+      ]),
     )
     expect(Object.keys(doc.components.schemas)).toEqual(
       expect.arrayContaining(['Agent', 'AgentCreate', 'AgentPatch', 'Error']),

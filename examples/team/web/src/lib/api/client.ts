@@ -4,8 +4,15 @@ import type { components, paths } from './schema';
 export type Agent = components['schemas']['Agent'];
 export type AgentCreate = components['schemas']['AgentCreate'];
 export type AgentPatch = components['schemas']['AgentPatch'];
-export type ToolName = components['schemas']['ToolName'];
-export type ToolInfo = components['schemas']['ToolCatalog']['tools'][number];
+export type Connector = components['schemas']['Connector'];
+export type Connection = components['schemas']['Connection'];
+export type Capability = components['schemas']['Capability'];
+export type CapabilityMode = components['schemas']['CapabilityMode'];
+export type ConnectionChoices = components['schemas']['ConnectionChoices'];
+export type AgentConnector = components['schemas']['AgentConnector'];
+export type ConnectFlow = components['schemas']['ConnectFlow'];
+export type FlowView = components['schemas']['FlowView'];
+export type FlowResult = components['schemas']['FlowResult'];
 export type PermissionMode = Agent['permissionMode'];
 
 type Method = 'get' | 'post' | 'patch' | 'put' | 'delete';
@@ -47,8 +54,11 @@ export class ApiError extends Error {
 	readonly status: number;
 	readonly code: string;
 	readonly details?: unknown;
-	constructor(status: number, code: string, message: string, details?: unknown) {
+	/** The whole parsed error body (a connect-flow conflict carries the current `flow` beside `error`). */
+	readonly body?: unknown;
+	constructor(status: number, code: string, message: string, details?: unknown, body?: unknown) {
 		super(message);
+		this.body = body;
 		this.name = 'ApiError';
 		this.status = status;
 		this.code = code;
@@ -60,7 +70,7 @@ export class ApiError extends Error {
 export function toApiError(status: number, body: unknown): ApiError {
 	const e = (body as { error?: { code?: unknown; message?: unknown; details?: unknown } } | null)?.error;
 	if (e && typeof e === 'object' && typeof e.code === 'string' && typeof e.message === 'string') {
-		return new ApiError(status, e.code, e.message, e.details);
+		return new ApiError(status, e.code, e.message, e.details, body);
 	}
 	return new ApiError(status, status === 401 ? 'UNAUTHORIZED' : 'HTTP_ERROR', `Request failed (${status})`);
 }

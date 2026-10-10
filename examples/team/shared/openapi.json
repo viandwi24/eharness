@@ -120,77 +120,46 @@
           }
         ]
       },
-      "ToolName": {
-        "type": "string",
-        "enum": [
-          "library_read",
-          "library_write",
-          "memory",
-          "todos",
-          "web_search",
-          "web_fetch",
-          "ask_user",
-          "delegate",
-          "send_message",
-          "mcp"
-        ]
-      },
-      "McpServer": {
+      "ConnectionChoices": {
         "type": "object",
         "properties": {
-          "name": {
+          "enabled": {
             "type": "string",
-            "pattern": "^[a-z0-9-]{1,32}$",
-            "example": "github",
-            "description": "Tool prefix: tools are `<name>_<tool>`."
+            "enum": [
+              "inherit",
+              "on",
+              "off"
+            ],
+            "description": "`on` / `off` forces it; `inherit` (default) follows the connection: a workspace connection with `defaultEnabled` is available to every agent, an agent's own connection to that agent."
           },
-          "transport": {
+          "capabilities": {
             "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "http",
-                  "sse"
-                ],
-                "description": "Remote transports only (no stdio)."
-              },
-              "url": {
-                "type": "string",
-                "format": "uri"
-              },
-              "headerNames": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "Names of the stored request headers. Values are never returned."
-              }
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityMode"
             },
-            "required": [
-              "type",
-              "url",
-              "headerNames"
-            ]
+            "description": "Mode per capability id (\"Read files\", \"Edit files\")."
           },
-          "allow": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "tools": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityMode"
+            },
+            "description": "Mode per individual tool (Advanced). Rarely needed."
           },
-          "deny": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+          "choices": {
+            "type": "object",
+            "additionalProperties": {}
           }
-        },
-        "required": [
-          "name",
-          "transport"
+        }
+      },
+      "CapabilityMode": {
+        "type": "string",
+        "enum": [
+          "allow",
+          "ask",
+          "off"
         ],
-        "description": "A remote MCP server of an agent (secrets redacted). Its tools are deferred."
+        "description": "`allow` = Allowed, `ask` = Ask first, `off` = Off."
       },
       "PermissionRules": {
         "type": "object",
@@ -300,28 +269,17 @@
             ],
             "description": "Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile."
           },
-          "tools": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ToolName"
-            }
+          "connectors": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ConnectionChoices"
+            },
+            "description": "This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view."
           },
           "skills": {
             "type": "array",
             "items": {
               "type": "string"
-            }
-          },
-          "mcp": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "mcpServers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/McpServer"
             }
           },
           "permissionMode": {
@@ -368,10 +326,8 @@
           "instructions",
           "model",
           "modelProfile",
-          "tools",
+          "connectors",
           "skills",
-          "mcp",
-          "mcpServers",
           "permissionMode",
           "rules",
           "version",
@@ -458,30 +414,18 @@
             ],
             "description": "Provider profile id from `GET /providers`; null = the default profile."
           },
-          "tools": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ToolName"
-            }
+          "connectors": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ConnectionChoices"
+            },
+            "description": "Replaces the whole enablement. Default for a new agent: Files (read only), Memory and Planning. Prefer `PUT /agents/{id}/connectors`."
           },
           "skills": {
             "type": "array",
             "items": {
               "type": "string"
             }
-          },
-          "mcp": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "mcpServers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/McpServerInput"
-            },
-            "maxItems": 8
           },
           "permissionMode": {
             "type": "string",
@@ -527,58 +471,6 @@
           "instructions"
         ]
       },
-      "McpServerInput": {
-        "type": "object",
-        "properties": {
-          "name": {
-            "type": "string",
-            "pattern": "^[a-z0-9-]{1,32}$"
-          },
-          "transport": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": [
-                  "http",
-                  "sse"
-                ]
-              },
-              "url": {
-                "type": "string",
-                "format": "uri"
-              },
-              "headers": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "string"
-                },
-                "description": "Request headers such as `Authorization`. Omitted: the stored headers of the server with the same name are kept. `{}` clears them."
-              }
-            },
-            "required": [
-              "type",
-              "url"
-            ]
-          },
-          "allow": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "deny": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "name",
-          "transport"
-        ]
-      },
       "AgentPatch": {
         "type": "object",
         "properties": {
@@ -618,30 +510,18 @@
             ],
             "description": "Provider profile id from `GET /providers`; null = the default profile."
           },
-          "tools": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ToolName"
-            }
+          "connectors": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ConnectionChoices"
+            },
+            "description": "Replaces the whole enablement. Default for a new agent: Files (read only), Memory and Planning. Prefer `PUT /agents/{id}/connectors`."
           },
           "skills": {
             "type": "array",
             "items": {
               "type": "string"
             }
-          },
-          "mcp": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "mcpServers": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/McpServerInput"
-            },
-            "maxItems": 8
           },
           "permissionMode": {
             "type": "string",
@@ -683,51 +563,6 @@
           }
         },
         "description": "Only the given fields change; `version` bumps."
-      },
-      "ToolCatalog": {
-        "type": "object",
-        "properties": {
-          "tools": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "$ref": "#/components/schemas/ToolName"
-                },
-                "description": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "name",
-                "description"
-              ]
-            }
-          },
-          "unavailable": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "$ref": "#/components/schemas/ToolName"
-                },
-                "reason": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "name",
-                "reason"
-              ]
-            },
-            "description": "Catalog tools left out because the server has no backend for them."
-          }
-        },
-        "required": [
-          "tools"
-        ]
       },
       "ModeState": {
         "type": "object",
@@ -1718,7 +1553,8 @@
               "settings-changed",
               "mode-changed",
               "model-call",
-              "providers-changed"
+              "providers-changed",
+              "connectors-changed"
             ]
           },
           "agentId": {
@@ -3263,6 +3099,1103 @@
           "source"
         ]
       },
+      "ConnectorList": {
+        "type": "object",
+        "properties": {
+          "connectors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Connector"
+            }
+          }
+        },
+        "required": [
+          "connectors"
+        ]
+      },
+      "Connector": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "github"
+          },
+          "name": {
+            "type": "string",
+            "example": "GitHub"
+          },
+          "description": {
+            "type": "string"
+          },
+          "icon": {
+            "type": "string",
+            "description": "An icon name the UI resolves."
+          },
+          "category": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "builtin",
+              "curated",
+              "custom"
+            ]
+          },
+          "scopes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "workspace",
+                "agent",
+                "user"
+              ]
+            }
+          },
+          "auth": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "apiKey",
+                  "oauth2",
+                  "deviceCode"
+                ]
+              },
+              "scopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderField"
+            },
+            "description": "The settings form of the connector."
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            }
+          },
+          "builtin": {
+            "type": "boolean",
+            "description": "Included: there is no connect step."
+          },
+          "leadOnly": {
+            "type": "boolean"
+          },
+          "oauthClient": {
+            "$ref": "#/components/schemas/OAuthClientState"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "description",
+          "category",
+          "source",
+          "scopes",
+          "auth",
+          "fields",
+          "capabilities",
+          "builtin",
+          "leadOnly"
+        ]
+      },
+      "Capability": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "read"
+          },
+          "title": {
+            "type": "string",
+            "example": "Read files"
+          },
+          "description": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "destructive",
+              "external"
+            ]
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Technical tool names (Advanced only)."
+          },
+          "defaultMode": {
+            "$ref": "#/components/schemas/CapabilityMode"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "kind",
+          "tools",
+          "defaultMode"
+        ]
+      },
+      "OAuthClientState": {
+        "type": "object",
+        "properties": {
+          "required": {
+            "type": "boolean"
+          },
+          "configured": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "env",
+              "stored",
+              null
+            ]
+          },
+          "redirectUri": {
+            "type": "string",
+            "description": "Register this callback URL with the OAuth app."
+          },
+          "envVars": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "required",
+          "configured",
+          "source",
+          "redirectUri",
+          "envVars"
+        ]
+      },
+      "ConnectionList": {
+        "type": "object",
+        "properties": {
+          "connections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Connection"
+            }
+          }
+        },
+        "required": [
+          "connections"
+        ]
+      },
+      "Connection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "definitionId": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "agent",
+              "user"
+            ]
+          },
+          "scopeId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "needs-auth",
+              "error",
+              "disabled"
+            ]
+          },
+          "statusMessage": {
+            "type": "string"
+          },
+          "accountLabel": {
+            "type": "string"
+          },
+          "defaultEnabled": {
+            "type": "boolean",
+            "description": "Workspace scope: every agent has the connection unless it opts out."
+          },
+          "defaultModes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityMode"
+            }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Capability"
+            },
+            "description": "Discovered at connect time (replace the connector list)."
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Secrets are `{ set, hint? }`; the value is never returned."
+          },
+          "authorized": {
+            "type": "boolean"
+          },
+          "builtin": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "definitionId",
+          "label",
+          "enabled",
+          "scope",
+          "status",
+          "defaultEnabled",
+          "settings",
+          "authorized",
+          "builtin",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "FlowResult": {
+        "type": "object",
+        "properties": {
+          "flow": {
+            "$ref": "#/components/schemas/ConnectFlow"
+          },
+          "connection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Connection"
+              },
+              {
+                "description": "Set once the flow finished and the connection was saved."
+              }
+            ]
+          }
+        },
+        "required": [
+          "flow"
+        ]
+      },
+      "ConnectFlow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "definitionId": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "agent",
+              "user"
+            ]
+          },
+          "scopeId": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "connectionId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "done",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "step": {
+            "type": "string"
+          },
+          "rev": {
+            "type": "integer"
+          },
+          "view": {
+            "$ref": "#/components/schemas/FlowView"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "expiresAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "definitionId",
+          "scope",
+          "label",
+          "status",
+          "step",
+          "rev",
+          "view",
+          "createdAt",
+          "updatedAt",
+          "expiresAt"
+        ]
+      },
+      "FlowView": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "form"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "fields": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ProviderField"
+                }
+              },
+              "values": {
+                "type": "object",
+                "additionalProperties": {},
+                "description": "Current values; a secret is `{ set, hint? }`."
+              },
+              "errors": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "message": {
+                "type": "string"
+              },
+              "submitLabel": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "title",
+              "fields",
+              "values",
+              "submitLabel"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "oauth"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "authorizeUrl": {
+                "type": "string"
+              },
+              "pollIntervalMs": {
+                "type": "number"
+              },
+              "expiresAt": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "title",
+              "authorizeUrl",
+              "pollIntervalMs",
+              "expiresAt"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "deviceCode"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "userCode": {
+                "type": "string"
+              },
+              "verificationUrl": {
+                "type": "string"
+              },
+              "verificationUrlComplete": {
+                "type": "string"
+              },
+              "expiresAt": {
+                "type": "number"
+              },
+              "pollIntervalMs": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "title",
+              "userCode",
+              "verificationUrl",
+              "expiresAt",
+              "pollIntervalMs"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "choose"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "options": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "value": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "value",
+                    "label"
+                  ]
+                }
+              },
+              "multiple": {
+                "type": "boolean"
+              },
+              "selected": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "min": {
+                "type": "number"
+              },
+              "errors": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "title",
+              "options",
+              "multiple",
+              "selected",
+              "min"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "confirm"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "confirmLabel": {
+                "type": "string"
+              },
+              "cancelLabel": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "title",
+              "message",
+              "confirmLabel",
+              "cancelLabel"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "status"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "running",
+                  "success"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "account": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "state",
+              "message"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "error"
+                ]
+              },
+              "viewId": {
+                "type": "string"
+              },
+              "step": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "type",
+              "viewId",
+              "step",
+              "message",
+              "retryable"
+            ]
+          }
+        ],
+        "description": "What to show now. A closed vocabulary: render by `type`. Every action quotes the `viewId` of the view it answers."
+      },
+      "FlowStart": {
+        "type": "object",
+        "properties": {
+          "definitionId": {
+            "type": "string",
+            "description": "Connect a new connection of this connector."
+          },
+          "connectionId": {
+            "type": "string",
+            "description": "Or re-authorize this connection."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "agent"
+            ],
+            "description": "Default `workspace`."
+          },
+          "scopeId": {
+            "type": "string",
+            "description": "The agent id or slug (agent scope)."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "defaultEnabled": {
+            "type": "boolean",
+            "description": "Workspace scope: available to all agents. Default false."
+          }
+        }
+      },
+      "FlowConflict": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "NOT_FOUND",
+                "description": "Stable machine-readable code (eharness codes pass through)."
+              },
+              "message": {
+                "type": "string",
+                "example": "agent not found: abc"
+              },
+              "details": {}
+            },
+            "required": [
+              "code",
+              "message"
+            ]
+          },
+          "flow": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ConnectFlow"
+              },
+              {
+                "description": "The current state of the flow: re-render it (nothing is lost)."
+              }
+            ]
+          },
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      },
+      "FlowAct": {
+        "type": "object",
+        "properties": {
+          "viewId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "submit",
+              "poll",
+              "back",
+              "cancel",
+              "retry"
+            ]
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "`form`: the values (a secret may be `{ keep: true }`); `choose`: `{ selected }`."
+          }
+        },
+        "required": [
+          "viewId",
+          "action"
+        ]
+      },
+      "ConnectionPatch": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "False switches the connection off for everyone."
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Keep-secret semantics: a secret omitted, `\"\"` or `{ \"keep\": true }` keeps the stored value; `null` removes a value."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "agent"
+            ],
+            "description": "Move between scopes."
+          },
+          "scopeId": {
+            "type": "string",
+            "description": "The agent (with `scope: \"agent\"`)."
+          },
+          "defaultEnabled": {
+            "type": "boolean"
+          },
+          "defaultModes": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/CapabilityMode"
+            },
+            "description": "Default mode per capability for agents that do not choose."
+          }
+        }
+      },
+      "ConnectionTest": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          },
+          "accountLabel": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "integer"
+          },
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          }
+        },
+        "required": [
+          "ok",
+          "connection"
+        ]
+      },
+      "AgentConnectorList": {
+        "type": "object",
+        "properties": {
+          "connectors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AgentConnector"
+            }
+          }
+        },
+        "required": [
+          "connectors"
+        ]
+      },
+      "AgentConnector": {
+        "type": "object",
+        "properties": {
+          "connectionId": {
+            "type": "string"
+          },
+          "connectorId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "example": "GitHub"
+          },
+          "icon": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "builtin",
+              "curated",
+              "custom"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "accountLabel": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "connected",
+              "needs-auth",
+              "error",
+              "disabled"
+            ]
+          },
+          "statusMessage": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "agent"
+            ]
+          },
+          "ownership": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "agent"
+            ],
+            "description": "`workspace`: \"From workspace\"; `agent`: \"This agent only\"."
+          },
+          "defaultEnabled": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "on",
+              "off"
+            ],
+            "description": "This agent's own switch."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Whether the agent uses it now."
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/Capability"
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/CapabilityMode"
+                        },
+                        {
+                          "description": "Effective mode for this agent."
+                        }
+                      ]
+                    },
+                    "inherited": {
+                      "allOf": [
+                        {
+                          "$ref": "#/components/schemas/CapabilityMode"
+                        },
+                        {
+                          "description": "The mode without this agent's choice."
+                        }
+                      ]
+                    },
+                    "override": {
+                      "$ref": "#/components/schemas/CapabilityMode"
+                    },
+                    "pinned": {
+                      "type": "boolean",
+                      "description": "Always asks, even in Bypass mode (write or destructive, not built in)."
+                    },
+                    "toolModes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "mode": {
+                            "$ref": "#/components/schemas/CapabilityMode"
+                          },
+                          "override": {
+                            "$ref": "#/components/schemas/CapabilityMode"
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "mode"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "mode",
+                    "inherited",
+                    "pinned",
+                    "toolModes"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "connectionId",
+          "connectorId",
+          "name",
+          "category",
+          "source",
+          "label",
+          "status",
+          "scope",
+          "ownership",
+          "defaultEnabled",
+          "state",
+          "enabled",
+          "capabilities"
+        ]
+      },
+      "AgentConnectorsPut": {
+        "type": "object",
+        "properties": {
+          "connections": {
+            "type": "object",
+            "additionalProperties": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/ConnectionChoices"
+                },
+                {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                }
+              ]
+            },
+            "description": "Connection id to its new choices (replaces that entry); `null` removes it (back to inherit)."
+          }
+        },
+        "required": [
+          "connections"
+        ]
+      },
+      "OAuthClientPut": {
+        "type": "object",
+        "properties": {
+          "clientId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "clientSecret": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "clientId"
+        ]
+      },
       "RoutineList": {
         "type": "object",
         "properties": {
@@ -4359,51 +5292,6 @@
           },
           "409": {
             "description": "The lead cannot be archived",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/tools": {
-      "get": {
-        "tags": [
-          "agents"
-        ],
-        "summary": "The fixed tool catalog a definition can choose from",
-        "security": [
-          {
-            "Bearer": []
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Tool names with descriptions",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ToolCatalog"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Missing or wrong bearer token",
             "content": {
               "application/json": {
                 "schema": {
@@ -7437,6 +8325,901 @@
           },
           "404": {
             "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connectors": {
+      "get": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "The connector catalog",
+        "description": "Built-in connectors (Files, Memory, Planning, Web, Ask the user, Team: included, no connect step), curated third-party connectors (GitHub) and the custom connector (any remote MCP URL). Each carries its settings form, what it can do (capabilities, in plain words), how it authenticates and, for OAuth apps, whether the admin credentials are configured.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectorList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections": {
+      "get": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Connections (workspace and agent scoped)",
+        "description": "Secrets are redacted (`{ set, hint }`). A workspace connection is connected once; `defaultEnabled` makes it available to every agent. Built-in connectors have one workspace connection each (`builtin: true`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "workspace",
+                "agent"
+              ]
+            },
+            "required": false,
+            "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "With `scope=agent`: the agent id."
+            },
+            "required": false,
+            "description": "With `scope=agent`: the agent id.",
+            "name": "scopeId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/flows": {
+      "post": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Start connecting (or reconnecting) a connector",
+        "description": "Returns a flow whose `view` says what to show: a form, an OAuth authorization to open in a popup, a device code, a choice, a confirmation or the end. Answer it with `POST /connections/flows/{id}/act`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowStart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector, connection or agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Built-in connector (nothing to connect)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/flows/{id}": {
+      "get": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "The current state of a flow",
+        "description": "A reload (or the OAuth redirect back to the app) resumes here.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or expired flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/flows/{id}/act": {
+      "post": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Answer the current view of a flow",
+        "description": "Quote the `viewId` of the view you answer. A stale `viewId` (a double submit, another tab) is a 409 `STALE_VIEW` that carries the current `flow`: re-render it. A finished flow returns the saved `connection`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlowAct"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The next state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or expired flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale view, expired or already finished (with the current flow)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FlowConflict"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/oauth/callback": {
+      "get": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "OAuth redirect target",
+        "description": "Register this URL with the OAuth app. Not authenticated (a browser redirect cannot carry the token; the single-use `state` is the proof). Completes the flow and redirects to the web app at `/connectors?flow=<id>`.",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "state",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "code",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "error",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "error_description",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "Redirect to the web app"
+          }
+        }
+      }
+    },
+    "/connections/{id}": {
+      "patch": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Edit a connection",
+        "description": "Label, settings (keep-secret semantics), scope, availability to all agents (`defaultEnabled`) and the default mode per capability.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConnectionPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The connection, redacted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Connection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Built-in connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Disconnect",
+        "description": "Deletes the connection, its stored credentials and every agent's choices for it. Built-in connections can not be removed.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Disconnected"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Built-in connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connections/{id}/test": {
+      "post": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Test a connection",
+        "description": "Never fails with an error status for a bad key: `ok: false` carries the reason. Records the status, the account and the tools found.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionTest"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/connectors": {
+      "get": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "The connectors an agent can use",
+        "description": "Every connection available to the agent: workspace connections (`ownership: \"workspace\"`, \"From workspace\") and its own (`\"agent\"`, \"This agent only\"), with the effective state and the effective mode per capability. Technical tool names are only in `toolModes` (Advanced).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentConnectorList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Change what an agent uses",
+        "description": "Replaces the agent's choices for each connection given (`null` goes back to inherit) and returns the new view. Stricter of the agent's own rules and these modes wins; writes of non-built-in connectors that ask always ask, even in Bypass mode.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentConnectorsPut"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connectors",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentConnectorList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connectors/{id}/oauth-client": {
+      "put": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Save the OAuth app credentials of a connector",
+        "description": "For connectors that need an OAuth app (GitHub): the client id and secret are stored encrypted and never returned. `TEAM_<CONNECTOR>_CLIENT_ID` / `_CLIENT_SECRET` in the environment win.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Connector id."
+            },
+            "required": true,
+            "description": "Connector id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OAuthClientPut"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Saved"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Remove the saved OAuth app credentials",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Connector id."
+            },
+            "required": true,
+            "description": "Connector id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connector",
             "content": {
               "application/json": {
                 "schema": {

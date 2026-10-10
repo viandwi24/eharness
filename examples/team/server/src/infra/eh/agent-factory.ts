@@ -5,8 +5,11 @@
  * An edit bumps the version, so the next `agent.session(id)` of a chat gets a fresh agent while
  * open turns finish on the old one (retired agents are closed with the factory).
  *
- * Plugin order is fixed and identical for every session of an agent (prompt-cache prefix,
- * `toolOrder`): filesystem (library) -> memory -> todos -> web -> permissions -> ask -> subagents -> taskIndex -> activityLog (hook only). Static instructions come first; the volatile parts (date, roster)
+ * Connectors decide the tools (`activateConnectors`, spec 24): the built-ins in their fixed order
+ * (files, memory, planning, web, ask, team), then the other connectors by id; the plugin order is
+ * identical for every session of an agent (prompt-cache prefix, `toolOrder`):
+ * connectors -> permissions -> child side of subagents -> routine outcomes -> taskIndex -> activityLog (hook only).
+ * Activation is asynchronous: `prepare` runs it, `agentFor` (synchronous) uses its result. Static instructions come first; the volatile parts (date, roster)
  * live in the turn reminder, never in `instructions` (spec 02 §5).
  *
  * Delegation (M4, ADR-0035 / ADR-0041): the lead gets `subagents({ approvals: 'park' })` with the
@@ -29,10 +32,8 @@ import {
   type SessionLock,
   type SessionPeek,
 } from 'eharness'
-import { askUser } from 'eharness/ask'
-import { type FileToolName, filesystem } from 'eharness/filesystem'
-import { mcpServer } from 'eharness/mcp'
-import { memory } from 'eharness/memory'
+import type { ActivatedConnectors, BuiltinInput } from 'eharness/connectors'
+import { filesystem } from 'eharness/filesystem'
 import {
   type AutoClassifier,
   type AutoEvent,
@@ -42,11 +43,8 @@ import {
   type PermissionEngine,
 } from 'eharness/permissions'
 import { AGENT_MESSAGE_INSTRUCTIONS, subagents } from 'eharness/subagent'
-import { todos } from 'eharness/todos'
-import { webFetch, webSearch } from 'eharness/web'
-import type { AgentDef, ToolName } from '../../domain/agents.ts'
+import type { AgentDef } from '../../domain/agents.ts'
 import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
-import { memoryRootsFor, pinnedMemoryFiles } from '../../domain/memory.ts'
 import {
   agentModeChoice,
   type ResolvedMode,
@@ -59,6 +57,8 @@ import type { WorkspaceSettings } from '../../domain/settings.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { ActivityLog } from './activity-log.ts'
+import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
+import type { ConnectorsRuntime } from './connectors.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { sessionPermissions } from './permission-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -75,20 +75,6 @@ import {
 import { sqliteStreamLog } from './stream-log.ts'
 import { taskIndex } from './task-index.ts'
 
-const READ_TOOLS: FileToolName[] = ['list_files', 'read_file', 'grep', 'glob']
-const WRITE_TOOLS: FileToolName[] = ['write_file', 'edit_file', 'delete_file']
-
-/** Memory tools are file writes by definition: the agent owns its memory, so they never ask. */
-const MEMORY_TOOL_KINDS = {
-  memory_view: { kind: 'read' as const, pathField: 'path' },
-  memory_create: { kind: 'write' as const, pathField: 'path' },
-  memory_str_replace: { kind: 'write' as const, pathField: 'path' },
-  memory_insert: { kind: 'write' as const, pathField: 'path' },
-  memory_delete: { kind: 'write' as const, pathField: 'path' },
-  memory_rename: { kind: 'write' as const, pathField: 'old_path' },
-}
-const MEMORY_ALLOW = Object.keys(MEMORY_TOOL_KINDS).filter((n) => n !== 'memory_view')
-
 /** Limits of delegation (plan decision D4: multi-agent runs cost many times a chat). */
 export interface TeamLimits {
   /** Children the lead starts at once (the spawn cap). Default 4; the settings row overrides it. */
@@ -104,6 +90,8 @@ export interface TeamLimits {
 export interface AgentFactoryDeps {
   sqlite: Database
   models: ModelConfig
+  /** Connector activation (`infra/eh/connectors.ts`): the tools, MCP servers and rules of an agent. */
+  connectors: ConnectorsRuntime
   /** Context windows and prices of models (`openRouterCatalog` / `modelsDevCatalog`); absent = unpriced. */
   catalog?: ModelCatalog
   workspaceId?: string
@@ -164,7 +152,13 @@ export interface StreamsTuning {
 }
 
 export interface AgentFactory {
-  /** The agent of a definition version (built once per version on this instance). */
+  /**
+   * Activate the connectors of `def`, the lead and the roster (what delegation builds). Await it
+   * before `agentFor` / `openSession` whenever the agent, its connections or its enablement may
+   * have changed; cheap when nothing did.
+   */
+  prepare(def?: AgentDef): Promise<void>
+  /** The agent of a definition version (built once per version on this instance). Needs `prepare`. */
   agentFor(def: AgentDef): HarnessAgent
   /** The model an agent runs on and what the catalog knows about it (window, prices). */
   modelInfo(def: AgentDef): ModelInfoOf
@@ -216,7 +210,15 @@ function createStorage(sqlite: Database) {
   }
 }
 
-const has = (def: AgentDef, tool: ToolName): boolean => def.tools.includes(tool)
+const EMPTY_ACTIVATION: ActivatedConnectors = {
+  plugins: [],
+  mcpSources: [],
+  rules: { allow: [], ask: [], deny: [], pinnedAsk: [], toolKinds: {} },
+  instructions: [],
+  toolNameMap: {},
+  connections: [],
+  warnings: [],
+}
 
 /** Common preamble; the definition's own instructions follow. Static text only. */
 const TEAM_PREAMBLE = [
@@ -338,22 +340,77 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return factoryAgentFor(lead)
   }
 
-  function build(def: AgentDef, settings: ReturnType<typeof currentSettings>): HarnessAgent {
-    const limits = { ...fixed, spawnCap: settings.spawnCap }
-    const holder: { self?: HarnessAgent } = {}
-    const self = (): HarnessAgent => holder.self as HarnessAgent
-    const delegates = def.role === 'lead' && has(def, 'delegate')
-    const messaging = def.role === 'lead' ? has(def, 'send_message') : true
-    const fs = libraryFs(sqlite, {
-      agentId: def.id,
-      ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
-    })
+  /** The agent object of each agent id (latest build): `subagents({ selfAgent })` of the team connector. */
+  const selves = new Map<string, HarnessAgent>()
 
-    const fsTools: FileToolName[] = [
-      ...(has(def, 'library_read') ? READ_TOOLS : []),
-      ...(has(def, 'library_write') ? WRITE_TOOLS : []),
-    ]
-    const useMemory = has(def, 'memory')
+  /** Stable ids of activations (they are part of the cache key of built agents). */
+  const activationIds = new WeakMap<object, number>()
+  let nextActivationId = 0
+  const activationId = (out: ActivatedConnectors): number => {
+    let id = activationIds.get(out)
+    if (id === undefined) {
+      id = ++nextActivationId
+      activationIds.set(out, id)
+    }
+    return id
+  }
+
+  const toolOn = (out: ActivatedConnectors, name: string): boolean =>
+    name in out.toolNameMap && !out.rules.deny.includes(name)
+
+  /**
+   * The Team connector: the lead gets `subagents({ approvals: 'park' })` with the role agents of
+   * the DB roster (delegate, output and stop tools follow the connector's tool modes); other agents
+   * never get it (they have the child side below).
+   */
+  function teamPlugin(def: AgentDef, input: BuiltinInput) {
+    if (def.role !== 'lead') return undefined
+    const settings = currentSettings()
+    const limits = { ...fixed, spawnCap: settings.spawnCap }
+    if (input.modes.delegate === undefined || input.modes.delegate === 'off') return undefined
+    const has = (tool: string): boolean => input.tools.includes(tool)
+    return subagents({
+      agents: () =>
+        Object.fromEntries(
+          (deps.roster?.() ?? [])
+            .filter((a) => a.id !== def.id && a.archivedAt === null)
+            .map((a) => [
+              a.slug,
+              {
+                agent: factoryAgentFor(a),
+                description: a.description === '' ? a.name : a.description,
+                maxTurns: limits.childMaxTurns,
+              },
+            ]),
+        ),
+      approvals: 'park',
+      // durable background delegation (ADR-0046): the lead stays free to chat while the
+      // role agents work; their reports arrive as events and wake it
+      background: { default: true },
+      parkTimeoutMs: limits.parkTimeoutMs,
+      maxConcurrent: limits.spawnCap,
+      ...(limits.maxChildren === undefined ? {} : { maxChildren: limits.maxChildren }),
+      childSession: childSessionOptions,
+      parentSession: parentSessionOptions,
+      // role agents are leaves: a delegation is one level deep
+      maxDepth: 1,
+      messageTool: has('send_message'),
+      outputTool: has('agent_output'),
+      stopTool: has('agent_stop'),
+      selfAgent: () => selves.get(def.id) as HarnessAgent,
+    })
+  }
+  if (deps.connectors.hooks.team === undefined) deps.connectors.hooks.team = teamPlugin
+
+  function build(
+    def: AgentDef,
+    settings: ReturnType<typeof currentSettings>,
+    out: ActivatedConnectors,
+  ): HarnessAgent {
+    const self = (): HarnessAgent => selves.get(def.id) as HarnessAgent
+    const delegates = def.role === 'lead' && toolOn(out, 'agent')
+    const messaging = def.role === 'lead' ? toolOn(out, 'send_message') : true
+    const pluginNames = new Set(out.plugins.map((p) => p.name))
 
     // one engine per live session (Auto mode counters are per conversation); the mode is read
     // per tool call, never baked into the engine (`permission-plugin.ts`)
@@ -363,68 +420,29 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         roots: () => [{ virtual: '/', real: '/' }],
         mode: 'default',
         ...(classifier === undefined ? {} : { classifier }),
-        rules: {
-          allow: [
-            ...def.rules.allow,
-            ...(useMemory ? MEMORY_ALLOW : []),
-            // library writes are the point of the role agents (plan §6.5); deletes still ask
-            ...(has(def, 'library_write') ? ['write_file', 'edit_file'] : []),
-          ],
-          ask: def.rules.ask,
-          deny: def.rules.deny,
-        },
-        toolKinds: MEMORY_TOOL_KINDS,
+        // connector modes and the app's own rules, most restrictive wins (activateConnectors)
+        rules: { allow: out.rules.allow, ask: out.rules.ask, deny: out.rules.deny },
+        // pinned asks (write / destructive tools of non-built-in connectors) ask even in Bypass
+        toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
       })
     }
 
-    // MCP servers of the definition (tools `<name>_<tool>`, deferred behind `tool_search`, results
-    // framed as untrusted). Remote transports only; headers (secrets) stay on the server.
-    const mcpSources = has(def, 'mcp')
-      ? def.mcpServers.map((s) =>
-          mcpServer({
-            name: s.name,
-            transport: {
-              type: s.transport.type,
-              url: s.transport.url,
-              ...(Object.keys(s.transport.headers).length > 0
-                ? { headers: s.transport.headers }
-                : {}),
-            },
-            ...(s.allow === undefined ? {} : { allow: s.allow }),
-            ...(s.deny === undefined ? {} : { deny: s.deny }),
-            defer: true,
-            wrapUntrusted: true,
-          }),
-        )
-      : []
-
     const plugins = [
-      // memory needs the `fs` service, so the filesystem plugin is installed even without file tools
-      ...(fsTools.length > 0 || useMemory
+      // memory needs the `fs` service: a bare filesystem plugin when only memory is on
+      ...(pluginNames.has('memory') && !pluginNames.has('filesystem')
         ? [
             filesystem({
-              fs,
-              tools: fsTools,
+              fs: libraryFs(sqlite, {
+                agentId: def.id,
+                ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
+              }),
+              tools: [],
               hiddenPrefixes: ['/memories'],
               ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
             }),
           ]
         : []),
-      ...(useMemory
-        ? [
-            memory({
-              roots: () => memoryRootsFor(def),
-              pinned: () => pinnedMemoryFiles(def.id),
-              flushOnCompaction: true,
-            }),
-          ]
-        : []),
-      ...(has(def, 'todos') ? [todos()] : []),
-      ...(has(def, 'web_fetch') ? [webFetch({})] : []),
-      // offered only with a real backend: a tool that always fails makes models retry forever
-      ...(has(def, 'web_search') && deps.models.search !== undefined
-        ? [webSearch({ search: deps.models.search })]
-        : []),
+      ...out.plugins,
       sessionPermissions({
         createEngine,
         registry: engines,
@@ -440,56 +458,23 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             mode: resolveSessionMode(def, sessionId, undefined, currentSettings()).mode,
           }),
       }),
-      ...(has(def, 'ask_user') ? [askUser()] : []),
-      ...(delegates
-        ? [
+      // child side of subagents for every agent but the lead: send_message to main, reports of
+      // resumed turns, reconcile on open
+      ...(def.role === 'lead'
+        ? []
+        : [
             subagents({
-              agents: () =>
-                Object.fromEntries(
-                  (deps.roster?.() ?? [])
-                    .filter((a) => a.id !== def.id && a.archivedAt === null)
-                    .map((a) => [
-                      a.slug,
-                      {
-                        agent: factoryAgentFor(a),
-                        description: a.description === '' ? a.name : a.description,
-                        maxTurns: limits.childMaxTurns,
-                      },
-                    ]),
-                ),
+              agents: {},
               approvals: 'park',
-              // durable background delegation (ADR-0046): the lead stays free to chat while the
-              // role agents work; their reports arrive as events and wake it
-              background: { default: true },
-              parkTimeoutMs: limits.parkTimeoutMs,
-              maxConcurrent: limits.spawnCap,
-              ...(limits.maxChildren === undefined ? {} : { maxChildren: limits.maxChildren }),
+              parentAgent: leadAgent,
               childSession: childSessionOptions,
               parentSession: parentSessionOptions,
-              // role agents are leaves: a delegation is one level deep
-              maxDepth: 1,
-              messageTool: messaging,
-              outputTool: messaging,
-              stopTool: messaging,
               selfAgent: self,
+              messageTool: true,
+              outputTool: false,
+              stopTool: false,
             }),
-          ]
-        : def.role === 'lead'
-          ? []
-          : [
-              // child side: send_message to main, reports of resumed turns, reconcile on open
-              subagents({
-                agents: {},
-                approvals: 'park',
-                parentAgent: leadAgent,
-                childSession: childSessionOptions,
-                parentSession: parentSessionOptions,
-                selfAgent: self,
-                messageTool: true,
-                outputTool: false,
-                stopTool: false,
-              }),
-            ]),
+          ]),
       ...(deps.routineOutcomes === undefined
         ? []
         : [
@@ -543,6 +528,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
         ...(delegates || messaging ? [AGENT_MESSAGE_INSTRUCTIONS] : []),
         def.instructions,
+        ...out.instructions,
         reminder,
       ],
       plugins,
@@ -553,7 +539,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           scopes: (ctx) => [workspaceScope(String(ctx.runtime.workspaceId ?? workspaceId))],
         },
       },
-      ...(mcpSources.length > 0 ? { mcp: mcpSources } : {}),
+      ...(out.mcpSources.length > 0 ? { mcp: out.mcpSources } : {}),
       // role agents are bounded by the same cap as a delegated run (also when a chat opens them directly)
       loop: { maxSteps: def.role === 'lead' ? 40 : fixed.childMaxTurns },
       // uploads are checked by the chat route; the core caps data URLs at the same size
@@ -571,7 +557,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
     }) as unknown as HarnessAgent
-    holder.self = agent
+    selves.set(def.id, agent)
     return agent
   }
 
@@ -610,14 +596,27 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return { id, ...(lookupModel(catalog, id) ?? {}) }
   }
 
-  function factoryAgentFor(def: AgentDef): HarnessAgent {
+  /**
+   * `bare`: a read-only handle (`peek`) may be built without connectors when none were prepared;
+   * it never runs a turn.
+   */
+  function factoryAgentFor(def: AgentDef, bare = false): HarnessAgent {
     const settings = currentSettings()
-    const key = `${def.id}@${def.version}@${settings.rev}@${deps.models.rev?.() ?? 0}`
+    let out = deps.connectors.activated(def.id)
+    if (out === undefined) {
+      if (!bare) {
+        throw new Error(
+          `the connectors of agent ${def.slug} are not loaded: await factory.prepare(def) first`,
+        )
+      }
+      out = EMPTY_ACTIVATION
+    }
+    const key = `${def.id}@${def.version}@${settings.rev}@${deps.models.rev?.() ?? 0}@${activationId(out)}`
     let agent = cache.get(key)
     if (agent === undefined) {
       // the workspace limit is a row of the shared ledger: applied by whoever builds first
       setBudgetLimit(sqlite, workspaceScope(workspaceId), settings.budgetUsd)
-      agent = build(def, settings)
+      agent = build(def, settings, out)
       cache.set(key, agent)
       const previous = latest.get(def.id)
       if (previous !== undefined && previous !== key) {
@@ -643,16 +642,23 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         engines.get(sessionId)?.autoState() ?? { paused: false, consecutive: 0, total: 0 },
       resumeAuto: (sessionId) => engines.get(sessionId)?.resumeAuto(),
     },
-    agentFor: factoryAgentFor,
+    prepare: async (def) => {
+      const all = new Map<string, AgentDef>()
+      for (const a of [def, deps.lead?.(), ...(deps.roster?.() ?? [])]) {
+        if (a !== undefined) all.set(a.id, a)
+      }
+      await deps.connectors.prepare([...all.values()])
+    },
+    agentFor: (def) => factoryAgentFor(def, def.archivedAt !== null),
     modelInfo: (def) => modelInfoOf(def, currentSettings()),
     peek: (sessionId) => {
       const lead = deps.lead?.()
       const any = lead ?? deps.roster?.()[0]
       if (any === undefined) throw new Error('the workspace has no agent to read sessions with')
-      return factoryAgentFor(any).peek(sessionId)
+      return factoryAgentFor(any, true).peek(sessionId)
     },
     openSession: (def, sessionId) =>
-      factoryAgentFor(def).session(sessionId, {
+      factoryAgentFor(def, def.archivedAt !== null).session(sessionId, {
         lock,
         runtime: { workspaceId, agentId: def.id },
       }) as HarnessSession,

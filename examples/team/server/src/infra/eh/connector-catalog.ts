@@ -1,0 +1,347 @@
+/**
+ * The connector definitions of the team app: the built-in connectors (the shipped plugins: Files,
+ * Memory, Planning, Web, Ask the user, Team), the curated GitHub connector and the generic custom
+ * connector (any remote MCP server by URL).
+ *
+ * Built-in plugin factories are called by `activateConnectors` for one agent at a time (`ctx.agent`).
+ * Everything that needs the agent factory (the subagents plugin) is late-bound through `hooks`.
+ */
+import type { Database } from 'bun:sqlite'
+import { askUser } from 'eharness/ask'
+import {
+  type AnyConnectorDefinition,
+  type BuiltinInput,
+  builtinConnectors,
+  type ConnectorActivation,
+  capabilitiesFromTools,
+  defineConnector,
+  type RemoteToolInfo,
+  remoteMcpConnector,
+} from 'eharness/connectors'
+import { type FileToolName, filesystem } from 'eharness/filesystem'
+import { listRemoteMcpTools, mcpServer } from 'eharness/mcp'
+import { memory } from 'eharness/memory'
+import { ehMeta } from 'eharness/providers'
+import { todos } from 'eharness/todos'
+import { webFetch, webSearch } from 'eharness/web'
+import { z } from 'zod'
+import type { AgentDef } from '../../domain/agents.ts'
+import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
+import { type LibraryChange, libraryFs } from './library-fs.ts'
+import type { ModelConfig } from './provider.ts'
+
+/** Memory tools are file writes by definition: the agent owns its memory, so they never ask. */
+export const MEMORY_TOOL_KINDS = {
+  memory_view: { kind: 'read' as const, pathField: 'path' },
+  memory_create: { kind: 'write' as const, pathField: 'path' },
+  memory_str_replace: { kind: 'write' as const, pathField: 'path' },
+  memory_insert: { kind: 'write' as const, pathField: 'path' },
+  memory_delete: { kind: 'write' as const, pathField: 'path' },
+  memory_rename: { kind: 'write' as const, pathField: 'old_path' },
+}
+const MEMORY_ALLOW = Object.keys(MEMORY_TOOL_KINDS).filter((n) => n !== 'memory_view')
+
+/**
+ * The app's own rules of an agent, merged most-restrictive-wins with the connector rules
+ * (`activateConnectors({ appRules })`): its definition rules, memory writes (the agent owns its
+ * memory) and library edits (the point of the role agents; deletes still ask).
+ */
+export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
+  allow: string[]
+  ask: string[]
+  deny: string[]
+} {
+  return {
+    allow: [...def.rules.allow, ...MEMORY_ALLOW, 'write_file', 'edit_file'],
+    ask: [...def.rules.ask],
+    deny: [...def.rules.deny],
+  }
+}
+
+export const GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/'
+
+/** Late-bound pieces that need the agent factory. */
+export interface CatalogHooks {
+  /** The subagents plugin of a lead (delegation and messaging); undefined for other agents. */
+  team?: (agent: AgentDef, input: BuiltinInput) => ConnectorActivation
+}
+
+export interface CatalogOptions {
+  sqlite: Database
+  agentById: (id: string) => AgentDef | undefined
+  /** Search backend of `web_search`; absent = the Web connector has no search capability. */
+  search?: ModelConfig['search']
+  onFileChange?: (change: LibraryChange) => void
+  hooks: CatalogHooks
+  /** Lists the tools of a remote MCP server (default `listRemoteMcpTools`; tests inject a fake). */
+  listTools?: typeof listRemoteMcpTools
+}
+
+/** Connection label of the two memory scopes, as people and the model read them. */
+export const MEMORY_LABELS = {
+  workspace: 'Workspace memory — shared by the whole team',
+  agent: "This agent's memory — only this agent",
+} as const
+
+interface RemoteSettings {
+  url: string
+  authMode: 'none' | 'headers' | 'oauth'
+  headers?: Record<string, string>
+  transport?: 'http' | 'sse'
+  allow?: string[]
+  deny?: string[]
+}
+
+/** A field only the migration sets (never shown: the condition can not hold). */
+const NEVER = { field: 'authMode', in: [] as unknown[] }
+
+/** The custom remote MCP connector, extended with the legacy SSE transport and a stable tool prefix. */
+function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
+  const base = remoteMcpConnector({
+    id: 'mcp-remote',
+    name: 'Custom connector',
+    description: 'Connect any remote MCP server by its URL.',
+    icon: 'plugs',
+    category: 'custom',
+    listTools: (server) => listTools(server) as Promise<RemoteToolInfo[]>,
+  })
+  const settings = (base.settings as z.ZodObject).extend({
+    transport: z
+      .enum(['http', 'sse'])
+      .default('http')
+      .meta({
+        title: 'Transport',
+        description: 'Streamable HTTP, or the older SSE transport.',
+        ...ehMeta({ group: 'advanced', widget: 'radio', showWhen: NEVER }),
+      }),
+    // tool lists of servers set up before connectors (hidden; capabilities replace them on a test)
+    allow: z
+      .array(z.string())
+      .optional()
+      .meta({ title: 'Allowed tools', ...ehMeta({ group: 'advanced', showWhen: NEVER }) }),
+    deny: z
+      .array(z.string())
+      .optional()
+      .meta({ title: 'Blocked tools', ...ehMeta({ group: 'advanced', showWhen: NEVER }) }),
+  })
+  return defineConnector({
+    ...base,
+    settings,
+    test: async (ctx) =>
+      (ctx.settings as unknown as RemoteSettings).transport === 'sse'
+        ? { ok: true, message: 'Saved. Tools of SSE servers are not listed.' }
+        : ((await base.test?.(ctx)) ?? { ok: true }),
+    activate: (ctx) => {
+      const s = ctx.settings as unknown as RemoteSettings
+      // tools are always `<slug>_<tool>` (a remote tool never shadows a built-in one)
+      const prefix = `${ctx.slug}_`
+      if (s.transport === 'sse') {
+        const modes = Object.entries(ctx.toolModes)
+        const off = modes.filter(([, m]) => m === 'off').map(([t]) => t)
+        const on = modes.filter(([, m]) => m !== 'off').map(([t]) => t)
+        return mcpServer({
+          name: ctx.slug,
+          transport: {
+            type: 'sse',
+            url: s.url,
+            ...(s.authMode === 'headers' &&
+            s.headers !== undefined &&
+            Object.keys(s.headers).length > 0
+              ? { headers: s.headers }
+              : {}),
+          },
+          prefix,
+          ...(modes.length > 0 ? { allow: on } : s.allow === undefined ? {} : { allow: s.allow }),
+          ...(off.length > 0 || s.deny !== undefined ? { deny: [...off, ...(s.deny ?? [])] } : {}),
+          defer: true,
+          wrapUntrusted: true,
+        })
+      }
+      return {
+        kind: 'mcp' as const,
+        name: ctx.slug,
+        url: s.url,
+        ...(s.authMode === 'headers' && s.headers !== undefined && Object.keys(s.headers).length > 0
+          ? { headers: s.headers }
+          : {}),
+        ...(s.authMode === 'oauth' ? { getAccessToken: ctx.connection.getAccessToken } : {}),
+        prefix,
+        ...(s.allow === undefined ? {} : { allow: s.allow }),
+        ...(s.deny === undefined ? {} : { deny: s.deny }),
+        defer: true as const,
+      }
+    },
+  })
+}
+
+const GITHUB_API = 'https://api.github.com'
+
+/** GitHub through its remote MCP server: OAuth app (admin credentials) or a personal access token. */
+function github(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
+  return defineConnector({
+    id: 'github',
+    version: '1',
+    name: 'GitHub',
+    description: 'Work with repositories, issues and pull requests.',
+    icon: 'github-logo',
+    category: 'development',
+    source: 'curated',
+    scopes: ['workspace', 'agent'],
+    settings: z.object({
+      authMode: z
+        .enum(['oauth', 'token'])
+        .default('oauth')
+        .meta({
+          title: 'Sign in with',
+          description: 'GitHub account (OAuth app) or a personal access token.',
+          ...ehMeta({ group: 'auth', widget: 'radio' }),
+        }),
+      token: z
+        .string()
+        .optional()
+        .meta({
+          title: 'Personal access token',
+          description: 'Create one at github.com/settings/tokens. Stored encrypted.',
+          ...ehMeta({
+            group: 'auth',
+            secret: true,
+            widget: 'password',
+            showWhen: { field: 'authMode', equals: 'token' },
+          }),
+        }),
+    }),
+    auth: {
+      type: 'oauth2',
+      authorizationUrl: 'https://github.com/login/oauth/authorize',
+      tokenUrl: 'https://github.com/login/oauth/access_token',
+      scopes: ['repo', 'read:org', 'read:user'],
+      pkce: true,
+      dcr: 'never',
+      clientAuth: 'post',
+      client: z.object({ clientId: z.string(), clientSecret: z.string().optional() }),
+      when: (settings) => settings.authMode !== 'token',
+    },
+    // discovered at connect time (read-only tools allowed, the rest ask first)
+    capabilities: [],
+    test: async (ctx) => {
+      const s = ctx.settings as { authMode?: string; token?: string }
+      const token = s.authMode === 'token' ? s.token : ctx.accessToken
+      if (token === undefined || token === '') {
+        return { ok: false, message: 'Enter a personal access token.' }
+      }
+      let accountLabel: string | undefined
+      try {
+        const res = await ctx.fetch(`${GITHUB_API}/user`, {
+          headers: {
+            authorization: `Bearer ${token}`,
+            accept: 'application/vnd.github+json',
+            'user-agent': 'eharness-team',
+          },
+        })
+        if (res.status === 401) return { ok: false, message: 'GitHub rejected the credentials.' }
+        if (res.ok) accountLabel = ((await res.json()) as { login?: string }).login
+      } catch {
+        return { ok: false, message: 'Could not reach GitHub.' }
+      }
+      try {
+        const tools = await listTools({
+          url: GITHUB_MCP_URL,
+          getAccessToken: () => Promise.resolve(token),
+        })
+        return {
+          ok: true,
+          ...(accountLabel === undefined ? {} : { accountLabel }),
+          capabilities: capabilitiesFromTools(tools as RemoteToolInfo[]),
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          message: `Could not list GitHub tools: ${error instanceof Error ? error.message.slice(0, 160) : 'unknown error'}`,
+        }
+      }
+    },
+    activate: (ctx) => {
+      const s = ctx.settings as { authMode?: string; token?: string }
+      return {
+        kind: 'mcp' as const,
+        name: ctx.slug,
+        url: GITHUB_MCP_URL,
+        ...(s.authMode === 'token' && s.token !== undefined
+          ? { headers: { Authorization: `Bearer ${s.token}` } }
+          : { getAccessToken: ctx.connection.getAccessToken }),
+        prefix: `${ctx.slug}_`,
+        defer: true as const,
+      }
+    },
+  })
+}
+
+export function createConnectorDefinitions(options: CatalogOptions): AnyConnectorDefinition[] {
+  const { sqlite } = options
+  const defOf = (id: string): AgentDef => {
+    const def = options.agentById(id)
+    if (def === undefined) throw new Error(`unknown agent ${id}`)
+    return def
+  }
+  const builtins = builtinConnectors({
+    labels: {
+      files: {
+        description: 'Read, write and organise the shared library of files.',
+        capabilities: {
+          read: { description: 'Open, list and search library files.' },
+          edit: { description: 'Create and change library files.' },
+          delete: { description: 'Delete library files.' },
+        },
+      },
+      memory: {
+        description: 'Remember durable facts across conversations.',
+        scopeLabels: { workspace: MEMORY_LABELS.workspace, agent: MEMORY_LABELS.agent },
+      },
+      planning: { description: 'Keep a todo list while working on multi-step tasks.' },
+      web: { description: 'Search the web and read web pages.' },
+      ask: { description: 'Ask you a question when something is unclear, and wait.' },
+      team: {
+        name: 'Team',
+        description: 'Delegate work to the other agents and message them (lead only).',
+      },
+    },
+    files: {
+      plugin: ({ tools }, ctx) => {
+        const def = defOf(ctx.agent.id)
+        return filesystem({
+          fs: libraryFs(sqlite, {
+            agentId: def.id,
+            ...(options.onFileChange ? { onChange: options.onFileChange } : {}),
+          }),
+          tools: tools as FileToolName[],
+          hiddenPrefixes: ['/memories'],
+          ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
+        })
+      },
+    },
+    memory: {
+      paths: { workspace: WORKSPACE_MEMORY, agent: agentMemory },
+      plugin: (roots) =>
+        memory({
+          roots: () => roots.map(({ path, write, label }) => ({ path, write, label })),
+          pinned: () => roots.map((r) => `${r.path}/profile.md`),
+          flushOnCompaction: true,
+        }),
+    },
+    planning: { plugin: () => todos() },
+    web: {
+      read: () => webFetch({}),
+      // offered only with a real backend: a tool that always fails makes models retry forever
+      ...(options.search === undefined
+        ? {}
+        : {
+            search: () =>
+              webSearch({ search: options.search as NonNullable<typeof options.search> }),
+          }),
+    },
+    ask: { plugin: () => askUser() },
+    team: { plugin: (input, ctx) => options.hooks.team?.(defOf(ctx.agent.id), input) },
+  })
+  const listTools = options.listTools ?? listRemoteMcpTools
+  return [...builtins, github(listTools), customMcp(listTools)]
+}

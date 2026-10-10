@@ -210,6 +210,7 @@ export function createRoutineService(
           return after
         }
       }
+      await factory.prepare(def)
       const session = factory.openSession(def, run.sessionId)
       const ahead = run.scheduledAt > now && run.trigger === 'schedule'
       const result = await session.enqueue(routine.prompt, {
@@ -334,6 +335,7 @@ export function createRoutineService(
             : deps.tasks.getBySession(sessionId)?.agentId
       const def = agentId === undefined ? undefined : deps.agents.get(agentId)
       if (def === undefined || def.archivedAt !== null) continue
+      await factory.prepare(def)
       factory.openSession(def, sessionId)
       opened++
     }

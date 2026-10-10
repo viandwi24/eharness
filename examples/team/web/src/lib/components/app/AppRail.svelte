@@ -5,6 +5,7 @@
 	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
 	import GearIcon from 'phosphor-svelte/lib/Gear';
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
+	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
 	import PulseIcon from 'phosphor-svelte/lib/Pulse';
 	import type { Component } from 'svelte';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
@@ -25,6 +26,7 @@
 		tasks: ListChecksIcon,
 		routines: ClockIcon,
 		files: FolderOpenIcon,
+		connectors: PlugsConnectedIcon,
 		logs: PulseIcon,
 		settings: GearIcon
 	};

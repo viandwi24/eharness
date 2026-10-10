@@ -298,6 +298,7 @@ describe('settings', () => {
 
     const writer = s.deps.agents.getBySlug('writer')
     if (writer === undefined) throw new Error('seed')
+    await s.factory.prepare(writer)
     s.factory.agentFor(writer)
     expect(asked.at(-1)).toBeNull() // no model of its own, no workspace default
 

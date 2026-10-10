@@ -12,13 +12,14 @@ afterEach(async () => {
 })
 
 describe('agent factory', () => {
-  test('caches per agent version; an edit builds a new agent', () => {
+  test('caches per agent version; an edit builds a new agent', async () => {
     server = compose({
       dbFile: ':memory:',
       models: scriptedModelConfig(scriptedModel([]) as never),
     })
     const researcher = server.deps.agents.getBySlug('researcher')
     if (researcher === undefined) throw new Error('seed missing')
+    await server.factory.prepare(researcher)
     const a = server.factory.agentFor(researcher)
     expect(server.factory.agentFor(researcher)).toBe(a)
     const edited = updateAgent(server.deps, researcher.id, { instructions: 'Be brief.' })
@@ -51,6 +52,7 @@ describe('agent factory', () => {
     if (def === undefined) throw new Error('seed missing')
     agentId = def.id
 
+    await server.factory.prepare(def)
     const agent = server.factory.agentFor(def)
     const session = agent.session(`dm:${def.id}`, { lock: server.factory.lock })
     const result = await session.send('Research and save notes').result
@@ -76,16 +78,20 @@ describe('agent factory', () => {
     expect(lock.n).toBe(0)
   })
 
-  test('the lead gets no library write; role tools follow the definition', () => {
+  test('the lead gets no library write; role tools follow the definition', async () => {
     server = compose({
       dbFile: ':memory:',
       models: scriptedModelConfig(scriptedModel([]) as never),
     })
     const lead = server.deps.agents.getBySlug('lead')
     const analyst = server.deps.agents.getBySlug('analyst')
-    expect(lead?.tools).not.toContain('library_write')
-    expect(analyst?.tools).not.toContain('web_fetch')
     if (lead === undefined || analyst === undefined) throw new Error('seed missing')
+    await server.factory.prepare()
+    const toolsOf = (id: string): string[] =>
+      Object.keys(server?.connectors.activated(id)?.toolNameMap ?? {})
+    // the lead can read the library but not write it: the tool is switched off
+    expect(server.connectors.activated(lead.id)?.rules.deny).toContain('write_file')
+    expect(toolsOf(analyst.id)).not.toContain('web_fetch')
     // both build (plugin order, permissions, memory roots) without throwing
     server.factory.agentFor(lead)
     server.factory.agentFor(analyst)

@@ -7,7 +7,10 @@
  *   OPENROUTER_API_KEY | AI_GATEWAY_API_KEY   read-only env provider profiles (more profiles are
  *                     added in Settings > Providers and stored encrypted); TEAM_SCRIPTED_MODEL wins over all
  *   TEAM_PROVIDER / TEAM_MODEL   default profile (openrouter | gateway) and its default model
- *   TEAM_SECRET_KEY   32 bytes base64: encrypts provider secrets at rest (dev: a key file next to the DB)
+ *   TEAM_SECRET_KEY   32 bytes base64: encrypts provider secrets, connection secrets and tokens at rest (dev: a key file next to the DB)
+ *   TEAM_PUBLIC_URL   where this server is reached by the browser (OAuth callback `<url>/oauth/callback`; default http://localhost:PORT)
+ *   TEAM_WEB_URL      where the web app lives (the OAuth callback redirects to `<url>/connectors`; default http://localhost:5173)
+ *   TEAM_<CONNECTOR>_CLIENT_ID / _CLIENT_SECRET   OAuth app of a curated connector (e.g. TEAM_GITHUB_CLIENT_ID); or save it in the web app
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
  *   TEAM_SEARCH_MODEL   model of web_search, same format
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
@@ -39,22 +42,26 @@ import {
   type TeamLimits,
 } from './infra/eh/agent-factory.ts'
 import { createChatService } from './infra/eh/chat-service.ts'
+import type { CatalogOptions } from './infra/eh/connector-catalog.ts'
+import { type ConnectorsRuntime, createConnectors } from './infra/eh/connectors.ts'
+import { migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
+import { sqliteProfileStore } from './infra/eh/profile-store.ts'
 import {
   type ModelConfig,
   providerModelConfig,
   scriptedModelConfigFromEnv,
 } from './infra/eh/provider.ts'
-import { createProviderService, type ProviderService } from './infra/eh/providers.ts'
+import { createProviderService, PROVIDER_KIND, type ProviderService } from './infra/eh/providers.ts'
 import {
   createRoutineService,
   type RoutineEngineConfig,
   type RoutineService,
 } from './infra/eh/routine-service.ts'
 import { lazySecretBox, type SealOpen, secretBoxFromEnv } from './infra/eh/secret-box.ts'
-import { setBudgetLimit } from './infra/eh/storage.ts'
+import { setBudgetLimit, sqliteLock } from './infra/eh/storage.ts'
 import {
   createTeamService,
   type ReconcileReport,
@@ -82,6 +89,14 @@ export interface ServerConfig {
   fetch?: typeof fetch
   /** Poll interval of the provider-change feed (ms, default 1000; 0 = off). */
   providersPollMs?: number
+  /** Lists the tools of a remote MCP server when a connection is tested (tests inject a fake). */
+  mcpListTools?: CatalogOptions['listTools']
+  /** Poll interval of the connectors-change feed (ms, default 1000; 0 = off). */
+  connectorsPollMs?: number
+  /** Public URL of this server (OAuth redirect URI base). Default `TEAM_PUBLIC_URL`, else `http://localhost:4000`. */
+  publicUrl?: string
+  /** URL of the web app (the OAuth callback redirects there). Default `TEAM_WEB_URL`, else `http://localhost:5173`. */
+  webUrl?: string
   /** Auto mode classifier override (tests); default: the model of `models.classifierModel`. */
   classifier?: AgentFactoryDeps['classifier']
   /** Timers of the stream log and inbox (tests shorten them). */
@@ -112,6 +127,10 @@ export interface Server {
   routines: RoutineService
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
   activityLog: ActivityLog
+  /** Connectors: connections, flows, enablement, activation. */
+  connectors: ConnectorsRuntime
+  /** Resolves when the legacy migration ran and the connectors of every agent are activated. */
+  connectorsReady: Promise<void>
   /** The provider manager behind `GET /providers` and the model port. */
   providers: ProviderService
   /** Resolves when the provider profiles and catalogs are loaded (await before serving chats). */
@@ -133,21 +152,39 @@ export function compose(config: ServerConfig): Server {
   const events = {
     append: (e: Parameters<typeof tasks.appendEvent>[0]) => tasks.appendEvent(e, Date.now()),
   }
+  // ONE secret box and ONE profile table: provider profiles, connections, their credentials and
+  // OAuth app credentials. Provider rows are sealed by the store (legacy format), connector rows by
+  // `sealedProfileStore` (`infra/eh/connectors.ts`).
+  const instance = crypto.randomUUID()
+  const box =
+    config.secretBox ??
+    lazySecretBox(() =>
+      secretBoxFromEnv({
+        ...(config.env === undefined ? {} : { env: config.env }),
+        dataDir: config.dbFile === ':memory:' ? undefined : dirname(config.dbFile),
+      }),
+    )
+  let connectorsRef: ConnectorsRuntime | undefined
+  const profileStore = sqliteProfileStore(conn.sqlite, box, {
+    sealKinds: [PROVIDER_KIND],
+    warn: (message) => console.warn(`team: ${message}`),
+    onChange: ({ kind, id, action }) => {
+      if (kind === PROVIDER_KIND) {
+        events.append({ type: 'providers-changed', payload: { profileId: id, action, instance } })
+      } else if (kind === 'connection') {
+        // appends `connectors-changed` and bumps the local revision
+        connectorsRef?.profileChanged(kind)
+      }
+    },
+  })
   // model providers: env profiles + encrypted profiles from the web; TEAM_SCRIPTED_MODEL wins
   const providers = createProviderService({
     sqlite: conn.sqlite,
-    box:
-      config.secretBox ??
-      lazySecretBox(() =>
-        secretBoxFromEnv({
-          ...(config.env === undefined ? {} : { env: config.env }),
-          dataDir: config.dbFile === ':memory:' ? undefined : dirname(config.dbFile),
-        }),
-      ),
+    store: profileStore,
+    instance,
     ...(config.env === undefined ? {} : { env: config.env }),
     ...(config.offline === undefined ? {} : { offline: config.offline }),
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
-    events,
     feed: tasks,
     ...(config.providersPollMs === undefined ? {} : { pollMs: config.providersPollMs }),
   })
@@ -196,12 +233,41 @@ export function compose(config: ServerConfig): Server {
     // the limit is a row of the shared ledger: apply it now; other instances read the row
     onChange: (s) => setBudgetLimit(conn.sqlite, `workspace:${WORKSPACE_ID}`, s.budgetUsd),
   })
+  const publicUrl = (
+    config.publicUrl ??
+    process.env.TEAM_PUBLIC_URL ??
+    `http://localhost:${process.env.PORT ?? 4000}`
+  ).replace(/\/$/, '')
+  const webUrl = (config.webUrl ?? process.env.TEAM_WEB_URL ?? 'http://localhost:5173').replace(
+    /\/$/,
+    '',
+  )
+  const connectors = createConnectors({
+    sqlite: conn.sqlite,
+    profiles: profileStore,
+    box,
+    lock: sqliteLock(conn.sqlite),
+    agentById: (id) => agents.get(id),
+    agents: () => agents.list(),
+    ...(models.search === undefined ? {} : { search: models.search }),
+    ...(config.mcpListTools === undefined ? {} : { listTools: config.mcpListTools }),
+    onFileChange,
+    ...(config.env === undefined ? {} : { env: config.env }),
+    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+    redirectUri: `${publicUrl}/oauth/callback`,
+    events,
+    feed: tasks,
+    ...(config.connectorsPollMs === undefined ? {} : { pollMs: config.connectorsPollMs }),
+    instance,
+  })
+  connectorsRef = connectors
   const routineStore = sqliteRoutineStore(conn.sqlite)
   const sessionModes = sqliteSessionModes(conn.sqlite)
   let routines: RoutineService | undefined
   const factory = createAgentFactory({
     sqlite: conn.sqlite,
     models,
+    connectors,
     ...(config.catalog === undefined ? {} : { catalog: config.catalog }),
     workspaceId: WORKSPACE_ID,
     roster: () => agents.list().filter((a) => a.role === 'role' || a.role === 'custom'),
@@ -262,6 +328,8 @@ export function compose(config: ServerConfig): Server {
     library: sqliteLibraryStore(conn.sqlite, { onChange: onFileChange }),
     settings,
     providers,
+    connectors,
+    webUrl,
     modes: createModeService(factory, {
       store: sessionModes,
       workspaceDefault: () => settings.get().defaultPermissionMode,
@@ -274,16 +342,6 @@ export function compose(config: ServerConfig): Server {
     clock: { now: () => Date.now() },
     ids: { next: () => newId() },
     workspaceId: WORKSPACE_ID,
-    ...(models.search === undefined
-      ? {
-          unavailableTools: [
-            {
-              name: 'web_search' as const,
-              reason: 'no web search backend: needs a provider key (OpenRouter or AI Gateway)',
-            },
-          ],
-        }
-      : {}),
     ...(config.eventsPollMs === undefined ? {} : { eventsPollMs: config.eventsPollMs }),
   }
   if (config.seed !== false) seedAgents(deps)
@@ -301,9 +359,19 @@ export function compose(config: ServerConfig): Server {
       () => undefined,
       (error) => console.warn(`team: reconcile failed: ${String(error)}`),
     )
-  // the repair pass opens sessions, which needs the provider profiles to be loaded
+  // agents from before connectors get their enablement, then every agent's connectors activate
+  const connectorsReady = providersReady.then(async () => {
+    await migrateLegacyAgents({
+      sqlite: conn.sqlite,
+      connections: connectors.stores.connections,
+      changed: () => connectors.profileChanged('connection'),
+    })
+    await factory.prepare()
+  })
+  connectorsReady.catch(() => undefined)
+  // the repair pass opens sessions, which needs the provider profiles and connectors
   const ready =
-    config.reconcile?.onBoot === false ? Promise.resolve() : providersReady.then(quiet, quiet)
+    config.reconcile?.onBoot === false ? Promise.resolve() : connectorsReady.then(quiet, quiet)
   const everyMs = config.reconcile?.everyMs ?? 60_000
   const timer = everyMs > 0 ? setInterval(() => void quiet(), everyMs) : undefined
   timer?.unref()
@@ -320,6 +388,8 @@ export function compose(config: ServerConfig): Server {
     activityLog,
     providers,
     providersReady,
+    connectors,
+    connectorsReady,
     ready,
     reconcile,
     async close() {
@@ -329,6 +399,8 @@ export function compose(config: ServerConfig): Server {
       await repairing?.catch(() => undefined)
       await factory.close()
       providers.close()
+      connectors.close()
+      await connectorsReady.catch(() => undefined)
       await providersReady.catch(() => undefined)
       conn.close()
     },
@@ -359,6 +431,7 @@ if (import.meta.main) {
   try {
     // profiles (decrypting them needs a valid TEAM_SECRET_KEY) and catalogs
     await server.providersReady
+    await server.connectorsReady
   } catch (error) {
     console.error(
       `provider setup failed: ${error instanceof Error ? error.message : String(error)}`,

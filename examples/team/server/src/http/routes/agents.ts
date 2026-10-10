@@ -6,15 +6,12 @@ import {
   listAgentsWithActivity,
   updateAgent,
 } from '../../app/agents.ts'
-import { redactAgent } from '../../app/catalog.ts'
 import type { Deps } from '../../app/ports.ts'
 import {
   AgentCreateSchema,
   AgentListSchema,
   AgentPatchSchema,
   AgentSchema,
-  TOOL_CATALOG_VALUE,
-  ToolCatalogSchema,
 } from '../schemas/agents.ts'
 import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
 
@@ -99,18 +96,6 @@ const remove = createRoute({
   },
 })
 
-const tools = createRoute({
-  method: 'get',
-  path: '/tools',
-  tags: ['agents'],
-  summary: 'The fixed tool catalog a definition can choose from',
-  security,
-  responses: {
-    200: { description: 'Tool names with descriptions', content: json(ToolCatalogSchema) },
-    ...errorResponses,
-  },
-})
-
 export function agentRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(list, (c) => {
@@ -119,30 +104,15 @@ export function agentRoutes(deps: Deps): OpenAPIHono {
         {
           agents: listAgentsWithActivity(deps, {
             includeArchived: includeArchived === 'true',
-          }).map(redactAgent),
+          }),
         },
         200,
       )
     })
-    .openapi(create, (c) => c.json(redactAgent(createAgent(deps, c.req.valid('json'))), 201))
-    .openapi(get, (c) => c.json(redactAgent(getAgent(deps, c.req.valid('param').id)), 200))
+    .openapi(create, (c) => c.json(createAgent(deps, c.req.valid('json')), 201))
+    .openapi(get, (c) => c.json(getAgent(deps, c.req.valid('param').id), 200))
     .openapi(patch, (c) =>
-      c.json(redactAgent(updateAgent(deps, c.req.valid('param').id, c.req.valid('json'))), 200),
+      c.json(updateAgent(deps, c.req.valid('param').id, c.req.valid('json')), 200),
     )
-    .openapi(remove, (c) => c.json(redactAgent(archiveAgent(deps, c.req.valid('param').id)), 200))
-    .openapi(tools, (c) => {
-      const off = deps.unavailableTools ?? []
-      if (off.length === 0) return c.json(TOOL_CATALOG_VALUE, 200)
-      const names = new Set(off.map((t) => t.name))
-      return c.json(
-        {
-          tools: TOOL_CATALOG_VALUE.tools.filter((t) => !names.has(t.name)),
-          unavailable: off as Array<{
-            name: (typeof TOOL_CATALOG_VALUE.tools)[number]['name']
-            reason: string
-          }>,
-        },
-        200,
-      )
-    })
+    .openapi(remove, (c) => c.json(archiveAgent(deps, c.req.valid('param').id), 200))
 }

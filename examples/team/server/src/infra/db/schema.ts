@@ -14,7 +14,13 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core'
 
-import type { McpServerDef } from '../../domain/agents.ts'
+/** The MCP server rows of before connectors (read by the boot migration only). */
+export interface LegacyMcpServer {
+  name: string
+  transport: { type: 'http' | 'sse'; url: string; headers: Record<string, string> }
+  allow?: string[]
+  deny?: string[]
+}
 
 const json = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 
@@ -40,10 +46,16 @@ export const agents = sqliteTable(
     model: text('model'),
     /** Profile the model comes from (`provider_profiles.id`); null = the default profile. */
     modelProfile: text('model_profile'),
+    /** Legacy tool checklist (before connectors): read by the boot migration only, never written. */
     tools: json<string[]>('tools').notNull(),
     skills: json<string[]>('skills').notNull(),
     mcp: json<string[]>('mcp').notNull(),
-    mcpServers: json<McpServerDef[]>('mcp_servers').notNull().default([]),
+    /** Legacy (before connectors): read only by the boot migration (`infra/eh/connectors-migration.ts`). */
+    mcpServers: json<LegacyMcpServer[]>('mcp_servers').notNull().default([]),
+    /** Unused: an early draft of the enablement storage (see `agent_connectors`); never read or written. */
+    connectors: json<Record<string, unknown>>('connectors'),
+    /** 0 = a row from before connectors: the boot migration derives its enablement from `tools` and `mcp_servers`. */
+    connectorsMigrated: integer('connectors_migrated').notNull().default(0),
     permissionMode: text('permission_mode').notNull(),
     rules: json<{ allow: string[]; ask: string[]; deny: string[] }>('rules').notNull(),
     version: integer('version').notNull(),
@@ -52,6 +64,25 @@ export const agents = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
   },
   (t) => [index('agents_workspace').on(t.workspaceId)],
+)
+
+/**
+ * Connector enablement (`EnablementStore`): one agent's choices for one connection (on / off /
+ * inherit, a mode per capability, per-tool overrides). The agent's version does not change with it:
+ * a change appends `connectors-changed` and the agent factory rebuilds from the new revision.
+ */
+export const agentConnectors = sqliteTable(
+  'agent_connectors',
+  {
+    agentId: text('agent_id').notNull(),
+    connectionId: text('connection_id').notNull(),
+    choices: json<Record<string, unknown>>('choices').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.agentId, t.connectionId] }),
+    index('agent_connectors_conn').on(t.connectionId),
+  ],
 )
 
 /** One DM chat per agent: the sidebar row. */
@@ -424,10 +455,28 @@ export const configProfiles = sqliteTable(
     /** `v1:<keyId>:<iv>:<ciphertext>`: never plaintext. */
     settings: text('settings').notNull(),
     models: json<unknown>('models'),
+    /** Plain JSON of the fields beyond the columns (connection scope, status, ...): no secrets. */
+    extra: json<Record<string, unknown>>('extra'),
     enabled: integer('enabled').notNull().default(1),
     updatedAt: integer('updated_at').notNull(),
   },
   (t) => [primaryKey({ columns: [t.kind, t.id] })],
+)
+
+/** Connector setup flows (`FlowStore`): `data` is the `FlowState` JSON, its scratch sealed. */
+export const connectorFlows = sqliteTable(
+  'connector_flows',
+  {
+    id: text('id').primaryKey(),
+    stateHash: text('state_hash'),
+    status: text('status').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    data: text('data').notNull(),
+  },
+  (t) => [
+    index('connector_flows_state').on(t.stateHash),
+    index('connector_flows_expiry').on(t.expiresAt),
+  ],
 )
 
 /** Raw public model catalogs (models.dev, OpenRouter) cached between runs (`CatalogCache`). */

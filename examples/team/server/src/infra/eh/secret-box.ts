@@ -11,8 +11,11 @@
  * persists it next to the database (`secret.key`, git-ignored) with a loud warning; an in-memory
  * database gets a throwaway key.
  */
+
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { HarnessError } from 'eharness'
+import type { SecretVault } from 'eharness/providers'
 
 const PREFIX = 'v1'
 
@@ -29,6 +32,31 @@ export function lazySecretBox(create: () => Promise<SecretBox>): SealOpen {
   return {
     seal: async (plain) => (await get()).seal(plain),
     open: async (sealed) => (await get()).open(sealed),
+  }
+}
+
+/**
+ * The box as the library's `SecretVault` port (connection settings, OAuth credentials, flow
+ * scratch): ONE key ring for everything the server encrypts. The `context` (row or flow id) is
+ * sealed together with the value and checked on open, so a blob cannot be replayed elsewhere.
+ */
+export function vaultFromBox(box: SealOpen): SecretVault {
+  const fail = (): HarnessError =>
+    new HarnessError('EH_CONFIG_INVALID', 'The sealed value could not be opened.', {
+      details: { reason: 'vault-open' },
+    })
+  return {
+    seal: (plaintext, context) => box.seal(JSON.stringify({ c: context, p: plaintext })),
+    async open(sealed, context) {
+      let value: { c?: unknown; p?: unknown }
+      try {
+        value = JSON.parse(await box.open(sealed)) as { c?: unknown; p?: unknown }
+      } catch {
+        throw fail()
+      }
+      if (value.c !== context || typeof value.p !== 'string') throw fail()
+      return value.p
+    },
   }
 }
 

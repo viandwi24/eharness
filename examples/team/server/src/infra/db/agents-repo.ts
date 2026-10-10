@@ -1,12 +1,12 @@
 import { and, eq, isNull, sql } from 'drizzle-orm'
 import type { AgentRepo } from '../../app/ports.ts'
-import type { AgentDef, AgentRole, PermissionMode, ToolName } from '../../domain/agents.ts'
+import type { AgentDef, AgentRole, PermissionMode } from '../../domain/agents.ts'
 import type { Db } from './client.ts'
-import { agents } from './schema.ts'
+import { agentConnectors, agents } from './schema.ts'
 
 type Row = typeof agents.$inferSelect
 
-const toDef = (row: Row): AgentDef => ({
+const toDef = (row: Row, connectors: AgentDef['connectors']): AgentDef => ({
   id: row.id,
   workspaceId: row.workspaceId,
   slug: row.slug,
@@ -18,10 +18,8 @@ const toDef = (row: Row): AgentDef => ({
   instructions: row.instructions,
   model: row.model,
   modelProfile: row.modelProfile,
-  tools: row.tools as ToolName[],
+  connectors,
   skills: row.skills,
-  mcp: row.mcp,
-  mcpServers: row.mcpServers,
   permissionMode: row.permissionMode as PermissionMode,
   rules: row.rules,
   version: row.version,
@@ -30,7 +28,35 @@ const toDef = (row: Row): AgentDef => ({
   updatedAt: row.updatedAt,
 })
 
+/** Columns of the legacy checklist stay at their defaults for rows written now. */
+const toRow = (def: AgentDef) => {
+  const { connectors: _connectors, ...rest } = def
+  return { ...rest, tools: [], mcp: [], mcpServers: [] }
+}
+
 export function drizzleAgentRepo(db: Db): AgentRepo {
+  const connectorsOf = (): Map<string, AgentDef['connectors']> => {
+    const out = new Map<string, AgentDef['connectors']>()
+    for (const r of db.select().from(agentConnectors).all()) {
+      const entry = out.get(r.agentId) ?? {}
+      entry[r.connectionId] = r.choices as AgentDef['connectors'][string]
+      out.set(r.agentId, entry)
+    }
+    return out
+  }
+  const writeConnectors = (agentId: string, connectors: AgentDef['connectors'], now: number) => {
+    db.delete(agentConnectors).where(eq(agentConnectors.agentId, agentId)).run()
+    for (const [connectionId, choices] of Object.entries(connectors)) {
+      db.insert(agentConnectors)
+        .values({
+          agentId,
+          connectionId,
+          choices: choices as Record<string, unknown>,
+          updatedAt: now,
+        })
+        .run()
+    }
+  }
   return {
     list(opts = {}) {
       const rows = opts.includeArchived
@@ -41,27 +67,38 @@ export function drizzleAgentRepo(db: Db): AgentRepo {
             .where(isNull(agents.archivedAt))
             .orderBy(agents.createdAt, agents.id)
             .all()
-      return rows.map(toDef)
+      const all = connectorsOf()
+      return rows.map((row) => toDef(row, all.get(row.id) ?? {}))
     },
     get(id) {
       const row = db.select().from(agents).where(eq(agents.id, id)).get()
-      return row === undefined ? undefined : toDef(row)
+      if (row === undefined) return undefined
+      return toDef(row, connectorsOf().get(row.id) ?? {})
     },
     getBySlug(slug) {
       const row = db.select().from(agents).where(eq(agents.slug, slug)).get()
-      return row === undefined ? undefined : toDef(row)
+      if (row === undefined) return undefined
+      return toDef(row, connectorsOf().get(row.id) ?? {})
     },
     insert(def) {
-      db.insert(agents).values(def).run()
+      db.transaction(() => {
+        db.insert(agents)
+          .values({ ...toRow(def), connectorsMigrated: 1 })
+          .run()
+        writeConnectors(def.id, def.connectors, def.updatedAt)
+      })
     },
     update(def, expectedVersion) {
       const rows = db
         .update(agents)
-        .set(def)
+        .set(toRow(def))
         .where(and(eq(agents.id, def.id), eq(agents.version, expectedVersion)))
         .returning({ id: agents.id })
         .all()
       return rows.length === 1
+    },
+    setConnectors(agentId, connectors, now) {
+      writeConnectors(agentId, connectors, now)
     },
     count() {
       const row = db.select({ n: sql<number>`count(*)` }).from(agents).get()

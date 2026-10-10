@@ -468,6 +468,7 @@ describe('ticker', () => {
     }) as RoutineRun
     const def = a.server.deps.agents.getBySlug('researcher')
     if (def === undefined) throw new Error('seed')
+    await a.server.factory.prepare(def)
     const first = await a.server.factory
       .openSession(def, run.sessionId)
       .enqueue('Brief me.', { mode: 'queue', id: fireId(r.id, slot) })

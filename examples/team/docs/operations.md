@@ -18,6 +18,18 @@ One SQLite file is a good fit for instances on **one machine** (SQLite locks do 
 over network file systems such as NFS or SMB: never put the file there). For instances on different
 machines use a networked database.
 
+## Connectors
+
+`TEAM_PUBLIC_URL` (where browsers reach this server; the OAuth redirect URI is
+`<url>/oauth/callback`, default `http://localhost:$PORT`) and `TEAM_WEB_URL` (where the callback sends
+the browser back, `<url>/connectors`, default `http://localhost:5173`) are needed for OAuth
+connectors. A curated OAuth connector needs an OAuth app: `TEAM_GITHUB_CLIENT_ID` /
+`TEAM_GITHUB_CLIENT_SECRET`, or save the credentials from the Connectors page (stored encrypted).
+`TEAM_SECRET_KEY` now encrypts connection secrets and tokens too: rotating it works the same way
+(`TEAM_SECRET_KEY_PREVIOUS`). The OAuth callback is the only unauthenticated route besides health;
+its single-use `state` is the proof. Give the server an egress policy that blocks private networks:
+custom connectors fetch user-supplied URLs.
+
 ## Moving to a networked database
 
 The app talks to SQLite in three places; the library never sees it.

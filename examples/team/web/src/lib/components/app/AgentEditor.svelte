@@ -5,17 +5,15 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import ModelPicker from '#lib/components/app/ModelPicker.svelte';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
-	import { fieldErrors, type Agent, type ToolName } from '#lib/api/index.js';
+	import { fieldErrors, type Agent } from '#lib/api/index.js';
 	import { agentColors } from '#lib/models.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
 	import { agentChoiceOf, agentChoices, storedOfChoice, type AgentChoice } from '#lib/modes.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
-	import { toolsStore } from '#lib/stores/tools.svelte.js';
 
 	/** Without `agent` the editor creates one; with it, it edits (the lead cannot be archived). */
 	let {
@@ -51,8 +49,6 @@
 	// svelte-ignore state_referenced_locally
 	let modelProfile = $state<string | null>(agent?.modelProfile ?? null);
 	// svelte-ignore state_referenced_locally
-	let tools = $state<ToolName[]>([...(agent?.tools ?? ['library_read', 'memory', 'todos'])]);
-	// svelte-ignore state_referenced_locally
 	let modeChoice = $state<AgentChoice>(agentChoiceOf(agent?.permissionMode));
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
@@ -62,16 +58,10 @@
 	});
 
 	const isLead = $derived(agent?.role === 'lead');
-	const toolError = $derived(Object.entries(errors).find(([k]) => k.startsWith('tools'))?.[1]);
 
 	onMount(() => {
-		void toolsStore.load();
 		void providersStore.load();
 	});
-
-	function toggleTool(t: ToolName, on: boolean) {
-		tools = on ? [...tools.filter((x) => x !== t), t] : tools.filter((x) => x !== t);
-	}
 
 	async function submit(e: SubmitEvent) {
 		e.preventDefault();
@@ -85,7 +75,6 @@
 			instructions,
 			model: model || null,
 			modelProfile: modelProfile || null,
-			tools,
 			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode']
 		};
 		try {
@@ -154,6 +143,7 @@
 		<span class="font-medium">Instructions</span>
 		<Textarea bind:value={instructions} rows={compact ? 6 : 10} placeholder="What should this agent do?" aria-invalid={!!errors.instructions} />
 		{#if errors.instructions}<span class="text-xs text-destructive-text">{errors.instructions}</span>{/if}
+		{#if !agent}<span class="text-xs text-muted-foreground">After you create the agent you can choose its connectors (it starts with files (read only), memory and planning).</span>{/if}
 	</label>
 
 	<div class="flex flex-col gap-1">
@@ -161,22 +151,6 @@
 		<ModelPicker bind:profileId={modelProfile} bind:modelId={model} id="agent-model" />
 		{#if errors.model || errors.modelProfile}<span class="text-xs text-destructive-text">{errors.model ?? errors.modelProfile}</span>{/if}
 	</div>
-
-	<fieldset class="flex flex-col gap-2">
-		<legend class="mb-1 font-medium">Tools</legend>
-		{#each toolsStore.state.tools as t (t.name)}
-			<label class="flex items-start gap-2">
-				<Checkbox checked={tools.includes(t.name)} onCheckedChange={(v) => toggleTool(t.name, v === true)} class="mt-0.5" />
-				<span class="min-w-0">
-					<span class="font-mono text-xs">{t.name}</span>
-					<span class="block text-xs text-muted-foreground">{t.description}</span>
-				</span>
-			</label>
-		{:else}
-			<p class="text-xs text-muted-foreground">{toolsStore.state.error ?? 'Loading tools…'}</p>
-		{/each}
-		{#if toolError}<span class="text-xs text-destructive-text">{toolError}</span>{/if}
-	</fieldset>
 
 	<label class="flex flex-col gap-1">
 		<span class="font-medium">Permission mode</span>

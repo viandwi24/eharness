@@ -3,12 +3,16 @@ import {
   AGENT_ROLES,
   type AgentDef,
   type AgentDraft,
-  normalizeMcpServers,
-  normalizeTools,
   PERMISSION_MODES,
   slugify,
   validateSlug,
 } from '../domain/agents.ts'
+import {
+  builtinId,
+  DEFAULT_LEGACY_TOOLS,
+  enablementFromTools,
+  normalizeConnectors,
+} from '../domain/connectors.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import { normalizeSelection } from '../domain/providers.ts'
 import type { Deps } from './ports.ts'
@@ -70,6 +74,14 @@ function pick(
   return { model: sel.modelId, modelProfile: sel.profileId }
 }
 
+/** The Team connector (delegation) belongs to the lead. */
+function checkTeam(role: string, connectors: AgentDef['connectors']): void {
+  const team = connectors[builtinId('team')]
+  if (role !== 'lead' && team !== undefined && team.enabled === 'on') {
+    throw invalid('delegate and send_message are only available to the lead agent')
+  }
+}
+
 export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
   checkDraft(draft)
   const role = draft.role ?? 'custom'
@@ -87,8 +99,9 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     slug = draft.slug
   }
   const now = deps.clock.now()
+  const id = deps.ids.next()
   const def: AgentDef = {
-    id: deps.ids.next(),
+    id,
     workspaceId: deps.workspaceId,
     slug,
     name: draft.name.trim(),
@@ -98,17 +111,19 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     description: draft.description ?? '',
     instructions: draft.instructions,
     ...pick(deps, draft.modelProfile, draft.model),
-    tools: normalizeTools(draft.tools ?? ['library_read', 'memory', 'todos'], role),
     skills: draft.skills ?? [],
-    mcp: draft.mcp ?? [],
-    mcpServers: normalizeMcpServers(draft.mcpServers ?? []),
     permissionMode: draft.permissionMode ?? 'default',
+    connectors:
+      draft.connectors === undefined
+        ? enablementFromTools(draft.toolset ?? DEFAULT_LEGACY_TOOLS, { id, role })
+        : normalizeConnectors(draft.connectors),
     rules: { allow: [], ask: [], deny: [], ...draft.rules },
     version: 1,
     archivedAt: null,
     createdAt: now,
     updatedAt: now,
   }
+  checkTeam(role, def.connectors)
   deps.agents.insert(def)
   return def
 }
@@ -139,22 +154,21 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
           patch.modelProfile === undefined ? current.modelProfile : patch.modelProfile,
           patch.model === undefined ? current.model : patch.model,
         )),
-    tools: patch.tools === undefined ? current.tools : normalizeTools(patch.tools, current.role),
     skills: patch.skills ?? current.skills,
-    mcp: patch.mcp ?? current.mcp,
-    mcpServers:
-      patch.mcpServers === undefined
-        ? current.mcpServers
-        : normalizeMcpServers(patch.mcpServers, current.mcpServers),
+    connectors:
+      patch.connectors === undefined ? current.connectors : normalizeConnectors(patch.connectors),
     permissionMode: patch.permissionMode ?? current.permissionMode,
     rules:
       patch.rules === undefined ? current.rules : { allow: [], ask: [], deny: [], ...patch.rules },
     version: current.version + 1,
     updatedAt: deps.clock.now(),
   }
+  checkTeam(next.role, next.connectors)
   if (!deps.agents.update(next, current.version)) {
     throw conflict('the agent was changed concurrently; reload and retry', 'VERSION_CONFLICT')
   }
+  if (patch.connectors !== undefined)
+    deps.agents.setConnectors(next.id, next.connectors, next.updatedAt)
   return next
 }
 

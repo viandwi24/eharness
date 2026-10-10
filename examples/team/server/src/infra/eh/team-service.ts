@@ -62,9 +62,11 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
   const defBySlug = (slug: string): AgentDef | undefined => deps.agents.getBySlug(slug)
 
   /** The agent a stored task session runs on (its row names the owner). */
-  const sessionOfTask = (task: Task): HarnessSession | undefined => {
+  const sessionOfTask = async (task: Task): Promise<HarnessSession | undefined> => {
     const def = defById(task.agentId)
-    return def === undefined ? undefined : factory.openSession(def, task.sessionId)
+    if (def === undefined) return undefined
+    await factory.prepare(def)
+    return factory.openSession(def, task.sessionId)
   }
 
   /** `dm:<agentId>` of a session id that starts with it (the DM itself or a child of the lead). */
@@ -195,6 +197,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
   ): Promise<ApprovalOutcome> {
     const def = defById(view.agentId)
     if (def === undefined) throw notFound('agent', view.agentId)
+    await factory.prepare(def)
     const session = factory.openSession(def, view.sessionId)
     let run: ReturnType<HarnessSession['respond']>
     // items that still wait after this answer, as far as the stored state tells (a partial
@@ -275,6 +278,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     }
     for (const [sessionId, def] of parents) {
       try {
+        await factory.prepare(def)
         const session = factory.openSession(def, sessionId)
         const entries = await reconcileSubagentWaits(session as never, {
           openChild: (childSessionId, info) => {
@@ -347,20 +351,20 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
   }
 
   async function abortTask(task: Task, reason?: string) {
-    const session = sessionOfTask(task)
+    const session = await sessionOfTask(task)
     if (session === undefined) throw notFound('agent', task.agentId)
     return session.requestAbort(reason)
   }
 
   async function messageTask(task: Task, text: string, mode: 'steer' | 'queue') {
-    const session = sessionOfTask(task)
+    const session = await sessionOfTask(task)
     if (session === undefined) throw notFound('agent', task.agentId)
     const queued = await session.enqueue(text, { mode })
     return { inboxId: queued.inboxId, target: queued.target }
   }
 
   async function resumeTask(task: Task, request: Request): Promise<Response> {
-    const session = sessionOfTask(task)
+    const session = await sessionOfTask(task)
     if (session === undefined) throw notFound('agent', task.agentId)
     return handleResumeRequest(session, request)
   }

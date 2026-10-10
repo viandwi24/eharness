@@ -2,7 +2,7 @@
 // through these functions; the dialogs read the state.
 
 /** The agent dialog: `mode: 'create'` for a new agent, `'edit'` for an existing one (`agentId`). */
-export const agentDialog = $state<{ open: boolean; mode: 'create' | 'edit'; agentId: string | null; tab: 'settings' | 'memory' }>({
+export const agentDialog = $state<{ open: boolean; mode: 'create' | 'edit'; agentId: string | null; tab: 'settings' | 'memory' | 'connectors' }>({
 	open: false,
 	mode: 'create',
 	agentId: null,
@@ -16,7 +16,7 @@ export function openNewAgent(): void {
 	agentDialog.open = true;
 }
 
-export function openEditAgent(agentId: string, tab: 'settings' | 'memory' = 'settings'): void {
+export function openEditAgent(agentId: string, tab: 'settings' | 'memory' | 'connectors' = 'settings'): void {
 	agentDialog.mode = 'edit';
 	agentDialog.agentId = agentId;
 	agentDialog.tab = tab;
