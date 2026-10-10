@@ -20,7 +20,19 @@
     },
     {
       "name": "library",
-      "description": "Shared files (uploads)."
+      "description": "Shared files: agent artifacts, uploads, version history."
+    },
+    {
+      "name": "memory",
+      "description": "Workspace and per-agent memory files."
+    },
+    {
+      "name": "settings",
+      "description": "Workspace settings read by the agent factory."
+    },
+    {
+      "name": "routines",
+      "description": "Scheduled prompts per agent (multi-instance safe, on the durable inbox)."
     },
     {
       "name": "tasks",
@@ -865,23 +877,20 @@
               "totalTokens": {
                 "type": "number"
               },
-              "cachedInputTokens": {
-                "type": "number"
-              },
               "costUsd": {
                 "type": "number"
               },
-              "messages": {
-                "type": "integer"
+              "turns": {
+                "type": "integer",
+                "description": "Turns that ran at least one model step."
               }
             },
             "required": [
               "inputTokens",
               "outputTokens",
               "totalTokens",
-              "cachedInputTokens",
               "costUsd",
-              "messages"
+              "turns"
             ]
           }
         },
@@ -1341,7 +1350,9 @@
               "agent-message",
               "file-changed",
               "agent-changed",
-              "routine-fired"
+              "routine-fired",
+              "routine-changed",
+              "settings-changed"
             ]
           },
           "agentId": {
@@ -1432,6 +1443,514 @@
           "delegated"
         ]
       },
+      "TaskAbortResult": {
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote",
+              "idle",
+              "unsupported"
+            ],
+            "description": "`local`/`remote`: the turn was told to stop (here or on another instance). `idle`: nothing was running."
+          }
+        },
+        "required": [
+          "taskId",
+          "target"
+        ]
+      },
+      "TaskAbortBody": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "maxLength": 500
+          }
+        }
+      },
+      "TaskMessageResult": {
+        "type": "object",
+        "properties": {
+          "taskId": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "steer",
+              "queue"
+            ]
+          },
+          "inboxId": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string",
+            "enum": [
+              "local",
+              "remote"
+            ]
+          }
+        },
+        "required": [
+          "taskId",
+          "mode",
+          "inboxId",
+          "target"
+        ]
+      },
+      "TaskMessageBody": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "steer",
+              "queue"
+            ],
+            "description": "`steer` (default): joins the running turn at its next step boundary (a queued turn when idle). `queue`: a turn of its own after the running one."
+          }
+        },
+        "required": [
+          "text"
+        ]
+      },
+      "AgentContext": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "slug": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "role": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "slug",
+              "name",
+              "role"
+            ]
+          },
+          "stats": {
+            "$ref": "#/components/schemas/ChatStats"
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "source": {
+                  "type": "string"
+                },
+                "deferred": {
+                  "type": "boolean"
+                },
+                "tokens": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "name",
+                "description",
+                "source",
+                "deferred",
+                "tokens"
+              ]
+            }
+          },
+          "memory": {
+            "type": "object",
+            "properties": {
+              "workspace": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MemoryFileInfo"
+                }
+              },
+              "agent": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/MemoryFileInfo"
+                }
+              }
+            },
+            "required": [
+              "workspace",
+              "agent"
+            ]
+          },
+          "routines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Routine"
+            }
+          },
+          "tasks": {
+            "type": "object",
+            "properties": {
+              "owned": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              },
+              "delegated": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            },
+            "required": [
+              "owned",
+              "delegated"
+            ]
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            }
+          }
+        },
+        "required": [
+          "agent",
+          "stats",
+          "tools",
+          "memory",
+          "routines",
+          "tasks",
+          "files"
+        ]
+      },
+      "MemoryFileInfo": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Relative to the scope root.",
+            "example": "profile.md"
+          },
+          "version": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "version",
+          "size",
+          "updatedAt"
+        ]
+      },
+      "Routine": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/RoutineSpec"
+          },
+          "sessionMode": {
+            "type": "string",
+            "enum": [
+              "dm",
+              "task"
+            ],
+            "description": "`dm`: the fire is appended to the agent DM chat. `task`: every fire runs in a new task session `routine:<id>:<slot>` (shows on the board)."
+          },
+          "overlap": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "queue"
+            ],
+            "description": "`skip`: a fire is dropped while the previous one still runs or waits. `queue`: it queues behind."
+          },
+          "catchUpWindowMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "null: fires missed during downtime are skipped. Else the latest missed slot fires once when it is younger than this."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "pausedReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "manual",
+              "max-failures",
+              "max-fires",
+              "ended",
+              "completed",
+              "agent-archived",
+              null
+            ]
+          },
+          "nextFireAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastFireAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failures": {
+            "type": "integer",
+            "description": "Consecutive failed runs."
+          },
+          "maxFailures": {
+            "type": "integer",
+            "description": "The routine pauses itself at this many."
+          },
+          "fireCount": {
+            "type": "integer"
+          },
+          "maxFires": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "endAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "name",
+          "prompt",
+          "schedule",
+          "sessionMode",
+          "overlap",
+          "catchUpWindowMs",
+          "status",
+          "pausedReason",
+          "nextFireAt",
+          "lastFireAt",
+          "lastStatus",
+          "failures",
+          "maxFailures",
+          "fireCount",
+          "maxFires",
+          "endAt",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "RoutineSpec": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "cron"
+                ]
+              },
+              "expr": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "example": "0 9 * * 1-5"
+              },
+              "tz": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100,
+                "example": "Europe/Berlin"
+              }
+            },
+            "required": [
+              "kind",
+              "expr",
+              "tz"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "every"
+                ]
+              },
+              "everyMs": {
+                "type": "integer",
+                "minimum": 10000,
+                "example": 3600000
+              }
+            },
+            "required": [
+              "kind",
+              "everyMs"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "at"
+                ]
+              },
+              "at": {
+                "type": "integer",
+                "description": "Epoch ms."
+              }
+            },
+            "required": [
+              "kind",
+              "at"
+            ]
+          }
+        ],
+        "description": "`cron` (5 or 6 fields, IANA timezone, croner syntax), `every` (interval in ms, at least 10 s) or `at` (one shot)."
+      },
+      "LibraryEntry": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "example": "/library/research/notes.md"
+          },
+          "version": {
+            "type": "string",
+            "description": "Content hash; pass it as `ifVersion`."
+          },
+          "size": {
+            "type": "integer"
+          },
+          "mediaType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "binary": {
+            "type": "boolean"
+          },
+          "createdByAgentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdBy": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "slug": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug"
+            ],
+            "description": "The agent that first wrote the file; null = a person."
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "path",
+          "version",
+          "size",
+          "mediaType",
+          "binary",
+          "createdByAgentId",
+          "createdBy",
+          "updatedAt"
+        ]
+      },
       "ReadMarker": {
         "type": "object",
         "properties": {
@@ -1445,6 +1964,668 @@
         "required": [
           "agentId",
           "lastReadSeq"
+        ]
+      },
+      "LibraryList": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryEntry"
+            }
+          }
+        },
+        "required": [
+          "files"
+        ]
+      },
+      "LibraryTextFile": {
+        "type": "object",
+        "properties": {
+          "file": {
+            "$ref": "#/components/schemas/LibraryEntry"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "file",
+          "content"
+        ]
+      },
+      "LibraryVersions": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LibraryVersion"
+            }
+          }
+        },
+        "required": [
+          "path",
+          "versions"
+        ]
+      },
+      "LibraryVersion": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "write",
+              "delete",
+              "move"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "size": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fromPath": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "by": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "slug": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "name",
+              "slug"
+            ],
+            "description": "Who made the change; null = a person."
+          },
+          "at": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "action",
+          "version",
+          "size",
+          "fromPath",
+          "agentId",
+          "by",
+          "at"
+        ]
+      },
+      "LibraryWritten": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "version"
+        ]
+      },
+      "LibraryWriteBody": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "content": {
+            "type": "string"
+          },
+          "ifVersion": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Omitted: overwrite. `null`: create only (409 `FILE_EXISTS`). A version: write only when the file still has it (409 `VERSION_CONFLICT`, `details.currentVersion`)."
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ]
+      },
+      "LibraryDeleted": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ]
+      },
+      "LibraryMoved": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "LibraryMoveBody": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "to": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "ifVersion": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ]
+      },
+      "MemoryList": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/MemoryScope"
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "root": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MemoryFileInfo"
+            }
+          }
+        },
+        "required": [
+          "scope",
+          "agentId",
+          "root",
+          "files"
+        ]
+      },
+      "MemoryScope": {
+        "type": "string",
+        "enum": [
+          "workspace",
+          "agent"
+        ]
+      },
+      "MemoryFile": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/MemoryScope"
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "content": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "agentId",
+          "path",
+          "version",
+          "size",
+          "updatedAt",
+          "content"
+        ]
+      },
+      "MemoryWritten": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/MemoryScope"
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "agentId",
+          "path",
+          "version"
+        ]
+      },
+      "MemoryWriteBody": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "ifVersion": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "content"
+        ]
+      },
+      "MemoryDeleted": {
+        "type": "object",
+        "properties": {
+          "scope": {
+            "$ref": "#/components/schemas/MemoryScope"
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "agentId",
+          "path"
+        ]
+      },
+      "Settings": {
+        "type": "object",
+        "properties": {
+          "defaultPermissionMode": {
+            "type": "string",
+            "enum": [
+              "default",
+              "acceptEdits",
+              "plan",
+              "dontAsk",
+              "bypassPermissions"
+            ],
+            "description": "The mode of every agent whose own `permissionMode` is `default`; read by the agent factory on every turn."
+          },
+          "budgetUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "Monthly USD limit of the workspace budget ledger; null = tracked, not limited."
+          },
+          "spawnCap": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32,
+            "description": "Children the lead runs at once (`subagents` `maxConcurrent`)."
+          },
+          "defaultModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Model id of agents without their own; null = the server default."
+          },
+          "updatedAt": {
+            "type": "integer",
+            "description": "0 until a person changed something."
+          }
+        },
+        "required": [
+          "defaultPermissionMode",
+          "budgetUsd",
+          "spawnCap",
+          "defaultModel",
+          "updatedAt"
+        ]
+      },
+      "SettingsPatch": {
+        "type": "object",
+        "properties": {
+          "defaultPermissionMode": {
+            "type": "string",
+            "enum": [
+              "default",
+              "acceptEdits",
+              "plan",
+              "dontAsk",
+              "bypassPermissions"
+            ]
+          },
+          "budgetUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          },
+          "spawnCap": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 32
+          },
+          "defaultModel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "RoutineList": {
+        "type": "object",
+        "properties": {
+          "routines": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Routine"
+            }
+          }
+        },
+        "required": [
+          "routines"
+        ]
+      },
+      "RoutineCreate": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent id or slug."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/RoutineSpec"
+          },
+          "sessionMode": {
+            "type": "string",
+            "enum": [
+              "dm",
+              "task"
+            ],
+            "description": "`dm`: the fire is appended to the agent DM chat. `task`: every fire runs in a new task session `routine:<id>:<slot>` (shows on the board)."
+          },
+          "overlap": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "queue"
+            ],
+            "description": "`skip`: a fire is dropped while the previous one still runs or waits. `queue`: it queues behind."
+          },
+          "catchUpWindowMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "maxFailures": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maxFires": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "endAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "agentId",
+          "name",
+          "prompt",
+          "schedule"
+        ]
+      },
+      "RoutinePatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/RoutineSpec"
+          },
+          "sessionMode": {
+            "type": "string",
+            "enum": [
+              "dm",
+              "task"
+            ],
+            "description": "`dm`: the fire is appended to the agent DM chat. `task`: every fire runs in a new task session `routine:<id>:<slot>` (shows on the board)."
+          },
+          "overlap": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "queue"
+            ],
+            "description": "`skip`: a fire is dropped while the previous one still runs or waits. `queue`: it queues behind."
+          },
+          "catchUpWindowMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "maxFailures": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "maxFires": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1
+          },
+          "endAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      },
+      "RoutineRun": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "routineId": {
+            "type": "string"
+          },
+          "scheduledAt": {
+            "type": "integer"
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "schedule",
+              "manual"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "claimed",
+              "enqueued",
+              "needs_action",
+              "succeeded",
+              "failed",
+              "skipped"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "inboxId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "claimedAt": {
+            "type": "integer"
+          },
+          "firedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "finishedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "routineId",
+          "scheduledAt",
+          "trigger",
+          "status",
+          "sessionId",
+          "inboxId",
+          "reason",
+          "claimedAt",
+          "firedAt",
+          "finishedAt"
+        ]
+      },
+      "RoutineRuns": {
+        "type": "object",
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RoutineRun"
+            }
+          }
+        },
+        "required": [
+          "runs"
         ]
       }
     },
@@ -2989,6 +4170,236 @@
         }
       }
     },
+    "/tasks/{id}/abort": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Stop the running turn of a task (any instance)",
+        "description": "`requestAbort()` on the task session: the instance that runs the turn stops it within one poll. A task that waits for an approval has no running turn (`target: idle`): answer or deny the approval instead.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskAbortBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Where the abort went",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskAbortResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/messages": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Send a message into the session of a task",
+        "description": "Through the durable inbox (`enqueue`), so it reaches the instance that holds the session. `steer` joins the running turn at its next step boundary; `queue` runs after it. On an idle or finished task either starts a turn of the task agent. While approvals are pending the message waits behind them.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskMessageBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Stored in the inbox",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskMessageResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/context": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Everything the right panel of an agent shows",
+        "description": "Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Context",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentContext"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/agents/{id}/read": {
       "post": {
         "tags": [
@@ -3047,6 +4458,1621 @@
           },
           "404": {
             "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/library": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "List library files with their creator agent",
+        "description": "Every file outside `/memories` (agent artifacts under `/library`, uploads under `/uploads`), by path. Newest changes also arrive as `file-changed` events.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "maxLength": 512,
+              "description": "Directory prefix, e.g. `/library/research`. Default `/`."
+            },
+            "required": false,
+            "description": "Directory prefix, e.g. `/library/research`. Default `/`.",
+            "name": "prefix",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 2000,
+              "default": 500
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/library/file": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Read a file: text inline, binary as a download",
+        "description": "A text file answers JSON `{ file, content }`; a binary file (or `raw=true`) answers the bytes with its media type and `Content-Disposition: attachment` (`inline=true` only for images and PDF).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "Absolute path of the file.",
+              "example": "/library/research/notes.md"
+            },
+            "required": true,
+            "description": "Absolute path of the file.",
+            "name": "path",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Bytes instead of JSON for a text file."
+            },
+            "required": false,
+            "description": "Bytes instead of JSON for a text file.",
+            "name": "raw",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Show images and PDF in the browser."
+            },
+            "required": false,
+            "description": "Show images and PDF in the browser.",
+            "name": "inline",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryTextFile"
+                }
+              },
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Write a text file as the user",
+        "description": "Text up to 1 MB. With `ifVersion` a stale edit loses to an agent write (409 `VERSION_CONFLICT`, `error.details.currentVersion`). Emits `file-changed`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryWriteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryWritten"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Delete a file",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "Absolute path of the file.",
+              "example": "/library/research/notes.md"
+            },
+            "required": true,
+            "description": "Absolute path of the file.",
+            "name": "path",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Delete only this version."
+            },
+            "required": false,
+            "description": "Delete only this version.",
+            "name": "ifVersion",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/library/versions": {
+      "get": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Change history of a file (metadata only)",
+        "description": "Writes, moves and deletes of the path, newest first, with the version hash, size and who changed it. The content of older versions is not kept.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512,
+              "description": "Absolute path of the file.",
+              "example": "/library/research/notes.md"
+            },
+            "required": true,
+            "description": "Absolute path of the file.",
+            "name": "path",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "History",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryVersions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/library/move": {
+      "post": {
+        "tags": [
+          "library"
+        ],
+        "summary": "Move or rename a file",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LibraryMoveBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Moved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LibraryMoved"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`FILE_EXISTS` at the destination or `VERSION_CONFLICT`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/memory": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Memory files of the workspace or of one agent",
+        "description": "The files the agents read and write with their memory tools: workspace memory (`/memories/workspace`, shared) and per-agent memory (`/memories/agents/<id>`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/MemoryScope"
+            },
+            "required": true,
+            "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug; required for `scope=agent`."
+            },
+            "required": false,
+            "description": "Agent id or slug; required for `scope=agent`.",
+            "name": "agentId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/memory/file": {
+      "get": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Read a memory file",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/MemoryScope"
+            },
+            "required": true,
+            "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug; required for `scope=agent`."
+            },
+            "required": false,
+            "description": "Agent id or slug; required for `scope=agent`.",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "description": "Path relative to the scope root.",
+              "example": "profile.md"
+            },
+            "required": true,
+            "description": "Path relative to the scope root.",
+            "name": "path",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryFile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file or agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Write a memory file as the user",
+        "description": "Same `ifVersion` rules as `PUT /library/file`: a stale edit loses to an agent write.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/MemoryScope"
+            },
+            "required": true,
+            "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug; required for `scope=agent`."
+            },
+            "required": false,
+            "description": "Agent id or slug; required for `scope=agent`.",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "description": "Path relative to the scope root.",
+              "example": "profile.md"
+            },
+            "required": true,
+            "description": "Path relative to the scope root.",
+            "name": "path",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryWriteBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Written",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryWritten"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "memory"
+        ],
+        "summary": "Delete a memory file",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/MemoryScope"
+            },
+            "required": true,
+            "name": "scope",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug; required for `scope=agent`."
+            },
+            "required": false,
+            "description": "Agent id or slug; required for `scope=agent`.",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 300,
+              "description": "Path relative to the scope root.",
+              "example": "profile.md"
+            },
+            "required": true,
+            "description": "Path relative to the scope root.",
+            "name": "path",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": false,
+            "name": "ifVersion",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryDeleted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such file or agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/settings": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Workspace settings",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Change workspace settings",
+        "description": "Stored in the database and read by the agent factory of every instance: the agents are rebuilt on their next use, the budget limit applies to the shared ledger. `budgetUsd: null` removes the limit.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SettingsPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines": {
+      "get": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "List routines",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only this agent (id or slug)."
+            },
+            "required": false,
+            "description": "Only this agent (id or slug).",
+            "name": "agentId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Routines",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutineList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Create a routine",
+        "description": "A scheduled prompt for an agent. Every instance ticks; the one that wins the compare-and-set on `nextFireAt` fires the slot, once (`session.enqueue` with the deterministic id `sched:<id>:<slot>`). Missed fires after downtime are skipped (or the latest one fires within `catchUpWindowMs`); overlap defaults to `skip`. A fire that needs an approval lands in `GET /approvals` (needs action) and is never approved by the scheduler.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutineCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Routine"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent or a schedule without a next slot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}": {
+      "get": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "A routine",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Routine"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Edit a routine",
+        "description": "Changing the schedule of an active routine recomputes its next slot from now.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoutinePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Routine"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Schedule without a next slot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Delete a routine and its run history",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Routine"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/pause": {
+      "post": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Pause a routine",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Routine"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/resume": {
+      "post": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Resume a routine",
+        "description": "Recomputes the next slot from now (nothing missed while paused fires) and resets the failure counter.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Routine"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Ended, exhausted or archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/run": {
+      "post": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Run now",
+        "description": "A manual fire with the same enqueue path; the schedule is untouched. `409 ROUTINE_BUSY` when overlap is `skip` and the previous run is still in the way.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Enqueued (or failed to enqueue: see `status`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutineRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`ROUTINE_BUSY` or archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/routines/{id}/runs": {
+      "get": {
+        "tags": [
+          "routines"
+        ],
+        "summary": "Run history, newest first",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Routine id."
+            },
+            "required": true,
+            "description": "Routine id.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoutineRuns"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown routine",
             "content": {
               "application/json": {
                 "schema": {

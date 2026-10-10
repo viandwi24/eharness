@@ -5,12 +5,16 @@
  */
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { Scalar } from '@scalar/hono-api-reference'
+import { HTTPException } from 'hono/http-exception'
 import { checkBearer } from '../app/auth.ts'
 import { DomainError } from '../app/errors.ts'
 import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { healthRoutes } from './routes/health.ts'
+import { libraryRoutes } from './routes/library.ts'
+import { routineRoutes } from './routes/routines.ts'
+import { settingsRoutes } from './routes/settings.ts'
 import { taskRoutes } from './routes/tasks.ts'
 import { uploadRoutes } from './routes/uploads.ts'
 
@@ -40,7 +44,13 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
       name: 'chats',
       description: 'The DM chat of an agent: streaming, approvals, resume, history.',
     },
-    { name: 'library', description: 'Shared files (uploads).' },
+    { name: 'library', description: 'Shared files: agent artifacts, uploads, version history.' },
+    { name: 'memory', description: 'Workspace and per-agent memory files.' },
+    { name: 'settings', description: 'Workspace settings read by the agent factory.' },
+    {
+      name: 'routines',
+      description: 'Scheduled prompts per agent (multi-instance safe, on the durable inbox).',
+    },
     { name: 'tasks', description: 'Delegated work across agents (the board).' },
     {
       name: 'approvals',
@@ -105,7 +115,20 @@ export function createApp(options: AppOptions): OpenAPIHono {
 
   app.onError((error, c) => {
     if (error instanceof DomainError) {
-      return c.json({ error: { code: error.code, message: error.message } }, STATUS[error.kind])
+      return c.json(
+        {
+          error: {
+            code: error.code,
+            message: error.message,
+            ...(error.details === undefined ? {} : { details: error.details }),
+          },
+        },
+        STATUS[error.kind],
+      )
+    }
+    // the validator reports a malformed body as an HTTPException with its own status
+    if (error instanceof HTTPException) {
+      return c.json({ error: { code: 'BAD_REQUEST', message: error.message } }, error.status as 400)
     }
     // a malformed JSON body surfaces as a SyntaxError from the validator
     if (error instanceof SyntaxError) {
@@ -138,6 +161,9 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', chatRoutes(options.deps))
   app.route('/', uploadRoutes(options.deps))
   app.route('/', taskRoutes(options.deps))
+  app.route('/', libraryRoutes(options.deps))
+  app.route('/', settingsRoutes(options.deps))
+  app.route('/', routineRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)
   app.get('/docs', Scalar({ url: '/openapi.json', pageTitle: OPENAPI_INFO.title }))

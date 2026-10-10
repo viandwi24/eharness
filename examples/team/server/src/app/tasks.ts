@@ -1,8 +1,10 @@
 /** Task board and agent session use cases. */
 import { dmSessionId } from '../domain/chat.ts'
-import { notFound } from '../domain/errors.ts'
+import { invalid, notFound } from '../domain/errors.ts'
 import type { Task, TaskStatus } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
+import { withCreator } from './library.ts'
+import { listMemory } from './memory.ts'
 import type { ChatMessage, Deps } from './ports.ts'
 
 export function listTasks(
@@ -56,5 +58,66 @@ export async function agentSessions(deps: Deps, idOrSlug: string) {
     },
     tasks: owned,
     delegated,
+  }
+}
+
+function taskOrThrow(deps: Deps, id: string): Task {
+  const task = deps.tasks.get(id)
+  if (task === undefined) throw notFound('task', id)
+  return task
+}
+
+/** Stop the running turn of a task session (any instance). `idle` = nothing was running. */
+export async function abortTask(deps: Deps, id: string, reason?: string) {
+  const task = taskOrThrow(deps, id)
+  return { taskId: task.id, ...(await deps.team.abortTask(task, reason)) }
+}
+
+const MAX_TASK_MESSAGE_CHARS = 20_000
+
+/** A message from the user into a task's session through the inbox (steer or queue). */
+export async function messageTask(
+  deps: Deps,
+  id: string,
+  body: { text: string; mode?: 'steer' | 'queue' },
+) {
+  const task = taskOrThrow(deps, id)
+  const text = body.text.trim()
+  if (text === '' || text.length > MAX_TASK_MESSAGE_CHARS) {
+    throw invalid(`text must be 1-${MAX_TASK_MESSAGE_CHARS} characters`, 'INVALID_MESSAGE')
+  }
+  const mode = body.mode ?? 'steer'
+  const queued = await deps.team.messageTask(task, text, mode)
+  return { taskId: task.id, mode, ...queued }
+}
+
+/** Everything the right panel of an agent needs in one call. */
+export async function agentContext(deps: Deps, idOrSlug: string) {
+  const agent = getAgent(deps, idOrSlug)
+  const [chat, memoryWorkspace] = await Promise.all([
+    deps.chat.context(agent),
+    Promise.resolve(listMemory(deps, 'workspace')),
+  ])
+  const { owned, delegated } = deps.tasks.ofAgent(agent.id, dmSessionId(agent.id))
+  const active = (t: Task) => t.status === 'running' || t.status === 'needs_action'
+  return {
+    agent: { id: agent.id, slug: agent.slug, name: agent.name, role: agent.role },
+    stats: chat.stats,
+    tools: chat.tools,
+    memory: {
+      workspace: memoryWorkspace.files,
+      agent: listMemory(deps, 'agent', agent.id).files,
+    },
+    routines: deps.routines.list({ agentId: agent.id }),
+    tasks: { owned: owned.filter(active), delegated: delegated.filter(active) },
+    files: deps.library
+      .list({
+        prefix: '/',
+        excludePrefixes: ['/memories/'],
+        createdBy: agent.id,
+        newestFirst: true,
+        limit: 20,
+      })
+      .map((m) => withCreator(deps, m)),
   }
 }

@@ -231,22 +231,61 @@ const toItem = (row: InboxRow): InboxItem => {
 
 const placeholders = (n: number): string => Array.from({ length: n }, () => '?').join(',')
 
+/** How long the caller id of an acked item keeps deduping (spec 05 §12 rule 17: at least 24 h). */
+const DEDUPE_WINDOW_MS = 24 * 60 * 60 * 1000
+
+export interface SqliteInboxOptions {
+  /** Dedupe horizon after the ack (ms). Default 24 hours, the minimum the spec asks for. */
+  dedupeWindowMs?: number
+}
+
 /**
  * `InboxAdapter` on `eh_inbox` (spec 05 §12): head-of-line claims with leases, `availableAt`
  * timers, retry delays, dead-letter and stats. `claim` is one `BEGIN IMMEDIATE` transaction, so
  * claimers in several processes never take the same item. There is no `notify`/`subscribe`
  * (SQLite has no notification channel): the holder of a session polls (`inbox.pollMs`).
  */
-export function sqliteInbox(sqlite: Sqlite): InboxAdapter {
+export function sqliteInbox(sqlite: Sqlite, options: SqliteInboxOptions = {}): InboxAdapter {
+  const dedupeWindowMs = options.dedupeWindowMs ?? DEDUPE_WINDOW_MS
+  const insertItem = (sessionId: string, item: InboxItemInput): string => {
+    const id = uuidv7()
+    sqlite
+      .query(
+        `INSERT INTO eh_inbox (id, session_id, kind, item, available_at) VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(id, sessionId, item.kind, JSON.stringify(item), item.availableAt ?? null)
+    return id
+  }
   return {
     async enqueue(sessionId, item: InboxItemInput) {
-      const id = uuidv7()
-      sqlite
-        .query(
-          `INSERT INTO eh_inbox (id, session_id, kind, item, available_at) VALUES (?, ?, ?, ?, ?)`,
-        )
-        .run(id, sessionId, item.kind, JSON.stringify(item), item.availableAt ?? null)
-      return id
+      return insertItem(sessionId, item)
+    },
+
+    /**
+     * Idempotent enqueue (rule 17): the key lives in `eh_inbox_keys` next to the item, in one
+     * transaction, so racing producers (also in other processes) store exactly one item. The key
+     * has no expiry while the item is stored (ready, claimed, delayed, dead) and keeps
+     * deduping for `dedupeWindowMs` after the ack.
+     */
+    async enqueueOnce(sessionId, item) {
+      return immediate(sqlite, () => {
+        sqlite
+          .query('DELETE FROM eh_inbox_keys WHERE expires_at IS NOT NULL AND expires_at <= ?')
+          .run(Date.now())
+        const known = sqlite
+          .query<{ item_id: string }, [string, string]>(
+            'SELECT item_id FROM eh_inbox_keys WHERE session_id = ? AND dedupe_key = ?',
+          )
+          .get(sessionId, item.dedupeKey)
+        if (known !== null) return { id: known.item_id, duplicate: true }
+        const id = insertItem(sessionId, item)
+        sqlite
+          .query(
+            'INSERT INTO eh_inbox_keys (session_id, dedupe_key, item_id, expires_at) VALUES (?, ?, ?, NULL)',
+          )
+          .run(sessionId, item.dedupeKey, id)
+        return { id, duplicate: false }
+      })
     },
 
     async claim(sessionId, owner, opts = {}) {
@@ -309,7 +348,15 @@ export function sqliteInbox(sqlite: Sqlite): InboxAdapter {
 
     async ack(ids) {
       if (ids.length === 0) return
-      sqlite.query(`DELETE FROM eh_inbox WHERE id IN (${placeholders(ids.length)})`).run(...ids)
+      immediate(sqlite, () => {
+        // the caller ids of acked items keep deduping for the horizon
+        sqlite
+          .query(
+            `UPDATE eh_inbox_keys SET expires_at = ? WHERE item_id IN (${placeholders(ids.length)})`,
+          )
+          .run(Date.now() + dedupeWindowMs, ...ids)
+        sqlite.query(`DELETE FROM eh_inbox WHERE id IN (${placeholders(ids.length)})`).run(...ids)
+      })
     },
 
     async release(ids, opts = {}) {

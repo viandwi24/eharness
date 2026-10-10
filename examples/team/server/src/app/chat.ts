@@ -35,20 +35,14 @@ function liveAgent(deps: Deps, idOrSlug: string) {
 /** Reading history of an archived agent stays possible (plan §5.1: delete = archive). */
 const anyAgent = getAgent
 
-function toBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
-  }
-  return btoa(binary)
-}
-
 /**
- * Check the file parts of the message the client sent and turn `library:` references into data
- * URLs read from the uploads folder. The client never names a path outside `/uploads`, and a media
- * type outside the allowlist is rejected whatever the URL scheme.
+ * Check the file parts of the message the client sent. `library:` references name an uploaded
+ * file and **stay references** in the stored message: the agent resolves them to bytes only when
+ * it builds the model request (`inputFiles.resolve`, `infra/eh/agent-factory.ts`). The client
+ * never names a path outside `/uploads`, and a media type outside the allowlist is rejected
+ * whatever the URL scheme.
  */
-async function resolveFiles(deps: Deps, message: ChatMessage): Promise<ChatMessage> {
+async function checkFiles(deps: Deps, message: ChatMessage): Promise<ChatMessage> {
   const parts: ChatMessage['parts'] = []
   for (const part of message.parts) {
     if (part.type !== 'file') {
@@ -68,13 +62,13 @@ async function resolveFiles(deps: Deps, message: ChatMessage): Promise<ChatMessa
       parts.push(part)
       continue
     }
-    const file = await deps.uploads.get(path)
+    const file = await deps.uploads.stat(path)
     if (file === undefined) throw invalid(`no such upload: ${path}`, 'INVALID_FILE_REF')
     const name = typeof part.filename === 'string' ? part.filename : path.split('/').pop()
     parts.push({
       type: 'file',
       mediaType: file.mediaType,
-      url: `data:${file.mediaType};base64,${toBase64(file.bytes)}`,
+      url: libraryUrl(path),
       ...(name === undefined ? {} : { filename: name }),
     })
   }
@@ -101,7 +95,7 @@ export async function chat(
   // only the last message is read (spec 11 §7); history, ids and metadata of the client are not
   const input: ChatInput = {
     messages:
-      last === undefined ? [] : [last.role === 'user' ? await resolveFiles(deps, last) : last],
+      last === undefined ? [] : [last.role === 'user' ? await checkFiles(deps, last) : last],
     ...(body.trigger === undefined ? {} : { trigger: body.trigger }),
     ...(body.messageId === undefined ? {} : { messageId: body.messageId }),
   }

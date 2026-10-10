@@ -129,9 +129,8 @@ export const ChatStatsSchema = z
       inputTokens: z.number(),
       outputTokens: z.number(),
       totalTokens: z.number(),
-      cachedInputTokens: z.number(),
       costUsd: z.number(),
-      messages: z.number().int(),
+      turns: z.number().int().openapi({ description: 'Turns that ran at least one model step.' }),
     }),
   })
   .openapi('ChatStats')

@@ -119,24 +119,13 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return out
   }
 
-  /** `open` for `pendingSubagentApprovals`: a child without a row yet has nothing pending. */
-  const openChild = (childSessionId: string): HarnessSession => {
-    const task = deps.tasks.getBySession(childSessionId)
-    const session = task === undefined ? undefined : sessionOfTask(task)
-    return (session ??
-      ({
-        stats: async () => ({ pending: null }),
-        children: async () => [],
-      } as unknown as HarnessSession)) as HarnessSession
-  }
-
   async function approvals(only: { sessionId?: string } = {}): Promise<ApprovalView[]> {
     if (only.sessionId !== undefined) {
       const task = deps.tasks.getBySession(only.sessionId)
       const def = task === undefined ? dmOwner(only.sessionId) : defById(task.agentId)
       if (def === undefined) return []
-      const stats = await factory.openSession(def, only.sessionId).stats()
-      return viewsOf(def, only.sessionId, task?.parentSessionId ?? null, stats.pending)
+      const pending = await factory.peek(only.sessionId).pending()
+      return viewsOf(def, only.sessionId, task?.parentSessionId ?? null, pending)
     }
     const out: ApprovalView[] = []
     const seen = new Set<string>()
@@ -155,12 +144,17 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     for (const def of allAgents()) {
       if (def.role !== 'lead' && !active.has(def.id)) continue
       const sessionId = dmSessionId(def.id)
-      const session = factory.openSession(def, sessionId)
-      add(viewsOf(def, sessionId, null, (await session.stats()).pending))
+      // reads go through `peek`: listing never runs session.start hooks or resumes a parked lead
+      const session = factory.peek(sessionId)
+      add(viewsOf(def, sessionId, null, await session.pending()))
       if (def.role === 'lead') {
-        for (const found of await pendingSubagentApprovals(session as never, openChild as never)) {
+        const children = await pendingSubagentApprovals(session, (childId) => factory.peek(childId))
+        for (const found of children) {
+          // the child index carries the agent (catalog key = slug); the task row is the fallback
           const task = deps.tasks.getBySession(found.sessionId)
-          const owner = task === undefined ? undefined : defById(task.agentId)
+          const owner =
+            (found.agent === undefined ? undefined : defBySlug(found.agent)) ??
+            (task === undefined ? undefined : defById(task.agentId))
           if (owner !== undefined) {
             add(viewsOf(owner, found.sessionId, found.parentSessionId, found.pending))
           }
@@ -170,17 +164,21 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     // the index is a safety net for sessions the walk above does not reach (routine runs)
     for (const task of deps.tasks.list({ status: 'needs_action', limit: 500 })) {
       const def = defById(task.agentId)
-      const session = sessionOfTask(task)
-      if (def === undefined || session === undefined) continue
-      add(viewsOf(def, task.sessionId, task.parentSessionId, (await session.stats()).pending))
+      if (def === undefined) continue
+      add(
+        viewsOf(
+          def,
+          task.sessionId,
+          task.parentSessionId,
+          await factory.peek(task.sessionId).pending(),
+        ),
+      )
     }
     return out
   }
 
   async function taskMessages(task: Task, limit: number): Promise<ChatMessage[]> {
-    const session = sessionOfTask(task)
-    if (session === undefined) return []
-    return (await session.messages({ limit })) as unknown as ChatMessage[]
+    return (await factory.peek(task.sessionId).messages({ limit })) as unknown as ChatMessage[]
   }
 
   async function answer(
@@ -208,7 +206,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         body.endTurn === undefined ? {} : { endTurn: body.endTurn },
       )
     } else {
-      const pending = (await session.stats()).pending
+      const pending = await factory.peek(view.sessionId).pending()
       const question = pendingQuestions(pending).find((q) => q.toolCallId === view.id)
       if (question === undefined) throw conflict(`question ${view.id} is not pending any more`)
       const output = answerOutput(
@@ -265,9 +263,8 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
   async function reconcileDrift(): Promise<ReconcileReport['drift']> {
     const out: ReconcileReport['drift'] = []
     for (const task of deps.tasks.active()) {
-      const session = sessionOfTask(task)
-      if (session === undefined) continue
       try {
+        const session = factory.peek(task.sessionId)
         const stats = await session.stats()
         const t = now()
         const turn = stats.activeTurn
@@ -314,9 +311,24 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return out
   }
 
+  async function abortTask(task: Task, reason?: string) {
+    const session = sessionOfTask(task)
+    if (session === undefined) throw notFound('agent', task.agentId)
+    return session.requestAbort(reason)
+  }
+
+  async function messageTask(task: Task, text: string, mode: 'steer' | 'queue') {
+    const session = sessionOfTask(task)
+    if (session === undefined) throw notFound('agent', task.agentId)
+    const queued = await session.enqueue(text, { mode })
+    return { inboxId: queued.inboxId, target: queued.target }
+  }
+
   return {
     approvals,
     answer,
+    abortTask,
+    messageTask,
     taskMessages,
     async reconcile() {
       const waits = await reconcileWaits()

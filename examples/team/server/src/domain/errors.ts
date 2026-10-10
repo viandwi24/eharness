@@ -4,8 +4,11 @@ export type DomainErrorKind = 'invalid' | 'not_found' | 'conflict' | 'forbidden'
 export class DomainError extends Error {
   readonly kind: DomainErrorKind
   readonly code: string
-  constructor(kind: DomainErrorKind, code: string, message: string) {
+  /** Machine-readable extra data returned as `error.details` (e.g. the current version). */
+  readonly details: unknown
+  constructor(kind: DomainErrorKind, code: string, message: string, details?: unknown) {
     super(message)
+    this.details = details
     this.name = 'DomainError'
     this.kind = kind
     this.code = code
@@ -16,5 +19,5 @@ export const invalid = (message: string, code = 'INVALID'): DomainError =>
   new DomainError('invalid', code, message)
 export const notFound = (what: string, id: string): DomainError =>
   new DomainError('not_found', 'NOT_FOUND', `${what} not found: ${id}`)
-export const conflict = (message: string, code = 'CONFLICT'): DomainError =>
-  new DomainError('conflict', code, message)
+export const conflict = (message: string, code = 'CONFLICT', details?: unknown): DomainError =>
+  new DomainError('conflict', code, message, details)

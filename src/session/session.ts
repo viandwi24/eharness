@@ -777,8 +777,11 @@ export function createSessionHandle(args: {
         gateStep()
         return
       }
-      queue.push(...gated.splice(0))
-      startNext()
+      // a direct send starts like an idle `send()` does: the turn reloads the state, so a stale
+      // in-memory `pending` (answered on another instance) does not hold it back
+      const [first, ...rest] = gated.splice(0)
+      queue.push(...rest)
+      if (first !== undefined) launch(first)
     })()
   }
 
@@ -804,6 +807,11 @@ export function createSessionHandle(args: {
     if (index < 0) return
     const [next] = queue.splice(index, 1)
     if (next === undefined) return
+    launch(next)
+  }
+
+  /** Start a queued turn now (the caller checked that the session is free). */
+  function launch(next: QueuedTurn): void {
     rt.running = true
     touch()
     current = startTurn(host, {

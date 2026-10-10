@@ -1,0 +1,51 @@
+import { createRoute, OpenAPIHono } from '@hono/zod-openapi'
+import type { Deps } from '../../app/ports.ts'
+import { getSettings, patchSettings } from '../../app/settings.ts'
+import { errorResponses } from '../schemas/common.ts'
+import { SettingsPatchSchema, SettingsSchema } from '../schemas/settings.ts'
+
+const security = [{ Bearer: [] }]
+
+const getRoute = createRoute({
+  method: 'get',
+  path: '/settings',
+  tags: ['settings'],
+  summary: 'Workspace settings',
+  security,
+  responses: {
+    200: {
+      description: 'Settings',
+      content: { 'application/json': { schema: SettingsSchema } },
+    },
+    ...errorResponses,
+  },
+})
+
+const patchRoute = createRoute({
+  method: 'patch',
+  path: '/settings',
+  tags: ['settings'],
+  summary: 'Change workspace settings',
+  description:
+    'Stored in the database and read by the agent factory of every instance: the agents are rebuilt on their next use, the budget limit applies to the shared ledger. `budgetUsd: null` removes the limit.',
+  security,
+  request: {
+    body: {
+      required: true,
+      content: { 'application/json': { schema: SettingsPatchSchema } },
+    },
+  },
+  responses: {
+    200: {
+      description: 'The new settings',
+      content: { 'application/json': { schema: SettingsSchema } },
+    },
+    ...errorResponses,
+  },
+})
+
+export function settingsRoutes(deps: Deps): OpenAPIHono {
+  return new OpenAPIHono()
+    .openapi(getRoute, (c) => c.json(getSettings(deps), 200))
+    .openapi(patchRoute, (c) => c.json(patchSettings(deps, c.req.valid('json')), 200))
+}

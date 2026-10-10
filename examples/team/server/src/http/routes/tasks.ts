@@ -3,9 +3,17 @@ import { streamSSE } from 'hono/streaming'
 import { answerApproval, listApprovals } from '../../app/approvals.ts'
 import { listEvents, markAgentRead } from '../../app/events.ts'
 import type { Deps } from '../../app/ports.ts'
-import { agentSessions, getTask, listTasks } from '../../app/tasks.ts'
+import {
+  abortTask,
+  agentContext,
+  agentSessions,
+  getTask,
+  listTasks,
+  messageTask,
+} from '../../app/tasks.ts'
 import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
 import {
+  AgentContextSchema,
   AgentSessionsSchema,
   ApprovalAcceptedSchema,
   ApprovalBodySchema,
@@ -13,9 +21,13 @@ import {
   EventListSchema,
   EventsStreamSchema,
   ReadMarkerSchema,
+  TaskAbortBodySchema,
+  TaskAbortResultSchema,
   TaskDetailSchema,
   TaskIdParam,
   TaskListSchema,
+  TaskMessageBodySchema,
+  TaskMessageResultSchema,
   TaskStatusSchema,
 } from '../schemas/tasks.ts'
 
@@ -185,6 +197,60 @@ const readRoute = createRoute({
   },
 })
 
+const abortRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/abort',
+  tags: ['tasks'],
+  summary: 'Stop the running turn of a task (any instance)',
+  description:
+    '`requestAbort()` on the task session: the instance that runs the turn stops it within one poll. A task that waits for an approval has no running turn (`target: idle`): answer or deny the approval instead.',
+  security,
+  request: {
+    params: TaskIdParam,
+    body: { required: false, content: json(TaskAbortBodySchema) },
+  },
+  responses: {
+    200: { description: 'Where the abort went', content: json(TaskAbortResultSchema) },
+    404: jsonError('Unknown task'),
+    ...errorResponses,
+  },
+})
+
+const messageRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/messages',
+  tags: ['tasks'],
+  summary: 'Send a message into the session of a task',
+  description:
+    'Through the durable inbox (`enqueue`), so it reaches the instance that holds the session. `steer` joins the running turn at its next step boundary; `queue` runs after it. On an idle or finished task either starts a turn of the task agent. While approvals are pending the message waits behind them.',
+  security,
+  request: {
+    params: TaskIdParam,
+    body: { required: true, content: json(TaskMessageBodySchema) },
+  },
+  responses: {
+    202: { description: 'Stored in the inbox', content: json(TaskMessageResultSchema) },
+    404: jsonError('Unknown task'),
+    ...errorResponses,
+  },
+})
+
+const contextRoute = createRoute({
+  method: 'get',
+  path: '/agents/{id}/context',
+  tags: ['agents'],
+  summary: 'Everything the right panel of an agent shows',
+  description:
+    'Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.',
+  security,
+  request: { params: IdParam },
+  responses: {
+    200: { description: 'Context', content: json(AgentContextSchema) },
+    404: jsonError('Unknown agent'),
+    ...errorResponses,
+  },
+})
+
 export function taskRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(tasksRoute, (c) => {
@@ -267,6 +333,23 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     })
     .openapi(sessionsRoute, async (c) =>
       c.json((await agentSessions(deps, c.req.valid('param').id)) as never, 200),
+    )
+    .openapi(abortRoute, async (c) => {
+      const body = c.req.valid('json')
+      return c.json(await abortTask(deps, c.req.valid('param').id, body?.reason), 200)
+    })
+    .openapi(messageRoute, async (c) => {
+      const body = c.req.valid('json')
+      return c.json(
+        await messageTask(deps, c.req.valid('param').id, {
+          text: body.text,
+          ...(body.mode === undefined ? {} : { mode: body.mode }),
+        }),
+        202,
+      )
+    })
+    .openapi(contextRoute, async (c) =>
+      c.json((await agentContext(deps, c.req.valid('param').id)) as never, 200),
     )
     .openapi(readRoute, (c) => c.json(markAgentRead(deps, c.req.valid('param').id), 200))
 }

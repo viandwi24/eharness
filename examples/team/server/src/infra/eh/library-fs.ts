@@ -68,6 +68,8 @@ const metaOf = (
 /** SQL `LIKE` pattern matching `prefix` literally (escape `%`, `_` and `\`). */
 const likePrefix = (prefix: string): string => `${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`
 
+const HISTORY_KEEP = 100
+
 const META_COLS = 'path, version, size, updated_at, bytes IS NOT NULL AS has_bytes, media_type'
 
 export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): FileSystem {
@@ -76,6 +78,28 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
   type MetaRow = Omit<Row, 'text' | 'bytes' | 'created_by_agent_id'> & { has_bytes: number }
   const toMeta = (row: MetaRow): FileMeta =>
     metaOf({ ...row, bytes: row.has_bytes === 1 ? new Uint8Array(0) : null })
+
+  /** Metadata-only history of a path, written in the same transaction as the change. */
+  const record = (e: {
+    path: string
+    action: 'write' | 'delete' | 'move'
+    version: string | null
+    size: number | null
+    fromPath?: string
+  }): void => {
+    sqlite
+      .query(
+        `INSERT INTO library_history (path, action, version, size, from_path, agent_id, at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(e.path, e.action, e.version, e.size, e.fromPath ?? null, agentId, Date.now())
+    sqlite
+      .query(
+        `DELETE FROM library_history WHERE path = ?1 AND seq NOT IN
+           (SELECT seq FROM library_history WHERE path = ?1 ORDER BY seq DESC LIMIT ${HISTORY_KEEP})`,
+      )
+      .run(e.path)
+  }
 
   const current = (path: string): { version: string } | null =>
     sqlite
@@ -124,6 +148,7 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
             agentId,
             Date.now(),
           )
+        record({ path, action: 'write', version: stored.version, size: stored.size })
         return { ok: true, version: stored.version }
       })
       .immediate()
@@ -182,7 +207,8 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
       if (!(bytes instanceof Uint8Array)) {
         throw new TypeError('libraryFs.writeBytes: bytes must be a Uint8Array')
       }
-      const mediaType = detectMediaType(bytes, path) ?? null
+      // a declared media type wins (spec 08 §4: text/csv of a text file), else detection
+      const mediaType = opts.mediaType ?? detectMediaType(bytes, path) ?? null
       if (!looksBinary(bytes)) {
         // valid UTF-8 text is stored as a text file (spec 08 §12)
         const text = decoder.decode(bytes)
@@ -220,6 +246,7 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
             return { ok: false, reason: 'conflict', currentVersion: cur.version }
           }
           sqlite.query('DELETE FROM library_files WHERE path = ?').run(path)
+          record({ path, action: 'delete', version: null, size: null })
           return { ok: true }
         })
         .immediate()
@@ -250,6 +277,7 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
           sqlite
             .query('UPDATE library_files SET path = ?, updated_at = ? WHERE path = ?')
             .run(to, Date.now(), from)
+          record({ path: to, action: 'move', version: cur.version, size: null, fromPath: from })
           return { ok: true }
         })
         .immediate()

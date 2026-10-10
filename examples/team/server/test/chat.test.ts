@@ -106,13 +106,13 @@ describe('chat: text and tool turns', () => {
       running: boolean
       activeTurn: unknown
       pending: unknown
-      usage: { messages: number; totalTokens: number }
+      usage: { turns: number; totalTokens: number }
       context: { window: number }
     }
     expect(stats.running).toBe(false)
     expect(stats.activeTurn).toBeNull()
     expect(stats.pending).toBeNull()
-    expect(stats.usage.messages).toBe(1)
+    expect(stats.usage.turns).toBe(1)
     expect(stats.context.window).toBeGreaterThan(0)
   })
 
@@ -249,10 +249,12 @@ describe('chat: approvals', () => {
       '/agents/researcher/chat',
       post({ messages: [{ ...waiting, parts: waiting.parts }] }),
     )
-    // the stale answer never authorizes anything: nothing pending, so it fails as a run error
-    const text = await replay.text()
-    expect(replay.status).toBe(200)
-    expect(text).toContain('EH_INVALID_INPUT') // a run error: in the stream, not a status
+    // the stale answer never authorizes anything: nothing pending, so it fails before the commit
+    // point, and `toHttpResponse()` answers with a status (not an error chunk in a 200 stream)
+    expect(replay.status).toBe(400)
+    expect(((await replay.json()) as { error: { code: string } }).error.code).toMatch(
+      /^EH_(PENDING_RESPONSE|INVALID_INPUT)$/,
+    )
     expect((await stored(app)).filter((m) => m.role === 'assistant')).toHaveLength(1)
   })
 })
@@ -480,9 +482,12 @@ describe('chat: requests and uploads', () => {
     expect(chat.status).toBe(200)
     await chat.text()
     expect(JSON.stringify(model.prompts[0])).toContain('read this')
+    // the reference was resolved to bytes for the model (inputFiles.resolve)
+    expect(JSON.stringify(model.prompts[0])).toContain('text/csv')
     const user = (await stored(app)).find((m) => m.role === 'user')
     const filePart = user?.parts.find((p) => p.type === 'file') as { url: string; filename: string }
-    expect(filePart.url.startsWith('data:text/csv')).toBe(true)
+    // stored messages keep the reference, not base64
+    expect(filePart.url.startsWith('library:///uploads/')).toBe(true)
     expect(filePart.filename).toBe('notes.csv')
     // agents see the same file in the library
     expect((await libraryFs(a.server.conn.sqlite).read(file.path))?.content).toBe('a,b\n1,2\n')

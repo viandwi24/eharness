@@ -23,6 +23,7 @@ import {
   type HarnessSession,
   type HarnessWarning,
   type SessionLock,
+  type SessionPeek,
 } from 'eharness'
 import { askUser } from 'eharness/ask'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
@@ -32,12 +33,15 @@ import { AGENT_MESSAGE_INSTRUCTIONS, subagents } from 'eharness/subagent'
 import { todos } from 'eharness/todos'
 import { webFetch, webSearch } from 'eharness/web'
 import type { AgentDef, ToolName } from '../../domain/agents.ts'
-import { MAX_UPLOAD_BYTES } from '../../domain/chat.ts'
+import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
 import { memoryRootsFor, pinnedMemoryFiles } from '../../domain/memory.ts'
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
+import type { WorkspaceSettings } from '../../domain/settings.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
+import { routineOutcomes } from './routine-plugin.ts'
+import type { RoutineOutcomes } from './routine-service.ts'
 import {
   setBudgetLimit,
   sqliteBudgetLedger,
@@ -65,8 +69,10 @@ const MEMORY_ALLOW = Object.keys(MEMORY_TOOL_KINDS).filter((n) => n !== 'memory_
 
 /** Limits of delegation (plan decision D4: multi-agent runs cost many times a chat). */
 export interface TeamLimits {
-  /** Children the lead starts at once (the spawn cap). Default 4. */
+  /** Children the lead starts at once (the spawn cap). Default 4; the settings row overrides it. */
   spawnCap?: number
+  /** Children one session may start over its lifetime (`subagents({ maxChildren })`). Default none. */
+  maxChildren?: number
   /** Steps a role agent may take per delegated run. Default 30. */
   childMaxTurns?: number
   /** How long the lead stays parked on a task before the wait times out (ms). Default 24 h. */
@@ -88,6 +94,16 @@ export interface AgentFactoryDeps {
   limits?: TeamLimits
   /** Monthly USD limit of the workspace ledger scope; absent = tracked, not limited. */
   budgetUsd?: number
+  /**
+   * Workspace settings (spawn cap, default model, default permission mode, budget): read on every
+   * `agentFor`, so a change on any instance rebuilds the agents (the cache key holds `rev`).
+   */
+  settings?: () => Pick<
+    WorkspaceSettings,
+    'spawnCap' | 'defaultModel' | 'defaultPermissionMode' | 'budgetUsd'
+  > & { rev: number }
+  /** Receives the end of every turn so routine runs get their outcome (see `routine-plugin.ts`). */
+  routineOutcomes?: () => RoutineOutcomes | undefined
   /** Called after a library file changed (event feed, M4). */
   onFileChange?: (change: LibraryChange) => void
   onWarning?: (warning: HarnessWarning) => void
@@ -113,6 +129,11 @@ export interface AgentFactory {
   lock: SessionLock
   /** Open a session of a definition's agent with the shared lock and runtime (any instance). */
   openSession(def: AgentDef, sessionId: string): HarnessSession
+  /**
+   * A side-effect-free read handle of a stored session (messages, pending, usage, busy, children):
+   * no `session.start` hooks, nothing resumes. Use it for every pure read (spec 05 `agent.peek`).
+   */
+  peek(sessionId: string): SessionPeek
   /** Close every agent built (shutdown). */
   close(): Promise<void>
 }
@@ -147,13 +168,49 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   })
   const workspaceId = deps.workspaceId ?? 'default'
   const ledger = sqliteBudgetLedger(sqlite)
-  if (deps.budgetUsd !== undefined)
-    setBudgetLimit(sqlite, workspaceScope(workspaceId), deps.budgetUsd)
-  const limits = {
-    spawnCap: deps.limits?.spawnCap ?? 4,
+  const fixed = {
     childMaxTurns: deps.limits?.childMaxTurns ?? 30,
     parkTimeoutMs: deps.limits?.parkTimeoutMs ?? 24 * 60 * 60 * 1000,
+    maxChildren: deps.limits?.maxChildren,
   }
+  const currentSettings = () =>
+    deps.settings?.() ?? {
+      spawnCap: deps.limits?.spawnCap ?? 4,
+      defaultModel: null,
+      defaultPermissionMode: 'default' as const,
+      budgetUsd: deps.budgetUsd ?? null,
+      rev: 0,
+    }
+  setBudgetLimit(sqlite, workspaceScope(workspaceId), currentSettings().budgetUsd)
+  // `library://` references of uploads stay references in stored messages; they become bytes only
+  // when the request to the model is built (`inputFiles.resolve`, spec 03 §6)
+  const uploads = libraryFs(sqlite)
+  const resolveUpload = async (url: string, ctx: { mediaType: string }) => {
+    let path: string | undefined
+    try {
+      path = uploadPathOfUrl(url)
+    } catch {
+      return null
+    }
+    if (path === undefined) return undefined // https: and friends: the provider fetches them
+    const file = await uploads.readBytes?.(path)
+    if (file === null || file === undefined) return null
+    return { data: file.bytes, mediaType: file.mediaType ?? ctx.mediaType }
+  }
+
+  // children and re-opened parents get the app's lock and runtime (spec 20, ADR-0042)
+  const childSessionOptions = (info: { agent: string }) => {
+    const child = deps.agentBySlug?.(info.agent)
+    return {
+      lock,
+      runtime: { workspaceId, ...(child === undefined ? {} : { agentId: child.id }) },
+    }
+  }
+  const parentSessionOptions = (sessionId: string) => {
+    const owner = /^dm:([^:]+)/.exec(sessionId)?.[1]
+    return { lock, runtime: { workspaceId, ...(owner === undefined ? {} : { agentId: owner }) } }
+  }
+
   const cache = new Map<string, HarnessAgent>()
   const latest = new Map<string, string>()
   const retired: HarnessAgent[] = []
@@ -164,7 +221,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return factoryAgentFor(lead)
   }
 
-  function build(def: AgentDef): HarnessAgent {
+  function build(def: AgentDef, settings: ReturnType<typeof currentSettings>): HarnessAgent {
+    const limits = { ...fixed, spawnCap: settings.spawnCap }
+    // `default` means "the workspace default" (settings)
+    const mode =
+      def.permissionMode === 'default' ? settings.defaultPermissionMode : def.permissionMode
     const holder: { self?: HarnessAgent } = {}
     const self = (): HarnessAgent => holder.self as HarnessAgent
     const delegates = def.role === 'lead' && has(def, 'delegate')
@@ -182,7 +243,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
     const engine = createPermissionEngine({
       roots: () => [{ virtual: '/', real: '/' }],
-      mode: def.permissionMode,
+      mode,
       rules: {
         allow: [
           ...def.rules.allow,
@@ -250,6 +311,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               approvals: 'park',
               parkTimeoutMs: limits.parkTimeoutMs,
               maxConcurrent: limits.spawnCap,
+              ...(limits.maxChildren === undefined ? {} : { maxChildren: limits.maxChildren }),
+              childSession: childSessionOptions,
+              parentSession: parentSessionOptions,
               // role agents are leaves: a delegation is one level deep
               maxDepth: 1,
               messageTool: messaging,
@@ -266,12 +330,23 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                 agents: {},
                 approvals: 'park',
                 parentAgent: leadAgent,
+                childSession: childSessionOptions,
+                parentSession: parentSessionOptions,
                 selfAgent: self,
                 messageTool: true,
                 outputTool: false,
                 stopTool: false,
               }),
             ]),
+      ...(deps.routineOutcomes === undefined
+        ? []
+        : [
+            routineOutcomes({
+              outcomes: {
+                turnEnded: (e) => deps.routineOutcomes?.()?.turnEnded(e) ?? Promise.resolve(),
+              },
+            }),
+          ]),
       ...(deps.taskStore === undefined
         ? []
         : [
@@ -305,7 +380,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
     const agent = defineHarnessAgent({
       id: def.slug,
-      model: deps.models.resolve(def.model),
+      model: deps.models.resolve(def.model ?? settings.defaultModel),
       contextWindow: 200_000,
       instructions: [
         TEAM_PREAMBLE,
@@ -317,11 +392,18 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       plugins,
       storage,
       budget: {
-        ledger: { adapter: ledger, scopes: () => [workspaceScope(workspaceId)] },
+        ledger: {
+          adapter: ledger,
+          scopes: (ctx) => [workspaceScope(String(ctx.runtime.workspaceId ?? workspaceId))],
+        },
       },
       loop: { maxSteps: 40 },
       // uploads are checked by the chat route; the core caps data URLs at the same size
-      inputFiles: { protocols: ['data:', 'https:'], maxBytes: MAX_UPLOAD_BYTES },
+      inputFiles: {
+        protocols: ['data:', 'https:', 'library:'],
+        maxBytes: MAX_UPLOAD_BYTES,
+        resolve: resolveUpload,
+      },
       ...(deps.tuning?.streams ? { streams: deps.tuning.streams } : {}),
       ...(deps.tuning?.inbox ? { inbox: deps.tuning.inbox } : {}),
       ...(deps.tuning?.abortPollMs !== undefined
@@ -336,10 +418,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   }
 
   function factoryAgentFor(def: AgentDef): HarnessAgent {
-    const key = `${def.id}@${def.version}`
+    const settings = currentSettings()
+    const key = `${def.id}@${def.version}@${settings.rev}`
     let agent = cache.get(key)
     if (agent === undefined) {
-      agent = build(def)
+      // the workspace limit is a row of the shared ledger: applied by whoever builds first
+      setBudgetLimit(sqlite, workspaceScope(workspaceId), settings.budgetUsd)
+      agent = build(def, settings)
       cache.set(key, agent)
       const previous = latest.get(def.id)
       if (previous !== undefined && previous !== key) {
@@ -358,6 +443,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     storage,
     lock,
     agentFor: factoryAgentFor,
+    peek: (sessionId) => {
+      const lead = deps.lead?.()
+      const any = lead ?? deps.roster?.()[0]
+      if (any === undefined) throw new Error('the workspace has no agent to read sessions with')
+      return factoryAgentFor(any).peek(sessionId)
+    },
     openSession: (def, sessionId) =>
       factoryAgentFor(def).session(sessionId, {
         lock,

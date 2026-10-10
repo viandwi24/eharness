@@ -1,6 +1,8 @@
 import { z } from '@hono/zod-openapi'
 import { EVENT_TYPES, MAX_NOTE_CHARS, TASK_STATUSES } from '../../app/catalog.ts'
-import { UiMessageSchema } from './chat.ts'
+import { ChatStatsSchema, UiMessageSchema } from './chat.ts'
+import { LibraryEntrySchema, MemoryFileInfoSchema } from './library.ts'
+import { RoutineSchema } from './routines.ts'
 
 export const TaskStatusSchema = z.enum(TASK_STATUSES).openapi('TaskStatus', {
   description:
@@ -198,3 +200,59 @@ export const AgentSessionsSchema = z
 export const ReadMarkerSchema = z
   .object({ agentId: z.string(), lastReadSeq: z.number().int() })
   .openapi('ReadMarker')
+
+export const TaskAbortBodySchema = z
+  .object({ reason: z.string().max(500).optional() })
+  .openapi('TaskAbortBody')
+
+export const TaskAbortResultSchema = z
+  .object({
+    taskId: z.string(),
+    target: z.enum(['local', 'remote', 'idle', 'unsupported']).openapi({
+      description:
+        '`local`/`remote`: the turn was told to stop (here or on another instance). `idle`: nothing was running.',
+    }),
+  })
+  .openapi('TaskAbortResult')
+
+export const TaskMessageBodySchema = z
+  .object({
+    text: z.string().min(1).max(20_000),
+    mode: z.enum(['steer', 'queue']).optional().openapi({
+      description:
+        '`steer` (default): joins the running turn at its next step boundary (a queued turn when idle). `queue`: a turn of its own after the running one.',
+    }),
+  })
+  .openapi('TaskMessageBody')
+
+export const TaskMessageResultSchema = z
+  .object({
+    taskId: z.string(),
+    mode: z.enum(['steer', 'queue']),
+    inboxId: z.string(),
+    target: z.enum(['local', 'remote']),
+  })
+  .openapi('TaskMessageResult')
+
+export const AgentContextSchema = z
+  .object({
+    agent: z.object({ id: z.string(), slug: z.string(), name: z.string(), role: z.string() }),
+    stats: ChatStatsSchema,
+    tools: z.array(
+      z.object({
+        name: z.string(),
+        description: z.string().nullable(),
+        source: z.string(),
+        deferred: z.boolean(),
+        tokens: z.number(),
+      }),
+    ),
+    memory: z.object({
+      workspace: z.array(MemoryFileInfoSchema),
+      agent: z.array(MemoryFileInfoSchema),
+    }),
+    routines: z.array(RoutineSchema),
+    tasks: z.object({ owned: z.array(TaskSchema), delegated: z.array(TaskSchema) }),
+    files: z.array(LibraryEntrySchema),
+  })
+  .openapi('AgentContext')

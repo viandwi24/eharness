@@ -1,7 +1,10 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalAnswer, ApprovalView } from '../domain/approvals.ts'
-import type { TeamEvent } from '../domain/events.ts'
+import type { NewEvent, TeamEvent } from '../domain/events.ts'
+import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
+import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
+import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskStatus } from '../domain/tasks.ts'
 
 export interface Clock {
@@ -77,14 +80,14 @@ export interface ChatStats {
     clientTools: number
     externals: number
   } | null
-  /** Sum over the stored assistant messages of the chat. */
+  /** Cumulative usage of all finished turns (`session.stats().usage`). */
   usage: {
     inputTokens: number
     outputTokens: number
     totalTokens: number
-    cachedInputTokens: number
     costUsd: number
-    messages: number
+    /** Turns that ran at least one model step. */
+    turns: number
   }
 }
 
@@ -113,6 +116,17 @@ export interface ChatPort {
   /** `message` is the summary kind message, or null when there was nothing to compact. */
   compact(agent: AgentDef): Promise<{ compacted: boolean; message: ChatMessage | null }>
   stats(agent: AgentDef): Promise<ChatStats>
+  /** Stats plus the tools the model sees in the next request (opens the session). */
+  context(agent: AgentDef): Promise<{ stats: ChatStats; tools: ToolInfo[] }>
+}
+
+export interface ToolInfo {
+  name: string
+  description: string | null
+  /** `app`, `core`, `plugin:<name>` or `source:<id>`. */
+  source: string
+  deferred: boolean
+  tokens: number
 }
 
 export interface StoredUpload {
@@ -126,6 +140,8 @@ export interface StoredUpload {
 export interface UploadStore {
   put(path: string, bytes: Uint8Array, mediaType: string): Promise<StoredUpload>
   get(path: string): Promise<{ bytes: Uint8Array; mediaType: string } | undefined>
+  /** Existence and metadata without reading the content. */
+  stat(path: string): Promise<{ size: number; mediaType: string } | undefined>
 }
 
 /** Sidebar data of one agent, from the event feed and its last-read marker. */
@@ -165,6 +181,118 @@ export interface TeamPort {
    * once the answer is recorded; a rejected answer (stale, already answered) throws.
    */
   answer(view: ApprovalView, answer: ApprovalAnswer, actor: Actor): Promise<void>
+  /** `requestAbort()` on the task session, from any instance. */
+  abortTask(
+    task: Task,
+    reason?: string,
+  ): Promise<{ target: 'local' | 'remote' | 'idle' | 'unsupported' }>
+  /**
+   * A message from the user into the task session through the durable inbox: `steer` joins the
+   * running turn at its next step boundary, `queue` runs after it (both start a turn when idle).
+   */
+  messageTask(
+    task: Task,
+    text: string,
+    mode: 'steer' | 'queue',
+  ): Promise<{ inboxId: string; target: 'local' | 'remote' }>
+}
+
+/** Appends to the event feed from use cases (routines, settings). */
+export interface EventAppender {
+  append(event: NewEvent): number
+}
+
+/** Outcome of a conditional file change (`ifVersion`). */
+export type FileChange =
+  | { ok: true; version: string }
+  | { ok: false; reason: 'exists' | 'conflict' | 'missing'; currentVersion?: string }
+
+export interface LibraryListQuery {
+  prefix: string
+  excludePrefixes?: string[]
+  createdBy?: string
+  newestFirst?: boolean
+  limit: number
+}
+
+/** The shared file store as the library and memory routes use it (`infra/eh/library-store.ts`). */
+export interface LibraryStore {
+  list(query: LibraryListQuery): LibraryFileMeta[]
+  read(
+    path: string,
+  ): Promise<{ meta: LibraryFileMeta; text: string | null; bytes: Uint8Array | null } | undefined>
+  /** `ifVersion`: undefined = overwrite, null = create only, string = must match. */
+  writeText(path: string, content: string, ifVersion?: string | null): Promise<FileChange>
+  delete(path: string, ifVersion?: string): Promise<FileChange>
+  move(from: string, to: string, ifVersion?: string): Promise<FileChange>
+  /** Metadata-only history of a path, newest first. */
+  versions(path: string, limit: number): LibraryVersion[]
+}
+
+/** The workspace settings row (`infra/db/settings-repo.ts`). */
+export interface SettingsStore {
+  get(): WorkspaceSettings & { updatedAt: number }
+  patch(patch: SettingsPatch, now: number): WorkspaceSettings & { updatedAt: number }
+}
+
+export interface NewRoutine {
+  id: string
+  agentId: string
+  name: string
+  prompt: string
+  schedule: RoutineSpec
+  sessionMode: Routine['sessionMode']
+  overlap: Routine['overlap']
+  catchUpWindowMs: number | null
+  maxFailures: number
+  maxFires: number | null
+  endAt: number | null
+  nextFireAt: number | null
+  now: number
+}
+
+/** Fields `update` may change (anything absent stays). */
+export type RoutinePatch = Partial<
+  Pick<
+    Routine,
+    | 'name'
+    | 'prompt'
+    | 'schedule'
+    | 'sessionMode'
+    | 'overlap'
+    | 'catchUpWindowMs'
+    | 'maxFailures'
+    | 'maxFires'
+    | 'endAt'
+    | 'status'
+    | 'pausedReason'
+    | 'nextFireAt'
+    | 'failures'
+  >
+>
+
+export interface RoutineStore {
+  list(query: { agentId?: string }): Routine[]
+  get(id: string): Routine | undefined
+  insert(routine: NewRoutine): Routine
+  update(id: string, patch: RoutinePatch, now: number): Routine | undefined
+  delete(id: string): boolean
+  runs(routineId: string, limit: number): RoutineRun[]
+  getRun(id: string): RoutineRun | undefined
+}
+
+/** Cron / interval maths (`infra/schedule.ts`, croner); pure functions of the clock they are given. */
+export interface ScheduleCalc {
+  /** Throws a `DomainError` for a bad expression, timezone or interval. */
+  validate(spec: RoutineSpec): void
+  /** The first slot strictly after `afterMs`, or null (`at` slots, exhausted crons). */
+  next(spec: RoutineSpec, afterMs: number): number | null
+}
+
+/** Fires routines (`infra/eh/routine-service.ts`); every instance runs a ticker. */
+export interface RoutineEngine {
+  /** Fire `routine` now (a manual run); it respects `overlap: 'skip'`. */
+  runNow(routine: Routine): Promise<RoutineRun>
 }
 
 export interface Deps {
@@ -173,6 +301,12 @@ export interface Deps {
   uploads: UploadStore
   tasks: TaskStore
   team: TeamPort
+  library: LibraryStore
+  settings: SettingsStore
+  routines: RoutineStore
+  schedule: ScheduleCalc
+  routineEngine: RoutineEngine
+  events: EventAppender
   clock: Clock
   ids: IdGenerator
   workspaceId: string

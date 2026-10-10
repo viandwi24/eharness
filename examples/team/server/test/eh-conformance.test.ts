@@ -54,6 +54,7 @@ suite(
     requireRetry: true,
     requireDeadLetter: true,
     requireStats: true,
+    requireDedupe: true,
     claimTtlMs: 200,
   }),
 )

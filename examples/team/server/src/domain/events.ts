@@ -8,6 +8,8 @@ export const EVENT_TYPES = [
   'file-changed',
   'agent-changed',
   'routine-fired',
+  'routine-changed',
+  'settings-changed',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 
