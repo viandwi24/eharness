@@ -55,7 +55,7 @@ describe('postgres MessageAdapter', () => {
 
 Suites: `messageAdapterConformance`, `stateAdapterConformance`, `fileSystemConformance`,
 `skillSourceConformance`, `idGeneratorConformance`, `inboxAdapterConformance` (0.4.0),
-`budgetLedgerConformance` (0.5.0; the factory receives the case's static limits).
+`budgetLedgerConformance` (0.5.0; the factory receives the case's static limits), `profileStoreConformance` (`eharness/providers` stores). `scriptedProvider` is a provider definition with scripted models.
 
 Minimum cases for `budgetLedgerConformance`: unknown scopes have no limit; reserve up to the limit
 and refuse beyond it (refused scope, limit, spent + reserved); a used-up scope refuses a zero

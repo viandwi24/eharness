@@ -15,6 +15,7 @@ export default defineConfig({
     'memory/index': 'src/memory/index.ts',
     'ask/index': 'src/ask/index.ts',
     'permissions/index': 'src/permissions/index.ts',
+    'providers/index': 'src/providers/index.ts',
     'shell/index': 'src/shell/index.ts',
     'subagent/index': 'src/subagent/index.ts',
     'web/index': 'src/web/index.ts',

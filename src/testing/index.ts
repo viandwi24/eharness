@@ -28,6 +28,11 @@ export {
   messageAdapterConformance,
 } from './message-adapter.conformance.ts'
 export {
+  type ProfileStoreConformanceOptions,
+  type ProfileStoreUnderTest,
+  profileStoreConformance,
+} from './profile-store.conformance.ts'
+export {
   type ScriptedCallOptions,
   type ScriptedFinishReason,
   type ScriptedModel,
@@ -38,6 +43,11 @@ export {
   type ScriptedStreamPart,
   scriptedModel,
 } from './scripted-model.ts'
+export {
+  type ScriptedProviderDefinition,
+  type ScriptedProviderOptions,
+  scriptedProvider,
+} from './scripted-provider.ts'
 export {
   SKILL_SOURCE_FIXTURE,
   type SkillSourceConformanceOptions,

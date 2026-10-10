@@ -81,6 +81,7 @@
     "./memory": "./dist/memory/index.js",
     "./openapi": "./dist/openapi/index.js",
     "./permissions": "./dist/permissions/index.js",
+    "./providers": "./dist/providers/index.js",
     "./shell": "./dist/shell/index.js",
     "./storage/memory": "./dist/storage/memory.js",
     "./subagent": "./dist/subagent/index.js",

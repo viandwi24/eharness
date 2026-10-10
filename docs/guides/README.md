@@ -24,6 +24,7 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Long-running turns](long-running-turns.md) | step budget, wrap-up, progress guard (`'stuck'`), continuations, stop reasons |
 | [Debugging and activity logs](debugging-and-activity-logs.md) | the `model.call` hook: a log of every LLM call with raw request/response, tokens, cost, latency; retention |
 | [Models and cost](models-and-cost.md) | model catalog, models.dev, `costUsd`, nested usage, USD budgets, [budgets across sessions](models-and-cost.md#budgets-across-sessions) (`budget.ledger`) |
+| [Providers and profiles](providers-and-profiles.md) | `eharness/providers`: several providers and saved profiles, dynamic model lists, prices into the agent, a settings form, secrets, encrypted stores |
 | [Shell](shell.md) | the `shell()` plugin: `bash` with live output, background tasks and wake-ups, the local sandbox and OS isolation, profiles (server, CLI, web) |
 | [Todos](todos.md) | the `todos()` plugin: checklist tool, rendering, reminders, enforcement |
 | [Memory](memory.md) | the `memory()` plugin: per-user memory files, read-only roots, pinned files, audit, provider memory tools |

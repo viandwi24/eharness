@@ -17,6 +17,7 @@ Everything a user can observe without reading our source:
    | `eharness/guard`, `eharness/group`, `eharness/openapi` | |
    | `eharness/ask`, `eharness/permissions`, `eharness/subagent`, `eharness/web` | since 0.7 |
    | `eharness/shell` | Node-only (ADR-0036); since 0.7 |
+   | `eharness/providers` | Draft (0.8) |
    | `eharness/testing` | |
 2. **Persisted formats:** `metadata.eharness`, core data part types and payloads (`eh.*`),
    core message kinds and payloads, `SessionStateSnapshot`, plugin data parts of shipped plugins.

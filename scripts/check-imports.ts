@@ -1,7 +1,7 @@
 /**
  * Import rules for `src/` (ADR-0008, ADR-0010, docs/engineering/conventions.md):
  *
- * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|permissions|shell|subagent|web`) import core only through the relative
+ * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|permissions|providers|shell|subagent|web`) import core only through the relative
  *    path to `src/index.ts`, never through other core files or the `eharness` self-reference.
  *    Non-test files never import another subpath; test files of a subpath may (e.g. a filesystem
  *    test running `fileSystemConformance` from `src/testing`), but still never core internals.
@@ -28,6 +28,7 @@ const subpaths = [
   'group',
   'ask',
   'permissions',
+  'providers',
   'shell',
   'subagent',
   'web',

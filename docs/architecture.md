@@ -72,6 +72,7 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/permissions` | `src/permissions/index.ts` | `permissionsPlugin()`, `createPermissionEngine()`, `parseRule()` / `matchRule()`, `parseCommand()`, `isReadOnlyCommand()`, `PERMISSION_MODES`, `DEFAULT_PROTECTED_PATHS` (spec 18) |
 | `eharness/subagent` | `src/subagent/index.ts` | `subagents()` (approvals `'inline'` / `'park'` / `'policy'`, background children), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()`, `subagentWaitId()`, `SUBAGENT_*` texts (spec 20, ADR-0035) |
 | `eharness/ask` | `src/ask/index.ts` | `askUser()`, `pendingQuestions()`, `answerOutput()`, `parseQuestions()`, `formatAnswers()`, `ASK_TOOL` (spec 21) |
+| `eharness/providers` | `src/providers/index.ts` | `createProviderManager()`, `defineProvider()`, `openRouterProvider()` / `gatewayProvider()` / `openAIProvider()` / `anthropicProvider()` / `openAICompatibleProvider()`, `formSpec()`, `redactSettings()`, `mergeSecretPatch()`, `memoryProfileStore()`, `fromEnv()`, `loadCachedJson()` (spec 23) |
 | `eharness/web` | `src/web/index.ts` | `webFetch()`, `webSearch()`, `htmlToText()`, `isPrivateHost()`, `matchHost()` (spec 22) |
 | `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |

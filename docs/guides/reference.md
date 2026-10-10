@@ -341,6 +341,7 @@ tools) and `PAGE_CONTEXT_PREAMBLE` (the framing of page context). `eharness/guar
   budget ledger types `BudgetLedger`, `BudgetLedgerConfig`, `BudgetReservation`,
   `BudgetScopeStatus`, `BudgetEstimateEvent`.
 - `version`: the package version of the build.
+- `eharness/providers` (spec 23): see the [providers guide](providers-and-profiles.md#reference).
 
 ## Shipped plugins
 

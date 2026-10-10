@@ -49,5 +49,6 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0042](0042-peek-child-identity-spawn-cap.md) | Read-only `agent.peek`, child identity in the child index, `childSession` options and `maxChildren` |
 | [0043](0043-enqueue-source-metadata-fs-versions.md) | Caller id on the turn, `enqueue` app metadata, optional `FileSystem` versions |
 | [0044](0044-partial-resolution-of-pending-approvals.md) | Partial resolution of pending approvals: `respond()` records a subset, the last answer continues |
+| [0048](0048-providers-module.md) | `eharness/providers`: definitions, profiles, a manager and a cached catalog loader (module fetches via injected `fetch`) |
 | [0047](0047-model-call-observer.md) | Model call observer: the `model.call` hook, an AI SDK middleware, `observeModel` |
 | [0046](0046-durable-background-subagents-in-park-mode.md) | Durable background subagents in `park` mode: durable start through the child inbox, report events through storage, run marker for every park call |
