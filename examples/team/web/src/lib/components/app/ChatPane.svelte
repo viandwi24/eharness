@@ -364,7 +364,7 @@
 	{#if wide && panelOpen}
 		<!-- Second column of the same surface: the floating session card scrolls on its own. -->
 		<aside class="hidden w-[352px] shrink-0 overflow-y-auto p-3 lg:block" aria-label="Agent session">
-			<SessionContext {agentId} onClose={onTogglePanel} />
+			<SessionContext {agentId} elevation="flat" class="border-border bg-background shadow-sm" onClose={onTogglePanel} />
 		</aside>
 	{/if}
 	</div>
