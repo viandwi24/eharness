@@ -14,7 +14,8 @@
 	import TextPart from './TextPart.svelte';
 	import ToolGroup from './ToolGroup.svelte';
 	import ToolPart from './ToolPart.svelte';
-	import { isActivityTool, type ToolView } from './activity.js';
+	import { isActivityTool, type ToolView, writtenFiles } from './activity.js';
+	import FileCard from './FileCard.svelte';
 
 	type Block =
 		| { type: 'view'; view: PartView }
@@ -58,6 +59,19 @@
 	});
 
 	const visible = $derived(hasVisibleParts(views));
+
+	// One file card per path and message: under the last tool group that wrote it, labelled with
+	// the first action (a file created and then edited is "Created").
+	const fileCards = $derived.by(() => {
+		const at = new Map<number, ReturnType<typeof writtenFiles>>();
+		const first = new Map<string, { block: number; file: ReturnType<typeof writtenFiles>[number] }>();
+		blocks.forEach((b, i) => {
+			if (b.type !== 'tools') return;
+			for (const f of writtenFiles(b.views)) first.set(f.path, { block: i, file: first.get(f.path)?.file ?? f });
+		});
+		for (const { block, file } of first.values()) at.set(block, [...(at.get(block) ?? []), file]);
+		return at;
+	});
 </script>
 
 {#snippet part(v: PartView)}
@@ -101,6 +115,7 @@
 					<SourcePart views={b.views} />
 				{:else if b.type === 'tools'}
 					{#if b.views.length === 1}<ToolPart view={b.views[0]} />{:else}<ToolGroup views={b.views} />{/if}
+					{#each fileCards.get(i) ?? [] as f (f.path)}<FileCard file={f} />{/each}
 				{:else}
 					{@render part(b.view)}
 				{/if}

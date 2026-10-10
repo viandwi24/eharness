@@ -38,3 +38,26 @@ export function reasoningLabel(streaming: boolean, durationMs?: number): string 
 	const s = Math.max(1, Math.round(durationMs / 1000));
 	return `Thought for ${s} ${s === 1 ? 'second' : 'seconds'}`;
 }
+
+export type WrittenFile = { path: string; action: 'created' | 'edited' };
+
+const WRITE_TOOLS: Record<string, WrittenFile['action']> = { write_file: 'created', edit_file: 'edited' };
+const PATH_KEYS = ['path', 'file_path', 'filePath', 'file'];
+
+/**
+ * Files the calls wrote, once each (an edit after a write stays "created"), for the file cards
+ * under a tool group. Failed writes (tools answer errors as text) and internal folders are left out.
+ */
+export function writtenFiles(views: readonly ToolView[]): WrittenFile[] {
+	const out = new Map<string, WrittenFile>();
+	for (const v of views) {
+		const action = WRITE_TOOLS[v.toolName];
+		if (!action || v.state !== 'output-available') continue;
+		if (typeof v.output === 'string' && /^\s*error\b/i.test(v.output)) continue;
+		const input = v.input as Record<string, unknown> | null;
+		const path = PATH_KEYS.map((k) => input?.[k]).find((p): p is string => typeof p === 'string' && p.startsWith('/'));
+		if (!path || path.startsWith('/memories/') || path.startsWith('/.eharness/')) continue;
+		if (!out.has(path)) out.set(path, { path, action });
+	}
+	return [...out.values()];
+}
