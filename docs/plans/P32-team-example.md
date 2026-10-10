@@ -1,6 +1,6 @@
 # P32 — Team-agent example (`examples/team`)
 
-Status: in progress (M1-M4 done, M6-M8 server side and docs done; web items open) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
+Status: review (M1-M8 done; real-model smoke passes; awaiting maintainer confirmation) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
 
 ## Goal
 
@@ -728,6 +728,10 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 | R22 caller id on the turn | **closed in the library** (`ctx.turn.source`); the app's retry loop can be dropped | ADR-0043 |
 | R23 enqueue metadata | **closed in the library** (`metadata.app`); the example can label routine messages with it | ADR-0043 |
 | R24 inbox sweeper | **closed as app code**: the session-id to agent mapping is application knowledge; guide note added | ADR-0043 |
+| R25 tool failures not seen by the progress guard | **closed**: `ERROR:` results count as failures; `progress.toolErrorStreak` nudges then stops `stuck` (found by the real-model smoke) | `23ec4fe` |
+| R26 parallel approvals answered one at a time | **closed**: partial resolution of pending approvals; the completing answer runs the continuation (found by the real-model smoke) | ADR-0044, `b5ba722` |
+| R27 step budget across park resumes | **open**: every approval resume of a park child is a new turn with a fresh `maxSteps`, so a child's lifetime work is unbounded by steps; candidate: a per-session lifetime step/tool-call cap in `subagents()` or the loop | — |
+| R28 cost of unpriced models | **open (example)**: OpenRouter models are unpriced without a catalog (`W_MODEL_UNPRICED`), so the workspace budget counts nothing; wire the OpenRouter model catalog as the coder does | — |
 
 Not library requests, found on the way: no Svelte `resume` option (the app calls
 `chat.resumeStream()`), and MCP over stdio is deliberately absent from the server example.

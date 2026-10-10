@@ -1145,7 +1145,7 @@ export interface paths {
         put?: never;
         /**
          * Answer an approval or a question
-         * @description `respond()` on the session that owns the item, from whichever instance receives the request. Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.
+         * @description `respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: "recorded"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: "resumed"`). Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.
          *
          *     - Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).
          *     - Question: `{ answers }` (one per question, `null` dismisses).
@@ -1168,7 +1168,7 @@ export interface paths {
                 };
             };
             responses: {
-                /** @description Recorded; the session continues */
+                /** @description Recorded (`recorded`) or recorded and resumed (`resumed`) */
                 202: {
                     headers: {
                         [name: string]: unknown;
@@ -3213,6 +3213,11 @@ export interface components {
                 name: components["schemas"]["ToolName"];
                 description: string;
             }[];
+            /** @description Catalog tools left out because the server has no backend for them. */
+            unavailable?: {
+                name: components["schemas"]["ToolName"];
+                reason: string;
+            }[];
         };
         /** @description A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /agents/{id}/chat/stream`. */
         ChatQueued: {
@@ -3382,6 +3387,8 @@ export interface components {
             /** @enum {string|null} */
             risk: "read" | "write" | "external" | "unknown" | null;
             questions: components["schemas"]["Question"][] | null;
+            /** @description Items of this session that were answered already and wait for the others of the same batch (hidden from the list). */
+            answeredWaiting: number;
         };
         Question: {
             question: string;
@@ -3395,10 +3402,17 @@ export interface components {
         ApprovalList: {
             approvals: components["schemas"]["Approval"][];
         };
-        /** @description The answer is recorded and the session continues in the background; follow it with the events feed. */
+        /** @description The answer is recorded. When it was the last of its batch the session continues in the background (follow it with the events feed); else the others still wait. */
         ApprovalAccepted: {
             /** @enum {boolean} */
             accepted: true;
+            /**
+             * @description `recorded`: the answer is stored and other items of the same batch still wait (`remaining`). `resumed`: it was the last one and the session continues.
+             * @enum {string}
+             */
+            status: "recorded" | "resumed";
+            /** @description Items still unanswered (0 when resumed). */
+            remaining: number;
             id: string;
             sessionId: string;
             agentId: string;
