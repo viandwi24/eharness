@@ -48,3 +48,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0041](0041-park-mode-messaging.md) | Agent messaging in `park` mode: storage-backed directory, delivery over the durable inbox (supersedes the park limit of 0038) |
 | [0042](0042-peek-child-identity-spawn-cap.md) | Read-only `agent.peek`, child identity in the child index, `childSession` options and `maxChildren` |
 | [0043](0043-enqueue-source-metadata-fs-versions.md) | Caller id on the turn, `enqueue` app metadata, optional `FileSystem` versions |
+| [0044](0044-partial-resolution-of-pending-approvals.md) | Partial resolution of pending approvals: `respond()` records a subset, the last answer continues |

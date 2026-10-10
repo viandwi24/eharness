@@ -32,7 +32,7 @@ A turn that ends with `stop: 'tool-pending'` leaves the session **pending**:
 export interface PendingState {
   v?: number                                          // 2 since 0.5.0; absent = 0.3 / 0.4 shape (rule 9 of §4.2)
   messageId: string                                   // the assistant message waiting for answers
-  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk; idempotent?: boolean; granted?: true }>  // input/risk since 0.3, idempotent since 0.5 (§3.2); granted: approved already, waits for parked calls (§3.5)
+  approvals: Array<{ approvalId: string; toolCallId: string; toolName: string; input?: unknown; risk?: ToolRisk; idempotent?: boolean; granted?: true; answer?: PendingApprovalAnswer }>  // input/risk since 0.3, idempotent since 0.5 (§3.2); granted: approved already, waits for parked calls (§3.5); answer: recorded by a partial respond() (§4.3)
   clientTools: PendingClientTool[]                    // calls of tools without execute (spec 09 §6); timeout fields: request-scoped client tools (§7.1)
   externals?: PendingExternal[]                       // 0.5.0, §4.2
 }
@@ -43,7 +43,9 @@ export interface PendingClientTool {
   timeoutAt?: number                                  // epoch ms
   onTimeout?: { errorText: string } | { output: JSONValue }  // default { errorText: CLIENT_TOOL_TIMED_OUT }
   result?: { output: JSONValue; by: 'timeout' } | { errorText: string; by: 'timeout' }  // recorded on timeout: the call counts as answered
+  answer?: { output: JSONValue } | { errorText: string }  // recorded by a partial respond() (§4.3): counts as answered
 }
+export interface PendingApprovalAnswer { approved: boolean; reason?: string; remember?: 'once' | 'session'; actor?: unknown; note?: string }
 export interface PendingExternal {
   waitId: string                                      // `w_<toolCallId>`, stable
   toolCallId: string; toolName: string
@@ -300,9 +302,12 @@ export interface PendingResponse {
 Inside the run (same failure semantics as `send()`, spec 05 §2):
 
 1. Lock, load, validate against `state.core.pending`:
-   - every id must belong to the pending set, and **all** pending approvals and client tools must
-     be answered in one call (v0 has no partial resolution) → else `EH_INVALID_INPUT`
-     (`details.reason: 'unknown-id' | 'incomplete'`). External waits (§4.2) are answered by
+   - every id must belong to the pending set → else `EH_INVALID_INPUT`
+     (`details.reason: 'unknown-id'`). The answers of this call and the ones recorded by earlier
+     partial calls (§4.3) must cover **all** pending approvals and client tools to continue;
+     if they do not, the call is a partial answer (§4.3), except when it answers nothing
+     (`'incomplete'`) or answers external waits (`'incomplete'`: externals are never recorded
+     partially, use `resolveWait()`). External waits (§4.2) are answered by
      `externals` or were recorded by `resolveWait()` before (a recorded wait is used as recorded
      and must not be answered again: `'unknown-id'`); an open wait nobody answered is
      `'incomplete'`; a `toolOutputs` answer for an external call is `'wrong-kind'`; a pending state
@@ -488,6 +493,38 @@ session.pendingWaits(): Promise<PendingExternal[]>   // reads the stored pending
 
 The core cannot authenticate a webhook: the application verifies the caller (signature,
 correlation id) before calling `resolveWait()`. `opts.actor` is accepted and reserved for audit.
+
+### 4.3 Partial resolution (0.8.0)
+
+A `respond()` that answers only some of the pending approvals / client tool calls **records** its
+answers and ends; the continuation runs when the last missing answer arrives (ADR-0044). v0 used
+to reject such a call; a UI that answers one approval at a time (parallel approvals of one step)
+now just works.
+
+1. Inside the run (preparation, nothing consumed): the answers are validated as in §4 step 1, then
+   written into the pending state (`approvals[].answer`, `clientTools[].answer`) with a
+   compare-and-set on the state `rev` (works from any instance; on a lost race the state is
+   reloaded and planned again, so concurrent answers from two instances never lose one).
+   No message is saved, no tool runs, no model is called, no `approval.decided` event fires
+   (those happen at the continuation).
+2. The run ends with `stop: 'tool-pending'`, `partial: true` and `pending` = the stored pending
+   state; `answer` marks the answered items, the unanswered ones are those without `answer` (and
+   without `granted`). `messageId` is not set; the stream is an empty `start` / `finish` pair.
+3. **Idempotent per id**: the same decision again (same `approved`, `reason`, `note`; client output
+   deep-equal) is accepted and changes nothing; a different one is `EH_INVALID_INPUT`
+   (`details.reason: 'conflict'`) and records nothing. Both within the same call and across calls.
+4. **Last answer**: when this call's answers plus the recorded ones cover every item, the run is
+   a normal continuation (§4) with all answers, in pending order, into the same UI message: one
+   `tool-approval-response` per approval (recorded `reason` / `remember` / `actor` / `note`
+   included), tools run, `approval.decided` fires for every approval. Client outputs go through
+   `tool.after` and the output limits then, not when recorded.
+5. A recorded client output is final: its §7.1 timeout no longer fires. New input while pending
+   (§4.1) ignores recorded answers (`onNewInput: 'deny'` denies everything; `'reject'` rejects).
+6. `endTurn` and the other `SendOptions` belong to the call that **completes** the answers; the
+   options of earlier partial calls are ignored (they only record). `metadata.eharness.pending`
+   of the stored message is not updated by a partial answer: the state (`session.stats().pending`,
+   `result.pending`) is the authority for "answered, waiting for the others".
+7. `handleChatRequest` answers with a partial request the same way (`partial: true`).
 
 ## 5. Regenerate, edit, rewind
 
@@ -713,7 +750,7 @@ run and reported as a run error):
    `approval.id / approved / reason` of parts in `approval-responded` (never a `note`, §3.6), and `toolCallId` /
    `output` / `errorText` of tool parts in `output-available` / `output-error`. Inside the run
    the answers are matched against `state.core.pending`; entries that are not pending are ignored,
-   and a pending item without an answer → `EH_INVALID_INPUT` (`'incomplete'`). External waits are
+   and a pending item without an answer waits for the next request (partial resolution, §4.3; a request that answers nothing is `'incomplete'`). External waits are
    never answered from the request body (§4.2 rule 5).
 3. `body.messageId` is set (useChat sends it when a message is replaced) and the last message has
    `role: 'user'` → `edit(body.messageId, last)`.

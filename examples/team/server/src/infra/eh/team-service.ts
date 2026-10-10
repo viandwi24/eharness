@@ -18,7 +18,7 @@ import { ASK_TOOL, answerOutput, pendingQuestions } from 'eharness/ask'
 import { pendingSubagentApprovals, reconcileSubagentWaits } from 'eharness/subagent'
 import type { AgentRepo, ChatMessage, TeamPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import type { ApprovalRisk, ApprovalView } from '../../domain/approvals.ts'
+import type { ApprovalOutcome, ApprovalRisk, ApprovalView } from '../../domain/approvals.ts'
 import { dmSessionId } from '../../domain/chat.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import { deriveTaskStatus, type Task } from '../../domain/tasks.ts'
@@ -89,7 +89,12 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
       taskId,
     }
     const out: ApprovalView[] = []
+    // answered items of a parallel batch wait for the others: hidden here, counted
+    const answeredWaiting =
+      pending.approvals.filter((a) => a.answer !== undefined).length +
+      pending.clientTools.filter((c) => c.answer !== undefined).length
     for (const a of pending.approvals) {
+      if (a.answer !== undefined) continue
       out.push({
         ...base,
         id: a.approvalId,
@@ -99,12 +104,13 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         input: a.input ?? null,
         risk: (a.risk as ApprovalRisk | undefined) ?? null,
         questions: null,
+        answeredWaiting,
       })
     }
     const questions = pendingQuestions(pending)
     for (const q of questions) {
       const call = pending.clientTools.find((c) => c.toolCallId === q.toolCallId)
-      if (call === undefined || call.result !== undefined) continue
+      if (call === undefined || call.result !== undefined || call.answer !== undefined) continue
       out.push({
         ...base,
         id: q.toolCallId,
@@ -114,6 +120,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         input: call.input ?? null,
         risk: null,
         questions: q.questions ?? [],
+        answeredWaiting,
       })
     }
     return out
@@ -185,11 +192,25 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     view: ApprovalView,
     body: Parameters<TeamPort['answer']>[1],
     actor: Parameters<TeamPort['answer']>[2],
-  ): Promise<void> {
+  ): Promise<ApprovalOutcome> {
     const def = defById(view.agentId)
     if (def === undefined) throw notFound('agent', view.agentId)
     const session = factory.openSession(def, view.sessionId)
     let run: ReturnType<HarnessSession['respond']>
+    // items that still wait after this answer, as far as the stored state tells (a partial
+    // answer is recorded without running anything, so the run settles fast and tells for sure)
+    const before = await factory.peek(view.sessionId).pending()
+    const predicted =
+      before === null
+        ? 0
+        : Math.max(
+            0,
+            before.approvals.filter((a) => a.answer === undefined && a.granted !== true).length +
+              before.clientTools.filter((c) => c.answer === undefined && c.result === undefined)
+                .length +
+              (before.externals ?? []).filter((e) => e.result === undefined).length -
+              1,
+          )
     if (body.kind === 'approval') {
       run = session.respond(
         {
@@ -225,6 +246,19 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
       if (code === 'EH_INVALID_INPUT') throw invalid(message, code)
       throw conflict(message, code ?? 'ANSWER_REJECTED')
     }
+    if (settled?.partial === true) {
+      const left = settled.pending
+      const remaining =
+        left === undefined
+          ? predicted
+          : left.approvals.filter((a) => a.answer === undefined && a.granted !== true).length +
+            left.clientTools.filter((c) => c.answer === undefined && c.result === undefined)
+              .length +
+            (left.externals ?? []).filter((e) => e.result === undefined).length
+      return { status: 'recorded', remaining }
+    }
+    if (settled === undefined && predicted > 0) return { status: 'recorded', remaining: predicted }
+    return { status: 'resumed' }
   }
 
   async function reconcileWaits(): Promise<ReconcileReport['waits']> {

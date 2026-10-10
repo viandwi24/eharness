@@ -26,7 +26,7 @@ import { isKnownPending } from './waits.ts'
 export const RESPOND_IGNORE_UNKNOWN: unique symbol = Symbol.for('eharness.respond.ignoreUnknown')
 
 /** Why `respond()` answers were rejected (`details.reason` of `EH_INVALID_INPUT`). */
-export type RespondRejection = 'unknown-id' | 'incomplete' | 'stale' | 'wrong-kind'
+export type RespondRejection = 'unknown-id' | 'incomplete' | 'stale' | 'wrong-kind' | 'conflict'
 
 /** One validated approval answer. */
 export interface ApprovalAnswer {
@@ -90,14 +90,54 @@ export interface ExternalAnswer {
   recorded: boolean
 }
 
-/** Validated answers of one `respond()`: every pending item answered exactly once. */
+/**
+ * Validated answers of one `respond()`. When `complete`, every pending item is answered exactly
+ * once (this call's answers plus the ones recorded earlier, ADR-0044). Otherwise the call is a
+ * partial answer: `record` holds the new answers to store in the pending state, `remaining` the
+ * ids of the items still unanswered.
+ */
 export interface RespondPlan {
   pending: PendingState
+  complete: boolean
   approvals: ApprovalAnswer[]
   /** Client outputs, then the external results (as outputs, in pending order). */
   toolOutputs: ClientToolAnswer[]
   /** The external waits of the plan (events, audit). */
   externals: ExternalAnswer[]
+  /** Answers of this call that are not recorded yet (always empty when `complete`). */
+  record: { approvals: ApprovalAnswer[]; toolOutputs: ClientToolAnswer[] }
+  /** Ids (approval id / tool call id / wait id) still unanswered (empty when `complete`). */
+  remaining: string[]
+}
+
+/** Store the new answers of a partial plan in its pending state (mutates `plan.pending`). */
+export function applyRecord(plan: RespondPlan): void {
+  for (const a of plan.record.approvals) {
+    const entry = plan.pending.approvals.find((e) => e.approvalId === a.approvalId)
+    if (entry === undefined) continue
+    entry.answer = {
+      approved: a.approved,
+      ...(a.reason !== undefined ? { reason: a.reason } : {}),
+      ...(a.remember !== undefined ? { remember: a.remember } : {}),
+      ...(a.actor !== undefined ? { actor: structuredClone(a.actor) } : {}),
+      ...(a.note !== undefined ? { note: a.note } : {}),
+    }
+  }
+  for (const o of plan.record.toolOutputs) {
+    const entry = plan.pending.clientTools.find((e) => e.toolCallId === o.toolCallId)
+    if (entry === undefined) continue
+    entry.answer = structuredClone(
+      'errorText' in o ? { errorText: o.errorText } : { output: o.output },
+    ) as never
+  }
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  try {
+    return JSON.stringify(a) === JSON.stringify(b)
+  } catch {
+    return false
+  }
 }
 
 function reject(reason: RespondRejection, message: string, extra: Record<string, unknown> = {}) {
@@ -151,6 +191,10 @@ export function planRespond(args: {
   const externalById = new Map(externals.map((e) => [e.waitId, e]))
   const answeredApprovals = new Map<string, ApprovalAnswer>()
   const answeredOutputs = new Map<string, ClientToolAnswer>()
+  /** Answers of this call that are valid (new or a repeat of a recorded one). */
+  let accepted = 0
+  const recordApprovals: ApprovalAnswer[] = []
+  const recordOutputs: ClientToolAnswer[] = []
 
   for (const answer of approvals as unknown[]) {
     const a = answer as {
@@ -211,12 +255,35 @@ export function planRespond(args: {
     }
     if (a.remember === 'once' || a.remember === 'session') out.remember = a.remember
     if (a.actor !== undefined) out.actor = structuredClone(a.actor) as ApprovalActor
+    accepted++
+    if (entry.answer !== undefined && entry.granted !== true) {
+      // recorded by an earlier partial respond(): the same decision again is a no-op
+      const recorded = entry.answer
+      if (
+        recorded.approved !== out.approved ||
+        recorded.reason !== out.reason ||
+        recorded.note !== out.note
+      ) {
+        throw reject('conflict', `Approval '${a.id}' was answered differently before.`, {
+          id: a.id,
+        })
+      }
+      answeredApprovals.set(a.id, recordedApproval(entry))
+      continue
+    }
     answeredApprovals.set(a.id, out)
+    if (entry.granted !== true) recordApprovals.push(out)
   }
 
-  // approvals granted before their batch parked (spec 11 §3.5) need no second answer
+  // approvals granted before their batch parked (spec 11 §3.5) need no second answer; approvals
+  // recorded by an earlier partial respond() (ADR-0044) are used as recorded
   for (const entry of pending.approvals) {
-    if (entry.granted !== true || answeredApprovals.has(entry.approvalId)) continue
+    if (answeredApprovals.has(entry.approvalId)) continue
+    if (entry.answer !== undefined && entry.granted !== true) {
+      answeredApprovals.set(entry.approvalId, recordedApproval(entry))
+      continue
+    }
+    if (entry.granted !== true) continue
     answeredApprovals.set(entry.approvalId, {
       approvalId: entry.approvalId,
       toolCallId: entry.toolCallId,
@@ -259,16 +326,26 @@ export function planRespond(args: {
         { id: o.toolCallId },
       )
     }
-    answeredOutputs.set(
-      o.toolCallId,
-      isError
-        ? {
-            toolCallId: entry.toolCallId,
-            toolName: entry.toolName,
-            errorText: o.errorText as string,
-          }
-        : { toolCallId: entry.toolCallId, toolName: entry.toolName, output: o.output },
-    )
+    const given: ClientToolAnswer = isError
+      ? { toolCallId: entry.toolCallId, toolName: entry.toolName, errorText: o.errorText as string }
+      : { toolCallId: entry.toolCallId, toolName: entry.toolName, output: o.output }
+    accepted++
+    if (entry.answer !== undefined) {
+      if (!sameJson(entry.answer, isError ? { errorText: o.errorText } : { output: o.output })) {
+        throw reject('conflict', `Tool call '${o.toolCallId}' was answered differently before.`, {
+          id: o.toolCallId,
+        })
+      }
+    } else recordOutputs.push(given)
+    answeredOutputs.set(o.toolCallId, given)
+  }
+  for (const entry of pending.clientTools) {
+    if (entry.answer === undefined || answeredOutputs.has(entry.toolCallId)) continue
+    answeredOutputs.set(entry.toolCallId, {
+      toolCallId: entry.toolCallId,
+      toolName: entry.toolName,
+      ...entry.answer,
+    } as ClientToolAnswer)
   }
 
   const answeredExternals = new Map<string, WaitResult>()
@@ -314,10 +391,12 @@ export function planRespond(args: {
       .filter((c) => c.result === undefined && !answeredOutputs.has(c.toolCallId))
       .map((c) => c.toolCallId),
   ]
-  if (missing.length > 0) {
+  // a call that answers nothing (or answers external waits, which are not recorded partially)
+  // while items are open is rejected; any other partial answer is recorded (ADR-0044)
+  if (missing.length > 0 && (accepted === 0 || answeredExternals.size > 0)) {
     throw reject(
       'incomplete',
-      `Every pending approval and client tool call must be answered in one respond() (missing: ${missing.join(', ')}).`,
+      `Pending approvals, client tool calls or waits are still unanswered (missing: ${missing.join(', ')}).`,
       { missing },
     )
   }
@@ -331,6 +410,7 @@ export function planRespond(args: {
       { messageId: pending.messageId },
     )
   }
+  const complete = missing.length === 0
   const externalPlan: ExternalAnswer[] = externals.map((e) => ({
     waitId: e.waitId,
     toolCallId: e.toolCallId,
@@ -360,9 +440,29 @@ export function planRespond(args: {
   })
   return {
     pending,
+    complete,
     approvals: [...answeredApprovals.values()],
     toolOutputs: [...answeredOutputs.values(), ...timedOutClients, ...externalOutputs],
-    externals: externalPlan,
+    externals: complete ? externalPlan : [],
+    record: complete
+      ? { approvals: [], toolOutputs: [] }
+      : { approvals: recordApprovals, toolOutputs: recordOutputs },
+    remaining: missing,
+  }
+}
+
+/** The answer of an approval that a partial `respond()` recorded. */
+function recordedApproval(entry: PendingState['approvals'][number]): ApprovalAnswer {
+  const a = entry.answer as NonNullable<typeof entry.answer>
+  return {
+    approvalId: entry.approvalId,
+    toolCallId: entry.toolCallId,
+    toolName: entry.toolName,
+    approved: a.approved,
+    ...(a.reason !== undefined ? { reason: a.reason } : {}),
+    ...(a.remember !== undefined ? { remember: a.remember } : {}),
+    ...(a.actor !== undefined ? { actor: structuredClone(a.actor) as ApprovalActor } : {}),
+    ...(a.note !== undefined ? { note: a.note } : {}),
   }
 }
 

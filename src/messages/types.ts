@@ -85,6 +85,11 @@ export interface PendingState {
      * waits of its batch (spec 11 §3.5). `respond()` answers it as approved without a second answer.
      */
     granted?: true
+    /**
+     * The decision recorded by a partial `respond()` (ADR-0044): the item is answered and waits
+     * for the others of its batch. The continuation uses it as recorded.
+     */
+    answer?: PendingApprovalAnswer
   }>
   /**
    * Calls of tools without `execute` waiting for a client-provided output. Calls of request-scoped
@@ -102,6 +107,17 @@ export interface PendingState {
    * outside. Each holds its recorded `result` once `resolveWait()` (or a timeout) recorded it.
    */
   externals?: PendingExternal[]
+}
+
+/** A recorded approval decision of a partial `respond()` (spec 11 §4.3, ADR-0044). */
+export interface PendingApprovalAnswer {
+  approved: boolean
+  /** For a denial, the reason with the note appended (spec 11 §3.6). */
+  reason?: string
+  remember?: 'once' | 'session'
+  actor?: unknown
+  /** The note of an approved call (spec 11 §3.6). */
+  note?: string
 }
 
 /** One client tool call of the pending state (spec 11 §2). */
@@ -123,6 +139,11 @@ export interface PendingClientTool {
   onTimeout?: WaitTimeoutResult
   /** The recorded timeout result: the call counts as answered and is not answered again. */
   result?: WaitResult
+  /**
+   * The output recorded by a partial `respond()` (ADR-0044), as given (`tool.after` and the
+   * output limits run when the continuation uses it). The call counts as answered.
+   */
+  answer?: { output: JSONValue } | { errorText: string }
 }
 
 /** The explicit result a wait takes when it times out (`WAIT_TIMED_OUT` by default). */
@@ -482,6 +503,11 @@ export interface TurnResult<M = HarnessUIMessage, O = unknown> {
   stop: StopReason
   /** Set when stop is `tool-pending`. */
   pending?: PendingState
+  /**
+   * `respond()` only: the answers were recorded but items are still unanswered (ADR-0044); no
+   * continuation ran. `stop` is `'tool-pending'` and `pending` shows each item's `answer`.
+   */
+  partial?: true
   /** Messages created by this turn (user, assistant, and any kind messages such as markers). */
   messages: M[]
   /** This turn only; includes `addUsage()` contributions. */

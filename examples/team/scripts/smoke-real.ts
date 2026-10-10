@@ -50,12 +50,20 @@ try {
   const first = parseSse(await res.text())
   console.log(`lead turn 1: ${first.chunks.length} chunks`)
 
-  const end = Date.now() + 240_000
+  const end = Date.now() + Number(process.env.SMOKE_MS ?? 240_000)
   let lastLead = ''
+  // an item is answered once: a state that stays stuck must fail the run, not loop on approvals
+  const answered = new Set<string>()
   for (;;) {
     for (const item of await approvals(server)) {
+      if (answered.has(item.id))
+        throw new Error(`approval ${item.id} is listed again after it was answered`)
+      answered.add(item.id)
       console.log(`approving ${item.toolName} of ${item.agentName} (smoke run: auto-approve)`)
-      await fetch(`${server.url}/approvals/${item.id}`, post({ approved: true }))
+      const answer = await fetch(`${server.url}/approvals/${item.id}`, post({ approved: true }))
+      const body = await answer.text()
+      if (answer.status !== 202) throw new Error(`approval ${item.id}: ${answer.status} ${body}`)
+      console.log(`  -> ${body}`)
     }
     const all = await tasks(server)
     const open = all.some((t) => t.status === 'running' || t.status === 'needs_action')

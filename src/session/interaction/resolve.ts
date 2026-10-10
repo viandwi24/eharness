@@ -31,6 +31,7 @@ import {
   findWaitTool,
   isClientWait,
   isKnownPending,
+  isSettled,
   MAX_TIMER_MS,
   nextTimeoutAt,
   type TimedWait,
@@ -209,7 +210,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
         if (source.kind === 'result' && isClientWait(pending, waitId)) {
           return { status: 'not-pending' }
         }
-        if (entry.result !== undefined) return { status: 'already-resolved' }
+        if (isSettled(entry)) return { status: 'already-resolved' }
         prepared ??= await prepare(entry, source)
         entry.result = structuredClone(prepared)
         rt.state.markDirty()
@@ -478,7 +479,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     const inbox = host.inbox
     if (inbox !== undefined) {
       for (const entry of timedWaits(pending)) {
-        if (entry.timeoutAt === undefined || entry.result !== undefined) continue
+        if (entry.timeoutAt === undefined || isSettled(entry)) continue
         try {
           const inboxId = await inbox.enqueue(rt.id, {
             kind: 'wait-timeout',

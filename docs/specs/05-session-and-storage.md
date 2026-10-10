@@ -73,7 +73,11 @@ export interface HarnessSession<
    * (spec 11 §6.1, spec 04 §7): into a step of the running turn, a queued turn of its own, or dropped.
    */
   send(input?: SendInput, options?: SendOptions): HarnessRun<M>
-  /** Answer pending tool approvals / client tool calls and continue that message (spec 11 §4). */
+  /**
+   * Answer pending tool approvals / client tool calls and continue that message (spec 11 §4). A
+   * subset is recorded in the pending state (`answer` per item) and the run ends `partial: true`;
+   * the last answer continues (spec 11 §4.3, ADR-0044).
+   */
   respond(response: PendingResponse, options?: SendOptions): HarnessRun<M>
   /** Answer again (spec 11 §5). */
   regenerate(options?: { messageId?: string } & SendOptions): HarnessRun<M>

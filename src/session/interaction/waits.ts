@@ -45,8 +45,8 @@ export function pendingCallIds(pending: PendingState): Set<string> {
  */
 export function unresolvedCount(pending: PendingState): number {
   return (
-    pending.approvals.filter((a) => a.granted !== true).length +
-    pending.clientTools.filter((c) => c.result === undefined).length +
+    pending.approvals.filter((a) => a.granted !== true && a.answer === undefined).length +
+    pending.clientTools.filter((c) => c.result === undefined && c.answer === undefined).length +
     (pending.externals ?? []).filter((e) => e.result === undefined).length
   )
 }
@@ -80,10 +80,15 @@ export function isClientWait(pending: PendingState, waitId: string): boolean {
   return pending.clientTools.some((c) => c.waitId === waitId)
 }
 
+/** A wait with a result, or a client call a partial `respond()` answered (ADR-0044). */
+export function isSettled(e: TimedWait): boolean {
+  return e.result !== undefined || ('answer' in e && e.answer !== undefined)
+}
+
 /** The unresolved waits whose timeout is due at `now`, in tool-call order. */
 export function dueExternals(pending: PendingState, now: number): TimedWait[] {
   return timedWaits(pending).filter(
-    (e) => e.result === undefined && e.timeoutAt !== undefined && e.timeoutAt <= now,
+    (e) => !isSettled(e) && e.timeoutAt !== undefined && e.timeoutAt <= now,
   )
 }
 
@@ -91,7 +96,7 @@ export function dueExternals(pending: PendingState, now: number): TimedWait[] {
 export function nextTimeoutAt(pending: PendingState | undefined): number | undefined {
   let earliest: number | undefined
   for (const e of timedWaits(pending)) {
-    if (e.result !== undefined || e.timeoutAt === undefined) continue
+    if (isSettled(e) || e.timeoutAt === undefined) continue
     if (earliest === undefined || e.timeoutAt < earliest) earliest = e.timeoutAt
   }
   return earliest

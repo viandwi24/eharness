@@ -76,6 +76,7 @@ import { buildUserMessage, type NormalizedInput, normalizeInput } from './input.
 import { createTurnInputQueue, type PendingInput } from './interaction/inbox.ts'
 import { approvalNoteData } from './interaction/notes.ts'
 import {
+  applyRecord,
   type ClientToolAnswer,
   clientToolEntry,
   patchForNewInput,
@@ -190,6 +191,8 @@ type Outcome = {
   steps: number
   model: LanguageModel
   abortReason?: string
+  /** A partial `respond()` recorded its answers; nothing continued (ADR-0044). */
+  partial?: true
 }
 
 function unref(timer: unknown): void {
@@ -697,6 +700,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   // ─── preparation (spec 05 §3 steps 1–10): nothing is persisted ────────────────────────────
   type Prepared =
     | { kind: 'aborted' }
+    | { kind: 'partial'; pending: PendingState }
     | { kind: 'blocked'; reason: string }
     | {
         kind: 'turn'
@@ -764,12 +768,31 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const core = rt.state.core()
     const view = rt.view ?? []
     if (op.kind === 'respond') {
-      plan = planRespond({
-        pending: core.pending,
-        response: op.respond?.response ?? {},
-        view,
-        ignoreUnknown: op.respond?.ignoreUnknown === true,
-      })
+      for (let attempt = 0; ; attempt++) {
+        plan = planRespond({
+          pending: rt.state.core().pending,
+          response: op.respond?.response ?? {},
+          view: rt.view ?? view,
+          ignoreUnknown: op.respond?.ignoreUnknown === true,
+        })
+        if (plan.complete) break
+        // a partial answer: record it with a compare-and-set and end (ADR-0044). Another
+        // instance may record meanwhile: reload and plan again — the last answer continues.
+        applyRecord(plan)
+        rt.state.markDirty()
+        if (await rt.state.write({ cas: true })) {
+          stateCheckpoint = undefined // the recorded answers are kept, not reverted
+          return { kind: 'partial', pending: structuredClone(plan.pending) }
+        }
+        if (attempt >= 5) {
+          throw new HarnessError(
+            'EH_SESSION_BUSY',
+            'The session state kept changing while the answers were recorded; try again.',
+          )
+        }
+        rt.state.discard()
+        await rt.state.load()
+      }
       // results of `respond({ externals })` are checked like `resolveWait()` results
       if (plan.externals.length > 0)
         await validateExternalAnswers(rt, await host.ensureOpen(), plan)
@@ -1526,6 +1549,18 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     }
     if (prep.kind === 'aborted') return earlyEnd('aborted')
     if (prep.kind === 'blocked') return earlyEnd('blocked')
+    if (prep.kind === 'partial') {
+      writeStart(rt.agent.generateId(), undefined) // throwaway id, never stored
+      outcome = {
+        stop: 'tool-pending',
+        steps: 0,
+        model: info.model,
+        pending: prep.pending,
+        partial: true,
+      }
+      resolveAccepted(undefined)
+      return writeEnd()
+    }
 
     try {
       await commit(prep)
@@ -2035,6 +2070,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       messageId: committed ? assistantId : undefined,
       stop,
       pending: stop === 'tool-pending' ? outcome.pending : undefined,
+      partial: stop === 'tool-pending' ? outcome.partial : undefined,
       messages: structuredClone(messages) as UIMessage[],
       usage: withoutUndefined({
         inputTokens: usage.input + usage.nestedInput,

@@ -510,6 +510,56 @@ describe('delegation with park', () => {
     expect(denied?.payload.actor).toBe('owner')
   })
 
+  test('two parallel approvals are answered one by one, from two instances', async () => {
+    const dir = tmp()
+    const a = instance(
+      dir,
+      {
+        lead: [{ toolCalls: [delegate('cleaner', 'call-1')] }],
+        researcher: [
+          {
+            toolCalls: [
+              deleteOld,
+              { toolName: 'delete_file', input: { path: '/library/old2.md' } },
+            ],
+          },
+        ],
+      },
+      { first: true },
+    )
+    await parkLead(a)
+    const pending = await approvals(a.app)
+    expect(pending).toHaveLength(2)
+    expect((pending[0] as ApprovalItem & { answeredWaiting: number }).answeredWaiting).toBe(0)
+
+    const b = instance(
+      dir,
+      {
+        lead: [{ text: 'Both handled.' }],
+        researcher: [{ text: 'Done with both.' }],
+      },
+      {},
+    )
+    await b.server.ready
+    const first = await a.app.request(`/approvals/${pending[0]?.id}`, post({ approved: true }))
+    expect(first.status).toBe(202)
+    expect(await first.json()).toMatchObject({ status: 'recorded', remaining: 1 })
+    // the answered one is hidden, the other shows how many wait for it
+    const rest = (await approvals(b.app)) as Array<ApprovalItem & { answeredWaiting: number }>
+    expect(rest.map((x) => x.id)).toEqual([pending[1]?.id as string])
+    expect(rest[0]?.answeredWaiting).toBe(1)
+    // answering the same one again is a no-op for the library but the item is gone from the list
+    expect(
+      (await b.app.request(`/approvals/${pending[0]?.id}`, post({ approved: true }))).status,
+    ).toBe(404)
+
+    const second = await b.app.request(`/approvals/${pending[1]?.id}`, post({ approved: false }))
+    expect(second.status).toBe(202)
+    expect(await second.json()).toMatchObject({ status: 'resumed', remaining: 0 })
+    await until('lead finished', async () => (await dmText(b.app)).includes('Both handled.'))
+    expect(await approvals(b.app)).toEqual([])
+  })
+
   test('answer validation: unknown id and wrong body kind', async () => {
     const dir = tmp()
     const a = instance(

@@ -1,5 +1,5 @@
 /** Cross-session approvals: list what waits for a person and answer it from any instance. */
-import type { ApprovalAnswer, ApprovalView } from '../domain/approvals.ts'
+import type { ApprovalAnswer, ApprovalOutcome, ApprovalView } from '../domain/approvals.ts'
 import { MAX_NOTE_CHARS } from '../domain/approvals.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import { OWNER } from './chat.ts'
@@ -18,7 +18,7 @@ export async function answerApproval(
   id: string,
   answer: ApprovalAnswer,
   sessionId?: string,
-): Promise<ApprovalView> {
+): Promise<{ view: ApprovalView; outcome: ApprovalOutcome }> {
   if (answer.kind === 'approval' && answer.note !== undefined) {
     if (answer.note.length > MAX_NOTE_CHARS) {
       throw invalid(`note is longer than ${MAX_NOTE_CHARS} characters`, 'NOTE_TOO_LONG')
@@ -35,6 +35,6 @@ export async function answerApproval(
   if (view.kind !== answer.kind) {
     throw invalid(`${id} is a ${view.kind}: answer it with a ${view.kind} body`, 'WRONG_KIND')
   }
-  await deps.team.answer(view, answer, OWNER)
-  return view
+  const outcome = await deps.team.answer(view, answer, OWNER)
+  return { view, outcome }
 }

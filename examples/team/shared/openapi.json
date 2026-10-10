@@ -1289,6 +1289,10 @@
             "items": {
               "$ref": "#/components/schemas/Question"
             }
+          },
+          "answeredWaiting": {
+            "type": "integer",
+            "description": "Items of this session that were answered already and wait for the others of the same batch (hidden from the list)."
           }
         },
         "required": [
@@ -1302,7 +1306,8 @@
           "toolCallId",
           "toolName",
           "risk",
-          "questions"
+          "questions",
+          "answeredWaiting"
         ]
       },
       "Question": {
@@ -1365,6 +1370,18 @@
               true
             ]
           },
+          "status": {
+            "type": "string",
+            "enum": [
+              "recorded",
+              "resumed"
+            ],
+            "description": "`recorded`: the answer is stored and other items of the same batch still wait (`remaining`). `resumed`: it was the last one and the session continues."
+          },
+          "remaining": {
+            "type": "integer",
+            "description": "Items still unanswered (0 when resumed)."
+          },
           "id": {
             "type": "string"
           },
@@ -1377,11 +1394,13 @@
         },
         "required": [
           "accepted",
+          "status",
+          "remaining",
           "id",
           "sessionId",
           "agentId"
         ],
-        "description": "The answer is recorded and the session continues in the background; follow it with the events feed."
+        "description": "The answer is recorded. When it was the last of its batch the session continues in the background (follow it with the events feed); else the others still wait."
       },
       "ApprovalAnswer": {
         "anyOf": [
@@ -4037,7 +4056,7 @@
           "approvals"
         ],
         "summary": "Answer an approval or a question",
-        "description": "`respond()` on the session that owns the item, from whichever instance receives the request. Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.\n\n- Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).\n- Question: `{ answers }` (one per question, `null` dismisses).\n\nAn item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.",
+        "description": "`respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: \"recorded\"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: \"resumed\"`). Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.\n\n- Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).\n- Question: `{ answers }` (one per question, `null` dismisses).\n\nAn item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.",
         "security": [
           {
             "Bearer": []
@@ -4068,7 +4087,7 @@
         },
         "responses": {
           "202": {
-            "description": "Recorded; the session continues",
+            "description": "Recorded (`recorded`) or recorded and resumed (`resumed`)",
             "content": {
               "application/json": {
                 "schema": {

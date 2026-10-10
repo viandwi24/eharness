@@ -28,6 +28,11 @@ export interface ApprovalView {
   input: unknown
   risk: ApprovalRisk | null
   questions: QuestionView[] | null
+  /**
+   * Items of the same session that were answered already and wait for the others of their batch
+   * (library partial resolution). Those are hidden from the list; this is their count.
+   */
+  answeredWaiting: number
 }
 
 export type ApprovalAnswer =
@@ -42,5 +47,8 @@ export type ApprovalAnswer =
       kind: 'question'
       answers: Array<{ selected?: string[]; other?: string; notes?: string }> | null
     }
+
+/** What an answer did: stored for later, or it was the last one and the session continues. */
+export type ApprovalOutcome = { status: 'recorded'; remaining: number } | { status: 'resumed' }
 
 export const MAX_NOTE_CHARS = 4000

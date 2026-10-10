@@ -70,6 +70,10 @@ export const ApprovalSchema = z
     input: z.unknown(),
     risk: z.enum(['read', 'write', 'external', 'unknown']).nullable(),
     questions: z.array(QuestionSchema).nullable(),
+    answeredWaiting: z.number().int().openapi({
+      description:
+        'Items of this session that were answered already and wait for the others of the same batch (hidden from the list).',
+    }),
   })
   .openapi('Approval')
 
@@ -134,13 +138,21 @@ export const ApprovalBodySchema = z
 export const ApprovalAcceptedSchema = z
   .object({
     accepted: z.literal(true),
+    status: z.enum(['recorded', 'resumed']).openapi({
+      description:
+        '`recorded`: the answer is stored and other items of the same batch still wait (`remaining`). `resumed`: it was the last one and the session continues.',
+    }),
+    remaining: z
+      .number()
+      .int()
+      .openapi({ description: 'Items still unanswered (0 when resumed).' }),
     id: z.string(),
     sessionId: z.string(),
     agentId: z.string(),
   })
   .openapi('ApprovalAccepted', {
     description:
-      'The answer is recorded and the session continues in the background; follow it with the events feed.',
+      'The answer is recorded. When it was the last of its batch the session continues in the background (follow it with the events feed); else the others still wait.',
   })
 
 export const EventSchema = z

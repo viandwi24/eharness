@@ -101,7 +101,7 @@ const answerRoute = createRoute({
   tags: ['approvals'],
   summary: 'Answer an approval or a question',
   description: [
-    '`respond()` on the session that owns the item, from whichever instance receives the request. Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.',
+    '`respond()` on the session that owns the item, from whichever instance receives the request. A step can raise several approvals at once: each answer is recorded on its own (`status: "recorded"`, `remaining` = items still waiting) and the answer to the last one resumes the session (`status: "resumed"`). Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.',
     '',
     '- Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).',
     '- Question: `{ answers }` (one per question, `null` dismisses).',
@@ -122,7 +122,10 @@ const answerRoute = createRoute({
     body: { required: true, content: json(ApprovalBodySchema) },
   },
   responses: {
-    202: { description: 'Recorded; the session continues', content: json(ApprovalAcceptedSchema) },
+    202: {
+      description: 'Recorded (`recorded`) or recorded and resumed (`resumed`)',
+      content: json(ApprovalAcceptedSchema),
+    },
     404: jsonError('No such pending item'),
     409: jsonError('Stale answer, ambiguous id, or a turn of the session is running'),
     ...errorResponses,
@@ -274,7 +277,7 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     .openapi(answerRoute, async (c) => {
       const { id } = c.req.valid('param')
       const body = c.req.valid('json')
-      const view = await answerApproval(
+      const { view, outcome } = await answerApproval(
         deps,
         id,
         'answers' in body
@@ -289,7 +292,14 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
         body.sessionId,
       )
       return c.json(
-        { accepted: true as const, id: view.id, sessionId: view.sessionId, agentId: view.agentId },
+        {
+          accepted: true as const,
+          status: outcome.status,
+          remaining: outcome.status === 'recorded' ? outcome.remaining : 0,
+          id: view.id,
+          sessionId: view.sessionId,
+          agentId: view.agentId,
+        },
         202,
       )
     })

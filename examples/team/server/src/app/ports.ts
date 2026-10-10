@@ -1,6 +1,6 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
-import type { ApprovalAnswer, ApprovalView } from '../domain/approvals.ts'
+import type { ApprovalAnswer, ApprovalOutcome, ApprovalView } from '../domain/approvals.ts'
 import type { NewEvent, TeamEvent } from '../domain/events.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
@@ -177,10 +177,11 @@ export interface TeamPort {
    */
   approvals(only?: { sessionId?: string }): Promise<ApprovalView[]>
   /**
-   * Answer one item with `respond()` on its session (this instance continues the turn). Resolves
-   * once the answer is recorded; a rejected answer (stale, already answered) throws.
+   * Answer one item with `respond()` on its session. Parallel approvals are answered one by one:
+   * the answer is recorded (`recorded`, with the number still waiting) and the last one resumes
+   * the session on this instance (`resumed`). A rejected answer (stale, conflicting) throws.
    */
-  answer(view: ApprovalView, answer: ApprovalAnswer, actor: Actor): Promise<void>
+  answer(view: ApprovalView, answer: ApprovalAnswer, actor: Actor): Promise<ApprovalOutcome>
   /** `requestAbort()` on the task session, from any instance. */
   abortTask(
     task: Task,
