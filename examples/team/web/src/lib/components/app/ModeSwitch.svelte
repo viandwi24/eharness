@@ -40,12 +40,6 @@
 		if (st) void pick(cycleMode(st.mode, st.available));
 	}
 
-	const tone = (m: TeamMode): string => {
-		const t = modeInfo(m).tone;
-		if (t === 'danger') return 'bg-destructive-soft text-destructive-text';
-		if (t === 'info') return 'bg-info-soft text-info-text';
-		return 'text-muted-foreground hover:bg-muted hover:text-foreground';
-	};
 	// One-line descriptions for the menu (the full hints stay in Settings).
 	const short: Record<TeamMode, string> = {
 		manual: 'Risky tools ask you first',
@@ -63,7 +57,7 @@
 	<div class="flex min-w-0 items-center gap-1.5">
 		<DropdownMenu.Root>
 			<DropdownMenu.Trigger
-				class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring {tone(st.mode)}"
+				class="inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-ring text-muted-foreground hover:bg-muted hover:text-foreground"
 				aria-label="Permission mode: {modeInfo(st.mode).label}"
 				title="{modeInfo(st.mode).hint} (⇧Tab to switch)"
 				data-testid="mode-switch"
@@ -82,7 +76,7 @@
 						{@const why = disabledWhy(m.id)}
 						<DropdownMenu.RadioItem closeOnSelect value={m.id} disabled={why !== null} class="h-auto items-start py-1.5">
 							<span class="flex flex-col gap-0.5">
-								<span class={m.tone === 'danger' ? 'text-destructive-text' : ''}>{m.label}</span>
+								<span>{m.label}</span>
 								<span class="text-xs text-muted-foreground">{why ?? short[m.id]}</span>
 							</span>
 						</DropdownMenu.RadioItem>
