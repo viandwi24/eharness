@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import CaretUpDownIcon from 'phosphor-svelte/lib/CaretUpDown';
 	import { toast } from 'svelte-sonner';
+	import { Kbd, KbdGroup } from '#lib/components/ui/kbd/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import { cycleMode, modeInfo, teamModes, type TeamMode } from '#lib/modes.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -72,6 +73,10 @@
 				<CaretUpDownIcon class="size-3.5 opacity-70" />
 			</DropdownMenu.Trigger>
 			<DropdownMenu.Content side="top" align="start" class="w-64">
+				<div class="flex items-center justify-between px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
+					<span>Permission mode</span>
+					<KbdGroup><Kbd>⇧</Kbd><Kbd>Tab</Kbd></KbdGroup>
+				</div>
 				<DropdownMenu.RadioGroup value={st.mode} onValueChange={(v) => void pick(v as TeamMode)}>
 					{#each teamModes as m (m.id)}
 						{@const why = disabledWhy(m.id)}
@@ -83,7 +88,6 @@
 						</DropdownMenu.RadioItem>
 					{/each}
 				</DropdownMenu.RadioGroup>
-				<p class="px-2 pt-1 pb-1.5 text-[11px] text-muted-foreground">⇧Tab switches mode</p>
 			</DropdownMenu.Content>
 		</DropdownMenu.Root>
 		{#if st.mode === 'auto' && st.auto.paused}
