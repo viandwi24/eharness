@@ -47,7 +47,9 @@ export interface InboxUnit {
   /** Item ids (acked at the turn's commit point). */
   ids: string[]
   /** User message metadata: one item → `inboxId`, merged `collect` items → `collected`. */
-  meta: { inboxId: string } | { collected: Array<{ inboxId?: string; clientId?: string }> }
+  meta:
+    | { inboxId: string; key?: string }
+    | { collected: Array<{ inboxId?: string; clientId?: string; inboxKey?: string }> }
 }
 
 /**
@@ -606,7 +608,15 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
         if (retry === undefined) done.push(head.id)
         return undefined
       }
-      return { kind: 'send', input, ids: [head.id], meta: { inboxId: head.id } }
+      return {
+        kind: 'send',
+        input,
+        ids: [head.id],
+        meta:
+          head.dedupeKey === undefined
+            ? { inboxId: head.id }
+            : { inboxId: head.id, key: head.dedupeKey },
+      }
     }
     const options = resolveCollect(host.collect, head.collect)
     const burst: Array<Extract<InboxItem, { kind: 'send' }>> = []
@@ -635,7 +645,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
       return undefined
     }
     const inputs: NormalizedInput[] = []
-    const collected: Array<{ inboxId?: string; clientId?: string }> = []
+    const collected: Array<{ inboxId?: string; clientId?: string; inboxKey?: string }> = []
     const ids: string[] = []
     for (const item of taken) {
       const input = normalized(item)
@@ -645,11 +655,11 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
       ids.push(item.id)
       if (input === undefined) continue
       inputs.push(input)
-      collected.push(
-        input.clientId === undefined
-          ? { inboxId: item.id }
-          : { inboxId: item.id, clientId: input.clientId },
-      )
+      collected.push({
+        inboxId: item.id,
+        ...(input.clientId === undefined ? {} : { clientId: input.clientId }),
+        ...(item.dedupeKey === undefined ? {} : { inboxKey: item.dedupeKey }),
+      })
     }
     if (inputs.length === 0) {
       done.push(...ids)

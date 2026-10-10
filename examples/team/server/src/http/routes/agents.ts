@@ -6,6 +6,7 @@ import {
   listAgentsWithActivity,
   updateAgent,
 } from '../../app/agents.ts'
+import { redactAgent } from '../../app/catalog.ts'
 import type { Deps } from '../../app/ports.ts'
 import {
   AgentCreateSchema,
@@ -115,15 +116,19 @@ export function agentRoutes(deps: Deps): OpenAPIHono {
     .openapi(list, (c) => {
       const { includeArchived } = c.req.valid('query')
       return c.json(
-        { agents: listAgentsWithActivity(deps, { includeArchived: includeArchived === 'true' }) },
+        {
+          agents: listAgentsWithActivity(deps, {
+            includeArchived: includeArchived === 'true',
+          }).map(redactAgent),
+        },
         200,
       )
     })
-    .openapi(create, (c) => c.json(createAgent(deps, c.req.valid('json')), 201))
-    .openapi(get, (c) => c.json(getAgent(deps, c.req.valid('param').id), 200))
+    .openapi(create, (c) => c.json(redactAgent(createAgent(deps, c.req.valid('json'))), 201))
+    .openapi(get, (c) => c.json(redactAgent(getAgent(deps, c.req.valid('param').id)), 200))
     .openapi(patch, (c) =>
-      c.json(updateAgent(deps, c.req.valid('param').id, c.req.valid('json')), 200),
+      c.json(redactAgent(updateAgent(deps, c.req.valid('param').id, c.req.valid('json'))), 200),
     )
-    .openapi(remove, (c) => c.json(archiveAgent(deps, c.req.valid('param').id), 200))
+    .openapi(remove, (c) => c.json(redactAgent(archiveAgent(deps, c.req.valid('param').id)), 200))
     .openapi(tools, (c) => c.json(TOOL_CATALOG_VALUE, 200))
 }

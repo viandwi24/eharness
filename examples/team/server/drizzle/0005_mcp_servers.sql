@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `mcp_servers` text DEFAULT '[]' NOT NULL;

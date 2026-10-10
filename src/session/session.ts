@@ -66,7 +66,7 @@ import {
   liveForeignTurn,
 } from './inbox/driver.ts'
 import { toSerialized } from './inbox/serialize.ts'
-import { type NormalizedInput, normalizeInput } from './input.ts'
+import { type NormalizedInput, normalizeInput, validateEnqueueMetadata } from './input.ts'
 import { kindText } from './interaction/inbox.ts'
 import { RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
 import { createDeferredRun, type DeferredRun, type QueuedTurn } from './interaction/queue.ts'
@@ -860,6 +860,7 @@ export function createSessionHandle(args: {
   type CollectEntry = {
     input: NormalizedInput
     inboxId?: string
+    key?: string
     at: number
     handle?: DeferredRun
   }
@@ -879,6 +880,7 @@ export function createSessionHandle(args: {
     options: CollectOptions | undefined,
     inboxId: string | undefined,
     withRun: boolean,
+    key?: string,
   ): HarnessRun<UIMessage> | undefined {
     if (collecting === undefined) {
       collecting = {
@@ -892,6 +894,7 @@ export function createSessionHandle(args: {
       input,
       at: Date.now(),
       ...(inboxId === undefined ? {} : { inboxId }),
+      ...(key === undefined ? {} : { key }),
     }
     if (withRun) {
       entry.handle = createDeferredRun({
@@ -938,8 +941,9 @@ export function createSessionHandle(args: {
     collecting = undefined
     const handles = group.entries.flatMap((e) => (e.handle === undefined ? [] : [e.handle]))
     const collected = group.entries.map((e) => {
-      const out: { inboxId?: string; clientId?: string } = {}
+      const out: { inboxId?: string; clientId?: string; inboxKey?: string } = {}
       if (e.inboxId !== undefined) out.inboxId = e.inboxId
+      if (e.key !== undefined) out.inboxKey = e.key
       if (e.input.clientId !== undefined) out.clientId = e.input.clientId
       return out
     })
@@ -1721,6 +1725,9 @@ export function createSessionHandle(args: {
         acceptClientMetadata: rt.options.acceptClientMetadata === true,
         files: config.inputFiles,
       })
+      if (options.metadata !== undefined) {
+        normalized.app = validateEnqueueMetadata(options.metadata)
+      }
       const inbox = args.inbox
       if (inbox === undefined || drain === undefined) {
         if (availableAt !== undefined && availableAt > Date.now()) {
@@ -1736,7 +1743,7 @@ export function createSessionHandle(args: {
         const inboxId = internals.generateId()
         if (callerId !== undefined) localEnqueueIds.set(callerId, inboxId)
         events.emit({ type: 'inbox-enqueued', inboxId, kind: 'send', mode })
-        enqueueLocal(normalized, mode, inboxId, options.collect)
+        enqueueLocal(normalized, mode, inboxId, options.collect, callerId)
         return { inboxId, target: 'local' }
       }
       const item: InboxItemInput = {
@@ -2072,12 +2079,17 @@ export function createSessionHandle(args: {
     mode: 'queue' | 'steer' | 'collect',
     inboxId: string,
     collect: CollectOptions | undefined,
+    key?: string,
   ): void {
     if (mode === 'collect') {
-      collectInput(normalized, collect, inboxId, false)
+      collectInput(normalized, collect, inboxId, false, key)
       return
     }
-    const inbox = { ids: [inboxId], meta: { inboxId }, durable: false }
+    const inbox = {
+      ids: [inboxId],
+      meta: key === undefined ? { inboxId } : { inboxId, key },
+      durable: false,
+    }
     if (mode === 'steer' && current !== undefined && current.steer(normalized, inboxId)) return
     if (!rt.running && queue.length === 0) {
       begin({ kind: 'send', input: undefined, normalized, options: {}, queued: false, inbox })

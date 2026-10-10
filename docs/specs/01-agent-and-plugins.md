@@ -351,6 +351,9 @@ export interface TurnInfo {
    * wake turn (input.submit then runs with via: 'queue').
    */
   queued: boolean
+  /** Set when the turn applies inbox items (`enqueue()`): `{ kind: 'inbox', id, key?, ids, keys }`
+   *  (spec 05 §12 rule 18). `key` is the caller id of `enqueue(…, { id })`. */
+  source?: TurnSource
   /** Undefined for respond/regenerate/wake and for send() without input, and while
    *  refresh: 'turn' instructions and dynamic sources resolve (spec 02 §2). */
   input: HarnessUIMessage | undefined

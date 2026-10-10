@@ -16,6 +16,7 @@ export function toSerialized(input: NormalizedInput): SerializedInput {
   if (input.appMetadata !== undefined) {
     out.appMetadata = structuredClone(input.appMetadata) as Record<string, JSONValue>
   }
+  if (input.app !== undefined) out.app = structuredClone(input.app)
   return out
 }
 
@@ -30,5 +31,8 @@ export function fromSerialized(
     parts: structuredClone(input.parts ?? []),
     ...(input.appMetadata === undefined ? {} : { metadata: structuredClone(input.appMetadata) }),
   }
-  return normalizeInput(message, options)
+  const normalized = normalizeInput(message, options)
+  // `app` is server-set (enqueue), not client metadata: it survives `acceptClientMetadata: false`
+  if (input.app !== undefined) normalized.app = structuredClone(input.app)
+  return normalized
 }

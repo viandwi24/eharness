@@ -20,6 +20,7 @@ const toDef = (row: Row): AgentDef => ({
   tools: row.tools as ToolName[],
   skills: row.skills,
   mcp: row.mcp,
+  mcpServers: row.mcpServers,
   permissionMode: row.permissionMode as PermissionMode,
   rules: row.rules,
   version: row.version,

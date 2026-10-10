@@ -11,6 +11,7 @@ describe('memoryFs() conformance', () => {
     requireGrep: true,
     requireMove: true,
     requireBytes: true,
+    requireVersions: true,
     keepsMediaType: true,
   })) {
     test(c.name, c.run)
@@ -149,5 +150,32 @@ describe('fileSystemConformance catches broken adapters', () => {
     expect(await failing(noMove)).not.toContain(
       'move renames atomically and reports missing, exists and conflict',
     )
+  })
+})
+
+describe('memoryFs() version history', () => {
+  test('keeps authors, binary states, history through delete and move, and prunes', async () => {
+    const fs = memoryFs({}, { maxVersions: 3 })
+    await fs.write('/a.md', 'one', { author: 'ana' })
+    await fs.write('/a.md', 'two')
+    const states = (await fs.versions?.('/a.md')) ?? []
+    expect(states.map((s) => s.author)).toEqual([undefined, 'ana'])
+    await fs.delete('/a.md')
+    expect((await fs.versions?.('/a.md'))?.length).toBe(2) // survives a delete: restorable
+    await fs.write('/a.md', 'two')
+    expect((await fs.versions?.('/a.md'))?.length).toBe(2) // same content as the last state
+    await fs.move?.('/a.md', '/b.md')
+    expect(await fs.versions?.('/a.md')).toEqual([])
+    expect((await fs.versions?.('/b.md'))?.length).toBe(2)
+    for (const text of ['3', '4', '5']) await fs.write('/b.md', text)
+    const kept = (await fs.versions?.('/b.md')) ?? []
+    expect(kept.length).toBe(3)
+    expect(await fs.readVersion?.('/b.md', states[1]?.version as string)).toBeNull() // pruned
+    const bin = new Uint8Array([0, 255, 1, 2, 0, 200])
+    await fs.writeBytes?.('/x.bin', bin, { mediaType: 'application/x-test' })
+    const [bv] = (await fs.versions?.('/x.bin')) ?? []
+    expect(bv).toMatchObject({ binary: true, mediaType: 'application/x-test', size: 6 })
+    const back = (await fs.readVersion?.('/x.bin', bv?.version as string)) as { bytes: Uint8Array }
+    expect([...back.bytes]).toEqual([...bin])
   })
 })

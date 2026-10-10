@@ -14,6 +14,8 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core'
 
+import type { McpServerDef } from '../../domain/agents.ts'
+
 const json = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 
 export const workspaces = sqliteTable('workspaces', {
@@ -39,6 +41,7 @@ export const agents = sqliteTable(
     tools: json<string[]>('tools').notNull(),
     skills: json<string[]>('skills').notNull(),
     mcp: json<string[]>('mcp').notNull(),
+    mcpServers: json<McpServerDef[]>('mcp_servers').notNull().default([]),
     permissionMode: text('permission_mode').notNull(),
     rules: json<{ allow: string[]; ask: string[]; deny: string[] }>('rules').notNull(),
     version: integer('version').notNull(),

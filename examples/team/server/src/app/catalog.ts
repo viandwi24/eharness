@@ -4,6 +4,7 @@ export type { AgentDef, AgentDraft } from '../domain/agents.ts'
 export {
   AGENT_ROLES,
   PERMISSION_MODES,
+  redactAgent,
   TOOL_CATALOG,
   TOOL_NAMES,
 } from '../domain/agents.ts'

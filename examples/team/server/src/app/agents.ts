@@ -3,6 +3,7 @@ import {
   AGENT_ROLES,
   type AgentDef,
   type AgentDraft,
+  normalizeMcpServers,
   normalizeTools,
   PERMISSION_MODES,
   slugify,
@@ -82,6 +83,7 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     tools: normalizeTools(draft.tools ?? ['library_read', 'memory', 'todos'], role),
     skills: draft.skills ?? [],
     mcp: draft.mcp ?? [],
+    mcpServers: normalizeMcpServers(draft.mcpServers ?? []),
     permissionMode: draft.permissionMode ?? 'default',
     rules: { allow: [], ask: [], deny: [], ...draft.rules },
     version: 1,
@@ -116,6 +118,10 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
     tools: patch.tools === undefined ? current.tools : normalizeTools(patch.tools, current.role),
     skills: patch.skills ?? current.skills,
     mcp: patch.mcp ?? current.mcp,
+    mcpServers:
+      patch.mcpServers === undefined
+        ? current.mcpServers
+        : normalizeMcpServers(patch.mcpServers, current.mcpServers),
     permissionMode: patch.permissionMode ?? current.permissionMode,
     rules:
       patch.rules === undefined ? current.rules : { allow: [], ask: [], deny: [], ...patch.rules },

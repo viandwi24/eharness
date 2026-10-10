@@ -1,6 +1,6 @@
 # P32 — Team-agent example (`examples/team`)
 
-Status: in progress (M1-M4 done, M6 and M7 server side done) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
+Status: in progress (M1-M4 done, M6-M8 server side and docs done; web items open) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
 
 ## Goal
 
@@ -636,25 +636,34 @@ Server side (done, `server/test/routines.test.ts`; the web editor is still open)
 
 ### M8 — Multi-instance and polish
 
-- [ ] `two-instances.ts`, `kill-restart.ts` (table in §8), events tailing across instances
-- [ ] Optional MCP per agent, usage screen, `examples/team/docs`, README, real-model smoke
-- [ ] Fill "Requests to the library" with real findings; finish this file
-
----
+- [x] `two-instances.ts`, `kill-restart.ts` (table in §8; commit `265f547`, scripts in `examples/team/scripts`, README there), events tailing across instances (checked by `two-instances.ts`: B's `/events/stream` carries A's events)
+- [x] Optional MCP per agent, server side: `agents.mcp_servers` (migration `0005_mcp_servers`), `mcpServers: [{ name, transport: { type: 'http' | 'sse', url, headers? }, allow?, deny? }]`, no stdio (a server example must not spawn processes for an editable definition, and another instance would not have them), headers stored server-side and returned as `headerNames` only (an edit without `headers` keeps them), the factory adds `mcpServer({ defer: true, wrapUntrusted: true })` per entry (installed when the definition lists the `mcp` tool), OpenAPI regenerated; `server/test/mcp.test.ts` (validation, redaction, wiring against a local HTTP MCP server: deferred tools, auth header, untrusted frame)
+- [x] `examples/team/README.md` and `docs/` (architecture, api, operations); guide [Lead and role agents](../guides/lead-and-role-agents.md) (D4) with its row in the guides README
+- [ ] Usage screen and the MCP editor in the agent form (web, other owner)
+- [ ] Real-model smoke: `scripts/smoke-real.ts` exists and was not run in this pass (it costs money)
+- [x] "Requests to the library" consolidated with the final status of every item (table below the candidates)
+- [ ] Finish this file: set the status to done when the web milestones (M5-M8 web items) close
 
 ## Acceptance criteria
 
+Status at the end of the server pass (server and docs done; the web items depend on the web owner):
+
 1. Everything in §1.1 works from the browser against one server and against two servers sharing
-   one database file.
+   one database file. **Server side verified** (HTTP tests, `two-instances.ts`); browser side open
+   (web milestones).
 2. The server survives `SIGKILL` at any point of the §8 table; pending approvals and parked leads
-   are answerable afterwards, and no tool is re-executed.
+   are answerable afterwards, and no tool is re-executed. **Met** (`kill-restart.ts`; the honest
+   `--wait-stale` variant waits the recovery window).
 3. `GET /openapi.json` is valid OpenAPI 3.1, every route is documented with named schemas, `/docs`
-   renders it, and `shared/openapi.json` is up to date in CI.
+   renders it, and `shared/openapi.json` is up to date in CI. **Met locally** (`bun run openapi`
+   after every change, including MCP); the CI up-to-date check is not added yet.
 4. The example imports `eharness` only through public subpaths; no `src/` deep imports; no
-   library change is hidden in the example.
-5. The adapters pass the library's conformance suites.
-6. `bun run lint`, `typecheck`, `test` pass; the process scripts pass.
-7. Every workaround is listed under "Requests to the library".
+   library change is hidden in the example. **Met** (`layering.test.ts`; gaps went to the library:
+   ADR-0039..0043).
+5. The adapters pass the library's conformance suites. **Met** (`eh-conformance.test.ts`).
+6. `bun run lint`, `typecheck`, `test` pass; the process scripts pass. **Server met** (143 tests);
+   the web's checks and a run of both scripts after the last library change are the closing gate.
+7. Every workaround is listed under "Requests to the library". **Met** (final table below).
 
 ---
 
@@ -681,14 +690,47 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 | R15 (done in library: `inputFiles.resolve` and `writeBytes({ mediaType })`) | **File parts that name app-side files**: `inputFiles` only allows `data:` / `https:`, so an upload (library `/uploads`) must be inlined as a data URL into the stored message. Candidate: `inputFiles.resolve(url) -> bytes` hook, or a file-reference part kind that is resolved only when projecting to the model; also `FileSystem.writeBytes(path, bytes, { mediaType })` so a store can keep the declared media type of text files (the SQLite adapter lost `text/csv`) | stored messages bloat with base64; media types are guessed from the extension |
 | R16 (done in library: `stats().usage`) | `session.stats()` has no cumulative usage/cost; the example sums `metadata.eharness.usage` over up to 5 000 stored messages for `GET /agents/{id}/stats`. Candidate: `usage` (and `costUsd`) in `stats()` or a `session.usage()` read | a cheap per-chat cost readout for UIs |
 | R17 (closed by ADR-0042, verified in M6) | **Runtime and lock for child sessions**: `subagents({ childSession, parentSession })` hands the app's `SessionLock` and `runtime` (`workspaceId`, `agentId`) to children and re-opened parents; the example wires both in `agent-factory.ts` and no longer silences `W_SESSION_OPTIONS_IGNORED` | cross-process locking of child turns and attribution in hooks |
-| R18 (closed by ADR-0042, verified in M6) | **Read-only session access**: `agent.peek(id)` (messages, stats, pending, busy, children, parentInfo) has no `session.start` hooks; the approvals list, task detail, DM messages, drift pass and routine overlap checks use it, so reading never resumes a parked lead. Residue: `ContextStats` (window, tokens) is not in `peek().stats()`, so `GET /agents/{id}/stats` and `/context` still open the session | the board and the approvals list read many sessions without waking any |
+| R18 (closed by ADR-0042, verified in M6) | **Read-only session access**: `agent.peek(id)` (messages, stats, pending, busy, children, parentInfo) has no `session.start` hooks; the approvals list, task detail, DM messages, drift pass and routine overlap checks use it, so reading never resumes a parked lead. Residue (closed, ADR-0043: needs the resolved registry which peek must not run, and is not stored; apps open the session for it): `ContextStats` (window, tokens) is not in `peek().stats()`, so `GET /agents/{id}/stats` and `/context` still open the session | the board and the approvals list read many sessions without waking any |
 | R19 (closed by ADR-0042, verified in M6) | **Child identity in the index**: `ChildSessionInfo` / `pendingSubagentApprovals` entries carry `agent`, `name`, `description`; the approvals listing maps `agent` (catalog key = slug) to the definition and keeps the task row only as a fallback | the approvals listing opens a child on the right agent |
 | R20 (closed by ADR-0042 in the library; verified for wiring) | **Spawn budget for park**: `subagents({ maxChildren })` is wired through `TeamLimits.maxChildren`; budgets are per workspace through `budget.ledger.scopes: (ctx) => ['workspace:' + ctx.runtime.workspaceId]`. The cap counts the children of a session's whole life and the lead DM never ends, so the example keeps it off by default (`maxConcurrent` = the settings `spawnCap` is the live limit). Candidate: a per-turn or per-day variant | multi-agent runs cost many times a chat (D4) |
 | R10 | Run records: one hook or event carrying `{ sessionId, parent, kind, stop, usage, durationMs }` per turn end for every instance | the task index builds it from three hooks |
-| R21 | **Version history for `FileSystem`**: `GET /library/versions` is metadata only (`library_history`, written in the same transaction as the change); the content of an older version is gone, so there is no restore. Candidate: an optional `FileSystem.history?(path)` / `readVersion?(path, version)` and a conformance case | the library UI wants "who changed this and when" and, later, restore |
-| R22 | **Caller id on the turn**: a turn started from `enqueue(…, { id })` does not expose the id (`dedupeKey`) to hooks; the app matches a fire to its run row by `metadata.eharness.inboxId`, which is only known after `enqueue` returns, so a very fast turn can end first and the outcome plugin retries for up to 2 s. Candidate: put the caller id in `metadata.eharness` of the user message (and `turn.start`'s input), or return it from `onRun` | routine run outcomes without a race |
-| R23 | **App metadata on enqueued input**: `enqueue()` drops client metadata (`acceptClientMetadata` is off), so a routine fire cannot mark its user message (the UI wants "Routine: Morning briefing" instead of a plain user bubble). Candidate: `EnqueueOptions.metadata` stored under a namespaced key | provenance of scheduled and webhook inputs |
-| R24 | **Inbox sweeper helper**: sweeping `inbox.pending()` means mapping every session id back to its agent definition (`dm:`, `routine:` prefixes here) and opening it; the guide shows the loop but not that mapping. Candidate: `agent.drainPending({ open })` or a documented convention | instances that went away leave claimable items |
+| R21 (done in library, ADR-0043: optional `FileSystem.versions?` / `readVersion?`, restore = write, `memoryFs` + `requireVersions`; the app adopts it) | **Version history for `FileSystem`**: `GET /library/versions` is metadata only (`library_history`, written in the same transaction as the change); the content of an older version is gone, so there is no restore. Candidate: an optional `FileSystem.history?(path)` / `readVersion?(path, version)` and a conformance case | the library UI wants "who changed this and when" and, later, restore |
+| R22 (done in library, ADR-0043: `ctx.turn.source = { kind: 'inbox', id, key?, ids, keys }` and `metadata.eharness.inboxKey`; the app drops the retry loop) | **Caller id on the turn**: a turn started from `enqueue(…, { id })` does not expose the id (`dedupeKey`) to hooks; the app matches a fire to its run row by `metadata.eharness.inboxId`, which is only known after `enqueue` returns, so a very fast turn can end first and the outcome plugin retries for up to 2 s. Candidate: put the caller id in `metadata.eharness` of the user message (and `turn.start`'s input), or return it from `onRun` | routine run outcomes without a race |
+| R23 (done in library, ADR-0043: `enqueue(…, { metadata })` stored as trusted `metadata.app`, 16 KiB cap, wins over a client `app` key) | **App metadata on enqueued input**: `enqueue()` drops client metadata (`acceptClientMetadata` is off), so a routine fire cannot mark its user message (the UI wants "Routine: Morning briefing" instead of a plain user bubble). Candidate: `EnqueueOptions.metadata` stored under a namespaced key | provenance of scheduled and webhook inputs |
+| R24 (closed as app code, ADR-0043: `pending()` has session ids only and the id carries no agent identity; guide note in multi-instance sweeper) | **Inbox sweeper helper**: sweeping `inbox.pending()` means mapping every session id back to its agent definition (`dm:`, `routine:` prefixes here) and opening it; the guide shows the loop but not that mapping. Candidate: `agent.drainPending({ open })` or a documented convention | instances that went away leave claimable items |
+
+
+### Final status (end of the server pass)
+
+| R | Status | Reference |
+|---|---|---|
+| R1 cross-session index | **open**: the example keeps a derived `tasks` table written by hooks; `agent.peek()` and the child identity (R18, R19) make the reads cheap, but "all sessions with pending state" is still an app index | `47f1f9a` |
+| R2 cross-instance attach | **closed** | ADR-0039, `84f8bc9` (stream log port, `attachRemote`, `handleResumeRequest`; SQLite adapter in the example) |
+| R3 cross-instance event feed | **open**: the `events` table fed by hooks and tailed by every instance works (poll 500 ms); a library feed would remove the hooks | - |
+| R4 park-mode messaging | **closed** | ADR-0041, `84f8bc9` |
+| R5 routines on the inbox | **closed**: `enqueue({ availableAt, id })` and the guide section "Routines on the inbox"; no scheduler port (D3); promote to `eharness/scheduler` only if a second product repeats it | ADR-0040, `84f8bc9`, `docs/guides/multi-instance.md` |
+| R6 team/agent registry helper | **open (kept in the example)**: the factory plus per-version cache was written once here; generalise when a second app needs it | `agent-factory.ts` |
+| R7 memory scopes preset | **open (kept in the example)**: `domain/memory.ts` roots; documented in the example docs | - |
+| R8 part renderers | **decided D1**: built in the example only; revisit after P32 | - |
+| R9 DB-backed `FileSystem` | **kept as example** (ADR-0008): `infra/eh/library-fs.ts`, conformance-checked | `ae6665b` |
+| R10 run records event | **open**: the task index still builds it from three hooks; `ctx.turn.source` (R22) removed the worst gap | - |
+| R11 memory tool kinds | **closed** | `220d467` |
+| R12 filesystem text helpers | **closed** | `220d467` |
+| R13 inbox poll cost | **open (documentation)**: the SQLite inbox is poll-only (`inbox.pollMs`); stated in `docs/operations.md`; a `PRAGMA data_version` notify is a candidate | - |
+| R14 busy as a status | **closed** | `7b945f5` |
+| R15 file references, `writeBytes({ mediaType })` | **closed** | `7b945f5` |
+| R16 `stats().usage` | **closed** | `7b945f5` |
+| R17 child lock and runtime | **closed** | ADR-0042, `47f1f9a` |
+| R18 `agent.peek()` | **closed** (residue closed by decision: context tokens need the resolved registry, so `GET /agents/{id}/stats` opens the session) | ADR-0042, ADR-0043 |
+| R19 child identity in the index | **closed** | ADR-0042, `47f1f9a` |
+| R20 spawn budget for park | **closed** (`maxChildren`; per-day / per-turn variants are not requested) | ADR-0042, `47f1f9a` |
+| R21 `FileSystem` versions | **closed in the library**; the example still stores metadata only (`library_history`) and does not adopt `versions` / `readVersion` yet (restore UI) | ADR-0043 |
+| R22 caller id on the turn | **closed in the library** (`ctx.turn.source`); the app's retry loop can be dropped | ADR-0043 |
+| R23 enqueue metadata | **closed in the library** (`metadata.app`); the example can label routine messages with it | ADR-0043 |
+| R24 inbox sweeper | **closed as app code**: the session-id to agent mapping is application knowledge; guide note added | ADR-0043 |
+
+Not library requests, found on the way: no Svelte `resume` option (the app calls
+`chat.resumeStream()`), and MCP over stdio is deliberately absent from the server example.
 
 ---
 

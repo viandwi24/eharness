@@ -14,6 +14,7 @@ import type {
   FileEntry,
   FileMeta,
   FileSystem,
+  FileVersion,
   GrepHit,
   MoveResult,
   WriteResult,
@@ -30,6 +31,18 @@ interface StoredFile {
   updatedAt: number
   /** Declared by `writeBytes`; cleared by the next write without one. */
   mediaType?: string
+}
+
+/** One kept state of a file (`versions` / `readVersion`). */
+interface HistoryEntry {
+  file: StoredFile
+  author?: string
+}
+
+/** Options of {@link memoryFs}. */
+export interface MemoryFsOptions {
+  /** How many states per path `versions` keeps (oldest dropped first). Default 100. */
+  maxVersions?: number
 }
 
 const decoder = new TextDecoder()
@@ -58,8 +71,24 @@ const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
  * @throws {TypeError} for an invalid seed path or a seed value that is neither a string nor a `Uint8Array`.
  * @see docs/specs/08-filesystem-plugin.md#6-memoryfs
  */
-export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSystem {
+export function memoryFs(
+  seed: Record<string, string | Uint8Array> = {},
+  options: MemoryFsOptions = {},
+): FileSystem {
+  const maxVersions = Math.max(1, options.maxVersions ?? 100)
   const files = new Map<string, StoredFile>()
+  /** Kept states per path, oldest first; survives a delete, follows a move. */
+  const history = new Map<string, HistoryEntry[]>()
+  /** Set `files[path]` and record the state when its content differs from the last kept one. */
+  const put = (path: string, file: StoredFile, author?: string): void => {
+    files.set(path, file)
+    const kept = history.get(path) ?? []
+    if (kept.at(-1)?.file.version !== file.version) {
+      kept.push({ file, ...(author === undefined ? {} : { author }) })
+      if (kept.length > maxVersions) kept.splice(0, kept.length - maxVersions)
+    }
+    history.set(path, kept)
+  }
   const initial: Array<[string, string | Uint8Array]> = []
   for (const [key, content] of Object.entries(seed)) {
     const normalized = normalizePath(key)
@@ -76,7 +105,7 @@ export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSy
   const ready = (async () => {
     const now = Date.now()
     for (const [path, content] of initial) {
-      files.set(path, { ...(await stored(content)), updatedAt: now })
+      put(path, { ...(await stored(content)), updatedAt: now })
     }
   })()
 
@@ -146,11 +175,15 @@ export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSy
       }
       const mediaType =
         typeof opts.mediaType === 'string' && opts.mediaType !== '' ? opts.mediaType : undefined
-      files.set(path, {
-        ...next,
-        updatedAt: Date.now(),
-        ...(mediaType === undefined ? {} : { mediaType }),
-      })
+      put(
+        path,
+        {
+          ...next,
+          updatedAt: Date.now(),
+          ...(mediaType === undefined ? {} : { mediaType }),
+        },
+        opts.author,
+      )
       return { ok: true, version: next.version }
     },
 
@@ -169,7 +202,7 @@ export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSy
           ? { ok: false, reason: 'conflict' }
           : { ok: false, reason: 'conflict', currentVersion: current.version }
       }
-      files.set(path, { content, version, size: byteLength(content), updatedAt: Date.now() })
+      put(path, { content, version, size: byteLength(content), updatedAt: Date.now() }, opts.author)
       return { ok: true, version }
     },
 
@@ -206,7 +239,37 @@ export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSy
       if (files.has(to)) return { ok: false, reason: 'exists' }
       files.delete(from)
       files.set(to, { ...current, updatedAt: Date.now() })
+      const moved = history.get(from)
+      history.delete(from)
+      if (moved === undefined) history.delete(to)
+      else history.set(to, moved)
       return { ok: true }
+    },
+
+    async versions(path): Promise<FileVersion[]> {
+      await ready
+      return [...(history.get(path) ?? [])].reverse().map(({ file, author }) => ({
+        version: file.version,
+        size: file.size,
+        updatedAt: file.updatedAt,
+        ...(file.bytes === undefined ? {} : { binary: true as const }),
+        ...(file.mediaType === undefined ? {} : { mediaType: file.mediaType }),
+        ...(author === undefined ? {} : { author }),
+      }))
+    },
+
+    async readVersion(path, version): Promise<FileEntry | BinaryFile | null> {
+      await ready
+      const kept = history.get(path) ?? []
+      const found = kept.findLast((entry) => entry.file.version === version)?.file
+      if (found === undefined) return null
+      if (found.bytes === undefined) return { ...meta(path, found), content: found.content }
+      const mediaType = found.mediaType ?? detectMediaType(found.bytes, path)
+      return {
+        bytes: found.bytes.slice(),
+        meta: meta(path, found),
+        ...(mediaType === undefined ? {} : { mediaType }),
+      }
     },
 
     async grep(pattern, opts = {}): Promise<GrepHit[]> {

@@ -4,7 +4,7 @@
  *
  * @see docs/specs/05-session-and-storage.md#3-turn-lifecycle-normative-order
  */
-import type { FileUIPart, TextUIPart } from 'ai'
+import type { FileUIPart, JSONValue, TextUIPart } from 'ai'
 import type { SendInput } from '../agent/session-types.ts'
 import type { InputFilesConfig } from '../agent/types.ts'
 import { HarnessError } from '../errors.ts'
@@ -17,6 +17,35 @@ export interface NormalizedInput {
   clientId?: string
   /** App metadata keys (only with `acceptClientMetadata`). */
   appMetadata?: Record<string, unknown>
+  /** Server-set `metadata.app` of `enqueue(…, { metadata })` (already validated JSON). */
+  app?: Record<string, JSONValue>
+}
+
+/** Largest serialized size of `EnqueueOptions.metadata`. */
+export const MAX_ENQUEUE_METADATA_BYTES: number = 16 * 1024
+
+/**
+ * Validate `EnqueueOptions.metadata`: a plain object that survives a JSON round trip, at most
+ * {@link MAX_ENQUEUE_METADATA_BYTES} serialized. Returns a detached copy.
+ */
+export function validateEnqueueMetadata(value: unknown): Record<string, JSONValue> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    invalid('enqueue metadata must be a plain object.')
+  }
+  const proto = Object.getPrototypeOf(value)
+  if (proto !== Object.prototype && proto !== null)
+    invalid('enqueue metadata must be a plain object.')
+  let json: string | undefined
+  try {
+    json = JSON.stringify(value)
+  } catch {
+    invalid('enqueue metadata must be JSON-serializable.')
+  }
+  if (json === undefined) invalid('enqueue metadata must be JSON-serializable.')
+  if (new TextEncoder().encode(json).byteLength > MAX_ENQUEUE_METADATA_BYTES) {
+    invalid(`enqueue metadata is larger than ${MAX_ENQUEUE_METADATA_BYTES} bytes.`)
+  }
+  return JSON.parse(json) as Record<string, JSONValue>
 }
 
 function invalid(message: string, details?: Record<string, unknown>): never {
@@ -180,7 +209,11 @@ export function buildUserMessage(
   return {
     id: meta.id,
     role: 'user',
-    metadata: { ...(input.appMetadata ?? {}), eharness },
+    metadata: {
+      ...(input.appMetadata ?? {}),
+      eharness,
+      ...(input.app === undefined ? {} : { app: structuredClone(input.app) }),
+    },
     parts: structuredClone(input.parts),
   }
 }

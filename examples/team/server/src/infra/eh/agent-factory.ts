@@ -6,8 +6,7 @@
  * open turns finish on the old one (retired agents are closed with the factory).
  *
  * Plugin order is fixed and identical for every session of an agent (prompt-cache prefix,
- * `toolOrder`): filesystem (library) -> memory -> todos -> web -> permissions -> ask -> MCP (TODO)
- * -> subagents -> taskIndex. Static instructions come first; the volatile parts (date, roster)
+ * `toolOrder`): filesystem (library) -> memory -> todos -> web -> permissions -> ask -> subagents -> taskIndex. Static instructions come first; the volatile parts (date, roster)
  * live in the turn reminder, never in `instructions` (spec 02 §5).
  *
  * Delegation (M4, ADR-0035 / ADR-0041): the lead gets `subagents({ approvals: 'park' })` with the
@@ -27,6 +26,7 @@ import {
 } from 'eharness'
 import { askUser } from 'eharness/ask'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
+import { mcpServer } from 'eharness/mcp'
 import { memory } from 'eharness/memory'
 import { createPermissionEngine, permissionsPlugin } from 'eharness/permissions'
 import { AGENT_MESSAGE_INSTRUCTIONS, subagents } from 'eharness/subagent'
@@ -257,6 +257,27 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       toolKinds: MEMORY_TOOL_KINDS,
     })
 
+    // MCP servers of the definition (tools `<name>_<tool>`, deferred behind `tool_search`, results
+    // framed as untrusted). Remote transports only; headers (secrets) stay on the server.
+    const mcpSources = has(def, 'mcp')
+      ? def.mcpServers.map((s) =>
+          mcpServer({
+            name: s.name,
+            transport: {
+              type: s.transport.type,
+              url: s.transport.url,
+              ...(Object.keys(s.transport.headers).length > 0
+                ? { headers: s.transport.headers }
+                : {}),
+            },
+            ...(s.allow === undefined ? {} : { allow: s.allow }),
+            ...(s.deny === undefined ? {} : { deny: s.deny }),
+            defer: true,
+            wrapUntrusted: true,
+          }),
+        )
+      : []
+
     const plugins = [
       // memory needs the `fs` service, so the filesystem plugin is installed even without file tools
       ...(fsTools.length > 0 || useMemory
@@ -291,7 +312,6 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         : []),
       permissionsPlugin({ engine }),
       ...(has(def, 'ask_user') ? [askUser()] : []),
-      // TODO: mcpServer() per def.mcp (M8)
       ...(delegates
         ? [
             subagents({
@@ -397,6 +417,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           scopes: (ctx) => [workspaceScope(String(ctx.runtime.workspaceId ?? workspaceId))],
         },
       },
+      ...(mcpSources.length > 0 ? { mcp: mcpSources } : {}),
       loop: { maxSteps: 40 },
       // uploads are checked by the chat route; the core caps data URLs at the same size
       inputFiles: {

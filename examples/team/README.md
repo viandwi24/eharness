@@ -1,42 +1,98 @@
-# examples/team
+# eharness team
 
-A team-agent app on the public eharness API: a lead agent plus role agents, a web UI, and a
-server that runs everything (deployment profile "web + server"). Plan:
-[`docs/plans/P32-team-example.md`](../../docs/plans/P32-team-example.md). Never published.
+A team of AI agents you chat with, built **only on the public eharness API**. One lead agent and
+several role agents (researcher, writer, analyst, ops) share a library of files and a memory. You
+talk to any of them, watch what the others are doing on a task board, approve risky actions from
+one inbox, and let agents run routines on a schedule.
+
+It is the reference for deployment profile "web + server" ([ADR-0034](../../docs/decisions/0034-deployment-profiles.md)):
+the web is only a UI, the server runs everything, survives `SIGKILL`, and can run as several
+instances over one database. It is an example: it is never published, and its SQLite adapters live
+here, not in the library. Plan and decisions: [P32](../../docs/plans/P32-team-example.md).
 
 ```
-server/   Hono + @hono/zod-openapi + Drizzle on bun:sqlite   (M1-M2 done: agents API, SQLite adapters, agent factory)
-web/      SvelteKit UI
-shared/   generated: openapi.json (`bun run openapi` in server/)
-docs/     architecture and run notes
+server/   Hono + @hono/zod-openapi + Drizzle on bun:sqlite (the whole backend)
+web/      SvelteKit 3 + Svelte 5 + Tailwind 4 + edmi-ui (UI only; talks to /api)
+shared/   generated: openapi.json (and the web's api types), never edited
+scripts/  real-process checks: two instances, kill and restart, real-model smoke
+docs/     architecture, API, operations
 ```
 
-## Run the server
+## What you get
+
+- **Chat per agent** (AI SDK `useChat`): streaming, reload and resume, stop, steer a running turn,
+  attachments, tool approvals in the thread.
+- **Lead and role agents**: the lead hands work to role agents (parked, so approvals survive
+  restarts) and reads their reports; agents are rows in the database you edit in the app, not code.
+- **Board and approvals inbox**: every delegated task, and everything waiting for a person, across
+  all sessions.
+- **Library and memory**: shared files agents write and you edit (stale edits lose to agent writes),
+  workspace and per-agent memory.
+- **Routines**: cron / interval / one-shot prompts, safe with several instances.
+- **MCP per agent**: remote MCP servers (HTTP / SSE) configured per agent; tools are deferred.
+- **Cost controls**: a per-workspace USD budget on a shared ledger and a cap on concurrent
+  delegations. Multi-agent runs cost many times a chat, see the
+  [lead and role agents guide](../../docs/guides/lead-and-role-agents.md).
+
+Screenshots (to be added under `docs/img/`): `chat.png` (chat with the context panel),
+`board.png` (tasks board with an approval drawer), `approvals.png` (inbox), `library.png`,
+`routines.png`, `agent-editor.png`.
+
+## Quick start
+
+Requirements: [Bun](https://bun.sh) (dev toolchain) and Node 22+ compatible code; one model key.
 
 ```bash
-bun install                      # at the repo root (workspaces)
+bun install                              # at the repo root (workspaces)
+
+# 1. server (port 4000)
 cd examples/team/server
-OPENROUTER_API_KEY=... bun run start      # or AI_GATEWAY_API_KEY, or TEAM_SCRIPTED_MODEL=steps.json
+OPENROUTER_API_KEY=sk-or-... TEAM_TOKEN=dev-secret bun run dev
+
+# 2. web (another terminal; /api is proxied to the server)
+cd examples/team/web
+bun run dev                              # http://localhost:5173
 ```
 
-| Variable | Meaning |
-|---|---|
-| `TEAM_DB` | database file, default `./data/team.db` (WAL; two processes may share it) |
-| `TEAM_TOKEN` | bearer token. **Unset = the API is open**: use it on localhost only |
-| `PORT` | default 4000 |
-| `OPENROUTER_API_KEY` / `AI_GATEWAY_API_KEY` | model provider (`TEAM_PROVIDER`, `TEAM_MODEL` override the choice) |
-| `TEAM_SCRIPTED_MODEL` | JSON array of scripted steps (`eharness/testing`): offline runs and tests |
+No key? Run the server offline with a scripted model: `TEAM_SCRIPTED_MODEL=steps.json bun run start`
+(a JSON array of steps, see `eharness/testing`).
 
-- API reference: `GET /docs` (Scalar). Machine-readable: `GET /openapi.json` (OpenAPI 3.1),
-  exported to `shared/openapi.json` by `bun run openapi`.
-- Errors: `{ "error": { "code", "message" } }`. `/health`, `/docs` and `/openapi.json` need no token.
-- Migrations are generated (`bun run db:generate`) and applied at boot.
+| Variable | Default | Meaning |
+|---|---|---|
+| `OPENROUTER_API_KEY` / `AI_GATEWAY_API_KEY` | - | model provider (`TEAM_PROVIDER`, `TEAM_MODEL` override the choice) |
+| `TEAM_SCRIPTED_MODEL` | - | path to a JSON array of scripted steps: offline runs and tests (wins over the keys) |
+| `TEAM_TOKEN` | - | bearer token for every route except `/health`, `/docs`, `/openapi.json`. **Unset = the API is open**: localhost only |
+| `TEAM_DB` | `./data/team.db` | SQLite file (WAL). Several instances may share it |
+| `PORT` | `4000` | HTTP port of the server |
+| `TEAM_BUDGET_USD` | unset | monthly USD limit of the workspace ledger (also in Settings) |
+| `TEAM_SPAWN_CAP` | `4` | role agents the lead runs at once (also in Settings) |
+| `TEAM_ROUTINE_TICK_MS` | `15000` | routine ticker interval (`0` = off) |
+| `PUBLIC_TEAM_TOKEN` | - | web only: token the browser sends (else saved from Settings) |
+| `TEAM_API_PROXY` | `http://localhost:4000` | web dev server only: where `/api` goes |
 
-## Tests
+The web reads the token from `PUBLIC_TEAM_TOKEN` (build/dev env) or from the one saved on its Settings page (browser storage). Migrations are generated by
+drizzle-kit (`bun run db:generate`) and applied at boot.
+
+## Scripts and checks
 
 ```bash
-cd examples/team/server && bun test    # layering, HTTP, agent factory, adapter conformance suites
+cd examples/team/server
+bun test                      # layering, HTTP, factory, tasks, routines, MCP, adapter conformance
+bunx tsc --noEmit -p .        # typecheck
+bun run openapi               # regenerate ../shared/openapi.json (commit it)
+
+# from the repo root, real processes over one SQLite file, scripted model (free):
+bun examples/team/scripts/two-instances.ts
+bun examples/team/scripts/kill-restart.ts
+bun examples/team/scripts/smoke-real.ts        # one real turn, costs money
 ```
 
-The SQLite adapters (`infra/eh/storage.ts`, `infra/eh/library-fs.ts`) run the library's conformance
-suites from `eharness/testing` (messages, state, inbox, budget ledger, filesystem).
+Details of the scripts: [scripts/README.md](scripts/README.md).
+
+## Docs
+
+- [docs/architecture.md](docs/architecture.md): layers, request flow, how eharness is wired, what
+  survives a restart, known limits
+- [docs/api.md](docs/api.md): OpenAPI at `/docs`, auth, errors, the streaming endpoints
+- [docs/operations.md](docs/operations.md): several instances, swapping the database, tuning, backups
+- [Lead and role agents](../../docs/guides/lead-and-role-agents.md): the pattern this app uses

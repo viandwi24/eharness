@@ -1008,12 +1008,14 @@ export interface SerializedInput {            // a normalized input (§3 step 7)
   parts: Array<TextUIPart | FileUIPart>
   clientId?: string
   appMetadata?: Record<string, JSONValue>     // only with acceptClientMetadata
+  app?: Record<string, JSONValue>             // server-set by enqueue(…, { metadata }) → metadata.app (rule 18)
 }
 export interface CollectOptions { quietMs?: number; maxWaitMs?: number; maxItems?: number }
 export interface EnqueueOptions {
   mode?: 'queue' | 'steer' | 'collect'; collect?: CollectOptions
   availableAt?: number    // epoch ms: not claimable before it (rules 14, 17); not with 'collect'
   id?: string             // caller id, 1–256 chars, unique per session: a repeat is a no-op (rule 17)
+  metadata?: Record<string, unknown>   // app metadata → metadata.app of the user message (rule 18)
 }
 export interface EnqueueResult { inboxId: string; target: 'local' | 'remote'; duplicate?: true }
 
@@ -1230,6 +1232,25 @@ without it releases carry only `owner` and rules 1–10 are the whole contract.
     The "routines on the inbox" pattern (schedule row, compare-and-set tick, deterministic fire id,
     overlap skip, missed-fire skip, pause) is in `docs/guides/multi-instance.md`.
 
+18. **Caller id on the turn, app metadata on the input (ADR-0043).**
+    - The caller id (`dedupeKey`) of an item reaches the turn it becomes: `ctx.turn.source =
+      { kind: 'inbox', id, key?, ids, keys }` (known from `turn.start` on, before `enqueue()`
+      has returned to its caller) and `metadata.eharness.inboxKey` on the stored user message
+      (`inboxKey` per entry of `collected` for a merged burst). `id` / `key` are the first item's;
+      `ids` / `keys` list every item in arrival order (`keys` only those that had a caller id).
+      A turn without inbox items has no `source`. A steer delivered into a running turn is not
+      a turn of its own: it carries only `inboxId` on its `data-eh.input` part.
+    - `enqueue(input, { metadata })` stores a plain JSON object (at most 16 KiB serialized,
+      otherwise `EH_INVALID_INPUT`) as `metadata.app` of the user message, never inside
+      `metadata.eharness` (which is rebuilt). **Trust boundary:** `enqueue` is a server API, so
+      this metadata is trusted; client metadata is not (§3 step 7). Client metadata is
+      dropped unless `acceptClientMetadata`; with it a client `app` key is kept like any other
+      app key, but a value set by `enqueue` always wins, and an `input.submit` hook cannot change
+      or remove it. A `collect` burst merges the objects shallowly (later
+      items win). A steer delivered mid-turn stores it as `app` on its `data-eh.input` part.
+    - Not provided, by decision: mapping `pending()` session ids back to agents (the id carries
+      no agent identity, so that is app code: see `docs/guides/multi-instance.md` sweeper).
+
 At-least-once and dedupe (rule 5) are unchanged: a redelivered item already applied is acked by
 the stored-view dedupe before any attempt logic runs. With a 0.4 adapter (no new members,
 `release` ignoring the options) everything still works without `retry`; with `retry.maxAttempts`
@@ -1249,8 +1270,9 @@ the **stored** state and messages through the adapters only: no hook, no recover
 no inbox drain, no lock, no write, no cache (create one per read; it holds nothing).
 
 `messages(q)` (same paging and rewind hiding as `session.messages()`), `stats()` →
-`{ pending, activeTurn, usage }` (stored values; no token breakdown, that needs the opened
-context), `busy()` (`local` when a live handle of this agent runs a turn, `remote` for a live
+`{ pending, activeTurn, usage }` (stored values; no token breakdown: context tokens are computed from the registry, i.e. the
+agent's plugins, tools and instructions resolved by `session.start`, which is exactly what peek
+must not run, and they are not stored), `busy()` (`local` when a live handle of this agent runs a turn, `remote` for a live
 foreign `activeTurn`, else `null`), `pending()`, `pendingWaits()`, `children()`, `parentInfo()`.
 There are no turn operations: from JS, `send`, `respond`, `regenerate`, `edit`, `enqueue`,
 `inject` and `compact` throw `EH_INVALID_INPUT` (`details.reason: 'peek-read-only'`) naming

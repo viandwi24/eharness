@@ -200,6 +200,7 @@ async function tick(now = Date.now()) {
     await session.enqueue(row.prompt, {
       mode: 'queue',
       id: `sched:${row.id}:${row.next_at}`,                 // deterministic: a retried tick is a no-op
+      metadata: { routine: { id: row.id, name: row.name } }, // lands in message.metadata.app (UI label)
     })
   }
 }
@@ -211,6 +212,10 @@ setInterval(tick, 15_000)                                   // any number of ins
   retried tick) safe: a repeat returns `{ duplicate: true }`. Keys are remembered for at least 24
   hours after the item was processed (the dedupe horizon), so never reuse an id for a different
   slot.
+- **Which turn was this fire?** The turn knows its caller id from the start: in a `turn.start` /
+  `turn.end` hook read `ctx.turn.source?.key` (`sched:<id>:<slot>`), and the stored user message has
+  `metadata.eharness.inboxKey` and your `metadata.app`. No need to wait for `enqueue()` to return
+  and match `inboxId` (spec 05 §12 rule 18).
 - **Overlap `skip`.** A fire is a queued turn, so a slow run would pile fires up. Before enqueueing,
   skip when the previous fire is still in flight (`running_since` set, cleared by `onRun` of the
   fire's turn, or the inbox `stats({ sessionId })` showing something ready or claimed). Use `mode: 'collect'` instead when a burst of fires should merge
@@ -238,6 +243,11 @@ setInterval(async () => {
   for (const id of (await inbox.pending?.({ limit: 100 })) ?? []) agent.session(id) // drains once on open
 }, 30_000)
 ```
+
+The mapping from a session id back to its agent definition (a `dm:` or `routine:` prefix, a table
+lookup) is your application's knowledge; `pending()` entries carry only session ids, and the library
+cannot know which agent definition a session belongs to, so it ships no `drainPending` helper.
+Open each id with the agent you resolved: `resolveAgent(id).session(id)`.
 
 ## Writing an `InboxAdapter`
 

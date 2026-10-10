@@ -53,11 +53,12 @@
       "name": "eharness-team-server",
       "version": "0.0.0",
       "dependencies": {
+        "@ai-sdk/mcp": "^2.0.73",
         "@hono/zod-openapi": "1.6.3",
         "@openrouter/ai-sdk-provider": "3.1.0",
         "@scalar/hono-api-reference": "0.12.11",
         "ai": "^7.0.127",
-        "croner": "^10.0.1",
+        "croner": "10.0.1",
         "drizzle-orm": "0.45.4",
         "hono": "4.13.13",
         "zod": "^4.6.5",

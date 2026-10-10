@@ -53,16 +53,19 @@ export function mergeInputs(inputs: readonly NormalizedInput[]): NormalizedInput
   const texts: string[] = []
   const files: NormalizedInput['parts'] = []
   let appMetadata: Record<string, unknown> | undefined
+  let app: NormalizedInput['app'] | undefined
   for (const input of inputs) {
     const own = input.parts.filter((p) => p.type === 'text').map((p) => p.text)
     if (own.length > 0) texts.push(own.join('\n\n'))
     for (const part of input.parts) if (part.type === 'file') files.push(structuredClone(part))
     if (input.appMetadata !== undefined) appMetadata = { ...appMetadata, ...input.appMetadata }
+    if (input.app !== undefined) app = { ...app, ...input.app }
   }
   const parts: NormalizedInput['parts'] = []
   if (texts.length > 0) parts.push({ type: 'text', text: texts.join('\n\n') })
   parts.push(...files)
-  return appMetadata === undefined
-    ? { parts }
-    : { parts, appMetadata: structuredClone(appMetadata) }
+  const out: NormalizedInput = { parts }
+  if (appMetadata !== undefined) out.appMetadata = structuredClone(appMetadata)
+  if (app !== undefined) out.app = structuredClone(app)
+  return out
 }

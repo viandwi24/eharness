@@ -103,12 +103,32 @@ export interface PluginStreamWriter<DP extends DataPartMap = Record<never, never
 }
 
 /**
+ * Where a turn came from when it applies inbox items. `id` / `key` are the first item's inbox id
+ * and caller id (`enqueue(…, { id })`); a merged `collect` turn lists all of them in `ids` /
+ * `keys` (arrival order; `keys` holds only the items that had a caller id).
+ *
+ * @see docs/specs/05-session-and-storage.md#12-inbox
+ */
+export interface TurnSource {
+  kind: 'inbox'
+  id: string
+  key?: string
+  ids: string[]
+  keys: string[]
+}
+
+/**
  * Information about the running turn (`ctx.turn`).
  *
  * @see docs/specs/01-agent-and-plugins.md#4-harnesscontext-sessionturnstep-context
  */
 export interface TurnInfo {
   id: string
+  /**
+   * Set when the turn applies inbox items (`session.enqueue()`, spec 05 §12): known from
+   * `turn.start` on, before `enqueue()` has returned to its caller. Absent for direct turns.
+   */
+  source?: TurnSource
   /** What started the turn. */
   kind: TurnKind
   /** True for a turn that waited in the session queue (`ifBusy: 'queue' | 'wait'`, a steer that fell back to a turn, a queued wake). */

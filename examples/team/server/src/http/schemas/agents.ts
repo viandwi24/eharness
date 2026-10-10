@@ -14,6 +14,44 @@ const Rules = z
 
 const ToolName = z.enum(TOOL_NAMES as unknown as [string, ...string[]]).openapi('ToolName')
 
+const McpName = z.string().regex(/^[a-z0-9-]{1,32}$/)
+
+export const McpServerSchema = z
+  .object({
+    name: McpName.openapi({
+      example: 'github',
+      description: 'Tool prefix: tools are `<name>_<tool>`.',
+    }),
+    transport: z.object({
+      type: z.enum(['http', 'sse']).openapi({ description: 'Remote transports only (no stdio).' }),
+      url: z.string().url(),
+      headerNames: z.array(z.string()).openapi({
+        description: 'Names of the stored request headers. Values are never returned.',
+      }),
+    }),
+    allow: z.array(z.string()).optional(),
+    deny: z.array(z.string()).optional(),
+  })
+  .openapi('McpServer', {
+    description: 'A remote MCP server of an agent (secrets redacted). Its tools are deferred.',
+  })
+
+export const McpServerInputSchema = z
+  .object({
+    name: McpName,
+    transport: z.object({
+      type: z.enum(['http', 'sse']),
+      url: z.string().url(),
+      headers: z.record(z.string(), z.string()).optional().openapi({
+        description:
+          'Request headers such as `Authorization`. Omitted: the stored headers of the server with the same name are kept. `{}` clears them.',
+      }),
+    }),
+    allow: z.array(z.string()).optional(),
+    deny: z.array(z.string()).optional(),
+  })
+  .openapi('McpServerInput')
+
 export const AgentSchema = z
   .object({
     id: z.string(),
@@ -32,6 +70,7 @@ export const AgentSchema = z
     tools: z.array(ToolName),
     skills: z.array(z.string()),
     mcp: z.array(z.string()),
+    mcpServers: z.array(McpServerSchema),
     permissionMode: z.enum(PERMISSION_MODES),
     rules: Rules,
     version: z.number().int().openapi({ description: 'Bumps on every edit.' }),
@@ -59,6 +98,7 @@ export const AgentCreateSchema = z
     tools: z.array(ToolName).optional(),
     skills: z.array(z.string()).optional(),
     mcp: z.array(z.string()).optional(),
+    mcpServers: z.array(McpServerInputSchema).max(8).optional(),
     permissionMode: z.enum(PERMISSION_MODES).optional(),
     rules: Rules.partial().optional(),
   })

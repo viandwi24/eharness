@@ -63,7 +63,7 @@ import {
   type TurnOutput,
   withOutputTool,
 } from '../output/turn.ts'
-import type { TurnInfo } from '../plugin/types.ts'
+import type { TurnInfo, TurnSource } from '../plugin/types.ts'
 import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
 import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.ts'
@@ -431,6 +431,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     kind: op.kind,
     queued: op.queued,
     input: undefined,
+    ...(op.inbox === undefined ? {} : inboxSource(op.inbox)),
     options: op.options.options,
     model: op.options.model ?? config.model,
     settings: mergeSettings(config.settings ?? {}, op.options.settings),
@@ -1028,8 +1029,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     const meta = op.inbox?.meta
     const eharness = user.metadata?.eharness
     if (meta === undefined || eharness === undefined) return user
-    if ('inboxId' in meta) eharness.inboxId = meta.inboxId
-    else eharness.collected = structuredClone(meta.collected)
+    if ('inboxId' in meta) {
+      eharness.inboxId = meta.inboxId
+      if (meta.key !== undefined) eharness.inboxKey = meta.key
+    } else eharness.collected = structuredClone(meta.collected)
     return user
   }
 
@@ -1077,6 +1080,9 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           files: config.inputFiles,
         })
         current = { ...renormalized }
+        // `metadata.app` is server-set (enqueue): a hook cannot change or drop it
+        if (input.app === undefined) delete current.app
+        else current.app = input.app
         if (input.clientId === undefined) delete current.clientId
         else current.clientId = input.clientId
       } else if ('context' in out && Array.isArray(out.context)) {
@@ -2228,6 +2234,10 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
               files: files.length === 0 ? undefined : structuredClone(files),
               clientId: input.clientId,
               inboxId,
+              app:
+                submitted.input.app === undefined
+                  ? undefined
+                  : structuredClone(submitted.input.app),
             }),
             steer: { input: submitted.input, contexts: submitted.contexts, text },
             ...(inboxId === undefined ? {} : { inboxId }),
@@ -2248,6 +2258,28 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
           ...(wake === true ? { wake: true } : {}),
         }),
       )
+    },
+  }
+}
+
+/** `TurnInfo.source` of a turn made from inbox items (empty for a turn without any). */
+function inboxSource(inbox: NonNullable<TurnOperation['inbox']>): { source?: TurnSource } {
+  const first = inbox.ids[0]
+  if (first === undefined) return {}
+  const keys: string[] =
+    'inboxId' in inbox.meta
+      ? inbox.meta.key === undefined
+        ? []
+        : [inbox.meta.key]
+      : inbox.meta.collected.flatMap((c) => (c.inboxKey === undefined ? [] : [c.inboxKey]))
+  const key = keys[0]
+  return {
+    source: {
+      kind: 'inbox',
+      id: first,
+      ids: [...inbox.ids],
+      keys,
+      ...(key === undefined ? {} : { key }),
     },
   }
 }

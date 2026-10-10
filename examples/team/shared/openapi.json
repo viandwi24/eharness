@@ -127,6 +127,63 @@
           "mcp"
         ]
       },
+      "McpServer": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,32}$",
+            "example": "github",
+            "description": "Tool prefix: tools are `<name>_<tool>`."
+          },
+          "transport": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "http",
+                  "sse"
+                ],
+                "description": "Remote transports only (no stdio)."
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "headerNames": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Names of the stored request headers. Values are never returned."
+              }
+            },
+            "required": [
+              "type",
+              "url",
+              "headerNames"
+            ]
+          },
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "transport"
+        ],
+        "description": "A remote MCP server of an agent (secrets redacted). Its tools are deferred."
+      },
       "PermissionRules": {
         "type": "object",
         "properties": {
@@ -246,6 +303,12 @@
               "type": "string"
             }
           },
+          "mcpServers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpServer"
+            }
+          },
           "permissionMode": {
             "type": "string",
             "enum": [
@@ -290,6 +353,7 @@
           "tools",
           "skills",
           "mcp",
+          "mcpServers",
           "permissionMode",
           "rules",
           "version",
@@ -386,6 +450,13 @@
               "type": "string"
             }
           },
+          "mcpServers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpServerInput"
+            },
+            "maxItems": 8
+          },
           "permissionMode": {
             "type": "string",
             "enum": [
@@ -426,6 +497,58 @@
         "required": [
           "name",
           "instructions"
+        ]
+      },
+      "McpServerInput": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9-]{1,32}$"
+          },
+          "transport": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "http",
+                  "sse"
+                ]
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              },
+              "headers": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Request headers such as `Authorization`. Omitted: the stored headers of the server with the same name are kept. `{}` clears them."
+              }
+            },
+            "required": [
+              "type",
+              "url"
+            ]
+          },
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "name",
+          "transport"
         ]
       },
       "AgentPatch": {
@@ -476,6 +599,13 @@
             "items": {
               "type": "string"
             }
+          },
+          "mcpServers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/McpServerInput"
+            },
+            "maxItems": 8
           },
           "permissionMode": {
             "type": "string",

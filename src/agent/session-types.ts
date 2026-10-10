@@ -317,6 +317,8 @@ export interface SerializedInput {
   parts: Array<TextUIPart | FileUIPart>
   clientId?: string
   appMetadata?: Record<string, JSONValue>
+  /** Server-set app metadata of `enqueue(…, { metadata })`; becomes `metadata.app` as is. */
+  app?: Record<string, JSONValue>
 }
 
 /**
@@ -514,6 +516,14 @@ export interface EnqueueOptions {
    * one the id is remembered for the life of the session object.
    */
   id?: string
+  /**
+   * App metadata for the user message the item becomes, stored as `metadata.app` (never inside
+   * `metadata.eharness`). `enqueue` is a server API, so unlike client input this is trusted (it overrides a client `app` key), but
+   * it must be a plain JSON object of at most 16 KiB serialized (`EH_INVALID_INPUT` otherwise).
+   * Merged shallowly (later items win) into one message for `mode: 'collect'`; stored as
+   * `app` on the `data-eh.input` part of a `steer` delivered into a running turn.
+   */
+  metadata?: Record<string, unknown>
 }
 
 /**

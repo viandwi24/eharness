@@ -30,6 +30,10 @@ export interface FileSystem {
   glob?(pattern: string, opts: { prefix: string; limit: number }): Promise<FileMeta[]>
   /** Optional (since 0.4): atomic rename of one file; never overwrites `to`. */
   move?(from: string, to: string, opts?: { ifVersion?: string }): Promise<MoveResult>
+  /** Optional (since 0.10, §14): states of a file, newest first. */
+  versions?(path: string): Promise<FileVersion[]>
+  /** Optional (§14): content of one listed state; `null` if unknown or pruned. */
+  readVersion?(path: string, version: string): Promise<FileEntry | BinaryFile | null>
 }
 
 export interface FileMeta { path: string; version: string; size: number; updatedAt?: number }
@@ -90,7 +94,7 @@ Rules for adapters:
   above: round trips (non-ASCII, CRLF, empty file), version iff content, `ifVersion` semantics
   incl. concurrent writers (exactly one wins), `DeleteResult` reasons, `list` order and prefixes,
   metadata-only listings, copies, and `stat` / `grep` / `glob` / `move` / `readBytes` +
-  `writeBytes` (`requireBytes`) when implemented. `eharness/testing` does
+  `writeBytes` (`requireBytes`) and `versions` + `readVersion` (`requireVersions`) when implemented. `eharness/testing` does
   not import `eharness/filesystem`, so the suite types its parameter with the structural mirror
   `FileSystemUnderTest` (every `FileSystem` is assignable).
 
@@ -683,3 +687,28 @@ export function loadProjectInstructions(fs: FileSystem, opts?): Promise<ProjectI
   call it outside a session). In `ContextStats.instructionBlocks` the text appears under the owner
   `project-instructions` (`refresh: 'static'`).
 - Invalid options throw `EH_CONFIG_INVALID`; missing files never throw.
+
+## 14. Version history (optional)
+
+```ts
+export interface FileVersion {
+  version: string; size: number; updatedAt?: number
+  binary?: boolean; mediaType?: string; author?: string
+}
+// FileSystem.write / writeBytes opts gain `author?: string` (a hint; adapters may ignore it)
+versions?(path: string): Promise<FileVersion[]>
+readVersion?(path: string, version: string): Promise<FileEntry | BinaryFile | null>
+```
+
+- `versions` returns the states of a file **newest first**, the current state first; one entry per
+  content change (writing the same content adds none); `[]` for a path that never existed. An
+  adapter may keep history after a `delete` (`memoryFs` does), so a deleted file can be restored.
+- `readVersion` returns the content of one listed state (`FileEntry` for text, `BinaryFile` for a
+  binary state) or `null` when unknown or pruned (adapters may bound history; `memoryFs` keeps
+  100 per path, `memoryFs(seed, { maxVersions })`).
+- **Restore is a write** of the old content: because versions are content hashes the file gets the
+  old version string back. No new method, no tool change: the file tools never use these methods.
+- `author` is whatever the app passes to `write` / `writeBytes` (an adapter wrapper or the app's own
+  write path); the tools do not set it.
+- Conformance: `requireVersions` (default: the case runs only when both methods exist).
+

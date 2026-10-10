@@ -208,8 +208,13 @@ export interface HarnessMessageMeta {
   deliveredIn?: string
   /** User messages: the id of the inbox item it was made from (`session.enqueue()`). */
   inboxId?: string
+  /**
+   * User messages: the caller id of the inbox item (`session.enqueue(…, { id })`), when it had
+   * one. Lets a hook match the turn to the producer's own key without waiting for `enqueue()`.
+   */
+  inboxKey?: string
   /** User messages merged from `collect` inputs: one entry per input, in arrival order. */
-  collected?: Array<{ inboxId?: string; clientId?: string }>
+  collected?: Array<{ inboxId?: string; clientId?: string; inboxKey?: string }>
   /** Assistant messages: model id used by the turn. */
   model?: string
   /** Assistant messages: token usage (cumulative over all turns that wrote the message). */
@@ -238,6 +243,11 @@ export interface HarnessMessageMeta {
  */
 export interface HarnessMetadata {
   eharness?: HarnessMessageMeta
+  /**
+   * Server-set app metadata of an input made by `session.enqueue(…, { metadata })` (spec 05 §12).
+   * Set by the server; overrides a client `app` key; `eharness` stays rebuilt.
+   */
+  app?: Record<string, JSONValue>
 }
 
 /**
@@ -340,6 +350,8 @@ export interface InputPartData {
   clientId?: string
   /** A steer from the durable inbox: its item id (dedupe on redelivery). */
   inboxId?: string
+  /** App metadata of the enqueued steer (`EnqueueOptions.metadata`), as in `metadata.app`. */
+  app?: Record<string, JSONValue>
   /**
    * Set when this input is the note of an approved tool call (`respond({ approvals: [{ note }] })`,
    * 0.7.0, spec 11 §3.6): `text` is the framed `<user-note>` the model saw, `approvalNote.text`

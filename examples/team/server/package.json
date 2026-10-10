@@ -13,6 +13,7 @@
     "openapi": "bun scripts/export-openapi.ts"
   },
   "dependencies": {
+    "@ai-sdk/mcp": "^2.0.73",
     "@hono/zod-openapi": "1.6.3",
     "@openrouter/ai-sdk-provider": "3.1.0",
     "@scalar/hono-api-reference": "0.12.11",

@@ -53,6 +53,26 @@ export interface BinaryFile {
 }
 
 /**
+ * One entry of {@link FileSystem.versions}: a past (or the current) state of a file.
+ *
+ * @see docs/specs/08-filesystem-plugin.md#14-version-history-optional
+ */
+export interface FileVersion {
+  /** The version string the file had (same rules as {@link FileMeta.version}). */
+  version: string
+  /** Size of the content then, in bytes. */
+  size: number
+  /** When this state was written (ms since epoch), when the adapter knows it. */
+  updatedAt?: number
+  /** `true` when the state was a binary file (read it with {@link FileSystem.readVersion}). */
+  binary?: boolean
+  /** IANA media type kept for that state, when the adapter keeps one. */
+  mediaType?: string
+  /** Who wrote it: the `author` hint of `write` / `writeBytes`, when the adapter keeps it. */
+  author?: string
+}
+
+/**
  * Result of {@link FileSystem.write}. `'conflict'`: `ifVersion` was a string that does not match
  * (or the file is missing); `'exists'`: `ifVersion` was `null` and the file exists.
  *
@@ -116,7 +136,11 @@ export interface FileSystem {
    * Write text. `ifVersion`: string → only if the current version matches; `null` → only if the
    * file does not exist; `undefined` → unconditional.
    */
-  write(path: string, content: string, opts?: { ifVersion?: string | null }): Promise<WriteResult>
+  write(
+    path: string,
+    content: string,
+    opts?: { ifVersion?: string | null; author?: string },
+  ): Promise<WriteResult>
   /** Delete a file. `ifVersion` → only if the current version matches. */
   delete(path: string, opts?: { ifVersion?: string }): Promise<DeleteResult>
   /**
@@ -164,8 +188,21 @@ export interface FileSystem {
   writeBytes?(
     path: string,
     bytes: Uint8Array,
-    opts?: { ifVersion?: string | null; mediaType?: string },
+    opts?: { ifVersion?: string | null; mediaType?: string; author?: string },
   ): Promise<WriteResult>
+  /**
+   * Optional (version history, since 0.10, spec 08 §14): the states of a file, newest first (the
+   * first entry is the current state), one entry per content change (a write of the same content
+   * adds none). `[]` for a path that never existed. Adapters that keep history may keep it after a
+   * delete, so a deleted file can be restored. Without it an app cannot list versions.
+   */
+  versions?(path: string): Promise<FileVersion[]>
+  /**
+   * Optional (with {@link FileSystem.versions}): the content of one listed version, as
+   * {@link FileEntry} for text or {@link BinaryFile} for a binary state; `null` when that version
+   * is unknown or was pruned. A restore is an ordinary `write` / `writeBytes` of this content.
+   */
+  readVersion?(path: string, version: string): Promise<FileEntry | BinaryFile | null>
 }
 
 /**

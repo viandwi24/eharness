@@ -47,3 +47,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0040](0040-enqueue-timers-and-ids.md) | `enqueue()` timers and caller ids: routines on the inbox, no scheduler port |
 | [0041](0041-park-mode-messaging.md) | Agent messaging in `park` mode: storage-backed directory, delivery over the durable inbox (supersedes the park limit of 0038) |
 | [0042](0042-peek-child-identity-spawn-cap.md) | Read-only `agent.peek`, child identity in the child index, `childSession` options and `maxChildren` |
+| [0043](0043-enqueue-source-metadata-fs-versions.md) | Caller id on the turn, `enqueue` app metadata, optional `FileSystem` versions |

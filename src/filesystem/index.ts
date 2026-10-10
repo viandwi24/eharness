@@ -60,6 +60,7 @@ export type {
   FileSystem,
   FilesystemOptions,
   FileToolName,
+  FileVersion,
   GrepHit,
   MoveResult,
   ToolOutputStore,

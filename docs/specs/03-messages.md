@@ -40,6 +40,8 @@ obtained with `InferHarnessUIMessage<typeof agent>`.
 ## 3. Metadata
 
 `metadata.eharness` is reserved. Apps may add their own top-level metadata keys next to it.
+`metadata.app` is the key `session.enqueue(…, { metadata })` writes (spec 05 §12 rule 18); it
+overrides a client `app` key accepted through `acceptClientMetadata`.
 
 ```ts
 export interface HarnessMetadata {
@@ -69,7 +71,9 @@ export interface HarnessMessageMeta {
   inboxId?: string
   /** User messages merged from `collect` inputs (spec 05 §12 rule 6): one entry per input, in
    *  arrival order (`inboxId` when it came through `enqueue()`, the client's id when it had one). */
-  collected?: Array<{ inboxId?: string; clientId?: string }>
+  collected?: Array<{ inboxId?: string; clientId?: string; inboxKey?: string }>
+  /** User messages made from an inbox item enqueued with `{ id }`: that caller id (spec 05 §12 rule 18). */
+  inboxKey?: string
 
   // assistant messages only
   /** Gateway strings as-is ('anthropic/claude-sonnet-4.6'); provider instances as

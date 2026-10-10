@@ -53,6 +53,20 @@ export interface FileSystemUnderTest {
     | { ok: true; version: string }
     | { ok: false; reason: 'conflict' | 'exists'; currentVersion?: string }
   >
+  versions?(path: string): Promise<
+    Array<{
+      version: string
+      size: number
+      updatedAt?: number
+      binary?: boolean
+      mediaType?: string
+      author?: string
+    }>
+  >
+  readVersion?(
+    path: string,
+    version: string,
+  ): Promise<({ content: string } & MetaUnderTest) | { bytes: Uint8Array } | null>
   move?(
     from: string,
     to: string,
@@ -74,6 +88,8 @@ export interface FileSystemConformanceOptions {
   requireMove?: boolean
   /** Require the optional `readBytes` and `writeBytes` (binary files). Default false: runs only when present. */
   requireBytes?: boolean
+  /** Require the optional `versions` and `readVersion`. Default false: runs only when present. */
+  requireVersions?: boolean
   /**
    * The adapter keeps the `mediaType` declared by `writeBytes` (`readBytes` and `list` return it,
    * also for text files). Default false: the case is skipped.
@@ -567,6 +583,47 @@ export function fileSystemConformance(
         assertTrue(again.ok, 'rewrite must work')
         const cleared = (await fs.list('/data/')).find((m) => m.path === '/data/x.bin')
         assertTrue(cleared?.mediaType === undefined, 'a write without mediaType clears it')
+      },
+    },
+    {
+      name: 'versions lists states newest first and readVersion returns their content',
+      run: async () => {
+        const fs = await factory()
+        if (fs.versions === undefined || fs.readVersion === undefined) {
+          assertTrue(!options.requireVersions, 'versions and readVersion are required but missing')
+          return
+        }
+        assertJsonEqual(await fs.versions('/never.md'), [], 'a path that never existed')
+        const v1 = await written(fs, '/h.md', 'one')
+        const v2 = await written(fs, '/h.md', 'two ø')
+        await written(fs, '/h.md', 'two ø') // same content: no new state
+        const v3 = await written(fs, '/h.md', 'three')
+        const listed = await fs.versions('/h.md')
+        assertJsonEqual(
+          listed.map((v) => v.version),
+          [v3, v2, v1],
+          'versions are newest first, one per content change, the current state first',
+        )
+        assertTrue(
+          listed.every((v, i) => v.size === utf8(['three', 'two ø', 'one'][i] as string)),
+          'each state keeps its own size',
+        )
+        const old = (await fs.readVersion('/h.md', v2)) as {
+          content: string
+          version: string
+        } | null
+        assertTrue(
+          old?.content === 'two ø' && old.version === v2,
+          'readVersion returns the content of that state',
+        )
+        assertTrue(
+          (await fs.readVersion('/h.md', 'no-such-version')) === null,
+          'an unknown version is null',
+        )
+        // restore = write the old content: the version is the old one again
+        const restored = await written(fs, '/h.md', old?.content as string)
+        assertTrue(restored === v2, 'restoring old content gives the old version back')
+        assertTrue((await contentOf(fs, '/h.md')) === 'two ø', 'restored content is current')
       },
     },
     {

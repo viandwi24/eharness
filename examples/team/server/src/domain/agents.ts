@@ -39,6 +39,109 @@ export const TOOL_CATALOG = [
 export type ToolName = (typeof TOOL_CATALOG)[number]['name']
 export const TOOL_NAMES: readonly ToolName[] = TOOL_CATALOG.map((t) => t.name)
 
+/**
+ * A remote MCP server of an agent. Only `http` (streamable HTTP) and `sse` exist here: a stdio
+ * transport spawns a process on the server host, which a multi-user, multi-instance server must
+ * not do on behalf of a definition anyone can edit (and a restarted or second instance would not
+ * have the process anyway).
+ */
+export interface McpServerDef {
+  /** Tool prefix and source id (`mcp:<name>`): `^[a-z0-9-]{1,32}$`, unique per agent. */
+  name: string
+  transport: {
+    type: 'http' | 'sse'
+    url: string
+    /** Stored server-side only (typically `Authorization`); never returned by the API. */
+    headers: Record<string, string>
+  }
+  /** Allow list of the server's tool names (before prefixing). */
+  allow?: string[]
+  /** Deny list of the server's tool names (before prefixing). */
+  deny?: string[]
+}
+
+/** What a client sends: `headers` omitted keeps the stored headers of the same-named server. */
+export interface McpServerInput {
+  name: string
+  transport: { type: 'http' | 'sse'; url: string; headers?: Record<string, string> | undefined }
+  allow?: string[] | undefined
+  deny?: string[] | undefined
+}
+
+/** What the API returns: the names of the headers that are set, never their values. */
+export interface McpServerView {
+  name: string
+  transport: { type: 'http' | 'sse'; url: string; headerNames: string[] }
+  allow?: string[]
+  deny?: string[]
+}
+
+const MCP_NAME = /^[a-z0-9-]{1,32}$/
+const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/
+export const MAX_MCP_SERVERS = 8
+
+/**
+ * Validate the servers a client sent and merge secrets: a server without `headers` keeps the
+ * headers stored under the same name (so an edit never needs the secret again).
+ */
+export function normalizeMcpServers(
+  input: readonly McpServerInput[],
+  current: readonly McpServerDef[] = [],
+): McpServerDef[] {
+  if (input.length > MAX_MCP_SERVERS) throw invalid(`at most ${MAX_MCP_SERVERS} MCP servers`)
+  const seen = new Set<string>()
+  return input.map((s) => {
+    if (!MCP_NAME.test(s.name)) throw invalid(`MCP server name must match ${MCP_NAME}: ${s.name}`)
+    if (seen.has(s.name)) throw invalid(`duplicate MCP server name: ${s.name}`)
+    seen.add(s.name)
+    if (s.transport.type !== 'http' && s.transport.type !== 'sse') {
+      throw invalid(`MCP transport must be http or sse (no stdio): ${s.name}`)
+    }
+    let url: URL
+    try {
+      url = new URL(s.transport.url)
+    } catch {
+      throw invalid(`MCP server ${s.name}: invalid url`)
+    }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw invalid(`MCP server ${s.name}: url must be http or https`)
+    }
+    const headers =
+      s.transport.headers ?? current.find((c) => c.name === s.name)?.transport.headers ?? {}
+    for (const [k, v] of Object.entries(headers)) {
+      if (!HEADER_NAME.test(k) || /[\r\n]/.test(v)) {
+        throw invalid(`MCP server ${s.name}: invalid header ${k}`)
+      }
+    }
+    return {
+      name: s.name,
+      transport: { type: s.transport.type, url: url.toString(), headers },
+      ...(s.allow === undefined ? {} : { allow: s.allow }),
+      ...(s.deny === undefined ? {} : { deny: s.deny }),
+    }
+  })
+}
+
+export function redactMcpServers(servers: readonly McpServerDef[]): McpServerView[] {
+  return servers.map((s) => ({
+    name: s.name,
+    transport: {
+      type: s.transport.type,
+      url: s.transport.url,
+      headerNames: Object.keys(s.transport.headers),
+    },
+    ...(s.allow === undefined ? {} : { allow: s.allow }),
+    ...(s.deny === undefined ? {} : { deny: s.deny }),
+  }))
+}
+
+/** An agent as the API shows it: MCP secrets redacted. */
+export function redactAgent<T extends { mcpServers: McpServerDef[] }>(
+  def: T,
+): Omit<T, 'mcpServers'> & { mcpServers: McpServerView[] } {
+  return { ...def, mcpServers: redactMcpServers(def.mcpServers) }
+}
+
 export interface AgentDef {
   id: string
   workspaceId: string
@@ -54,6 +157,8 @@ export interface AgentDef {
   tools: ToolName[]
   skills: string[]
   mcp: string[]
+  /** Remote MCP servers of this agent (secrets inside: never return it from the API as is). */
+  mcpServers: McpServerDef[]
   permissionMode: PermissionMode
   rules: PermissionRules
   /** Bumps on every edit; the factory cache key is `id@version`. */
@@ -76,6 +181,7 @@ export interface AgentDraft {
   tools?: string[] | undefined
   skills?: string[] | undefined
   mcp?: string[] | undefined
+  mcpServers?: McpServerInput[] | undefined
   permissionMode?: PermissionMode | undefined
   rules?: Partial<PermissionRules> | undefined
 }
