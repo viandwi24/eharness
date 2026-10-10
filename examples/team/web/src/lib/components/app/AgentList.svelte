@@ -6,18 +6,25 @@
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 	import BooksIcon from 'phosphor-svelte/lib/Books';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { onMount } from 'svelte';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
+	import { formatTime } from '#lib/format.js';
+	import { live } from '#lib/stores/live.svelte.js';
 	import ThemeToggle from './ThemeToggle.svelte';
 
 	let query = $state('');
+	// Most recent conversation first (stable for agents without messages).
 	const shown = $derived(
-		agentsStore.state.agents.filter((a) =>
-			`${a.name} ${a.description}`.toLowerCase().includes(query.trim().toLowerCase())
-		)
+		agentsStore.state.agents
+			.filter((a) => `${a.name} ${a.description}`.toLowerCase().includes(query.trim().toLowerCase()))
+			.map((a, i) => ({ a, i, t: agentsStore.state.activity[a.id]?.lastMessageAt ?? 0 }))
+			.sort((x, y) => y.t - x.t || x.i - y.i)
+			.map((x) => x.a)
 	);
+	const pendingCount = $derived(live.state.approvals.length);
 	onMount(() => void agentsStore.load());
 	const nav = [
 		{ href: '/tasks', label: 'Tasks', icon: ListChecksIcon },
@@ -54,11 +61,11 @@
 				<span class="min-w-0 flex-1">
 					<span class="flex items-baseline justify-between gap-2">
 						<span class="truncate text-sm font-medium">{a.name}</span>
-						<span class="shrink-0 text-xs text-muted-foreground">{act?.time ?? ''}</span>
+						<span class="shrink-0 text-xs text-muted-foreground">{formatTime(act?.lastMessageAt)}</span>
 					</span>
 					<span class="flex items-center justify-between gap-2">
-						<span class="truncate text-xs text-muted-foreground">{act?.preview ?? a.description}</span>
-						{#if act?.unread}<span class="size-2 shrink-0 rounded-full bg-brand" aria-label="Unread"></span>{/if}
+						<span class="truncate text-xs text-muted-foreground">{act?.preview || a.description}</span>
+						{#if act?.unread}<span class="size-2 shrink-0 rounded-full bg-brand" aria-label="{act.unread} unread"></span>{/if}
 					</span>
 				</span>
 			</a>
@@ -81,6 +88,9 @@
 			<Button href={n.href} variant={page.url.pathname.startsWith(n.href) ? 'secondary' : 'ghost'} size="sm" class="flex-1 gap-1.5">
 				<n.icon class="size-4" />
 				<span class="hidden xl:inline">{n.label}</span>
+				{#if n.href === '/tasks' && pendingCount > 0}
+					<Badge shape="number" variant="warning" aria-label="{pendingCount} waiting for approval" class="h-4 min-w-4 px-1 text-[10px]">{pendingCount}</Badge>
+				{/if}
 			</Button>
 		{/each}
 	</div>

@@ -130,3 +130,10 @@ export function createClient(opts: ClientOptions) {
 }
 
 export type ApiClient = ReturnType<typeof createClient>;
+
+export type Task = components['schemas']['Task'];
+export type TaskStatus = components['schemas']['TaskStatus'];
+export type TaskDetail = components['schemas']['TaskDetail'];
+export type Approval = components['schemas']['Approval'];
+export type AgentSessions = components['schemas']['AgentSessions'];
+export type ApprovalBody = components['schemas']['ApprovalAnswer'];

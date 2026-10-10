@@ -47,7 +47,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List agents */
+        /** List agents with their sidebar activity */
         get: {
             parameters: {
                 query?: {
@@ -939,6 +939,538 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The task board: tasks across agents
+         * @description Tasks are delegated runs (child sessions of the lead). The index is written by every instance on turn start / end and repaired at boot, so it is the same for all of them. Newest activity first.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Only this status. */
+                    status?: components["schemas"]["TaskStatus"] & unknown;
+                    /** @description Only tasks of this agent (id or slug). */
+                    agentId?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Tasks */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A task with the messages of its session and what it waits for */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The task */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskDetail"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approvals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything that waits for a person, across all sessions
+         * @description Pending tool approvals and `ask_user_question` questions of every DM chat and every delegated task, read from the stored session state (any instance).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Pending items */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApprovalList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/approvals/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Answer an approval or a question
+         * @description `respond()` on the session that owns the item, from whichever instance receives the request. Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.
+         *
+         *     - Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).
+         *     - Question: `{ answers }` (one per question, `null` dismisses).
+         *
+         *     An item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description The `id` of an item of `GET /approvals`. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ApprovalAnswer"];
+                };
+            };
+            responses: {
+                /** @description Recorded; the session continues */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApprovalAccepted"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such pending item */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Stale answer, ambiguous id, or a turn of the session is running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Events after a cursor (JSON) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Return events with a higher `seq`. Default 0. */
+                    after?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Events, oldest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["EventList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live event feed (SSE)
+         * @description Every instance tails the `events` table (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only).
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Replay events with a higher `seq`. */
+                    after?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Server-sent events */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The DM chat and the tasks of an agent */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description DM state, owned and delegated tasks */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentSessions"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark the chat of an agent as read (clears its unread count) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The new marker */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ReadMarker"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -952,7 +1484,27 @@ export interface components {
             time: number;
         };
         AgentList: {
-            agents: components["schemas"]["Agent"][];
+            agents: components["schemas"]["AgentListItem"][];
+        };
+        AgentListItem: components["schemas"]["Agent"] & {
+            lastActivity: components["schemas"]["AgentActivity"];
+        };
+        /** @enum {string} */
+        ToolName: "library_read" | "library_write" | "memory" | "todos" | "web_search" | "web_fetch" | "ask_user" | "delegate" | "send_message" | "mcp";
+        /** @description Permission rules in `Tool(spec)` form (eharness/permissions). */
+        PermissionRules: {
+            /** @default [] */
+            allow: string[];
+            /** @default [] */
+            ask: string[];
+            /** @default [] */
+            deny: string[];
+        };
+        /** @description Sidebar data: last message time, its preview and the unread count. */
+        AgentActivity: {
+            lastMessageAt: number | null;
+            preview: string | null;
+            unread: number;
         };
         Agent: {
             id: string;
@@ -981,17 +1533,6 @@ export interface components {
             archivedAt: number | null;
             createdAt: number;
             updatedAt: number;
-        };
-        /** @enum {string} */
-        ToolName: "library_read" | "library_write" | "memory" | "todos" | "web_search" | "web_fetch" | "ask_user" | "delegate" | "send_message" | "mcp";
-        /** @description Permission rules in `Tool(spec)` form (eharness/permissions). */
-        PermissionRules: {
-            /** @default [] */
-            allow: string[];
-            /** @default [] */
-            ask: string[];
-            /** @default [] */
-            deny: string[];
         };
         Error: {
             error: {
@@ -1175,6 +1716,142 @@ export interface components {
              * @example library:///uploads/2026-10-10/0198f0a2-report.pdf
              */
             url: string;
+        };
+        TaskList: {
+            tasks: components["schemas"]["Task"][];
+        };
+        Task: {
+            id: string;
+            /** @description The agent that runs the task session. */
+            agentId: string;
+            /** @example dm:0198…:agent:call_1 */
+            sessionId: string;
+            /** @description The session that delegated the task (the lead DM), if any. */
+            parentSessionId: string | null;
+            /** @enum {string} */
+            origin: "user" | "lead" | "routine";
+            title: string;
+            status: components["schemas"]["TaskStatus"];
+            /** @enum {string|null} */
+            pendingKind: "approval" | "question" | null;
+            startedAt: number;
+            endedAt: number | null;
+            /** @description Preview of the last report. */
+            summary: string | null;
+            lastActivityAt: number;
+            costUsd: number;
+            tokens: number;
+        };
+        /**
+         * @description `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted).
+         * @enum {string}
+         */
+        TaskStatus: "needs_action" | "running" | "done" | "failed" | "stopped";
+        TaskDetail: {
+            task: components["schemas"]["Task"];
+            /** @description The stored messages of the task session (newest 200). */
+            messages: components["schemas"]["UiMessage"][];
+            /** @description What the task waits for. */
+            approvals: components["schemas"]["Approval"][];
+        };
+        Approval: {
+            /** @description The approval id, or the tool call id of a question: the `{id}` of `POST /approvals/{id}`. */
+            id: string;
+            /** @enum {string} */
+            kind: "approval" | "question";
+            sessionId: string;
+            parentSessionId: string | null;
+            agentId: string;
+            agentName: string;
+            taskId: string | null;
+            toolCallId: string;
+            toolName: string;
+            input?: unknown;
+            /** @enum {string|null} */
+            risk: "read" | "write" | "external" | "unknown" | null;
+            questions: components["schemas"]["Question"][] | null;
+        };
+        Question: {
+            question: string;
+            header: string;
+            options: {
+                label: string;
+                description?: string;
+            }[];
+            multiSelect: boolean;
+        };
+        ApprovalList: {
+            approvals: components["schemas"]["Approval"][];
+        };
+        /** @description The answer is recorded and the session continues in the background; follow it with the events feed. */
+        ApprovalAccepted: {
+            /** @enum {boolean} */
+            accepted: true;
+            id: string;
+            sessionId: string;
+            agentId: string;
+        };
+        ApprovalAnswer: components["schemas"]["ApprovalDecision"] | components["schemas"]["QuestionAnswer"];
+        /** @description Answer of a tool approval. */
+        ApprovalDecision: {
+            approved: boolean;
+            /** @description Shown to the model when denied. */
+            reason?: string;
+            /** @description A free-text note of the person about this call: the model reads it right after the result (approved) or as part of the reason (denied). */
+            note?: string;
+            /**
+             * @description End the turn after the answer without calling the model again (spec 11): always, or only when denied.
+             * @enum {string}
+             */
+            endTurn?: "after-answers" | "if-denied";
+            /** @description Session of the item; only needed when two sessions carry the same id. */
+            sessionId?: string;
+        };
+        /** @description Answer of an `ask_user_question` question. */
+        QuestionAnswer: {
+            /** @description One answer per question, in order; null dismisses the questions. */
+            answers: {
+                selected?: string[];
+                other?: string;
+                notes?: string;
+            }[] | null;
+            /** @description Session of the item; only needed when two sessions carry the same id. */
+            sessionId?: string;
+        };
+        EventList: {
+            events: components["schemas"]["TeamEvent"][];
+            /** @description Cursor for the next call: the `seq` of the last event, else the current head. */
+            lastSeq: number;
+        };
+        /** @description `message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview). */
+        TeamEvent: {
+            seq: number;
+            /** @enum {string} */
+            type: "message-added" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired";
+            agentId: string | null;
+            sessionId: string | null;
+            payload: {
+                [key: string]: unknown;
+            };
+            createdAt: number;
+        };
+        AgentSessions: {
+            dm: {
+                sessionId: string;
+                lastMessageAt: number | null;
+                preview: string | null;
+                unread: number;
+                /** @description Approvals / questions waiting in the DM. */
+                pending: number;
+            };
+            /** @description Tasks this agent runs. */
+            tasks: components["schemas"]["Task"][];
+            /** @description Tasks this agent handed to others. */
+            delegated: components["schemas"]["Task"][];
+        };
+        ReadMarker: {
+            agentId: string;
+            lastReadSeq: number;
         };
     };
     responses: never;

@@ -1,8 +1,8 @@
 import type { Agent, AgentCreate, AgentPatch, ApiClient } from '../api/client';
 
 /** Plain shape; the `.svelte.ts` wrapper hands in a `$state` proxy so mutations are reactive. */
-/** Sidebar extras that come later from the events feed (spec §5.3); all optional. */
-export type AgentActivity = { preview?: string; time?: string; unread?: boolean };
+/** Sidebar data from `GET /agents` (`lastActivity`), kept live by the events feed (spec §5.3). */
+export type AgentActivity = { preview: string | null; lastMessageAt: number | null; unread: number };
 
 export type AgentsState = {
 	agents: Agent[];
@@ -34,7 +34,14 @@ export function createAgentsCore(api: ApiClient, state: AgentsState) {
 		async load(): Promise<void> {
 			state.loading = true;
 			try {
-				state.agents = (await api.get('/agents')).agents;
+				const agents = (await api.get('/agents')).agents;
+				state.agents = agents;
+				const activity: Record<string, AgentActivity> = {};
+				for (const a of agents) {
+					const l = (a as { lastActivity?: AgentActivity }).lastActivity;
+					activity[a.id] = { preview: l?.preview ?? null, lastMessageAt: l?.lastMessageAt ?? null, unread: l?.unread ?? 0 };
+				}
+				state.activity = activity;
 				state.error = null;
 				state.loaded = true;
 			} catch (e) {

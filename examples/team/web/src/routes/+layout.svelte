@@ -5,9 +5,14 @@
 	import { ElevationProvider } from '#lib/components/ui/elevation/index.js';
 	import { Toaster } from '#lib/components/ui/sonner/index.js';
 	import AgentList from '#lib/components/app/AgentList.svelte';
+	import TaskDrawer from '#lib/components/app/TaskDrawer.svelte';
+	import { startLive } from '#lib/stores/live.svelte.js';
+	import { onMount } from 'svelte';
 	import type { LayoutProps } from './$types';
 
 	let { children }: LayoutProps = $props();
+
+	onMount(() => startLive());
 
 	// Mobile: list -> chat -> panel sheet. The list is the home screen; other routes replace it.
 	const isHome = $derived(page.url.pathname === '/');
@@ -29,5 +34,6 @@
 			{@render children()}
 		</main>
 	</div>
+	<TaskDrawer />
 	<Toaster />
 </ElevationProvider>

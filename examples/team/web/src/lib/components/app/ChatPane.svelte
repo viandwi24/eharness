@@ -11,11 +11,14 @@
 		ConversationScrollButton
 	} from '#lib/components/ai/conversation/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { tick } from 'svelte';
+	import { onDestroy, tick } from 'svelte';
+	import ApprovalsPopover from './ApprovalsPopover.svelte';
 	import { toast } from 'svelte-sonner';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import { agentChat } from '#lib/chat/chats.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
+	import { openTask, openSession } from '#lib/stores/drawer.svelte.js';
+	import { live } from '#lib/stores/live.svelte.js';
 	import MessageView from '#lib/parts/MessageView.svelte';
 	import ChatComposer from './ChatComposer.svelte';
 
@@ -70,6 +73,13 @@
 	$effect(() => {
 		if (ac.loaded && ac.hasOlder && chat.messages.length) void tick().then(maybeLoadOlder);
 	});
+	// Opening the chat marks it read; the live store keeps it read while it stays visible.
+	$effect(() => {
+		live.setViewing(agentId);
+	});
+	onDestroy(() => live.setViewing(null));
+	// Approvals in child sessions of this agent's delegations (lead hint).
+	const waiting = $derived(live.childApprovals(agentId));
 	$effect(() => {
 		if (!agentsStore.find(agentId)) void agentsStore.get(agentId).catch(() => {});
 	});
@@ -89,6 +99,7 @@
 		{:else}
 			<div class="flex-1 text-sm text-muted-foreground">Unknown agent</div>
 		{/if}
+		<ApprovalsPopover />
 		<Button variant="ghost" size="icon-sm" aria-label="Agent actions"><DotsThreeIcon class="size-4" /></Button>
 		<Button variant="ghost" size="icon-sm" aria-label="Toggle context panel" onclick={onTogglePanel}>
 			<SidebarSimpleIcon class="size-4" />
@@ -108,7 +119,7 @@
 								message={m}
 								agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 								onApproval={(a) => void ac.approve(a)}
-								onOpenSession={() => {}}
+								onOpenSession={(sid) => void openSession(sid)}
 							/>
 						</ConversationItem>
 					{:else}
@@ -133,6 +144,18 @@
 	</div>
 
 	<div class="mx-auto w-full max-w-3xl shrink-0 p-3">
+		{#if waiting.length}
+			<div class="mb-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-lg border border-border bg-warning-soft px-3 py-1.5 text-xs text-warning-text" role="status">
+				{#each waiting as w, i (w.sessionId + w.id)}
+					<span>
+						Waiting for approval in <strong>{w.agentName}</strong>
+						{#if w.taskId}
+							<button class="underline underline-offset-4" onclick={() => openTask(w.taskId!)}>Review</button>
+						{/if}{i < waiting.length - 1 ? ',' : ''}
+					</span>
+				{/each}
+			</div>
+		{/if}
 		{#if ac.notice}
 			<div class="mb-2 text-center text-xs text-muted-foreground" role="status">{ac.notice}</div>
 		{/if}

@@ -2,6 +2,7 @@
 	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeft';
 	import type { Snippet } from 'svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
+	import ApprovalsPopover from './ApprovalsPopover.svelte';
 
 	let { title, children }: { title: string; children?: Snippet } = $props();
 </script>
@@ -12,4 +13,5 @@
 	</Button>
 	<h1 class="flex-1 text-base font-medium">{title}</h1>
 	{@render children?.()}
+	<ApprovalsPopover />
 </header>
