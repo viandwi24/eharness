@@ -71,6 +71,15 @@ arrive later.
    stored order differ from the model order (ADR-0011, ADR-0014). Applications that want a lead
    that stays free to chat use background delegation; the docs say so.
 
+## Amendment: orphaned foreground parks
+
+A foreground park child whose parent call was cancelled by new input (`WAIT_CANCELLED_NEW_INPUT`)
+or answered `Interrupted:` keeps running, and its end found no wait to resolve, so the lead was
+never told. Decision: when the child's turn ends and the parent's stored call for its `toolCallId`
+is an `output-error` with those texts, it is treated as a background child (report through
+`inject` with `wake`, flag set in its plugin state, `waiting` events). This is also the safety net
+for the brief window above. Normally resolved waits are untouched.
+
 ## Consequences
 
 + The lead stays free to chat while role agents work; reports, approvals and restarts work across

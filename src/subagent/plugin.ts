@@ -31,6 +31,7 @@ import {
   type StepEndEvent,
   type ToolInput,
   type TurnResult,
+  WAIT_CANCELLED_NEW_INPUT,
 } from '../index.ts'
 import {
   type AddUsage,
@@ -781,11 +782,41 @@ function createParkHook(options: {
       ctx.state.set(BACKGROUND_STATE, { toolCallId })
     }
   }
+  /**
+   * Whether the parent's call for `toolCallId` was answered with a cancellation or an interruption
+   * (spec 11 §4.1 `onNewInput: 'deny'`, ADR-0014) while this park child kept running (ADR-0046).
+   */
+  const orphaned = async (
+    ctx: HarnessContext,
+    parentSession: AnySession,
+    toolCallId: string,
+  ): Promise<boolean> => {
+    try {
+      const stored = (await parentSession.messages({ limit: 100 })) as unknown as MessageLike[]
+      for (const message of stored.toReversed()) {
+        for (const part of message.parts as Array<{
+          type: string
+          toolCallId?: string
+          state?: string
+          errorText?: string
+        }>) {
+          if (part.toolCallId !== toolCallId || !part.type.startsWith('tool-')) continue
+          if (part.state !== 'output-error') return false
+          const text = part.errorText ?? ''
+          return text === WAIT_CANCELLED_NEW_INPUT || text.startsWith('Interrupted:')
+        }
+      }
+    } catch (error) {
+      ctx.log.warn('subagent: could not read the parent call', { error: errText(error) })
+    }
+    return false
+  }
   /** The report (or the waiting notice) of a durable background child, into its launcher. */
   const reportBackground = async (
     ctx: HarnessContext,
     e: TurnResult,
     parent: { sessionId: string },
+    cancelled = false,
   ): Promise<void> => {
     if (options.parentAgent === undefined) return
     const identity = ctx.session.parent as
@@ -809,7 +840,7 @@ function createParkHook(options: {
       ? `Background subagent ${who} ${what} is waiting for the user to answer a permission request or a question. It continues once that is answered; its report arrives when it finishes.`
       : `Background subagent ${who} ${what} ${
           status === 'completed' ? 'finished' : status === 'stopped' ? 'was stopped' : 'failed'
-        }.\n\n${
+        }${cancelled ? ' after its call was cancelled' : ''}.\n\n${
           reportOf(
             neutralizeTags(body, ['agent-message']),
             reportMax,
@@ -900,10 +931,17 @@ function createParkHook(options: {
       } else await reportBackground(ctx, e, parent)
       return
     }
-    if (e.stop === 'tool-pending') return
     const parentSession = options
       .parentAgent()
       .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession
+    if (e.stop === 'tool-pending') {
+      // a child whose parent call was cancelled keeps running: tell the parent it is waiting
+      if (await orphaned(ctx, parentSession, parent.toolCallId)) {
+        ctx.state.set(BACKGROUND_STATE, { toolCallId: parent.toolCallId })
+        await reportBackground(ctx, e, parent, true)
+      }
+      return
+    }
     const waitId = subagentWaitId(parent.toolCallId)
     let waits: Awaited<ReturnType<AnySession['pendingWaits']>>
     try {
@@ -915,6 +953,16 @@ function createParkHook(options: {
     const wait = waits.find((w) => w.waitId === waitId)
     // not a parked child (inline, policy, background), or already resolved: maybe a resume
     if (wait === undefined || wait.result !== undefined) {
+      const first = (e.messages as unknown as MessageLike[]).find((m) => m.role === 'user')
+      const frame = first === undefined ? undefined : parseAgentFrame(textOf(first, false))
+      const resume = frame?.relation === 'launcher' && frame.to !== undefined
+      // the parent's call was cancelled (new input) or interrupted while this child kept running:
+      // report like a background child, once (the marker makes later turns report as well)
+      if (!resume && (await orphaned(ctx, parentSession, parent.toolCallId))) {
+        ctx.state.set(BACKGROUND_STATE, { toolCallId: parent.toolCallId })
+        await reportBackground(ctx, e, parent, true)
+        return
+      }
       await reportResume(ctx, e, parent)
       return
     }

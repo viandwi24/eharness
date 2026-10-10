@@ -324,3 +324,66 @@ describe("background subagents with approvals: 'park' (ADR-0046)", () => {
     await Promise.all([a.main.close(), a.worker.close()])
   })
 })
+
+describe('orphaned foreground parks (ADR-0046 amendment)', () => {
+  test('a user message cancels the parent wait, the child finishes later: the lead is told and woken', async () => {
+    const storage = newStorage()
+    const a = process_(storage, {
+      main: [
+        { toolCalls: [spawn('c1', { run_in_background: false })] },
+        { text: 'chat answer' },
+        { text: 'I saw the late report' },
+      ],
+      worker: [{ toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] }],
+      approve: true,
+    })
+    const first = await a.main.session('p1').send('go').result
+    expect(first.stop).toBe('tool-pending')
+    const chat = await a.main.session('p1').send('never mind, chat').result
+    expect(chat.stop).toBe('complete')
+    expect(await dump(a.main, 'p1')).toContain('Cancelled: the user sent a new message')
+    const b = process_(storage, {
+      main: [{ text: 'I saw the late report' }],
+      worker: [{ text: 'late report' }],
+      approve: true,
+    })
+    const found = await pendingSubagentApprovals(b.main.session('p1'), b.worker)
+    const approvalId = found[0]?.pending.approvals[0]?.approvalId as string
+    const childRun = b.worker
+      .session('p1:agent:c1')
+      .respond({ approvals: [{ id: approvalId, approved: true }] })
+    expect((await childRun.result).stop).toBe('complete')
+    await until('late report', async () =>
+      (await dump(b.main, 'p1')).includes('after its call was cancelled'),
+    )
+    await until('parent woke', async () =>
+      (await dump(b.main, 'p1')).includes('I saw the late report'),
+    )
+    const all = (await b.main.session('p1').messages()) as HarnessUIMessage[]
+    const events = partsOf(all, 'data-eh.event').map(
+      (p) => p.data as { name: string; text: string; data: unknown },
+    )
+    const reports = events.filter((e) => e.text.includes('late report'))
+    expect(reports).toHaveLength(1)
+    expect(reports[0]?.data).toMatchObject({
+      sessionId: 'p1:agent:c1',
+      status: 'completed',
+      taskId: 'p1:agent:c1',
+    })
+    await Promise.all([a.main.close(), a.worker.close(), b.main.close(), b.worker.close()])
+  })
+
+  test('a normally resolved foreground park sends no extra event', async () => {
+    const storage = newStorage()
+    const a = process_(storage, {
+      main: [{ toolCalls: [spawn('c1', { run_in_background: false })] }, { text: 'done' }],
+      worker: [{ text: 'the report' }],
+    })
+    await a.main.session('p1').send('go').result
+    await until('result', async () => (await dump(a.main, 'p1')).includes('done'))
+    await sleep(100)
+    const all = (await a.main.session('p1').messages()) as HarnessUIMessage[]
+    expect(partsOf(all, 'data-eh.event')).toHaveLength(0)
+    await Promise.all([a.main.close(), a.worker.close()])
+  })
+})

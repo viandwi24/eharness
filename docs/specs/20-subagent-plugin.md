@@ -368,6 +368,16 @@ the call a **background start**; a call without it stays the foreground external
 - **New user input.** Foreground waits are still cancelled by a new user message under
   `onNewInput: 'deny'` (spec 11 §4.1); delegate in the background to keep the lead free.
 
+**Orphaned foreground parks (ADR-0046 amendment).** A foreground park child keeps running when its
+parent call was answered without it: `onNewInput: 'deny'` (`WAIT_CANCELLED_NEW_INPUT`, spec 11 §4.1)
+or an `Interrupted:` result (ADR-0014). When such a child's turn ends and the parent has no open wait
+for `w_<toolCallId>`, the child's hook reads the parent's stored call (`output-error` with one of
+those texts) and reports like a durable background child: the same `eh.event` (`deliver:
+'next-step'`, `wake: true`), head `Background subagent <id> ["<name>"] (<type>: <description>)
+finished after its call was cancelled.`, and it sets the background flag in its plugin state so a
+`tool-pending` stop sends the `waiting` status event and later turns report too. A wait that was
+resolved normally (or by `reconcileSubagentWaits`) does not report again.
+
 ## 4. Multi-instance and restarts
 
 Everything the strategy needs is stored: the parent's pending wait, the child's pending state, the

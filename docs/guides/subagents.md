@@ -146,6 +146,9 @@ message no longer cancels the delegation (that happens only to foreground parks:
   storage (`next-step` + `wake`): `Background subagent … finished.` plus the report, `data: {
   sessionId, agent, status, taskId, name? }`. A child that stops waiting for a person sends a
   status event (`status: 'waiting'`) without waking the lead.
+- A foreground park whose wait was cancelled by a new user message (or interrupted) keeps running;
+  when it finishes it reports the same way (`… finished after its call was cancelled.`), so the lead
+  is never left without a result.
 - `data-subagent.run` is stored for every park call with the child session id (and `background`),
   so a UI can open the child transcript. Its status is the one at start; read the current state
   from `session.children()` / the child's stored state / the report event.
