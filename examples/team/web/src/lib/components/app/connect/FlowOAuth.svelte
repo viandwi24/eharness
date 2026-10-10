@@ -5,6 +5,7 @@
 	import type { FlowView } from '#lib/api/index.js';
 	import type { FlowSession } from '#lib/connectors/flow-core.js';
 	import { countdownText, safeUrl } from '#lib/connectors/flow-view.js';
+	import FlowFooter from './FlowFooter.svelte';
 	import { usePolling, useNow } from './waiting.svelte.js';
 
 	let { session, view, onCancel }: { session: FlowSession; view: Extract<FlowView, { type: 'oauth' }>; onCancel: () => void } = $props();
@@ -22,15 +23,20 @@
 	}
 </script>
 
-<div class="flex flex-col items-center gap-4 py-2 text-center">
-	<h3 class="text-sm font-semibold">{view.title}</h3>
-	<p class="flex items-center gap-2 text-sm text-muted-foreground" role="status"><Spinner class="size-4" />Waiting for authorization…</p>
+<div class="flex flex-col items-center gap-3 pt-2 pb-3 text-center">
+	<span class="flex size-12 items-center justify-center rounded-full bg-muted"><Spinner class="size-5" /></span>
+	<div class="flex flex-col gap-1">
+		<h3 class="text-sm font-medium">{view.title}</h3>
+		<p class="text-[13px] text-muted-foreground" role="status">Finish signing in in the window that opened. This page updates by itself.</p>
+	</div>
 	{#if ok}
-		<Button href={view.authorizeUrl} target="_blank" rel="noopener noreferrer" onclick={open}><ArrowSquareOutIcon class="size-4" />Open authorization page</Button>
+		<Button variant="outline" href={view.authorizeUrl} target="_blank" rel="noopener noreferrer" onclick={open}><ArrowSquareOutIcon class="size-4" />Open the sign-in window</Button>
 		<p class="text-xs text-muted-foreground">
-			Popup blocked? <a class="underline" href={view.authorizeUrl} target="_blank" rel="noopener noreferrer">Open the page in a new tab</a>.
+			Nothing opened? <a class="underline underline-offset-2 hover:text-foreground" href={view.authorizeUrl} target="_blank" rel="noopener noreferrer">Open it in a new tab</a>.
 		</p>
 	{/if}
 	<p class="text-xs text-muted-foreground">{countdownText(view.expiresAt, clock.value)}</p>
-	<Button variant="ghost" onclick={onCancel}>Cancel</Button>
 </div>
+<FlowFooter>
+	<Button variant="ghost" onclick={onCancel}>Cancel</Button>
+</FlowFooter>

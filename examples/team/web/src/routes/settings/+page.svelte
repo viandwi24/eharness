@@ -192,7 +192,7 @@
 		</nav>
 
 		<div class="min-h-0 min-w-0 flex-1 overflow-y-auto">
-			<div class="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 md:p-6">
+			<div class="mx-auto flex w-full flex-col gap-4 p-4 md:p-6 {section === 'providers' ? 'max-w-5xl' : 'max-w-3xl'}">
 				{#if section === 'providers'}
 					<ProvidersSettings />
 				{:else if section === 'general'}

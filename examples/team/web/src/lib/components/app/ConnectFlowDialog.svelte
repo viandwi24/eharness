@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
 	import FlowRenderer from '#lib/components/app/connect/FlowRenderer.svelte';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
 	import type { Connection } from '#lib/api/index.js';
@@ -64,9 +65,12 @@
 
 <Dialog.Root bind:open>
 	<Dialog.Content elevation="floating" class="flex max-h-[90svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-md">
-		<Dialog.Header class="border-b border-border px-5 py-4">
-			<Dialog.Title>{title}</Dialog.Title>
-			<Dialog.Description>Follow the steps to finish connecting.</Dialog.Description>
+		<Dialog.Header class="flex-row items-center gap-3 border-b border-border px-5 py-4 pr-12">
+			<ConnectorIcon icon={definitionId ? connectorsStore.connector(definitionId)?.icon : undefined} size="sm" />
+			<div class="min-w-0">
+				<Dialog.Title class="truncate text-[15px]">{title}</Dialog.Title>
+				<Dialog.Description class="text-xs">Only takes a moment. Nothing is shared until you finish.</Dialog.Description>
+			</div>
 		</Dialog.Header>
 		<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
 			{#key generation}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import FlowFooter from './FlowFooter.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
@@ -39,14 +40,14 @@
 
 <form class="flex flex-col gap-4" onsubmit={submit}>
 	<div class="flex flex-col gap-1">
-		<h3 class="text-sm font-semibold">{view.title}</h3>
+		<h3 class="text-sm font-medium">{view.title}</h3>
 		{#if view.description}<p class="text-sm text-muted-foreground">{view.description}</p>{/if}
 	</div>
 	<ul class="flex max-h-72 flex-col gap-1 overflow-y-auto" role={view.multiple ? 'group' : 'radiogroup'} aria-label={view.title}>
 		{#each view.options as o, i (o.value)}
 			{@const on = selected.includes(o.value)}
 			<li>
-				<label class="flex cursor-pointer items-start gap-3 rounded-md border border-border px-3 py-2 hover:bg-muted/50 {on ? 'border-primary' : ''}">
+				<label class="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2.5 transition-colors hover:bg-muted/50 {on ? 'border-foreground/60 bg-muted/40' : 'border-border'}">
 					{#if view.multiple}
 						<Checkbox checked={on} onCheckedChange={() => pick(o.value)} disabled={busy} class="mt-0.5" />
 					{:else}
@@ -62,9 +63,9 @@
 	</ul>
 	{#if error}<p class="text-sm text-destructive-text" role="alert">{error}</p>{/if}
 	{#if view.message}<p class="text-sm text-muted-foreground">{view.message}</p>{/if}
-	<div class="flex flex-wrap justify-end gap-2">
+	<FlowFooter>
 		<Button type="button" variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
 		{#if canBack}<Button type="button" variant="outline" onclick={onBack} disabled={busy}>Back</Button>{/if}
 		<Button type="submit" disabled={busy}>{#if busy}<Spinner class="size-4" />{/if}Continue</Button>
-	</div>
+	</FlowFooter>
 </form>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import FlowFooter from './FlowFooter.svelte';
 	import SchemaForm from '#lib/components/app/SchemaForm.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
@@ -42,14 +43,14 @@
 
 <form class="flex flex-col gap-4" onsubmit={submit}>
 	<div class="flex flex-col gap-1">
-		<h3 class="text-sm font-semibold">{view.title}</h3>
-		{#if view.description}<p class="text-sm text-muted-foreground">{view.description}</p>{/if}
+		<h3 class="text-sm font-medium">{view.title}</h3>
+		{#if view.description}<p class="text-[13px] text-muted-foreground">{view.description}</p>{/if}
 	</div>
 	<SchemaForm fields={view.fields} bind:values current={view.values} {errors} idPrefix="cf" disabled={busy} />
 	{#if view.message}<p class="text-sm text-destructive-text" role="alert">{view.message}</p>{/if}
-	<div class="flex flex-wrap justify-end gap-2">
+	<FlowFooter>
 		<Button type="button" variant="ghost" onclick={onCancel} disabled={busy}>Cancel</Button>
 		{#if canBack}<Button type="button" variant="outline" onclick={onBack} disabled={busy}>Back</Button>{/if}
 		<Button type="submit" disabled={busy}>{#if busy}<Spinner class="size-4" />{/if}{view.submitLabel}</Button>
-	</div>
+	</FlowFooter>
 </form>
