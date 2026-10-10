@@ -4,6 +4,7 @@
 </script>
 
 <script lang="ts">
+	import ShellHeader from './ShellHeader.svelte';
 	import SidebarToggle from './SidebarToggle.svelte';
 	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeft';
 	import type { Snippet } from 'svelte';
@@ -33,33 +34,35 @@
 	} = $props();
 </script>
 
-<header class="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
-	<Button href={backHref} variant="ghost" size="icon-sm" class="md:hidden" aria-label="Back">
-		<CaretLeftIcon class="size-4" />
-	</Button>
-	<SidebarToggle whenCollapsed />
-	<div class="flex min-w-0 flex-1 flex-col justify-center">
-		{#if breadcrumb?.length}
-			<Breadcrumb.Root>
-				<Breadcrumb.List class="flex-nowrap gap-1.5 text-sm sm:gap-1.5">
-					{#each breadcrumb as c (c.label + (c.href ?? ''))}
-						<Breadcrumb.Item class="shrink-0">
-							{#if c.href}<Breadcrumb.Link href={c.href}>{c.label}</Breadcrumb.Link>{:else}{c.label}{/if}
+<ShellHeader>
+	<header class="flex h-14 shrink-0 items-center gap-2 px-3">
+		<Button href={backHref} variant="ghost" size="icon-sm" class="md:hidden" aria-label="Back">
+			<CaretLeftIcon class="size-4" />
+		</Button>
+		<SidebarToggle whenCollapsed />
+		<div class="flex min-w-0 flex-1 flex-col justify-center">
+			{#if breadcrumb?.length}
+				<Breadcrumb.Root>
+					<Breadcrumb.List class="flex-nowrap gap-1.5 text-sm sm:gap-1.5">
+						{#each breadcrumb as c (c.label + (c.href ?? ''))}
+							<Breadcrumb.Item class="shrink-0">
+								{#if c.href}<Breadcrumb.Link href={c.href}>{c.label}</Breadcrumb.Link>{:else}{c.label}{/if}
+							</Breadcrumb.Item>
+							<Breadcrumb.Separator />
+						{/each}
+						<Breadcrumb.Item class="min-w-0">
+							<h1 class="truncate text-sm font-medium text-foreground">{title}</h1>
 						</Breadcrumb.Item>
-						<Breadcrumb.Separator />
-					{/each}
-					<Breadcrumb.Item class="min-w-0">
-						<h1 class="truncate text-sm font-medium text-foreground">{title}</h1>
-					</Breadcrumb.Item>
-				</Breadcrumb.List>
-			</Breadcrumb.Root>
-		{:else}
-			<h1 class="truncate text-sm leading-5 font-medium">{title}</h1>
-		{/if}
-		{#if description}<p class="truncate text-xs leading-4 text-muted-foreground">{description}</p>{/if}
-	</div>
-	<div class="flex shrink-0 items-center gap-2">
-		{@render actions?.()}
-		{@render children?.()}
-	</div>
-</header>
+					</Breadcrumb.List>
+				</Breadcrumb.Root>
+			{:else}
+				<h1 class="truncate text-sm leading-5 font-medium">{title}</h1>
+			{/if}
+			{#if description}<p class="truncate text-xs leading-4 text-muted-foreground">{description}</p>{/if}
+		</div>
+		<div class="flex shrink-0 items-center gap-2">
+			{@render actions?.()}
+			{@render children?.()}
+		</div>
+	</header>
+</ShellHeader>

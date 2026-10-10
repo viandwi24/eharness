@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ShellHeader from './ShellHeader.svelte';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { Shimmer } from '#lib/components/ai/shimmer/index.js';
 	import SidebarToggle from './SidebarToggle.svelte';
@@ -183,69 +184,71 @@
 
 <Tooltip.Provider delayDuration={300}>
 <section class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
-	<header class="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
-		<Button href="/" variant="ghost" size="icon-sm" class="md:hidden" aria-label="Back to agents">
-			<CaretLeftIcon class="size-4" />
-		</Button>
-		<SidebarToggle whenCollapsed />
-		{#if agent}
-			<button
-				type="button"
-				class="-mx-1 flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
-				aria-label="Edit {agent.name}"
-				onclick={() => openEditAgent(agent.id)}
-			>
-				<AgentAvatar seed={agent.id} color={agent.color} size={32} label={agent.name} />
-				<span class="min-w-0">
-					<span class="block truncate text-sm leading-tight font-medium">{agent.name}</span>
-					{#if agent.description}<span class="block truncate text-xs leading-tight text-muted-foreground">{agent.description}</span>{/if}
-				</span>
-			</button>
-		{:else}
-			<div class="flex flex-1 items-center gap-2.5">
-				<Skeleton class="size-8 rounded-lg" />
-				<div class="flex flex-col gap-1.5"><Skeleton class="h-3 w-28" /><Skeleton class="h-2.5 w-44" /></div>
-			</div>
-		{/if}
-		<div class="flex shrink-0 items-center gap-0.5">
-			<DropdownMenu.Root>
-				<DropdownMenu.Trigger>
-					{#snippet child({ props })}
-						<Button {...props} variant="ghost" size="icon-sm" aria-label="Agent actions" disabled={!agent}>
-							<DotsThreeIcon class="size-4" weight="bold" />
-						</Button>
-					{/snippet}
-				</DropdownMenu.Trigger>
-				<DropdownMenu.Content align="end" class="w-56">
-					<DropdownMenu.Item onSelect={() => agent && openEditAgent(agent.id)}>
-						<PencilSimpleIcon /> Agent settings
-					</DropdownMenu.Item>
-					<DropdownMenu.Item disabled={compacting || busy} onSelect={() => void compact()}>
-						<ArrowsInLineVerticalIcon /> {compacting ? 'Compacting…' : 'Compact conversation'}
-					</DropdownMenu.Item>
-					<DropdownMenu.Separator />
-					<DropdownMenu.Item onSelect={onTogglePanel}>
-						<SidebarSimpleIcon /> {panelOpen ? 'Hide session panel' : 'Show session panel'}
-						<DropdownMenu.Shortcut>⌘.</DropdownMenu.Shortcut>
-					</DropdownMenu.Item>
-				</DropdownMenu.Content>
-			</DropdownMenu.Root>
-			{#if wide}
-				{@render panelToggle({})}
+	<ShellHeader>
+	<header class="flex h-14 shrink-0 items-center gap-2 px-3">
+			<Button href="/" variant="ghost" size="icon-sm" class="md:hidden" aria-label="Back to agents">
+				<CaretLeftIcon class="size-4" />
+			</Button>
+			<SidebarToggle whenCollapsed />
+			{#if agent}
+				<button
+					type="button"
+					class="-mx-1 flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1 py-1 text-left transition-colors hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
+					aria-label="Edit {agent.name}"
+					onclick={() => openEditAgent(agent.id)}
+				>
+					<AgentAvatar seed={agent.id} color={agent.color} size={32} label={agent.name} />
+					<span class="min-w-0">
+						<span class="block truncate text-sm leading-tight font-medium">{agent.name}</span>
+						{#if agent.description}<span class="block truncate text-xs leading-tight text-muted-foreground">{agent.description}</span>{/if}
+					</span>
+				</button>
 			{:else}
-				<Popover.Root bind:open={popoverOpen}>
-					<Popover.Trigger>
-						{#snippet child({ props })}
-							{@render panelToggle(props)}
-						{/snippet}
-					</Popover.Trigger>
-					<Popover.Content align="end" class="max-h-[min(80svh,40rem)] w-[min(92vw,22rem)] overflow-y-auto p-0" aria-label="Agent session">
-						<SessionContext {agentId} elevation="flat" class="max-w-none border-0 shadow-none" onClose={() => (popoverOpen = false)} />
-					</Popover.Content>
-				</Popover.Root>
+				<div class="flex flex-1 items-center gap-2.5">
+					<Skeleton class="size-8 rounded-lg" />
+					<div class="flex flex-col gap-1.5"><Skeleton class="h-3 w-28" /><Skeleton class="h-2.5 w-44" /></div>
+				</div>
 			{/if}
-		</div>
-	</header>
+			<div class="flex shrink-0 items-center gap-0.5">
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						{#snippet child({ props })}
+							<Button {...props} variant="ghost" size="icon-sm" aria-label="Agent actions" disabled={!agent}>
+								<DotsThreeIcon class="size-4" weight="bold" />
+							</Button>
+						{/snippet}
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content align="end" class="w-56">
+						<DropdownMenu.Item onSelect={() => agent && openEditAgent(agent.id)}>
+							<PencilSimpleIcon /> Agent settings
+						</DropdownMenu.Item>
+						<DropdownMenu.Item disabled={compacting || busy} onSelect={() => void compact()}>
+							<ArrowsInLineVerticalIcon /> {compacting ? 'Compacting…' : 'Compact conversation'}
+						</DropdownMenu.Item>
+						<DropdownMenu.Separator />
+						<DropdownMenu.Item onSelect={onTogglePanel}>
+							<SidebarSimpleIcon /> {panelOpen ? 'Hide session panel' : 'Show session panel'}
+							<DropdownMenu.Shortcut>⌘.</DropdownMenu.Shortcut>
+						</DropdownMenu.Item>
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+				{#if wide}
+					{@render panelToggle({})}
+				{:else}
+					<Popover.Root bind:open={popoverOpen}>
+						<Popover.Trigger>
+							{#snippet child({ props })}
+								{@render panelToggle(props)}
+							{/snippet}
+						</Popover.Trigger>
+						<Popover.Content align="end" class="max-h-[min(80svh,40rem)] w-[min(92vw,22rem)] overflow-y-auto p-0" aria-label="Agent session">
+							<SessionContext {agentId} elevation="flat" class="max-w-none border-0 shadow-none" onClose={() => (popoverOpen = false)} />
+						</Popover.Content>
+					</Popover.Root>
+				{/if}
+			</div>
+		</header>
+</ShellHeader>
 
 	<!-- The conversation fills the pane to the bottom; the pending card and the composer float over
 	     it (dock), and the content is padded by the dock's height so the last message stays visible. -->

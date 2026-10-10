@@ -1,5 +1,6 @@
 <script lang="ts">
 	import * as InsetPanel from '#lib/components/ui/inset-panel/index.js';
+	import { shell } from '#lib/stores/shell.svelte.js';
 	import './layout.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import { page } from '$app/state';
@@ -52,7 +53,11 @@
 			<InsetPanel.Root
 				class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 max-md:rounded-none max-md:border-0 md:my-2 md:mr-2 md:flex md:h-auto"
 			>
-				<InsetPanel.Body class="mt-0.5 flex min-h-0 text-foreground max-md:m-0 max-md:rounded-none max-md:border-0">
+				{#if shell.header}
+					<!-- page header on the shell, above the plate (edmi inset panel recipe) -->
+					<InsetPanel.Header class="block p-0 font-normal">{@render shell.header()}</InsetPanel.Header>
+				{/if}
+				<InsetPanel.Body class="{shell.header ? '' : 'mt-0.5'} flex min-h-0 text-foreground max-md:m-0 max-md:rounded-none max-md:border-0">
 					{@render children()}
 				</InsetPanel.Body>
 			</InsetPanel.Root>
