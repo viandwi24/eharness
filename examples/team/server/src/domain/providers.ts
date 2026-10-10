@@ -76,6 +76,8 @@ export interface ModelView {
   reasoning?: boolean
   tools?: boolean
   source: 'extra' | 'live' | 'catalog'
+  /** Only with `all`: false when the profile's allow / deny hides the model. */
+  enabled?: boolean
 }
 
 export interface TestResultView {

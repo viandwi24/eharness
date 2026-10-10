@@ -290,7 +290,7 @@
 				<div class="flex min-w-0 flex-col gap-6 rounded-xl border border-border p-4 sm:p-5">
 					<div class="flex flex-wrap items-start gap-3">
 						<ProviderIcon definitionId={p.definitionId} size="lg" />
-						<div class="min-w-0 flex-1">
+						<div class="min-w-44 flex-1">
 							<div class="flex flex-wrap items-center gap-1.5">
 								<h3 class="truncate text-base font-semibold">{p.label}</h3>
 								{#each profileStatuses(p) as st (st)}<StatusBadge status={st} />{/each}
@@ -333,7 +333,7 @@
 						</dl>
 					</section>
 
-					{#key p.id}<ProviderModels profileId={p.id} />{/key}
+					{#key p.id}<ProviderModels profileId={p.id} readOnly={p.source === 'env'} />{/key}
 				</div>
 			{/if}
 		</div>

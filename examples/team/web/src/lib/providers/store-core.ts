@@ -20,6 +20,8 @@ export const emptyProvidersState = (): ProvidersState => ({ providers: [], profi
 export function createProvidersCore(api: ApiClient, state: ProvidersState) {
 	// model lists are cached for the page's life; `revision` drops them when profiles change
 	const lists = new Map<string, Promise<ProviderModel[]>>();
+	// the same with the models a profile's allow / deny hides (`all=true`): the model switches
+	const everything = new Map<string, Promise<ProviderModel[]>>();
 	let seq = 0;
 
 	const core = {
@@ -66,10 +68,29 @@ export function createProvidersCore(api: ApiClient, state: ProvidersState) {
 			return p;
 		},
 
+		/** Model list with the hidden ones too, each marked `enabled` (cached like `models`). */
+		allModels(profileId: string, refresh = false): Promise<ProviderModel[]> {
+			const hit = everything.get(profileId);
+			if (hit && !refresh) return hit;
+			const p = api
+				.get('/providers/profiles/{id}/models', { params: { id: profileId }, query: { all: 'true' as const, ...(refresh ? { refresh: 'true' as const } : {}) } })
+				.then((r) => r.models);
+			everything.set(profileId, p);
+			p.catch(() => {
+				if (everything.get(profileId) === p) everything.delete(profileId);
+			});
+			return p;
+		},
+
 		/** Forget cached model lists (a profile changed). */
 		forget(profileId?: string): void {
-			if (profileId === undefined) lists.clear();
-			else lists.delete(profileId);
+			if (profileId === undefined) {
+				lists.clear();
+				everything.clear();
+			} else {
+				lists.delete(profileId);
+				everything.delete(profileId);
+			}
 		}
 	};
 	return core;

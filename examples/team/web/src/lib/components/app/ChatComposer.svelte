@@ -22,6 +22,7 @@
 	import type { ChatStatus } from 'ai';
 	import { toast } from 'svelte-sonner';
 	import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES } from '#lib/chat/constants.js';
+	import ChatToolsMenu from './ChatToolsMenu.svelte';
 	import ContextMeter from './ContextMeter.svelte';
 	import ModeSwitch from './ModeSwitch.svelte';
 
@@ -83,6 +84,7 @@
 				<PromptInputButton aria-label="Attach files" title="Attach files" onclick={openFileDialog}>
 					<PaperclipIcon class="size-4" />
 				</PromptInputButton>
+				{#if agentId}<ChatToolsMenu {agentId} />{/if}
 				{#if agentId}<ModeSwitch bind:this={modeSwitch} {agentId} />{/if}
 			</PromptInputTools>
 			<div class="flex items-center gap-1.5">

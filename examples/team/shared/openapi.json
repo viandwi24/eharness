@@ -841,6 +841,96 @@
           "message"
         ]
       },
+      "ChatTools": {
+        "type": "object",
+        "properties": {
+          "connectors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "connectionId": {
+                  "type": "string"
+                },
+                "connectorId": {
+                  "type": "string",
+                  "example": "github"
+                },
+                "name": {
+                  "type": "string",
+                  "example": "GitHub"
+                },
+                "icon": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "accountLabel": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "builtin",
+                    "curated",
+                    "custom"
+                  ]
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "connected",
+                    "needs-auth",
+                    "error"
+                  ]
+                },
+                "on": {
+                  "type": "boolean",
+                  "description": "Offered to the model in this chat."
+                },
+                "tools": {
+                  "type": "integer",
+                  "description": "Tools it contributes."
+                }
+              },
+              "required": [
+                "connectionId",
+                "connectorId",
+                "name",
+                "label",
+                "source",
+                "status",
+                "on",
+                "tools"
+              ]
+            }
+          },
+          "offCount": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "connectors",
+          "offCount"
+        ]
+      },
+      "ChatToolsPut": {
+        "type": "object",
+        "properties": {
+          "off": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 200,
+            "description": "Connection ids switched off in this chat (replaces the previous list)."
+          }
+        },
+        "required": [
+          "off"
+        ]
+      },
       "ChatStats": {
         "type": "object",
         "properties": {
@@ -3091,6 +3181,10 @@
               "catalog"
             ],
             "description": "Where the entry comes from: added by hand, the provider API, or the public catalog."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Only with `all=true`: false when the profile's `models.allow` / `models.deny` hides the model (agents cannot pick it)."
           }
         },
         "required": [
@@ -3130,6 +3224,18 @@
           "icon": {
             "type": "string",
             "description": "An icon name the UI resolves."
+          },
+          "publisher": {
+            "type": "string",
+            "description": "Who makes or runs the service."
+          },
+          "homepage": {
+            "type": "string",
+            "description": "The service site (http(s))."
+          },
+          "docsUrl": {
+            "type": "string",
+            "description": "Documentation (http(s))."
           },
           "category": {
             "type": "string"
@@ -5933,6 +6039,164 @@
         }
       }
     },
+    "/agents/{id}/chat/tools": {
+      "get": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Connectors this chat offers to the model (composer tools menu)",
+        "description": "The agent's enabled connections (and web search), each with whether this chat offers it. A new chat offers all of them.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connectors and their switches",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatTools"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "chats"
+        ],
+        "summary": "Switch connectors off or on for this chat only",
+        "description": "Replaces the list of switched-off connections (400 `UNKNOWN_CONNECTION` for an id that is not a connector of this agent). Takes effect at the next model step (a running turn included). The tool definitions and their order do not change (prompt cache): switched-off tools are only not offered. Permissions and pinned asks of the tools that stay on are unchanged.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatToolsPut"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatTools"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/agents/{id}/stats": {
       "get": {
         "tags": [
@@ -8289,6 +8553,20 @@
             "required": false,
             "description": "Ask the provider again instead of using the 5 minute cached list.",
             "name": "refresh",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "`true` also lists the models the profile's allow / deny hides, each with `enabled` (for the model toggles). Default: only the models agents can pick."
+            },
+            "required": false,
+            "description": "`true` also lists the models the profile's allow / deny hides, each with `enabled` (for the model toggles). Default: only the models agents can pick.",
+            "name": "all",
             "in": "query"
           }
         ],

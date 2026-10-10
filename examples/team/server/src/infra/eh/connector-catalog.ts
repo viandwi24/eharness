@@ -126,6 +126,7 @@ function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition
   })
   return defineConnector({
     ...base,
+    docsUrl: 'https://modelcontextprotocol.io/docs/getting-started/intro',
     // a remote tool never shadows a built-in one and rules keep one name per tool
     toolPrefix: 'always',
     settings,
@@ -185,6 +186,9 @@ function github(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
     name: 'GitHub',
     description: 'Work with repositories, issues and pull requests.',
     icon: 'github-logo',
+    publisher: 'GitHub',
+    homepage: 'https://github.com/github/github-mcp-server',
+    docsUrl: 'https://github.com/github/github-mcp-server/blob/main/docs/remote-server.md',
     category: 'development',
     source: 'curated',
     scopes: ['workspace', 'agent'],

@@ -5,7 +5,9 @@ import {
   chatMessages,
   chatStats,
   compactChat,
+  getChatTools,
   resumeChat,
+  setChatTools,
 } from '../../app/chat.ts'
 import type { ChatMessage, Deps } from '../../app/ports.ts'
 import { MAX_REQUEST_BYTES, requestLimit } from '../body-limit.ts'
@@ -15,6 +17,8 @@ import {
   ChatQueuedSchema,
   ChatRequestSchema,
   ChatStatsSchema,
+  ChatToolsPutSchema,
+  ChatToolsSchema,
   CompactResultSchema,
   EventStreamSchema,
   MessagesPageSchema,
@@ -172,6 +176,39 @@ const statsRoute = createRoute({
   },
 })
 
+const toolsGetRoute = createRoute({
+  method: 'get',
+  path: '/agents/{id}/chat/tools',
+  tags: ['chats'],
+  summary: 'Connectors this chat offers to the model (composer tools menu)',
+  description:
+    "The agent's enabled connections (and web search), each with whether this chat offers it. A new chat offers all of them.",
+  security,
+  request: { params: IdParam },
+  responses: {
+    200: { description: 'The connectors and their switches', content: json(ChatToolsSchema) },
+    404: jsonError('Unknown agent'),
+    ...errorResponses,
+  },
+})
+
+const toolsPutRoute = createRoute({
+  method: 'put',
+  path: '/agents/{id}/chat/tools',
+  tags: ['chats'],
+  summary: 'Switch connectors off or on for this chat only',
+  description:
+    'Replaces the list of switched-off connections (400 `UNKNOWN_CONNECTION` for an id that is not a connector of this agent). Takes effect at the next model step (a running turn included). The tool definitions and their order do not change (prompt cache): switched-off tools are only not offered. Permissions and pinned asks of the tools that stay on are unchanged.',
+  security,
+  request: { params: IdParam, body: { required: true, content: json(ChatToolsPutSchema) } },
+  responses: {
+    200: { description: 'The new state', content: json(ChatToolsSchema) },
+    404: jsonError('Unknown agent'),
+    409: jsonError('Archived agent'),
+    ...errorResponses,
+  },
+})
+
 export function chatRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(chatRoute, async (c) => {
@@ -218,5 +255,11 @@ export function chatRoutes(deps: Deps): OpenAPIHono {
       const result = await compactChat(deps, c.req.valid('param').id)
       return c.json(result as never, 200)
     })
+    .openapi(toolsGetRoute, async (c) =>
+      c.json(await getChatTools(deps, c.req.valid('param').id), 200),
+    )
+    .openapi(toolsPutRoute, async (c) =>
+      c.json(await setChatTools(deps, c.req.valid('param').id, c.req.valid('json').off), 200),
+    )
     .openapi(statsRoute, async (c) => c.json(await chatStats(deps, c.req.valid('param').id), 200))
 }

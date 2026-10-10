@@ -29,6 +29,7 @@ import { newId } from './domain/ids.ts'
 import { areaOf } from './domain/library.ts'
 import { createApp } from './http/app.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
+import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
@@ -44,6 +45,7 @@ import {
 } from './infra/eh/agent-factory.ts'
 import { createChangeFeed } from './infra/eh/change-feed.ts'
 import { createChatService } from './infra/eh/chat-service.ts'
+import { createChatToolsService } from './infra/eh/chat-tools-service.ts'
 import type { CatalogOptions } from './infra/eh/connector-catalog.ts'
 import { type ConnectorsRuntime, createConnectors, SEALED_KINDS } from './infra/eh/connectors.ts'
 import { migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
@@ -274,6 +276,7 @@ export function compose(config: ServerConfig): Server {
   connectorsRef = connectors
   const routineStore = sqliteRoutineStore(conn.sqlite)
   const sessionModes = sqliteSessionModes(conn.sqlite)
+  const chatToolsStore = sqliteChatTools(conn.sqlite)
   let routines: RoutineService | undefined
   const factory = createAgentFactory({
     sqlite: conn.sqlite,
@@ -287,6 +290,7 @@ export function compose(config: ServerConfig): Server {
     agentById: (id) => agents.get(id),
     ...(config.classifier === undefined ? {} : { classifier: config.classifier }),
     sessionModes,
+    chatTools: chatToolsStore,
     // Auto blocked / paused / resumed: the web shows "auto paused" from this event
     onAutoEvent: ({ sessionId, agentId, event, state, mode }) =>
       events.append({
@@ -333,6 +337,10 @@ export function compose(config: ServerConfig): Server {
   const deps: Deps = {
     agents,
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
+    chatTools: createChatToolsService({
+      store: chatToolsStore,
+      agentConnectors: (agent) => connectors.agentConnectors(agent),
+    }),
     uploads: sqliteUploadStore(conn.sqlite, { onChange: onFileChange }),
     tasks,
     team,

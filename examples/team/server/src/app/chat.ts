@@ -122,6 +122,15 @@ export function compactChat(deps: Deps, agentId: string) {
   return deps.chat.compact(liveAgent(deps, agentId))
 }
 
+export function getChatTools(deps: Deps, agentId: string) {
+  return deps.chatTools.get(anyAgent(deps, agentId))
+}
+
+/** Switch connectors off (or back on) for this chat; the next model step sees the change. */
+export function setChatTools(deps: Deps, agentId: string, off: string[]) {
+  return deps.chatTools.set(liveAgent(deps, agentId), off, deps.clock.now())
+}
+
 export function chatStats(deps: Deps, agentId: string): Promise<ChatStats> {
   return deps.chat.stats(anyAgent(deps, agentId))
 }

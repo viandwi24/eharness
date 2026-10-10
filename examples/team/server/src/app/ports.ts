@@ -160,6 +160,34 @@ export interface ChatPort {
   context(agent: AgentDef): Promise<{ stats: ChatStats; tools: ToolInfo[] }>
 }
 
+/** A connector of the agent as the composer tools menu shows it. */
+export interface ChatToolConnector {
+  connectionId: string
+  connectorId: string
+  name: string
+  icon?: string
+  label: string
+  accountLabel?: string
+  source: 'builtin' | 'curated' | 'custom'
+  status: 'connected' | 'needs-auth' | 'error'
+  /** Offered to the model in this chat. */
+  on: boolean
+  /** Tools it contributes (not counting the ones its mode turns off). */
+  tools: number
+}
+
+export interface ChatToolsState {
+  connectors: ChatToolConnector[]
+  offCount: number
+}
+
+/** Per-chat connector switches (the composer tools menu). */
+export interface ChatToolsPort {
+  get(agent: AgentDef): Promise<ChatToolsState>
+  /** Replace the connections switched off in this chat. */
+  set(agent: AgentDef, off: string[], now: number): Promise<ChatToolsState>
+}
+
 export interface ToolInfo {
   name: string
   description: string | null
@@ -384,7 +412,7 @@ export interface ProvidersPort {
   update(id: string, patch: ProfilePatch): Promise<ProfileView>
   remove(id: string): Promise<void>
   test(id: string): Promise<TestResultView>
-  models(id: string, options: { refresh: boolean }): Promise<ModelView[]>
+  models(id: string, options: { refresh: boolean; all?: boolean }): Promise<ModelView[]>
 }
 
 /**
@@ -430,6 +458,7 @@ export type { AgentConnectors }
 export interface Deps {
   agents: AgentRepo
   chat: ChatPort
+  chatTools: ChatToolsPort
   uploads: UploadStore
   tasks: TaskStore
   team: TeamPort

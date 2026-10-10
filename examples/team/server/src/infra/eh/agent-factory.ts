@@ -54,9 +54,11 @@ import {
 } from '../../domain/modes.ts'
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
+import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { ActivityLog } from './activity-log.ts'
+import { chatTools } from './chat-tools-plugin.ts'
 import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
@@ -118,6 +120,8 @@ export interface AgentFactoryDeps {
   > & { rev: number }
   /** Modes people picked per session (`domain/modes.ts`); absent = nobody can pick one. */
   sessionModes?: Pick<SessionModeStore, 'get'>
+  /** Connections people switched off per chat (the composer tools menu); absent = none. */
+  chatTools?: Pick<ChatToolsStore, 'off'>
   /** Definition by id: a child's parent session `dm:<agentId>` names its agent. */
   agentById?: (id: string) => AgentDef | undefined
   /**
@@ -443,6 +447,14 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           ]
         : []),
       ...out.plugins,
+      ...(deps.chatTools === undefined
+        ? []
+        : [
+            chatTools({
+              off: (sessionId) => new Set(deps.chatTools?.off(sessionId) ?? []),
+              origins: out.toolNameMap,
+            }),
+          ]),
       sessionPermissions({
         createEngine,
         registry: engines,

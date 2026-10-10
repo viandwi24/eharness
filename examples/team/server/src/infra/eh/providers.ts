@@ -201,6 +201,7 @@ export function createProviderService(options: ProviderServiceOptions): Provider
     ...(m.reasoning === undefined ? {} : { reasoning: m.reasoning }),
     ...(m.tools === undefined ? {} : { tools: m.tools }),
     source: m.source,
+    ...(m.enabled === undefined ? {} : { enabled: m.enabled }),
   })
 
   return {
@@ -279,7 +280,12 @@ export function createProviderService(options: ProviderServiceOptions): Provider
       await ready()
       if (!views.some((p) => p.id === id)) throw notFound('provider profile', id)
       try {
-        return (await manager.models(id, { refresh: o.refresh })).map(toModelView)
+        return (
+          await manager.models(id, {
+            refresh: o.refresh,
+            ...(o.all === true ? { includeDisabled: true } : {}),
+          })
+        ).map(toModelView)
       } catch (error) {
         if (error instanceof DomainError) throw error
         const e = error as { code?: unknown; message?: string }

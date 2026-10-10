@@ -875,6 +875,141 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/chat/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Connectors this chat offers to the model (composer tools menu)
+         * @description The agent's enabled connections (and web search), each with whether this chat offers it. A new chat offers all of them.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The connectors and their switches */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatTools"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        /**
+         * Switch connectors off or on for this chat only
+         * @description Replaces the list of switched-off connections (400 `UNKNOWN_CONNECTION` for an id that is not a connector of this agent). Takes effect at the next model step (a running turn included). The tool definitions and their order do not change (prompt cache): switched-off tools are only not offered. Permissions and pinned asks of the tools that stay on are unchanged.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChatToolsPut"];
+                };
+            };
+            responses: {
+                /** @description The new state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatTools"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/stats": {
         parameters: {
             query?: never;
@@ -2954,6 +3089,8 @@ export interface paths {
                 query?: {
                     /** @description Ask the provider again instead of using the 5 minute cached list. */
                     refresh?: "true" | "false";
+                    /** @description `true` also lists the models the profile's allow / deny hides, each with `enabled` (for the model toggles). Default: only the models agents can pick. */
+                    all?: "true" | "false";
                 };
                 header?: never;
                 path: {
@@ -4938,6 +5075,31 @@ export interface components {
             compacted: boolean;
             message: components["schemas"]["UiMessage"] & (Record<string, never> | null);
         };
+        ChatTools: {
+            connectors: {
+                connectionId: string;
+                /** @example github */
+                connectorId: string;
+                /** @example GitHub */
+                name: string;
+                icon?: string;
+                label: string;
+                accountLabel?: string;
+                /** @enum {string} */
+                source: "builtin" | "curated" | "custom";
+                /** @enum {string} */
+                status: "connected" | "needs-auth" | "error";
+                /** @description Offered to the model in this chat. */
+                on: boolean;
+                /** @description Tools it contributes. */
+                tools: number;
+            }[];
+            offCount: number;
+        };
+        ChatToolsPut: {
+            /** @description Connection ids switched off in this chat (replaces the previous list). */
+            off: string[];
+        };
         ChatStats: {
             /** @description A turn runs in this process. */
             running: boolean;
@@ -5576,6 +5738,8 @@ export interface components {
              * @enum {string}
              */
             source: "extra" | "live" | "catalog";
+            /** @description Only with `all=true`: false when the profile's `models.allow` / `models.deny` hides the model (agents cannot pick it). */
+            enabled?: boolean;
         };
         ConnectorList: {
             connectors: components["schemas"]["Connector"][];
@@ -5588,6 +5752,12 @@ export interface components {
             description: string;
             /** @description An icon name the UI resolves. */
             icon?: string;
+            /** @description Who makes or runs the service. */
+            publisher?: string;
+            /** @description The service site (http(s)). */
+            homepage?: string;
+            /** @description Documentation (http(s)). */
+            docsUrl?: string;
             category: string;
             /** @enum {string} */
             source: "builtin" | "curated" | "custom";

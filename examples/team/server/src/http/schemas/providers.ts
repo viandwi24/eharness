@@ -171,6 +171,10 @@ export const ModelSchema = z
       description:
         'Where the entry comes from: added by hand, the provider API, or the public catalog.',
     }),
+    enabled: z.boolean().optional().openapi({
+      description:
+        "Only with `all=true`: false when the profile's `models.allow` / `models.deny` hides the model (agents cannot pick it).",
+    }),
   })
   .openapi('ProviderModel')
 
@@ -202,4 +206,8 @@ export const ModelsQuery = z.object({
     .enum(['true', 'false'])
     .optional()
     .openapi({ description: 'Ask the provider again instead of using the 5 minute cached list.' }),
+  all: z.enum(['true', 'false']).optional().openapi({
+    description:
+      "`true` also lists the models the profile's allow / deny hides, each with `enabled` (for the model toggles). Default: only the models agents can pick.",
+  }),
 })

@@ -1,6 +1,34 @@
 import { z } from '@hono/zod-openapi'
 
 /** A UI message (AI SDK `UIMessage`): JSON data, the part shapes are the AI SDK's (ADR-0001). */
+export const ChatToolsSchema = z
+  .object({
+    connectors: z.array(
+      z.object({
+        connectionId: z.string(),
+        connectorId: z.string().openapi({ example: 'github' }),
+        name: z.string().openapi({ example: 'GitHub' }),
+        icon: z.string().optional(),
+        label: z.string(),
+        accountLabel: z.string().optional(),
+        source: z.enum(['builtin', 'curated', 'custom']),
+        status: z.enum(['connected', 'needs-auth', 'error']),
+        on: z.boolean().openapi({ description: 'Offered to the model in this chat.' }),
+        tools: z.number().int().openapi({ description: 'Tools it contributes.' }),
+      }),
+    ),
+    offCount: z.number().int(),
+  })
+  .openapi('ChatTools')
+
+export const ChatToolsPutSchema = z
+  .object({
+    off: z.array(z.string()).max(200).openapi({
+      description: 'Connection ids switched off in this chat (replaces the previous list).',
+    }),
+  })
+  .openapi('ChatToolsPut')
+
 export const UiMessageSchema = z
   .looseObject({
     id: z.string().optional(),

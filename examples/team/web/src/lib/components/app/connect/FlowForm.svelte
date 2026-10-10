@@ -3,7 +3,7 @@
 	import SchemaForm from '#lib/components/app/SchemaForm.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { formPayload } from '#lib/connectors/flow-view.js';
+	import { formPayload, friendlyError, repeatsDialogTitle } from '#lib/connectors/flow-view.js';
 	import type { FlowView } from '#lib/api/index.js';
 	import { initialValues, type FormValues } from '#lib/providers/form.js';
 
@@ -27,7 +27,7 @@
 	// svelte-ignore state_referenced_locally
 	let values = $state<FormValues>(initialValues(view.fields, view.values));
 	let local = $state<Record<string, string>>({});
-	const errors = $derived({ ...(view.errors ?? {}), ...local });
+	const errors = $derived(Object.fromEntries(Object.entries({ ...(view.errors ?? {}), ...local }).map(([k, v]) => [k, friendlyError(v)])));
 
 	function submit(e: SubmitEvent): void {
 		e.preventDefault();
@@ -43,7 +43,7 @@
 
 <form class="flex flex-col gap-4" onsubmit={submit}>
 	<div class="flex flex-col gap-1">
-		<h3 class="text-sm font-medium">{view.title}</h3>
+		{#if !repeatsDialogTitle(view.title)}<h3 class="text-sm font-medium">{view.title}</h3>{/if}
 		{#if view.description}<p class="text-[13px] text-muted-foreground">{view.description}</p>{/if}
 	</div>
 	<SchemaForm fields={view.fields} bind:values current={view.values} {errors} idPrefix="cf" disabled={busy} />

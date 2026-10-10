@@ -8,8 +8,8 @@ export const createProfile = (deps: Deps, input: ProfileCreate) => deps.provider
 export const updateProfile = (deps: Deps, id: string, patch: ProfilePatch) =>
   deps.providers.update(id, patch)
 export const testProfile = (deps: Deps, id: string) => deps.providers.test(id)
-export const listProfileModels = (deps: Deps, id: string, refresh: boolean) =>
-  deps.providers.models(id, { refresh })
+export const listProfileModels = (deps: Deps, id: string, refresh: boolean, all = false) =>
+  deps.providers.models(id, { refresh, all })
 
 /** Delete a profile unless an agent or the workspace default still points at it. */
 export async function deleteProfile(deps: Deps, id: string): Promise<void> {

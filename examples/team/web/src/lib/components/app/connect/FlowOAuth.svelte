@@ -27,7 +27,7 @@
 	<span class="flex size-12 items-center justify-center rounded-full bg-muted"><Spinner class="size-5" /></span>
 	<div class="flex flex-col gap-1">
 		<h3 class="text-sm font-medium">{view.title}</h3>
-		<p class="text-[13px] text-muted-foreground" role="status">Finish signing in in the window that opened. This page updates by itself.</p>
+		<p class="text-[13px] text-muted-foreground" role="status">Finish signing in, in the window that opened. This page updates by itself.</p>
 	</div>
 	{#if ok}
 		<Button variant="outline" href={view.authorizeUrl} target="_blank" rel="noopener noreferrer" onclick={open}><ArrowSquareOutIcon class="size-4" />Open the sign-in window</Button>

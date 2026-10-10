@@ -246,6 +246,9 @@ export interface ConnectorView {
   name: string
   description: string
   icon?: string
+  publisher?: string
+  homepage?: string
+  docsUrl?: string
   category: string
   source: 'builtin' | 'curated' | 'custom'
   scopes: Array<'workspace' | 'agent' | 'user'>

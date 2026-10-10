@@ -135,9 +135,16 @@ export function providerRoutes(deps: Deps): OpenAPIHono {
     })
     .openapi(test, async (c) => c.json(await testProfile(deps, c.req.valid('param').id), 200))
     .openapi(models, async (c) => {
-      const refresh = c.req.valid('query').refresh === 'true'
+      const query = c.req.valid('query')
       return c.json(
-        { models: await listProfileModels(deps, c.req.valid('param').id, refresh) },
+        {
+          models: await listProfileModels(
+            deps,
+            c.req.valid('param').id,
+            query.refresh === 'true',
+            query.all === 'true',
+          ),
+        },
         200,
       )
     })

@@ -7,7 +7,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { filterModels, formatContext, formatPricing, type ProviderModel } from '#lib/providers/models.js';
+	import { filterModels, formatContext, formatPricing, hasModelPolicy, isModelEnabled, type ModelPolicy, type ProviderModel } from '#lib/providers/models.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
 
 	/**
@@ -71,6 +71,9 @@
 
 	const selected = $derived(modelId ? models.find((m) => m.id === modelId) : undefined);
 	const matches = $derived(filterModels(models, query));
+	// the profile's model policy: only enabled models can be picked, a typed id must pass it too
+	const policy = $derived((listProfileId ? providersStore.profile(listProfileId)?.models : undefined) as ModelPolicy | undefined);
+	const customBlocked = $derived(hasModelPolicy(policy) && query.trim() !== '' && !isModelEnabled(policy, query.trim()));
 	const exact = $derived(models.some((m) => m.id === query.trim()));
 
 	function onProfile(e: Event): void {
@@ -126,7 +129,11 @@
 									<span class="text-sm">Default model of this profile</span>
 								</Command.Item>
 							{/if}
-							{#if query.trim() && !exact}
+							{#if query.trim() && !exact && customBlocked}
+								<p class="px-3 py-2 text-xs text-muted-foreground" data-testid="custom-blocked">
+									<span class="font-mono">{query.trim()}</span> is not enabled for this profile. Turn it on under Settings, Providers.
+								</p>
+							{:else if query.trim() && !exact}
 								<Command.Item value="__custom__" onSelect={() => pick(query.trim())} class="h-auto py-1.5">
 									<span class="text-sm">Use <span class="font-mono">{query.trim()}</span></span>
 									<span class="text-xs text-muted-foreground">custom id</span>

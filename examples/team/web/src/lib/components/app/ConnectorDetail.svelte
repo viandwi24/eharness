@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOut';
 	import CaretDownIcon from 'phosphor-svelte/lib/CaretDown';
 	import DotsThreeIcon from 'phosphor-svelte/lib/DotsThree';
 	import LockIcon from 'phosphor-svelte/lib/Lock';
@@ -283,7 +284,7 @@
 <Dialog.Root bind:open>
 	<Dialog.Content elevation="floating" class="flex max-h-[92svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
 		{#if connector}
-			<Dialog.Header class="gap-0 border-b border-border px-5 py-5 pr-12 sm:px-6">
+			<Dialog.Header class="gap-0 border-b border-border px-5 py-5 pr-12 sm:pr-14 sm:pl-6">
 				<div class="flex flex-col gap-4 sm:flex-row sm:items-start">
 					<ConnectorIcon icon={connector.icon} size="lg" />
 					<div class="min-w-0 flex-1">
@@ -296,6 +297,13 @@
 							{#if connector.auth.type !== 'none'}· Sign in with {connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type === 'deviceCode' ? 'a device code' : 'an API key'}{/if}
 						</p>
 						<Dialog.Description class="mt-2 text-sm text-muted-foreground">{connector.description}</Dialog.Description>
+						{#if connector.publisher || connector.homepage || connector.docsUrl}
+							<p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" data-testid="connector-links">
+								{#if connector.publisher}<span>By {connector.publisher}</span>{/if}
+								{#if connector.homepage}<a class="inline-flex items-center gap-1 underline-offset-2 hover:text-foreground hover:underline" href={connector.homepage} target="_blank" rel="noopener noreferrer">Website<ArrowSquareOutIcon class="size-3" /></a>{/if}
+								{#if connector.docsUrl}<a class="inline-flex items-center gap-1 underline-offset-2 hover:text-foreground hover:underline" href={connector.docsUrl} target="_blank" rel="noopener noreferrer">Docs<ArrowSquareOutIcon class="size-3" /></a>{/if}
+							</p>
+						{/if}
 					</div>
 					{#if !connector.builtin && !needsSetup}
 						<Button class="shrink-0 sm:mt-0.5" onclick={startConnect}>
@@ -410,10 +418,15 @@
 
 			{#if !connector.builtin && !needsSetup}
 				<div class="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-5 py-3 sm:px-6">
-					<label class="flex items-center gap-2.5 text-sm">
-						<Switch bind:checked={makeDefault} aria-label="Available to all agents" />
-						<span>Available to all agents <span class="text-muted-foreground">when connected</span></span>
-					</label>
+					<!-- applies to the NEXT account connected here; existing accounts have their own switch above -->
+					{#if connections.length === 0}
+						<label class="flex items-center gap-2.5 text-sm">
+							<Switch bind:checked={makeDefault} aria-label="Make it available to all agents once connected" />
+							<span>Make it available to all agents <span class="text-muted-foreground">once connected</span></span>
+						</label>
+					{:else}
+						<span class="text-xs text-muted-foreground">Each account above has its own “Available to all agents” switch.</span>
+					{/if}
 					<Button variant="ghost" onclick={() => (open = false)}>Close</Button>
 				</div>
 			{/if}

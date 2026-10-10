@@ -91,3 +91,12 @@ export const deviceLink = (view: View<'deviceCode'>): string => view.verificatio
 
 /** Only http(s) links are opened. */
 export const safeUrl = (url: string): boolean => /^https?:\/\//i.test(url);
+
+/** The dialog title already says "Connect <name>": a form heading that repeats it is left out. */
+export const repeatsDialogTitle = (title: string): boolean => /^(re)?connect\b/i.test(title.trim());
+
+/** Plain words for the generic messages a validator produces. */
+export function friendlyError(message: string): string {
+	if (/^invalid url$/i.test(message.trim())) return 'Enter a full address, like https://mcp.example.com/mcp';
+	return message;
+}

@@ -62,14 +62,14 @@ export function sqliteProfileStore(
     } as ConfigProfile
   }
   return {
+    // creation order (rowid survives an upsert): editing a profile must not reorder the list, the
+    // default profile is the first enabled one
     async list(query) {
       const rows =
         query?.kind === undefined
-          ? sqlite.query<Row, []>('SELECT * FROM config_profiles ORDER BY updated_at, id').all()
+          ? sqlite.query<Row, []>('SELECT * FROM config_profiles ORDER BY rowid').all()
           : sqlite
-              .query<Row, [string]>(
-                'SELECT * FROM config_profiles WHERE kind = ? ORDER BY updated_at, id',
-              )
+              .query<Row, [string]>('SELECT * FROM config_profiles WHERE kind = ? ORDER BY rowid')
               .all(query.kind)
       return rows.map(unrow)
     },

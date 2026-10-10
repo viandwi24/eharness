@@ -513,6 +513,56 @@ describe('profiles API', () => {
     expect((await ok.app.request('/providers/profiles/ghost/models')).status).toBe(404)
   })
 
+  test('allow / deny hide models from agents; all=true lists them marked enabled', async () => {
+    const ok = await boot({ calls: [] })
+    await ok.app.request(
+      '/providers/profiles',
+      send('POST', { providerId: 'openrouter', settings: { apiKey: SECRET } }),
+    )
+    type List = { models: Array<{ id: string; enabled?: boolean }> }
+    const list = async (query: string): Promise<List> =>
+      (await (await ok.app.request(`/providers/profiles/openrouter/models${query}`)).json()) as List
+    const all = await list('?all=true')
+    expect(all.models.length).toBeGreaterThan(1)
+    expect(all.models.every((m) => m.enabled === true)).toBe(true)
+    const first = all.models[0]?.id as string
+    const patched = await ok.app.request(
+      '/providers/profiles/openrouter',
+      send('PATCH', { models: { allow: [first] } }),
+    )
+    expect(patched.status).toBe(200)
+    expect((await list('')).models.map((m) => m.id)).toEqual([first])
+    const marked = await list('?all=true')
+    expect(marked.models.find((m) => m.id === first)?.enabled).toBe(true)
+    expect(marked.models.filter((m) => m.enabled === false).length).toBe(all.models.length - 1)
+    // back to everything
+    await ok.app.request('/providers/profiles/openrouter', send('PATCH', { models: null }))
+    expect((await list('')).models.length).toBe(all.models.length)
+  })
+
+  test('editing a profile does not change which one is the default', async () => {
+    const t = await boot({ calls: [] })
+    for (const providerId of ['openrouter', 'gateway']) {
+      await t.app.request(
+        '/providers/profiles',
+        send('POST', { providerId, settings: { apiKey: SECRET } }),
+      )
+    }
+    const defaultId = async (): Promise<string | undefined> =>
+      (
+        (await (await t.app.request('/providers')).json()) as {
+          profiles: Array<{ id: string; isDefault: boolean }>
+        }
+      ).profiles.find((p) => p.isDefault)?.id
+    expect(await defaultId()).toBe('openrouter')
+    await new Promise((resolve) => setTimeout(resolve, 15)) // a later updated_at
+    await t.app.request(
+      '/providers/profiles/openrouter',
+      send('PATCH', { models: { deny: ['some/model'] } }),
+    )
+    expect(await defaultId()).toBe('openrouter')
+  })
+
   test('a failing key test is ok:false with a message and no secret', async () => {
     const bad = await boot({ keyStatus: 401 })
     await bad.app.request(

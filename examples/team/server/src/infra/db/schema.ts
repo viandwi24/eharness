@@ -108,6 +108,17 @@ export const sessionModes = sqliteTable('session_modes', {
 })
 
 /**
+ * Connections a person switched off for one chat (the composer tools menu): `off` holds
+ * connection ids. No row = nothing off. The tool definitions never change; the agent hides the
+ * tools of these connections per step (`activeTools`).
+ */
+export const chatToolOverrides = sqliteTable('chat_tool_overrides', {
+  sessionId: text('session_id').primaryKey(),
+  off: json<string[]>('off').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+/**
  * Index derived from sessions (request R1); the session stays the truth. One row per task session
  * (a child of the lead, later a routine run): written by the `taskIndex` plugin on whichever
  * instance runs the turn, repaired by the boot / periodic drift pass (`infra/eh/team-service.ts`).

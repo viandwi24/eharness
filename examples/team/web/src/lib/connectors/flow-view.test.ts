@@ -61,3 +61,14 @@ describe('misc', () => {
 		expect(deviceLink({ ...v, verificationUrlComplete: 'https://b' })).toBe('https://b');
 	});
 });
+
+describe('form wording', () => {
+	test('a heading that repeats the dialog title is dropped', async () => {
+		const { repeatsDialogTitle, friendlyError } = await import('./flow-view');
+		expect(repeatsDialogTitle('Connect Custom connector')).toBe(true);
+		expect(repeatsDialogTitle('Reconnect GitHub')).toBe(true);
+		expect(repeatsDialogTitle('Choose what to share')).toBe(false);
+		expect(friendlyError('Invalid URL')).toContain('https://');
+		expect(friendlyError('Too short')).toBe('Too short');
+	});
+});
