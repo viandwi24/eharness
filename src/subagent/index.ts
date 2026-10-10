@@ -25,6 +25,7 @@ export {
   type SubagentApprovalAnswer,
   type SubagentApprovalRequest,
   type SubagentCatalog,
+  type SubagentChildInfo,
   type SubagentDefinition,
   type SubagentProgress,
   type SubagentReconcileEntry,

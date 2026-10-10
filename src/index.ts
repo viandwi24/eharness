@@ -43,6 +43,7 @@ export type {
   SessionEvent,
   SessionLock,
   SessionOptions,
+  SessionPeek,
   SessionStateSnapshot,
   SessionUsage,
   StateAdapter,

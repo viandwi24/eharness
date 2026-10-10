@@ -1237,6 +1237,21 @@ acked after `onDeadLetter` ran ("bring a dead table").
 The poll interval is the latency without `subscribe` and the safety net for lost notifications
 with it; the core never claims from a session that is not live in its process. `wake` items are
 written by `inject(…, { wake: true })` when a live foreign turn runs (spec 11 §6.3).
+### 2.2 Read-only handle: `agent.peek(id)` (0.9)
+
+Opening a session (`agent.session(id)` + any operation except `messages()`/`children()`/`busy()`)
+runs `session.start` hooks, crash recovery and plugin reconciles, which may start model calls
+(a parked lead resumes). `agent.peek(sessionId, { storage? })` returns a `SessionPeek` that reads
+the **stored** state and messages through the adapters only: no hook, no recovery, no reconcile,
+no inbox drain, no lock, no write, no cache (create one per read; it holds nothing).
+
+`messages(q)` (same paging and rewind hiding as `session.messages()`), `stats()` →
+`{ pending, activeTurn, usage }` (stored values; no token breakdown, that needs the opened
+context), `busy()` (`local` when a live handle of this agent runs a turn, `remote` for a live
+foreign `activeTurn`, else `null`), `pending()`, `pendingWaits()`, `children()`, `parentInfo()`.
+There are no turn operations: from JS, `send`, `respond`, `regenerate`, `edit`, `enqueue`,
+`inject` and `compact` throw `EH_INVALID_INPUT` (`details.reason: 'peek-read-only'`) naming
+`agent.session(id)`. A missing session reads as empty (`stats()` zero, `children()` `[]`).
 
 ## 13. Parent and child sessions
 
@@ -1249,7 +1264,11 @@ index).
    A child whose state already holds the same `parent` does nothing (reopening is idempotent). A
    failing registration is logged (`log.warn`) and never fails the open; `core.parent` is not
    recorded then, so the next open retries.
-2. **Parent side: `core.children`.** `{ sessionId, turnId, toolCallId?, createdAt }[]`,
+2. **Parent side: `core.children`.** `{ sessionId, turnId, toolCallId?, createdAt, agent?, name?,
+   description? }[]` (the identity fields come from `ParentInfo` when the opener set them: for
+   `subagents()` the catalog key of the child's agent, the `name` and the `description` of the
+   `agent` call; entries without them, written before 0.9, read as before; `ParentInfo.agent` etc.
+   are also on `ctx.session.parent` inside the child),
    append-only, capped at 500 (the oldest are dropped), deduplicated by `sessionId`. It is a
    **foreign-writable** field (§7, like `abortRequest`, §9.1): the child's runtime writes the
    parent's state **directly through its own `StateAdapter`** — read, append, `setIf(rev)`, re-read

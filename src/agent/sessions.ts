@@ -7,12 +7,15 @@
 import type { UIMessage } from 'ai'
 import { uuidv7 } from '../messages/ids.ts'
 import { defaultMemoryMessages, defaultMemoryState } from '../session/memory-storage.ts'
+import { createSessionPeek } from '../session/peek.ts'
+import { DEFAULT_STALE_MS as DEFAULT_STALE } from '../session/remote-abort.ts'
 import { createSessionHandle, type SessionHandle } from '../session/session.ts'
 import type { AgentInternals } from './internals.ts'
 import type {
   HarnessSession,
   MessageAdapter,
   SessionOptions,
+  SessionPeek,
   StateAdapter,
 } from './session-types.ts'
 
@@ -22,6 +25,7 @@ export const DEFAULT_SESSION_IDLE_MS: number = 30 * 60 * 1000
 /** Runtime part of an agent. */
 export interface AgentSessions {
   session(id: string, options?: SessionOptions): HarnessSession<UIMessage, Record<string, unknown>>
+  peek(id: string, options?: Pick<SessionOptions, 'storage'>): SessionPeek
   closeSession(id: string): Promise<void>
   close(): Promise<void>
 }
@@ -119,6 +123,25 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
       })
       sessions.set(id, handle)
       return handle.session
+    },
+    peek(id, options = {}) {
+      if (typeof id !== 'string' || id.length === 0) {
+        throw new TypeError('agent.peek(id): id must be a non-empty string.')
+      }
+      const storage = storageFor(options)
+      const recovery = internals.config.recovery
+      return createSessionPeek({
+        id,
+        messages: storage.messages,
+        state: storage.state,
+        registry: internals.messages,
+        staleMs: recovery === false ? false : (recovery?.staleMs ?? DEFAULT_STALE),
+        localTurn: async () => {
+          const live = sessions.get(id)
+          if (live === undefined || live.rt.closed || !live.rt.running) return undefined
+          return (await live.session.busy())?.turnId
+        },
+      })
     },
     async closeSession(id) {
       await sessions.get(id)?.close()

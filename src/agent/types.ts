@@ -54,6 +54,7 @@ import type {
   InboxAdapter,
   MessageAdapter,
   SessionOptions,
+  SessionPeek,
   StateAdapter,
   StreamLogAdapter,
 } from './session-types.ts'
@@ -634,6 +635,12 @@ export interface HarnessAgent<C = HarnessAgentConfig> {
     sessionId: string,
     options?: SessionOptions,
   ): HarnessSession<AgentMessageOf<C>, AgentKindTypes<C>>
+  /**
+   * Side-effect-free read handle of a session (spec 05 §2.2): messages, stats, busy, pending
+   * state, children and parent, read from storage without opening the session (no hooks, no
+   * recovery, no lock, no writes). Turn operations do not exist on it.
+   */
+  peek(sessionId: string, options?: Pick<SessionOptions, 'storage'>): SessionPeek<AgentMessageOf<C>>
   /** Close and evict a cached session (runs plugin dispose). */
   closeSession(sessionId: string): Promise<void>
   /** Close all sessions. Call on shutdown. */

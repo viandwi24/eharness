@@ -5,7 +5,7 @@
  * @see docs/decisions/0038-agent-messaging.md
  * @see docs/specs/20-subagent-plugin.md
  */
-import { neutralizeTags, type TurnResult } from '../index.ts'
+import { neutralizeTags, type ParentInfo, type TurnResult } from '../index.ts'
 
 /** Default tool name of the tool that stops a running agent. */
 export const AGENT_STOP_TOOL = 'agent_stop'
@@ -84,7 +84,7 @@ export interface AgentEntry {
   /** Session that launched it. */
   ownerSessionId: string
   /** Its `parent` link (reused when it is resumed). */
-  parentInfo: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+  parentInfo: ParentInfo
   taskId?: string
   name?: string
   /** Subagent type (a key of the catalog). */

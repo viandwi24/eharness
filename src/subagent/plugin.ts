@@ -11,6 +11,7 @@
 import { type FlexibleSchema, type JSONValue, readUIMessageStream, tool } from 'ai'
 import { z } from 'zod/v4'
 import {
+  type ChildSessionInfo,
   type DataPartDef,
   defineDataPart,
   definePlugin,
@@ -22,8 +23,11 @@ import {
   type HarnessSession,
   isHarnessError,
   neutralizeTags,
+  type ParentInfo,
   type PendingState,
   type SessionContribution,
+  type SessionOptions,
+  type SessionPeek,
   type ToolInput,
   type TurnResult,
 } from '../index.ts'
@@ -75,6 +79,17 @@ export const SUBAGENT_NO_CLIENT =
 
 /** Text of a bare denial from an `answer` callback. */
 export const SUBAGENT_DENIED = 'Denied by the user.'
+
+/** Identifies a child session the plugin is about to open (`subagents({ childSession })`). */
+export interface SubagentChildInfo {
+  parentSessionId: string
+  /** Catalog key of the agent definition that runs the child. */
+  agent: string
+  /** Name the launcher gave the child, when known. */
+  name?: string
+  /** Nesting depth of the child (the root's children are 1). */
+  depth: number
+}
 
 /** Default cap of the report injected into the parent when a background child finishes. */
 export const AGENT_REPORT_MAX_CHARS = 16000
@@ -163,6 +178,26 @@ export interface SubagentsOptions {
   maxDepth?: number
   /** Children running at once, per nesting depth and plugin instance. Default 8. */
   maxConcurrent?: number
+  /**
+   * Cap of the children one session may start over its lifetime (counted per parent session,
+   * `agent` calls only; resuming a child or messaging it is not a new child). Further `agent`
+   * calls are refused with a readable error string and start nothing. In `'park'` mode with
+   * `selfAgent`, the count is read from the stored child index (`children()`), so it holds across
+   * instances and restarts; otherwise it counts the children this session object started.
+   * Default: no cap. `maxConcurrent` limits only children running at once.
+   */
+  maxChildren?: number
+  /**
+   * Session options for every child session this plugin opens (foreground, background, park start,
+   * resume, `agent_stop`/message delivery): `lock`, `runtime`, `storage`, `toolsContext`. The
+   * `runtime` is merged under the plugin's own keys; `parent` cannot be set here. Runs on each open.
+   */
+  childSession?: (info: SubagentChildInfo) => Omit<SessionOptions, 'parent'> | undefined
+  /**
+   * Session options for the parent / root sessions this plugin opens from a child or to reconcile
+   * (the same idea as `childSession`, for `parentAgent` / `selfAgent` opens).
+   */
+  parentSession?: (sessionId: string) => Omit<SessionOptions, 'parent'> | undefined
   /**
    * Offer `run_in_background` (`'inline'` and `'policy'` only, never with `approvals: 'park'`): the
    * child runs detached and its report is injected into the parent as an `eh.event` with
@@ -709,6 +744,7 @@ export async function reconcileSubagentWaits(
 function createParkHook(options: {
   parentAgent: (() => AnyAgent) | undefined
   onParentRun: ((run: AnyRun, parentSessionId: string) => void) | undefined
+  parentSession: ((sessionId: string) => SessionOptions | undefined) | undefined
   /** `'park'` messaging: the report of a turn started by the launcher's message goes back to it. */
   reportResumes: boolean
 }): (ctx: HarnessContext, e: TurnResult) => Promise<void> {
@@ -732,7 +768,11 @@ function createParkHook(options: {
     const label = frame.to === ctx.session.id ? undefined : frame.to
     const who = label === undefined ? ctx.session.id : `"${label}"`
     try {
-      await (options.parentAgent().session(parent.sessionId) as AnySession).inject(
+      await (
+        options
+          .parentAgent()
+          .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession
+      ).inject(
         'eh.event',
         {
           name: 'subagent',
@@ -755,7 +795,9 @@ function createParkHook(options: {
     const parent = ctx.session.parent
     if (parent?.toolCallId === undefined || e.stop === 'tool-pending') return
     if (options.parentAgent === undefined) return
-    const parentSession = options.parentAgent().session(parent.sessionId) as AnySession
+    const parentSession = options
+      .parentAgent()
+      .session(parent.sessionId, options.parentSession?.(parent.sessionId) ?? {}) as AnySession
     const waitId = subagentWaitId(parent.toolCallId)
     let waits: Awaited<ReturnType<AnySession['pendingWaits']>>
     try {
@@ -807,10 +849,13 @@ function createParkHook(options: {
 export function subagentChild(options: {
   parent: () => AnyAgent
   onParentRun?: (run: AnyRun, parentSessionId: string) => void
+  /** Session options (`lock`, `runtime`, `storage`) for the parent sessions this plugin opens. */
+  parentSession?: (sessionId: string) => Omit<SessionOptions, 'parent'> | undefined
 }): HarnessPlugin<'subagent-child'> {
   const hook = createParkHook({
     parentAgent: options.parent,
     onParentRun: options.onParentRun,
+    parentSession: options.parentSession,
     reportResumes: true,
   })
   return definePlugin({
@@ -826,20 +871,45 @@ export function subagentChild(options: {
  * agents: a function that opens the child session on the right agent).
  */
 export async function pendingSubagentApprovals(
-  session: AnySession,
-  open: AnyAgent | ((childSessionId: string) => AnySession),
-): Promise<Array<{ sessionId: string; parentSessionId: string; pending: PendingState }>> {
-  const out: Array<{ sessionId: string; parentSessionId: string; pending: PendingState }> = []
-  const walk = async (parent: AnySession, depth: number): Promise<void> => {
+  session: AnySession | SessionPeek,
+  open: AnyAgent | ((childSessionId: string) => AnySession | SessionPeek),
+): Promise<
+  Array<{
+    sessionId: string
+    parentSessionId: string
+    pending: PendingState
+    agent?: string
+    name?: string
+    description?: string
+  }>
+> {
+  const out: Array<{
+    sessionId: string
+    parentSessionId: string
+    pending: PendingState
+    agent?: string
+    name?: string
+    description?: string
+  }> = []
+  const walk = async (
+    parent: { id: string; children(): Promise<ChildSessionInfo[]> },
+    depth: number,
+  ): Promise<void> => {
     if (depth > 8) return
     for (const info of await parent.children()) {
-      const child =
-        typeof open === 'function'
-          ? open(info.sessionId)
-          : (open.session(info.sessionId) as AnySession)
+      // an agent opens a read handle (peek): listing never resumes a parked child
+      const child: SessionPeek | AnySession =
+        typeof open === 'function' ? open(info.sessionId) : open.peek(info.sessionId)
       const stats = await child.stats()
       if (stats.pending !== null) {
-        out.push({ sessionId: info.sessionId, parentSessionId: parent.id, pending: stats.pending })
+        out.push({
+          sessionId: info.sessionId,
+          parentSessionId: parent.id,
+          pending: stats.pending,
+          ...(info.agent === undefined ? {} : { agent: info.agent }),
+          ...(info.name === undefined ? {} : { name: info.name }),
+          ...(info.description === undefined ? {} : { description: info.description }),
+        })
       }
       await walk(child, depth + 1)
     }
@@ -935,6 +1005,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   const parkHook = createParkHook({
     parentAgent: options.parentAgent,
     onParentRun: options.onParentRun,
+    parentSession: options.parentSession,
     reportResumes: park,
   })
 
@@ -957,6 +1028,73 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   ): { runtime: Record<string, unknown> } | Record<string, never> =>
     dir === undefined || park ? {} : { runtime: { [DIRECTORY_RUNTIME_KEY]: dir } }
 
+  /** `childSession` options of an open (never `parent`), merged over `base`. */
+  const childOptions = (info: SubagentChildInfo, base: SessionOptions = {}): SessionOptions => {
+    const extra = options.childSession?.(info)
+    if (extra === undefined) return base
+    const { parent: _ignored, ...rest } = extra as SessionOptions
+    return {
+      ...rest,
+      ...base,
+      ...(rest.runtime === undefined && base.runtime === undefined
+        ? {}
+        : { runtime: { ...rest.runtime, ...base.runtime } }),
+    }
+  }
+  /** Options to open the child of a directory entry. */
+  const entryOptions = (entry: AgentEntry, base: SessionOptions = {}): SessionOptions =>
+    childOptions(
+      {
+        parentSessionId: entry.parentInfo.sessionId,
+        agent: entry.agent,
+        ...(entry.name === undefined ? {} : { name: entry.name }),
+        depth: entry.parentInfo.depth,
+      },
+      base,
+    )
+  /** Options to open a parent / root session (`parentSession`). */
+  const parentOptions = (sessionId: string): SessionOptions =>
+    options.parentSession?.(sessionId) ?? {}
+
+  /** Storage override of `parentSession` for a read handle. */
+  const parentPeek = (sessionId: string): Pick<SessionOptions, 'storage'> => {
+    const storage = parentOptions(sessionId).storage
+    return storage === undefined ? {} : { storage }
+  }
+
+  /** Read handle of a child (storage override of `childSession`, nothing else is needed). */
+  const peekOf = (agent: AnyAgent, id: string, info: SubagentChildInfo): SessionPeek => {
+    const storage = childOptions(info).storage
+    return agent.peek(id, storage === undefined ? {} : { storage }) as unknown as SessionPeek
+  }
+
+  /** Spawn cap (`maxChildren`): `undefined` to go on, or the refusal text. */
+  async function claimSpawn(scope: Scope, childSessionId: string): Promise<string | undefined> {
+    const max = options.maxChildren
+    if (max === undefined) return undefined
+    const mine = scope.spawned ?? new Set<string>()
+    scope.spawned = mine
+    if (mine.has(childSessionId)) return undefined
+    const known = new Set(mine)
+    if (park && options.selfAgent !== undefined) {
+      try {
+        const stored = await options
+          .selfAgent()
+          .peek(scope.ctx.session.id, parentOptions(scope.ctx.session.id))
+          .children()
+        for (const c of stored) known.add(c.sessionId)
+      } catch (error) {
+        scope.ctx.log.warn('subagent: could not read the child index', { error: errText(error) })
+      }
+    }
+    if (known.has(childSessionId)) return undefined
+    if (known.size >= max) {
+      return `ERROR: this session already started ${known.size} subagents and may not start more (limit ${max}). Continue the work yourself, or message an existing agent.`
+    }
+    mine.add(childSessionId)
+    return undefined
+  }
+
   /** Where a report goes: the `inject` of some session (ADR-0038). */
   type Reporter = (text: string, data: Record<string, unknown>) => Promise<void>
 
@@ -973,6 +1111,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     rebuiltAt: number
     /** `'park'`: this session's name as its launcher gave it (read once from the parent). */
     selfName?: Promise<string | undefined>
+    /** `maxChildren`: ids of the children this session object started. */
+    spawned?: Set<string>
   }
 
   return definePlugin({
@@ -1008,8 +1148,15 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       const registry = createSubagentTaskRegistry({
         foreign: async (childSessionId) => {
           // not a task of this process: ask the child session to abort, wherever it runs
-          for (const def of Object.values(resolveCatalog(options.agents))) {
-            const child = def.agent.session(childSessionId) as AnySession
+          for (const [agentKey, def] of Object.entries(resolveCatalog(options.agents))) {
+            const child = def.agent.session(
+              childSessionId,
+              childOptions({
+                parentSessionId: ctx.session.id,
+                agent: agentKey,
+                depth: (ctx.session.parent?.depth ?? 0) + 1,
+              }),
+            ) as AnySession
             try {
               const out = await child.requestAbort('stopped')
               if (out.target !== 'idle') return
@@ -1043,14 +1190,25 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           void (async () => {
             await sleep(0)
             if (ctx.signal.aborted) return
-            const parentSession = self().session(ctx.session.id) as AnySession
+            const parentSession = self().session(
+              ctx.session.id,
+              parentOptions(ctx.session.id),
+            ) as AnySession
             const catalog = resolveCatalog(options.agents)
             await reconcileSubagentWaits(parentSession, {
               openChild: (id, info) => {
-                const def =
-                  (info.agent === undefined ? undefined : catalog[info.agent]) ??
-                  Object.values(catalog)[0]
-                return (def as SubagentDefinition).agent.session(id) as AnySession
+                const key =
+                  info.agent !== undefined && catalog[info.agent] !== undefined
+                    ? info.agent
+                    : (Object.keys(catalog)[0] as string)
+                return (catalog[key] as SubagentDefinition).agent.session(
+                  id,
+                  childOptions({
+                    parentSessionId: ctx.session.id,
+                    agent: key,
+                    depth: depth + 1,
+                  }),
+                ) as AnySession
               },
               ...(options.onParentRun === undefined ? {} : { onParentRun: options.onParentRun }),
               log: ctx.log,
@@ -1506,7 +1664,12 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         if (def === undefined) return `ERROR: the agent type "${agent}" is not available.`
         let text = ''
         try {
-          const child = def.agent.session(childId, directoryOptions(dir)) as AnySession
+          // a side-effect-free read: the child is not opened (no start hooks, no recovery)
+          const child = peekOf(def.agent, childId, {
+            parentSessionId: ctx.session.id,
+            agent,
+            depth: scope.depth + 1,
+          })
           try {
             const stored = (await child.messages({ limit: 200 })) as unknown as MessageLike[]
             for (const m of stored.toReversed()) {
@@ -1564,7 +1727,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     scope.rebuilt = true
     const { ctx } = scope
     try {
-      const session = options.selfAgent().session(ctx.session.id) as AnySession
+      const session = options.selfAgent().peek(ctx.session.id, parentPeek(ctx.session.id))
       const children = await session.children()
       if (children.length === 0) return
       const byChild = new Map(children.map((c) => [c.sessionId, c]))
@@ -1611,17 +1774,17 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         else if (marker.status === 'failed') status = 'failed'
         else {
           // the marker says running: the stored child tells how its last turn ended
-          const child = def.agent.session(sessionId, directoryOptions(dir)) as AnySession
-          try {
-            const stored = (await child.messages({ limit: 20 })) as unknown as Array<{
-              role: string
-              metadata?: { eharness?: { stop?: string } }
-            }>
-            const last = stored.findLast((m) => m.role === 'assistant')
-            status = last?.metadata?.eharness?.stop === 'complete' ? 'completed' : 'failed'
-          } finally {
-            await def.agent.closeSession(sessionId).catch(() => {})
-          }
+          const child = peekOf(def.agent, sessionId, {
+            parentSessionId: ctx.session.id,
+            agent: marker.agent,
+            depth: scope.depth + 1,
+          })
+          const stored = (await child.messages({ limit: 20 })) as unknown as Array<{
+            role: string
+            metadata?: { eharness?: { stop?: string } }
+          }>
+          const last = stored.findLast((m) => m.role === 'assistant')
+          status = last?.metadata?.eharness?.stop === 'complete' ? 'completed' : 'failed'
         }
         addEntry(scope, {
           childSessionId: sessionId,
@@ -1635,6 +1798,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             turnId: info.turnId,
             toolCallId: info.toolCallId ?? marker.toolCallId,
             depth: scope.depth + 1,
+            agent: marker.agent,
+            ...(marker.name === undefined ? {} : { name: marker.name }),
           },
         })
         const n = Number(/^agent-(\d+)$/.exec(marker.taskId ?? '')?.[1] ?? 0)
@@ -1651,7 +1816,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
 
   /** The `agent` tool inputs of `toolCallIds`, read from the stored messages of `session`. */
   async function readLaunchInputs(
-    session: AnySession,
+    session: Pick<AnySession, 'messages'>,
     toolCallIds: Set<string>,
   ): Promise<Map<string, LaunchInput>> {
     const found = new Map<string, LaunchInput>()
@@ -1693,7 +1858,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     if (now - scope.rebuiltAt < (miss ? 500 : 15_000)) return
     scope.rebuiltAt = now
     try {
-      const session = options.selfAgent().session(ctx.session.id) as AnySession
+      const session = options.selfAgent().peek(ctx.session.id, parentPeek(ctx.session.id))
       const children = (await session.children()).filter(
         (c) => c.toolCallId !== undefined && !dir.entries.has(c.sessionId),
       )
@@ -1705,20 +1870,24 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       const defs = scope.defs()
       for (const info of children) {
         const input = inputs.get(info.toolCallId as string)
-        const type = input?.subagent_type
+        const type = info.agent ?? input?.subagent_type
         if (type === undefined || defs[type] === undefined) continue
         addEntry(scope, {
           childSessionId: info.sessionId,
           agent: type,
-          description: input?.description ?? type,
+          description: info.description ?? input?.description ?? type,
           status: 'completed',
           durable: true,
-          ...(input?.name === undefined ? {} : { name: input.name }),
+          ...((info.name ?? input?.name) === undefined
+            ? {}
+            : { name: (info.name ?? input?.name) as string }),
           parentInfo: {
             sessionId: ctx.session.id,
             turnId: info.turnId,
             toolCallId: info.toolCallId as string,
             depth: scope.depth + 1,
+            agent: type,
+            ...(input?.name === undefined ? {} : { name: input.name }),
           },
         })
       }
@@ -1733,7 +1902,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       const parent = scope.ctx.session.parent
       if (parent?.toolCallId === undefined || options.parentAgent === undefined) return undefined
       try {
-        const session = options.parentAgent().session(parent.sessionId) as AnySession
+        const session = options.parentAgent().peek(parent.sessionId, parentPeek(parent.sessionId))
         const inputs = await readLaunchInputs(session, new Set([parent.toolCallId]))
         return inputs.get(parent.toolCallId)?.name
       } catch {
@@ -1752,7 +1921,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     let id = parent.sessionId
     try {
       for (let hops = 0; hops < 8; hops++) {
-        const up = await (options.parentAgent().session(id) as AnySession).parentInfo()
+        const up = await options.parentAgent().peek(id, parentPeek(id)).parentInfo()
         if (up === undefined) return id
         id = up.sessionId
       }
@@ -1769,9 +1938,12 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   ): Promise<{ status: AgentEntry['status']; waiting: boolean }> {
     const def = scope.defs()[entry.agent]
     if (def === undefined) return { status: entry.status, waiting: false }
-    // The handle is left open on purpose: closing could drop a message this process just
-    // enqueued for it; the agent evicts idle sessions (`sessionIdleMs`).
-    const child = def.agent.session(entry.childSessionId) as AnySession
+    // a read: peek never opens (and so never resumes) the child
+    const child = peekOf(def.agent, entry.childSessionId, {
+      parentSessionId: entry.parentInfo.sessionId,
+      agent: entry.agent,
+      depth: entry.parentInfo.depth,
+    })
     const stats = await child.stats()
     if (stats.activeTurn !== null || stats.pending !== null) {
       entry.status = 'running'
@@ -1802,9 +1974,9 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       return `${label} is waiting for an answer to a permission request; it cannot be stopped from here. It continues when the request is answered.`
     }
     try {
-      const out = await (def.agent.session(entry.childSessionId) as AnySession).requestAbort(
-        'stopped',
-      )
+      const out = await (
+        def.agent.session(entry.childSessionId, entryOptions(entry)) as AnySession
+      ).requestAbort('stopped')
       if (out.target === 'idle') return `${label} is not running (${entry.status}).`
     } catch (error) {
       return `ERROR: could not stop ${label}: ${errText(error)}`
@@ -1831,9 +2003,10 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     const relation = ctx.session.parent?.sessionId === rootId ? 'child' : 'peer'
     const framed = frameAgentMessage(text, { label: sender.label, id: sender.id }, relation)
     try {
-      await (options.parentAgent().session(rootId) as AnySession).enqueue(framed, {
-        mode: 'steer',
-      })
+      await (options.parentAgent().session(rootId, parentOptions(rootId)) as AnySession).enqueue(
+        framed,
+        { mode: 'steer' },
+      )
     } catch (error) {
       return fail(`could not deliver the message to main: ${errText(error)}`)
     }
@@ -1900,9 +2073,12 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         : text
     try {
       // the handle stays open: it drains the inbox when no other instance holds the session
-      await (def.agent.session(entry.childSessionId) as AnySession).enqueue(payload, {
-        mode: running ? 'steer' : 'queue',
-      })
+      await (def.agent.session(entry.childSessionId, entryOptions(entry)) as AnySession).enqueue(
+        payload,
+        {
+          mode: running ? 'steer' : 'queue',
+        },
+      )
     } catch (error) {
       return fail(`could not deliver the message to ${label}: ${errText(error)}`)
     }
@@ -1938,6 +2114,14 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           yield 'ERROR: subagents can only be started inside a turn.'
           return
         }
+        const sessionId = childIdOf(ctx.session.id, toolCallId)
+        if (options.maxChildren !== undefined) {
+          const refused = await claimSpawn(scope, sessionId)
+          if (refused !== undefined) {
+            yield refused
+            return
+          }
+        }
         const dir = scope.dir
         if (dir !== undefined && name !== undefined) {
           await rebuildEntries(scope)
@@ -1947,12 +2131,14 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
             return
           }
         }
-        const sessionId = childIdOf(ctx.session.id, toolCallId)
-        const parentInfo = {
+        const parentInfo: ParentInfo = {
           sessionId: ctx.session.id,
           turnId: turn.id,
           toolCallId,
           depth: depth + 1,
+          agent: subagent_type,
+          description: label,
+          ...(name === undefined ? {} : { name }),
         }
         if (
           (run_in_background ?? backgroundDefault) &&
@@ -2021,10 +2207,18 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         let detachedId: string | undefined
         let handedOff = false
         try {
-          const child = def.agent.session(sessionId, {
-            parent: parentInfo,
-            ...directoryOptions(scope.dir),
-          }) as AnySession
+          const child = def.agent.session(
+            sessionId,
+            childOptions(
+              {
+                parentSessionId: ctx.session.id,
+                agent: subagent_type,
+                ...(name === undefined ? {} : { name }),
+                depth: depth + 1,
+              },
+              { parent: parentInfo, ...directoryOptions(scope.dir) },
+            ),
+          ) as AnySession
           opened = true
           if (entry !== undefined) wireRunning(entry, child)
           // latest-value mailbox between the stream consumers (callbacks) and this generator
@@ -2258,7 +2452,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     label: string,
     prompt: string,
     sessionId: string,
-    parentInfo: { sessionId: string; turnId: string; toolCallId: string; depth: number },
+    parentInfo: ParentInfo,
     name: string | undefined,
   ): string {
     const entry = addEntry(scope, {
@@ -2297,7 +2491,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     name?: string
     prompt: string
     sessionId: string
-    parentInfo: { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+    parentInfo: ParentInfo
     /** Run marker (first start only). */
     toolCallId?: string
     /** Existing task id: the task runs again. */
@@ -2375,10 +2569,18 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       }
       let opened = false
       try {
-        const child = def.agent.session(sessionId, {
-          parent: parentInfo,
-          ...directoryOptions(scope.dir),
-        }) as AnySession
+        const child = def.agent.session(
+          sessionId,
+          childOptions(
+            {
+              parentSessionId: parentInfo.sessionId,
+              agent: agentName,
+              ...(a.name === undefined ? {} : { name: a.name }),
+              depth: parentInfo.depth,
+            },
+            { parent: parentInfo, ...directoryOptions(scope.dir) },
+          ),
+        ) as AnySession
         opened = true
         if (entry !== undefined) wireRunning(entry, child)
         const run = child.send(a.prompt, {
@@ -2460,11 +2662,17 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         if (turn === undefined)
           return failNow('ERROR: subagents can only be started inside a turn.')
         const sessionId = childIdOf(ctx.session.id, event.toolCallId)
-        const parentInfo = {
+        const refused =
+          options.maxChildren === undefined ? undefined : await claimSpawn(scope, sessionId)
+        if (refused !== undefined) return failNow(refused)
+        const parentInfo: ParentInfo = {
           sessionId: ctx.session.id,
           turnId: turn.id,
           toolCallId: event.toolCallId,
           depth: depth + 1,
+          agent: subagent_type,
+          description: label,
+          ...(name === undefined ? {} : { name }),
         }
         if (messaging && scope.dir !== undefined) {
           // the directory comes from storage: names are unique across instances and restarts
@@ -2486,7 +2694,18 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           }
         }
         const base = { childSessionId: sessionId, agent: subagent_type, description: label }
-        const child = def.agent.session(sessionId, { parent: parentInfo }) as AnySession
+        const child = def.agent.session(
+          sessionId,
+          childOptions(
+            {
+              parentSessionId: ctx.session.id,
+              agent: subagent_type,
+              ...(name === undefined ? {} : { name }),
+              depth: depth + 1,
+            },
+            { parent: parentInfo },
+          ),
+        ) as AnySession
         const sem = semaphoreFor(depth)
         if (!(await sem.acquire(event.abortSignal))) {
           return failNow('ERROR: subagent was aborted before it started.')

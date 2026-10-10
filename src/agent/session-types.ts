@@ -208,6 +208,15 @@ export interface ParentInfo {
   turnId: string
   toolCallId?: string
   depth: number
+  /**
+   * Identity of the child (not of the parent), set by whoever opens the child (the `subagents()`
+   * plugin): `agent` is the catalog key of the agent definition that runs it, `name` the name its
+   * launcher gave it, `description` the short task description. Copied into the parent's
+   * {@link ChildSessionInfo}. Absent in sessions stored before 0.x (spec 05 §13).
+   */
+  agent?: string
+  name?: string
+  description?: string
 }
 
 /**
@@ -221,6 +230,39 @@ export interface ChildSessionInfo {
   turnId: string
   toolCallId?: string
   createdAt: number
+  /** Catalog key of the agent definition that runs the child (see {@link ParentInfo.agent}). */
+  agent?: string
+  /** Name the launcher gave the child. */
+  name?: string
+  /** Short description of the child's task. */
+  description?: string
+}
+
+/**
+ * A side-effect-free read handle (`agent.peek(id)`, spec 05 §2.2): reads the stored state and
+ * messages only. It runs no `session.start` hook, no crash recovery, no reconcile and no inbox
+ * drain, takes no lock and never writes. Cheap: create one per read.
+ */
+export interface SessionPeek<M extends UIMessage = HarnessUIMessage> {
+  readonly id: string
+  /** Same as `session.messages()`, read from the storage. */
+  messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
+  /** Stored pending state, active turn and usage (`null` / zero when the session does not exist). */
+  stats(): Promise<{
+    pending: PendingState | null
+    activeTurn: ActiveTurn | null
+    usage: SessionUsage
+  }>
+  /** Like `session.busy()`; `local` when a live handle of this agent runs a turn. */
+  busy(): Promise<SessionBusy | null>
+  /** External waits of the stored pending state. */
+  pendingWaits(): Promise<PendingExternal[]>
+  /** Stored pending state (`null` when none). */
+  pending(): Promise<PendingState | null>
+  /** Children registered in the stored state, with their identity when recorded. */
+  children(): Promise<ChildSessionInfo[]>
+  /** The stored parent of the session. */
+  parentInfo(): Promise<ParentInfo | undefined>
 }
 
 /**

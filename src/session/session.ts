@@ -420,6 +420,9 @@ export function createSessionHandle(args: {
         sessionId: id,
         turnId: parent.turnId,
         ...(parent.toolCallId === undefined ? {} : { toolCallId: parent.toolCallId }),
+        ...(parent.agent === undefined ? {} : { agent: parent.agent }),
+        ...(parent.name === undefined ? {} : { name: parent.name }),
+        ...(parent.description === undefined ? {} : { description: parent.description }),
         createdAt: Date.now(),
       })
       core.parent = { ...parent }

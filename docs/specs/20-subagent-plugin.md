@@ -25,6 +25,9 @@ subagents({
   toolName?: string                            // 'agent'
   maxDepth?: number                            // 2: the root is depth 0; a session at maxDepth has no tool
   maxConcurrent?: number                       // 8, per nesting depth and plugin instance
+  maxChildren?: number                         // no cap; children one session may start in total (§2.3)
+  childSession?: (info: SubagentChildInfo) => Omit<SessionOptions, 'parent'> | undefined  // §2.4
+  parentSession?: (sessionId: string) => Omit<SessionOptions, 'parent'> | undefined       // §2.4
   // tools (one pattern: `false` removes the tool, `{ name }` renames it)
   messageTool?: boolean | { name?: string }    // true: send_message + the `name` field of `agent` (§5); false removes both
   outputTool?: boolean | { name?: string }     // agent_output (§5.7): on when background or messageTool is on; true / { name } forces it on
@@ -181,6 +184,38 @@ that child). No cross-session injection exists (the root session handle lives in
 and may be in another instance). Shell background tasks follow the same rule by configuration:
 install `shell({ background: true })` only on the root agent and a `shell()` without `background`
 on child agents (spec 19).
+
+### 2.3 Spawn cap (`maxChildren`)
+
+`maxConcurrent` bounds children running at once; `maxChildren` bounds how many a session may
+**start in total**, counted per parent session (a root and each child have their own budget of
+children). A new `agent` call over the cap starts nothing and returns `ERROR: this session already
+started N subagents and may not start more (limit M). …` (a model-readable string; for `'park'` it
+resolves the wait at once). Resuming a finished child, messaging it and a redispatched start of the
+same call are not new children (counted by child session id). Count source: `'park'` with
+`selfAgent` reads the stored child index through `peek().children()` (so it holds across
+instances and restarts, up to the 500 entries of `core.children`); otherwise the children this
+session object started (inline / policy / background children do not outlive the process).
+
+**Budgets per workspace.** Cost limits are not a plugin feature: the ledger (spec 12 §4.1) takes
+app-defined scopes, so scope by workspace from the runtime, e.g. `budget.ledger.scopes: (ctx) =>
+[`workspace:${ctx.runtime.workspaceId}`]`, and pass the same `runtime` to children with
+`childSession` (§2.4) so child turns reserve against the same workspace scope. The ledger's
+periods (monthly USD) are those of the adapter; a per-run or per-day cap is a scope the app names.
+
+### 2.4 Session options of children (`childSession`, `parentSession`)
+
+Every child session the plugin opens (foreground, background, park start, resume, `agent_stop` and
+message delivery, the reconcile on open) is opened with `childSession({ parentSessionId, agent,
+name?, depth })` merged under the plugin's own options (`parent`, the directory `runtime` key):
+return `lock`, `runtime` (merged key by key), `storage`, `toolsContext`. `parent` cannot be
+overridden. Hooks inside the child see `ctx.session.parent` with `agent`, `name` and `description`
+(`ParentInfo`, spec 05 §13) and its own `ctx.runtime`. `parentSession(sessionId)` does the same for
+the parent / root sessions opened from a child or by the plugin (`parentAgent`, `selfAgent`);
+`subagentChild({ parent, parentSession })` has the same option. Reads of children and parents
+(`agent_output`, park status, directory rebuild, `pendingSubagentApprovals(session, agent)`) use
+`agent.peek()` (spec 05 §2.2): they never run `session.start` hooks of the session they read.
+`pendingSubagentApprovals` entries carry `agent`, `name`, `description` of the child when stored.
 
 ## 3. `'park'` (profile c): nested approvals, ADR-0035
 
@@ -453,4 +488,5 @@ park (another instance answers; parent process restart; child finishes at once; 
 `pendingSubagentApprovals`, `subagentTasks` (list / tail / stop / `run` part), `background.inChildren`.
 `src/subagent/park-messaging.test.ts`: two instances over shared storage (park on a child, answer it from the other instance, message the finished agent by name, report reaches the parent), steer into a running child, child to main, throttling, refusals, `agent_stop`.
 `src/subagent/messaging.test.ts`: running target (`data-eh.input`, model order), resume with full history and the report to the sender, subagent → main wake, subagent → sibling, user-stopped refusal, one-shot refusal, unknown target, name collision / validation, throttling and queue cap, spoofed tags, `subagentTasks.send`, roster, `messageTool: false`, tool options (`{ name }` / `false`), agent directory isolation between two agents that reuse a session id, rebuild after reopening the root session.
-Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`).
+`src/subagent/child-session.test.ts`: `childSession` / `parentSession` options and identity on `ctx.session.parent`, `maxChildren`, identity in `children()` / `pendingSubagentApprovals`, `peek` use.
+Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`), `src/session/peek.int.test.ts` (`agent.peek`).
