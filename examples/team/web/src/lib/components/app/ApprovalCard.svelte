@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { toast } from 'svelte-sonner';
 	import { ApiError, type Approval } from '#lib/api/client.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -32,7 +33,7 @@
 	}
 </script>
 
-<div class="flex max-h-[min(45vh,28rem)] flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm shadow-sm" data-testid="approval-card" role="group" aria-label="Approval request" tabindex="-1">
+<Surface class="flex max-h-[min(45vh,28rem)] flex-col gap-2 p-3 text-sm" data-testid="approval-card" role="group" aria-label="Approval request" tabindex={-1}>
 	<div class="flex flex-wrap items-center gap-2">
 		<span class="font-medium">{approval.agentName}</span>
 		<span class="text-xs text-muted-foreground">wants to</span>
@@ -66,4 +67,4 @@
 			{/key}
 		</div>
 	{/if}
-</div>
+</Surface>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import FileTextIcon from 'phosphor-svelte/lib/FileText';
 	import FileCodeIcon from 'phosphor-svelte/lib/FileCode';
 	import FileImageIcon from 'phosphor-svelte/lib/FileImage';
@@ -18,9 +19,10 @@
 	const href = $derived(`/files?path=${encodeURIComponent(file.path)}`);
 </script>
 
-<a
+<Surface
+	as="a"
 	{href}
-	class="group flex w-full max-w-lg items-center gap-3 rounded-xl border border-border bg-card p-2.5 pr-3 text-[13.5px] transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+	class="group flex w-full max-w-lg items-center gap-3 p-2.5 pr-3 text-[13.5px] transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 	data-testid="file-card"
 >
 	<span class="flex size-11 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-muted-foreground">
@@ -33,4 +35,4 @@
 		</span>
 	</span>
 	<span class="shrink-0 rounded-md bg-muted px-2.5 py-1 text-xs font-medium text-foreground transition-colors group-hover:bg-accent">Open</span>
-</a>
+</Surface>

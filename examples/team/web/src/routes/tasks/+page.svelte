@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { onMount } from 'svelte';
 	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotch';
@@ -186,7 +187,7 @@
 						</Empty.Header>
 					</Empty.Root>
 				{:else}
-					<div class="overflow-hidden rounded-xl border border-border bg-card">
+					<Surface class="overflow-hidden">
 						<Table.Root>
 							<Table.Header>
 								<Table.Row class="hover:bg-transparent">
@@ -227,7 +228,7 @@
 								{/each}
 							</Table.Body>
 						</Table.Root>
-					</div>
+					</Surface>
 				{/if}
 			</div>
 		{/if}

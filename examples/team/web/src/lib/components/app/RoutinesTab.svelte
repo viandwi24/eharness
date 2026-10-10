@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import PauseIcon from 'phosphor-svelte/lib/Pause';
 	import PlayIcon from 'phosphor-svelte/lib/Play';
@@ -86,7 +87,7 @@
 				</Empty.Header>
 			</Empty.Root>
 		{:else}
-			<ul class="flex flex-col divide-y divide-border rounded-lg border border-border bg-card">
+			<Surface as="ul" class="flex flex-col divide-y divide-border overflow-hidden">
 				{#each routines as r (r.id)}
 					{@const b = routineBadge(r)}
 					<li class="flex items-center gap-1 pr-1.5 pl-3">
@@ -107,7 +108,7 @@
 						{@render iconAction('Run now', busy === r.id, () => void act(r, 'run'), LightningIcon)}
 					</li>
 				{/each}
-			</ul>
+			</Surface>
 		{/if}
 	</div>
 </Tooltip.Provider>

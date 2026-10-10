@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import CheckIcon from 'phosphor-svelte/lib/Check';
 	import CopyIcon from 'phosphor-svelte/lib/Copy';
 	import WarningIcon from 'phosphor-svelte/lib/Warning';
@@ -34,7 +35,7 @@
 {#if missing}
 	<p class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">{empty}</p>
 {:else}
-	<div class="overflow-hidden rounded-lg border border-border bg-card">
+	<Surface elevation="sunken" class="overflow-hidden rounded-lg">
 		<div class="flex items-center gap-1 border-b border-border bg-muted py-1.5 pr-1.5 pl-3">
 			<span class="mr-auto font-mono text-[11.5px] text-muted-foreground">{title ?? 'JSON'} · {formatBytes(cut ? cut.bytes : text.length)}</span>
 			{#if !cut}
@@ -56,5 +57,5 @@
 				{#key openDepth}<JsonNode {value} {openDepth} />{/key}
 			</div>
 		{/if}
-	</div>
+	</Surface>
 {/if}

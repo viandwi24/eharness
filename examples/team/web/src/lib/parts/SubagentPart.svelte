@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOut';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge, type BadgeVariant } from '#lib/components/ui/badge/index.js';
@@ -75,16 +76,17 @@
 {/snippet}
 
 {#if sessionId && onOpenSession}
-	<button
+	<Surface
+		as="button"
 		type="button"
 		aria-label={`Open ${label} session`}
-		class="flex w-full max-w-lg cursor-pointer items-start gap-3 rounded-xl border border-border bg-card p-3 text-left text-[13.5px] transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+		class="flex w-full max-w-lg cursor-pointer items-start gap-3 p-3 text-left text-[13.5px] transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 		onclick={() => onOpenSession(sessionId)}
 	>
 		{@render body()}
-	</button>
+	</Surface>
 {:else}
-	<div class="flex w-full max-w-lg items-start gap-3 rounded-xl border border-border bg-card p-3 text-[13.5px]">
+	<Surface class="flex w-full max-w-lg items-start gap-3 p-3 text-[13.5px]">
 		{@render body()}
-	</div>
+	</Surface>
 {/if}

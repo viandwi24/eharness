@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import FileTextIcon from 'phosphor-svelte/lib/FileText';
 	import { untrack } from 'svelte';
 	import { api } from '#lib/api/index.js';
@@ -153,7 +154,7 @@
 	{/if}
 
 	{#if selected}
-		<div class="flex flex-col gap-2 rounded-xl border border-border p-3">
+		<Surface class="flex flex-col gap-2 p-3">
 			<div class="flex items-center gap-2">
 				<span class="min-w-0 flex-1 truncate font-mono text-xs font-medium">{selected}</span>
 				{#if file && !editing}
@@ -198,6 +199,6 @@
 					<pre class="max-h-80 overflow-auto whitespace-pre-wrap font-mono text-xs">{file.content}</pre>
 				{/if}
 			{/if}
-		</div>
+		</Surface>
 	{/if}
 </div>

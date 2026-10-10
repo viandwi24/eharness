@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { toast } from '#lib/components/ui/sonner/index.js';
@@ -205,12 +206,12 @@
 			{/if}
 		</div>
 	{:else if agent && !isLead}
-		<div class="flex items-center justify-between gap-3 rounded-lg border border-border p-3">
+		<Surface class="flex items-center justify-between gap-3 rounded-lg p-3">
 			<div class="min-w-0">
 				<div class="font-medium">Archive agent</div>
 				<div class="text-xs text-muted-foreground">Hides it from the list. Its history stays readable.</div>
 			</div>
 			<Button type="button" variant="outline" size="sm" onclick={archive}>Archive</Button>
-		</div>
+		</Surface>
 	{/if}
 </form>

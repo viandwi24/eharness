@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { api } from '#lib/api/index.js';
 	import type { components } from '#lib/api/schema.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -48,7 +49,7 @@
 	{:else if !runs.length}
 		<p class="text-xs text-muted-foreground">No runs yet.</p>
 	{:else}
-		<ul class="divide-y divide-border rounded-lg border border-border">
+		<Surface as="ul" class="divide-y divide-border overflow-hidden rounded-lg">
 			{#each runs as r (r.id)}
 				<li class="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2 text-xs">
 					<Badge variant={variant(r.status)}>{r.status.replace('_', ' ')}</Badge>
@@ -60,6 +61,6 @@
 					<span class="text-muted-foreground">{when(r.scheduledAt)}</span>
 				</li>
 			{/each}
-		</ul>
+		</Surface>
 	{/if}
 </section>

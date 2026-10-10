@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { toast } from 'svelte-sonner';
 	import { ApiError, type Approval } from '#lib/api/client.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -27,7 +28,7 @@
 	let busy = $state(false);
 	let showNotes = $state<Record<number, boolean>>({});
 	let warn = $state(false);
-	let root: HTMLElement | undefined = $state();
+	let root: HTMLElement | null = $state(null);
 
 	const review = $derived(Q.isReview(qs));
 	const q = $derived(qs.questions[qs.step]);
@@ -105,9 +106,10 @@
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section
-	bind:this={root}
-	class="flex max-h-[min(45vh,28rem)] flex-col gap-2 rounded-xl border border-border bg-card p-3 text-sm shadow-sm"
+<Surface
+	as="section"
+	bind:ref={root}
+	class="flex max-h-[min(45vh,28rem)] flex-col gap-2 p-3 text-sm"
 	data-testid="question-card"
 	aria-label="Question from {approval.agentName}"
 	{onkeydown}
@@ -215,4 +217,4 @@
 			<Button size="sm" disabled={busy} onclick={goNext}>{Q.isLast(qs) ? 'Review' : 'Next'}</Button>
 		{/if}
 	</div>
-</section>
+</Surface>

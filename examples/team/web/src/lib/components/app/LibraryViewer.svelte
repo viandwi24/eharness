@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { onDestroy, untrack } from 'svelte';
 	import ClockCounterClockwiseIcon from 'phosphor-svelte/lib/ClockCounterClockwise';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeft';
@@ -236,7 +237,7 @@
 		{#if actionError}<p class="text-xs text-destructive-text" role="alert">{actionError}</p>{/if}
 
 		{#if showVersions}
-			<div class="rounded-lg border border-border bg-card p-3 text-xs">
+			<Surface class="rounded-lg p-3 text-xs">
 				<h3 class="mb-2 font-medium">History <span class="font-normal text-muted-foreground">(metadata only)</span></h3>
 				{#if !versions}
 					<p class="text-muted-foreground">Loading…</p>
@@ -255,7 +256,7 @@
 						{/each}
 					</ul>
 				{/if}
-			</div>
+			</Surface>
 		{/if}
 
 		{#if error}
@@ -295,7 +296,7 @@
 		{:else if kind === 'code' && content !== null}
 			<CodeBlock code={content} language={(codeLanguage(path) ?? 'text') as never} showLineNumbers />
 		{:else if kind === 'text' && content !== null}
-			<pre class="whitespace-pre-wrap rounded-lg border border-border bg-card p-3 font-mono text-xs">{content}</pre>
+			<pre class="whitespace-pre-wrap rounded-lg border border-sk-bd bg-sk-bg p-3 font-mono text-xs shadow-sunken">{content}</pre>
 		{:else if kind === 'image' && blobUrl}
 			<img src={blobUrl} alt={basename(path)} class="max-h-[70vh] max-w-full self-start rounded-lg border border-border object-contain" />
 		{:else if kind === 'pdf' && blobUrl}

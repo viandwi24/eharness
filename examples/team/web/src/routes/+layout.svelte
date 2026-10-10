@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import './layout.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import { page } from '$app/state';
@@ -41,16 +42,18 @@
 	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 flex-col bg-background text-foreground md:flex-row md:bg-sidebar">
 		<div class="hidden md:flex"><AppRail /></div>
 		<div class="flex min-h-0 min-w-0 flex-1">
-			<aside
-				class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col bg-sidebar text-sidebar-foreground {listShown ? 'md:flex' : 'md:hidden'} md:my-2 md:mr-2 md:h-auto md:w-72 md:overflow-hidden md:rounded-xl md:border md:border-border lg:w-80"
+			<Surface
+				as="aside"
+				class="{isHome ? 'flex' : 'hidden'} h-full w-full shrink-0 flex-col rounded-none border-0 bg-sidebar text-sidebar-foreground max-md:shadow-none {listShown ? 'md:flex' : 'md:hidden'} md:my-2 md:mr-2 md:h-auto md:w-72 md:overflow-hidden md:rounded-xl md:border lg:w-80"
 			>
 				<AgentListPanel />
-			</aside>
-			<main
-				class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 bg-background md:my-2 md:mr-2 md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border md:border-border md:shadow-sm"
+			</Surface>
+			<Surface
+				as="main"
+				class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 rounded-none border-0 bg-background text-foreground max-md:shadow-none md:my-2 md:mr-2 md:flex md:h-auto md:overflow-hidden md:rounded-xl md:border"
 			>
 				{@render children()}
-			</main>
+			</Surface>
 		</div>
 		{#if barShown}<div class="md:hidden"><AppRail bar /></div>{/if}
 	</Sidebar.Provider>

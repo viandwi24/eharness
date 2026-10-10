@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeft';
 	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRight';
 	import CaretDownIcon from 'phosphor-svelte/lib/CaretDown';
@@ -69,11 +70,11 @@
 <svelte:window onkeydowncapture={onKeydown} />
 
 {#snippet tile(label: string, value: string, sub?: string)}
-	<div class="rounded-lg border border-border bg-card px-3 py-2.5">
+	<Surface class="rounded-lg px-3 py-2.5">
 		<div class="text-[11.5px] text-muted-foreground">{label}</div>
 		<div class="mt-0.5 font-mono text-[15px] leading-tight tabular-nums">{value}</div>
 		{#if sub}<div class="mt-0.5 text-[11.5px] text-muted-foreground tabular-nums">{sub}</div>{/if}
-	</div>
+	</Surface>
 {/snippet}
 
 <Sheet.Root open={id !== null} onOpenChange={(o) => !o && onClose()}>
@@ -185,7 +186,7 @@
 								<p class="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">No prompt was recorded for this call.</p>
 							{/if}
 							{#each messages as m, i (i)}
-								<details class="group rounded-lg border border-border bg-card" open={m.role !== 'system'}>
+								<Surface as="details" class="group rounded-lg" open={m.role !== 'system'}>
 									<summary class="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs select-none [&::-webkit-details-marker]:hidden">
 										<CaretDownIcon class="size-3 text-muted-foreground transition-transform group-not-open:-rotate-90" />
 										<Badge variant={m.role === 'user' ? 'brand' : m.role === 'assistant' ? 'info' : m.role === 'tool' ? 'warning' : 'secondary'} class="capitalize">{m.role}</Badge>
@@ -201,7 +202,7 @@
 											</div>
 										{/each}
 									</div>
-								</details>
+								</Surface>
 							{/each}
 							{#if tools.length > 0}
 								<p class="text-xs text-muted-foreground">Tools offered ({tools.length}): <span class="font-mono">{tools.join(', ')}</span></p>
@@ -215,10 +216,10 @@
 								</p>
 							{/if}
 							{#if output?.text}
-								<section><h4 class="mb-1 text-xs font-semibold text-muted-foreground">Text</h4><div class="rounded-lg border border-border bg-card px-3 py-2.5"><LogText text={output.text} max={4000} /></div></section>
+								<section><h4 class="mb-1 text-xs font-semibold text-muted-foreground">Text</h4><Surface class="rounded-lg px-3 py-2.5"><LogText text={output.text} max={4000} /></Surface></section>
 							{/if}
 							{#if output?.reasoning}
-								<section><h4 class="mb-1 text-xs font-semibold text-muted-foreground">Reasoning</h4><div class="rounded-lg border border-border bg-card px-3 py-2.5 text-muted-foreground"><LogText text={output.reasoning} max={2000} /></div></section>
+								<section><h4 class="mb-1 text-xs font-semibold text-muted-foreground">Reasoning</h4><Surface class="rounded-lg px-3 py-2.5 text-muted-foreground"><LogText text={output.reasoning} max={2000} /></Surface></section>
 							{/if}
 							{#if output && output.toolCalls.length > 0}
 								<section class="flex flex-col gap-2">

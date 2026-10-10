@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import FileTextIcon from 'phosphor-svelte/lib/FileText';
 	import FileCodeIcon from 'phosphor-svelte/lib/FileCode';
 	import FileImageIcon from 'phosphor-svelte/lib/FileImage';
@@ -159,13 +160,13 @@
 	{@const b = badgeFor(t.status)}
 	<Item.Root variant="outline" size="xs" class="px-3 py-2 hover:bg-accent/50">
 		{#snippet child({ props })}
-			<button type="button" {...props} class="{props.class} cursor-pointer text-left" onclick={() => openTask(t.id)}>
+			<Surface as="button" type="button" {...props} class="{props.class} cursor-pointer text-left" onclick={() => openTask(t.id)}>
 				<Item.Content>
 					<Item.Title class="text-[13px] font-medium">{t.title}</Item.Title>
 					<Item.Description class="text-xs">{relativeTime(t.lastActivityAt)}</Item.Description>
 				</Item.Content>
 				<Badge variant={b.variant}>{b.label}</Badge>
-			</button>
+			</Surface>
 		{/snippet}
 	</Item.Root>
 {/snippet}
@@ -238,13 +239,13 @@
 						{@const Icon = iconFor(f.path)}
 						<Item.Root variant="outline" size="xs" class="px-3 py-2 hover:bg-accent/50">
 							{#snippet child({ props })}
-								<a {...props} href="/files?path={encodeURIComponent(f.path)}" title="Open in Files">
+								<Surface as="a" {...props} href="/files?path={encodeURIComponent(f.path)}" title="Open in Files">
 									<Item.Media><Icon class="size-4 text-muted-foreground" /></Item.Media>
 									<Item.Content>
 										<Item.Title class="text-[13px] font-medium break-all">{basename(f.path)}</Item.Title>
 										<Item.Description class="text-xs">{parentOf(f.path)} · {formatBytes(f.size)} · {relativeTime(f.updatedAt)}</Item.Description>
 									</Item.Content>
-								</a>
+								</Surface>
 							{/snippet}
 						</Item.Root>
 					{/each}

@@ -24,7 +24,7 @@
 		<Skeleton class="h-24 w-full rounded-lg" />
 	{:else}
 		<div
-			class="flex h-24 items-end gap-px rounded-lg border border-border bg-card px-2 pt-2 pb-0 {loading ? 'opacity-60' : ''}"
+			class="flex h-24 items-end gap-px rounded-lg border border-sk-bd bg-sk-bg shadow-sunken px-2 pt-2 pb-0 {loading ? 'opacity-60' : ''}"
 			role="img"
 			aria-label="Calls over time: {stats.totals.count} calls, {stats.totals.errors} errors"
 		>

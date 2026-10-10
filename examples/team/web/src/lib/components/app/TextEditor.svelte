@@ -84,7 +84,7 @@
 				<Button size="sm" variant="ghost" onclick={() => (theirs = undefined)}>Keep editing</Button>
 			</div>
 			{#if showDiff && theirs}
-				<pre class="max-h-64 overflow-auto rounded-md border border-border bg-card p-2 font-mono text-xs text-foreground">{#each diff as l, i (i)}<span
+				<pre class="max-h-64 overflow-auto rounded-md border border-sk-bd bg-sk-bg p-2 shadow-sunken font-mono text-xs text-foreground">{#each diff as l, i (i)}<span
 							class="block whitespace-pre-wrap {l.kind === 'add' ? 'bg-success-soft text-success-text' : l.kind === 'del' ? 'bg-destructive-soft text-destructive-text' : ''}"
 							>{l.kind === 'add' ? '+ ' : l.kind === 'del' ? '- ' : '  '}{l.text}</span
 						>{/each}</pre>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { onMount } from 'svelte';
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import PauseIcon from 'phosphor-svelte/lib/Pause';
@@ -103,7 +104,7 @@
 					</Empty.Content>
 				</Empty.Root>
 			{:else}
-				<div class="rounded-lg border border-border bg-card">
+				<Surface>
 					<Table.Root>
 						<Table.Header>
 							<Table.Row>
@@ -150,7 +151,7 @@
 							{/each}
 						</Table.Body>
 					</Table.Root>
-				</div>
+				</Surface>
 			{/if}
 		</div>
 	</div>

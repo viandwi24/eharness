@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Surface from '#lib/components/app/Surface.svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
@@ -253,7 +254,7 @@
 					{#if filtering}<Empty.Content><Button size="sm" variant="outline" onclick={clearFilters}>Clear filters</Button></Empty.Content>{/if}
 				</Empty.Root>
 			{:else}
-				<div class="overflow-hidden rounded-xl border border-border bg-card {logs.loading ? 'opacity-60' : ''}">
+				<Surface class="overflow-hidden {logs.loading ? 'opacity-60' : ''}">
 					<Table.Root class="min-w-[980px]">
 						<Table.Header>
 							<Table.Row class="hover:bg-transparent">
@@ -307,7 +308,7 @@
 							{/each}
 						</Table.Body>
 					</Table.Root>
-				</div>
+				</Surface>
 				<div bind:this={sentinel} class="flex min-h-10 items-center justify-center">
 					{#if logs.nextCursor}
 						<Button variant="ghost" size="sm" class="text-muted-foreground" disabled={logs.loadingMore} onclick={() => void core.loadMore()}>
