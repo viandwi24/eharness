@@ -7,6 +7,8 @@
  */
 import { convertToModelMessages, type ModelMessage } from 'ai'
 import type { SteerDelivery } from '../../agent/session-types.ts'
+import type { InputFilesConfig } from '../../agent/types.ts'
+import { resolveFileParts } from '../../messages/files.ts'
 import { kindOf } from '../../messages/kinds.ts'
 import type { MessageRegistry } from '../../messages/registry.ts'
 import type { HarnessUIMessage, InputPartData } from '../../messages/types.ts'
@@ -88,9 +90,19 @@ export function createTurnInputQueue(): TurnInputQueue {
  * The user model message of a `data-eh.input` part: exactly what projection produces when it
  * splits the stored assistant message (spec 03 §6 step 4), so stored order equals model order.
  */
-export async function inputWireMessage(data: InputPartData): Promise<ModelMessage[]> {
+export async function inputWireMessage(
+  data: InputPartData,
+  files?: { resolve?: InputFilesConfig['resolve']; sessionId: string },
+): Promise<ModelMessage[]> {
   const parts: Array<{ type: 'text'; text: string } | NonNullable<InputPartData['files']>[number]> =
-    [{ type: 'text', text: data.text }, ...(data.files ?? [])]
+    await resolveFileParts(
+      [{ type: 'text', text: data.text }, ...(data.files ?? [])] as Array<{
+        type: 'text'
+        text: string
+      }>,
+      files?.resolve,
+      { sessionId: files?.sessionId ?? '' },
+    )
   return convertToModelMessages([{ role: 'user', parts }])
 }
 

@@ -24,7 +24,13 @@ import {
   toUIMessageStream,
   type UIMessageChunk,
 } from 'ai'
-import type { BudgetConfig, CacheConfig, ModelSettings, ProgressConfig } from '../agent/types.ts'
+import type {
+  BudgetConfig,
+  CacheConfig,
+  InputFilesConfig,
+  ModelSettings,
+  ProgressConfig,
+} from '../agent/types.ts'
 import type { TurnCompaction } from '../compaction/turn-context.ts'
 import { HarnessToolError } from '../errors.ts'
 import { describeModel } from '../internal/model.ts'
@@ -578,7 +584,7 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
       if (inbox !== undefined) external.push(...(await inbox.take()))
       for (const item of external) {
         input.write({ type: 'data-eh.input', data: structuredClone(item.data) })
-        wire.push(...(await inputWireMessage(item.data)))
+        wire.push(...(await inputWireMessage(item.data, fileResolution(input.rt))))
         input.delivered?.(item)
       }
       external = []
@@ -790,7 +796,8 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
     const endStep = firstOfContinuation() && input.endAfterContinuation === true
     const noteData = firstOfContinuation() ? (input.approvalNotes ?? []) : []
     const noteWire: ModelMessage[] = []
-    for (const data of noteData) noteWire.push(...(await inputWireMessage(data)))
+    for (const data of noteData)
+      noteWire.push(...(await inputWireMessage(data, fileResolution(input.rt))))
     let notesWritten = noteData.length === 0
     const writeNotes = (): void => {
       if (notesWritten) return
@@ -1335,6 +1342,14 @@ function fileUrlOf(data: unknown): string | undefined {
     return normalizeUrl(String((data as { url?: unknown }).url))
   }
   return undefined
+}
+
+function fileResolution(rt: SessionRuntime): {
+  resolve?: NonNullable<InputFilesConfig['resolve']>
+  sessionId: string
+} {
+  const resolve = rt.agent.config.inputFiles?.resolve
+  return { sessionId: rt.id, ...(resolve === undefined ? {} : { resolve }) }
 }
 
 function describeStuck(stuck: StuckReason): string {

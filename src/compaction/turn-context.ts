@@ -173,6 +173,7 @@ export function createTurnCompaction(args: {
     model: info.model,
     pending: args.pending ?? null,
     ...(args.continuing === undefined ? {} : { continuing: args.continuing }),
+    ...(config.inputFiles?.resolve === undefined ? {} : { resolveFile: config.inputFiles.resolve }),
   }
 
   async function fixed(): Promise<number> {

@@ -421,6 +421,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     resolveResult = resolve
   })
 
+  let resolveAccepted!: (error: TurnError | undefined) => void
+  const accepted = new Promise<TurnError | undefined>((resolve) => {
+    resolveAccepted = resolve
+  })
+
   const info: TurnInfo = {
     id: turnId,
     kind: op.kind,
@@ -653,6 +658,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       rt.state.revert(stateCheckpoint, [...touched.values()])
     if (!startWritten) writeStart(rt.agent.generateId(), undefined) // throwaway id, never stored
     outcome = { stop, steps: 0, model: info.model }
+    if (!committed && error !== undefined) resolveAccepted(toTurnError(error, log))
     if (stop === 'aborted' || stop === 'timeout') {
       outcome.stop = timedOut ? 'timeout' : 'aborted'
       outcome.abortReason = timedOut ? 'timeout' : abortReason()
@@ -1517,6 +1523,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
 
     try {
       await commit(prep)
+      resolveAccepted(undefined)
     } catch (error) {
       if (!committed) return earlyEnd('error', error)
       // committed but not applied: the items are tried again (dedupe skips a saved user message)
@@ -2058,6 +2065,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (rt.turn === turnState) rt.turn = undefined
     rt.running = false
     rt.events.emit({ type: 'status', running: false })
+    resolveAccepted(undefined) // no-op after a pre-commit failure or commit
     resolveResult(turnResult)
     host.onTurnEnd()
     stopObserving()
@@ -2177,6 +2185,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     stream: buffer.reader(),
     result,
     abort,
+    accepted,
   })
   return {
     run,

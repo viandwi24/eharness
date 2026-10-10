@@ -6,13 +6,16 @@
 	import {
 		Conversation,
 		ConversationContent,
+		ConversationEmptyState,
 		ConversationItem,
 		ConversationScrollButton
 	} from '#lib/components/ai/conversation/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import { agents } from '#lib/mock.js'; // MOCK: only to resolve fixture message authors
+	import { tick } from 'svelte';
+	import { toast } from 'svelte-sonner';
+	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
+	import { agentChat } from '#lib/chat/chats.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
-	import { fixtureMessages } from '#lib/parts/fixtures.js';
 	import MessageView from '#lib/parts/MessageView.svelte';
 	import ChatComposer from './ChatComposer.svelte';
 
@@ -22,6 +25,51 @@
 	}: { agentId: string; onTogglePanel: () => void } = $props();
 
 	const agent = $derived(agentsStore.find(agentId));
+	// One cached chat per agent (history, stream and pagination survive switching agents).
+	const ac = $derived(agentChat(agentId));
+	const chat = $derived(ac.chat);
+
+	async function send(m: PromptInputMessage): Promise<void> {
+		const text = m.text.trim();
+		if (!text && m.files.length === 0) return;
+		let files;
+		try {
+			files = await Promise.all(m.files.map((f) => ac.upload(f)));
+		} catch (e) {
+			// Throwing keeps the text and attachments in the composer for a retry.
+			toast.error(e instanceof Error ? e.message : 'Upload failed');
+			throw e;
+		}
+		// Not awaited: the composer must clear now, not when the stream ends. Errors reach `onError`.
+		void ac.send(text, files);
+	}
+
+	// Scroll-up pagination: load the next older page near the top and keep the viewport anchored.
+	let root = $state<HTMLElement | null>(null);
+	let busyOlder = false;
+	async function maybeLoadOlder(): Promise<void> {
+		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
+		if (!vp || busyOlder || !ac.hasOlder || ac.loadingOlder) return;
+		if (vp.scrollHeight > vp.clientHeight && vp.scrollTop > 160) return;
+		busyOlder = true;
+		const height = vp.scrollHeight;
+		const top = vp.scrollTop;
+		const added = await ac.loadOlder();
+		await tick();
+		if (added > 0) vp.scrollTop = top + (vp.scrollHeight - height);
+		busyOlder = false;
+	}
+	$effect(() => {
+		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
+		if (!vp) return;
+		const onScroll = (): void => void maybeLoadOlder();
+		vp.addEventListener('scroll', onScroll, { passive: true });
+		return () => vp.removeEventListener('scroll', onScroll);
+	});
+	// Short history that does not fill the viewport: keep loading until it does (or there is no more).
+	$effect(() => {
+		if (ac.loaded && ac.hasOlder && chat.messages.length) void tick().then(maybeLoadOlder);
+	});
 	$effect(() => {
 		if (!agentsStore.find(agentId)) void agentsStore.get(agentId).catch(() => {});
 	});
@@ -47,24 +95,52 @@
 		</Button>
 	</header>
 
-	<Conversation class="min-h-0 flex-1">
-		<ConversationContent class="mx-auto w-full max-w-3xl gap-6 px-4 py-6">
-			{#each fixtureMessages as f (f.message.id)}
-				{@const author = agents.find((a) => a.id === f.agentId)}
-				<ConversationItem messageId={f.message.id}>
-					<MessageView
-						message={f.message}
-						agent={author ? { id: author.id, name: author.name } : undefined}
-						onApproval={(a) => console.debug('approval', a)}
-						onOpenSession={(id) => console.debug('open session', id)}
-					/>
-				</ConversationItem>
-			{/each}
-		</ConversationContent>
-		<ConversationScrollButton />
-	</Conversation>
+	<div bind:this={root} class="flex min-h-0 flex-1 flex-col">
+		{#key agentId}
+			<Conversation class="min-h-0 flex-1">
+				<ConversationContent class="mx-auto w-full max-w-3xl gap-6 px-4 py-6">
+					{#if ac.loadingOlder}
+						<div class="text-center text-xs text-muted-foreground">Loading earlier messages...</div>
+					{/if}
+					{#each chat.messages as m (m.id)}
+						<ConversationItem messageId={m.id}>
+							<MessageView
+								message={m}
+								agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
+								onApproval={(a) => void ac.approve(a)}
+								onOpenSession={() => {}}
+							/>
+						</ConversationItem>
+					{:else}
+						{#if ac.loaded}
+							<ConversationEmptyState
+								title={agent ? `Start a conversation with ${agent.name}` : 'No messages yet'}
+								description={agent?.description || 'Send a message to get started.'}
+							>
+								{#snippet icon()}
+									{#if agent}<AgentAvatar seed={agent.id} color={agent.color} size={48} label={agent.name} />{/if}
+								{/snippet}
+							</ConversationEmptyState>
+						{/if}
+					{/each}
+					{#if chat.status === 'submitted'}
+						<div class="text-sm text-muted-foreground">Thinking...</div>
+					{/if}
+				</ConversationContent>
+				<ConversationScrollButton />
+			</Conversation>
+		{/key}
+	</div>
 
 	<div class="mx-auto w-full max-w-3xl shrink-0 p-3">
-		<ChatComposer onSend={() => {}} />
+		{#if ac.notice}
+			<div class="mb-2 text-center text-xs text-muted-foreground" role="status">{ac.notice}</div>
+		{/if}
+		<ChatComposer
+			onSend={send}
+			onStop={() => void ac.stop()}
+			status={chat.status}
+			placeholder={agent ? `Message ${agent.name}` : 'Message the agent'}
+		/>
 	</div>
 </section>

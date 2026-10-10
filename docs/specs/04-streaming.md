@@ -307,9 +307,21 @@ export interface HarnessRun<M extends HarnessUIMessage = HarnessUIMessage, O = n
    * `input.submit` block; an `input-dropped` event, §6). Never rejects.
    */
   readonly delivery?: Promise<'step' | 'turn' | 'dropped'>
+  /**
+   * Resolves `undefined` once the turn is accepted (passed its commit point, or ended without an
+   * error: blocked, aborted); the error `{ code, message, details? }` of a turn that failed
+   * BEFORE its commit point (nothing persisted). attach() / attachRemote() runs: `undefined`.
+   */
+  readonly accepted: Promise<{ code?: string; message: string; details?: Record<string, unknown> } | undefined>
   abort(reason?: string): void
   /** createUIMessageStreamResponse({ stream }) with UI_MESSAGE_STREAM_HEADERS. */
   toResponse(init?: ResponseInit): Response
+  /**
+   * `await accepted`, then `toResponse()`; a pre-commit failure answers an HTTP status with the
+   * JSON body `{ error: { code, message } }` instead (§7.1). Failures after the stream started
+   * stay in-stream.
+   */
+  toHttpResponse(init?: ResponseInit): Promise<Response>
   /** pipeUIMessageStreamToResponse for Node's ServerResponse (typed without importing node:). */
   pipeTo(response: Parameters<typeof pipeUIMessageStreamToResponse>[0]['response']): Promise<void>
 }
@@ -321,7 +333,7 @@ Typical route (works with `useChat`'s default request body `{ id, messages, trig
 export async function POST(req: Request) {
   const body = await req.json()
   const session = agent.session(body.id, { runtime: { userId } })
-  return handleChatRequest(session, body).toResponse()   // send / respond / regenerate / edit (spec 11 §7)
+  return handleChatRequest(session, body).toHttpResponse()   // send / respond / regenerate / edit (spec 11 §7)
 }
 export async function GET(req: Request) {        // reconnect (useChat resume)
   const id = new URL(req.url).searchParams.get('id')!
@@ -360,3 +372,25 @@ Verified AI SDK v7 behaviour and what the core does with it:
 - Error texts come from `describeError` (spec 10 §3); it never leaks stack traces or provider
   payloads.
 - The stream always ends with exactly one `finish` or one `abort`, never left hanging.
+
+### 7.1 Status of failures before the commit point (0.9.0)
+
+`run.accepted` separates failures **before** the turn's commit point (spec 05 §3 step 11:
+busy in this or another instance, a `SessionLock` held elsewhere, `EH_INVALID_INPUT`, a pending
+item without an answer, a stale state; nothing was persisted and no model call happened) from
+everything after it. `toHttpResponse()` maps the former to a status and a JSON body
+`{ error: { code, message } }`; the latter stay `error` chunks of a `200` stream (the stream and
+the stored message are the record, spec 04 §5).
+
+| `error.code` | Status |
+|---|---|
+| `EH_SESSION_BUSY`, `EH_SESSION_CLOSED` | 409 |
+| `EH_INVALID_INPUT`, `EH_PENDING_RESPONSE`, `EH_INVALID_MESSAGE` | 400 |
+| `EH_STORAGE` | 503 |
+| any other pre-commit failure | 500 |
+
+Rules: (1) `accepted` never rejects and resolves once; (2) a blocked or aborted turn is accepted
+(`200`); (3) `toResponse()` is unchanged (an in-stream error for those failures; in-process busy
+of `handleChatRequest` is still a 409); (4) the unread stream of a rejected run is cancelled.
+Oversized bodies (413) are the HTTP framework's concern: the core has no body limit besides
+`inputFiles.maxBytes`, which is `EH_INVALID_INPUT` (400).

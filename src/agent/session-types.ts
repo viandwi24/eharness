@@ -104,6 +104,34 @@ export interface ActiveTurn {
 }
 
 /**
+ * Cumulative usage of a session: all finished turns (`state.core.usage`). `costUsd` is present
+ * once anything was priced (spec 12).
+ *
+ * @see docs/specs/05-session-and-storage.md#7-state
+ */
+export interface SessionUsage {
+  inputTokens: number
+  outputTokens: number
+  /** Turns that ran at least one model step. */
+  turns: number
+  costUsd?: number
+}
+
+/**
+ * A running turn as reported by `session.busy()`.
+ *
+ * @see docs/specs/05-session-and-storage.md#2-session-api
+ */
+export interface SessionBusy {
+  scope: 'local' | 'remote'
+  turnId: string
+  /** Owner (instance) of the turn; remote turns only. */
+  owner?: string
+  /** Epoch ms of the last heartbeat; remote turns only. */
+  heartbeatAt?: number
+}
+
+/**
  * A request, written by another instance, to abort the turn `turnId` (cross-process abort). The
  * only `state.core` field a foreign instance may write while a turn runs.
  *
@@ -143,7 +171,7 @@ export interface SessionStateSnapshot {
   core: {
     compaction?: { markerId: string; resumeFromId: string | null }
     /** `costUsd`: estimated USD of all turns (spec 12), when anything was priced. */
-    usage?: { inputTokens: number; outputTokens: number; turns: number; costUsd?: number }
+    usage?: SessionUsage
     activeTurn?: ActiveTurn
     pending?: PendingState
     grants?: Record<string, 'always' | 'never'>
@@ -728,9 +756,24 @@ export interface HarnessRun<M extends UIMessage = HarnessUIMessage, O = never> {
    * `input.submit` hook blocked it (`input-dropped` event). Never rejects.
    */
   readonly delivery?: Promise<SteerDelivery>
+  /**
+   * Resolves `undefined` once the turn is accepted (it passed its commit point, or ended without
+   * an error: blocked, aborted) and the error of a turn that failed **before** its commit point
+   * (busy, invalid input, no pending answer; nothing was persisted). Runs of `attach()` /
+   * `attachRemote()` resolve `undefined` at once. Never rejects.
+   */
+  readonly accepted: Promise<NonNullable<TurnResult['error']> | undefined>
   abort(reason?: string): void
   /** `createUIMessageStreamResponse({ stream })`. */
   toResponse(init?: ResponseInit): Response
+  /**
+   * Like `toResponse()`, but waits for {@link HarnessRun.accepted} first: a turn that failed
+   * before its commit point answers an HTTP status with a JSON body `{ error: { code, message } }`
+   * (`EH_SESSION_BUSY` / `EH_SESSION_CLOSED` 409, `EH_INVALID_INPUT` / `EH_PENDING_RESPONSE` /
+   * `EH_INVALID_MESSAGE` 400, `EH_STORAGE` 503, others 500); every other turn streams as
+   * `toResponse()` does, and failures after the stream started stay in the stream (spec 04 §7).
+   */
+  toHttpResponse(init?: ResponseInit): Promise<Response>
   /** `pipeUIMessageStreamToResponse` for Node's `ServerResponse`. */
   pipeTo(response: Parameters<typeof pipeUIMessageStreamToResponse>[0]['response']): Promise<void>
 }
@@ -905,7 +948,22 @@ export interface HarnessSession<
   /** Read history for UIs (newest `limit` before `beforeId`, chronological). */
   messages(q?: { beforeId?: string; limit?: number; includeHidden?: boolean }): Promise<M[]>
   /** Current context stats and pending state. */
-  stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
+  stats(): Promise<
+    ContextStats & {
+      pending: PendingState | null
+      activeTurn: ActiveTurn | null
+      /** Cumulative usage of all finished turns of this session (spec 05 §7, spec 12). */
+      usage: SessionUsage
+    }
+  >
+  /**
+   * Whether a turn is running right now, in this process (`scope: 'local'`) or in another
+   * instance (`scope: 'remote'`: a stored `activeTurn` of another owner whose heartbeat is
+   * younger than `recovery.staleMs`). `null` when idle. Reads the stored state; never recovers.
+   * A lock held by another instance without a stored `activeTurn` is not visible here (the turn
+   * operations report it as `EH_SESSION_BUSY`).
+   */
+  busy(): Promise<SessionBusy | null>
   /**
    * The tools the model sees in the next request, in request order (spec 02 §3.4): static, skill,
    * source and `tool_search` tools with their source, deferral and estimated tokens. Resolved the

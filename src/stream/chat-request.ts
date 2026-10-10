@@ -122,14 +122,18 @@ export function extractResponses(message: UIMessage): PendingResponse {
  * Throws only `EH_SESSION_CLOSED`. A busy session (`EH_SESSION_BUSY`) is returned as a failed run
  * (`stop: 'error'`, `error.code: 'EH_SESSION_BUSY'`) whose `toResponse()` / `pipeTo()` answer
  * **409** with `{ error: { code, message } }`; pass `{ ifBusy: 'wait' }` to wait instead (send and
- * respond only).
+ * respond only). Failures **before the turn's commit point** that only the run can see (a lock
+ * held by another instance, a turn running in another instance, `EH_INVALID_INPUT`, a pending
+ * item without an answer) are in-stream `error` chunks of `toResponse()`; use
+ * `await run.toHttpResponse()` to answer them with a status (409 / 400 / 503, JSON body) too.
+ * Failures after the stream started stay in the stream.
  *
  * @example
  * ```ts
  * export async function POST(req: Request) {
  *   const body = await req.json()
  *   const session = agent.session(body.id, { runtime: { userId } })
- *   return handleChatRequest(session, body).toResponse()
+ *   return await handleChatRequest(session, body).toHttpResponse()
  * }
  * ```
  * @see docs/specs/11-interaction.md#7-handlechatrequest-usechat-adapter

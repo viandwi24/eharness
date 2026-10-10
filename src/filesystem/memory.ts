@@ -28,6 +28,8 @@ interface StoredFile {
   version: string
   size: number
   updatedAt: number
+  /** Declared by `writeBytes`; cleared by the next write without one. */
+  mediaType?: string
 }
 
 const decoder = new TextDecoder()
@@ -101,6 +103,7 @@ export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSy
     size: file.size,
     updatedAt: file.updatedAt,
     ...(file.bytes === undefined ? {} : { binary: true }),
+    ...(file.mediaType === undefined ? {} : { mediaType: file.mediaType }),
   })
 
   const listed = (prefix: string): Array<[string, StoredFile]> =>
@@ -122,7 +125,7 @@ export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSy
       const file = files.get(path)
       if (file === undefined) return null
       const bytes = file.bytes === undefined ? encoder.encode(file.content) : file.bytes.slice()
-      const mediaType = detectMediaType(bytes, path)
+      const mediaType = file.mediaType ?? detectMediaType(bytes, path)
       return { bytes, meta: meta(path, file), ...(mediaType === undefined ? {} : { mediaType }) }
     },
 
@@ -141,7 +144,13 @@ export function memoryFs(seed: Record<string, string | Uint8Array> = {}): FileSy
           ? { ok: false, reason: 'conflict' }
           : { ok: false, reason: 'conflict', currentVersion: current.version }
       }
-      files.set(path, { ...next, updatedAt: Date.now() })
+      const mediaType =
+        typeof opts.mediaType === 'string' && opts.mediaType !== '' ? opts.mediaType : undefined
+      files.set(path, {
+        ...next,
+        updatedAt: Date.now(),
+        ...(mediaType === undefined ? {} : { mediaType }),
+      })
       return { ok: true, version: next.version }
     },
 

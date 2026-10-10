@@ -11,6 +11,7 @@ describe('memoryFs() conformance', () => {
     requireGrep: true,
     requireMove: true,
     requireBytes: true,
+    keepsMediaType: true,
   })) {
     test(c.name, c.run)
   }

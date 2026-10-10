@@ -390,6 +390,555 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/chat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a message, answer an approval or regenerate (useChat)
+         * @description The body is an AI SDK `useChat` request; the response is the UI message stream (`text/event-stream`).
+         *
+         *     - **Send**: the last message is a user message. Attachments are `file` parts (`data:` / `https:` URLs, or the `library:///uploads/…` url returned by `POST /library/files`).
+         *     - **Approvals**: when a turn ends with an `approval-requested` tool part, the client posts the assistant message back with the part in `approval-responded` (`addToolApprovalResponse` + `sendAutomaticallyWhen`). The continuation streams into the **same** message id.
+         *     - **Regenerate / edit**: `trigger: "regenerate-message"`, or a user message with `messageId`.
+         *
+         *     Busy policy: while a turn of this chat runs, a new user message is **steered** into it (`ifBusy=steer`, default): on this instance the response follows the running turn; when another instance runs it the message goes through the durable inbox and the route answers `202`. `ifBusy=reject` answers `409 EH_SESSION_BUSY` instead. Approvals, regenerate and edit never steer: `409`.
+         *
+         *     Errors after the turn started (model failure, stale approval answer) arrive as an `error` chunk inside the stream, not as an HTTP status.
+         */
+        post: {
+            parameters: {
+                query?: {
+                    /** @description What a user message does while a turn runs. Default `steer`. */
+                    ifBusy?: "steer" | "reject";
+                };
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChatRequest"];
+                };
+            };
+            responses: {
+                /** @description The UI message stream of the turn */
+                200: {
+                    headers: {
+                        "x-vercel-ai-ui-message-stream": "v1";
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description Steered into a turn running on another instance */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatQueued"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `EH_SESSION_BUSY`, `EH_SESSION_CLOSED` or archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Request body too large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/chat/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resume the running turn (useChat resume)
+         * @description Replays the chunks of the active turn from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use the stored messages. A continuation turn after an approval replays only the continuation: refetch the message at the end.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0. */
+                    from?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The UI message stream from the cursor */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description No turn is streaming */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/chat/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop the running turn (any instance) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["AbortRequest"];
+                };
+            };
+            responses: {
+                /** @description Where the abort went */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AbortResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stored messages of the chat (paginated, newest page first) */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Message id: only older messages. */
+                    before?: string;
+                    /** @description Page size (1-200). */
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page, chronological */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MessagesPage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/compact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Summarise the older part of the chat now */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The summary, or nothing to compact */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CompactResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description A turn runs (`EH_SESSION_BUSY`) or the agent is archived */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Context size, usage, active turn and pending approvals */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Session statistics */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChatStats"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/library/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload a file into the library (/uploads)
+         * @description Multipart form with one `file` field (max 10 MB; images, PDF, text, Markdown, CSV, JSON). The file is stored under `/uploads/<day>/…` in the shared library, so agents can read it. Attach it to a message with a `file` part whose `url` is the returned `url`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": {
+                        /**
+                         * Format: binary
+                         * @description The file (max 10 MB).
+                         */
+                        file: string;
+                    };
+                };
+            };
+            responses: {
+                /** @description The stored file */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Upload"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description File too large */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -511,6 +1060,121 @@ export interface components {
                 name: components["schemas"]["ToolName"];
                 description: string;
             }[];
+        };
+        /** @description A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /agents/{id}/chat/stream`. */
+        ChatQueued: {
+            inboxId: string;
+            /** @enum {string} */
+            delivered: "steer";
+            /** @enum {string} */
+            target: "local" | "remote";
+        };
+        /** @description The `useChat` request body (`DefaultChatTransport`). */
+        ChatRequest: {
+            /** @description Chat id of `useChat`; ignored (the chat is the agent DM). */
+            id?: string;
+            /** @description Only the **last** message is read: a user message (send), or the assistant message with `approval-responded` / `output-available` tool parts (answers a pending approval; the continuation streams into the same message). Ids, metadata and history of the client are never trusted. */
+            messages: components["schemas"]["UiMessage"][];
+            /** @enum {string} */
+            trigger?: "submit-message" | "regenerate-message";
+            /** @description With a user message: replace that message and answer it (edit). */
+            messageId?: string;
+        };
+        /** @description An AI SDK `UIMessage`. Stored messages carry `metadata.eharness` (turn id, stop reason, usage, pending approvals). */
+        UiMessage: {
+            id?: string;
+            /** @enum {string} */
+            role: "user" | "assistant" | "system";
+            parts: ({
+                type: string;
+            } & {
+                [key: string]: unknown;
+            })[];
+            metadata?: unknown;
+        } & {
+            [key: string]: unknown;
+        };
+        AbortResult: {
+            /**
+             * @description `local`: a turn of this instance was aborted; `remote`: the request was written for the instance running it; `idle`: nothing runs.
+             * @enum {string}
+             */
+            target: "local" | "remote" | "idle" | "unsupported";
+        };
+        AbortRequest: {
+            reason?: string;
+        };
+        MessagesPage: {
+            /** @description Chronological (oldest first). */
+            messages: components["schemas"]["UiMessage"][];
+            /** @description Pass as `before` to load older messages; null = no more. */
+            nextBefore: string | null;
+        };
+        CompactResult: {
+            compacted: boolean;
+            message: components["schemas"]["UiMessage"] & (Record<string, never> | null);
+        };
+        ChatStats: {
+            /** @description A turn runs in this process. */
+            running: boolean;
+            context: {
+                window: number;
+                tokens: number;
+                instructions: number;
+                tools: number;
+                messages: number;
+                summarizeAt: number;
+                hardLimit: number;
+                lastCompaction?: {
+                    markerId: string;
+                    before: number;
+                    after: number;
+                    at: number;
+                };
+            };
+            /** @description The turn running anywhere (any instance), or null. */
+            activeTurn: {
+                turnId: string;
+                kind: string;
+                messageId: string;
+                owner: string;
+                startedAt: number;
+                heartbeatAt: number;
+            } | null;
+            /** @description Approvals and questions waiting for the user. */
+            pending: {
+                messageId: string;
+                approvals: {
+                    approvalId: string;
+                    toolCallId: string;
+                    toolName: string;
+                    input?: unknown;
+                    risk?: string;
+                }[];
+                clientTools: number;
+                externals: number;
+            } | null;
+            usage: {
+                inputTokens: number;
+                outputTokens: number;
+                totalTokens: number;
+                cachedInputTokens: number;
+                costUsd: number;
+                messages: number;
+            };
+        };
+        Upload: {
+            /** @example /uploads/2026-10-10/0198f0a2-report.pdf */
+            path: string;
+            name: string;
+            mediaType: string;
+            size: number;
+            version: string;
+            /**
+             * @description Use as the `url` of a `file` part of the next user message; the server resolves it to the file content.
+             * @example library:///uploads/2026-10-10/0198f0a2-report.pdf
+             */
+            url: string;
         };
     };
     responses: never;

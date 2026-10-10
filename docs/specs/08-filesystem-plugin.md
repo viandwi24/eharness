@@ -556,7 +556,7 @@ interface FileMeta { /* … */ binary?: boolean; mediaType?: string }
 interface BinaryFile { bytes: Uint8Array; meta: FileMeta; mediaType?: string }
 interface FileSystem {
   readBytes?(path: string): Promise<BinaryFile | null>
-  writeBytes?(path: string, bytes: Uint8Array, opts?: { ifVersion?: string | null }): Promise<WriteResult>
+  writeBytes?(path: string, bytes: Uint8Array, opts?: { ifVersion?: string | null; mediaType?: string }): Promise<WriteResult>
 }
 ```
 
@@ -571,6 +571,11 @@ interface FileSystem {
   binary file replaces it.
 - `binary` classification is the same everywhere (`looksBinary`, exported): NUL byte in the first
   8000 bytes, or invalid UTF-8.
+- `writeBytes(..., { mediaType })` (0.9.0) declares the IANA media type. An adapter that can keep
+  it (a database column, object metadata) returns it as `FileMeta.mediaType` (`list`, `stat`) and
+  `BinaryFile.mediaType` afterwards, also for text files (`text/csv`), until the next write without
+  one; others may ignore it. `memoryFs` keeps it; the conformance option `keepsMediaType` checks
+  it.
 - `mediaType` on `FileMeta`/`BinaryFile` is optional (an object store knows it); the plugin falls
   back to `detectMediaType(bytes, path)` (magic bytes for PNG, JPEG, GIF, WebP, PDF, BMP, ZIP,
   gzip, then the extension; `undefined` when unknown). `imageDimensions`, `bytesToBase64`,

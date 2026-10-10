@@ -14,6 +14,7 @@ interface MetaUnderTest {
   size: number
   updatedAt?: number
   binary?: boolean
+  mediaType?: string
 }
 
 /**
@@ -47,7 +48,7 @@ export interface FileSystemUnderTest {
   writeBytes?(
     path: string,
     bytes: Uint8Array,
-    opts?: { ifVersion?: string | null },
+    opts?: { ifVersion?: string | null; mediaType?: string },
   ): Promise<
     | { ok: true; version: string }
     | { ok: false; reason: 'conflict' | 'exists'; currentVersion?: string }
@@ -73,6 +74,11 @@ export interface FileSystemConformanceOptions {
   requireMove?: boolean
   /** Require the optional `readBytes` and `writeBytes` (binary files). Default false: runs only when present. */
   requireBytes?: boolean
+  /**
+   * The adapter keeps the `mediaType` declared by `writeBytes` (`readBytes` and `list` return it,
+   * also for text files). Default false: the case is skipped.
+   */
+  keepsMediaType?: boolean
 }
 
 const encoder = new TextEncoder()
@@ -532,6 +538,35 @@ export function fileSystemConformance(
         const replaced = await fs.write('/img/a.bin', 'now text')
         assertTrue(replaced.ok, 'a text write over a binary file must work')
         assertTrue((await contentOf(fs, '/img/a.bin')) === 'now text', 'replaced content')
+      },
+    },
+    {
+      name: 'writeBytes keeps the declared mediaType (keepsMediaType)',
+      run: async () => {
+        if (options.keepsMediaType !== true) return
+        const fs = await factory()
+        assertTrue(
+          fs.readBytes !== undefined && fs.writeBytes !== undefined,
+          'keepsMediaType needs readBytes and writeBytes',
+        )
+        const write = fs.writeBytes as NonNullable<typeof fs.writeBytes>
+        const csv = new TextEncoder().encode('a,b\n1,2\n')
+        const created = await write('/data/x.bin', csv, { mediaType: 'text/csv' })
+        assertTrue(created.ok, 'writeBytes with a mediaType must write')
+        const file = await (fs.readBytes as NonNullable<typeof fs.readBytes>)('/data/x.bin')
+        assertTrue(file?.mediaType === 'text/csv', `readBytes mediaType, got ${file?.mediaType}`)
+        const listed = (await fs.list('/data/')).find((m) => m.path === '/data/x.bin')
+        assertTrue(listed?.mediaType === 'text/csv', 'list must return the declared mediaType')
+        if (fs.stat !== undefined) {
+          assertTrue(
+            (await fs.stat('/data/x.bin'))?.mediaType === 'text/csv',
+            'stat must return the declared mediaType',
+          )
+        }
+        const again = await write('/data/x.bin', csv)
+        assertTrue(again.ok, 'rewrite must work')
+        const cleared = (await fs.list('/data/')).find((m) => m.path === '/data/x.bin')
+        assertTrue(cleared?.mediaType === undefined, 'a write without mediaType clears it')
       },
     },
     {

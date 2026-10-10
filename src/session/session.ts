@@ -1914,6 +1914,31 @@ export function createSessionHandle(args: {
         ),
         pending: core.pending ?? null,
         activeTurn: core.activeTurn ?? null,
+        usage:
+          core.usage === undefined
+            ? { inputTokens: 0, outputTokens: 0, turns: 0 }
+            : { ...core.usage },
+      }
+    },
+    async busy() {
+      assertOpen()
+      touch()
+      if (current !== undefined) return { scope: 'local', turnId: current.run.turnId }
+      const staleMs =
+        config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
+      let stored: Awaited<ReturnType<StateAdapter['get']>>
+      try {
+        stored = await args.state.get(id)
+      } catch (error) {
+        throw new HarnessError('EH_STORAGE', 'State storage failed (busy).', { cause: error })
+      }
+      const active = liveForeignTurn(stored, rt.owner, staleMs)
+      if (active === undefined) return null
+      return {
+        scope: 'remote',
+        turnId: active.turnId,
+        owner: active.owner,
+        heartbeatAt: active.heartbeatAt,
       }
     },
     async tools() {

@@ -84,6 +84,25 @@ export function createTurnBuffer(): TurnBuffer {
   }
 }
 
+type TurnError = NonNullable<TurnResult['error']>
+
+/** HTTP status of a failure before a turn's commit point (spec 04 §7). */
+export function statusOfError(code: string | undefined): number {
+  switch (code) {
+    case 'EH_SESSION_BUSY':
+    case 'EH_SESSION_CLOSED':
+      return 409
+    case 'EH_INVALID_INPUT':
+    case 'EH_PENDING_RESPONSE':
+    case 'EH_INVALID_MESSAGE':
+      return 400
+    case 'EH_STORAGE':
+      return 503
+    default:
+      return 500
+  }
+}
+
 /** Build a `HarnessRun` over a stream. */
 export function createRun<M extends UIMessage>(init: {
   turnId: string
@@ -92,20 +111,33 @@ export function createRun<M extends UIMessage>(init: {
   stream: ReadableStream<UIMessageChunk>
   result: Promise<TurnResult<M>>
   abort: (reason?: string) => void
+  /** Default: accepted at once. */
+  accepted?: Promise<TurnError | undefined>
 }): HarnessRun<M> {
   const stream = init.stream as HarnessRun<M>['stream']
+  const accepted = init.accepted ?? Promise.resolve(undefined)
+  const toResponse: HarnessRun<M>['toResponse'] = (responseInit) =>
+    createUIMessageStreamResponse({
+      ...responseInit,
+      stream: stream as ReadableStream<UIMessageChunk>,
+    })
   return {
     turnId: init.turnId,
     kind: init.kind,
     messageId: init.messageId,
     stream,
     result: init.result as Promise<TurnResult<M, never>>,
+    accepted,
     abort: init.abort,
-    toResponse(responseInit) {
-      return createUIMessageStreamResponse({
-        ...responseInit,
-        stream: stream as ReadableStream<UIMessageChunk>,
-      })
+    toResponse,
+    async toHttpResponse(responseInit) {
+      const error = await accepted
+      if (error === undefined) return toResponse(responseInit)
+      const body = JSON.stringify({ error: { code: error.code, message: error.message } })
+      const headers = new Headers(responseInit?.headers)
+      headers.set('content-type', 'application/json')
+      void stream.cancel().catch(() => {})
+      return new Response(body, { ...responseInit, status: statusOfError(error.code), headers })
     },
     pipeTo(response) {
       return pipeUIMessageStreamToResponse({
@@ -164,6 +196,7 @@ export function failedRun(
     stream: buffer.reader(),
     result: Promise.resolve(result),
     abort: () => {},
+    accepted: Promise.resolve(result.error),
   })
   if (status === undefined) return run
   const body = JSON.stringify({ error: { code: error.code, message: error.message } })
@@ -173,6 +206,9 @@ export function failedRun(
       const headers = new Headers(init?.headers)
       headers.set('content-type', 'application/json')
       return new Response(body, { ...init, status, headers })
+    },
+    async toHttpResponse(init) {
+      return this.toResponse(init)
     },
     async pipeTo(response) {
       response.writeHead(status, { 'content-type': 'application/json' })

@@ -155,12 +155,16 @@ export interface FileSystem {
   /**
    * Optional (binary files): write raw bytes with the same `ifVersion` rules and results as
    * {@link FileSystem.write}; the version is computed from the bytes. Bytes that are valid UTF-8
-   * text are stored as a text file.
+   * text are stored as a text file. `mediaType` (since 0.9) is the declared IANA media type: an
+   * adapter that can keep it (a database column, object metadata) returns it as
+   * `FileMeta.mediaType` / `BinaryFile.mediaType` afterwards, also for text (`text/csv`), until the
+   * file is written again without one; adapters that cannot may ignore it (the plugin then
+   * detects the type from the bytes and the path).
    */
   writeBytes?(
     path: string,
     bytes: Uint8Array,
-    opts?: { ifVersion?: string | null },
+    opts?: { ifVersion?: string | null; mediaType?: string },
   ): Promise<WriteResult>
 }
 

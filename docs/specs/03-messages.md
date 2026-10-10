@@ -275,7 +275,7 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   //
        ignoreIncompleteToolCalls: true, // safety net; step 3 already answered them
        convertDataPart: part => registry.dataPart(part.type)?.model …   // 'omit' | 'text' | fn
      })
-  7. sanitize: remove tool results without calls and empty messages (spec 06 §6)
+  6. convert: remove tool results without calls and empty messages (spec 06 §6)
 ```
 
 **Prune (turn wire only, 0.4.0).** With `compaction.prune` on, the wire builder of a turn (spec 06
@@ -289,6 +289,13 @@ Details (normative for the implementation in `src/messages/project.ts`):
 - Only the newest boundary (highest id) of the view is projected, and only its `partial` counts;
   older boundaries are dropped (the loader normally removes them already). If
   `partial.messageId` has fewer `step-start` parts than `fromStep + 1`, all its parts are dropped.
+- File references (0.9.0): with `ctx.resolveFile` (= `config.inputFiles.resolve`, spec 05 §3 step 7),
+  step 6 first replaces the `url` (and `mediaType`) of every `file` part whose URL is not a
+  `data:` URL with the resolved value (`{ data }` bytes / base64 become a `data:` URL, `{ url }` is
+  used as is), keeping the AI SDK `FileUIPart` shape; `undefined` leaves the part, `null` or a
+  throw replaces it with the `FILE_UNAVAILABLE` text. The same applies to files of
+  `data-eh.input` steers. Storage is never changed; token estimates and summarizer transcripts
+  (projections without `resolveFile`) do not call the resolver.
 - Kind messages whose kind is not registered, or whose projection returns `null` / an empty
   result, are dropped. `role: 'system'` messages are never projected (spec 02 §5).
 - Step 3 answers `approval-requested` parts unless they belong to `ctx.pending` (same message id

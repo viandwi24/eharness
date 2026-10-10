@@ -740,9 +740,14 @@ export async function POST(req: Request) {
   const body = await req.json()                      // { id, messages, trigger, messageId }
   const session = agent.session(body.id, { runtime: { userId } })
   // busy: 409 { error: { code: 'EH_SESSION_BUSY', … } } — or pass { ifBusy: 'wait' } to wait
-  return handleChatRequest(session, body).toResponse()
+  return handleChatRequest(session, body).toHttpResponse()   // also 409/400 for pre-commit failures
 }
 ```
+
+`toResponse()` keeps the in-stream form for failures only the run can see (a lock held by another
+instance, a turn of another instance, invalid input); `toHttpResponse()` maps them to a status
+(spec 04 §7.1). To choose between steering and a 409 before calling `handleChatRequest`, ask
+`session.busy()` (spec 05 §2).
 
 Client setup: `useChat({ sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses })`
 (or `…WithToolCalls` for client tools).

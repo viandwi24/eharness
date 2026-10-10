@@ -85,3 +85,69 @@ describe('item 20: client file URLs', () => {
     expect(isHarnessError(second.error)).toBe(false)
   })
 })
+
+describe('R15: inputFiles.resolve', () => {
+  const stored = (messages: ReturnType<typeof spyMessages>) =>
+    JSON.stringify(messages.saves.flat().map((m) => m))
+
+  test('a library: reference stays in storage and is resolved to bytes for the model', async () => {
+    const seen: Array<{ url: string; mediaType: string; sessionId: string }> = []
+    const model = scriptedModel([{ text: 'saw it' }, { text: 'again' }])
+    const { agent, messages } = setup({
+      model,
+      inputFiles: {
+        protocols: ['data:', 'https:', 'library:'],
+        resolve: (url, ctx) => {
+          seen.push({ url, mediaType: ctx.mediaType, sessionId: ctx.sessionId })
+          return { data: new Uint8Array([104, 105]), mediaType: 'text/plain' }
+        },
+      },
+    })
+    const session = agent.session('s1')
+    const first = await session.send(withFile('library://uploads/7')).result
+    expect(first.stop).toBe('complete')
+    expect(stored(messages)).toContain('library://uploads/7')
+    expect(stored(messages)).not.toContain('aGk=')
+    const wire = JSON.stringify(model.prompts[0])
+    expect(wire).toContain('text/plain')
+    expect(wire).not.toContain('library://')
+    expect(seen[0]).toEqual({ url: 'library://uploads/7', mediaType: 'image/png', sessionId: 's1' })
+    // the next turn resolves the historical file again
+    await session.send('and now?').result
+    expect(seen.length).toBeGreaterThanOrEqual(2)
+    expect(JSON.stringify(model.prompts[1])).not.toContain('library://')
+  })
+
+  test('{ url } hands a signed URL to the provider; undefined leaves the part untouched', async () => {
+    const model = scriptedModel([{ text: 'ok' }])
+    const logs: string[] = []
+    const collect = (message: string, data?: unknown) =>
+      logs.push(`${message} ${String((data as { error?: unknown } | undefined)?.error)}`)
+    const { agent } = setup({
+      model,
+      logger: { debug() {}, info: collect, warn: collect, error: collect },
+      inputFiles: {
+        protocols: ['data:', 'https:', 'library:'],
+        resolve: (url) =>
+          url.startsWith('library:') ? { url: 'https://cdn.test/a.png?sig=1' } : undefined,
+      },
+    })
+    const result = await agent.session('s1').send(withFile('library://uploads/9')).result
+    // AI SDK downloads the resolved URL (the mock provider supports none): it is the one it tried
+    expect(result.stop).toBe('error')
+    expect(logs.join('\n')).toContain('cdn.test/a.png')
+  })
+
+  test('null (or a throw) degrades the file to FILE_UNAVAILABLE and the turn continues', async () => {
+    for (const resolve of [() => null, () => Promise.reject(new Error('gone'))]) {
+      const model = scriptedModel([{ text: 'ok' }])
+      const { agent } = setup({
+        model,
+        inputFiles: { protocols: ['data:', 'https:', 'library:'], resolve },
+      })
+      const result = await agent.session('s1').send(withFile('library://uploads/404')).result
+      expect(result.stop).toBe('complete')
+      expect(JSON.stringify(model.prompts[0])).toContain('file unavailable')
+    }
+  })
+})

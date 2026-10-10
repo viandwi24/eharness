@@ -153,7 +153,19 @@ export interface HarnessSession<
   /** 0.5.0: the external waits of the stored pending state. */
   pendingWaits(): Promise<PendingExternal[]>
   /** Current context stats (spec 06 §2) and pending state (spec 11 §2). */
-  stats(): Promise<ContextStats & { pending: PendingState | null; activeTurn: ActiveTurn | null }>
+  stats(): Promise<ContextStats & {
+    pending: PendingState | null
+    activeTurn: ActiveTurn | null
+    /** 0.9.0: `state.core.usage`: all finished turns (§7); zeros when none ran. */
+    usage: { inputTokens: number; outputTokens: number; turns: number; costUsd?: number }
+  }>
+  /**
+   * 0.9.0: a turn running now: `{ scope: 'local', turnId }` (this process) or `{ scope: 'remote',
+   * turnId, owner, heartbeatAt }` (a stored `activeTurn` of another owner younger than
+   * `recovery.staleMs`; the same liveness rule as §9); `null` when idle. Reads the stored state,
+   * never recovers. A `SessionLock` held elsewhere without a stored `activeTurn` is not visible.
+   */
+  busy(): Promise<{ scope: 'local' | 'remote'; turnId: string; owner?: string; heartbeatAt?: number } | null>
   /** The tools the model sees in the next request, in request order (spec 02 §3.4). */
   tools(): Promise<SessionToolInfo[]>
 
@@ -334,6 +346,10 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
      model call, e.g. an expired link) does not break later turns: the step's wire replaces that
      file part with the text `FILE_UNAVAILABLE` (spec 10 §5) and the step is retried (once per
      failing URL; storage is unchanged). A failing file of the current turn stays a run error;
+   - file references (0.9.0): a custom protocol in `inputFiles.protocols` (e.g. `library:`) is
+     stored as is; `inputFiles.resolve(url, { sessionId, mediaType, filename })` turns it into
+     `{ data | url, mediaType? }` for the model at projection time (spec 03 §6), so stored
+     messages stay small;
    - client `metadata.eharness` (including any `kind`) is discarded and rebuilt (`v`,
      `createdAt`, `turnId`); a client id is kept as `metadata.eharness.clientId`; other client
      metadata keys are dropped unless `acceptClientMetadata`.
@@ -681,6 +697,9 @@ Notes:
   flight are merged into the loaded view (the load may have read storage before them).
 
 ## 7. State
+
+`core.usage` (`{ inputTokens, outputTokens, turns, costUsd? }`) is the cumulative usage of all
+finished turns, updated by the end-of-turn state write; `session.stats().usage` returns it (0.9.0).
 
 ```ts
 export interface StateAdapter {

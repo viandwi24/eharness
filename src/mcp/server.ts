@@ -96,7 +96,13 @@ const NAME = /^[a-z0-9-]{1,32}$/
 
 type ModelOutput = Awaited<ReturnType<NonNullable<Tool['toModelOutput']>>>
 
-type McpModule = { createMCPClient(config: MCPClientConfig): Promise<MCPClient> }
+/**
+ * The part of an MCP client the plugin uses. `@ai-sdk/mcp` 2.0.7x returns `MCPClient | ManagedMCPClient`
+ * (the managed client omits `experimental_events`); both have `tools()` and `close()`.
+ */
+type McpClient = Pick<MCPClient, 'tools' | 'close'>
+
+type McpModule = { createMCPClient(config: MCPClientConfig): Promise<McpClient> }
 
 /** Raised when `@ai-sdk/mcp` cannot be loaded. */
 class McpMissingError extends Error {}
@@ -110,8 +116,8 @@ async function importMcp(): Promise<McpModule> {
 /** Per-session connection state. */
 interface Conn {
   readonly ctx: HarnessContext
-  client: MCPClient | undefined
-  connecting: Promise<MCPClient> | undefined
+  client: McpClient | undefined
+  connecting: Promise<McpClient> | undefined
   closed: boolean
 }
 
@@ -282,7 +288,7 @@ export function createMcpServer(
     return conn
   }
 
-  function connect(conn: Conn): Promise<MCPClient> {
+  function connect(conn: Conn): Promise<McpClient> {
     if (conn.client !== undefined) return Promise.resolve(conn.client)
     if (conn.connecting !== undefined) return conn.connecting
     const connecting = (async () => {
@@ -318,7 +324,9 @@ export function createMcpServer(
   async function serverTools(conn: Conn): Promise<ToolSet> {
     const client = await connect(conn)
     try {
-      return await client.tools()
+      // `@ai-sdk/mcp` types its tools with its own `inputSchema` generics; at runtime they are AI SDK
+      // tools, so the plugin treats them as a `ToolSet`
+      return (await client.tools()) as unknown as ToolSet
     } catch (error) {
       // a broken connection: drop the client so the next turn reconnects
       if (conn.client === client) conn.client = undefined

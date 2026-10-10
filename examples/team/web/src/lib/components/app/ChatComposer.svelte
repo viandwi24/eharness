@@ -19,11 +19,33 @@
 		type PromptInputMessage
 	} from '#lib/components/ai/prompt-input/index.js';
 
-	let { onSend }: { onSend: (message: PromptInputMessage) => void | Promise<void> } = $props();
+	import type { ChatStatus } from 'ai';
+	import { toast } from 'svelte-sonner';
+	import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES } from '#lib/chat/constants.js';
+
+	let {
+		onSend,
+		onStop,
+		status,
+		placeholder = 'Message the agent'
+	}: {
+		onSend: (message: PromptInputMessage) => void | Promise<void>;
+		onStop?: () => void;
+		status?: ChatStatus;
+		placeholder?: string;
+	} = $props();
 </script>
 
-<!-- Composer with attachments (PromptInput + Attachments). Sending is wired in a later milestone. -->
-<PromptInput onSubmit={onSend} multiple globalDrop={false}>
+<!-- Composer: attachments are validated here (type, 10 MB) and uploaded by the owner on send. -->
+<PromptInput
+	onSubmit={onSend}
+	onError={(e) => toast.error(e.message)}
+	accept={UPLOAD_ACCEPT}
+	maxFileSize={UPLOAD_MAX_BYTES}
+	maxFiles={5}
+	multiple
+	globalDrop={false}
+>
 	{#snippet children({ files, remove, openFileDialog })}
 		{#if files.length > 0}
 			<PromptInputHeader>
@@ -39,7 +61,7 @@
 			</PromptInputHeader>
 		{/if}
 		<PromptInputBody>
-			<PromptInputTextarea placeholder="Message the agent" />
+			<PromptInputTextarea {placeholder} />
 		</PromptInputBody>
 		<PromptInputFooter>
 			<PromptInputTools>
@@ -47,7 +69,7 @@
 					<PaperclipIcon class="size-4" />
 				</PromptInputButton>
 			</PromptInputTools>
-			<PromptInputSubmit />
+			<PromptInputSubmit {status} {onStop} />
 		</PromptInputFooter>
 	{/snippet}
 </PromptInput>

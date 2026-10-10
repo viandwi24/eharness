@@ -12,7 +12,9 @@ import {
   type ToolSet,
   type UIMessage,
 } from 'ai'
+import type { InputFilesConfig } from '../agent/types.ts'
 import { providerOf } from '../internal/model.ts'
+import { resolveFileParts } from './files.ts'
 import { kindOf } from './kinds.ts'
 import type { MessageRegistry } from './registry.ts'
 import { sanitizeModelMessages } from './sanitize.ts'
@@ -43,6 +45,8 @@ export interface ProjectOptions {
   pending?: PendingState | null
   /** Id of the message a `respond()` continues: its `approval-responded` parts are kept. */
   continuing?: string
+  /** `config.inputFiles.resolve`: resolves stored file URLs for the model (spec 03 §6). */
+  resolveFile?: NonNullable<InputFilesConfig['resolve']>
 }
 
 /**
@@ -104,8 +108,12 @@ export async function project(
     // 4. split at data-eh.input
     for (const piece of splitAtInput(message)) {
       // 6. convert
+      const prepared = normalizeRawInput(stripReasoningTiming(piece))
+      const resolvedParts = await resolveFileParts(prepared.parts, options.resolveFile, {
+        sessionId: options.sessionId,
+      })
       const converted = await convertToModelMessages(
-        [normalizeRawInput(stripReasoningTiming(piece))],
+        [resolvedParts === prepared.parts ? prepared : { ...prepared, parts: resolvedParts }],
         {
           ...(options.tools === undefined ? {} : { tools: options.tools }),
           ignoreIncompleteToolCalls: true,

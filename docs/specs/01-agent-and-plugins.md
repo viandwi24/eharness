@@ -65,7 +65,12 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * File parts of user input (spec 05 §3 step 7): allowed URL protocols (default
    * ['data:', 'https:']) and the decoded size cap of data: URLs (default 20 MB).
    */
-  inputFiles?: { protocols?: string[]; maxBytes?: number }
+  inputFiles?: {
+    protocols?: string[]; maxBytes?: number
+    /** 0.9.0: resolve a stored file URL for the model at projection time (spec 03 §6). */
+    resolve?: (url: string, ctx: { sessionId: string; mediaType: string; filename?: string }) =>
+      Promise<{ mediaType?: string; data?: Uint8Array | string; url?: string } | null | undefined> | …
+  }
   /** Text of a thrown tool error in UI, storage and wire (default String(error), spec 10 §1.1). */
   toolErrorText?: (error: unknown, call: { toolName: string; toolCallId: string }) => string
   /** Typed per-call options accepted by send()/respond()/… (`options`), exposed as ctx.turn.options. */

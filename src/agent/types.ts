@@ -329,6 +329,27 @@ export interface InputFilesConfig {
   protocols?: string[]
   /** Maximum decoded size of a `data:` URL in bytes. Default 20 MB (20 971 520). */
   maxBytes?: number
+  /**
+   * Resolve a stored file URL for the model (0.9.0, spec 03 §6). Called at projection time for
+   * every file part whose URL is not a `data:` URL, so apps keep references (a custom protocol
+   * listed in `protocols`, e.g. `library://uploads/7`) in stored messages instead of inlined
+   * base64. The stored message is never changed. Return `{ data }` (bytes or base64) or
+   * `{ url }` (a URL the provider can fetch, e.g. signed), optionally with the real `mediaType`;
+   * `undefined` leaves the part as it is; `null` (or a throw) replaces it with the
+   * `FILE_UNAVAILABLE` text on the wire. Token estimates and compaction summaries do not call it.
+   */
+  resolve?: (
+    url: string,
+    ctx: { sessionId: string; mediaType: string; filename?: string },
+  ) => Promise<ResolveInputFile | null | undefined> | ResolveInputFile | null | undefined
+}
+
+/** A file resolved by {@link InputFilesConfig.resolve}: exactly one of `data` and `url`. */
+export interface ResolveInputFile {
+  mediaType?: string
+  /** Raw bytes or a base64 string. */
+  data?: Uint8Array | string
+  url?: string
 }
 
 /** Maps a thrown tool error to its text (`config.toolErrorText`). */
