@@ -120,7 +120,7 @@
 		</Tooltip.Root>
 	</div>
 
-	<nav class="mt-1 min-h-0 flex-1 overflow-y-auto px-2 pb-2" aria-label="Agents">
+	<nav class="mt-1 flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2" aria-label="Agents">
 		{#each shown as a (a.id)}
 			{@const active = page.params.agentId === a.id || page.params.agentId === a.slug}
 			{@const act = agentsStore.state.activity[a.id]}

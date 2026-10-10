@@ -100,7 +100,7 @@
 {#if kind === 'eh.event' || kind === 'eh.compaction'}
 	<!-- Kind messages are divider rows, not bubbles. -->
 	{#each views as v (v.key)}
-		{#if v.kind === 'event'}<EventPart name={v.name} text={v.text} />{:else if v.kind === 'compaction'}<CompactionPart summary={v.summary} />{/if}
+		{#if v.kind === 'event'}<EventPart name={v.name} text={v.text} />{:else if v.kind === 'compaction'}<CompactionPart summary={v.summary} tokens={v.tokens} trigger={v.trigger} />{/if}
 	{/each}
 {:else if visible}
 	<Message from={message.role === 'user' ? 'user' : 'assistant'}>

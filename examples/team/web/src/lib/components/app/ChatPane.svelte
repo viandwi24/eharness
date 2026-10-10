@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { Spinner } from '#lib/components/ui/spinner/index.js';
+	import { Shimmer } from '#lib/components/ai/shimmer/index.js';
 	import SidebarToggle from './SidebarToggle.svelte';
 	import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeft';
 	import SidebarSimpleIcon from 'phosphor-svelte/lib/SidebarSimple';
@@ -129,12 +131,13 @@
 		compacting = true;
 		try {
 			const r = await api.post('/agents/{id}/compact', { params: { id: agent.id } });
-			if (r.compacted) {
-				toast.success('Conversation compacted');
-				await ac.refetch();
-			} else toast('Nothing to compact yet');
+			if (r.compacted) await ac.refetch(); // the divider in the chat is the confirmation
+			else toast('Nothing to compact yet', { description: 'The conversation is still short; recent turns are always kept as they are.' });
 		} catch (e) {
-			toast.error(e instanceof Error ? e.message : 'Could not compact the conversation');
+			const text = e instanceof Error ? e.message : '';
+			toast.error('Could not compact the conversation', {
+				description: /busy|running|locked/i.test(text) ? 'A turn is running. Try again when it has finished.' : text || undefined
+			});
 		} finally {
 			compacting = false;
 		}
@@ -190,7 +193,7 @@
 					<DropdownMenu.Item onSelect={() => agent && openEditAgent(agent.id)}>
 						<PencilSimpleIcon /> Agent settings
 					</DropdownMenu.Item>
-					<DropdownMenu.Item disabled={compacting} onSelect={() => void compact()}>
+					<DropdownMenu.Item disabled={compacting || busy} onSelect={() => void compact()}>
 						<ArrowsInLineVerticalIcon /> {compacting ? 'Compacting…' : 'Compact conversation'}
 					</DropdownMenu.Item>
 					<DropdownMenu.Separator />
@@ -266,6 +269,14 @@
 								</Empty.Root>
 							{/if}
 						{/each}
+						{#if compacting || ac.activity === 'compacting'}
+							<div class="flex items-center gap-3 text-xs text-muted-foreground" role="status" aria-live="polite">
+								<span class="h-px flex-1 bg-border"></span>
+								<Spinner class="size-3.5" />
+								<Shimmer as="span" duration={1.2}>Compacting conversation…</Shimmer>
+								<span class="h-px flex-1 bg-border"></span>
+							</div>
+						{/if}
 						{#if chat.status === 'submitted'}
 							<div class="text-sm text-muted-foreground" role="status">Thinking…</div>
 						{/if}

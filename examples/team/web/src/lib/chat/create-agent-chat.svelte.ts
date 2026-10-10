@@ -55,6 +55,8 @@ export class AgentChat {
 	notice = $state<string | null>(null);
 	/** Reattached to a running turn / following a steered one. */
 	following = $state(false);
+	/** Live state of the streamed turn (`data-eh.status`, transient): e.g. `compacting`. */
+	activity = $state<'thinking' | 'tool' | 'compacting' | null>(null);
 
 	#nextBefore: string | null = null;
 	#paths: typeof chatPaths;
@@ -86,8 +88,14 @@ export class AgentChat {
 			transport,
 			sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
 			onError: (e) => this.#onError(e),
+			onData: (part) => {
+				if (part.type !== 'data-eh.status') return;
+				const state = (part.data as { state?: string } | undefined)?.state;
+				this.activity = state === 'thinking' || state === 'tool' || state === 'compacting' ? state : null;
+			},
 			// After a respond() continuation ends the stored message is the truth: refetch it.
 			onFinish: ({ message, isAbort, isError }) => {
+				this.activity = null;
 				if (!this.following) this.notice = null;
 				if (isAbort || isError) return;
 				if (message.role === 'assistant' && message.parts.some((p) => 'approval' in p)) void this.refetch();
