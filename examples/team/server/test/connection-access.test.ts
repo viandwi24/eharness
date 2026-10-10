@@ -3,9 +3,7 @@
  * agents), move them, convert agent-scoped connections, and exclusions in All mode.
  */
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { rmSync } from 'node:fs'
 import { scriptedModel } from 'eharness/testing'
 import { scriptedModelConfig } from '../src/infra/eh/provider.ts'
 import { compose, type Server } from '../src/main.ts'
@@ -21,11 +19,6 @@ afterEach(async () => {
   for (const stop of stops.splice(0)) stop()
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
-const tmpDb = (): string => {
-  const d = mkdtempSync(join(tmpdir(), 'team-custom-'))
-  dirs.push(d)
-  return join(d, 'team.db')
-}
 const key = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64')
 async function boot(dbFile = ':memory:', seed = true): Promise<Server> {
   const server = compose({

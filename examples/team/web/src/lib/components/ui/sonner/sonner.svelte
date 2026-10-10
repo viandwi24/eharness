@@ -33,12 +33,14 @@
 <Sonner
 	theme={mode.current}
 	class="toaster group"
+	visibleToasts={3}
 	style="--normal-bg: var(--popover); --normal-text: var(--popover-foreground); --normal-border: var(--border); --border-radius: var(--radius-xl); --width: 360px;"
 	toastOptions={{
 		classes: {
 			toast: cn("cn-toast text-[13.5px] font-sans", toastElevation[level.current]),
-			title: "font-medium",
-			description: "text-muted-foreground!",
+			// Compact: a long message (a raw server error) never grows the stack into a tall panel.
+			title: "font-medium line-clamp-3 break-words",
+			description: "text-muted-foreground! line-clamp-3 break-words",
 			success: "bg-success-soft! border-[color-mix(in_srgb,var(--success)_40%,var(--popover))]!",
 			info: "bg-info-soft! border-[color-mix(in_srgb,var(--info)_40%,var(--popover))]!",
 			warning: "bg-warning-soft! border-[color-mix(in_srgb,var(--warning)_40%,var(--popover))]!",

@@ -13,14 +13,14 @@
  *    hold a parked wait (a crash between "child finished" and "wait resolved"), then a drift pass
  *    comparing the task rows with the session state.
  */
-import { type HarnessSession, handleResumeRequest } from 'eharness'
+import { type HarnessSession, handleResumeRequest, isHarnessError } from 'eharness'
 import { ASK_TOOL, answerOutput, pendingQuestions } from 'eharness/ask'
 import { pendingSubagentApprovals, reconcileSubagentWaits } from 'eharness/subagent'
 import type { AgentRepo, ChatMessage, TeamPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import type { ApprovalOutcome, ApprovalRisk, ApprovalView } from '../../domain/approvals.ts'
 import { dmSessionId } from '../../domain/chat.ts'
-import { conflict, invalid, notFound } from '../../domain/errors.ts'
+import { ALREADY_ANSWERED, conflict, invalid, notFound } from '../../domain/errors.ts'
 import { deriveTaskStatus, type Task } from '../../domain/tasks.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
@@ -36,6 +36,8 @@ export interface ReconcileReport {
     status: 'resolved' | 'busy' | 'skipped'
   }>
   drift: Array<{ taskId: string; sessionId: string; from: string; to: string }>
+  /** Reports of finished children that no turn of the lead saw and no wake was held for. */
+  stranded: Array<{ sessionId: string; messageId: string }>
 }
 
 export interface TeamService extends TeamPort {
@@ -190,6 +192,22 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return (await factory.peek(task.sessionId).messages({ limit })) as unknown as ChatMessage[]
   }
 
+  /** The item still waits for an answer; polls briefly so a first answer in flight can finish. */
+  async function waitsStill(view: ApprovalView): Promise<boolean> {
+    for (let i = 0; i < 6; i++) {
+      const pending = await factory.peek(view.sessionId).pending()
+      const waiting =
+        pending !== null &&
+        (pending.approvals.some((a) => a.approvalId === view.id && a.answer === undefined) ||
+          pending.clientTools.some(
+            (c) => c.toolCallId === view.id && c.answer === undefined && c.result === undefined,
+          ))
+      if (!waiting) return false
+      await sleep(60)
+    }
+    return true
+  }
+
   async function answer(
     view: ApprovalView,
     body: Parameters<TeamPort['answer']>[1],
@@ -214,40 +232,82 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
               (before.externals ?? []).filter((e) => e.result === undefined).length -
               1,
           )
-    if (body.kind === 'approval') {
-      run = session.respond(
-        {
-          approvals: [
-            {
-              id: view.id,
-              approved: body.approved,
-              ...(body.reason === undefined ? {} : { reason: body.reason }),
-              ...(body.note === undefined ? {} : { note: body.note }),
-              ...(body.remember === undefined ? {} : { remember: body.remember }),
-              actor: { id: actor.id, ...(actor.name === undefined ? {} : { name: actor.name }) },
-            },
-          ],
-        },
-        body.endTurn === undefined ? {} : { endTurn: body.endTurn },
-      )
-    } else {
-      const pending = await factory.peek(view.sessionId).pending()
-      const question = pendingQuestions(pending).find((q) => q.toolCallId === view.id)
-      if (question === undefined) throw conflict(`question ${view.id} is not pending any more`)
-      const output = answerOutput(
-        question,
-        body.answers === null ? null : { answers: body.answers },
-      )
-      run = session.respond({ toolOutputs: [output] })
+    try {
+      if (body.kind === 'approval') {
+        run = session.respond(
+          {
+            approvals: [
+              {
+                id: view.id,
+                approved: body.approved,
+                ...(body.reason === undefined ? {} : { reason: body.reason }),
+                ...(body.note === undefined ? {} : { note: body.note }),
+                ...(body.remember === undefined ? {} : { remember: body.remember }),
+                actor: { id: actor.id, ...(actor.name === undefined ? {} : { name: actor.name }) },
+              },
+            ],
+          },
+          body.endTurn === undefined ? {} : { endTurn: body.endTurn },
+        )
+      } else {
+        const pending = await factory.peek(view.sessionId).pending()
+        const question = pendingQuestions(pending).find((q) => q.toolCallId === view.id)
+        if (question === undefined)
+          throw conflict(`question ${view.id} is not pending any more`, ALREADY_ANSWERED)
+        const output = answerOutput(
+          question,
+          body.answers === null ? null : { answers: body.answers },
+        )
+        run = session.respond({ toolOutputs: [output] })
+      }
+    } catch (error) {
+      // busy because the same item is being answered right now (a second tab, another
+      // instance): once the first answer consumed it, this one is just late
+      if (isHarnessError(error, 'EH_SESSION_BUSY') && !(await waitsStill(view))) {
+        throw conflict(
+          'This request was already answered or is no longer waiting.',
+          ALREADY_ANSWERED,
+        )
+      }
+      throw error
     }
     // `respond` throws only busy / closed; a stale or invalid answer is an error stop of the run.
     // Give it a moment to fail fast, then let the continuation run on in the background.
     const result = run.result.catch(() => undefined)
+    // the continuation of a lead's own question / approval ended: reports that arrived meanwhile
+    // (and have no held wake, e.g. stored before a restart) wake it now
+    if (def.role === 'lead' && view.sessionId === dmSessionId(def.id)) {
+      void result.then(async (r) => {
+        if (r?.stop !== 'complete') return
+        try {
+          await wakeStranded(def, view.sessionId)
+        } catch (error) {
+          log.warn(`waking stranded reports of ${view.sessionId} failed: ${String(error)}`)
+        }
+      })
+    }
     const settled = await Promise.race([result, sleep(250).then(() => undefined)])
     if (settled !== undefined && settled.stop === 'error') {
       const message = settled.error?.message ?? 'the answer was rejected'
       const code = settled.error?.code
+      const reason = (settled.error?.details as { reason?: string } | undefined)?.reason
+      // the item was answered (by another tab, the Auto classifier, another instance) or its
+      // message moved on: not a mistake of this request, the UI refreshes quietly
+      if (reason === 'unknown-id' || reason === 'stale' || reason === 'conflict') {
+        throw conflict(
+          'This request was already answered or is no longer waiting.',
+          ALREADY_ANSWERED,
+        )
+      }
       if (code === 'EH_INVALID_INPUT') throw invalid(message, code)
+      // busy because the same item is being answered right now (a second tab, another
+      // instance): once the first answer consumed it, this one is just late
+      if (code === 'EH_SESSION_BUSY' && !(await waitsStill(view))) {
+        throw conflict(
+          'This request was already answered or is no longer waiting.',
+          ALREADY_ANSWERED,
+        )
+      }
       throw conflict(message, code ?? 'ANSWER_REJECTED')
     }
     if (settled?.partial === true) {
@@ -350,6 +410,64 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return out
   }
 
+  /**
+   * Finished-child reports (`eh.event` named `subagent`) stored after the lead's newest
+   * assistant message that no wake is held for: a wake that was only held in the memory of a
+   * process that restarted (before the library made it durable, ADR-0054). Enqueues the same
+   * `wake:<messageId>` item the core would have, so a held one is never doubled.
+   */
+  async function wakeStranded(
+    def: AgentDef,
+    sessionId: string,
+  ): Promise<Array<{ sessionId: string; messageId: string }>> {
+    const peek = factory.peek(sessionId)
+    const stats = await peek.stats()
+    if (stats.pending !== null) return [] // an answer comes first: the held wake runs after it
+    const turn = stats.activeTurn
+    if (turn !== null && now() - turn.heartbeatAt < STALE_TURN_MS) return []
+    const history = await peek.messages({ limit: 80 })
+    let lastAssistant = -1
+    history.forEach((m, i) => {
+      if (m.role === 'assistant' && m.metadata?.eharness?.kind === undefined) lastAssistant = i
+    })
+    let newest: string | undefined
+    for (const m of history.slice(lastAssistant + 1)) {
+      const eh = m.metadata?.eharness
+      if (eh?.kind !== 'eh.event' || eh.deliveredIn !== undefined) continue
+      const part = m.parts.find((p) => p.type === 'data-eh.event') as
+        | { data?: { name?: string; data?: { status?: string } } }
+        | undefined
+      if (part?.data?.name !== 'subagent') continue
+      const status = part.data.data?.status
+      if (status === 'completed' || status === 'failed' || status === 'stopped') newest = m.id
+    }
+    if (newest === undefined) return []
+    const inbox = factory.storage.inbox
+    const item = { kind: 'wake' as const, messageId: newest, at: now() }
+    const key = `wake:${newest}`
+    if (inbox.enqueueOnce === undefined) return []
+    const stored = await inbox.enqueueOnce(sessionId, { ...item, dedupeKey: key })
+    if (stored.duplicate) return []
+    // a live session claims it; open the lead's session here so this instance runs it
+    await factory.prepare(def)
+    await factory.openSession(def, sessionId).ready()
+    await inbox.notify?.(sessionId)
+    return [{ sessionId, messageId: newest }]
+  }
+
+  async function reconcileStranded(): Promise<ReconcileReport['stranded']> {
+    const out: ReconcileReport['stranded'] = []
+    for (const def of allAgents()) {
+      if (def.role !== 'lead') continue
+      try {
+        out.push(...(await wakeStranded(def, dmSessionId(def.id))))
+      } catch (error) {
+        log.warn(`stranded reports of ${def.id} could not be woken: ${String(error)}`)
+      }
+    }
+    return out
+  }
+
   async function abortTask(task: Task, reason?: string) {
     const session = await sessionOfTask(task)
     if (session === undefined) throw notFound('agent', task.agentId)
@@ -379,7 +497,8 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     async reconcile() {
       const waits = await reconcileWaits()
       const drift = await reconcileDrift()
-      return { waits, drift }
+      const stranded = await reconcileStranded()
+      return { waits, drift, stranded }
     },
   }
 }

@@ -20,8 +20,28 @@ import {
 import type { ChatMessage, ChatPort, ChatStats, Deps } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { dmSessionId } from '../../domain/chat.ts'
-import { conflict } from '../../domain/errors.ts'
+import { ALREADY_ANSWERED, conflict } from '../../domain/errors.ts'
 import type { AgentFactory } from './agent-factory.ts'
+
+/** Ids a posted assistant message answers: approval ids in `approval-responded`, answered tool calls. */
+export function answeredIds(message: ChatMessage): string[] {
+  const out: string[] = []
+  for (const part of message.parts) {
+    const p = part as {
+      type?: string
+      state?: string
+      toolCallId?: string
+      approval?: { id?: string }
+    }
+    if (typeof p.type !== 'string' || !p.type.startsWith('tool-')) continue
+    if (p.state === 'approval-responded' && typeof p.approval?.id === 'string')
+      out.push(p.approval.id)
+    else if ((p.state === 'output-available' || p.state === 'output-error') && p.toolCallId) {
+      out.push(p.toolCallId)
+    }
+  }
+  return out
+}
 
 const asMessage = (m: HarnessUIMessage): ChatMessage => m as unknown as ChatMessage
 
@@ -58,6 +78,17 @@ export function createChatService(
     }
   }
 
+  /** Approval ids and client tool call ids that still wait for an answer in the DM session. */
+  const waitingIds = async (def: AgentDef): Promise<Set<string>> => {
+    const pending = await factory.peek(dmSessionId(def.id)).pending()
+    const out = new Set<string>()
+    for (const a of pending?.approvals ?? []) if (a.answer === undefined) out.add(a.approvalId)
+    for (const c of pending?.clientTools ?? []) {
+      if (c.answer === undefined && c.result === undefined) out.add(c.toolCallId)
+    }
+    return out
+  }
+
   return {
     async chat(def, input, { actor, ifBusy }) {
       const session = await sessionFor(def)
@@ -70,6 +101,18 @@ export function createChatService(
 
       // A turn on another instance: the core cannot hand an input to it by itself, so the route
       // decides here (`busy()` is the liveness check: stored activeTurn with a fresh heartbeat).
+      // an assistant message posted back answers items by id (`useChat` auto-send of an old tab, a
+      // double click): when none of the ids it answers waits any more, it is a stale answer, not
+      // a failing turn. 409 `ALREADY_ANSWERED`; the client refreshes quietly.
+      if (last?.role === 'assistant' && input.trigger !== 'regenerate-message') {
+        const waiting = await waitingIds(def)
+        if (!answeredIds(last).some((id) => waiting.has(id))) {
+          throw conflict(
+            'Nothing in this message is waiting for an answer any more.',
+            ALREADY_ANSWERED,
+          )
+        }
+      }
       const busy = await session.busy()
       if (busy?.scope === 'remote') {
         if (!isSend || ifBusy !== 'steer') {

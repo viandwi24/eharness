@@ -87,3 +87,10 @@ describe('uploadErrorText', () => {
 		expect(uploadErrorText(500, undefined, 'x.txt')).toBe('Could not upload x.txt');
 	});
 });
+
+describe('classifyChatResponse: stale answers', () => {
+	test('409 ALREADY_ANSWERED is stale (quiet), other 409s stay busy', () => {
+		expect(classifyChatResponse(409, { error: { code: 'ALREADY_ANSWERED', message: 'gone' } })).toEqual({ kind: 'stale', message: 'gone' });
+		expect(classifyChatResponse(409, { error: { code: 'EH_SESSION_BUSY', message: 'x' } }).kind).toBe('busy');
+	});
+});

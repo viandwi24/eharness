@@ -28,6 +28,7 @@
 		agent,
 		showHeader = true,
 		onApproval,
+		canAnswer,
 		onOpenSession
 	}: {
 		message: UIMessage;
@@ -36,6 +37,8 @@
 		/** Show the avatar + name line; the chat hides it for follow-up messages of the same author. */
 		showHeader?: boolean;
 		onApproval?: (answer: ApprovalAnswer) => void;
+		/** Whether an inline approval is still waiting on the server (see ApprovalPart). */
+		canAnswer?: (approvalId: string) => boolean;
 		onOpenSession?: (sessionId: string) => void;
 	} = $props();
 
@@ -89,7 +92,7 @@
 			<ToolPart view={v} />
 		{/if}
 	{:else if v.kind === 'approval'}
-		<ApprovalPart view={v} {onApproval} />
+		<ApprovalPart view={v} {onApproval} {canAnswer} />
 	{:else if v.kind === 'subagentRun'}
 		<SubagentPart view={v} {onOpenSession} />
 	{:else if v.kind === 'input'}

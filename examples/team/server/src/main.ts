@@ -325,7 +325,9 @@ export function compose(config: ServerConfig): Server {
           mode,
           autoPaused: state.paused,
           auto: event.type,
-          ...(event.type === 'blocked' ? { tool: event.toolName, reason: event.reason } : {}),
+          ...(event.type === 'blocked' || event.type === 'unavailable'
+            ? { tool: event.toolName, reason: event.reason }
+            : {}),
         },
       }),
     taskStore: tasks,

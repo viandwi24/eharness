@@ -26,6 +26,7 @@ export type ChatOutcome =
 	| { kind: 'stream' }
 	| { kind: 'steered'; inboxId?: string; target?: string }
 	| { kind: 'busy'; message: string; code: string }
+	| { kind: 'stale'; message: string }
 	| { kind: 'error'; status: number; message: string };
 
 /** Classify the response of `POST /chat`; `body` is the parsed JSON for 202 and error statuses. */
@@ -42,6 +43,8 @@ export function classifyChatResponse(status: number, body: unknown): ChatOutcome
 	const e = (body as { error?: { code?: unknown; message?: unknown } } | null)?.error;
 	const code = typeof e?.code === 'string' ? e.code : 'HTTP_ERROR';
 	const message = typeof e?.message === 'string' ? e.message : `Request failed (${status})`;
+	// the answered item is not waiting any more (answered in another tab, by Auto, double click)
+	if (status === 409 && code === 'ALREADY_ANSWERED') return { kind: 'stale', message };
 	if (status === 409) return { kind: 'busy', code, message: busyText(code, message) };
 	return { kind: 'error', status, message };
 }
@@ -58,6 +61,15 @@ export function emptyStreamResponse(): Response {
 		status: 200,
 		headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1' }
 	});
+}
+
+/** Thrown for a 409 `ALREADY_ANSWERED`: `onError` refreshes quietly (nothing to show). */
+export class ChatStaleError extends Error {
+	readonly code = 'ALREADY_ANSWERED';
+	constructor(message: string) {
+		super(message);
+		this.name = 'ChatStaleError';
+	}
 }
 
 /** Thrown from the transport fetch for a 409 so `onError` can toast instead of showing a chat error. */

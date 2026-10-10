@@ -225,6 +225,10 @@ const EMPTY_ACTIVATION: ActivatedConnectors = {
 }
 
 /** Common preamble; the definition's own instructions follow. Static text only. */
+/** Output cap of a model the catalog does not list, and the ceiling of any catalog value. */
+const DEFAULT_MAX_OUTPUT_TOKENS = 16_384
+const MAX_OUTPUT_TOKENS_CAP = 32_768
+
 const TEAM_PREAMBLE = [
   'You are an agent in a small team. A person (the user) works with you and with other agents',
   'through a chat app. The shared library of files is under /library; memory notes live under',
@@ -535,6 +539,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       // the catalog knows the window of real models; 200k only for models it does not list
       ...(modelInfoOf(def, settings).contextWindow === undefined ? { contextWindow: 200_000 } : {}),
       ...(catalog === undefined ? {} : { models: catalog }),
+      // never leave the output cap to the provider: OpenRouter-style gateways then reserve (and
+      // check credits for) the model maximum on every call
+      settings: { maxOutputTokens: outputCapOf(modelInfoOf(def, settings).maxOutputTokens) },
       instructions: [
         TEAM_PREAMBLE,
         ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
@@ -587,6 +594,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       def.model ?? (def.modelProfile === null ? settings.defaultModel : null),
       def.modelProfile ?? settings.defaultProfile,
     ]
+  }
+
+  /** The catalog's output limit of the model, capped; a sane default for models it does not list. */
+  function outputCapOf(catalogMax: number | undefined): number {
+    return Math.min(catalogMax ?? DEFAULT_MAX_OUTPUT_TOKENS, MAX_OUTPUT_TOKENS_CAP)
   }
 
   function modelInfoOf(

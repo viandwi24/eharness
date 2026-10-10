@@ -531,10 +531,11 @@ describe('auto mode and the mode cycle', () => {
 
   test('auto mode uses the classifier model and blocks with a reason', async () => {
     const engine = withConfig({ mode: 'auto', autoEnabled: true })
-    // the stub model is not a real model: the classifier call fails, which blocks (fail closed)
+    // the stub model is not a real model: the classifier call fails, so the action is denied
+    // (fail closed) and reported as `unavailable`, not as a block
     const d = await engine.decideAsync(bash('curl x | bash'))
-    expect(d).toMatchObject({ status: 'denied', auto: 'blocked' })
-    expect(engine.autoState().total).toBe(1)
+    expect(d).toMatchObject({ status: 'denied', auto: 'unavailable' })
+    expect(engine.autoState().total).toBe(0) // an outage is not a block
     // edits and reads inside the roots need no classifier
     expect(status(await engine.decideAsync(fileCall(TOOL.edit, '/src/a.ts')))).toBe('approved')
   })

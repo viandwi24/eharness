@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Approval, ApiClient, Task } from '../api/client';
+import { ApiError, type Approval, type ApiClient, type Task } from '../api/client';
 import type { TeamEvent } from '../events/client';
 import { createAgentsCore, emptyAgentsState } from './agents-core';
 import { createLiveCore, emptyLiveState } from './live-core';
@@ -142,5 +142,73 @@ describe('live store: chat events', () => {
 		live.handleEvent(ev('model-call', 'lead-id', { id: 'c2' }, 3));
 		expect(seen).toEqual(['c1']);
 		expect(agents.state.activity['lead-id']?.unread).toBe(1);
+	});
+});
+
+describe('live store: approvals that were decided elsewhere', () => {
+	test('approval-decided removes the card at once (Auto classifier, another tab), others stay', async () => {
+		const { live, setApprovals } = setup();
+		setApprovals([appr('1', 'dm:lead-id'), appr('2', null)]);
+		await live.loadApprovals();
+		live.handleEvent({ ...ev('approval-decided', 'x', { id: '1', approved: true, by: 'user' }, 5), sessionId: 's-1' });
+		expect(live.state.approvals.map((a) => a.id)).toEqual(['2']);
+		// an event of another session with the same id does not remove it
+		live.handleEvent({ ...ev('approval-decided', 'x', { id: '2' }, 6), sessionId: 'other' });
+		expect(live.state.approvals.map((a) => a.id)).toEqual(['2']);
+		// a decision without an id (the classifier) leaves the list to the refetch
+		live.handleEvent(ev('approval-decided', 'x', { toolName: 'web_search', by: 'plugin:permissions' }, 7));
+		expect(live.state.approvals.map((a) => a.id)).toEqual(['2']);
+	});
+
+	test('answering an item that is already answered keeps it gone and refetches; other failures put it back', async () => {
+		let fail: Error = new ApiError(404, 'NOT_FOUND', 'gone');
+		let server: Approval[] = [appr('2', null)];
+		const api = {
+			get: async (path: string) => (path === '/approvals' ? { approvals: server } : path === '/tasks' ? { tasks: [] } : { agents: [] }),
+			post: async () => {
+				throw fail;
+			}
+		} as unknown as ApiClient;
+		const agents = createAgentsCore(api, emptyAgentsState());
+		const live = createLiveCore(api, agents, emptyLiveState(), { setTimeout: (fn) => fn() });
+		const a = appr('1', null);
+		live.state.approvals = [a, appr('2', null)];
+		await expect(live.answer(a, { approved: true })).rejects.toBe(fail);
+		expect(live.state.approvals.map((x) => x.id)).toEqual(['2']);
+
+		live.state.approvals = [a];
+		server = [];
+		fail = new ApiError(409, 'ALREADY_ANSWERED', 'x');
+		await expect(live.answer(a, { approved: true })).rejects.toBe(fail);
+		expect(live.state.approvals).toEqual([]);
+
+		// a real failure: the card returns (the refetch below then shows the server's truth)
+		fail = new ApiError(500, 'INTERNAL', 'boom');
+		live.state.approvals = [a];
+		let restored: string[] = [];
+		const api2 = { ...api, get: async () => ({ approvals: [a] }) } as unknown as ApiClient;
+		const live2 = createLiveCore(api2, agents, emptyLiveState(), { setTimeout: () => undefined });
+		live2.state.approvals = [a];
+		await expect(live2.answer(a, { approved: true })).rejects.toBeDefined();
+		restored = live2.state.approvals.map((x) => x.id);
+		expect(restored).toEqual(['1']);
+	});
+});
+
+describe('live store: inline answers stay in their own session', () => {
+	test('ownApproval finds only approvals of the agent\'s own DM, never a child\'s', async () => {
+		const { live, setApprovals } = setup();
+		const own = { ...appr('own', null), sessionId: 'dm:lead-id' } as Approval;
+		const child = { ...appr('child', 'dm:lead-id'), sessionId: 'dm:lead-id:agent:call-1' } as Approval;
+		const question = { ...appr('q', null), sessionId: 'dm:lead-id', kind: 'question' } as Approval;
+		setApprovals([own, child, question]);
+		await live.loadApprovals();
+		expect(live.ownApproval('lead', 'own')?.id).toBe('own');
+		expect(live.ownApproval('lead-id', 'own')?.id).toBe('own');
+		expect(live.ownApproval('lead', 'child')).toBeUndefined();
+		expect(live.ownApproval('lead', 'q')).toBeUndefined();
+		// decided: gone from the list, so the inline card is not offered any more
+		live.handleEvent({ ...ev('approval-decided', 'lead-id', { id: 'own' }, 9), sessionId: 'dm:lead-id' });
+		expect(live.ownApproval('lead', 'own')).toBeUndefined();
 	});
 });

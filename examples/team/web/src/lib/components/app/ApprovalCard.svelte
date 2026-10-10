@@ -1,7 +1,8 @@
 <script lang="ts">
 	import Surface from '#lib/components/app/Surface.svelte';
 	import { toast } from 'svelte-sonner';
-	import { ApiError, type Approval } from '#lib/api/client.js';
+	import type { Approval } from '#lib/api/client.js';
+	import { answerFailureText } from '#lib/approval/outcome.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { summarizeApproval } from '#lib/approval/summary.js';
 	import ApprovalActions from './ApprovalActions.svelte';
@@ -26,7 +27,8 @@
 			await live.answer(approval, body);
 			onAnswered?.();
 		} catch (e) {
-			toast.error(e instanceof ApiError && (e.status === 404 || e.status === 409) ? 'Already answered or no longer pending' : e instanceof Error ? e.message : 'Could not send the answer');
+			const text = answerFailureText(e);
+			if (text) toast.error(text);
 		} finally {
 			busy = false;
 		}

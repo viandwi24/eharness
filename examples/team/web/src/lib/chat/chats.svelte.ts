@@ -25,7 +25,8 @@ export function agentChat(agentId: string): AgentChat {
 	if (!c) {
 		c = new AgentChat({
 			agentId,
-			notify: (level, text) => (level === 'error' ? toast.error(text) : toast(text))
+			// the same message again replaces the toast instead of stacking another one
+			notify: (level, text) => (level === 'error' ? toast.error(text, { id: text.slice(0, 80) }) : toast(text, { id: text.slice(0, 80) }))
 		});
 		chats.set(agentId, c);
 	}

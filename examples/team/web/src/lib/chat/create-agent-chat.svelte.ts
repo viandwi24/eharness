@@ -3,17 +3,14 @@
 // (id, messages, transport, sendAutomaticallyWhen, onError, ...). There is NO `resume` option on the
 // Svelte class (that is a React `useChat` option), so resuming is an explicit `chat.resumeStream()`.
 import { Chat } from '@ai-sdk/svelte';
-import {
-	DefaultChatTransport,
-	type FileUIPart,
-	lastAssistantMessageIsCompleteWithApprovalResponses,
-	type UIMessage
-} from 'ai';
+import { DefaultChatTransport, type FileUIPart, type UIMessage } from 'ai';
 import { getToken } from '../api/index';
 import { chatPaths, UPLOAD_MAX_BYTES } from './constants.js';
+import { type ChatProblem, describeChatError } from './errors.js';
 import {
 	buildChatRequest,
 	ChatBusyError,
+	ChatStaleError,
 	classifyChatResponse,
 	emptyStreamResponse,
 	type MessagesPage,
@@ -55,6 +52,8 @@ export class AgentChat {
 	notice = $state<string | null>(null);
 	/** Reattached to a running turn / following a steered one. */
 	following = $state(false);
+	/** A failure of a turn this tab follows but did not start: shown inline, with Retry when it helps. */
+	problem = $state<ChatProblem | null>(null);
 	/** Live state of the streamed turn (`data-eh.status`, transient): e.g. `compacting`. */
 	activity = $state<'thinking' | 'tool' | 'compacting' | null>(null);
 
@@ -86,7 +85,10 @@ export class AgentChat {
 			id: agentId,
 			messages: options.messages,
 			transport,
-			sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
+			// No `sendAutomaticallyWhen`: every approval and question is answered through
+			// `POST /approvals` (the server records it, partial answers included, and runs the
+			// continuation), never by posting the assistant message back from here. One answer
+			// path means a decided item can never be answered twice from the chat.
 			onError: (e) => this.#onError(e),
 			onData: (part) => {
 				if (part.type !== 'data-eh.status') return;
@@ -123,11 +125,18 @@ export class AgentChat {
 			return emptyStreamResponse();
 		}
 		if (outcome.kind === 'busy') throw new ChatBusyError(outcome.message, outcome.code);
+		if (outcome.kind === 'stale') throw new ChatStaleError(outcome.message);
 		throw new Error(outcome.kind === 'error' ? outcome.message : 'Request failed');
 	}
 	#steered = false;
 
 	#onError(e: Error): void {
+		if (e instanceof ChatStaleError) {
+			// The item was answered elsewhere: show what is stored, nothing else.
+			this.chat.clearError();
+			void this.refetch();
+			return;
+		}
 		if (e instanceof ChatBusyError) {
 			// The optimistic user message was never accepted: drop it and restore the stored view.
 			const last = this.chat.messages.at(-1);
@@ -136,7 +145,30 @@ export class AgentChat {
 			this.#notify('error', e.message);
 			return;
 		}
-		this.#notify('error', e.message || 'Something went wrong');
+		const problem = describeChatError(e, this.following);
+		if (problem === null) {
+			this.chat.clearError();
+			void this.refetch();
+		} else if (this.following) {
+			// A turn the server started (a report, a routine, another tab): an inline banner.
+			this.problem = problem;
+			this.chat.clearError();
+		} else {
+			this.#notify('error', problem.message);
+		}
+	}
+
+	/** Dismiss the inline banner. */
+	dismissProblem(): void {
+		this.problem = null;
+	}
+
+	/** The banner's Retry: attach to the server turn again, then align with storage. */
+	async retry(): Promise<void> {
+		const retry = this.problem?.retry;
+		this.problem = null;
+		if (retry === 'follow') await this.follow();
+		else await this.refetch();
 	}
 
 	async #getJson<T>(url: string): Promise<T | undefined> {
@@ -181,6 +213,7 @@ export class AgentChat {
 	async follow(): Promise<void> {
 		if (this.following) return;
 		this.following = true;
+		this.problem = null;
 		try {
 			await this.chat.resumeStream();
 		} catch (e) {
@@ -248,11 +281,6 @@ export class AgentChat {
 		if (this.#nextBefore === null && !this.hasOlder) this.hasOlder = page.nextBefore !== null;
 		if (this.#nextBefore === null) this.#nextBefore = page.nextBefore;
 		this.notice = null;
-	}
-
-	/** Answer a tool approval; the turn continues automatically once every approval has an answer. */
-	async approve(answer: { id: string; approved: boolean; reason?: string }): Promise<void> {
-		await this.chat.addToolApprovalResponse(answer);
 	}
 
 	/** Abort the server-side turn (separate endpoint), then stop reading locally. */

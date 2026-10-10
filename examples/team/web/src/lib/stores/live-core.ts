@@ -1,6 +1,7 @@
 import type { Approval, ApiClient, ApprovalBody, Task } from '../api/client';
 import { upsertTask } from '../board/board';
 import type { Connection, TeamEvent } from '../events/client';
+import { isAlreadyAnswered } from '../approval/outcome';
 import { applyActivity } from './activity';
 import type { AgentsStore } from './agents-core';
 
@@ -153,6 +154,12 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 				later('tasks', core.loadTasks); // new task, or summary / cost changed
 				later('approvals', core.loadApprovals);
 			} else if (e.type === 'approval-needed' || e.type === 'approval-decided') {
+				// decided (by a person in any tab, the Auto classifier, a remembered grant): the
+				// card goes at once, never offered again; the refetch below confirms
+				if (e.type === 'approval-decided' && typeof p.id === 'string') {
+					const id = p.id;
+					state.approvals = state.approvals.filter((a) => !(a.id === id && (!e.sessionId || a.sessionId === e.sessionId)));
+				}
 				later('approvals', core.loadApprovals);
 				later('tasks', core.loadTasks);
 			} else if (e.type === 'file-changed') {
@@ -201,8 +208,9 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			try {
 				await api.post('/approvals/{id}', { params: { id: a.id }, body: { ...body, sessionId: a.sessionId } as ApprovalBody });
 			} catch (e) {
-				state.approvals = before;
-				// 404: answered elsewhere, 409: stale. Either way the server is the truth.
+				// Answered elsewhere (404 / 409 ALREADY_ANSWERED): the item stays gone. Any other
+				// failure puts it back. Either way the server is the truth: refetch.
+				state.approvals = isAlreadyAnswered(e) ? state.approvals : before;
 				later('approvals', core.loadApprovals);
 				throw e;
 			}
@@ -223,6 +231,16 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 				...state.approvals.filter((a) => own(a) && a.kind === 'question'),
 				...core.childApprovals(agentId)
 			];
+		},
+
+		/**
+		 * The approval of this agent's OWN DM session with that id (what an inline card of its
+		 * message may answer). A child's approval is never answered from the lead's message.
+		 */
+		ownApproval(agentId: string, approvalId: string): Approval | undefined {
+			const agent = agents.find(agentId);
+			const ids = [agent?.id, agent?.slug, agentId].filter((x): x is string => !!x);
+			return state.approvals.find((a) => a.id === approvalId && a.kind === 'approval' && ids.some((id) => a.sessionId === `dm:${id}`));
 		},
 
 		/** Approvals waiting in child sessions of this agent's delegations (lead hint). */

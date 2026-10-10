@@ -19,6 +19,7 @@
 	import { badgeFor } from '#lib/board/board.js';
 	import { relativeTime } from '#lib/routines/schedule.js';
 	import MessageView from '#lib/parts/MessageView.svelte';
+	import { answerFailureText } from '#lib/approval/outcome.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -170,7 +171,12 @@
 	function answerFromPart(a: { id: string } & Parameters<typeof live.answer>[1]): void {
 		const { id, ...body } = a;
 		const item = approvals.find((x) => x.id === id);
-		if (item) void live.answer(item, body).catch(() => {});
+		if (item) {
+			void live.answer(item, body).catch((e: unknown) => {
+				const text = answerFailureText(e);
+				if (text) toast.error(text);
+			});
+		}
 	}
 </script>
 
@@ -254,6 +260,7 @@
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 									showHeader={head}
 									onApproval={answerFromPart}
+									canAnswer={(id) => approvals.some((x) => x.id === id)}
 									onOpenSession={(sid) => void openSession(sid)}
 								/>
 							</ConversationItem>

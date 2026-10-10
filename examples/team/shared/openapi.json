@@ -5858,7 +5858,7 @@
           "chats"
         ],
         "summary": "Send a message, answer an approval or regenerate (useChat)",
-        "description": "The body is an AI SDK `useChat` request; the response is the UI message stream (`text/event-stream`).\n\n- **Send**: the last message is a user message. Attachments are `file` parts (`data:` / `https:` URLs, or the `library:///uploads/…` url returned by `POST /library/files`).\n- **Approvals**: when a turn ends with an `approval-requested` tool part, the client posts the assistant message back with the part in `approval-responded` (`addToolApprovalResponse` + `sendAutomaticallyWhen`). The continuation streams into the **same** message id.\n- **Regenerate / edit**: `trigger: \"regenerate-message\"`, or a user message with `messageId`.\n\nBusy policy: while a turn of this chat runs, a new user message is **steered** into it (`ifBusy=steer`, default): on this instance the response follows the running turn; when another instance runs it the message goes through the durable inbox and the route answers `202`. `ifBusy=reject` answers `409 EH_SESSION_BUSY` instead. Approvals, regenerate and edit never steer: `409`.\n\nErrors after the turn started (model failure, stale approval answer) arrive as an `error` chunk inside the stream, not as an HTTP status.",
+        "description": "The body is an AI SDK `useChat` request; the response is the UI message stream (`text/event-stream`).\n\n- **Send**: the last message is a user message. Attachments are `file` parts (`data:` / `https:` URLs, or the `library:///uploads/…` url returned by `POST /library/files`).\n- **Approvals**: a client that posts the assistant message back with the part in `approval-responded` (`addToolApprovalResponse` + `sendAutomaticallyWhen`) continues into the **same** message id. The web app answers through `POST /approvals` instead. A posted message none of whose answers is waiting any more (answered in another tab, by Auto mode, double click) is `409 ALREADY_ANSWERED`: nothing runs, refresh quietly.\n- **Regenerate / edit**: `trigger: \"regenerate-message\"`, or a user message with `messageId`.\n\nBusy policy: while a turn of this chat runs, a new user message is **steered** into it (`ifBusy=steer`, default): on this instance the response follows the running turn; when another instance runs it the message goes through the durable inbox and the route answers `202`. `ifBusy=reject` answers `409 EH_SESSION_BUSY` instead. Approvals, regenerate and edit never steer: `409`.\n\nErrors after the turn started (model failure, stale approval answer) arrive as an `error` chunk inside the stream, not as an HTTP status.",
         "security": [
           {
             "Bearer": []
@@ -5967,7 +5967,7 @@
             }
           },
           "409": {
-            "description": "`EH_SESSION_BUSY`, `EH_SESSION_CLOSED` or archived agent",
+            "description": "`EH_SESSION_BUSY`, `EH_SESSION_CLOSED`, `ALREADY_ANSWERED` or archived agent",
             "content": {
               "application/json": {
                 "schema": {

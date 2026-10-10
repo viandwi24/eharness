@@ -15,6 +15,9 @@ export class DomainError extends Error {
   }
 }
 
+/** Error code of an answer to an item that is not waiting any more (web: refresh, no toast). */
+export const ALREADY_ANSWERED = 'ALREADY_ANSWERED'
+
 export const invalid = (message: string, code = 'INVALID'): DomainError =>
   new DomainError('invalid', code, message)
 export const notFound = (what: string, id: string): DomainError =>

@@ -249,11 +249,11 @@ describe('chat: approvals', () => {
       '/agents/researcher/chat',
       post({ messages: [{ ...waiting, parts: waiting.parts }] }),
     )
-    // the stale answer never authorizes anything: nothing pending, so it fails before the commit
-    // point, and `toHttpResponse()` answers with a status (not an error chunk in a 200 stream)
-    expect(replay.status).toBe(400)
-    expect(((await replay.json()) as { error: { code: string } }).error.code).toMatch(
-      /^EH_(PENDING_RESPONSE|INVALID_INPUT)$/,
+    // the stale answer never authorizes anything: nothing waits any more, so the route answers
+    // 409 ALREADY_ANSWERED before a turn starts (the web refreshes quietly)
+    expect(replay.status).toBe(409)
+    expect(((await replay.json()) as { error: { code: string } }).error.code).toBe(
+      'ALREADY_ANSWERED',
     )
     expect((await stored(app)).filter((m) => m.role === 'assistant')).toHaveLength(1)
   })

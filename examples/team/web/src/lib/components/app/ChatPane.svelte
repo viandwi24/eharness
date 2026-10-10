@@ -31,6 +31,7 @@
 	import { onDestroy, tick } from 'svelte';
 	import PendingCard from './PendingCard.svelte';
 	import { toast } from 'svelte-sonner';
+	import { answerFailureText } from '#lib/approval/outcome.js';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import { agentChat } from '#lib/chat/chats.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -57,23 +58,31 @@
 	const chat = $derived(ac.chat);
 
 	/**
-	 * An inline tool approval. Plain approve / deny (with a reason) ride the chat stream; "Always
-	 * allow" and notes only exist on `POST /approvals`, so those go there and the chat then follows
-	 * the continuation the server runs.
+	 * An inline tool approval of this agent's own message. Every answer goes through
+	 * `POST /approvals` (the server records it and runs the continuation), never through the chat
+	 * stream: one path, so an approval decided elsewhere cannot be answered twice. An approval the
+	 * server no longer lists was decided already: refresh quietly, no error.
 	 */
 	async function answerInline(a: { id: string; approved: boolean; reason?: string; note?: string; remember?: 'session' }): Promise<void> {
 		const { id, ...body } = a;
-		if (body.remember === undefined && body.note === undefined) return ac.approve(a);
-		const item = live.state.approvals.find((x) => x.id === id);
-		if (!item) return ac.approve(a);
+		const item = live.ownApproval(agentId, id);
+		if (!item) {
+			void live.loadApprovals();
+			void ac.refetch();
+			return;
+		}
 		try {
 			await live.answer(item, body);
 		} catch (e) {
-			toast.error(e instanceof Error ? e.message : 'Could not send the answer');
+			const text = answerFailureText(e);
+			if (text) toast.error(text);
+			else void ac.refetch();
 			return;
 		}
 		await followAfterAnswer();
 	}
+	/** An inline approval is offered only while the server lists it as waiting. */
+	const canAnswer = (approvalId: string): boolean => !live.state.approvalsLoaded || live.ownApproval(agentId, approvalId) !== undefined;
 
 	async function send(m: PromptInputMessage): Promise<void> {
 		const text = m.text.trim();
@@ -269,6 +278,7 @@
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 									showHeader={head}
 									onApproval={(a) => void answerInline(a)}
+									{canAnswer}
 									onOpenSession={(sid) => void openSession(sid)}
 								/>
 							</ConversationItem>
@@ -307,6 +317,14 @@
 						{/if}
 						{#if chat.status === 'submitted'}
 							<div class="text-sm text-muted-foreground" role="status">Thinking…</div>
+						{/if}
+						{#if ac.problem}
+							<div class="flex items-start gap-2 rounded-lg border border-border bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert" data-testid="chat-problem">
+								<WarningCircleIcon class="mt-0.5 size-4 shrink-0" />
+								<span class="min-w-0 flex-1 break-words">{ac.problem.message}</span>
+								{#if ac.problem.retry}<Button size="xs" variant="ghost" onclick={() => void ac.retry()}>Retry</Button>{/if}
+								<Button size="xs" variant="ghost" onclick={() => ac.dismissProblem()}>Dismiss</Button>
+							</div>
 						{/if}
 						{#if chat.error}
 							<div class="flex items-center gap-2 rounded-lg border border-border bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert">
