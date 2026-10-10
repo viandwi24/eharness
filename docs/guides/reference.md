@@ -157,6 +157,7 @@ order (root first); "chainable" hooks receive the previous result.
 | `turn.start`, `turn.end` | committed turn started / finished (`TurnResult`) | — |
 | `turn.beforeEnd` | the turn would stop `complete` / `max-steps` / `length` | `{ continue: { reason } }`, `{ extendSteps }` |
 | `step.prepare` | before every model call | `{ model?, settings?, activeTools?, toolChoice?, reminder?, providerOptions?, messages? }` (`reminder`: not stored) |
+| `model.call` | after every model call (step, compaction, flush, `ctx.observeModel`), observe-only | nothing |
 | `step.end` | after every step | `{ stop }` (→ `plugin:<name>:<stop>`), `{ context }` (**stored** as `data-eh.input`) |
 | `tool.approve` | before a call runs; the event has `toolName`, `toolCallId`, `input`, `toolMetadata?`, `risk?`, `idempotent?`, `hints?` and `transcript()` (0.5.0: a lazy, restricted view of user messages and tool calls, for judges) | an approval status (most restrictive wins) |
 | `approval.decided` | every approval decision (audit) | — |

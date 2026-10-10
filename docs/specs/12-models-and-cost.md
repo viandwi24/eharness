@@ -222,3 +222,63 @@ export interface BudgetLedger {
    shows monthly periods.
 
 Without `budget.ledger`, behaviour, warnings and storage are exactly those of §4.
+
+## 7. Model call observation
+
+The `model.call` hook (spec 01 §5) and the `observeModel` helper expose every provider call, for
+activity logs and generation inspectors (ADR-0047).
+
+```ts
+type ModelCallKind = 'step' | 'compaction' | 'flush' | 'other'
+
+interface ModelCallRecord {
+  id: string                        // UUIDv7
+  model: { provider: string; modelId: string }
+  startedAt: string                 // ISO 8601
+  firstChunkMs?: number             // streamed calls only
+  durationMs: number
+  status: 'ok' | 'error' | 'aborted'
+  finishReason?: string             // unified: stop | length | tool-calls | content-filter | error | other
+  usage: LanguageModelUsage         // incl. cache and reasoning details when reported
+  request: { options: unknown; body?: unknown }
+  response: { id?: string; modelId?: string; timestamp?: string; headers?: Record<string, string>; body?: unknown }
+  output: { text: string; reasoning: string; toolCalls: { toolCallId: string; toolName: string; input: unknown }[] }
+  providerMetadata?: Record<string, unknown>
+  error?: { name: string; message: string }
+}
+
+interface ModelCallEvent extends ModelCallRecord {
+  kind: ModelCallKind
+  sessionId: string
+  turnId?: string
+  stepIndex?: number                // kind 'step'
+  messageId?: string                // kind 'step': the assistant message
+  costUsd?: number                  // §3, from `models`; absent without pricing
+}
+
+observeModel(model: LanguageModel, report: (record: ModelCallRecord) => void | Promise<void>): LanguageModel
+ctx.observeModel(model: LanguageModel, options?: { kind?: ModelCallKind }): LanguageModel
+```
+
+Rules:
+
+1. One event per `doStream` / `doGenerate` call; AI SDK retries are separate events. The hook fires
+   after the call ended (stream finished, errored or cancelled), in plugin order, and is not awaited
+   by the stream: it never delays chunks and may complete after `step.end`. A throwing listener is
+   `W_HOOK_FAILED` and has no effect on the call, the turn or storage.
+2. `status: 'aborted'` when the call's signal fired or the stream was cancelled; `output` holds what
+   arrived until then. `error` is set only for `status: 'error'` (including an `error` stream part).
+3. `request.options` is the provider-agnostic call (prompt, tools, tool choice, settings, provider
+   options) as JSON: no abort signal, binary data replaced by `"[binary N bytes]"`, `headers`
+   redacted. `request.body` is what the provider reports it sent; `response.headers` drops
+   `set-cookie` and names matching authorization / api-key / token / secret / cookie / credential.
+4. The core observes steps, the compaction summarizer (`'compaction'`), the pre-compaction flush
+   (`'flush'`) and `approvalGuard`'s judge (`'other'`). Plugins wrap their own models with
+   `ctx.observeModel`; code without a session uses `observeModel` (the permission engine's
+   `modelClassifier` takes `onModelCall`).
+5. Without a `model.call` listener nothing is wrapped. These events do not charge budgets.
+6. **Size.** Request options, request and response bodies can be hundreds of KB per call (the prompt
+   is repeated every step). The core keeps none of it; the application decides retention
+   (truncate, sample, store bodies separately, expire).
+7. Gateway string models are resolved through `AI_SDK_DEFAULT_PROVIDER` or the AI Gateway; an
+   unresolvable string is not observed.

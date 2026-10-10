@@ -160,6 +160,13 @@ export type {
 } from './messages/types.ts'
 export { lookupModel, modelsDevCatalog, openRouterCatalog } from './models/catalog.ts'
 export { computeCost, estimateStepCostUsd } from './models/cost.ts'
+export type {
+  ModelCallEvent,
+  ModelCallKind,
+  ModelCallRecord,
+  ModelCallToolCall,
+} from './models/observe.ts'
+export { observeModel } from './models/observe.ts'
 export type { ModelCatalog, ModelInfo, ModelPricing, TokenRates } from './models/types.ts'
 export type { OutputSpec } from './output/types.ts'
 export { definePlugin } from './plugin/define-plugin.ts'

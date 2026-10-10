@@ -57,6 +57,7 @@ describe('core entry', () => {
       'messageToChunks',
       'modelsDevCatalog',
       'neutralizeTags',
+      'observeModel',
       'openRouterCatalog',
       'parseSkillMarkdown',
       'toolTraits',

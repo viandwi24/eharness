@@ -30,6 +30,7 @@ import type {
   TurnKind,
   TurnResult,
 } from '../messages/types.ts'
+import type { ModelCallEvent, ModelCallKind } from '../models/observe.ts'
 import type { ToolHints } from '../registry/risk.ts'
 import type { GuardTranscriptEntry } from '../registry/transcript.ts'
 import type {
@@ -214,6 +215,12 @@ export interface HarnessContext<DP extends DataPartMap = Record<never, never>> {
   readonly plugin: { name: string }
   readonly turn: TurnInfo | undefined
   readonly step: { index: number; model: LanguageModel } | undefined
+  /**
+   * Wrap a model this plugin calls itself (a judge, a search model) so its calls fire the
+   * `model.call` hook with `kind: 'other'` (or `kind`). Returns `model` unchanged when no plugin
+   * listens to `model.call`. Use the returned model in `generateText`/`streamText`.
+   */
+  observeModel(model: LanguageModel, options?: { kind?: ModelCallKind }): LanguageModel
   /** Typed services map. Accessing a service that no plugin provides throws `EH_SERVICE_MISSING`. */
   readonly services: HarnessServices
   /** Namespaced stream writer, typed with this plugin's own data parts. */
@@ -393,6 +400,16 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
     ctx: HarnessContext<DP>,
     e: StepEndEvent,
   ): Awaitable<{ stop?: string; context?: string } | void>
+
+  /**
+   * Observe-only. Fires after every model call of the session ends (success, error or abort): the
+   * turn's steps, the compaction summarizer, the pre-compaction flush and calls routed through
+   * `ctx.observeModel`. Listeners run in plugin order; errors are reported as `W_HOOK_FAILED` and
+   * never affect the call. It is not awaited by the stream and may complete after the step ended.
+   * Carries the raw request and response: bodies can be large, the application decides retention
+   * (spec 12 §7). When no plugin registers it, no call is wrapped.
+   */
+  'model.call'?(ctx: HarnessContext<DP>, e: ModelCallEvent): Awaitable<void>
 
   /** Most restrictive wins. Throw = denied. Must be deterministic and side-effect free. */
   'tool.approve'?(

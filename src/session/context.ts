@@ -6,6 +6,7 @@
 import { HarnessError, type HarnessWarning } from '../errors.ts'
 import type { HarnessContext, HarnessLogger, HarnessServices } from '../plugin/types.ts'
 import { createPluginWriter } from '../stream/writer.ts'
+import { observeForSession } from './model-calls.ts'
 import type { SessionRuntime } from './runtime.ts'
 
 /** Default logger: debug/info are no-ops, warn/error go to the console. */
@@ -83,6 +84,9 @@ export function createContext(rt: SessionRuntime, plugin: string): HarnessContex
     log: rt.log,
     get signal() {
       return rt.signal
+    },
+    observeModel(model, options) {
+      return observeForSession(rt, model, { kind: options?.kind ?? 'other' })
     },
     warn(warning: HarnessWarning) {
       rt.warn(

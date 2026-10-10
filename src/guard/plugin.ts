@@ -190,7 +190,7 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
     }
     try {
       const result = await generateText({
-        model: judgeModel,
+        model: ctx.observeModel(judgeModel),
         instructions: GUARD_INSTRUCTIONS,
         prompt,
         output: Output.object({ schema: verdictSchema }),

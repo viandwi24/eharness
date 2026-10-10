@@ -12,6 +12,7 @@ import { createKindMessage } from '../messages/kinds.ts'
 import { project } from '../messages/project.ts'
 import type { CompactionPayload, ContextStats, HarnessUIMessage } from '../messages/types.ts'
 import { hookFailed } from '../registry/wrap.ts'
+import { observeForSession } from '../session/model-calls.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { type FlushEnv, runFlushStage } from './flush.ts'
 import { resolveSummarizerPrompt } from './prompt.ts'
@@ -348,7 +349,7 @@ export function createSessionCompaction(deps: {
     let summary: string
     try {
       const result = await summarize({
-        model: summarizer,
+        model: observeForSession(rt, summarizer, { kind: 'compaction', turnId: request.turnId }),
         prompt,
         entries,
         context,

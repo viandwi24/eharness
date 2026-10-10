@@ -5,7 +5,7 @@
  */
 import { generateText, type LanguageModel, Output } from 'ai'
 import { z } from 'zod/v4'
-import { neutralizeTags } from '../index.ts'
+import { type ModelCallRecord, neutralizeTags, observeModel } from '../index.ts'
 import type { AutoAction, AutoClassifier, AutoClassifierContext, AutoVerdict } from './types.ts'
 
 /**
@@ -39,6 +39,11 @@ When unsure, block.`
 export interface ModelClassifierOptions {
   /** The judge: a cheap, fast model. */
   model: LanguageModel
+  /**
+   * Receives one {@link ModelCallRecord} per classifier call (activity logs, spec 12 §7). The
+   * engine has no session: forward the record to your own log, tagging it with what you know.
+   */
+  onModelCall?: (record: ModelCallRecord) => void | Promise<void>
   /** Replaces the rules prompt. Default {@link AUTO_CLASSIFIER_INSTRUCTIONS}. */
   instructions?: string
   /** What is trusted in this deployment (repositories, hosts, buckets), added to the prompt. */
@@ -136,7 +141,10 @@ export function modelClassifier(options: ModelClassifierOptions): AutoClassifier
     const signals = [AbortSignal.timeout(timeoutMs)]
     if (ctx.abortSignal !== undefined) signals.push(ctx.abortSignal)
     const result = await generateText({
-      model: options.model,
+      model:
+        options.onModelCall === undefined
+          ? options.model
+          : observeModel(options.model, options.onModelCall),
       instructions,
       prompt: sections.join('\n\n'),
       output: Output.object({ schema: verdictSchema }),

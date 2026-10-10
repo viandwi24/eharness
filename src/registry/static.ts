@@ -36,6 +36,7 @@ export const HOOK_NAMES: readonly HookName[] = [
   'turn.end',
   'step.prepare',
   'step.end',
+  'model.call',
   'tool.approve',
   'approval.decided',
   'tool.before',

@@ -60,6 +60,7 @@ import { noCallModel } from '../session/interaction/end-turn.ts'
 import type { PendingInput, TurnInputQueue } from '../session/interaction/inbox.ts'
 import { inputWireMessage } from '../session/interaction/inbox.ts'
 import { armExternals } from '../session/interaction/waits.ts'
+import { observeForSession } from '../session/model-calls.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import { describeError } from '../stream/describe-error.ts'
 import type { TurnLedger } from './ledger.ts'
@@ -806,7 +807,14 @@ export async function runSteps(input: StepLoopInput): Promise<LoopResult> {
         input.write({ type: 'data-eh.input', data: structuredClone(data) })
     }
     const result = streamText({
-      model: endStep ? noCallModel() : stepModel,
+      model: endStep
+        ? noCallModel()
+        : observeForSession(rt, stepModel, {
+            kind: 'step',
+            turnId: rt.turn?.info.id,
+            stepIndex,
+            messageId: input.messageId,
+          }),
       ...(noteWire.length === 0
         ? {}
         : {

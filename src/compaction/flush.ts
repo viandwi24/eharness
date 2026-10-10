@@ -29,6 +29,7 @@ import type { CompactionBeforeEvent, CompactionBeforePatch } from '../plugin/typ
 import { toolTraits } from '../registry/risk.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
 import { hookFailed, reportDecision } from '../registry/wrap.ts'
+import { observeForSession } from '../session/model-calls.ts'
 import type { OpenSession, SessionRuntime } from '../session/runtime.ts'
 
 /** Default `flush.maxSteps`. */
@@ -305,7 +306,7 @@ export async function runFlushStage(input: FlushStageInput): Promise<FlushOutcom
   const done: Array<StepResult<ToolSet>> = []
   try {
     const result = await generateText({
-      model,
+      model: observeForSession(rt, model, { kind: 'flush', turnId: input.turnId }),
       ...(env.instructions === undefined ? {} : { instructions: env.instructions }),
       messages: [...env.wire, { role: 'user', content: merged.prompt }],
       ...(hasTools

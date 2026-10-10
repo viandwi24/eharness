@@ -445,6 +445,9 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   /** After each step. `stop` ends the turn (StopReason `plugin:<name>:<reason>`); `context` is delivered before the next step. */
   'step.end'?(ctx: HarnessContext<DP>, e: StepEndEvent): Awaitable<{ stop?: string; context?: string } | void>
 
+  /** Observe-only (spec 12 §7). After every model call of the session ends (step, compaction, flush, `ctx.observeModel`): ok, error or abort. Not awaited by the stream; errors are `W_HOOK_FAILED`. */
+  'model.call'?(ctx: HarnessContext<DP>, e: ModelCallEvent): Awaitable<void>
+
   /** Most restrictive wins (spec 11 §3). Throw = denied. Must be deterministic and side-effect free: AI SDK calls it again for approved calls when a continuation starts. */
   /** `risk`, `idempotent`, `hints`: the tool's traits (spec 11 §3.2, `toolTraits`), present when known. */
   /** `transcript()` (0.5.0): restricted view — user messages and earlier tool calls only, never tool outputs or assistant text (spec 11 §3.4). Lazy; fresh copy per call. */

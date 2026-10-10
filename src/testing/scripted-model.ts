@@ -53,6 +53,10 @@ export interface ScriptedStep {
   throws?: unknown
   /** Emitted as a stream `error` part before `finish` (thrown by a `doGenerate` call). */
   streamError?: unknown
+  /** Reported as `request.body` of the call (what the provider would have sent). */
+  requestBody?: unknown
+  /** Reported as `response.headers` of the call. */
+  responseHeaders?: Record<string, string>
   /** Delay before every stream part, in ms (for abort and timeout tests). */
   delayMs?: number
   /** Raw stream parts; replaces everything above except `throws` and `delayMs`. */
@@ -237,7 +241,13 @@ export function scriptedModel(
       const { step, index } = next(call)
       if (step.delayMs !== undefined && step.delayMs > 0)
         await delay(step.delayMs, call.abortSignal)
-      return generateResult(buildParts(step, index))
+      return {
+        ...generateResult(buildParts(step, index)),
+        ...(step.requestBody === undefined ? {} : { request: { body: step.requestBody } }),
+        ...(step.responseHeaders === undefined
+          ? {}
+          : { response: { headers: step.responseHeaders } }),
+      }
     },
     doStream: async (call) => {
       const { step, index } = next(call)
@@ -245,6 +255,10 @@ export function scriptedModel(
       const delayMs = step.delayMs ?? 0
       const signal = call.abortSignal
       return {
+        ...(step.requestBody === undefined ? {} : { request: { body: step.requestBody } }),
+        ...(step.responseHeaders === undefined
+          ? {}
+          : { response: { headers: step.responseHeaders } }),
         stream: new ReadableStream<ScriptedStreamPart>({
           async start(controller) {
             for (const part of parts) {
