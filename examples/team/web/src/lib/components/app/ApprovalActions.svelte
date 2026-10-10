@@ -20,97 +20,92 @@
 		onAnswer: (body: ApprovalAnswerBody) => void;
 	} = $props();
 
-	// One text field at most: it is the denial guidance in `deny` mode, the note in `note` mode.
-	let mode = $state<'choose' | 'deny' | 'note'>('choose');
+	// Approve / Always allow / Deny answer at once. "Add note" opens one text field whose text goes
+	// with the button picked next: a note for the agent on Approve, the reason on Deny.
+	let noting = $state(false);
 	let text = $state('');
-	let field = $state<HTMLInputElement | null>(null);
+	let field = $state<HTMLTextAreaElement | HTMLInputElement | null>(null);
 
-	function open(next: 'deny' | 'note'): void {
-		mode = next;
+	function openNote(): void {
+		noting = true;
 		text = '';
 		void Promise.resolve().then(() => field?.focus());
 	}
-	function close(): void {
-		mode = 'choose';
+	function cancel(): void {
+		noting = false;
 		text = '';
 	}
 	function send(choice: ApprovalChoice): void {
 		if (busy) return;
-		onAnswer(buildAnswer(choice, mode === 'choose' ? '' : text));
+		onAnswer(buildAnswer(choice, noting ? text : ''));
 	}
 
-	// Scoped to the card (focus inside it): 1 Approve, 2 Always allow, 3 Deny, Enter approve, Esc deny with feedback.
+	// Scoped to the card (focus inside it): 1 Approve, 2 Always allow, 3 Deny, 4 Add note, Esc cancels the note.
 	function onkeydown(e: KeyboardEvent): void {
 		if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
 		const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
-		if (e.key === 'Escape') {
-			e.preventDefault();
-			e.stopPropagation();
-			if (mode === 'choose') open('deny');
-			else close();
-			return;
-		}
-		if (typing) {
-			if (e.key === 'Enter') {
+		if (noting) {
+			if (e.key === 'Escape') {
 				e.preventDefault();
-				send(mode === 'deny' ? 'deny' : 'approve');
+				e.stopPropagation();
+				cancel();
+			} else if (typing && e.key === 'Enter' && !e.shiftKey) {
+				e.preventDefault();
+				send('approve');
 			}
 			return;
 		}
-		if (e.target instanceof HTMLButtonElement && e.key === 'Enter') return; // the focused button decides
-		if (mode !== 'choose') return;
-		if (e.key === 'Enter' || e.key === '1') {
+		if (typing || (e.target instanceof HTMLButtonElement && e.key === 'Enter')) return;
+		const map: Record<string, () => void> = {
+			'1': () => send('approve'),
+			'2': () => canRemember && send('remember'),
+			'3': () => send('deny'),
+			'4': () => canNote && openNote(),
+		};
+		const act = map[e.key];
+		if (act) {
 			e.preventDefault();
-			send('approve');
-		} else if (e.key === '2' && canRemember) {
-			e.preventDefault();
-			send('remember');
-		} else if (e.key === '3') {
-			e.preventDefault();
-			open('deny');
+			act();
 		}
 	}
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div class="flex flex-col gap-2" role="group" aria-label="Answer" data-testid="approval-actions" {onkeydown}>
-	{#if mode === 'choose'}
-		<div class="flex flex-wrap items-center gap-2">
-			<Button size="sm" disabled={busy} onclick={() => send('approve')}>Approve <Kbd class="ml-1 h-4 min-w-4 text-[10px]">1</Kbd></Button>
-			{#if canRemember}
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={busy}
-					title="Allow this tool without asking for the rest of this session"
-					onclick={() => send('remember')}
-				>
-					Always allow <span class="max-w-32 truncate font-mono text-[11.5px]">{toolName}</span>
-					<Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
-				</Button>
-			{/if}
-			{#if canNote}
-				<Button variant="ghost" size="sm" disabled={busy} class="text-muted-foreground" onclick={() => open('note')}>Add note</Button>
-			{/if}
-			<Button variant="outline" size="sm" disabled={busy} class="ml-auto" onclick={() => open('deny')}>
-				Deny <Kbd class="ml-1 h-4 min-w-4 text-[10px]">3</Kbd>
-			</Button>
-		</div>
-	{:else}
+	{#if noting}
 		<Input
 			bind:ref={field}
 			bind:value={text}
 			class="h-8"
-			aria-label={mode === 'deny' ? 'Tell the agent what to do instead' : 'Note for the agent'}
-			placeholder={mode === 'deny' ? 'Tell the agent what to do instead (optional)' : 'Add a note for the agent (optional)'}
+			aria-label="Note for the agent"
+			placeholder="Note for the agent: sent with Approve, or as the reason with Deny"
 		/>
-		<div class="flex flex-wrap items-center gap-2">
-			{#if mode === 'deny'}
-				<Button variant="destructive" size="sm" disabled={busy} onclick={() => send('deny')}>Deny <Kbd class="ml-1 h-4 min-w-4 text-[10px]">Enter</Kbd></Button>
-			{:else}
-				<Button size="sm" disabled={busy} onclick={() => send('approve')}>Approve with note <Kbd class="ml-1 h-4 min-w-4 text-[10px]">Enter</Kbd></Button>
-			{/if}
-			<Button variant="ghost" size="sm" disabled={busy} onclick={close}>Back <Kbd class="ml-1 h-4 min-w-4 text-[10px]">Esc</Kbd></Button>
-		</div>
 	{/if}
+	<div class="flex flex-wrap items-center gap-2">
+		<Button size="sm" disabled={busy} onclick={() => send('approve')}>
+			Approve {#if !noting}<Kbd class="ml-1 h-4 min-w-4 text-[10px]">1</Kbd>{/if}
+		</Button>
+		{#if canRemember && !noting}
+			<Button
+				variant="outline"
+				size="sm"
+				disabled={busy}
+				title="Allow this tool without asking for the rest of this session"
+				onclick={() => send('remember')}
+			>
+				Always allow <span class="max-w-32 truncate font-mono text-[11.5px]">{toolName}</span>
+				<Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
+			</Button>
+		{/if}
+		<Button variant={noting ? 'destructive' : 'outline'} size="sm" disabled={busy} onclick={() => send('deny')}>
+			Deny {#if !noting}<Kbd class="ml-1 h-4 min-w-4 text-[10px]">3</Kbd>{/if}
+		</Button>
+		{#if noting}
+			<Button variant="ghost" size="sm" disabled={busy} onclick={cancel}>Cancel <Kbd class="ml-1 h-4 min-w-4 text-[10px]">Esc</Kbd></Button>
+		{:else if canNote}
+			<Button variant="ghost" size="sm" disabled={busy} class="ml-auto text-muted-foreground" onclick={openNote}>
+				Add note <Kbd class="ml-1 h-4 min-w-4 text-[10px]">4</Kbd>
+			</Button>
+		{/if}
+	</div>
 </div>
