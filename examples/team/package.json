@@ -1,0 +1,19 @@
+{
+  "name": "eharness-team",
+  "private": true,
+  "type": "module",
+  "description": "Team-agent example on eharness: Bun server (examples/team/server) and SvelteKit web (examples/team/web).",
+  "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "start": "bun scripts/dev.ts start",
+    "dev:server": "bun run --cwd server dev",
+    "dev:web": "bun run --cwd web dev",
+    "test": "bun test server",
+    "check": "bun run --cwd server typecheck && bun run --cwd web check",
+    "openapi": "bun run --cwd server openapi && bun run --cwd web gen:api",
+    "db:generate": "bun run --cwd server db:generate",
+    "smoke": "bun scripts/smoke-real.ts",
+    "test:instances": "bun scripts/two-instances.ts",
+    "test:restart": "bun scripts/kill-restart.ts"
+  }
+}

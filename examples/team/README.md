@@ -48,12 +48,13 @@ bun install                              # at the repo root (workspaces)
 cp examples/team/.env.example examples/team/.env
 # edit examples/team/.env: set OPENROUTER_API_KEY (or AI_GATEWAY_API_KEY) and TEAM_TOKEN
 
-# 1. server (port 4000) — reads examples/team/.env
-cd examples/team/server && bun run dev
-
-# 2. web (another terminal; /api is proxied to the server) — reads the same file
-cd examples/team/web && bun run dev        # http://localhost:5173
+cd examples/team
+bun run dev        # server on :4000 and web on http://localhost:5173 together; Ctrl+C stops both
 ```
+
+Or run them separately: `bun run dev:server` and `bun run dev:web` (both read the same `.env`).
+Other scripts in `examples/team/package.json`: `test`, `check`, `openapi` (export the spec and
+regenerate the web types), `db:generate`, `test:instances`, `test:restart`, `smoke` (real model, costs money).
 
 API docs: http://localhost:4000/docs. In the web, the token comes from `PUBLIC_TEAM_TOKEN` in the
 same `.env` (dev) or from the Settings page.
