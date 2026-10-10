@@ -282,3 +282,15 @@ column). `migrateInbox` in the example does exactly that.
 one `LISTEN` connection by payload. Full version: `examples/postgres-inbox.ts`. Prove it with
 `inboxAdapterConformance` (see [Writing a storage adapter](writing-a-storage-adapter.md)).
 `examples/inbox.ts` runs two instances on `memoryInbox()` in one process.
+
+## Tuning failover time
+
+After a process dies, another instance takes over its session only when (1) the session lock lease
+expires (a property of your `lock` adapter) and (2) the dead turn's heartbeat is older than
+`recovery.staleMs` (default 120 000 ms). Until then a send is queued, not applied. The heartbeat
+is written every `staleMs / 4` (also during long tool calls), so lowering `staleMs` shortens
+failover and raises the write rate: `recovery: { staleMs: 20_000 }` fails over in about 20 s and
+heartbeats every 5 s. Keep `staleMs` well above your longest storage stall, or a healthy slow
+turn looks dead. `inbox.claimTtlMs` (default `staleMs`) bounds how long a dead holder's claimed
+items stay hidden. Neither value has a separate knob: the heartbeat interval is derived from
+`staleMs`.

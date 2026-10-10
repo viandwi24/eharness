@@ -626,6 +626,12 @@ export function createSessionHandle(args: {
   let current: RunningTurn | undefined
   /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
   const queue: QueuedTurn[] = []
+  /**
+   * Direct `send()`s of an idle session with a durable inbox, held until the inbox has nothing
+   * older to apply (spec 05 §12 rule 7: a direct send never overtakes a queued item).
+   */
+  const gated: QueuedTurn[] = []
+  let gating = false
   /** External waits (spec 11 §4.2): resolve / expire, durable timer items, the live timer. */
   const waits = createWaitOps({
     rt,
@@ -651,6 +657,7 @@ export function createSessionHandle(args: {
       startNext()
       checkCollect()
       drain?.drain()
+      gateStep()
       touch()
       checkIdle()
     },
@@ -719,6 +726,60 @@ export function createSessionHandle(args: {
     // the session may have gone idle meanwhile (e.g. a steer that arrived as its turn ended)
     queueMicrotask(startNext)
     return entry.handle.run
+  }
+
+  /** Hold a direct send behind the older items of the durable inbox (spec 05 §12 rule 7). */
+  function gateSend(
+    normalized: NormalizedInput | undefined,
+    options: SendOptions,
+  ): HarnessRun<UIMessage> {
+    const turnId = internals.generateId()
+    const entry: QueuedTurn = {
+      kind: 'send',
+      turnId,
+      input: normalized,
+      options,
+      handle: createDeferredRun({
+        turnId,
+        kind: 'send',
+        generateId: () => internals.generateId(),
+        onAbort: () => {
+          const index = gated.indexOf(entry)
+          if (index < 0) return
+          gated.splice(index, 1)
+          entry.handle.drop()
+          checkIdle()
+        },
+      }),
+    }
+    gated.push(entry)
+    touch()
+    gateStep()
+    return entry.handle.run
+  }
+
+  /**
+   * Let the inbox apply what is older than the gated sends, then release them into the queue (FIFO).
+   * Re-run when a turn ends: the drain may have started a unit meanwhile.
+   */
+  function gateStep(): void {
+    if (gating || gated.length === 0 || drain === undefined) return
+    if (rt.closed) return
+    if (rt.running) return // the turn end calls this again
+    gating = true
+    void (async () => {
+      try {
+        await drain?.flush()
+      } catch {}
+      gating = false
+      if (rt.closed || gated.length === 0) return
+      if (rt.running || queue.length > 0) {
+        gateStep()
+        return
+      }
+      queue.push(...gated.splice(0))
+      startNext()
+    })()
   }
 
   /**
@@ -911,7 +972,11 @@ export function createSessionHandle(args: {
   function isIdle(): boolean {
     return (
       rt.closed ||
-      (!rt.running && queue.length === 0 && collecting === undefined && drain?.busy !== true)
+      (!rt.running &&
+        queue.length === 0 &&
+        gated.length === 0 &&
+        collecting === undefined &&
+        drain?.busy !== true)
     )
   }
   function checkIdle(): void {
@@ -1026,6 +1091,7 @@ export function createSessionHandle(args: {
    * Durable inbox items are never dropped: they go back to the inbox (spec 05 §12).
    */
   function dropQueue(all: boolean): void {
+    for (const entry of gated.splice(0)) entry.handle.drop()
     for (const entry of [...queue]) {
       if (!all && entry.wait !== undefined) continue
       queue.splice(queue.indexOf(entry), 1)
@@ -1207,6 +1273,21 @@ export function createSessionHandle(args: {
           return { ...enqueue({ input: normalized, options }), delivery }
         }
         return enqueue({ input: normalized, options })
+      }
+      if (drain !== undefined && options.ifBusy !== 'steer') {
+        let normalized: NormalizedInput | undefined
+        try {
+          normalized =
+            input === undefined
+              ? undefined
+              : normalizeInput(input, {
+                  acceptClientMetadata: rt.options.acceptClientMetadata === true,
+                  files: config.inputFiles,
+                })
+        } catch (error) {
+          return failedRun('send', () => internals.generateId(), asHarnessError(error))
+        }
+        return gateSend(normalized, options)
       }
       const started = begin({ kind: 'send', input, options, queued: false })
       // a steer with nothing running starts a turn of its own
@@ -1893,7 +1974,20 @@ export function createSessionHandle(args: {
       const open = await ensureOpen()
       if (rt.view === undefined) await ensureContext()
       const { inspection, ...fixed } = await staticTokens(open)
-      const core = rt.state.core()
+      // an idle, clean handle may be stale: another instance can have answered, started or
+      // finished a turn since it loaded (spec 05 §2.1); a running turn is authoritative here
+      let core = rt.state.core()
+      if (!rt.running && !rt.state.dirty) {
+        const stored = (await rt.state.peek())?.core
+        if (stored !== undefined && !rt.running && !rt.state.dirty) {
+          core = {
+            ...core,
+            pending: stored.pending,
+            activeTurn: stored.activeTurn,
+            usage: stored.usage,
+          }
+        }
+      }
       const measured = await compaction.measureView(rt.view ?? [])
       return {
         ...compaction.stats(

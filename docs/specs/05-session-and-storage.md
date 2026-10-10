@@ -1120,7 +1120,10 @@ Normative rules:
    it. The debounce of the burst is the first item's `collect`, over `config.inbox.collect`.
    Without an inbox (and for `send(…, { ifBusy: 'collect' })`) the burst lives in the process;
    it is dropped by `abort()` and `close()` like queued turns.
-7. **Ordering.** Per session, items are applied in id order. A steer that misses the running turn
+7. **Ordering.** Per session, items are applied in id order. A direct `send()` on an idle session
+   with a durable inbox does not overtake older items: it first lets the drain apply every ready
+   item (each its own unit), and starts its turn when the drain starts nothing more (the run is
+   returned at once and starts when it is its turn; `abort()` drops it like a queued turn). A steer that misses the running turn
    (the turn stopped taking input, or it ends with a stop other than `tool-pending` / `aborted` /
    `timeout`) goes back to the inbox and becomes a queued send at the next idle drain, in its
    original id order (its `input.submit` hooks run again, `via: 'queue'`); with `tool-pending`,
@@ -1252,6 +1255,14 @@ foreign `activeTurn`, else `null`), `pending()`, `pendingWaits()`, `children()`,
 There are no turn operations: from JS, `send`, `respond`, `regenerate`, `edit`, `enqueue`,
 `inject` and `compact` throw `EH_INVALID_INPUT` (`details.reason: 'peek-read-only'`) naming
 `agent.session(id)`. A missing session reads as empty (`stats()` zero, `children()` `[]`).
+
+**Reads on a live handle.** A cached `agent.session(id)` handle keeps its state in memory, and
+another instance may change the stored state meanwhile (answer an approval, finish a turn). The
+read operations therefore never report such a stale value: `children()`, `parentInfo()`,
+`pendingWaits()` and `busy()` read storage, and `stats()` re-reads `pending`, `activeTurn` and
+`usage` from storage whenever the handle is idle (no turn running here) and has no unwritten
+changes; while a turn runs here the in-memory state is authoritative. Turn operations reload the
+state at their start. `agent.peek(id)` stays the cheaper choice when only a read is needed.
 
 ## 13. Parent and child sessions
 

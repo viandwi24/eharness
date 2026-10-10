@@ -111,6 +111,8 @@ export interface DrainHost {
 export interface InboxDrain {
   /** Drain now (coalesced: one drain at a time, re-run once if asked again meanwhile). */
   drain(): void
+  /** Drain now and resolve when the drain (and every re-run it asked for) finished; never rejects. */
+  flush(): Promise<void>
   /** Ack applied items and emit `inbox-drained`. */
   ack(ids: string[], turnId?: string): Promise<void>
   /** Make items ready again without trying them (a deferral, `settle(ids, { how: 'defer' })`). */
@@ -739,8 +741,14 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   }
   queueMicrotask(drain)
 
+  async function flush(): Promise<void> {
+    drain()
+    while (running !== undefined) await running
+  }
+
   return {
     drain,
+    flush,
     ack,
     release,
     settle,
