@@ -37,6 +37,12 @@ provider wins). It maps `limit.context` → `contextWindow`, `limit.output` → 
 `tier.type: 'context'` → tiers (`tier.size` → `above`), and the legacy `cost.context_over_200k` →
 a tier above 200_000. Malformed entries are skipped.
 
+`openRouterCatalog(data)` does the same for the OpenRouter list (`GET /api/v1/models`, fetched and
+cached by the application): keys are the OpenRouter ids; `context_length` → `contextWindow`,
+`top_provider.max_completion_tokens` → `maxOutputTokens`, `pricing.prompt` / `completion` /
+`input_cache_read` (USD per token, strings) → rates per 1M tokens. A negative price (variable
+pricing) leaves the model unpriced. Like `modelsDevCatalog` it is pure: no fetching or caching.
+
 ## 2. Pricing
 
 ```ts

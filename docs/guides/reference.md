@@ -336,7 +336,7 @@ tools) and `PAGE_CONTEXT_PREAMBLE` (the framing of page context). `eharness/guar
   `durationMs`, `pending`, `error`, `output`, …), `DataChunk`, `OutputPartData` (the
   `data-eh.output` part).
 - Skills: `defineSkill()`, `defineSkillSource()`, `parseSkillMarkdown()`, `validateSkillPath()`.
-- Models: `modelsDevCatalog()`, `lookupModel()`, `computeCost()`, `estimateStepCostUsd()` (0.5.0);
+- Models: `modelsDevCatalog()`, `openRouterCatalog()`, `lookupModel()`, `computeCost()`, `estimateStepCostUsd()` (0.5.0);
   budget ledger types `BudgetLedger`, `BudgetLedgerConfig`, `BudgetReservation`,
   `BudgetScopeStatus`, `BudgetEstimateEvent`.
 - `version`: the package version of the build.

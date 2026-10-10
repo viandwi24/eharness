@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { LanguageModelUsage } from 'ai'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { lookupModel, modelsDevCatalog } from './catalog.ts'
+import { lookupModel, modelsDevCatalog, openRouterCatalog } from './catalog.ts'
 import { computeCost } from './cost.ts'
 
 const usage = (u: Partial<LanguageModelUsage>): LanguageModelUsage =>
@@ -152,5 +152,41 @@ describe('catalog', () => {
       }, 'a/b'),
     ).toBeUndefined()
     expect(lookupModel(undefined, 'a/b')).toBeUndefined()
+  })
+})
+
+describe('openRouterCatalog', () => {
+  test('maps limits and per-token prices to rates per 1M tokens', () => {
+    const catalog = openRouterCatalog({
+      data: [
+        {
+          id: 'anthropic/claude-x',
+          context_length: 200_000,
+          top_provider: { max_completion_tokens: 64_000 },
+          pricing: { prompt: '0.000003', completion: '0.000015', input_cache_read: '0.0000003' },
+        },
+        {
+          id: 'openrouter/auto',
+          context_length: 2_000_000,
+          pricing: { prompt: '-1', completion: '-1' },
+        },
+        { id: '' },
+        null,
+        { name: 'no id' },
+      ],
+    })
+    expect(Object.keys(catalog)).toEqual(['anthropic/claude-x', 'openrouter/auto'])
+    expect(catalog['anthropic/claude-x']).toEqual({
+      contextWindow: 200_000,
+      maxOutputTokens: 64_000,
+      pricing: { input: 3, output: 15, cacheRead: 0.3 },
+    })
+    expect(catalog['openrouter/auto']).toEqual({ contextWindow: 2_000_000 })
+    expect(lookupModel(catalog, 'anthropic/claude-x')?.contextWindow).toBe(200_000)
+  })
+
+  test('garbage input gives an empty catalog', () => {
+    expect(openRouterCatalog(undefined)).toEqual({})
+    expect(openRouterCatalog({ data: 'x' })).toEqual({})
   })
 })

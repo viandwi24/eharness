@@ -64,6 +64,12 @@ It maps `limit.context` → `contextWindow`, `limit.output` → `maxOutputTokens
 `context`, or the older `cost.context_over_200k`) → `pricing.tiers`. Malformed entries are skipped.
 You can merge it with your own overrides: `models: { ...modelsDevCatalog(json), ...myPrices }`.
 
+### From OpenRouter
+
+With OpenRouter model ids, `openRouterCatalog(json)` converts `GET https://openrouter.ai/api/v1/models`
+(public, no key) the same way; keys are the OpenRouter ids and prices become USD per 1M tokens.
+Fetch and cache it yourself. Merge catalogs with a spread: `{ ...modelsDevCatalog(a), ...openRouterCatalog(b) }`.
+
 ## Context window
 
 `contextWindow` (a number, or a function of the model) wins; else the catalog's `contextWindow`;

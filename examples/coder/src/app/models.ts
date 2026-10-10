@@ -7,7 +7,7 @@
  */
 import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { type ModelCatalog, type ModelInfo, modelsDevCatalog } from 'eharness'
+import { type ModelCatalog, type ModelInfo, modelsDevCatalog, openRouterCatalog } from 'eharness'
 import type { ModelOption, ModelProvider } from '../contracts.ts'
 
 /** Source of the catalog. */
@@ -111,15 +111,14 @@ export interface OpenRouterModels {
 const byUsability = (a: ModelOption, b: ModelOption): number =>
   Number(b.tools) - Number(a.tools) || a.name.localeCompare(b.name) || a.id.localeCompare(b.id)
 
-const perMillion = (perToken: number): number => Math.round(perToken * 1e12) / 1e6
-
 /**
- * Parse the body of `GET /api/v1/models`. Prices are USD per token (strings); the catalog stores
- * USD per 1M tokens. Entries without an id are skipped; a negative price (variable pricing such as
- * `openrouter/auto`) means unpriced.
+ * Parse the body of `GET /api/v1/models`: the catalog comes from core `openRouterCatalog`, the
+ * picker entries are built here. Entries without an id are skipped; a negative price (variable
+ * pricing such as `openrouter/auto`) means unpriced.
  */
 export function parseOpenRouterModels(data: unknown): OpenRouterModels {
-  const out: OpenRouterModels = { catalog: {}, options: [] }
+  const catalog = openRouterCatalog(data)
+  const out: OpenRouterModels = { catalog, options: [] }
   const list = (data as { data?: unknown } | null)?.data
   if (!Array.isArray(list)) return out
   for (const raw of list as Array<Record<string, unknown> | null>) {
@@ -127,27 +126,8 @@ export function parseOpenRouterModels(data: unknown): OpenRouterModels {
       continue
     }
     const params = Array.isArray(raw.supported_parameters) ? raw.supported_parameters : []
-    const contextWindow = finite(raw.context_length)
-    const maxOutput = finite(
-      (raw.top_provider as { max_completion_tokens?: unknown } | null)?.max_completion_tokens,
-    )
-    const price = raw.pricing as Record<string, unknown> | null
-    const input = finite(price?.prompt)
-    const output = finite(price?.completion)
-    const cacheRead = finite(price?.input_cache_read)
-    const pricing =
-      input !== undefined && output !== undefined
-        ? {
-            input: perMillion(input),
-            output: perMillion(output),
-            ...(cacheRead !== undefined ? { cacheRead: perMillion(cacheRead) } : {}),
-          }
-        : undefined
-    const info: ModelInfo = {}
-    if (contextWindow !== undefined && contextWindow > 0) info.contextWindow = contextWindow
-    if (maxOutput !== undefined && maxOutput > 0) info.maxOutputTokens = maxOutput
-    if (pricing !== undefined) info.pricing = pricing
-    out.catalog[raw.id] = info
+    const info = catalog[raw.id] ?? {}
+    const pricing = info.pricing
     out.options.push({
       id: raw.id,
       name: typeof raw.name === 'string' && raw.name !== '' ? raw.name : raw.id,

@@ -115,3 +115,53 @@ export function modelsDevCatalog(data: unknown): Record<string, ModelInfo> {
   }
   return catalog
 }
+
+const perMillion = (perToken: number): number => Math.round(perToken * 1e12) / 1e6
+
+const numeric = (value: unknown): number | undefined =>
+  num(typeof value === 'string' && value.trim() !== '' ? Number(value) : value)
+
+/**
+ * Build a catalog from the OpenRouter model list (`GET https://openrouter.ai/api/v1/models`,
+ * fetched by the application). Keys are the OpenRouter ids (`anthropic/claude-sonnet-4.6`).
+ * `context_length` → `contextWindow`, `top_provider.max_completion_tokens` → `maxOutputTokens`,
+ * `pricing.prompt` / `completion` / `input_cache_read` (USD per token, as strings) → rates per 1M
+ * tokens. A negative price (variable pricing, such as `openrouter/auto`) leaves the model
+ * unpriced. Entries without an id and malformed entries are skipped.
+ *
+ * @example
+ * ```ts
+ * const models = openRouterCatalog(await (await fetch('https://openrouter.ai/api/v1/models')).json())
+ * defineHarnessAgent({ model, models })
+ * ```
+ */
+export function openRouterCatalog(data: unknown): Record<string, ModelInfo> {
+  const catalog: Record<string, ModelInfo> = {}
+  const list = (data as { data?: unknown } | null)?.data
+  if (!Array.isArray(list)) return catalog
+  for (const raw of list as Array<Record<string, unknown> | null>) {
+    if (raw === null || typeof raw !== 'object' || typeof raw.id !== 'string' || raw.id === '') {
+      continue
+    }
+    const info: ModelInfo = {}
+    const context = numeric(raw.context_length)
+    const output = numeric(
+      (raw.top_provider as { max_completion_tokens?: unknown } | null)?.max_completion_tokens,
+    )
+    if (context !== undefined && context > 0) info.contextWindow = context
+    if (output !== undefined && output > 0) info.maxOutputTokens = output
+    const price = raw.pricing as Record<string, unknown> | null
+    const input = numeric(price?.prompt)
+    const completion = numeric(price?.completion)
+    const cacheRead = numeric(price?.input_cache_read)
+    if (input !== undefined && completion !== undefined) {
+      info.pricing = {
+        input: perMillion(input),
+        output: perMillion(completion),
+        ...(cacheRead !== undefined ? { cacheRead: perMillion(cacheRead) } : {}),
+      }
+    }
+    catalog[raw.id] = info
+  }
+  return catalog
+}
