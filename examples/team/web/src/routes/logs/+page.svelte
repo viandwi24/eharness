@@ -165,7 +165,7 @@
 						</Button>
 					{/snippet}
 				</Popover.Trigger>
-				<Popover.Content align="end" class="flex w-[min(92vw,20rem)] flex-col gap-3 p-3">
+				<Popover.Content elevation="floating" align="end" class="flex w-[min(92vw,20rem)] flex-col gap-3 p-3">
 					<label class="flex flex-col gap-1 text-xs text-muted-foreground">Agent
 						<NativeSelect value={filters.agentId} onchange={(e: Event) => setFilter({ agentId: (e.currentTarget as HTMLSelectElement).value })} size="sm" class="w-full text-foreground">
 							<NativeSelectOption value="">All agents</NativeSelectOption>

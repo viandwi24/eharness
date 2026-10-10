@@ -46,7 +46,7 @@
 </script>
 
 <Dialog.Root bind:open={agentDialog.open}>
-	<Dialog.Content class="flex max-h-[90svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+	<Dialog.Content elevation="floating" class="flex max-h-[90svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
 		<Dialog.Header class="border-b border-border px-5 py-4">
 			<Dialog.Title>{editing ? 'Edit agent' : 'New agent'}</Dialog.Title>
 			<Dialog.Description>

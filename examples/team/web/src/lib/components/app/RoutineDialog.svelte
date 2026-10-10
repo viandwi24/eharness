@@ -59,7 +59,7 @@
 </script>
 
 <Dialog.Root bind:open={routineDialog.open}>
-	<Dialog.Content class="flex max-h-[90svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
+	<Dialog.Content elevation="floating" class="flex max-h-[90svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-xl">
 		<Dialog.Header class="border-b border-border px-5 py-4">
 			<Dialog.Title>{editing ? 'Edit routine' : 'New routine'}</Dialog.Title>
 			<Dialog.Description>The agent runs the prompt on a schedule, with a fresh context each time plus its memory.</Dialog.Description>

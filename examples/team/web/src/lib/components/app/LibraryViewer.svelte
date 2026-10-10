@@ -204,7 +204,7 @@
 					<Button {...props} size="icon-sm" variant="ghost" aria-label="More actions"><DotsThreeIcon class="size-4" weight="bold" /></Button>
 				{/snippet}
 			</DropdownMenu.Trigger>
-			<DropdownMenu.Content align="end" class="w-48">
+			<DropdownMenu.Content elevation="floating" align="end" class="w-48">
 				<DropdownMenu.Item onSelect={() => ((renaming = true), (newPath = path))}><PencilSimpleIcon />Rename / move</DropdownMenu.Item>
 				<DropdownMenu.Item onSelect={loadVersions}><ClockCounterClockwiseIcon />{showVersions ? 'Hide history' : 'History'}</DropdownMenu.Item>
 				<DropdownMenu.Separator />
@@ -308,7 +308,7 @@
 </div>
 
 <AlertDialog.Root bind:open={confirmDelete}>
-	<AlertDialog.Content>
+	<AlertDialog.Content elevation="floating">
 		<AlertDialog.Header>
 			<AlertDialog.Title>Delete {basename(path)}?</AlertDialog.Title>
 			<AlertDialog.Description>This permanently deletes <span class="font-mono">{path}</span>. This cannot be undone.</AlertDialog.Description>

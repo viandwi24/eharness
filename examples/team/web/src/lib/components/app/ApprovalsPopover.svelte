@@ -24,7 +24,7 @@
 			</Button>
 		{/snippet}
 	</Popover.Trigger>
-	<Popover.Content {side} {align} class="flex max-h-[70svh] w-[min(92vw,24rem)] flex-col gap-2 overflow-y-auto p-2">
+	<Popover.Content elevation="floating" {side} {align} class="flex max-h-[70svh] w-[min(92vw,24rem)] flex-col gap-2 overflow-y-auto p-2">
 		<div class="px-1 pt-1 text-sm font-medium">Needs your approval</div>
 		{#each live.state.approvals as a (a.sessionId + a.id)}
 			<PendingCard

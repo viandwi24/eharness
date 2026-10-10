@@ -4,7 +4,6 @@
 	import './layout.css';
 	import favicon from '#lib/assets/favicon.svg';
 	import { page } from '$app/state';
-	import { ElevationProvider } from '#lib/components/ui/elevation/index.js';
 	import { Toaster } from '#lib/components/ui/sonner/index.js';
 	import * as Sidebar from '#lib/components/ui/sidebar/index.js';
 	import AgentDialog from '#lib/components/app/AgentDialog.svelte';
@@ -39,7 +38,6 @@
 	<link rel="icon" href={favicon} />
 </svelte:head>
 
-<ElevationProvider mode="layered">
 	<Sidebar.Provider bind:open={sidebarOpen} class="h-svh min-h-0 flex-col bg-background text-foreground md:flex-row md:bg-sidebar">
 		<div class="hidden md:flex"><AppRail /></div>
 		<div class="flex min-h-0 min-w-0 flex-1">
@@ -51,6 +49,7 @@
 			</aside>
 			<!-- the page is an edmi inset panel: a shell with the content plate inset in it -->
 			<InsetPanel.Root
+				elevation="raised"
 				class="{isHome ? 'hidden' : 'flex'} h-full min-w-0 flex-1 max-md:rounded-none max-md:border-0 md:my-2 md:mr-2 md:flex md:h-auto"
 			>
 				{#if shell.header}
@@ -68,4 +67,3 @@
 	<AgentDialog />
 	<RoutineDialog />
 	<Toaster />
-</ElevationProvider>

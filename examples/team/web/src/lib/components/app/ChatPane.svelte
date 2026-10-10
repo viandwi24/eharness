@@ -218,7 +218,7 @@
 							</Button>
 						{/snippet}
 					</DropdownMenu.Trigger>
-					<DropdownMenu.Content align="end" class="w-56">
+					<DropdownMenu.Content elevation="floating" align="end" class="w-56">
 						<DropdownMenu.Item onSelect={() => agent && openEditAgent(agent.id)}>
 							<PencilSimpleIcon /> Agent settings
 						</DropdownMenu.Item>
@@ -241,7 +241,7 @@
 								{@render panelToggle(props)}
 							{/snippet}
 						</Popover.Trigger>
-						<Popover.Content align="end" class="max-h-[min(80svh,40rem)] w-[min(92vw,22rem)] overflow-y-auto p-0" aria-label="Agent session">
+						<Popover.Content elevation="floating" align="end" class="max-h-[min(80svh,40rem)] w-[min(92vw,22rem)] overflow-y-auto p-0" aria-label="Agent session">
 							<SessionContext {agentId} elevation="flat" class="max-w-none border-0 shadow-none" onClose={() => (popoverOpen = false)} />
 						</Popover.Content>
 					</Popover.Root>

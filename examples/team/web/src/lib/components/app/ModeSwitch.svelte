@@ -72,7 +72,7 @@
 				{modeInfo(st.mode).label}
 				<CaretUpDownIcon class="size-3.5 opacity-70" />
 			</DropdownMenu.Trigger>
-			<DropdownMenu.Content side="top" align="start" class="w-64">
+			<DropdownMenu.Content elevation="floating" side="top" align="start" class="w-64">
 				<div class="flex items-center justify-between px-2 pt-1 pb-1.5 text-xs text-muted-foreground">
 					<span>Permission mode</span>
 					<KbdGroup><Kbd>⇧</Kbd><Kbd>Tab</Kbd></KbdGroup>

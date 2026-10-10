@@ -282,7 +282,7 @@
 </div>
 
 <Dialog.Root bind:open={creating}>
-	<Dialog.Content class="sm:max-w-md">
+	<Dialog.Content elevation="floating" class="sm:max-w-md">
 		<form class="flex flex-col gap-4" onsubmit={create}>
 			<Dialog.Header>
 				<Dialog.Title>New file</Dialog.Title>

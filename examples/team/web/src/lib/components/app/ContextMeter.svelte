@@ -99,7 +99,7 @@
 			</svg>
 			<span class="tabular-nums">{view.pct}%</span>
 		</Popover.Trigger>
-		<Popover.Content
+		<Popover.Content elevation="floating"
 			side="top"
 			align="start"
 			class="w-80 p-3 text-sm"
