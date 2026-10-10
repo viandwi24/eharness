@@ -5,7 +5,7 @@
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotch';
 	import { live } from '#lib/stores/live.svelte.js';
 	import type { PartView, SubagentProgress, SubagentRun } from './map.js';
-	import { cardStatus, childSessionOf } from './subagent.js';
+	import { cardStatus, childSessionOf, taskOfCall } from './subagent.js';
 
 	// Accepts either the merged `agent` tool view or a standalone `data-subagent.run` view.
 	let {
@@ -26,18 +26,19 @@
 	const label = $derived(run?.name ?? agent);
 	const description = $derived(progress?.description ?? (typeof input.description === 'string' ? input.description : undefined));
 	// The marker is stored for every call; a background start also names the child in its result.
-	const sessionId = $derived(
-		childSessionOf(run, view.kind === 'tool' ? view.output : undefined) ?? progress?.sessionId
-	);
+	const known = $derived(childSessionOf(run, view.kind === 'tool' ? view.output : undefined) ?? progress?.sessionId);
+	const toolCallId = $derived(view.kind === 'tool' ? view.toolCallId : view.run.toolCallId);
 	// Later status lives in the task row of the child session (kept current by the live events).
-	const task = $derived(sessionId ? live.state.tasks.find((t) => t.sessionId === sessionId) : undefined);
+	const task = $derived(taskOfCall(live.state.tasks, known, toolCallId));
+	const sessionId = $derived(known ?? task?.sessionId);
 
-	// Status words are the task registry's; fall back to the tool state when only the tool part exists.
+	// The task row is the truth (the child keeps running after a cancelled call, and a failed run can
+	// be followed up); the stored marker and the tool state only cover calls without a task row.
 	const status = $derived.by((): SubagentRun['status'] => {
-		if (run?.status) return cardStatus(run.status, task);
+		if (task) return cardStatus('running', task);
+		if (run?.status) return run.status;
 		if (progress?.status) return progress.status;
 		if (toolState === 'output-error' || toolState === 'output-denied') return 'failed';
-		if (task) return cardStatus('running', task);
 		if (toolState === 'output-available') return 'completed';
 		return 'running';
 	});

@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { cardStatus, childSessionOf, taskStatusWord } from './subagent.ts';
+import { cardStatus, childSessionOf, taskOfCall, taskStatusWord } from './subagent.ts';
 
 describe('childSessionOf', () => {
 	test('marker first, then the start text, else none', () => {
@@ -19,5 +19,17 @@ describe('status', () => {
 		expect(cardStatus('running', { status: 'done' })).toBe('completed');
 		expect(cardStatus('running', { status: 'failed' })).toBe('failed');
 		expect(cardStatus('running', undefined)).toBe('running');
+	});
+});
+
+describe('taskOfCall', () => {
+	const rows = [
+		{ sessionId: 'dm:a:agent:call-1', status: 'done' as const },
+		{ sessionId: 'dm:a:agent:call-2', status: 'running' as const }
+	];
+	test('by the known child session, else by the tool call the task index registered', () => {
+		expect(taskOfCall(rows, 'dm:a:agent:call-2', 'call-1')?.status).toBe('running');
+		expect(taskOfCall(rows, undefined, 'call-1')?.status).toBe('done');
+		expect(taskOfCall(rows, undefined, 'call-9')).toBeUndefined();
 	});
 });
