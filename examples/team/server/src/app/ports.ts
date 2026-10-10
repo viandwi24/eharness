@@ -51,6 +51,13 @@ export type ChatOutcome =
 
 export interface ChatStats {
   running: boolean
+  /** The model of the agent and what the catalog knows of it (prices per 1M tokens). */
+  model: {
+    id: string
+    contextWindow?: number
+    maxOutputTokens?: number
+    pricing?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
+  }
   context: {
     window: number
     tokens: number

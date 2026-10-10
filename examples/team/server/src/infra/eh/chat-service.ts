@@ -35,6 +35,25 @@ export function createChatService(
       runtime: { workspaceId: deps.workspaceId, agentId: def.id },
     }) as HarnessSession
 
+  const modelOf = (def: AgentDef): ChatStats['model'] => {
+    const { id, contextWindow, maxOutputTokens, pricing } = factory.modelInfo(def)
+    return {
+      id,
+      ...(contextWindow === undefined ? {} : { contextWindow }),
+      ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
+      ...(pricing === undefined
+        ? {}
+        : {
+            pricing: {
+              input: pricing.input,
+              output: pricing.output,
+              ...(pricing.cacheRead === undefined ? {} : { cacheRead: pricing.cacheRead }),
+              ...(pricing.cacheWrite === undefined ? {} : { cacheWrite: pricing.cacheWrite }),
+            },
+          }),
+    }
+  }
+
   return {
     async chat(def, input, { actor, ifBusy }) {
       const session = sessionFor(def)
@@ -89,11 +108,11 @@ export function createChatService(
       return { compacted: message !== null, message: message === null ? null : asMessage(message) }
     },
 
-    stats: (def) => statsOf(sessionFor(def)),
+    stats: (def) => statsOf(sessionFor(def), modelOf(def)),
 
     async context(def) {
       const session = sessionFor(def)
-      const [stats, tools] = await Promise.all([statsOf(session), session.tools()])
+      const [stats, tools] = await Promise.all([statsOf(session, modelOf(def)), session.tools()])
       return {
         stats,
         tools: tools.map((t) => ({
@@ -108,10 +127,11 @@ export function createChatService(
   }
 }
 
-async function statsOf(session: HarnessSession): Promise<ChatStats> {
+async function statsOf(session: HarnessSession, model: ChatStats['model']): Promise<ChatStats> {
   const { pending, activeTurn, usage, ...context } = await session.stats()
   return {
     running: session.running,
+    model,
     context: {
       window: context.window,
       tokens: context.tokens,

@@ -12,8 +12,8 @@ export type LiveState = {
 	connection: Connection;
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
-	/** Counters bumped (debounced) by file / routine / settings / mode events; screens refetch when one moves. */
-	revs: { files: number; routines: number; settings: number; modes: number };
+	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
+	revs: { files: number; routines: number; settings: number; modes: number; chat: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
@@ -23,7 +23,7 @@ export const emptyLiveState = (): LiveState => ({
 	tasksLoaded: false,
 	connection: 'idle',
 	viewing: null,
-	revs: { files: 0, routines: 0, settings: 0, modes: 0 }
+	revs: { files: 0, routines: 0, settings: 0, modes: 0, chat: 0 }
 });
 
 export type LiveDeps = {
@@ -89,6 +89,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			const effect = applyActivity(agents.state.activity, e, viewingId());
 			if (effect.markRead) void core.markRead(effect.markRead, true);
 			const p = e.payload;
+			// a stored message (turn step or end): context size and usage of the open chat moved
+			if (e.type === 'message-added') later('chat', bump('chat'));
 			if (e.type === 'task-changed') {
 				const id = typeof p.taskId === 'string' ? p.taskId : undefined;
 				const known = id ? state.tasks.find((t) => t.id === id) : undefined;

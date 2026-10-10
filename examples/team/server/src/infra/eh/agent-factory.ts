@@ -21,6 +21,9 @@ import {
   type HarnessAgent,
   type HarnessSession,
   type HarnessWarning,
+  lookupModel,
+  type ModelCatalog,
+  type ModelInfo,
   type SessionLock,
   type SessionPeek,
 } from 'eharness'
@@ -98,6 +101,8 @@ export interface TeamLimits {
 export interface AgentFactoryDeps {
   sqlite: Database
   models: ModelConfig
+  /** Context windows and prices of models (`openRouterCatalog` / `modelsDevCatalog`); absent = unpriced. */
+  catalog?: ModelCatalog
   workspaceId?: string
   /** Role agents the lead can delegate to (`subagents` catalog and the turn reminder). */
   roster?: () => AgentDef[]
@@ -156,6 +161,8 @@ export interface StreamsTuning {
 export interface AgentFactory {
   /** The agent of a definition version (built once per version on this instance). */
   agentFor(def: AgentDef): HarnessAgent
+  /** The model an agent runs on and what the catalog knows about it (window, prices). */
+  modelInfo(def: AgentDef): ModelInfoOf
   /** Shared storage ports (messages, state, inbox), for `agent.session(id, { lock })` callers. */
   storage: ReturnType<typeof createStorage>
   /** Cross-process turn lock; pass it as `session(id, { lock })`. */
@@ -172,6 +179,9 @@ export interface AgentFactory {
   /** Close every agent built (shutdown). */
   close(): Promise<void>
 }
+
+/** A model id and its catalog entry (no entry fields = unknown to the catalog). */
+export type ModelInfoOf = { id: string } & ModelInfo
 
 export interface SessionModes {
   /** Auto mode needs a classifier model; without one it is not offered. */
@@ -505,7 +515,11 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     const agent = defineHarnessAgent({
       id: def.slug,
       model: deps.models.resolve(def.model ?? settings.defaultModel),
-      contextWindow: 200_000,
+      // the catalog knows the window of real models; 200k only for models it does not list
+      ...(modelInfoOf(def, settings.defaultModel).contextWindow === undefined
+        ? { contextWindow: 200_000 }
+        : {}),
+      ...(deps.catalog === undefined ? {} : { models: deps.catalog }),
       instructions: [
         TEAM_PREAMBLE,
         ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
@@ -543,6 +557,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return agent
   }
 
+  function modelInfoOf(def: AgentDef, defaultModel: string | null): ModelInfoOf {
+    const id = def.model ?? defaultModel ?? deps.models.defaultModel
+    const info = lookupModel(deps.catalog, id)
+    return { id, ...(info ?? {}) }
+  }
+
   function factoryAgentFor(def: AgentDef): HarnessAgent {
     const settings = currentSettings()
     const key = `${def.id}@${def.version}@${settings.rev}`
@@ -577,6 +597,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       resumeAuto: (sessionId) => engines.get(sessionId)?.resumeAuto(),
     },
     agentFor: factoryAgentFor,
+    modelInfo: (def) => modelInfoOf(def, currentSettings().defaultModel),
     peek: (sessionId) => {
       const lead = deps.lead?.()
       const any = lead ?? deps.roster?.()[0]

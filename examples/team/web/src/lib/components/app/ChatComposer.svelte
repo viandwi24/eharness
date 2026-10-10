@@ -22,6 +22,7 @@
 	import type { ChatStatus } from 'ai';
 	import { toast } from 'svelte-sonner';
 	import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES } from '#lib/chat/constants.js';
+	import ContextMeter from './ContextMeter.svelte';
 	import ModeSwitch from './ModeSwitch.svelte';
 
 	let {
@@ -84,7 +85,10 @@
 				</PromptInputButton>
 				{#if agentId}<ModeSwitch bind:this={modeSwitch} {agentId} />{/if}
 			</PromptInputTools>
-			<PromptInputSubmit {status} {onStop} />
+			<div class="flex items-center gap-1">
+				{#if agentId}<ContextMeter {agentId} />{/if}
+				<PromptInputSubmit {status} {onStop} />
+			</div>
 		</PromptInputFooter>
 	{/snippet}
 </PromptInput>

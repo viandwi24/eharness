@@ -85,6 +85,22 @@ export const CompactResultSchema = z
 export const ChatStatsSchema = z
   .object({
     running: z.boolean().openapi({ description: 'A turn runs in this process.' }),
+    model: z
+      .object({
+        id: z.string(),
+        contextWindow: z.number().optional(),
+        maxOutputTokens: z.number().optional(),
+        pricing: z
+          .object({
+            input: z.number(),
+            output: z.number(),
+            cacheRead: z.number().optional(),
+            cacheWrite: z.number().optional(),
+          })
+          .optional()
+          .openapi({ description: 'USD per 1M tokens, from the model catalog.' }),
+      })
+      .openapi({ description: 'The model of the agent; no pricing = unknown to the catalog.' }),
     context: z.object({
       window: z.number(),
       tokens: z.number(),

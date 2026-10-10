@@ -76,6 +76,9 @@ describe('live store', () => {
 		live.handleEvent(ev('routine-fired', 'lead-id'));
 		live.handleEvent(ev('settings-changed', 'lead-id'));
 		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, settings: 1, modes: 1 });
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, settings: 1, modes: 1, chat: 0 });
+		// a stored message moves the context size of the open chat
+		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant' }));
+		expect(live.state.revs.chat).toBe(1);
 	});
 });

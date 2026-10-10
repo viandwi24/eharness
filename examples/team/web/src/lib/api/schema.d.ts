@@ -3520,6 +3520,19 @@ export interface components {
         ChatStats: {
             /** @description A turn runs in this process. */
             running: boolean;
+            /** @description The model of the agent; no pricing = unknown to the catalog. */
+            model: {
+                id: string;
+                contextWindow?: number;
+                maxOutputTokens?: number;
+                /** @description USD per 1M tokens, from the model catalog. */
+                pricing?: {
+                    input: number;
+                    output: number;
+                    cacheRead?: number;
+                    cacheWrite?: number;
+                };
+            };
             context: {
                 window: number;
                 tokens: number;

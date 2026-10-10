@@ -981,6 +981,46 @@
             "type": "boolean",
             "description": "A turn runs in this process."
           },
+          "model": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "contextWindow": {
+                "type": "number"
+              },
+              "maxOutputTokens": {
+                "type": "number"
+              },
+              "pricing": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "type": "number"
+                  },
+                  "output": {
+                    "type": "number"
+                  },
+                  "cacheRead": {
+                    "type": "number"
+                  },
+                  "cacheWrite": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "input",
+                  "output"
+                ],
+                "description": "USD per 1M tokens, from the model catalog."
+              }
+            },
+            "required": [
+              "id"
+            ],
+            "description": "The model of the agent; no pricing = unknown to the catalog."
+          },
           "context": {
             "type": "object",
             "properties": {
@@ -1155,6 +1195,7 @@
         },
         "required": [
           "running",
+          "model",
           "context",
           "activeTurn",
           "pending",

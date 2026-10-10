@@ -8,9 +8,12 @@
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode (default: TEAM_MODEL; none with a scripted model)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
+ *   TEAM_OFFLINE      1 = never fetch the model catalog (cached in the TEAM_DB folder, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  */
+import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
+import type { ModelCatalog } from 'eharness'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import { newId } from './domain/ids.ts'
@@ -32,6 +35,7 @@ import { createChatService } from './infra/eh/chat-service.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
+import { loadModelCatalog } from './infra/eh/model-catalog.ts'
 import { createModelConfig, type ModelConfig } from './infra/eh/provider.ts'
 import {
   createRoutineService,
@@ -54,6 +58,8 @@ export interface ServerConfig {
   seed?: boolean
   /** Model config override (tests); default from the environment. */
   models?: ModelConfig
+  /** Context windows and prices of models; default none (unpriced, 200k window). */
+  catalog?: ModelCatalog
   /** Auto mode classifier override (tests); default: the model of `models.classifierModel`. */
   classifier?: AgentFactoryDeps['classifier']
   /** Timers of the stream log and inbox (tests shorten them). */
@@ -144,6 +150,7 @@ export function compose(config: ServerConfig): Server {
   const factory = createAgentFactory({
     sqlite: conn.sqlite,
     models,
+    ...(config.catalog === undefined ? {} : { catalog: config.catalog }),
     workspaceId: WORKSPACE_ID,
     roster: () => agents.list().filter((a) => a.role === 'role' || a.role === 'custom'),
     lead: () => agents.list().find((a) => a.role === 'lead'),
@@ -271,9 +278,20 @@ if (import.meta.main) {
   const budget = Number(process.env.TEAM_BUDGET_USD)
   const spawnCap = Number(process.env.TEAM_SPAWN_CAP)
   const tickMs = Number(process.env.TEAM_ROUTINE_TICK_MS)
+  const dbFile = process.env.TEAM_DB ?? './data/team.db'
+  // prices and context windows: cached next to the database, never fatal (offline = no catalog)
+  let catalog: ModelCatalog | undefined
+  try {
+    const provider = createModelConfig().provider
+    const dataDir = dbFile === ':memory:' ? undefined : dirname(dbFile)
+    if (dataDir !== undefined) catalog = (await loadModelCatalog(provider, dataDir)).catalog
+  } catch {
+    catalog = undefined
+  }
   const server = compose({
-    dbFile: process.env.TEAM_DB ?? './data/team.db',
+    dbFile,
     token,
+    ...(catalog === undefined ? {} : { catalog }),
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
     ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { limits: { spawnCap } } : {}),
     ...(process.env.TEAM_ROUTINE_TICK_MS !== undefined && Number.isFinite(tickMs) && tickMs >= 0
