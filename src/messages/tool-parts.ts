@@ -116,3 +116,47 @@ export function normalizeRawInput<M extends UIMessage>(message: M): M {
   })
   return changed ? { ...message, parts } : message
 }
+
+/** Reason stored when an approved call was denied by the re-validation (see {@link normalizeDeniedApprovals}). */
+export const APPROVED_THEN_DENIED =
+  'Approved, but denied when the call was re-validated by the approval policy.'
+
+/**
+ * Make `output-denied` tool parts schema-valid: AI SDK's UI message schema requires
+ * `approval.approved === false` for that state, but its stream reducer keeps `approved: true` when
+ * a call a person approved is denied by the re-validation of a `respond()` continuation (the
+ * `tool-output-denied` chunk carries no approval). Such a part gets `approved: false` and, when it
+ * has no reason, {@link APPROVED_THEN_DENIED}. Returns the same message object when nothing
+ * changed, otherwise a shallow copy with new parts.
+ */
+export function normalizeDeniedApprovals<M extends UIMessage>(message: M): M {
+  let changed = false
+  const parts = message.parts.map((part): AnyPart => {
+    const p = part as { type?: unknown; state?: unknown; approval?: unknown } & Record<
+      string,
+      unknown
+    >
+    const approval = p.approval as { approved?: unknown; reason?: unknown } | undefined
+    if (
+      typeof p.type !== 'string' ||
+      !isToolPart(p as { type: string }) ||
+      p.state !== 'output-denied' ||
+      approval === undefined ||
+      approval === null ||
+      approval.approved === false
+    )
+      return part
+    changed = true
+    return {
+      ...p,
+      approval: {
+        ...approval,
+        approved: false,
+        ...(typeof approval.reason === 'string' && approval.reason !== ''
+          ? {}
+          : { reason: APPROVED_THEN_DENIED }),
+      },
+    } as unknown as AnyPart
+  })
+  return changed ? { ...message, parts } : message
+}

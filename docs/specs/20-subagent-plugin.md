@@ -129,6 +129,9 @@ so it survives restarts of the UI process. `text` starts `Background subagent <t
 names the task id and agent name, never the child session id (that stays in `data`). The report is capped at `maxReportChars` (default `AGENT_REPORT_MAX_CHARS`, 16 000); a cut report ends `… [report cut at N of M characters; read the full report with agent_output({ id: "agent-2" })]` (without the hint when `agent_output` is off). An inject that
 fails (parent closed) is logged. Approvals follow the configured strategy; a wake run is not driven
 by anyone — observe it with `session.onRun()` (in process, spec 05 §2.1) or `session.events()`.
+A parent that waits for a client tool answer or an approval holds the wake (durably with a
+`storage.inbox`, ADR-0054): the report is stored at once and the parent wakes **once** after the
+answer, whichever instance receives it.
 
 **`subagentTasks` service (0.8).** The plugin `provides: ['subagentTasks']` (always, also without
 `background`), per live session, in memory, like `shellTasks`:

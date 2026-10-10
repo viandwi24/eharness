@@ -122,6 +122,31 @@ describe('validateStoredMessages', () => {
     expect(new Set(warnings.map((w) => w.code))).toEqual(new Set(['W_INVALID_MESSAGE']))
   })
 
+  test('an output-denied part with approval.approved true is repaired, not dropped', async () => {
+    const denied = {
+      id: 'denied-approved',
+      role: 'assistant',
+      parts: [
+        {
+          type: 'tool-bash',
+          toolCallId: 'c1',
+          state: 'output-denied',
+          input: { command: 'ls' },
+          approval: { id: 'a1', approved: true },
+        },
+      ],
+    }
+    const { messages, warnings } = await validateStoredMessages([denied], registry(), 'drop')
+    expect(messages.map((m) => m.id)).toEqual(['denied-approved'])
+    expect(messages[0]?.parts[0]).toMatchObject({
+      state: 'output-denied',
+      approval: { id: 'a1', approved: false },
+    })
+    expect(warnings.map((w) => w.code)).toEqual(['W_REPAIRED_MESSAGE'])
+    // storage is untouched
+    expect(denied.parts[0]?.approval.approved).toBe(true)
+  })
+
   test("policy 'keep' keeps message-shaped invalid copies", async () => {
     const { messages, warnings } = await validateStoredMessages(invalidMessages, registry(), 'keep')
     expect(messages.map((m) => m.id)).toEqual(['bad-meta', 'bad-data', 'bad-kind', 'bad-role'])

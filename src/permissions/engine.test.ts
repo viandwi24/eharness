@@ -12,6 +12,7 @@ import {
   type AutoAction,
   type AutoClassifier,
   type AutoEvent,
+  ClassifierUnavailableError,
   modeCycleFor,
   PERMISSION_MODES,
   type PermissionCall,
@@ -1514,6 +1515,59 @@ describe('auto mode', () => {
     expect(engine.autoState()).toEqual({ paused: false, consecutive: 0, total: 3 })
     expect(events.at(-1)).toBe('resumed')
     expect(await engine.decideAsync(bash('make z'))).toMatchObject({ status: 'approved' })
+  })
+
+  test('a call a person approved is never classified again (re-validation)', async () => {
+    let calls = 0
+    const engine = make(
+      'auto',
+      {},
+      {
+        classifier: () => {
+          calls++
+          return { decision: 'block', reason: 'no' }
+        },
+      },
+    )
+    engine.noteApproval('call-1')
+    expect(await engine.decideAsync(bash('make x'), { toolCallId: 'call-1' })).toEqual({
+      status: 'approved',
+    })
+    expect(calls).toBe(0)
+    // another call still goes through the classifier
+    expect(await engine.decideAsync(bash('make y'), { toolCallId: 'call-2' })).toMatchObject({
+      status: 'denied',
+      auto: 'blocked',
+    })
+    expect(calls).toBe(1)
+  })
+
+  test('a classifier that could not run denies without counting towards the pause', async () => {
+    const engine = make(
+      'auto',
+      {},
+      {
+        classifier: () => {
+          throw new ClassifierUnavailableError('402 insufficient credits')
+        },
+      },
+    )
+    const events: AutoEvent['type'][] = []
+    engine.subscribeAuto((e) => events.push(e.type))
+    for (let i = 0; i < 5; i++) {
+      expect(await engine.decideAsync(bash(`make x${i}`))).toMatchObject({
+        status: 'denied',
+        auto: 'unavailable',
+      })
+    }
+    expect(engine.autoState()).toEqual({ paused: false, consecutive: 0, total: 0 })
+    expect(events).toEqual([
+      'unavailable',
+      'unavailable',
+      'unavailable',
+      'unavailable',
+      'unavailable',
+    ])
   })
 
   test('an allowed action resets the consecutive counter', async () => {

@@ -1,20 +1,22 @@
 /** The permissions plugin end to end: scripted model, memory file system, real engine. */
 import { describe, expect, test } from 'bun:test'
-import { tool } from 'ai'
+import { tool, type UIMessage } from 'ai'
 import { z } from 'zod/v4'
 import { filesystem } from '../filesystem/index.ts'
 import { memoryFs } from '../filesystem/memory.ts'
 import { type ApprovalDecision, defineHarnessAgent } from '../index.ts'
 import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { schemaCheckedMessages } from '../testing/schema-checked-messages.ts'
 import { type ScriptedStep, scriptedModel } from '../testing/scripted-model.ts'
 import { createPermissionEngine, type PermissionEngineOptions } from './engine.ts'
 import { type PermissionsPluginOptions, permissionsPlugin } from './plugin.ts'
-import type {
-  AutoAction,
-  AutoClassifier,
-  AutoClassifierContext,
-  PermissionMode,
-  PermissionRules,
+import {
+  type AutoAction,
+  type AutoClassifier,
+  type AutoClassifierContext,
+  ClassifierUnavailableError,
+  type PermissionMode,
+  type PermissionRules,
 } from './types.ts'
 
 const TOOL = {
@@ -28,6 +30,20 @@ const TOOL = {
   exitPlan: 'exit_plan_mode',
 } as const
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
+
+/** Memory messages that reject a schema-invalid save and record what was saved. */
+function checkedMessages() {
+  const inner = schemaCheckedMessages(memoryMessages())
+  const saves: UIMessage[][] = []
+  return {
+    saves,
+    load: inner.load,
+    async save(sessionId: string, messages: UIMessage[]) {
+      await inner.save(sessionId, messages)
+      saves.push(structuredClone(messages))
+    },
+  }
+}
 
 function setup(
   steps: ScriptedStep[],
@@ -50,7 +66,7 @@ function setup(
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState() },
+    storage: { messages: checkedMessages(), state: memoryState() },
     logger: silent,
     plugins: [filesystem({ fs }), permissionsPlugin({ engine, ...opts.plugin })],
   })
@@ -495,10 +511,11 @@ describe('auto mode', () => {
       classifier,
     })
     const model = scriptedModel(steps)
+    const messages = checkedMessages()
     const agent = defineHarnessAgent({
       model,
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages, state: memoryState() },
       logger: silent,
       tools: {
         bash: tool({
@@ -512,7 +529,7 @@ describe('auto mode', () => {
       },
       plugins: [permissionsPlugin({ engine })],
     })
-    return { agent, engine, model, ran }
+    return { agent, engine, model, ran, messages }
   }
   const run = (command: string, toolCallId?: string): ScriptedStep => ({
     toolCalls: [{ toolName: 'bash', input: { command }, ...(toolCallId ? { toolCallId } : {}) }],
@@ -580,6 +597,70 @@ describe('auto mode', () => {
     expect(done.stop).toBe('complete')
     expect(ran).toEqual(['d'])
     expect(engine.autoState().paused).toBe(false)
+    await agent.close()
+  })
+
+  test('a person approved a paused call: the re-validation does not classify it again (no denial after approval)', async () => {
+    let verdict: 'allow' | 'block' | 'down' = 'block'
+    const { agent, ran, messages } = autoSetup(
+      [run('a'), run('b'), run('c'), run('d'), { text: 'Done.' }],
+      () => {
+        if (verdict === 'down') throw new ClassifierUnavailableError('402 insufficient credits')
+        return { decision: 'block', reason: 'no' }
+      },
+    )
+    const session = agent.session('s')
+    const pending = await session.send('go').result
+    expect(pending.stop).toBe('tool-pending')
+    // the classifier is now down (or would block): the person's approval still wins
+    verdict = 'down'
+    const id = pending.pending?.approvals[0]?.approvalId as string
+    const done = await session.respond({ approvals: [{ id, approved: true }] }).result
+    expect(done.stop).toBe('complete')
+    expect(ran).toEqual(['d'])
+    const last = JSON.stringify(messages.saves.flat().at(-1))
+    expect(last).toContain('"toolCallId":"call-3-0"')
+    expect(last).toMatch(/"call-3-0".{0,300}"state":"output-available"/)
+    await agent.close()
+  })
+
+  test('approved, then denied by the re-validation: stored output-denied parts are schema-valid', async () => {
+    let asked = 0
+    const ran: string[] = []
+    const messages = checkedMessages()
+    const agent = defineHarnessAgent({
+      model: scriptedModel([run('x'), { text: 'Done.' }]),
+      contextWindow: 100_000,
+      storage: { messages, state: memoryState() },
+      logger: silent,
+      tools: {
+        bash: tool({
+          description: 'Run a shell command.',
+          inputSchema: z.object({ command: z.string() }),
+          execute: async ({ command }) => {
+            ran.push(command)
+            return 'ran'
+          },
+        }),
+      },
+      // asks the first time; denies the re-validation of the approved call
+      approval: { policy: () => (asked++ === 0 ? 'user-approval' : 'denied') },
+    })
+    const session = agent.session('s')
+    const pending = await session.send('go').result
+    expect(pending.stop).toBe('tool-pending')
+    const id = pending.pending?.approvals[0]?.approvalId as string
+    const done = await session.respond({ approvals: [{ id, approved: true }] }).result
+    expect(done.stop).toBe('complete')
+    expect(ran).toEqual([])
+    const last = messages.saves.flat().at(-1)
+    const part = last?.parts.find((p) => p.type === 'tool-bash') as {
+      state: string
+      approval: { approved: boolean; reason?: string }
+    }
+    expect(part.state).toBe('output-denied')
+    expect(part.approval.approved).toBe(false)
+    expect(part.approval.reason).toBeString()
     await agent.close()
   })
 

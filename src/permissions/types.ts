@@ -79,7 +79,7 @@ export interface PermissionCall {
 export type PermissionDecision =
   | { status: 'approved'; rule?: string; auto?: 'allowed' }
   | { status: 'user-approval'; rule?: string; reason?: string; auto?: 'classify' | 'paused' }
-  | { status: 'denied'; rule?: string; reason: string; auto?: 'blocked' }
+  | { status: 'denied'; rule?: string; reason: string; auto?: 'blocked' | 'unavailable' }
 
 /** The action an {@link AutoClassifier} reviews. */
 export interface AutoAction {
@@ -113,6 +113,20 @@ export interface AutoVerdict {
 }
 
 /**
+ * Thrown by an {@link AutoClassifier} when the judge could not run (provider error, timeout,
+ * network), as opposed to a verdict. The action is still denied (fail closed), but it does not
+ * count towards the repeated-blocks pause and the `unavailable` event reports it distinctly.
+ *
+ * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
+ */
+export class ClassifierUnavailableError extends Error {
+  override readonly name = 'ClassifierUnavailableError'
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options)
+  }
+}
+
+/**
  * Judges one action in `auto` mode. It must be fail-safe: throwing (or returning anything but a
  * well-formed verdict) blocks the action.
  *
@@ -137,6 +151,8 @@ export type AutoEvent =
   /** `reason` is short (the classifier's own, or why it was unavailable): for a notice. */
   /** `reason` is short (the classifier's own, or why it was unavailable): for a notice. */
   | { type: 'blocked'; toolName: string; reason: string; state: AutoState }
+  /** The classifier could not run (provider error, timeout): not a block, not counted. */
+  | { type: 'unavailable'; toolName: string; reason: string; state: AutoState }
   | { type: 'paused'; cause: 'consecutive' | 'total'; state: AutoState }
   | { type: 'resumed'; state: AutoState }
 

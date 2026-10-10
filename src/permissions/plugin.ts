@@ -179,7 +179,7 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): HarnessPlugin
         },
         'approval.decided': async (_ctx, e) => {
           // a person approved something: a paused auto mode resumes
-          if (e.by === 'user' && e.approved) engine.noteApproval()
+          if (e.by === 'user' && e.approved) engine.noteApproval(e.toolCallId)
           await opts.onDecision?.(e)
         },
       },

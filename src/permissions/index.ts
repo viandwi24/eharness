@@ -9,6 +9,7 @@
  */
 export {
   AUTO_CLASSIFIER_INSTRUCTIONS,
+  DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS,
   type ModelClassifierOptions,
   modelClassifier,
 } from './classifier.ts'
@@ -53,6 +54,7 @@ export {
   type AutoListener,
   type AutoState,
   type AutoVerdict,
+  ClassifierUnavailableError,
   DEFAULT_MODE_CYCLE,
   type ListingFormat,
   type ModeListener,

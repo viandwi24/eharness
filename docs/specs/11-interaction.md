@@ -709,6 +709,18 @@ inject<K extends KindName<Kinds>>(kind: K, data: KindData<Kinds, K>, opts?: {
   turn is queued (§6.2) and runs when the session is free; `inject()` returns its `run` when it
   queued it. While `state.core.pending` is set the queue is held (§6.2), so a background event
   never denies approvals the user is looking at (§4.1): the wake turn runs after `respond()`.
+- **While approvals or client tool calls wait (ADR-0054).** An event never starts a turn, never
+  fails and never touches the pending message: it is saved as its own kind message (stored after
+  the pending message; the pending message stays the newest *non-kind* message, so `respond()`
+  still matches it) and is held. With `storage.inbox` the hold is **durable**: a `wake` item
+  (spec 05 §12) is enqueued — by `inject()` when the stored state has a pending set (also one
+  another instance parked), and by a turn that ends `tool-pending` with undelivered `wake` events —
+  and the instance that finishes the `respond()` continuation runs **one** wake turn for all held
+  items (consecutive wake items are one unit). Without an inbox the wake is held in the in-memory
+  queue (lost when the process restarts; the saved events still reach the model at the next turn).
+  The continuation itself never projects those events (the tool results follow the tool calls
+  directly); the wake turn that follows does, in stored order (events after the continued
+  message).
 
 ### 6.4 Hook-provided context
 

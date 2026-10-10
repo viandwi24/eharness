@@ -19,7 +19,12 @@ import { kindOf } from './kinds.ts'
 import type { MessageRegistry } from './registry.ts'
 import { sanitizeModelMessages } from './sanitize.ts'
 import { INTERRUPTED_UNKNOWN } from './texts.ts'
-import { answerDanglingToolParts, isToolPart, normalizeRawInput } from './tool-parts.ts'
+import {
+  answerDanglingToolParts,
+  isToolPart,
+  normalizeDeniedApprovals,
+  normalizeRawInput,
+} from './tool-parts.ts'
 import type {
   CompactionPayload,
   HarnessUIMessage,
@@ -108,7 +113,7 @@ export async function project(
     // 4. split at data-eh.input
     for (const piece of splitAtInput(message)) {
       // 6. convert
-      const prepared = normalizeRawInput(stripReasoningTiming(piece))
+      const prepared = normalizeDeniedApprovals(normalizeRawInput(stripReasoningTiming(piece)))
       const resolvedParts = await resolveFileParts(prepared.parts, options.resolveFile, {
         sessionId: options.sessionId,
       })

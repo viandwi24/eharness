@@ -223,6 +223,7 @@ describe('loadContext paging fallback (spec 05 §5)', () => {
 
   test('rewinds hide messages; invalid messages are dropped with a warning', async () => {
     const messages = spyMessages()
+    messages.validate = false // seeds a deliberately invalid message
     const [a, b, c] = [uuidv7(), uuidv7(), uuidv7()]
     const rewind = createKindMessage(
       'eh.rewind',

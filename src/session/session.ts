@@ -34,7 +34,7 @@ import { currentTurnStartId } from '../compaction/turns.ts'
 import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
 import { recordOutsideTurn } from '../loop/ledger.ts'
 import { createKindMessage } from '../messages/kinds.ts'
-import { normalizeRawInput } from '../messages/tool-parts.ts'
+import { normalizeDeniedApprovals, normalizeRawInput } from '../messages/tool-parts.ts'
 import type { HarnessUIMessage, TurnResult } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
@@ -542,7 +542,7 @@ export function createSessionHandle(args: {
   async function persist(messages: HarnessUIMessage[]): Promise<HarnessUIMessage[]> {
     const out: HarnessUIMessage[] = []
     for (const original of messages) {
-      let message = normalizeRawInput(original)
+      let message = normalizeDeniedApprovals(normalizeRawInput(original))
       for (const hook of rt.open?.hooks.list('message.beforeSave') ?? []) {
         try {
           const next = await hook.fn(rt.contextOf(hook.owner), structuredClone(message))
@@ -556,7 +556,7 @@ export function createSessionHandle(args: {
         }
       }
       // cached token estimate of the projection (spec 06 §2)
-      out.push(await compaction.annotate(message))
+      out.push(await compaction.annotate(normalizeDeniedApprovals(message)))
     }
     try {
       await rt.messages.save(id, out)
@@ -687,7 +687,14 @@ export function createSessionHandle(args: {
     },
     dropQueue: () => dropQueue(false),
     waitsParked: (pending) => waits.parked(pending),
-    enqueueWake() {
+    async enqueueWake(messageIds, pending) {
+      // approvals / client tool calls wait for an answer: the wake is durable when it can be
+      // (it survives a restart and runs in whichever instance sees the answer, ADR-0054)
+      if (pending && messageIds.length > 0) {
+        let stored = 0
+        for (const messageId of messageIds) if (await holdWakeDurably(messageId)) stored++
+        if (stored === messageIds.length) return
+      }
       enqueue({ kind: 'wake', input: undefined, options: {} })
     },
   }
@@ -699,6 +706,19 @@ export function createSessionHandle(args: {
   ): HarnessRun<UIMessage> {
     const turnId = internals.generateId()
     const kind = item.kind ?? 'send'
+    // a queued wake turn projects every undelivered event when it runs: a second wake is the
+    // same turn (one turn for N reports, never an extra no-input turn, ADR-0054)
+    const queuedWake = kind === 'wake' ? queue.find((e) => e.kind === 'wake') : undefined
+    if (queuedWake !== undefined) {
+      const extra = createDeferredRun({
+        turnId: queuedWake.turnId,
+        kind,
+        generateId: () => internals.generateId(),
+        onAbort: () => {},
+      })
+      queuedWake.extraHandles = [...(queuedWake.extraHandles ?? []), extra]
+      return extra.run
+    }
     const remove = () => {
       const index = queue.indexOf(entry)
       if (index < 0) return false
@@ -1064,6 +1084,40 @@ export function createSessionHandle(args: {
       await args.inbox?.notify?.(id)
     } catch (error) {
       inboxWarning('notify', error)
+    }
+  }
+
+  /** Dedupe key of the `wake` item of a kind message (spec 05 §12 rule 17). */
+  const wakeKey = (messageId: string): string => `wake:${messageId}`
+
+  /** Store a `wake` item of an already saved kind message; false when the inbox failed. */
+  async function holdWakeDurably(messageId: string): Promise<boolean> {
+    if (args.inbox === undefined || drain === undefined) return false
+    try {
+      // one item per event, also when an app repairs a stranded one (`wake:<messageId>`, ADR-0054)
+      const item = { kind: 'wake' as const, messageId, at: Date.now() }
+      if (args.inbox.enqueueOnce !== undefined) {
+        const stored = await args.inbox.enqueueOnce(id, { ...item, dedupeKey: wakeKey(messageId) })
+        if (!stored.duplicate)
+          events.emit({ type: 'inbox-enqueued', inboxId: stored.id, kind: 'wake' })
+      } else {
+        const inboxId = await args.inbox.enqueue(id, item)
+        events.emit({ type: 'inbox-enqueued', inboxId, kind: 'wake' })
+      }
+      await notify()
+      return true
+    } catch (error) {
+      inboxWarning('enqueue', error)
+      return false
+    }
+  }
+
+  /** Approvals or client tool calls of this session wait for an answer (stored state). */
+  async function storedPending(): Promise<boolean> {
+    try {
+      return (await args.state.get(id))?.core?.pending !== undefined
+    } catch {
+      return rt.state.core().pending !== undefined
     }
   }
 
@@ -1523,22 +1577,16 @@ export function createSessionHandle(args: {
         if (text !== undefined && current.deliverEvent(out, text, wake)) return result
       }
       if (!wake || rt.closed) return result
-      // a turn of this session runs in another instance: hand the wake to it (spec 05 §12)
+      // a turn of this session runs in another instance, or approvals / client tool calls wait for
+      // an answer (stored, so also those another instance parked): hand the wake to the durable
+      // inbox. Whoever holds the session runs it once it is free (spec 05 §12, ADR-0054)
       if (current === undefined && !rt.running && args.inbox !== undefined && drain !== undefined) {
         const foreign = await foreignTurn()
-        if (foreign !== undefined) {
-          try {
-            const inboxId = await args.inbox.enqueue(id, {
-              kind: 'wake',
-              messageId: out.id,
-              at: Date.now(),
-            })
-            events.emit({ type: 'inbox-enqueued', inboxId, kind: 'wake' })
-            drain.foreign(foreign)
-            await notify()
+        const parked = foreign === undefined && (await storedPending())
+        if (foreign !== undefined || parked) {
+          if (await holdWakeDurably(out.id)) {
+            if (foreign !== undefined) drain.foreign(foreign)
             return result
-          } catch (error) {
-            inboxWarning('enqueue', error)
           }
         }
       }

@@ -3,10 +3,16 @@
  * structured verdict (spec 18 §12). It reads the restricted transcript (user messages and earlier
  * tool calls only), so text inside a tool output cannot talk it into an approval.
  */
-import { generateText, type LanguageModel, Output } from 'ai'
+import { generateText, type LanguageModel, NoObjectGeneratedError, Output } from 'ai'
 import { z } from 'zod/v4'
 import { type ModelCallRecord, neutralizeTags, observeModel } from '../index.ts'
-import type { AutoAction, AutoClassifier, AutoClassifierContext, AutoVerdict } from './types.ts'
+import {
+  type AutoAction,
+  type AutoClassifier,
+  type AutoClassifierContext,
+  type AutoVerdict,
+  ClassifierUnavailableError,
+} from './types.ts'
 
 /**
  * The default rules of the model classifier. Extend it (`${AUTO_CLASSIFIER_INSTRUCTIONS}\n…`) or
@@ -54,7 +60,18 @@ export interface ModelClassifierOptions {
   timeoutMs?: number
   /** AI SDK retries of the judge call. Default 1. */
   maxRetries?: number
+  /**
+   * Output token cap of the judge call. Default {@link DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS}: a
+   * verdict is one short sentence, so a provider default (often the model maximum) only reserves
+   * and bills credits for nothing.
+   */
+  maxOutputTokens?: number
+  /** Sampling temperature of the judge call. Default 0. */
+  temperature?: number
 }
+
+/** Default `maxOutputTokens` of {@link modelClassifier}. */
+export const DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS = 1024
 
 const verdictSchema = z.object({
   decision: z.enum(['allow', 'block']).describe('allow the action, or block it'),
@@ -140,18 +157,30 @@ export function modelClassifier(options: ModelClassifierOptions): AutoClassifier
     ].filter((section): section is string => section !== undefined)
     const signals = [AbortSignal.timeout(timeoutMs)]
     if (ctx.abortSignal !== undefined) signals.push(ctx.abortSignal)
-    const result = await generateText({
-      model:
-        options.onModelCall === undefined
-          ? options.model
-          : observeModel(options.model, options.onModelCall),
-      instructions,
-      prompt: sections.join('\n\n'),
-      output: Output.object({ schema: verdictSchema }),
-      abortSignal: AbortSignal.any(signals),
-      maxRetries: options.maxRetries ?? 1,
-    })
-    const parsed = verdictSchema.safeParse(result.output)
+    let output: unknown
+    try {
+      const result = await generateText({
+        model:
+          options.onModelCall === undefined
+            ? options.model
+            : observeModel(options.model, options.onModelCall),
+        instructions,
+        prompt: sections.join('\n\n'),
+        output: Output.object({ schema: verdictSchema }),
+        abortSignal: AbortSignal.any(signals),
+        maxRetries: options.maxRetries ?? 1,
+        maxOutputTokens: options.maxOutputTokens ?? DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS,
+        temperature: options.temperature ?? 0,
+      })
+      output = result.output
+    } catch (error) {
+      // an unreadable verdict is the judge's answer (a block); anything else means it did not run
+      if (NoObjectGeneratedError.isInstance(error)) throw new Error('unreadable verdict')
+      throw new ClassifierUnavailableError(error instanceof Error ? error.message : String(error), {
+        cause: error,
+      })
+    }
+    const parsed = verdictSchema.safeParse(output)
     if (!parsed.success) throw new Error('unreadable verdict')
     return { decision: parsed.data.decision, reason: parsed.data.reason.trim() }
   }

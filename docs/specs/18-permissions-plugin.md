@@ -45,7 +45,7 @@ export interface PermissionEngine {
   setMode(mode): void;  cycleMode(): PermissionMode;  subscribe(listener): () => void
   decide(call: PermissionCall, mode?: PermissionMode): PermissionDecision
   decideAsync(call, options?: DecideOptions): Promise<PermissionDecision>   // decide + the auto classifier (§12)
-  autoAvailable: boolean;  autoState(): AutoState;  noteApproval();  resumeAuto();  subscribeAuto(listener): () => void
+  autoAvailable: boolean;  autoState(): AutoState;  noteApproval(toolCallId?);  resumeAuto();  subscribeAuto(listener): () => void
   suggestRule(call): string | undefined
   allow(rule): Promise<void>;  addRule(kind, rule): Promise<void>;  removeRule(kind, rule): Promise<boolean>
   rules(): PermissionRules
@@ -380,8 +380,16 @@ runs it:
 - `allow` → `{ status: 'approved', auto: 'allowed' }`; resets the consecutive-block counter.
 - `block` → `{ status: 'denied', auto: 'blocked', reason }`. The reason ("Auto mode blocked this
   action: …") reaches the model as the tool result, so it can choose another way; the block is counted.
-- A classifier that throws, times out or returns something unreadable → blocked with a reason
+- A classifier that throws, or returns something unreadable → blocked with a reason
   (**fail closed**) and counted.
+- A classifier that **could not run** (it throws `ClassifierUnavailableError`: provider error, no
+  credits, timeout, network; `modelClassifier` does this for every failed `generateText`) →
+  `{ status: 'denied', auto: 'unavailable', reason }`, still fail closed, but **not a block**: it
+  does not touch the counters (so an outage never pauses auto mode) and `subscribeAuto` gets an
+  `unavailable` event (`toolName`, `reason`, `state`) instead of `blocked`.
+- A call a person approved (`approval.decided`, `by: 'user'`, approved; or `noteApproval(toolCallId)`)
+  is never classified again: AI SDK re-validates approved calls in the `respond()` continuation, and
+  a classifier verdict (or outage) there would deny what the person just allowed (ADR-0055).
 - The verdict is remembered per `toolCallId` (AI SDK re-validates approved calls): the classifier
   runs once and counts once. If the engine's mode left `auto` while the classifier ran, the verdict is
   dropped and the new mode decides (usually an ask).
@@ -400,7 +408,7 @@ and notices: `autoState(): { paused, consecutive, total }` and
 The counters live in the engine instance (one per session in a CLI); the library does not persist
 them.
 
-**`modelClassifier({ model, instructions?, environment?, maxContext?, timeoutMs?, maxRetries? })`**
+**`modelClassifier({ model, instructions?, environment?, maxContext?, timeoutMs?, maxRetries?, maxOutputTokens?, temperature? })`**
 is the ready classifier: one AI SDK `generateText` call with `Output.object` (`{ decision, reason }`).
 The default rules are the exported `AUTO_CLASSIFIER_INSTRUCTIONS` (extend it:
 `${AUTO_CLASSIFIER_INSTRUCTIONS}\n…`, or replace through `instructions`): block downloading and
@@ -410,7 +418,10 @@ matching actions until lifted; an explicit approval naming the action and what m
 clears one block. `environment` describes trusted infrastructure. The prompt carries the restricted
 transcript (spec 11 §3.4: user messages and earlier tool calls, **never tool outputs**, so a prompt
 injection in a file or page cannot reach it), the call under review is left out of it, and the
-action's input is framed as data. Use a cheap fast model; its usage is the application's to track
+action's input is framed as data. The call sets `maxOutputTokens` (default `DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS` = 1024: a verdict
+is one short sentence, and a provider default of the model maximum makes gateways reserve and bill
+for tens of thousands of tokens per permission decision) and `temperature` (default 0).
+Use a cheap fast model; its usage is the application's to track
 (it is not charged to the turn).
 
 Limits: the classifier is a heuristic layer, not a boundary; use deny rules for hard guarantees.

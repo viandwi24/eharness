@@ -344,6 +344,16 @@ export interface ProjectionContext {
 such parts first (on a copy): `input` is taken from `rawInput` when it is undefined and `rawInput`
 is removed, so stored messages stop carrying it and no AI SDK warning is logged.
 
+**`output-denied` with `approval.approved: true`.** AI SDK's UI stream reducer sets
+`state: 'output-denied'` on `tool-output-denied` without touching `approval`. When a call a person
+approved is denied by the re-validation of a `respond()` continuation (a `tool.approve` hook or
+policy denies it, ADR-0055), the stored part would keep `approved: true`, which AI SDK's UI message
+schema rejects (`output-denied` requires `approved: false`), so the whole message was dropped on
+the next cold load. Persistence, projection and load validation normalise such parts first:
+`approval.approved` becomes `false` and, when the part has no `reason`, `reason` is "Approved, but
+denied when the call was re-validated by the approval policy.". On load this is a repair, not a
+drop: `W_REPAIRED_MESSAGE` (once per message), storage unchanged.
+
 ## 7. Validation on load
 
 Stored data is untrusted (other versions, manual edits, other writers). Validation works on an
@@ -376,7 +386,8 @@ of type `data-<kind>`; otherwise it is invalid. `metadata.eharness`, when presen
 Policy `SessionOptions.onInvalidMessage` applies per message: `'drop'` (default: skip that message,
 warn `W_INVALID_MESSAGE`), `'keep'` (use the unvalidated copy — only if it is message-shaped, i.e. has a `parts` array;
 otherwise it is dropped with the warning), `'throw'` (`EH_INVALID_MESSAGE`).
-Validation runs on cold loads only (spec 05 §6), never on hot-path turns.
+Validation runs on cold loads only (spec 05 §6), never on hot-path turns. The only repair is the
+`output-denied` normalisation above (and the `rawInput` one); every other failure follows the policy.
 
 ## 8. Ids
 

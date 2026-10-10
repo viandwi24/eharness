@@ -147,8 +147,12 @@ export interface TurnHost {
   inboxApplied(ids: string[], turnId: string): void
   /** Inbox items this turn did not apply (spec 05 §12 rules 3, 11, 13). */
   inboxNotApplied(ids: string[], outcome: InboxSettle): void
-  /** Queue a no-input wake turn for an injection that was not delivered (spec 11 §6.3). */
-  enqueueWake(): void
+  /**
+   * Queue a no-input wake turn for injections that were not delivered (spec 11 §6.3). With a
+   * durable inbox and a turn that stopped `tool-pending` the wake is stored as inbox items of
+   * `messageIds` (any instance runs it once the pending items are answered, ADR-0054).
+   */
+  enqueueWake(messageIds: string[], pending: boolean): Promise<void>
   /** Drop queued turns like `session.abort()` (a cross-process abort, spec 05 §9.1). */
   dropQueue(): void
   /**
@@ -1871,11 +1875,15 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   async function settleInbox(stop: StopReason): Promise<void> {
     const leftovers = await inbox.close()
     let wake = false
+    const wakeIds: string[] = []
     for (const item of leftovers) {
       const steer = item.steer
       if (steer === undefined) {
         // an undelivered event stays for the next turn; a wake starts that turn (not after aborts)
-        if (item.wake === true && stop !== 'aborted' && stop !== 'timeout') wake = true
+        if (item.wake === true && stop !== 'aborted' && stop !== 'timeout') {
+          wake = true
+          if (item.event !== undefined) wakeIds.push(item.event.id)
+        }
         continue
       }
       if (stop === 'tool-pending' || stop === 'aborted' || stop === 'timeout') {
@@ -1898,7 +1906,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         item.settle?.(rt.closed ? 'dropped' : 'turn')
       }
     }
-    if (wake) host.enqueueWake()
+    if (wake) await host.enqueueWake(wakeIds, stop === 'tool-pending')
   }
 
   async function onEnd(message: HarnessUIMessage | undefined): Promise<void> {

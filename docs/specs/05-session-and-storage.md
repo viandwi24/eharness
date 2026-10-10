@@ -1009,7 +1009,7 @@ export interface InboxStats { ready: number; claimed: number; delayed: number; d
 
 export type InboxItemInput = (
   | { kind: 'send'; mode: 'queue' | 'steer' | 'collect'; input: SerializedInput; collect?: CollectOptions; at: number }
-  | { kind: 'wake'; messageId: string; at: number }     // inject(…, { wake }) from another process
+  | { kind: 'wake'; messageId: string; at: number }     // inject(…, { wake }) the holder cannot run now: a live foreign turn, or items waiting for an answer (ADR-0054)
   | { kind: 'abort'; turnId?: string; reason?: string; at: number }
   | { kind: 'wait-timeout'; waitId: string; at: number }   // 0.5.0: durable timeout of an external wait (rule 16)
 ) & { availableAt?: number; dedupeKey?: string }   // availableAt: epoch ms, a durable timer (rule 14); dedupeKey: caller id (rule 17)
@@ -1271,7 +1271,13 @@ acked after `onDeadLetter` ran ("bring a dead table").
 
 The poll interval is the latency without `subscribe` and the safety net for lost notifications
 with it; the core never claims from a session that is not live in its process. `wake` items are
-written by `inject(…, { wake: true })` when a live foreign turn runs (spec 11 §6.3).
+written by `inject(…, { wake: true })` when a live foreign turn runs, or when approvals / client tool
+calls wait for an answer (the stored state says so, whichever instance parked them), and by a turn
+that ends `tool-pending` with undelivered `wake` events (spec 11 §6.3, ADR-0054). A drain never
+starts a wake unit while the stored pending state is set: the item waits in the inbox (also across
+restarts) and runs in the instance that sees the pending items resolved. With `enqueueOnce` the
+item carries `dedupeKey: 'wake:<messageId>'`, so an app that repairs a stranded event enqueues the
+same key and never doubles a wake.
 ### 2.2 Read-only handle: `agent.peek(id)` (0.9)
 
 Opening a session (`agent.session(id)` + any operation except `messages()`/`children()`/`busy()`)

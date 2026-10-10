@@ -1,8 +1,12 @@
 /** `modelClassifier`: structured verdict, prompt content, fail-closed errors. */
 import { describe, expect, test } from 'bun:test'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { AUTO_CLASSIFIER_INSTRUCTIONS, modelClassifier } from './classifier.ts'
-import type { AutoAction } from './types.ts'
+import {
+  AUTO_CLASSIFIER_INSTRUCTIONS,
+  DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS,
+  modelClassifier,
+} from './classifier.ts'
+import { type AutoAction, ClassifierUnavailableError } from './types.ts'
 
 const action: AutoAction = {
   toolName: 'bash',
@@ -47,9 +51,31 @@ describe('modelClassifier', () => {
     await expect(modelClassifier({ model, maxRetries: 0 })(action, ctx)).rejects.toThrow()
   })
 
-  test('a model error throws', async () => {
+  test('a model error throws ClassifierUnavailableError (not a verdict)', async () => {
     const model = scriptedModel([{ throws: new Error('boom') }])
-    await expect(modelClassifier({ model, maxRetries: 0 })(action, ctx)).rejects.toThrow('boom')
+    const failure = modelClassifier({ model, maxRetries: 0 })(action, ctx)
+    await expect(failure).rejects.toBeInstanceOf(ClassifierUnavailableError)
+    await expect(failure).rejects.toThrow('boom')
+  })
+
+  test('an unreadable verdict is a plain error, not unavailable', async () => {
+    const model = scriptedModel([{ text: 'definitely safe' }])
+    const failure = await Promise.resolve(
+      modelClassifier({ model, maxRetries: 0 })(action, ctx),
+    ).catch((e: unknown) => e)
+    expect(failure).not.toBeInstanceOf(ClassifierUnavailableError)
+  })
+
+  test('the call has a small default output cap and temperature 0, both configurable', async () => {
+    const verdict = { text: JSON.stringify({ decision: 'allow', reason: 'ok' }) }
+    const model = scriptedModel([verdict, verdict])
+    await modelClassifier({ model })(action, ctx)
+    expect(model.calls[0]?.maxOutputTokens).toBe(DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS)
+    expect(DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS).toBeLessThanOrEqual(2048)
+    expect(model.calls[0]?.temperature).toBe(0)
+    await modelClassifier({ model, maxOutputTokens: 256, temperature: 0.2 })(action, ctx)
+    expect(model.calls[1]?.maxOutputTokens).toBe(256)
+    expect(model.calls[1]?.temperature).toBe(0.2)
   })
 })
 

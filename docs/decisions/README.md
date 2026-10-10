@@ -57,3 +57,5 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0051](0051-precedence-and-pinned-ask.md) | Mode precedence, most-restrictive combination and pinned asks under bypass |
 | [0052](0052-generic-secret-vault.md) | One generic `SecretVault` and `sealedProfileStore` for providers and connectors |
 | [0053](0053-providers-connectors-consolidation.md) | One sealing format, `toolPrefix`, per-flow `clientConfig`; providers and connectors share building blocks but stay separate areas |
+| [0054](0054-held-wakes-while-pending.md) | Wakes held while items wait for an answer are durable inbox `wake` items (survive restarts, run in whichever instance resolves the pending items) |
+| [0055](0055-approval-answer-wins-and-schema-valid-denials.md) | A person's approval is never overruled by the classifier on re-validation; stored `output-denied` parts are always schema-valid (repaired, not dropped, on load); classifier outages are not blocks |

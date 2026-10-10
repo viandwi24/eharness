@@ -58,6 +58,7 @@ import {
   type AutoEvent,
   type AutoListener,
   type AutoState,
+  ClassifierUnavailableError,
   DEFAULT_MODE_CYCLE,
   type ModeListener,
   type PermissionCall,
@@ -178,8 +179,12 @@ export interface PermissionEngine {
   decideAsync(call: PermissionCall, options?: DecideOptions): Promise<PermissionDecision>
   /** Block counters and whether auto mode is paused. */
   autoState(): AutoState
-  /** A person approved an action: resumes a paused auto mode (consecutive blocks restart at 0). */
-  noteApproval(): void
+  /**
+   * A person approved an action: resumes a paused auto mode (consecutive blocks restart at 0).
+   * With the `toolCallId` of the approved call the classifier never judges that call again (the
+   * re-validation of a `respond()` continuation must not overrule the person).
+   */
+  noteApproval(toolCallId?: string): void
   /** Resume a paused auto mode explicitly. */
   resumeAuto(): void
   /** Listen to auto mode events (blocks, pause, resume); returns the unsubscribe function. */
@@ -822,6 +827,8 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
   }
   // verdicts per tool call id: the core re-validates approved calls, the classifier runs once
   const verdicts = new Map<string, Promise<PermissionDecision>>()
+  // calls a person approved: the re-validation of the continuation must not classify them again
+  const userApproved = new Set<string>()
 
   const classifyCall = async (
     call: PermissionCall,
@@ -866,6 +873,20 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      if (error instanceof ClassifierUnavailableError) {
+        // the judge did not run: fail closed, but it is not a block (no counter, no pause)
+        emitAuto({
+          type: 'unavailable',
+          toolName: call.toolName,
+          reason: message,
+          state: autoSnapshot(),
+        })
+        return {
+          status: 'denied',
+          reason: `Auto mode could not classify this action (the classifier is unavailable: ${message}), so it was not run. Retry later or ask the user.`,
+          auto: 'unavailable',
+        }
+      }
       why = `classifier unavailable (${message})`
       reason = `Auto mode could not classify this action (${message}), so it was blocked.`
     }
@@ -950,7 +971,14 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     },
     autoAvailable: classifier !== undefined,
     autoState: autoSnapshot,
-    noteApproval: resume,
+    noteApproval(toolCallId?: string): void {
+      if (toolCallId !== undefined) {
+        userApproved.add(toolCallId)
+        if (userApproved.size > 500)
+          userApproved.delete(userApproved.values().next().value as string)
+      }
+      resume()
+    },
     resumeAuto: resume,
     subscribeAuto(listener: AutoListener): () => void {
       autoListeners.add(listener)
@@ -965,10 +993,12 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       if (classifier === undefined) {
         return { status: 'user-approval', reason: 'Auto mode has no classifier configured.' }
       }
+      const id = opts.toolCallId
+      // a person approved this very call: their answer wins over the classifier (re-validation)
+      if (id !== undefined && userApproved.has(id)) return { status: 'approved' }
       if (auto.paused) {
         return { status: 'user-approval', reason: AUTO_PAUSED_REASON, auto: 'paused' }
       }
-      const id = opts.toolCallId
       const known = id === undefined ? undefined : verdicts.get(id)
       const run = known ?? classifyCall(call, opts)
       if (id !== undefined && known === undefined) {

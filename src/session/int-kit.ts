@@ -4,6 +4,7 @@
 import type { UIMessageChunk } from 'ai'
 import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
+import { assertValidUIMessage } from '../testing/schema-checked-messages.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 /** Read a whole stream (typed loosely: tests assert on plain chunk objects). */
@@ -19,6 +20,8 @@ export interface SpyMessages extends MessageAdapter {
   loads: Array<Parameters<MessageAdapter['load']>[0]>
   failSave?: (messages: HarnessUIMessage[]) => boolean
   failLoad?: boolean
+  /** Set false to seed deliberately invalid messages (default: every save is schema-checked). */
+  validate?: boolean
 }
 
 /** Wrap (or create) a memory message adapter with call recording. */
@@ -33,6 +36,8 @@ export function spyMessages(inner: MessageAdapter = defaultMemoryMessages()): Sp
     },
     async save(sessionId, messages) {
       if (spy.failSave?.(messages as HarnessUIMessage[]) === true) throw new Error('save failed')
+      if (spy.validate !== false)
+        for (const message of messages) await assertValidUIMessage(message)
       spy.saves.push(structuredClone(messages) as HarnessUIMessage[])
       return inner.save(sessionId, messages)
     },

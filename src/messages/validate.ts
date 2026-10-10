@@ -10,7 +10,7 @@ import { z } from 'zod/v4'
 import { HarnessError, type HarnessWarning } from '../errors.ts'
 import { kindOf } from './kinds.ts'
 import type { MessageRegistry } from './registry.ts'
-import { normalizeRawInput } from './tool-parts.ts'
+import { normalizeDeniedApprovals, normalizeRawInput } from './tool-parts.ts'
 import type { HarnessUIMessage } from './types.ts'
 
 /** What to do with a message that fails validation (`SessionOptions.onInvalidMessage`). */
@@ -137,7 +137,15 @@ export async function validateStoredMessages(
       parts.push(part)
     }
     copy.parts = parts
-    copy = normalizeRawInput(copy)
+    const repaired = normalizeDeniedApprovals(copy)
+    if (repaired !== copy) {
+      warnings.push({
+        code: 'W_REPAIRED_MESSAGE',
+        message: `Stored message ${String(id)} had an 'output-denied' tool part with approval.approved true; it was repaired to approved false.`,
+        details: { messageId: id, repair: 'denied-approval' },
+      })
+    }
+    copy = normalizeRawInput(repaired)
 
     // kind shape: exactly one part, of type data-<kind>
     if (problem === undefined && kind !== undefined) {

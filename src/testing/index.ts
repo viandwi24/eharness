@@ -42,6 +42,7 @@ export {
   type ProfileStoreUnderTest,
   profileStoreConformance,
 } from './profile-store.conformance.ts'
+export { assertValidUIMessage, schemaCheckedMessages } from './schema-checked-messages.ts'
 export {
   type ScriptedCallOptions,
   type ScriptedFinishReason,
