@@ -85,6 +85,19 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
           const agentId = agent?.id ?? ctx.agent.id
           const t = now()
           if (isDmSession(ctx.session.id) && !isTaskSession(ctx)) {
+            // every DM turn, also one the server started (a subagent report, a routine, a message
+            // from another agent): open chats attach to its stream right away
+            store.appendEvent(
+              {
+                type: 'turn-started',
+                agentId,
+                sessionId: ctx.session.id,
+                payload: {
+                  ...(ctx.turn === undefined ? {} : { turnId: ctx.turn.id, kind: ctx.turn.kind }),
+                },
+              },
+              t,
+            )
             const text = textOf(e.input)
             if (text !== '') {
               store.appendEvent(

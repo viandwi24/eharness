@@ -1670,6 +1670,7 @@
             "type": "string",
             "enum": [
               "message-added",
+              "turn-started",
               "task-changed",
               "approval-needed",
               "approval-decided",
@@ -1710,7 +1711,7 @@
           "payload",
           "createdAt"
         ],
-        "description": "`message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview)."
+        "description": "`message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview)."
       },
       "AgentSessions": {
         "type": "object",

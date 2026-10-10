@@ -185,6 +185,33 @@ export class AgentChat {
 		if (this.chat.status === 'error') this.chat.clearError();
 	}
 
+	/**
+	 * A turn this tab did not start (a subagent report woke the agent, a routine, another agent's
+	 * message, another tab): attach to its stream. The event can arrive a moment before the turn's
+	 * stream is readable, so check a few times.
+	 */
+	async followServerTurn(): Promise<void> {
+		if (!this.loaded || this.#busy()) return;
+		for (let i = 0; i < 4; i++) {
+			const stats = await this.#getJson<StatsLike>(this.#paths.stats(this.agentId));
+			if (this.#busy()) return;
+			if (shouldResume(stats)) return this.follow();
+			await new Promise((r) => setTimeout(r, 250 * (i + 1)));
+		}
+		await this.refetch(); // it already ended: show what was stored
+	}
+
+	/** A message was stored in this chat by a turn this tab is not streaming: show it. */
+	async storedElsewhere(): Promise<void> {
+		if (!this.loaded || this.#busy()) return;
+		await this.refetch();
+	}
+
+	#busy(): boolean {
+		const s = this.chat.status;
+		return this.following || s === 'submitted' || s === 'streaming';
+	}
+
 	/** Load the next older page (scroll-up pagination). Returns the number of messages added. */
 	async loadOlder(): Promise<number> {
 		if (this.loadingOlder || this.#nextBefore === null) return 0;

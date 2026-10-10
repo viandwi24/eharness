@@ -116,3 +116,17 @@ describe('live store: stale task lists', () => {
 		expect(calls).toBeGreaterThanOrEqual(2);
 	});
 });
+
+describe('live store: chat events', () => {
+	test('turn-started and message-added reach chat listeners; others do not', () => {
+		const { live } = setup();
+		const seen: string[] = [];
+		const off = live.onChatEvent((e) => seen.push(e.type));
+		live.handleEvent(ev('turn-started', 'lead-id', {}, 1));
+		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant', preview: 'x' }, 2));
+		live.handleEvent(ev('file-changed', 'lead-id', { path: '/a' }, 3));
+		off();
+		live.handleEvent(ev('turn-started', 'lead-id', {}, 4));
+		expect(seen).toEqual(['turn-started', 'message-added']);
+	});
+});

@@ -1,6 +1,7 @@
 /** The event feed (plan §5.3): append-only rows every instance tails by `seq`. Pure. */
 export const EVENT_TYPES = [
   'message-added',
+  'turn-started',
   'task-changed',
   'approval-needed',
   'approval-decided',

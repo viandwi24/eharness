@@ -79,8 +79,16 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		state.revs[k]++;
 	};
 
+	const chatListeners = new Set<(e: TeamEvent) => void>();
+
 	const core = {
 		state,
+
+		/** Chat activity of DM sessions (`turn-started`, `message-added`): open chats follow server turns. */
+		onChatEvent(fn: (e: TeamEvent) => void): () => void {
+			chatListeners.add(fn);
+			return () => chatListeners.delete(fn);
+		},
 
 		loadApprovals(): Promise<void> {
 			return fetchList('approvals', async () => (await api.get('/approvals')).approvals, () => (state.approvalsLoaded = true));
@@ -95,6 +103,15 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		},
 
 		handleEvent(e: TeamEvent): void {
+			if (e.type === 'turn-started' || e.type === 'message-added') {
+				for (const fn of chatListeners) {
+					try {
+						fn(e);
+					} catch (error) {
+						report(error);
+					}
+				}
+			}
 			const effect = applyActivity(agents.state.activity, e, viewingId());
 			if (effect.markRead) void core.markRead(effect.markRead, true);
 			const p = e.payload;
