@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
 	import CircleIcon from 'phosphor-svelte/lib/Circle';
@@ -102,14 +103,42 @@
 	const active = $derived([...(sessions?.tasks ?? []), ...delegated].filter((t) => t.status === 'running' || t.status === 'needs_action').length);
 	const done = $derived(todos.filter((t) => t.status === 'completed').length);
 
-	// Outputs: files written in this chat first, then the agent's recent files
+	// Outputs: files written in THIS session — by this chat's own tool calls, then by the agents it
+	// delegated to (their task sessions). Not the agent's files from other sessions.
 	const views = $derived(toolViews(messages));
 	const mine = $derived(chatOutputs(views));
-	const updatedAt = $derived(new Map((context?.files ?? []).map((f) => [f.path, f.updatedAt])));
+	let childFiles = $state<{ path: string; at: number }[]>([]);
+	let fseq = 0;
+	const childKey = $derived(delegated.slice(0, 6).map((t) => `${t.id}:${t.lastActivityAt}`).join('|'));
+	$effect(() => {
+		void childKey;
+		// refetch only when a delegated task changed (childKey), not on every sessions reload
+		const tasks = untrack(() => delegated.slice(0, 6));
+		const mineSeq = ++fseq;
+		if (tasks.length === 0) {
+			childFiles = [];
+			return;
+		}
+		Promise.all(
+			tasks.map((t) =>
+				api.get('/tasks/{id}', { params: { id: t.id } }).then(
+					(d) => chatOutputs(toolViews(d.messages as never)).map((path) => ({ path, at: t.lastActivityAt })),
+					() => []
+				)
+			)
+		).then((lists) => {
+			if (mineSeq === fseq) childFiles = lists.flat();
+		});
+	});
+	const updatedAt = $derived(new Map([...childFiles.map((f) => [f.path, f.at] as const), ...(context?.files ?? []).map((f) => [f.path, f.updatedAt] as const)]));
 	const outputs = $derived.by((): string[] => {
 		const seen = new Set(mine);
-		const rest = (context?.files ?? []).filter((f) => !seen.has(f.path) && !f.path.startsWith('/memories/') && !f.path.startsWith('/.eharness/'));
-		return [...mine, ...rest.sort((a, b) => b.updatedAt - a.updatedAt).map((f) => f.path)];
+		const rest = childFiles.filter((f) => {
+			if (seen.has(f.path)) return false;
+			seen.add(f.path);
+			return true;
+		});
+		return [...mine, ...rest.sort((a, b) => b.at - a.at).map((f) => f.path)];
 	});
 	const MAX_FILES = 5;
 	const isMd = (p: string): boolean => fileKind({ path: p, mediaType: null, binary: false }) === 'markdown';
@@ -236,10 +265,10 @@
 			</div>
 		{/if}
 		{#if outputs.length === 0}
-			{#if context === null}
+			{#if sessions === null}
 				<div class="flex flex-col gap-2" aria-busy="true" aria-label="Loading"><Skeleton class="h-4 w-full" /><Skeleton class="h-4 w-2/3" /></div>
 			{:else}
-				<p class="text-[13px] text-muted-foreground">No files yet. Files the agent writes appear here.</p>
+				<p class="text-[13px] text-muted-foreground">No files yet. Files written in this session (and by the agents it delegates to) appear here.</p>
 			{/if}
 		{:else}
 			<a href="/files" class="mt-1 self-start rounded text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
