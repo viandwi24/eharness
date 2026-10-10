@@ -3,6 +3,13 @@ import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalAnswer, ApprovalOutcome, ApprovalView } from '../domain/approvals.ts'
 import type { NewEvent, TeamEvent } from '../domain/events.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
+import type {
+  ModelCallDetail,
+  ModelCallFilter,
+  ModelCallListQuery,
+  ModelCallPage,
+  ModelCallStats,
+} from '../domain/model-calls.ts'
 import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
@@ -232,6 +239,15 @@ export interface ModePort {
   set(agent: AgentDef, mode: TeamMode, now: number): ModeState
 }
 
+/** Read side of the model call log (written by the `activityLog` plugin). */
+export interface ModelCallStore {
+  list(query: ModelCallListQuery): ModelCallPage
+  /** Buckets and totals of a range; `bucketMs` default fits the range in about 60 buckets. */
+  stats(query: ModelCallFilter & { from: number; to: number; bucketMs?: number }): ModelCallStats
+  /** One call with its JSON columns and the ids of its neighbours under `filter`. */
+  get(id: string, filter: ModelCallFilter): ModelCallDetail | undefined
+}
+
 /** Appends to the event feed from use cases (routines, settings). */
 export interface EventAppender {
   append(event: NewEvent): number
@@ -343,6 +359,7 @@ export interface Deps {
   schedule: ScheduleCalc
   routineEngine: RoutineEngine
   events: EventAppender
+  modelCalls: ModelCallStore
   clock: Clock
   ids: IdGenerator
   workspaceId: string

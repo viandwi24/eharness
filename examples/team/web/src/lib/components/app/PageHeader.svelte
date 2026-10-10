@@ -9,7 +9,6 @@
 	import type { Snippet } from 'svelte';
 	import * as Breadcrumb from '#lib/components/ui/breadcrumb/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
-	import ApprovalsPopover from './ApprovalsPopover.svelte';
 
 	/**
 	 * The standard header of every global page (same h-14 as the chat header).
@@ -62,6 +61,5 @@
 	<div class="flex shrink-0 items-center gap-2">
 		{@render actions?.()}
 		{@render children?.()}
-		<ApprovalsPopover />
 	</div>
 </header>

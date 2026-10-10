@@ -129,4 +129,16 @@ describe('live store: chat events', () => {
 		live.handleEvent(ev('turn-started', 'lead-id', {}, 4));
 		expect(seen).toEqual(['turn-started', 'message-added']);
 	});
+
+	test('model-call events reach their listeners only', () => {
+		const { live, agents } = setup();
+		const seen: string[] = [];
+		const off = live.onModelCallEvent((e) => seen.push(String(e.payload.id)));
+		live.handleEvent(ev('model-call', 'lead-id', { id: 'c1' }));
+		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant', preview: 'x' }, 2));
+		off();
+		live.handleEvent(ev('model-call', 'lead-id', { id: 'c2' }, 3));
+		expect(seen).toEqual(['c1']);
+		expect(agents.state.activity['lead-id']?.unread).toBe(1);
+	});
 });

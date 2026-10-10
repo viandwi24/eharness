@@ -13,6 +13,7 @@ import { agentRoutes } from './routes/agents.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { healthRoutes } from './routes/health.ts'
 import { libraryRoutes } from './routes/library.ts'
+import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { settingsRoutes } from './routes/settings.ts'
@@ -56,6 +57,10 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
     {
       name: 'approvals',
       description: 'Approvals and questions waiting for a person, across sessions.',
+    },
+    {
+      name: 'logs',
+      description: 'Model call log: every provider call with timing, tokens, cost and payloads.',
     },
     { name: 'events', description: 'The feed of changes: JSON and SSE.' },
   ],
@@ -166,6 +171,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', libraryRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
   app.route('/', routineRoutes(options.deps))
+  app.route('/', logRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)
   app.get('/docs', Scalar({ url: '/openapi.json', pageTitle: OPENAPI_INFO.title }))

@@ -137,3 +137,9 @@ export type TaskDetail = components['schemas']['TaskDetail'];
 export type Approval = components['schemas']['Approval'];
 export type AgentSessions = components['schemas']['AgentSessions'];
 export type ApprovalBody = components['schemas']['ApprovalAnswer'];
+
+export type ModelCallSummary = components['schemas']['ModelCallSummary'];
+export type ModelCallDetail = components['schemas']['ModelCallDetail'];
+export type ModelCallStats = components['schemas']['ModelCallStats'];
+export type ModelCallKind = ModelCallSummary['kind'];
+export type ModelCallStatus = ModelCallSummary['status'];

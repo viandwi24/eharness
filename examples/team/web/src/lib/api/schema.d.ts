@@ -3255,6 +3255,245 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Model call log: one row per provider call, newest first
+         * @description Every call to a model (agent steps, compaction, memory flush, the Auto mode classifier) with timing, tokens and cost. Rows do not carry the request / response JSON: use `GET /logs/{id}`. Kept for a limited time and number of rows.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Calls started at or after this time (epoch ms). */
+                    from?: number | null;
+                    /** @description Calls started at or before this time (epoch ms). */
+                    to?: number | null;
+                    /** @description Only calls of this agent (id). */
+                    agentId?: string;
+                    /** @description Only calls of this session (`dm:<agentId>`, a task session, ...). */
+                    sessionId?: string;
+                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier). */
+                    kind?: "step" | "compaction" | "flush" | "other";
+                    /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
+                    status?: "ok" | "error" | "aborted";
+                    /** @description Model id contains this text (case-insensitive). */
+                    model?: string;
+                    /** @description Free text: matches the model id, the provider or the name of the agent. */
+                    q?: string;
+                    /** @description `nextCursor` of the previous page. */
+                    cursor?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description A page of calls */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelCallList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/logs/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Histogram of calls over a time range, with totals
+         * @description Buckets of the range `from`..`to` (default: the last 24 hours) with count, errors, tokens and cost, under the same filters as the list.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Calls started at or after this time (epoch ms). */
+                    from?: number | null;
+                    /** @description Calls started at or before this time (epoch ms). */
+                    to?: number | null;
+                    /** @description Only calls of this agent (id). */
+                    agentId?: string;
+                    /** @description Only calls of this session (`dm:<agentId>`, a task session, ...). */
+                    sessionId?: string;
+                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier). */
+                    kind?: "step" | "compaction" | "flush" | "other";
+                    /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
+                    status?: "ok" | "error" | "aborted";
+                    /** @description Model id contains this text (case-insensitive). */
+                    model?: string;
+                    /** @description Free text: matches the model id, the provider or the name of the agent. */
+                    q?: string;
+                    /** @description Bucket width in ms; default fits the range in about 60 buckets (at most 200). */
+                    bucketMs?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Buckets and totals */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelCallStats"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/logs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * One call with its request, response and output
+         * @description Pass the list filters to get `prevId` / `nextId` of the neighbours in that view.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Calls started at or after this time (epoch ms). */
+                    from?: number | null;
+                    /** @description Calls started at or before this time (epoch ms). */
+                    to?: number | null;
+                    /** @description Only calls of this agent (id). */
+                    agentId?: string;
+                    /** @description Only calls of this session (`dm:<agentId>`, a task session, ...). */
+                    sessionId?: string;
+                    /** @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier). */
+                    kind?: "step" | "compaction" | "flush" | "other";
+                    /** @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished). */
+                    status?: "ok" | "error" | "aborted";
+                    /** @description Model id contains this text (case-insensitive). */
+                    model?: string;
+                    /** @description Free text: matches the model id, the provider or the name of the agent. */
+                    q?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description Id of the call. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The call */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModelCallDetail"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown call (it may have been pruned) */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -3712,11 +3951,11 @@ export interface components {
             /** @description Cursor for the next call: the `seq` of the last event, else the current head. */
             lastSeq: number;
         };
-        /** @description `message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview). */
+        /** @description `message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page). */
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "turn-started" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed";
+            type: "message-added" | "turn-started" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -4042,6 +4281,143 @@ export interface components {
         };
         RoutineRuns: {
             runs: components["schemas"]["RoutineRun"][];
+        };
+        ModelCallList: {
+            items: components["schemas"]["ModelCallSummary"][];
+            /** @description Pass as `cursor` for the next page; null at the end. */
+            nextCursor: string | null;
+        };
+        /** @description One call without the large JSON columns. */
+        ModelCallSummary: {
+            /** @description UUIDv7 of the call. */
+            id: string;
+            /** @description When the row was stored (epoch ms). */
+            createdAt: number;
+            /**
+             * @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).
+             * @enum {string}
+             */
+            kind: "step" | "compaction" | "flush" | "other";
+            agentId: string | null;
+            sessionId: string | null;
+            turnId: string | null;
+            /** @description `step` calls: 0-based step of the turn. */
+            stepIndex: number | null;
+            /** @description `step` calls: the assistant message the step belongs to. */
+            messageId: string | null;
+            /** @description The task, when the session is a task session. */
+            taskId: string | null;
+            provider: string;
+            modelId: string;
+            /**
+             * @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).
+             * @enum {string}
+             */
+            status: "ok" | "error" | "aborted";
+            finishReason: string | null;
+            inputTokens: number | null;
+            outputTokens: number | null;
+            reasoningTokens: number | null;
+            /** @description Input tokens read from the prompt cache. */
+            cachedTokens: number | null;
+            /** @description Null when the model has no price in the catalog. */
+            costUsd: number | null;
+            /** @description Start of the provider call (epoch ms). */
+            startedAt: number;
+            /** @description Time to the first streamed content; null for non-streaming calls. */
+            firstChunkMs: number | null;
+            durationMs: number;
+            errorName: string | null;
+            errorMessage: string | null;
+            /** @description A JSON column was cut at the size cap; it then holds a `_truncated` marker with a preview. */
+            truncated: boolean;
+        };
+        ModelCallStats: {
+            from: number;
+            to: number;
+            /** @description Width of a bucket. */
+            bucketMs: number;
+            /** @description Every bucket of the range in order, empty ones included. */
+            buckets: {
+                start: number;
+                count: number;
+                /** @description Calls with status `error`. */
+                errors: number;
+                inputTokens: number;
+                outputTokens: number;
+                costUsd: number;
+            }[];
+            totals: {
+                count: number;
+                /** @description Calls with status `error`. */
+                errors: number;
+                inputTokens: number;
+                outputTokens: number;
+                costUsd: number;
+                aborted: number;
+            };
+            /** @description Distinct model ids in the range (ignoring the `model` filter), most called first. */
+            models: string[];
+        };
+        /** @description One call with every JSON column. */
+        ModelCallDetail: {
+            /** @description UUIDv7 of the call. */
+            id: string;
+            /** @description When the row was stored (epoch ms). */
+            createdAt: number;
+            /**
+             * @description `step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).
+             * @enum {string}
+             */
+            kind: "step" | "compaction" | "flush" | "other";
+            agentId: string | null;
+            sessionId: string | null;
+            turnId: string | null;
+            /** @description `step` calls: 0-based step of the turn. */
+            stepIndex: number | null;
+            /** @description `step` calls: the assistant message the step belongs to. */
+            messageId: string | null;
+            /** @description The task, when the session is a task session. */
+            taskId: string | null;
+            provider: string;
+            modelId: string;
+            /**
+             * @description `ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).
+             * @enum {string}
+             */
+            status: "ok" | "error" | "aborted";
+            finishReason: string | null;
+            inputTokens: number | null;
+            outputTokens: number | null;
+            reasoningTokens: number | null;
+            /** @description Input tokens read from the prompt cache. */
+            cachedTokens: number | null;
+            /** @description Null when the model has no price in the catalog. */
+            costUsd: number | null;
+            /** @description Start of the provider call (epoch ms). */
+            startedAt: number;
+            /** @description Time to the first streamed content; null for non-streaming calls. */
+            firstChunkMs: number | null;
+            durationMs: number;
+            errorName: string | null;
+            errorMessage: string | null;
+            /** @description A JSON column was cut at the size cap; it then holds a `_truncated` marker with a preview. */
+            truncated: boolean;
+            /** @description Provider-agnostic call options: prompt, tools, tool choice, settings. */
+            requestOptions?: unknown;
+            /** @description The body the provider received, when it reports it; null otherwise. */
+            requestBody?: unknown;
+            /** @description `{ id, modelId, timestamp, headers, body }` (credential-like headers are removed). */
+            response?: unknown;
+            /** @description `{ text, reasoning, toolCalls }`. */
+            output?: unknown;
+            providerMetadata?: unknown;
+            /** @description The usage object as the provider reported it. */
+            usageRaw?: unknown;
+            /** @description The row above in the list (newer) under the same filters. */
+            prevId: string | null;
+            /** @description The row below in the list (older) under the same filters. */
+            nextId: string | null;
         };
     };
     responses: never;

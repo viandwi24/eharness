@@ -80,6 +80,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 	};
 
 	const chatListeners = new Set<(e: TeamEvent) => void>();
+	const modelCallListeners = new Set<(e: TeamEvent) => void>();
 
 	const core = {
 		state,
@@ -88,6 +89,12 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		onChatEvent(fn: (e: TeamEvent) => void): () => void {
 			chatListeners.add(fn);
 			return () => chatListeners.delete(fn);
+		},
+
+		/** `model-call` events (one per logged provider call): the Logs page prepends rows. */
+		onModelCallEvent(fn: (e: TeamEvent) => void): () => void {
+			modelCallListeners.add(fn);
+			return () => modelCallListeners.delete(fn);
 		},
 
 		loadApprovals(): Promise<void> {
@@ -103,6 +110,16 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		},
 
 		handleEvent(e: TeamEvent): void {
+			if (e.type === 'model-call') {
+				for (const fn of modelCallListeners) {
+					try {
+						fn(e);
+					} catch (error) {
+						report(error);
+					}
+				}
+				return; // nothing else reads it
+			}
 			if (e.type === 'turn-started' || e.type === 'message-added') {
 				for (const fn of chatListeners) {
 					try {

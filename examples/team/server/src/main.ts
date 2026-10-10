@@ -10,6 +10,7 @@
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_OFFLINE      1 = never fetch the model catalog (cached in the TEAM_DB folder, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
+ *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
  */
 import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
@@ -21,10 +22,12 @@ import { areaOf } from './domain/library.ts'
 import { createApp } from './http/app.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
+import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
+import { type ActivityLog, createActivityLog } from './infra/eh/activity-log.ts'
 import {
   type AgentFactory,
   type AgentFactoryDeps,
@@ -68,6 +71,8 @@ export interface ServerConfig {
   limits?: TeamLimits
   /** Monthly USD limit of the workspace ledger scope. */
   budgetUsd?: number
+  /** Model call log retention: rows kept (default 5000) and days kept (default 7). */
+  logs?: { maxRows?: number; retentionDays?: number; jsonCap?: number }
   /** Poll interval of the SSE events feed (ms, default 500). */
   eventsPollMs?: number
   /** Routine ticker (interval, lookahead, grace, recovery). `tickMs: 0` = no timer. */
@@ -86,6 +91,8 @@ export interface Server {
   factory: AgentFactory
   team: TeamService
   routines: RoutineService
+  /** The model call log writer (the `model.call` plugin and the classifier observer). */
+  activityLog: ActivityLog
   /** Resolves when the boot repair pass finished. */
   ready: Promise<void>
   /** Run the repair pass now (idempotent; every instance may run it). */
@@ -134,6 +141,20 @@ export function compose(config: ServerConfig): Server {
       },
     })
   }
+  const modelCalls = sqliteModelCallStore(conn.sqlite, {
+    ...(config.logs?.jsonCap === undefined ? {} : { jsonCap: config.logs.jsonCap }),
+  })
+  const activityLog = createActivityLog({
+    store: modelCalls,
+    tasks,
+    agentOf: (slug) => agents.getBySlug(slug),
+    ...(config.logs?.maxRows === undefined ? {} : { maxRows: config.logs.maxRows }),
+    ...(config.logs?.retentionDays === undefined
+      ? {}
+      : { retentionDays: config.logs.retentionDays }),
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
+  activityLog.prune()
   const settings = sqliteSettingsStore(conn.sqlite, {
     defaults: {
       defaultPermissionMode: 'default',
@@ -172,6 +193,7 @@ export function compose(config: ServerConfig): Server {
         },
       }),
     taskStore: tasks,
+    activityLog,
     settings: () => {
       const s = settings.get()
       return { ...s, rev: s.updatedAt }
@@ -216,6 +238,7 @@ export function compose(config: ServerConfig): Server {
     schedule,
     routineEngine: routines,
     events,
+    modelCalls,
     clock: { now: () => Date.now() },
     ids: { next: () => newId() },
     workspaceId: WORKSPACE_ID,
@@ -260,6 +283,7 @@ export function compose(config: ServerConfig): Server {
     factory,
     team,
     routines,
+    activityLog,
     ready,
     reconcile,
     async close() {
@@ -278,6 +302,8 @@ if (import.meta.main) {
   const budget = Number(process.env.TEAM_BUDGET_USD)
   const spawnCap = Number(process.env.TEAM_SPAWN_CAP)
   const tickMs = Number(process.env.TEAM_ROUTINE_TICK_MS)
+  const logRows = Number(process.env.TEAM_LOG_MAX_ROWS)
+  const logDays = Number(process.env.TEAM_LOG_RETENTION_DAYS)
   const dbFile = process.env.TEAM_DB ?? './data/team.db'
   // prices and context windows: cached next to the database, never fatal (offline = no catalog)
   let catalog: ModelCatalog | undefined
@@ -294,6 +320,10 @@ if (import.meta.main) {
     ...(catalog === undefined ? {} : { catalog }),
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
     ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { limits: { spawnCap } } : {}),
+    logs: {
+      ...(Number.isFinite(logRows) && logRows > 0 ? { maxRows: logRows } : {}),
+      ...(Number.isFinite(logDays) && logDays > 0 ? { retentionDays: logDays } : {}),
+    },
     ...(process.env.TEAM_ROUTINE_TICK_MS !== undefined && Number.isFinite(tickMs) && tickMs >= 0
       ? { routines: { tickMs } }
       : {}),

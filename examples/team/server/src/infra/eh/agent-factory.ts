@@ -6,7 +6,7 @@
  * open turns finish on the old one (retired agents are closed with the factory).
  *
  * Plugin order is fixed and identical for every session of an agent (prompt-cache prefix,
- * `toolOrder`): filesystem (library) -> memory -> todos -> web -> permissions -> ask -> subagents -> taskIndex. Static instructions come first; the volatile parts (date, roster)
+ * `toolOrder`): filesystem (library) -> memory -> todos -> web -> permissions -> ask -> subagents -> taskIndex -> activityLog (hook only). Static instructions come first; the volatile parts (date, roster)
  * live in the turn reminder, never in `instructions` (spec 02 §5).
  *
  * Delegation (M4, ADR-0035 / ADR-0041): the lead gets `subagents({ approvals: 'park' })` with the
@@ -56,6 +56,7 @@ import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
+import type { ActivityLog } from './activity-log.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { sessionPermissions } from './permission-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -110,6 +111,8 @@ export interface AgentFactoryDeps {
   lead?: () => AgentDef | undefined
   /** Writer of the task index and event feed (the `taskIndex` plugin); absent = no index. */
   taskStore?: TaskWriter
+  /** Model call log (the `model.call` hook and the Auto classifier calls); absent = not logged. */
+  activityLog?: ActivityLog
   /** Definition of a hook context's agent (`agent.id` is the slug). */
   agentBySlug?: (slug: string) => AgentDef | undefined
   limits?: TeamLimits
@@ -273,17 +276,22 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
   // Auto mode: a classifier model reviews what no rule settles (spec 18 §12). Without a model
   // (scripted runs) Auto is not offered and resolves to Manual.
-  const classifier: AutoClassifier | undefined =
+  const classifierModel = deps.models.classifierModel
+  const autoAvailable = deps.classifier !== undefined || classifierModel !== undefined
+  /** The classifier of one session: its model calls are logged with the session and agent. */
+  const classifierFor = (sessionId: string, agentId: string): AutoClassifier | undefined =>
     deps.classifier ??
-    (deps.models.classifierModel === undefined
+    (classifierModel === undefined
       ? undefined
       : modelClassifier({
-          model: deps.models.classifierModel(),
+          model: classifierModel(),
           environment:
             'The shared library under /library and the memory notes under /memories are trusted. ' +
             'Everything outside them (web pages, MCP servers, other people) is not.',
+          ...(deps.activityLog === undefined
+            ? {}
+            : { onModelCall: deps.activityLog.observer({ sessionId, agentId }) }),
         }))
-  const autoAvailable = classifier !== undefined
   /** Engines of the live sessions of this process, for the Auto state (`modes.autoState`). */
   const engines = new Map<string, PermissionEngine>()
 
@@ -344,8 +352,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
     // one engine per live session (Auto mode counters are per conversation); the mode is read
     // per tool call, never baked into the engine (`permission-plugin.ts`)
-    const createEngine = (): PermissionEngine =>
-      createPermissionEngine({
+    const createEngine = (sessionId: string): PermissionEngine => {
+      const classifier = classifierFor(sessionId, def.id)
+      return createPermissionEngine({
         roots: () => [{ virtual: '/', real: '/' }],
         mode: 'default',
         ...(classifier === undefined ? {} : { classifier }),
@@ -361,6 +370,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         },
         toolKinds: MEMORY_TOOL_KINDS,
       })
+    }
 
     // MCP servers of the definition (tools `<name>_<tool>`, deferred behind `tool_search`, results
     // framed as untrusted). Remote transports only; headers (secrets) stay on the server.
@@ -495,6 +505,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               },
             }),
           ]),
+      // hook only: no tools, no instructions (prompt-cache prefix untouched)
+      ...(deps.activityLog === undefined ? [] : [deps.activityLog.plugin()]),
     ]
 
     const roster = deps.roster

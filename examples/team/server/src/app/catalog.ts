@@ -10,6 +10,7 @@ export {
 } from '../domain/agents.ts'
 export { MAX_NOTE_CHARS } from '../domain/approvals.ts'
 export { EVENT_TYPES } from '../domain/events.ts'
+export { MODEL_CALL_KINDS, MODEL_CALL_STATUSES } from '../domain/model-calls.ts'
 export { TEAM_MODES } from '../domain/modes.ts'
 export { SETTINGS_MODES } from '../domain/settings.ts'
 export { TASK_STATUSES } from '../domain/tasks.ts'

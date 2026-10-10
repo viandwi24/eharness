@@ -122,6 +122,53 @@ export const events = sqliteTable(
 )
 
 /**
+ * Model call log (the Logs page): one row per provider call, written by the `activityLog` plugin
+ * (`infra/eh/activity-log.ts`) on whichever instance runs the call. Pruned by count and age. The
+ * JSON columns are capped; `truncated` says one of them was cut.
+ */
+export const modelCalls = sqliteTable(
+  'model_calls',
+  {
+    id: text('id').primaryKey(),
+    createdAt: integer('created_at').notNull(),
+    kind: text('kind').notNull(),
+    agentId: text('agent_id'),
+    sessionId: text('session_id'),
+    turnId: text('turn_id'),
+    stepIndex: integer('step_index'),
+    messageId: text('message_id'),
+    taskId: text('task_id'),
+    provider: text('provider').notNull(),
+    modelId: text('model_id').notNull(),
+    status: text('status').notNull(),
+    finishReason: text('finish_reason'),
+    inputTokens: integer('input_tokens'),
+    outputTokens: integer('output_tokens'),
+    reasoningTokens: integer('reasoning_tokens'),
+    cachedTokens: integer('cached_tokens'),
+    costUsd: real('cost_usd'),
+    startedAt: integer('started_at').notNull(),
+    firstChunkMs: integer('first_chunk_ms'),
+    durationMs: integer('duration_ms').notNull(),
+    errorName: text('error_name'),
+    errorMessage: text('error_message'),
+    requestOptions: text('request_options'),
+    requestBody: text('request_body'),
+    response: text('response'),
+    output: text('output'),
+    providerMetadata: text('provider_metadata'),
+    usageRaw: text('usage_raw'),
+    truncated: integer('truncated').notNull().default(0),
+  },
+  (t) => [
+    index('model_calls_started').on(t.startedAt, t.id),
+    index('model_calls_agent').on(t.agentId, t.startedAt),
+    index('model_calls_session').on(t.sessionId, t.startedAt),
+    index('model_calls_created').on(t.createdAt),
+  ],
+)
+
+/**
  * Routines (plan §6.6, decision D3): the schedule rows. Every instance ticks; the winner of the
  * compare-and-set on `next_fire_at` fires the slot (`infra/eh/routine-service.ts`). `spec` is
  * `{ kind: 'cron', expr, tz } | { kind: 'every', everyMs } | { kind: 'at', at }`.

@@ -18,7 +18,7 @@ import { EH_MODE, type TeamMode } from '../../domain/modes.ts'
 
 export interface SessionPermissionsOptions {
   /** A fresh engine (rules, tool kinds, classifier) for a session. */
-  createEngine: () => PermissionEngine
+  createEngine: (sessionId: string) => PermissionEngine
   /** The mode of the session of `ctx` (own, inherited from the parent, agent, workspace). */
   mode: (ctx: HarnessContext) => TeamMode
   /** Engines of the live sessions of this process, by session id. */
@@ -32,7 +32,7 @@ export function sessionPermissions(opts: SessionPermissionsOptions): HarnessPlug
     name: 'permissions',
     session: (ctx) => {
       const sessionId = (ctx as HarnessContext).session.id
-      const engine = opts.createEngine()
+      const engine = opts.createEngine(sessionId)
       opts.registry.set(sessionId, engine)
       const unsubscribe = engine.subscribeAuto((event) => opts.onAuto?.(sessionId, event, engine))
       // the plan-exit tool belongs to plan mode, which the team app does not offer

@@ -170,7 +170,7 @@ export const EventSchema = z
   })
   .openapi('TeamEvent', {
     description:
-      '`message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview).',
+      '`message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page).',
   })
 
 export const EventListSchema = z

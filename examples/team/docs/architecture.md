@@ -73,6 +73,15 @@ which has no `session.start` hooks and resumes nothing
 tails it (poll, 500 ms) and replays from a cursor. It is app infrastructure; a library-level feed
 is request R3.
 
+**Model call log (Logs page).** The `activityLog` plugin (`infra/eh/activity-log.ts`) is registered on
+every agent and persists each `model.call` event
+([ADR-0047](../../../docs/decisions/0047-model-call-observer.md)) into `model_calls`: summary columns
+for the table plus capped JSON columns (request options and body, response, output, provider
+metadata, raw usage; 512 KB each, `truncated` flag). Auto mode classifier calls arrive through
+`modelClassifier({ onModelCall })` per session (kind `other`). Retention is a row cap and an age, pruned
+cheaply while writing (`TEAM_LOG_MAX_ROWS`, `TEAM_LOG_RETENTION_DAYS`). Each call also appends a
+`model-call` event so the page live-updates. A write failure is logged and never breaks a turn.
+
 **Stream log.** `eh_stream_log` / `eh_stream_chunks` implement the `StreamLogAdapter` port
 ([ADR-0039](../../../docs/decisions/0039-resumable-streams-stream-log.md)): cursor = chunk index,
 retention 10 min, readers poll. `GET /agents/{id}/chat/stream?from=` resumes a turn running on

@@ -10,9 +10,9 @@ dist
 coverage
 *.lcov
 
-# logs
-logs
-_.log
+# logs (root folder and log files only; source folders named `logs` are code)
+/logs
+*.log
 report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # dotenv environment variable files

@@ -9,6 +9,7 @@
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
 	import XIcon from 'phosphor-svelte/lib/X';
+	import PulseIcon from 'phosphor-svelte/lib/Pulse';
 	import { onMount } from 'svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -211,6 +212,9 @@
 						<dt class="text-muted-foreground">Role</dt>
 						<dd class="text-right capitalize">{agent.role}</dd>
 					</dl>
+					<Button variant="ghost" size="sm" class="mt-2 -ml-2 text-muted-foreground" href="/logs?sessionId={encodeURIComponent(`dm:${agent.id}`)}">
+						<PulseIcon /> View model calls
+					</Button>
 				</section>
 
 				<section>

@@ -27,7 +27,6 @@
 	import { startsAuthorRun } from '#lib/parts/map.js';
 	import { onDestroy, tick } from 'svelte';
 	import PendingCard from './PendingCard.svelte';
-	import ApprovalsPopover from './ApprovalsPopover.svelte';
 	import { toast } from 'svelte-sonner';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import { agentChat } from '#lib/chat/chats.svelte.js';
@@ -180,7 +179,6 @@
 			</div>
 		{/if}
 		<div class="flex shrink-0 items-center gap-0.5">
-			<ApprovalsPopover />
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props })}

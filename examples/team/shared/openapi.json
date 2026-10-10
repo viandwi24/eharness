@@ -43,6 +43,10 @@
       "description": "Approvals and questions waiting for a person, across sessions."
     },
     {
+      "name": "logs",
+      "description": "Model call log: every provider call with timing, tokens, cost and payloads."
+    },
+    {
       "name": "events",
       "description": "The feed of changes: JSON and SSE."
     }
@@ -1680,7 +1684,8 @@
               "routine-fired",
               "routine-changed",
               "settings-changed",
-              "mode-changed"
+              "mode-changed",
+              "model-call"
             ]
           },
           "agentId": {
@@ -1711,7 +1716,7 @@
           "payload",
           "createdAt"
         ],
-        "description": "`message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview)."
+        "description": "`message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page)."
       },
       "AgentSessions": {
         "type": "object",
@@ -2956,6 +2961,502 @@
         "required": [
           "runs"
         ]
+      },
+      "ModelCallList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ModelCallSummary"
+            }
+          },
+          "nextCursor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Pass as `cursor` for the next page; null at the end."
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor"
+        ]
+      },
+      "ModelCallSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "UUIDv7 of the call."
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "When the row was stored (epoch ms)."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "step",
+              "compaction",
+              "flush",
+              "other"
+            ],
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stepIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`step` calls: 0-based step of the turn."
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`step` calls: the assistant message the step belongs to."
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The task, when the session is a task session."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error",
+              "aborted"
+            ],
+            "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished)."
+          },
+          "finishReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "outputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reasoningTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cachedTokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Input tokens read from the prompt cache."
+          },
+          "costUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Null when the model has no price in the catalog."
+          },
+          "startedAt": {
+            "type": "integer",
+            "description": "Start of the provider call (epoch ms)."
+          },
+          "firstChunkMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Time to the first streamed content; null for non-streaming calls."
+          },
+          "durationMs": {
+            "type": "integer"
+          },
+          "errorName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "A JSON column was cut at the size cap; it then holds a `_truncated` marker with a preview."
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "kind",
+          "agentId",
+          "sessionId",
+          "turnId",
+          "stepIndex",
+          "messageId",
+          "taskId",
+          "provider",
+          "modelId",
+          "status",
+          "finishReason",
+          "inputTokens",
+          "outputTokens",
+          "reasoningTokens",
+          "cachedTokens",
+          "costUsd",
+          "startedAt",
+          "firstChunkMs",
+          "durationMs",
+          "errorName",
+          "errorMessage",
+          "truncated"
+        ],
+        "description": "One call without the large JSON columns."
+      },
+      "ModelCallStats": {
+        "type": "object",
+        "properties": {
+          "from": {
+            "type": "integer"
+          },
+          "to": {
+            "type": "integer"
+          },
+          "bucketMs": {
+            "type": "integer",
+            "description": "Width of a bucket."
+          },
+          "buckets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "integer"
+                },
+                "count": {
+                  "type": "integer"
+                },
+                "errors": {
+                  "type": "integer",
+                  "description": "Calls with status `error`."
+                },
+                "inputTokens": {
+                  "type": "integer"
+                },
+                "outputTokens": {
+                  "type": "integer"
+                },
+                "costUsd": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "start",
+                "count",
+                "errors",
+                "inputTokens",
+                "outputTokens",
+                "costUsd"
+              ]
+            },
+            "description": "Every bucket of the range in order, empty ones included."
+          },
+          "totals": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "errors": {
+                "type": "integer",
+                "description": "Calls with status `error`."
+              },
+              "inputTokens": {
+                "type": "integer"
+              },
+              "outputTokens": {
+                "type": "integer"
+              },
+              "costUsd": {
+                "type": "number"
+              },
+              "aborted": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "count",
+              "errors",
+              "inputTokens",
+              "outputTokens",
+              "costUsd",
+              "aborted"
+            ]
+          },
+          "models": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Distinct model ids in the range (ignoring the `model` filter), most called first."
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "bucketMs",
+          "buckets",
+          "totals",
+          "models"
+        ]
+      },
+      "ModelCallDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "UUIDv7 of the call."
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "When the row was stored (epoch ms)."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "step",
+              "compaction",
+              "flush",
+              "other"
+            ],
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "stepIndex": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`step` calls: 0-based step of the turn."
+          },
+          "messageId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`step` calls: the assistant message the step belongs to."
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The task, when the session is a task session."
+          },
+          "provider": {
+            "type": "string"
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "error",
+              "aborted"
+            ],
+            "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished)."
+          },
+          "finishReason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "inputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "outputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "reasoningTokens": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "cachedTokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Input tokens read from the prompt cache."
+          },
+          "costUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Null when the model has no price in the catalog."
+          },
+          "startedAt": {
+            "type": "integer",
+            "description": "Start of the provider call (epoch ms)."
+          },
+          "firstChunkMs": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Time to the first streamed content; null for non-streaming calls."
+          },
+          "durationMs": {
+            "type": "integer"
+          },
+          "errorName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "errorMessage": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "A JSON column was cut at the size cap; it then holds a `_truncated` marker with a preview."
+          },
+          "requestOptions": {
+            "description": "Provider-agnostic call options: prompt, tools, tool choice, settings."
+          },
+          "requestBody": {
+            "description": "The body the provider received, when it reports it; null otherwise."
+          },
+          "response": {
+            "description": "`{ id, modelId, timestamp, headers, body }` (credential-like headers are removed)."
+          },
+          "output": {
+            "description": "`{ text, reasoning, toolCalls }`."
+          },
+          "providerMetadata": {},
+          "usageRaw": {
+            "description": "The usage object as the provider reported it."
+          },
+          "prevId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The row above in the list (newer) under the same filters."
+          },
+          "nextId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The row below in the list (older) under the same filters."
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "kind",
+          "agentId",
+          "sessionId",
+          "turnId",
+          "stepIndex",
+          "messageId",
+          "taskId",
+          "provider",
+          "modelId",
+          "status",
+          "finishReason",
+          "inputTokens",
+          "outputTokens",
+          "reasoningTokens",
+          "cachedTokens",
+          "costUsd",
+          "startedAt",
+          "firstChunkMs",
+          "durationMs",
+          "errorName",
+          "errorMessage",
+          "truncated",
+          "prevId",
+          "nextId"
+        ],
+        "description": "One call with every JSON column."
       }
     },
     "parameters": {}
@@ -6645,6 +7146,518 @@
           },
           "404": {
             "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logs": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Model call log: one row per provider call, newest first",
+        "description": "Every call to a model (agent steps, compaction, memory flush, the Auto mode classifier) with timing, tokens and cost. Rows do not carry the request / response JSON: use `GET /logs/{id}`. Kept for a limited time and number of rows.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Calls started at or after this time (epoch ms)."
+            },
+            "required": false,
+            "description": "Calls started at or after this time (epoch ms).",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Calls started at or before this time (epoch ms)."
+            },
+            "required": false,
+            "description": "Calls started at or before this time (epoch ms).",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only calls of this agent (id)."
+            },
+            "required": false,
+            "description": "Only calls of this agent (id).",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only calls of this session (`dm:<agentId>`, a task session, ...)."
+            },
+            "required": false,
+            "description": "Only calls of this session (`dm:<agentId>`, a task session, ...).",
+            "name": "sessionId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "step",
+                "compaction",
+                "flush",
+                "other"
+              ],
+              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+            },
+            "required": false,
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "error",
+                "aborted"
+              ],
+              "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished)."
+            },
+            "required": false,
+            "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).",
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Model id contains this text (case-insensitive)."
+            },
+            "required": false,
+            "description": "Model id contains this text (case-insensitive).",
+            "name": "model",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Free text: matches the model id, the provider or the name of the agent."
+            },
+            "required": false,
+            "description": "Free text: matches the model id, the provider or the name of the agent.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "`nextCursor` of the previous page."
+            },
+            "required": false,
+            "description": "`nextCursor` of the previous page.",
+            "name": "cursor",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of calls",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCallList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logs/stats": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Histogram of calls over a time range, with totals",
+        "description": "Buckets of the range `from`..`to` (default: the last 24 hours) with count, errors, tokens and cost, under the same filters as the list.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Calls started at or after this time (epoch ms)."
+            },
+            "required": false,
+            "description": "Calls started at or after this time (epoch ms).",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Calls started at or before this time (epoch ms)."
+            },
+            "required": false,
+            "description": "Calls started at or before this time (epoch ms).",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only calls of this agent (id)."
+            },
+            "required": false,
+            "description": "Only calls of this agent (id).",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only calls of this session (`dm:<agentId>`, a task session, ...)."
+            },
+            "required": false,
+            "description": "Only calls of this session (`dm:<agentId>`, a task session, ...).",
+            "name": "sessionId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "step",
+                "compaction",
+                "flush",
+                "other"
+              ],
+              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+            },
+            "required": false,
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "error",
+                "aborted"
+              ],
+              "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished)."
+            },
+            "required": false,
+            "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).",
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Model id contains this text (case-insensitive)."
+            },
+            "required": false,
+            "description": "Model id contains this text (case-insensitive).",
+            "name": "model",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Free text: matches the model id, the provider or the name of the agent."
+            },
+            "required": false,
+            "description": "Free text: matches the model id, the provider or the name of the agent.",
+            "name": "q",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1000,
+              "description": "Bucket width in ms; default fits the range in about 60 buckets (at most 200)."
+            },
+            "required": false,
+            "description": "Bucket width in ms; default fits the range in about 60 buckets (at most 200).",
+            "name": "bucketMs",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Buckets and totals",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCallStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/logs/{id}": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "One call with its request, response and output",
+        "description": "Pass the list filters to get `prevId` / `nextId` of the neighbours in that view.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Id of the call."
+            },
+            "required": true,
+            "description": "Id of the call.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Calls started at or after this time (epoch ms)."
+            },
+            "required": false,
+            "description": "Calls started at or after this time (epoch ms).",
+            "name": "from",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "Calls started at or before this time (epoch ms)."
+            },
+            "required": false,
+            "description": "Calls started at or before this time (epoch ms).",
+            "name": "to",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only calls of this agent (id)."
+            },
+            "required": false,
+            "description": "Only calls of this agent (id).",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Only calls of this session (`dm:<agentId>`, a task session, ...)."
+            },
+            "required": false,
+            "description": "Only calls of this session (`dm:<agentId>`, a task session, ...).",
+            "name": "sessionId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "step",
+                "compaction",
+                "flush",
+                "other"
+              ],
+              "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier)."
+            },
+            "required": false,
+            "description": "`step` = a turn step of an agent, `compaction` = the history summarizer, `flush` = the pre-compaction memory flush, `other` = any other model call (the Auto mode classifier).",
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ok",
+                "error",
+                "aborted"
+              ],
+              "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished)."
+            },
+            "required": false,
+            "description": "`ok`, `error` (the provider call failed) or `aborted` (stopped before it finished).",
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Model id contains this text (case-insensitive)."
+            },
+            "required": false,
+            "description": "Model id contains this text (case-insensitive).",
+            "name": "model",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200,
+              "description": "Free text: matches the model id, the provider or the name of the agent."
+            },
+            "required": false,
+            "description": "Free text: matches the model id, the provider or the name of the agent.",
+            "name": "q",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The call",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelCallDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown call (it may have been pruned)",
             "content": {
               "application/json": {
                 "schema": {

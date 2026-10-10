@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ApprovalsPopover from './ApprovalsPopover.svelte';
 	import SidebarToggle from './SidebarToggle.svelte';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
@@ -8,6 +9,7 @@
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
+	import PulseIcon from 'phosphor-svelte/lib/Pulse';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
@@ -17,7 +19,6 @@
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openNewAgent } from '#lib/stores/dialogs.svelte.js';
 	import { formatTime } from '#lib/format.js';
-	import { live } from '#lib/stores/live.svelte.js';
 	import ThemeToggle from './ThemeToggle.svelte';
 
 	let query = $state('');
@@ -32,7 +33,6 @@
 			.sort((x, y) => y.t - x.t || x.i - y.i)
 			.map((x) => x.a)
 	);
-	const pendingCount = $derived(live.state.approvals.length);
 	const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
 
 	onMount(() => void agentsStore.load());
@@ -40,7 +40,8 @@
 	const nav = [
 		{ href: '/tasks', label: 'Tasks', icon: ListChecksIcon },
 		{ href: '/routines', label: 'Routines', icon: ClockIcon },
-		{ href: '/files', label: 'Files', icon: FolderOpenIcon }
+		{ href: '/files', label: 'Files', icon: FolderOpenIcon },
+		{ href: '/logs', label: 'Logs', icon: PulseIcon }
 	];
 
 	function onKeydown(e: KeyboardEvent): void {
@@ -89,6 +90,7 @@
 	</div>
 
 	<Sidebar.Menu class="gap-0.5 px-2" aria-label="Workspace">
+		<ApprovalsPopover />
 		{#each nav as n (n.href)}
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton isActive={page.url.pathname.startsWith(n.href)}>
@@ -99,9 +101,6 @@
 						</a>
 					{/snippet}
 				</Sidebar.MenuButton>
-				{#if n.href === '/tasks' && pendingCount > 0}
-					<Sidebar.MenuBadge aria-label="{pendingCount} waiting for approval">{pendingCount}</Sidebar.MenuBadge>
-				{/if}
 			</Sidebar.MenuItem>
 		{/each}
 	</Sidebar.Menu>
