@@ -19,6 +19,8 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as DropdownMenu from '#lib/components/ui/dropdown-menu/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
+	import * as Popover from '#lib/components/ui/popover/index.js';
+	import SessionContext from './SessionContext.svelte';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { Kbd } from '#lib/components/ui/kbd/index.js';
@@ -36,11 +38,17 @@
 	import MessageView from '#lib/parts/MessageView.svelte';
 	import ChatComposer from './ChatComposer.svelte';
 
+	/**
+	 * `panelOpen`: whether the session panel is shown (a column when `wide`, a popover below lg).
+	 * `popoverOpen` is the popover's state (bound by the page, which owns the shortcut).
+	 */
 	let {
 		agentId,
 		panelOpen = true,
+		wide = true,
+		popoverOpen = $bindable(false),
 		onTogglePanel
-	}: { agentId: string; panelOpen?: boolean; onTogglePanel: () => void } = $props();
+	}: { agentId: string; panelOpen?: boolean; wide?: boolean; popoverOpen?: boolean; onTogglePanel: () => void } = $props();
 
 	const agent = $derived(agentsStore.find(agentId));
 	// One cached chat per agent (history, stream and pagination survive switching agents).
@@ -152,6 +160,27 @@
 	const busy = $derived(chat.status === 'submitted' || chat.status === 'streaming');
 </script>
 
+{#snippet panelToggle(triggerProps: Record<string, unknown>)}
+	<Tooltip.Root>
+		<Tooltip.Trigger>
+			{#snippet child({ props })}
+				<Button
+					{...props}
+					{...triggerProps}
+					variant="ghost"
+					size="icon-sm"
+					aria-label={panelOpen ? 'Hide session panel' : 'Show session panel'}
+					aria-pressed={panelOpen}
+					onclick={wide ? onTogglePanel : (triggerProps.onclick as (() => void) | undefined)}
+				>
+					<SidebarSimpleIcon class="size-4" weight={panelOpen ? 'fill' : 'regular'} />
+				</Button>
+			{/snippet}
+		</Tooltip.Trigger>
+		<Tooltip.Content>{panelOpen ? 'Hide session panel' : 'Show session panel'} <Kbd>⌘.</Kbd></Tooltip.Content>
+	</Tooltip.Root>
+{/snippet}
+
 <Tooltip.Provider delayDuration={300}>
 <section class="flex h-full min-h-0 min-w-0 flex-1 flex-col">
 	<header class="flex h-14 shrink-0 items-center gap-2 border-b border-border px-3">
@@ -196,34 +225,32 @@
 					</DropdownMenu.Item>
 					<DropdownMenu.Separator />
 					<DropdownMenu.Item onSelect={onTogglePanel}>
-						<SidebarSimpleIcon /> {panelOpen ? 'Hide details' : 'Show details'}
+						<SidebarSimpleIcon /> {panelOpen ? 'Hide session panel' : 'Show session panel'}
 						<DropdownMenu.Shortcut>⌘.</DropdownMenu.Shortcut>
 					</DropdownMenu.Item>
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
-			<Tooltip.Root>
-				<Tooltip.Trigger>
-					{#snippet child({ props })}
-						<Button
-							{...props}
-							variant="ghost"
-							size="icon-sm"
-							aria-label={panelOpen ? 'Hide agent details' : 'Show agent details'}
-							aria-pressed={panelOpen}
-							onclick={onTogglePanel}
-						>
-							<SidebarSimpleIcon class="size-4" weight={panelOpen ? 'fill' : 'regular'} />
-						</Button>
-					{/snippet}
-				</Tooltip.Trigger>
-				<Tooltip.Content>{panelOpen ? 'Hide details' : 'Show details'} <Kbd>⌘.</Kbd></Tooltip.Content>
-			</Tooltip.Root>
+			{#if wide}
+				{@render panelToggle({})}
+			{:else}
+				<Popover.Root bind:open={popoverOpen}>
+					<Popover.Trigger>
+						{#snippet child({ props })}
+							{@render panelToggle(props)}
+						{/snippet}
+					</Popover.Trigger>
+					<Popover.Content align="end" class="max-h-[min(80svh,40rem)] w-[min(92vw,22rem)] overflow-y-auto p-0" aria-label="Agent session">
+						<SessionContext {agentId} elevation="flat" class="max-w-none border-0 shadow-none" onClose={() => (popoverOpen = false)} />
+					</Popover.Content>
+				</Popover.Root>
+			{/if}
 		</div>
 	</header>
 
 	<!-- The conversation fills the pane to the bottom; the pending card and the composer float over
 	     it (dock), and the content is padded by the dock's height so the last message stays visible. -->
-	<div class="relative flex min-h-0 flex-1 flex-col">
+	<div class="flex min-h-0 flex-1">
+	<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
 		<div bind:this={root} class="flex min-h-0 flex-1 flex-col">
 			{#key agentId}
 				<Conversation class="min-h-0 flex-1">
@@ -330,6 +357,13 @@
 				/>
 			</div>
 		</div>
+	</div>
+	{#if wide && panelOpen}
+		<!-- Second column of the same surface: the floating session card scrolls on its own. -->
+		<aside class="hidden w-[340px] shrink-0 overflow-y-auto p-3 pl-0 lg:block" aria-label="Agent session">
+			<SessionContext {agentId} onClose={onTogglePanel} />
+		</aside>
+	{/if}
 	</div>
 </section>
 </Tooltip.Provider>

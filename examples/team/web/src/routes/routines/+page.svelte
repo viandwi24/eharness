@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Surface from '#lib/components/app/Surface.svelte';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import PauseIcon from 'phosphor-svelte/lib/Pause';
@@ -27,7 +28,8 @@
 
 	let routines = $state<Routine[] | null>(null);
 	let error = $state('');
-	let agentFilter = $state('');
+	// `?agentId=` preselects the filter (the agent chat's session panel links here).
+	let agentFilter = $state(page.url.searchParams.get('agentId') ?? '');
 	let busy = $state<string | null>(null);
 	let seq = 0;
 

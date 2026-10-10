@@ -17,7 +17,5 @@ export function writePref(key: string, value: string): void {
 	}
 }
 
-/** The agent panel's open state (desktop inline column). Defaults to open. */
+/** The agent session panel's open state (desktop column). Defaults to open. */
 export const PANEL_OPEN_KEY = 'team.agentPanel.open';
-/** The agent panel's last tab, per agent. */
-export const panelTabKey = (agentId: string): string => `team.agentPanel.tab.${agentId}`;
