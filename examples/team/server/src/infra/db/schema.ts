@@ -3,7 +3,7 @@
  * with `bun run db:generate`; the eharness adapters (`infra/eh/storage.ts`) use the `eh_*`
  * tables with plain SQL on the same connection.
  */
-import { blob, index, integer, primaryKey, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import { blob, index, integer, primaryKey, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
 
 const json = <T>(name: string) => text(name, { mode: 'json' }).$type<T>()
 
@@ -48,34 +48,56 @@ export const chats = sqliteTable('chats', {
   lastPreview: text('last_preview'),
   unread: integer('unread').notNull().default(0),
   lastReadMessageId: text('last_read_message_id'),
+  /** Events up to this `seq` are read: unread = message events of the agent after it (M4). */
+  lastReadSeq: integer('last_read_seq').notNull().default(0),
 })
 
-/** Index derived from sessions (request R1); the session stays the truth. */
+/**
+ * Index derived from sessions (request R1); the session stays the truth. One row per task session
+ * (a child of the lead, later a routine run): written by the `taskIndex` plugin on whichever
+ * instance runs the turn, repaired by the boot / periodic drift pass (`infra/eh/team-service.ts`).
+ * The `state` column holds the task status (`needs_action|running|done|failed|stopped`).
+ */
 export const tasks = sqliteTable(
   'tasks',
   {
     id: text('id').primaryKey(),
+    /** Owner: the agent that runs the task session. */
     agentId: text('agent_id').notNull(),
     sessionId: text('session_id').notNull().unique(),
     parentSessionId: text('parent_session_id'),
     origin: text('origin').notNull(),
     title: text('title').notNull(),
-    state: text('state').notNull(),
+    status: text('state').notNull(),
     pendingKind: text('pending_kind'),
     startedAt: integer('started_at').notNull(),
     endedAt: integer('ended_at'),
     summary: text('summary'),
+    lastActivityAt: integer('last_activity_at').notNull().default(0),
+    costUsd: real('cost_usd').notNull().default(0),
+    tokens: integer('tokens').notNull().default(0),
   },
-  (t) => [index('tasks_state').on(t.state), index('tasks_agent').on(t.agentId)],
+  (t) => [
+    index('tasks_state').on(t.status),
+    index('tasks_agent').on(t.agentId),
+    index('tasks_parent').on(t.parentSessionId),
+  ],
 )
 
-/** Feed for the UI (plan §5.3); every instance tails it. */
-export const events = sqliteTable('events', {
-  seq: integer('seq').primaryKey({ autoIncrement: true }),
-  type: text('type').notNull(),
-  payload: json<Record<string, unknown>>('payload').notNull(),
-  createdAt: integer('created_at').notNull(),
-})
+/** Append-only feed for the UI (plan §5.3); every instance tails it by `seq`. */
+export const events = sqliteTable(
+  'events',
+  {
+    seq: integer('seq').primaryKey({ autoIncrement: true }),
+    type: text('type').notNull(),
+    /** Agent the event concerns (sidebar rows), when there is one. */
+    agentId: text('agent_id'),
+    sessionId: text('session_id'),
+    payload: json<Record<string, unknown>>('payload').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [index('events_agent').on(t.agentId, t.type, t.seq)],
+)
 
 export const routines = sqliteTable(
   'routines',

@@ -21,6 +21,18 @@
     {
       "name": "library",
       "description": "Shared files (uploads)."
+    },
+    {
+      "name": "tasks",
+      "description": "Delegated work across agents (the board)."
+    },
+    {
+      "name": "approvals",
+      "description": "Approvals and questions waiting for a person, across sessions."
+    },
+    {
+      "name": "events",
+      "description": "The feed of changes: JSON and SSE."
     }
   ],
   "components": {
@@ -62,13 +74,99 @@
           "agents": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Agent"
+              "$ref": "#/components/schemas/AgentListItem"
             }
           }
         },
         "required": [
           "agents"
         ]
+      },
+      "AgentListItem": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Agent"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "lastActivity": {
+                "$ref": "#/components/schemas/AgentActivity"
+              }
+            },
+            "required": [
+              "lastActivity"
+            ]
+          }
+        ]
+      },
+      "ToolName": {
+        "type": "string",
+        "enum": [
+          "library_read",
+          "library_write",
+          "memory",
+          "todos",
+          "web_search",
+          "web_fetch",
+          "ask_user",
+          "delegate",
+          "send_message",
+          "mcp"
+        ]
+      },
+      "PermissionRules": {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "ask": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        },
+        "description": "Permission rules in `Tool(spec)` form (eharness/permissions)."
+      },
+      "AgentActivity": {
+        "type": "object",
+        "properties": {
+          "lastMessageAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unread": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "lastMessageAt",
+          "preview",
+          "unread"
+        ],
+        "description": "Sidebar data: last message time, its preview and the unread count."
       },
       "Agent": {
         "type": "object",
@@ -187,48 +285,6 @@
           "createdAt",
           "updatedAt"
         ]
-      },
-      "ToolName": {
-        "type": "string",
-        "enum": [
-          "library_read",
-          "library_write",
-          "memory",
-          "todos",
-          "web_search",
-          "web_fetch",
-          "ask_user",
-          "delegate",
-          "send_message",
-          "mcp"
-        ]
-      },
-      "PermissionRules": {
-        "type": "object",
-        "properties": {
-          "allow": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": []
-          },
-          "ask": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": []
-          },
-          "deny": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "default": []
-          }
-        },
-        "description": "Permission rules in `Tool(spec)` form (eharness/permissions)."
       },
       "Error": {
         "type": "object",
@@ -870,6 +926,526 @@
           "version",
           "url"
         ]
+      },
+      "TaskList": {
+        "type": "object",
+        "properties": {
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          }
+        },
+        "required": [
+          "tasks"
+        ]
+      },
+      "Task": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string",
+            "description": "The agent that runs the task session."
+          },
+          "sessionId": {
+            "type": "string",
+            "example": "dm:0198…:agent:call_1"
+          },
+          "parentSessionId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The session that delegated the task (the lead DM), if any."
+          },
+          "origin": {
+            "type": "string",
+            "enum": [
+              "user",
+              "lead",
+              "routine"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/TaskStatus"
+          },
+          "pendingKind": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "approval",
+              "question",
+              null
+            ]
+          },
+          "startedAt": {
+            "type": "integer"
+          },
+          "endedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Preview of the last report."
+          },
+          "lastActivityAt": {
+            "type": "integer"
+          },
+          "costUsd": {
+            "type": "number"
+          },
+          "tokens": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "sessionId",
+          "parentSessionId",
+          "origin",
+          "title",
+          "status",
+          "pendingKind",
+          "startedAt",
+          "endedAt",
+          "summary",
+          "lastActivityAt",
+          "costUsd",
+          "tokens"
+        ]
+      },
+      "TaskStatus": {
+        "type": "string",
+        "enum": [
+          "needs_action",
+          "running",
+          "done",
+          "failed",
+          "stopped"
+        ],
+        "description": "`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted)."
+      },
+      "TaskDetail": {
+        "type": "object",
+        "properties": {
+          "task": {
+            "$ref": "#/components/schemas/Task"
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UiMessage"
+            },
+            "description": "The stored messages of the task session (newest 200)."
+          },
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            },
+            "description": "What the task waits for."
+          }
+        },
+        "required": [
+          "task",
+          "messages",
+          "approvals"
+        ]
+      },
+      "Approval": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The approval id, or the tool call id of a question: the `{id}` of `POST /approvals/{id}`."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "approval",
+              "question"
+            ]
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "parentSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "agentName": {
+            "type": "string"
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "toolCallId": {
+            "type": "string"
+          },
+          "toolName": {
+            "type": "string"
+          },
+          "input": {},
+          "risk": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "read",
+              "write",
+              "external",
+              "unknown",
+              null
+            ]
+          },
+          "questions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/Question"
+            }
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "sessionId",
+          "parentSessionId",
+          "agentId",
+          "agentName",
+          "taskId",
+          "toolCallId",
+          "toolName",
+          "risk",
+          "questions"
+        ]
+      },
+      "Question": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "header": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "label"
+              ]
+            }
+          },
+          "multiSelect": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "question",
+          "header",
+          "options",
+          "multiSelect"
+        ]
+      },
+      "ApprovalList": {
+        "type": "object",
+        "properties": {
+          "approvals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Approval"
+            }
+          }
+        },
+        "required": [
+          "approvals"
+        ]
+      },
+      "ApprovalAccepted": {
+        "type": "object",
+        "properties": {
+          "accepted": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "id": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "accepted",
+          "id",
+          "sessionId",
+          "agentId"
+        ],
+        "description": "The answer is recorded and the session continues in the background; follow it with the events feed."
+      },
+      "ApprovalAnswer": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/ApprovalDecision"
+          },
+          {
+            "$ref": "#/components/schemas/QuestionAnswer"
+          }
+        ]
+      },
+      "ApprovalDecision": {
+        "type": "object",
+        "properties": {
+          "approved": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Shown to the model when denied."
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 4000,
+            "description": "A free-text note of the person about this call: the model reads it right after the result (approved) or as part of the reason (denied)."
+          },
+          "endTurn": {
+            "type": "string",
+            "enum": [
+              "after-answers",
+              "if-denied"
+            ],
+            "description": "End the turn after the answer without calling the model again (spec 11): always, or only when denied."
+          },
+          "sessionId": {
+            "type": "string",
+            "description": "Session of the item; only needed when two sessions carry the same id."
+          }
+        },
+        "required": [
+          "approved"
+        ],
+        "description": "Answer of a tool approval."
+      },
+      "QuestionAnswer": {
+        "type": "object",
+        "properties": {
+          "answers": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "properties": {
+                "selected": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "other": {
+                  "type": "string"
+                },
+                "notes": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "One answer per question, in order; null dismisses the questions."
+          },
+          "sessionId": {
+            "type": "string",
+            "description": "Session of the item; only needed when two sessions carry the same id."
+          }
+        },
+        "required": [
+          "answers"
+        ],
+        "description": "Answer of an `ask_user_question` question."
+      },
+      "EventList": {
+        "type": "object",
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TeamEvent"
+            }
+          },
+          "lastSeq": {
+            "type": "integer",
+            "description": "Cursor for the next call: the `seq` of the last event, else the current head."
+          }
+        },
+        "required": [
+          "events",
+          "lastSeq"
+        ]
+      },
+      "TeamEvent": {
+        "type": "object",
+        "properties": {
+          "seq": {
+            "type": "integer"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "message-added",
+              "task-changed",
+              "approval-needed",
+              "approval-decided",
+              "agent-message",
+              "file-changed",
+              "agent-changed",
+              "routine-fired"
+            ]
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "createdAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "seq",
+          "type",
+          "agentId",
+          "sessionId",
+          "payload",
+          "createdAt"
+        ],
+        "description": "`message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview)."
+      },
+      "AgentSessions": {
+        "type": "object",
+        "properties": {
+          "dm": {
+            "type": "object",
+            "properties": {
+              "sessionId": {
+                "type": "string"
+              },
+              "lastMessageAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "preview": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "unread": {
+                "type": "integer"
+              },
+              "pending": {
+                "type": "integer",
+                "description": "Approvals / questions waiting in the DM."
+              }
+            },
+            "required": [
+              "sessionId",
+              "lastMessageAt",
+              "preview",
+              "unread",
+              "pending"
+            ]
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "description": "Tasks this agent runs."
+          },
+          "delegated": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "description": "Tasks this agent handed to others."
+          }
+        },
+        "required": [
+          "dm",
+          "tasks",
+          "delegated"
+        ]
+      },
+      "ReadMarker": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "lastReadSeq": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "agentId",
+          "lastReadSeq"
+        ]
       }
     },
     "parameters": {}
@@ -900,7 +1476,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "List agents",
+        "summary": "List agents with their sidebar activity",
         "security": [
           {
             "Bearer": []
@@ -1904,6 +2480,573 @@
           },
           "413": {
             "description": "File too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "The task board: tasks across agents",
+        "description": "Tasks are delegated runs (child sessions of the lead). The index is written by every instance on turn start / end and repaired at boot, so it is the same for all of them. Newest activity first.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "allOf": [
+                {
+                  "$ref": "#/components/schemas/TaskStatus"
+                },
+                {
+                  "description": "Only this status."
+                }
+              ]
+            },
+            "required": false,
+            "description": "Only this status.",
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only tasks of this agent (id or slug)."
+            },
+            "required": false,
+            "description": "Only tasks of this agent (id or slug).",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "A task with the messages of its session and what it waits for",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/approvals": {
+      "get": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Everything that waits for a person, across all sessions",
+        "description": "Pending tool approvals and `ask_user_question` questions of every DM chat and every delegated task, read from the stored session state (any instance).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pending items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/approvals/{id}": {
+      "post": {
+        "tags": [
+          "approvals"
+        ],
+        "summary": "Answer an approval or a question",
+        "description": "`respond()` on the session that owns the item, from whichever instance receives the request. Nothing streams: the continuation runs server side (a child task continues, and when it ends the lead that waits for it resumes by itself) and shows in the events feed.\n\n- Approval: `{ approved, reason?, note?, endTurn? }`. `note` is shown to the model after the result; `endTurn` ends the turn after the answer without a model call (`after-answers`, or `if-denied`).\n- Question: `{ answers }` (one per question, `null` dismisses).\n\nAn item that is gone (answered elsewhere) is `404`; a stale answer or a running turn is `409`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "The `id` of an item of `GET /approvals`."
+            },
+            "required": true,
+            "description": "The `id` of an item of `GET /approvals`.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApprovalAnswer"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Recorded; the session continues",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApprovalAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such pending item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Stale answer, ambiguous id, or a turn of the session is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Events after a cursor (JSON)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,15}$",
+              "description": "Return events with a higher `seq`. Default 0."
+            },
+            "required": false,
+            "description": "Return events with a higher `seq`. Default 0.",
+            "name": "after",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Events, oldest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/events/stream": {
+      "get": {
+        "tags": [
+          "events"
+        ],
+        "summary": "Live event feed (SSE)",
+        "description": "Every instance tails the `events` table (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,15}$",
+              "description": "Replay events with a higher `seq`."
+            },
+            "required": false,
+            "description": "Replay events with a higher `seq`.",
+            "name": "after",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-sent events",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open.",
+                  "example": "id: 12\nevent: task-changed\ndata: {\"seq\":12,\"type\":\"task-changed\",…}\n\n"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/sessions": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "The DM chat and the tasks of an agent",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "DM state, owned and delegated tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentSessions"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/read": {
+      "post": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Mark the chat of an agent as read (clears its unread count)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new marker",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadMarker"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
             "content": {
               "application/json": {
                 "schema": {

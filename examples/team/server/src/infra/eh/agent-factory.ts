@@ -6,14 +6,21 @@
  * open turns finish on the old one (retired agents are closed with the factory).
  *
  * Plugin order is fixed and identical for every session of an agent (prompt-cache prefix,
- * `toolOrder`): filesystem (library) -> memory -> todos -> web -> permissions -> ask -> MCP ->
- * (lead: subagents + roster tools, M4) -> taskIndex (M4). Static instructions come first; the
- * volatile parts (date, roster) live in the turn reminder, never in `instructions` (spec 02 §5).
+ * `toolOrder`): filesystem (library) -> memory -> todos -> web -> permissions -> ask -> MCP (TODO)
+ * -> subagents -> taskIndex. Static instructions come first; the volatile parts (date, roster)
+ * live in the turn reminder, never in `instructions` (spec 02 §5).
+ *
+ * Delegation (M4, ADR-0035 / ADR-0041): the lead gets `subagents({ approvals: 'park' })` with the
+ * role agents of the DB roster; every other agent gets the child side of the same plugin
+ * (`parentAgent` = the lead, `selfAgent` = itself) so it can `send_message` to `main` and reports
+ * of resumed turns find their way back. All instances build the same plugin set, which waits
+ * and reconcile need.
  */
 import type { Database } from 'bun:sqlite'
 import {
   defineHarnessAgent,
   type HarnessAgent,
+  type HarnessSession,
   type HarnessWarning,
   type SessionLock,
 } from 'eharness'
@@ -21,15 +28,26 @@ import { askUser } from 'eharness/ask'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
 import { memory } from 'eharness/memory'
 import { createPermissionEngine, permissionsPlugin } from 'eharness/permissions'
+import { AGENT_MESSAGE_INSTRUCTIONS, subagents } from 'eharness/subagent'
 import { todos } from 'eharness/todos'
 import { webFetch, webSearch } from 'eharness/web'
 import type { AgentDef, ToolName } from '../../domain/agents.ts'
 import { MAX_UPLOAD_BYTES } from '../../domain/chat.ts'
 import { memoryRootsFor, pinnedMemoryFiles } from '../../domain/memory.ts'
+import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
+import type { TaskWriter } from '../db/tasks-repo.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
-import { sqliteInbox, sqliteLock, sqliteMessages, sqliteState } from './storage.ts'
+import {
+  setBudgetLimit,
+  sqliteBudgetLedger,
+  sqliteInbox,
+  sqliteLock,
+  sqliteMessages,
+  sqliteState,
+} from './storage.ts'
 import { sqliteStreamLog } from './stream-log.ts'
+import { taskIndex } from './task-index.ts'
 
 const READ_TOOLS: FileToolName[] = ['list_files', 'read_file', 'grep', 'glob']
 const WRITE_TOOLS: FileToolName[] = ['write_file', 'edit_file', 'delete_file']
@@ -45,11 +63,31 @@ const MEMORY_TOOL_KINDS = {
 }
 const MEMORY_ALLOW = Object.keys(MEMORY_TOOL_KINDS).filter((n) => n !== 'memory_view')
 
+/** Limits of delegation (plan decision D4: multi-agent runs cost many times a chat). */
+export interface TeamLimits {
+  /** Children the lead starts at once (the spawn cap). Default 4. */
+  spawnCap?: number
+  /** Steps a role agent may take per delegated run. Default 30. */
+  childMaxTurns?: number
+  /** How long the lead stays parked on a task before the wait times out (ms). Default 24 h. */
+  parkTimeoutMs?: number
+}
+
 export interface AgentFactoryDeps {
   sqlite: Database
   models: ModelConfig
-  /** Lead's roster (role agents) for the turn reminder; M4 also feeds `subagents`. */
+  workspaceId?: string
+  /** Role agents the lead can delegate to (`subagents` catalog and the turn reminder). */
   roster?: () => AgentDef[]
+  /** The lead's definition: role agents resolve their parent (`parentAgent`) through it. */
+  lead?: () => AgentDef | undefined
+  /** Writer of the task index and event feed (the `taskIndex` plugin); absent = no index. */
+  taskStore?: TaskWriter
+  /** Definition of a hook context's agent (`agent.id` is the slug). */
+  agentBySlug?: (slug: string) => AgentDef | undefined
+  limits?: TeamLimits
+  /** Monthly USD limit of the workspace ledger scope; absent = tracked, not limited. */
+  budgetUsd?: number
   /** Called after a library file changed (event feed, M4). */
   onFileChange?: (change: LibraryChange) => void
   onWarning?: (warning: HarnessWarning) => void
@@ -73,9 +111,14 @@ export interface AgentFactory {
   storage: ReturnType<typeof createStorage>
   /** Cross-process turn lock; pass it as `session(id, { lock })`. */
   lock: SessionLock
+  /** Open a session of a definition's agent with the shared lock and runtime (any instance). */
+  openSession(def: AgentDef, sessionId: string): HarnessSession
   /** Close every agent built (shutdown). */
   close(): Promise<void>
 }
+
+/** Ledger scope of the workspace: every model call of every agent reserves against it. */
+export const workspaceScope = (workspaceId: string): string => `workspace:${workspaceId}`
 
 function createStorage(sqlite: Database) {
   return {
@@ -102,11 +145,30 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   const lock = sqliteLock(sqlite, {
     ...(deps.lockLeaseMs !== undefined ? { leaseMs: deps.lockLeaseMs } : {}),
   })
+  const workspaceId = deps.workspaceId ?? 'default'
+  const ledger = sqliteBudgetLedger(sqlite)
+  if (deps.budgetUsd !== undefined)
+    setBudgetLimit(sqlite, workspaceScope(workspaceId), deps.budgetUsd)
+  const limits = {
+    spawnCap: deps.limits?.spawnCap ?? 4,
+    childMaxTurns: deps.limits?.childMaxTurns ?? 30,
+    parkTimeoutMs: deps.limits?.parkTimeoutMs ?? 24 * 60 * 60 * 1000,
+  }
   const cache = new Map<string, HarnessAgent>()
   const latest = new Map<string, string>()
   const retired: HarnessAgent[] = []
 
+  const leadAgent = (): HarnessAgent => {
+    const lead = deps.lead?.()
+    if (lead === undefined) throw new Error('the workspace has no lead agent')
+    return factoryAgentFor(lead)
+  }
+
   function build(def: AgentDef): HarnessAgent {
+    const holder: { self?: HarnessAgent } = {}
+    const self = (): HarnessAgent => holder.self as HarnessAgent
+    const delegates = def.role === 'lead' && has(def, 'delegate')
+    const messaging = def.role === 'lead' ? has(def, 'send_message') : true
     const fs = libraryFs(sqlite, {
       agentId: def.id,
       ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
@@ -168,8 +230,59 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         : []),
       permissionsPlugin({ engine }),
       ...(has(def, 'ask_user') ? [askUser()] : []),
-      // TODO(M4): mcpServer() per def.mcp; subagents({ agents: roster, approvals: 'park' }) +
-      // roster tools for the lead; taskIndex plugin
+      // TODO: mcpServer() per def.mcp (M8)
+      ...(delegates
+        ? [
+            subagents({
+              agents: () =>
+                Object.fromEntries(
+                  (deps.roster?.() ?? [])
+                    .filter((a) => a.id !== def.id && a.archivedAt === null)
+                    .map((a) => [
+                      a.slug,
+                      {
+                        agent: factoryAgentFor(a),
+                        description: a.description === '' ? a.name : a.description,
+                        maxTurns: limits.childMaxTurns,
+                      },
+                    ]),
+                ),
+              approvals: 'park',
+              parkTimeoutMs: limits.parkTimeoutMs,
+              maxConcurrent: limits.spawnCap,
+              // role agents are leaves: a delegation is one level deep
+              maxDepth: 1,
+              messageTool: messaging,
+              outputTool: messaging,
+              stopTool: messaging,
+              selfAgent: self,
+            }),
+          ]
+        : def.role === 'lead'
+          ? []
+          : [
+              // child side: send_message to main, reports of resumed turns, reconcile on open
+              subagents({
+                agents: {},
+                approvals: 'park',
+                parentAgent: leadAgent,
+                selfAgent: self,
+                messageTool: true,
+                outputTool: false,
+                stopTool: false,
+              }),
+            ]),
+      ...(deps.taskStore === undefined
+        ? []
+        : [
+            taskIndex({
+              store: deps.taskStore,
+              agentOf: (slug) => {
+                const found = deps.agentBySlug?.(slug)
+                return found === undefined ? undefined : { id: found.id, name: found.name }
+              },
+            }),
+          ]),
     ]
 
     const roster = deps.roster
@@ -190,13 +303,22 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       refresh: 'turn' as const,
     }
 
-    return defineHarnessAgent({
+    const agent = defineHarnessAgent({
       id: def.slug,
       model: deps.models.resolve(def.model),
       contextWindow: 200_000,
-      instructions: [TEAM_PREAMBLE, def.instructions, reminder],
+      instructions: [
+        TEAM_PREAMBLE,
+        ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
+        ...(delegates || messaging ? [AGENT_MESSAGE_INSTRUCTIONS] : []),
+        def.instructions,
+        reminder,
+      ],
       plugins,
       storage,
+      budget: {
+        ledger: { adapter: ledger, scopes: () => [workspaceScope(workspaceId)] },
+      },
       loop: { maxSteps: 40 },
       // uploads are checked by the chat route; the core caps data URLs at the same size
       inputFiles: { protocols: ['data:', 'https:'], maxBytes: MAX_UPLOAD_BYTES },
@@ -209,29 +331,38 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
     }) as unknown as HarnessAgent
+    holder.self = agent
+    return agent
+  }
+
+  function factoryAgentFor(def: AgentDef): HarnessAgent {
+    const key = `${def.id}@${def.version}`
+    let agent = cache.get(key)
+    if (agent === undefined) {
+      agent = build(def)
+      cache.set(key, agent)
+      const previous = latest.get(def.id)
+      if (previous !== undefined && previous !== key) {
+        const old = cache.get(previous)
+        if (old !== undefined) {
+          retired.push(old)
+          cache.delete(previous)
+        }
+      }
+      latest.set(def.id, key)
+    }
+    return agent
   }
 
   return {
     storage,
     lock,
-    agentFor(def) {
-      const key = `${def.id}@${def.version}`
-      let agent = cache.get(key)
-      if (agent === undefined) {
-        agent = build(def)
-        cache.set(key, agent)
-        const previous = latest.get(def.id)
-        if (previous !== undefined && previous !== key) {
-          const old = cache.get(previous)
-          if (old !== undefined) {
-            retired.push(old)
-            cache.delete(previous)
-          }
-        }
-        latest.set(def.id, key)
-      }
-      return agent
-    },
+    agentFor: factoryAgentFor,
+    openSession: (def, sessionId) =>
+      factoryAgentFor(def).session(sessionId, {
+        lock,
+        runtime: { workspaceId, agentId: def.id },
+      }) as HarnessSession,
     async close() {
       await Promise.allSettled([...cache.values(), ...retired].map((a) => a.close()))
       cache.clear()

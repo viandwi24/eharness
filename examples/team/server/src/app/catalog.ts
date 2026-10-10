@@ -7,3 +7,6 @@ export {
   TOOL_CATALOG,
   TOOL_NAMES,
 } from '../domain/agents.ts'
+export { MAX_NOTE_CHARS } from '../domain/approvals.ts'
+export { EVENT_TYPES } from '../domain/events.ts'
+export { TASK_STATUSES } from '../domain/tasks.ts'

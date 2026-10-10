@@ -15,6 +15,13 @@
       "when": 1791610425133,
       "tag": "0001_stream_log",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791611253534,
+      "tag": "0002_tasks_events_feed",
+      "breakpoints": true
     }
   ]
 }

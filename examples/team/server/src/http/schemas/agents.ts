@@ -1,5 +1,6 @@
 import { z } from '@hono/zod-openapi'
 import { AGENT_ROLES, PERMISSION_MODES, TOOL_CATALOG, TOOL_NAMES } from '../../app/catalog.ts'
+import { ActivitySchema } from './tasks.ts'
 
 const Rules = z
   .object({
@@ -67,7 +68,15 @@ export const AgentPatchSchema = AgentCreateSchema.omit({ slug: true, role: true 
   .partial()
   .openapi('AgentPatch', { description: 'Only the given fields change; `version` bumps.' })
 
-export const AgentListSchema = z.object({ agents: z.array(AgentSchema) }).openapi('AgentList')
+export const AgentListItemSchema = AgentSchema.extend({
+  lastActivity: ActivitySchema.openapi({
+    description: 'Sidebar data: last message time, its preview and the unread count.',
+  }),
+}).openapi('AgentListItem')
+
+export const AgentListSchema = z
+  .object({ agents: z.array(AgentListItemSchema) })
+  .openapi('AgentList')
 
 export const ToolCatalogSchema = z
   .object({

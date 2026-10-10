@@ -1,6 +1,6 @@
 # P32 — Team-agent example (`examples/team`)
 
-Status: in progress (M1-M3 done) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
+Status: in progress (M1-M4 done) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
 
 ## Goal
 
@@ -580,10 +580,28 @@ uploads are `POST /library/files` and return a `library:///uploads/…` url to u
 
 ### M4 — Lead, role agents, tasks
 
-- [ ] `subagents` park config, `subagentChild`, roster from DB; close R4 in the library (park-mode `send_message`)
-- [ ] `taskIndex` plugin, `tasks` and `events` tables, board and approval routes, SSE feed
-- [ ] Boot reconcile (`selfAgent`, `reconcileSubagentWaits`, task drift pass)
-- [ ] Restart integration test: kill between park and answer
+- [x] `subagents` park config on the lead (roster from the DB, `messageTool` / `outputTool` / `stopTool`, `selfAgent`, spawn cap = `maxConcurrent`, `maxDepth: 1`, `parkTimeoutMs`), role agents as park children (`subagents({ agents: {}, approvals: 'park', parentAgent, selfAgent })`), per-workspace budget ledger scope `workspace:<id>` (`TEAM_BUDGET_USD`); lead / role prompts in `domain/prompts.ts` (D4: a convention, our own words). R4 is closed in the library (ADR-0041): `send_message` resumes a finished role agent across instances, tested here
+- [x] `taskIndex` plugin (`infra/eh/task-index.ts`: hooks `turn.start`, `turn.end`, `approval.decided`, `tool.after`), `tasks` and `events` tables (migration `0002_tasks_events_feed`), routes `GET /tasks`, `GET /tasks/{id}`, `GET /approvals`, `POST /approvals/{id}`, `GET /events`, `GET /events/stream` (SSE, polls the table: every instance tails it), `GET /agents/{id}/sessions`, `POST /agents/{id}/read`, `GET /agents` with `lastActivity`
+- [x] Boot / periodic repair (`infra/eh/team-service.ts` `reconcile()`: `reconcileSubagentWaits` over the lead DM and the parents of unfinished tasks, then a task drift pass; `selfAgent` also reconciles on session open)
+- [x] Integration tests (`server/test/team.test.ts`, scripted models, two `compose()` instances on one database file): delegate with park, approval listed and answered from the second instance (note, deny with reason, question), child continues and the lead resumes by itself, task rows and events, `send_message` resume, restart (instance closed between park and answer), crash gap (child finished without the wait resolved, healed by reconcile), drift repair, SSE across instances
+
+Routes added in M4 differ from §5.1: approvals of any session are `GET /approvals` +
+`POST /approvals/{id}` (`id` is the approval id, or the tool call id of an `ask_user_question`;
+`sessionId` in the body disambiguates; body `{ approved, reason?, note?, endTurn? }` or
+`{ answers }`), not `POST /tasks/{id}/approvals`; the SSE feed is `GET /events/stream` and
+`GET /events?after=` is plain JSON; the task status words are `needs_action | running | done |
+failed | stopped`. Not done (later): `POST /tasks/{id}/abort`, `POST /tasks/{id}/messages` (use the
+lead's `send_message`, or M6 adds them), `GET /agents/{id}/context`.
+
+Notes from building M4:
+
+- The spawn cap is `maxConcurrent` of the lead's plugin: in park mode a slot is held only while a
+  child's first turn runs, so it limits a burst of delegations, not the number of live tasks (see
+  R20). The workspace ledger counts USD only for priced models: M4 passes no `models` price
+  catalog, so `TEAM_BUDGET_USD` limits nothing until the usage screen (M8) wires a catalog.
+- Opening a lead session starts a detached `reconcileSubagentWaits` (library behaviour with
+  `selfAgent`): listing approvals or reading a DM can therefore resume a parked lead (a model
+  call). That is the intended heal, but it makes "read" calls not side-effect free (R18).
 
 ### M5 — Web shell and chat
 
@@ -636,7 +654,7 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 | R1 | A **cross-session index**: list sessions by state (`pending`, `running`, parent) through an optional `StateAdapter` / storage query, plus a `SessionSummary` (title, last message time, last stop, pending kinds) | the board and the sidebar need "all sessions with pending approvals" across the workspace; today only `children()` of a known parent exists, so the example keeps a derived `tasks` table |
 | R2 | **Cross-instance attach** — decided (D2): a core **port** `StreamLogAdapter` (append-only chunk log per `{ sessionId, turnId }`, cursor = chunk index, optional `subscribe`, short retention) with an in-memory default; `session.attachRemote({ from })` and `handleResumeRequest()` for AI SDK `useChat({ resume: true })`; the example ships a SQLite adapter; ADR + conformance suite | reload on instance B while A streams shows nothing until the turn ends |
 | R3 | A **cross-instance session event feed** (`events()` over storage / notify), including turn start/end and pending changes | the example polls its own `events` table fed by hooks |
-| R4 | **Messaging in `park` mode**: `send_message`/names/resume for park children, or an exported `messageSession()` helper (framing, neutralisation, throttling) over `enqueue`; background children in park mode | the lead cannot follow up with a role agent across processes without app code |
+| R4 | **(closed by ADR-0041, verified in M4)** **Messaging in `park` mode**: `send_message`/names/resume for park children, or an exported `messageSession()` helper (framing, neutralisation, throttling) over `enqueue`; background children in park mode | the lead cannot follow up with a role agent across processes without app code |
 | R5 | **Routines on the durable inbox** — decided (D3): no scheduler port; the library adds `enqueue(…, { availableAt, id })` (expose the inbox timer; a caller id makes a fire idempotent) and a guide for the schedule-row + compare-and-set tick pattern (skip overlap and skip missed fires by default, optional catch-up window, pause/resume); the schedule table and cron parsing (`croner`) stay in the example; promote to `eharness/scheduler` only if a second product repeats it | every team/ops product needs routines |
 | R6 | A **team/agent registry** helper: definition-as-data, cached agent per version, roster for `subagents` | the factory and cache are generic |
 | R7 | **Memory scopes** (workspace / agent / user) as a documented preset of `memory({ roots })` and a path convention | every multi-agent app builds the same roots |
@@ -645,9 +663,13 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 | R11 | Built-in **tool kinds for the memory tools** (`memory_view` read, `memory_create`/`str_replace`/`insert`/`delete` write on `path`, `memory_rename` write on `old_path`) in `DEFAULT_TOOL_KINDS` of `eharness/permissions` | without them every memory write is an unknown tool and asks; the example registers the kinds itself |
 | R12 | Export the small text helpers `fileSystemConformance` and `memoryFs` share (`splitLines`, `statelessPattern`, `GREP_SCAN_CHARS`) from `eharness/filesystem`, and document that the conformance factory must return an **empty, isolated** adapter per call | the SQLite `FileSystem` re-implemented them; the first run failed on a shared database until the factory returned a fresh one |
 | R13 | An `InboxAdapter` without `notify`/`subscribe` is fine but the guide should say what the holder's poll costs and recommend `inbox.pollMs`; a `bun:sqlite` adapter has no cross-process notification (candidate: poll `PRAGMA data_version`) | the SQLite inbox is poll-only |
-| R14 | **Busy as a status across instances**: `handleChatRequest` answers `409` only for an in-process busy; a turn on another instance (lock conflict) and every other run error (`EH_INVALID_INPUT`, stale approval answer) come back as an `error` chunk in a `200` stream. The example pre-checks `stats().activeTurn` (with the `recovery.staleMs` default of 120 s copied) before calling it. Candidate: a `busy()` helper on the session (activeTurn + staleness) and/or `handleChatRequest` mapping a pre-start failure to its status | the route cannot choose steer vs 409 without reimplementing liveness |
-| R15 | **File parts that name app-side files**: `inputFiles` only allows `data:` / `https:`, so an upload (library `/uploads`) must be inlined as a data URL into the stored message. Candidate: `inputFiles.resolve(url) -> bytes` hook, or a file-reference part kind that is resolved only when projecting to the model; also `FileSystem.writeBytes(path, bytes, { mediaType })` so a store can keep the declared media type of text files (the SQLite adapter lost `text/csv`) | stored messages bloat with base64; media types are guessed from the extension |
-| R16 | `session.stats()` has no cumulative usage/cost; the example sums `metadata.eharness.usage` over up to 5 000 stored messages for `GET /agents/{id}/stats`. Candidate: `usage` (and `costUsd`) in `stats()` or a `session.usage()` read | a cheap per-chat cost readout for UIs |
+| R14 (done in library: `run.accepted` / `toHttpResponse()` / `session.busy()`) | **Busy as a status across instances**: `handleChatRequest` answers `409` only for an in-process busy; a turn on another instance (lock conflict) and every other run error (`EH_INVALID_INPUT`, stale approval answer) come back as an `error` chunk in a `200` stream. The example pre-checks `stats().activeTurn` (with the `recovery.staleMs` default of 120 s copied) before calling it. Candidate: a `busy()` helper on the session (activeTurn + staleness) and/or `handleChatRequest` mapping a pre-start failure to its status | the route cannot choose steer vs 409 without reimplementing liveness |
+| R15 (done in library: `inputFiles.resolve` and `writeBytes({ mediaType })`) | **File parts that name app-side files**: `inputFiles` only allows `data:` / `https:`, so an upload (library `/uploads`) must be inlined as a data URL into the stored message. Candidate: `inputFiles.resolve(url) -> bytes` hook, or a file-reference part kind that is resolved only when projecting to the model; also `FileSystem.writeBytes(path, bytes, { mediaType })` so a store can keep the declared media type of text files (the SQLite adapter lost `text/csv`) | stored messages bloat with base64; media types are guessed from the extension |
+| R16 (done in library: `stats().usage`) | `session.stats()` has no cumulative usage/cost; the example sums `metadata.eharness.usage` over up to 5 000 stored messages for `GET /agents/{id}/stats`. Candidate: `usage` (and `costUsd`) in `stats()` or a `session.usage()` read | a cheap per-chat cost readout for UIs |
+| R17 | **Runtime and lock for child sessions**: a child opened by `subagents()` gets neither the app's `SessionLock` nor `runtime` (`workspaceId`, `agentId`) of the parent, so the app re-opens it with them (`W_SESSION_OPTIONS_IGNORED` when the plugin opened it first, silenced in `compose()`), and hooks of child turns have no `runtime` to identify the agent definition (the `taskIndex` maps `ctx.agent.id` = slug to the row). Candidate: `subagents({ childSession: (parentCtx, childId) => SessionOptions })` or inherit `runtime` and `lock` from the parent | cross-process locking of child turns and attribution in hooks |
+| R18 | **Read-only session access**: `stats()` / `agent.session()` on a session runs `session.start` hooks, so listing approvals or opening the lead DM can start the lead's own reconcile and resume a parked turn (a model call). Candidate: a side-effect free read handle (`agent.inspect(id)` returning stats, pending, messages, children without hooks) | the board and the approvals list want to read many sessions without waking any |
+| R19 | **Child identity in the index**: `children()` / `pendingSubagentApprovals()` give child session ids only; the app needs the child's agent (catalog key), name and the `agent` call `description` to open it on the right agent and to title it, and keeps its own `tasks` rows for that. Candidate: `agent`, `name`, `description` in `ChildSessionInfo` and in the `pendingSubagentApprovals` entries | the approvals listing cannot open a child without an app-side index (R1 again) |
+| R20 | **Spawn budget for park**: `maxConcurrent` only bounds children starting at once; there is no per-session / per-turn / per-day spawn cap, and the ledger is monthly USD only. Candidate: `subagents({ maxSpawns: { perTurn, perSession } })` returning a readable error string | multi-agent runs cost many times a chat (D4) |
 | R10 | Run records: one hook or event carrying `{ sessionId, parent, kind, stop, usage, durationMs }` per turn end for every instance | the task index builds it from three hooks |
 
 ---

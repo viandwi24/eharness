@@ -1,5 +1,8 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
+import type { ApprovalAnswer, ApprovalView } from '../domain/approvals.ts'
+import type { TeamEvent } from '../domain/events.ts'
+import type { Task, TaskStatus } from '../domain/tasks.ts'
 
 export interface Clock {
   now(): number
@@ -125,11 +128,54 @@ export interface UploadStore {
   get(path: string): Promise<{ bytes: Uint8Array; mediaType: string } | undefined>
 }
 
+/** Sidebar data of one agent, from the event feed and its last-read marker. */
+export interface AgentActivity {
+  lastMessageAt: number | null
+  preview: string | null
+  unread: number
+}
+
+/** Read side of the task index and the event feed (written by the `taskIndex` plugin). */
+export interface TaskStore {
+  list(query: { status?: TaskStatus; agentId?: string; limit: number }): Task[]
+  get(id: string): Task | undefined
+  getBySession(sessionId: string): Task | undefined
+  /** Tasks the agent runs (`owned`) and tasks it handed to others from its DM (`delegated`). */
+  ofAgent(agentId: string, dmSessionId: string): { owned: Task[]; delegated: Task[] }
+  /** Events with `seq > after`, oldest first. */
+  events(after: number, limit: number): TeamEvent[]
+  lastSeq(): number
+  /** Activity of every agent that has any, by agent id. */
+  activity(): Map<string, AgentActivity>
+  /** Everything up to the latest message event is read. Returns the marker. */
+  markRead(agentId: string): number
+}
+
+/** Cross-session reads and answers on eharness sessions (implemented in `infra/eh/team-service.ts`). */
+export interface TeamPort {
+  /** Stored messages of a task session (newest `limit`, chronological). */
+  taskMessages(task: Task, limit: number): Promise<ChatMessage[]>
+  /**
+   * Everything waiting for a person, across DM chats and task sessions, on any instance. With
+   * `sessionId` only that session is read (cheap: used when answering).
+   */
+  approvals(only?: { sessionId?: string }): Promise<ApprovalView[]>
+  /**
+   * Answer one item with `respond()` on its session (this instance continues the turn). Resolves
+   * once the answer is recorded; a rejected answer (stale, already answered) throws.
+   */
+  answer(view: ApprovalView, answer: ApprovalAnswer, actor: Actor): Promise<void>
+}
+
 export interface Deps {
   agents: AgentRepo
   chat: ChatPort
   uploads: UploadStore
+  tasks: TaskStore
+  team: TeamPort
   clock: Clock
   ids: IdGenerator
   workspaceId: string
+  /** How often the SSE feed polls the events table (ms). Default 500. */
+  eventsPollMs?: number
 }

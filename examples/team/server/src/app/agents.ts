@@ -17,6 +17,15 @@ export function listAgents(deps: Deps, opts: { includeArchived?: boolean } = {})
   return deps.agents.list(opts)
 }
 
+/** Agents with their sidebar activity (last message, preview, unread). */
+export function listAgentsWithActivity(deps: Deps, opts: { includeArchived?: boolean } = {}) {
+  const activity = deps.tasks.activity()
+  return deps.agents.list(opts).map((agent) => ({
+    ...agent,
+    lastActivity: activity.get(agent.id) ?? { lastMessageAt: null, preview: null, unread: 0 },
+  }))
+}
+
 export function getAgent(deps: Deps, id: string): AgentDef {
   const def = deps.agents.get(id) ?? deps.agents.getBySlug(id)
   if (def === undefined) throw notFound('agent', id)

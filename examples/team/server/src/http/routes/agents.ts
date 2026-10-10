@@ -1,5 +1,11 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
-import { archiveAgent, createAgent, getAgent, listAgents, updateAgent } from '../../app/agents.ts'
+import {
+  archiveAgent,
+  createAgent,
+  getAgent,
+  listAgentsWithActivity,
+  updateAgent,
+} from '../../app/agents.ts'
 import type { Deps } from '../../app/ports.ts'
 import {
   AgentCreateSchema,
@@ -18,7 +24,7 @@ const list = createRoute({
   method: 'get',
   path: '/agents',
   tags: ['agents'],
-  summary: 'List agents',
+  summary: 'List agents with their sidebar activity',
   security,
   request: {
     query: z.object({
@@ -109,7 +115,7 @@ export function agentRoutes(deps: Deps): OpenAPIHono {
     .openapi(list, (c) => {
       const { includeArchived } = c.req.valid('query')
       return c.json(
-        { agents: listAgents(deps, { includeArchived: includeArchived === 'true' }) },
+        { agents: listAgentsWithActivity(deps, { includeArchived: includeArchived === 'true' }) },
         200,
       )
     })

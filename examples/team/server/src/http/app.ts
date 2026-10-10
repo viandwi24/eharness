@@ -11,6 +11,7 @@ import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { healthRoutes } from './routes/health.ts'
+import { taskRoutes } from './routes/tasks.ts'
 import { uploadRoutes } from './routes/uploads.ts'
 
 export interface AppOptions {
@@ -40,6 +41,12 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
       description: 'The DM chat of an agent: streaming, approvals, resume, history.',
     },
     { name: 'library', description: 'Shared files (uploads).' },
+    { name: 'tasks', description: 'Delegated work across agents (the board).' },
+    {
+      name: 'approvals',
+      description: 'Approvals and questions waiting for a person, across sessions.',
+    },
+    { name: 'events', description: 'The feed of changes: JSON and SSE.' },
   ],
 }
 
@@ -130,6 +137,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', agentRoutes(options.deps))
   app.route('/', chatRoutes(options.deps))
   app.route('/', uploadRoutes(options.deps))
+  app.route('/', taskRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)
   app.get('/docs', Scalar({ url: '/openapi.json', pageTitle: OPENAPI_INFO.title }))

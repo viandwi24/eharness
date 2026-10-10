@@ -5,6 +5,9 @@ import { UPLOADS_ROOT } from './library.ts'
 /** The DM chat of an agent is one eharness session. */
 export const dmSessionId = (agentId: string): string => `dm:${agentId}`
 
+/** A DM id has no further `:`; a delegated child session is `dm:<lead>:agent:<call>`. */
+export const isDmSession = (sessionId: string): boolean => /^dm:[^:]+$/.test(sessionId)
+
 /** Largest file a chat message may carry (library upload and data URLs). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 
