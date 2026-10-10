@@ -4,3 +4,7 @@
 # docs/plans/P30-coder-example.md §2.1
 [install]
 linker = "hoisted"
+
+# The SvelteKit web of examples/team has its own checks (svelte-check, vitest later).
+[test]
+pathIgnorePatterns = ["examples/team/web/**"]

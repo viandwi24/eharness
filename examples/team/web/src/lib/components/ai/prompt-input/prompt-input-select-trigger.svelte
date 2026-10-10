@@ -1,0 +1,24 @@
+<script lang="ts">
+	import { SelectTrigger } from "#lib/components/ui/select/index.js";
+	import { cn } from "#lib/utils.js";
+	import type { ComponentProps } from "svelte";
+
+	let {
+		ref = $bindable(null),
+		class: className,
+		children,
+		...restProps
+	}: ComponentProps<typeof SelectTrigger> = $props();
+</script>
+
+<SelectTrigger
+	bind:ref
+	class={cn(
+		"h-8 border-none bg-transparent px-2.5 text-[13px] font-medium text-foreground shadow-none transition-colors data-[size=default]:h-8",
+		"hover:bg-accent data-[state=open]:bg-accent data-[state=open]:shadow-none",
+		className
+	)}
+	{...restProps}
+>
+	{@render children?.()}
+</SelectTrigger>

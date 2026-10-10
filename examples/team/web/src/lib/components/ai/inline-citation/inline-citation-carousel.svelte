@@ -1,0 +1,15 @@
+<script lang="ts">
+	import { cn } from "#lib/utils.js";
+	import { Carousel } from "#lib/components/ui/carousel/index.js";
+	import type { ComponentProps } from "svelte";
+
+	let {
+		class: className,
+		children,
+		...restProps
+	}: ComponentProps<typeof Carousel> = $props();
+</script>
+
+<Carousel class={cn("w-full", className)} {...restProps}>
+	{@render children?.()}
+</Carousel>

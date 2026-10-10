@@ -1,0 +1,137 @@
+/**
+ * The HTTP app: an OpenAPIHono root with `/openapi.json` (OpenAPI 3.1 generated from the zod
+ * schemas), `/docs` (Scalar), bearer-token auth and one error shape
+ * `{ error: { code, message } }` (docs/plans/P32-team-example.md §5).
+ */
+import { OpenAPIHono } from '@hono/zod-openapi'
+import { Scalar } from '@scalar/hono-api-reference'
+import { checkBearer } from '../app/auth.ts'
+import { DomainError } from '../app/errors.ts'
+import type { Deps } from '../app/ports.ts'
+import { agentRoutes } from './routes/agents.ts'
+import { chatRoutes } from './routes/chat.ts'
+import { healthRoutes } from './routes/health.ts'
+import { uploadRoutes } from './routes/uploads.ts'
+
+export interface AppOptions {
+  deps: Deps
+  /** `TEAM_TOKEN`; absent or empty = open (localhost only). */
+  token?: string | undefined
+}
+
+export const OPENAPI_INFO = {
+  title: 'eharness team server',
+  version: '0.1.0',
+  description:
+    'Team-agent server built on eharness (docs/plans/P32-team-example.md). Bearer token auth when TEAM_TOKEN is set; open otherwise.',
+} as const
+
+/** The OpenAPI document header; shared with `scripts/export-openapi.ts`. */
+type OpenAPIObjectConfig = Parameters<OpenAPIHono['getOpenAPI31Document']>[0]
+
+export const OPENAPI_DOC: OpenAPIObjectConfig = {
+  openapi: '3.1.0',
+  info: OPENAPI_INFO,
+  tags: [
+    { name: 'system', description: 'Health.' },
+    { name: 'agents', description: 'Agent definitions (blueprints).' },
+    {
+      name: 'chats',
+      description: 'The DM chat of an agent: streaming, approvals, resume, history.',
+    },
+    { name: 'library', description: 'Shared files (uploads).' },
+  ],
+}
+
+const STATUS = { invalid: 400, not_found: 404, conflict: 409, forbidden: 403 } as const
+
+/** HTTP status of eharness error codes that reach the route as exceptions (spec 10). */
+const EH_STATUS: Record<string, number> = {
+  EH_SESSION_BUSY: 409,
+  EH_SESSION_CLOSED: 409,
+  EH_PENDING_RESPONSE: 409,
+  EH_INVALID_INPUT: 400,
+  EH_STORAGE: 503,
+  EH_COMPACTION_FAILED: 502,
+}
+
+/** Paths that need no token. */
+const PUBLIC = new Set(['/health', '/openapi.json', '/docs'])
+
+export function createApp(options: AppOptions): OpenAPIHono {
+  const app = new OpenAPIHono({
+    // request validation failures use the same error shape
+    defaultHook: (result, c) => {
+      if (!result.success) {
+        return c.json(
+          {
+            error: {
+              code: 'VALIDATION_ERROR',
+              message: result.error.issues
+                .map((i) => `${i.path.join('.') || '(body)'}: ${i.message}`)
+                .join('; '),
+              details: result.error.issues,
+            },
+          },
+          400,
+        )
+      }
+    },
+  })
+
+  app.openAPIRegistry.registerComponent('securitySchemes', 'Bearer', {
+    type: 'http',
+    scheme: 'bearer',
+    description: 'The value of TEAM_TOKEN. Not required when the server runs without one.',
+  })
+
+  app.use('*', async (c, next) => {
+    if (PUBLIC.has(c.req.path)) return next()
+    if (!checkBearer(options.token, c.req.header('authorization'))) {
+      return c.json(
+        { error: { code: 'UNAUTHORIZED', message: 'missing or invalid bearer token' } },
+        401,
+      )
+    }
+    return next()
+  })
+
+  app.onError((error, c) => {
+    if (error instanceof DomainError) {
+      return c.json({ error: { code: error.code, message: error.message } }, STATUS[error.kind])
+    }
+    // a malformed JSON body surfaces as a SyntaxError from the validator
+    if (error instanceof SyntaxError) {
+      return c.json(
+        { error: { code: 'INVALID_JSON', message: 'request body is not valid JSON' } },
+        400,
+      )
+    }
+    // eharness errors carry a code: busy / closed are conflicts, invalid input a bad request
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string' && code.startsWith('EH_')) {
+      return c.json({ error: { code, message: error.message } }, (EH_STATUS[code] ?? 500) as 400)
+    }
+    console.error(error)
+    return c.json({ error: { code: 'INTERNAL', message: 'internal server error' } }, 500)
+  })
+
+  app.notFound((c) =>
+    c.json(
+      { error: { code: 'NOT_FOUND', message: `no route: ${c.req.method} ${c.req.path}` } },
+      404,
+    ),
+  )
+
+  app.route(
+    '/',
+    healthRoutes(() => options.deps.clock.now()),
+  )
+  app.route('/', agentRoutes(options.deps))
+  app.route('/', chatRoutes(options.deps))
+  app.route('/', uploadRoutes(options.deps))
+
+  app.doc31('/openapi.json', OPENAPI_DOC)
+  app.get('/docs', Scalar({ url: '/openapi.json', pageTitle: OPENAPI_INFO.title }))
+  return app
+}

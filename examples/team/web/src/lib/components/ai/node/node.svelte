@@ -1,0 +1,39 @@
+<script lang="ts">
+	import { Handle, Position } from "@xyflow/svelte";
+	import type { ComponentProps } from "svelte";
+	import { cn } from "#lib/utils.js";
+	import { Card } from "#lib/components/ui/card/index.js";
+
+	let {
+		class: className,
+		handles = { target: false, source: false },
+		selected = false,
+		children,
+		...restProps
+	}: ComponentProps<typeof Card> & {
+		handles?: { target?: boolean; source?: boolean };
+		/** Ring state. Inside Svelte Flow the `selected` class on the node wrapper does the same. */
+		selected?: boolean;
+	} = $props();
+
+	const handleClass = "size-2.5! min-h-0! min-w-0! rounded-full! border-2! border-muted-foreground! bg-card!";
+</script>
+
+<Card
+	{...restProps}
+	data-slot="ai-node"
+	data-selected={selected ? "" : undefined}
+	class={cn(
+		"relative size-full h-auto w-60 gap-0 overflow-visible rounded-[calc(var(--radius)*1.2)] py-0",
+		"data-[selected]:border-ring data-[selected]:shadow-ring [.selected_&]:border-ring [.selected_&]:shadow-ring",
+		className
+	)}
+>
+	{#if handles.target}
+		<Handle class={handleClass} position={Position.Left} type="target" />
+	{/if}
+	{#if handles.source}
+		<Handle class={handleClass} position={Position.Right} type="source" />
+	{/if}
+	{@render children?.()}
+</Card>

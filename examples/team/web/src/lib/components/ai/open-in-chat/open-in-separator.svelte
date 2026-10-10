@@ -1,0 +1,10 @@
+<script lang="ts">
+	import * as DropdownMenu from "#lib/components/ui/dropdown-menu/index.js";
+	import type { ComponentProps } from "svelte";
+
+	let { children, ...restProps }: ComponentProps<typeof DropdownMenu.Separator> = $props();
+</script>
+
+<DropdownMenu.Separator {...restProps}>
+	{@render children?.()}
+</DropdownMenu.Separator>

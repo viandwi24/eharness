@@ -1,0 +1,44 @@
+<script lang="ts">
+	import { cn, type WithElementRef } from "#lib/utils.js";
+	import { type Elevation, setSurface, useElevation } from "#lib/components/ui/elevation/index.js";
+	import type { HTMLAttributes } from "svelte/elements";
+
+	let {
+		ref = $bindable(null),
+		class: className,
+		children,
+		size = "default",
+		elevation = "auto",
+		...restProps
+	}: WithElementRef<HTMLAttributes<HTMLDivElement>> & {
+		size?: "default" | "sm";
+		/** ✦ depth: sunken -1, flat 0, raised +1 (bevel), floating +2 (bevel + drop). */
+		elevation?: Elevation;
+	} = $props();
+
+	// ✦ depth (v4): surface role. A card inside a raised/floating surface resolves flat (no bevel on bevel).
+	const cardElevation = {
+		sunken: "border-sk-bd bg-sk-bg shadow-sunken",
+		flat: "",
+		raised: "border-transparent shadow-raised",
+		floating: "border-transparent shadow-floating",
+	};
+
+	const level = useElevation(() => elevation, "surface");
+	setSurface(() => level.current);
+</script>
+
+<div
+	bind:this={ref}
+	data-slot="card"
+	data-size={size}
+	class={cn(
+		// Flat by default (border only); elevation ✦ adds depth. Spacing: 22px default, 16px sm.
+		"group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-xl border border-border bg-card py-(--card-spacing) text-sm text-card-foreground [--card-spacing:22px] has-data-[slot=card-footer]:pb-0 has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:16px] data-[size=sm]:has-data-[slot=card-footer]:pb-0 *:[img:first-child]:rounded-t-xl *:[img:last-child]:rounded-b-xl",
+		cardElevation[level.current],
+		className
+	)}
+	{...restProps}
+>
+	{@render children?.()}
+</div>

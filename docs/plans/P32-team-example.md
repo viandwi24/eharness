@@ -1,6 +1,6 @@
 # P32 — Team-agent example (`examples/team`)
 
-Status: in progress (M1-M2 done) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
+Status: in progress (M1-M3 done) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
 
 ## Goal
 
@@ -568,9 +568,15 @@ Dev first, one gate at the end of each milestone. Update this file and the board
 
 ### M3 — Chat endpoints
 
-- [ ] `POST /agents/{id}/chat` via `handleChatRequest`, attach, abort, compact, messages, uploads
-- [ ] Busy handling (steer / enqueue), 409 mapping documented in OpenAPI
-- [ ] Integration tests with scripted models (text, tool, approval, respond into the same message)
+- [x] SQLite `StreamLogAdapter` (`infra/eh/stream-log.ts`, tables `eh_stream_log` / `eh_stream_chunks`, poll-only, `expire`) wired as `storage.streams`; `streamLogConformance` green
+- [x] `POST /agents/{id}/chat` via `handleChatRequest` (last message only, file parts checked, `library:` upload refs resolved), `GET /agents/{id}/chat/stream` (`handleResumeRequest`, 204 when idle), `POST /agents/{id}/chat/abort`, `GET /agents/{id}/messages`, `POST /agents/{id}/compact`, `GET /agents/{id}/stats`, `POST /library/files` (multipart)
+- [x] Busy handling and error mapping, documented in OpenAPI: user message while busy = steer here / inbox steer + `202` on another instance / `?ifBusy=reject` and approvals, regenerate, edit = `409 EH_SESSION_BUSY`; `EH_INVALID_INPUT` 400, `EH_SESSION_CLOSED` 409
+- [x] Integration tests with scripted models (`server/test/chat.test.ts`): text, tool, approval approve/deny (same message id, consume-once), resume and cursor resume from a second `compose()` on the same DB file, abort from the second instance, 204 idle, steer / 202 / 409, uploads and limits
+
+Routes added in M3 differ from §5.1 in two names: compaction is `POST /agents/{id}/compact` and
+the status call is `GET /agents/{id}/stats` (context, usage, active turn, pending approvals);
+uploads are `POST /library/files` and return a `library:///uploads/…` url to use as the `url` of a
+`file` part (the server turns it into a data URL; clients never name other paths).
 
 ### M4 — Lead, role agents, tasks
 
@@ -639,6 +645,9 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 | R11 | Built-in **tool kinds for the memory tools** (`memory_view` read, `memory_create`/`str_replace`/`insert`/`delete` write on `path`, `memory_rename` write on `old_path`) in `DEFAULT_TOOL_KINDS` of `eharness/permissions` | without them every memory write is an unknown tool and asks; the example registers the kinds itself |
 | R12 | Export the small text helpers `fileSystemConformance` and `memoryFs` share (`splitLines`, `statelessPattern`, `GREP_SCAN_CHARS`) from `eharness/filesystem`, and document that the conformance factory must return an **empty, isolated** adapter per call | the SQLite `FileSystem` re-implemented them; the first run failed on a shared database until the factory returned a fresh one |
 | R13 | An `InboxAdapter` without `notify`/`subscribe` is fine but the guide should say what the holder's poll costs and recommend `inbox.pollMs`; a `bun:sqlite` adapter has no cross-process notification (candidate: poll `PRAGMA data_version`) | the SQLite inbox is poll-only |
+| R14 | **Busy as a status across instances**: `handleChatRequest` answers `409` only for an in-process busy; a turn on another instance (lock conflict) and every other run error (`EH_INVALID_INPUT`, stale approval answer) come back as an `error` chunk in a `200` stream. The example pre-checks `stats().activeTurn` (with the `recovery.staleMs` default of 120 s copied) before calling it. Candidate: a `busy()` helper on the session (activeTurn + staleness) and/or `handleChatRequest` mapping a pre-start failure to its status | the route cannot choose steer vs 409 without reimplementing liveness |
+| R15 | **File parts that name app-side files**: `inputFiles` only allows `data:` / `https:`, so an upload (library `/uploads`) must be inlined as a data URL into the stored message. Candidate: `inputFiles.resolve(url) -> bytes` hook, or a file-reference part kind that is resolved only when projecting to the model; also `FileSystem.writeBytes(path, bytes, { mediaType })` so a store can keep the declared media type of text files (the SQLite adapter lost `text/csv`) | stored messages bloat with base64; media types are guessed from the extension |
+| R16 | `session.stats()` has no cumulative usage/cost; the example sums `metadata.eharness.usage` over up to 5 000 stored messages for `GET /agents/{id}/stats`. Candidate: `usage` (and `costUsd`) in `stats()` or a `session.usage()` read | a cheap per-chat cost readout for UIs |
 | R10 | Run records: one hook or event carrying `{ sessionId, parent, kind, stop, usage, durationMs }` per turn end for every instance | the task index builds it from three hooks |
 
 ---

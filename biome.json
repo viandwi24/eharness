@@ -7,7 +7,14 @@
   },
   "files": {
     "ignoreUnknown": false,
-    "includes": ["**", "!!**/dist", "!!**/coverage", "!.changeset/*.md"]
+    "includes": [
+      "**",
+      "!!**/dist",
+      "!!**/coverage",
+      "!.changeset/*.md",
+      "!!examples/team/web",
+      "!!examples/team/shared"
+    ]
   },
   "formatter": {
     "enabled": true,

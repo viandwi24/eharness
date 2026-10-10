@@ -8,6 +8,6 @@
     "isolatedDeclarations": false
   },
   "include": ["."],
-  // `coder/` is a workspace package with its own tsconfig (JSX); typechecked separately
-  "exclude": ["coder"]
+  // `coder/` and `team/` are workspace packages with their own tsconfig; typechecked separately
+  "exclude": ["coder", "team"]
 }
