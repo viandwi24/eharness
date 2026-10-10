@@ -82,25 +82,20 @@
 					variant="outline"
 					size="sm"
 					disabled={busy}
-					title="Allow every call of this tool without asking, for the rest of this session"
+					title="Allow this tool without asking for the rest of this session"
 					onclick={() => send('remember')}
 				>
 					Always allow <span class="max-w-32 truncate font-mono text-[11.5px]">{toolName}</span>
 					<Kbd class="ml-1 h-4 min-w-4 text-[10px]">2</Kbd>
 				</Button>
 			{/if}
+			{#if canNote}
+				<Button variant="ghost" size="sm" disabled={busy} class="text-muted-foreground" onclick={() => open('note')}>Add note</Button>
+			{/if}
 			<Button variant="outline" size="sm" disabled={busy} class="ml-auto" onclick={() => open('deny')}>
 				Deny <Kbd class="ml-1 h-4 min-w-4 text-[10px]">3</Kbd>
 			</Button>
 		</div>
-		{#if canNote}
-			<button type="button" class="self-start text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground" onclick={() => open('note')}>
-				Add a note
-			</button>
-		{/if}
-		{#if canRemember}
-			<p class="text-[11px] text-muted-foreground">Always allow lasts for this session only.</p>
-		{/if}
 	{:else}
 		<Input
 			bind:ref={field}

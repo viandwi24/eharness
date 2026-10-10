@@ -14,6 +14,10 @@
 
 	let busy = $state(false);
 	const summary = $derived(summarizeApproval(approval.toolName, approval.input));
+	// The title already says it for a one-field input ("Search the web for <query>"): skip the rows then.
+	const rows = $derived(
+		summary.rows.length === 1 && summary.title.includes(summary.rows[0]?.value ?? '\u0000') ? [] : summary.rows
+	);
 	const riskVariant = { read: 'success', write: 'warning', external: 'destructive', unknown: 'outline' } as const;
 
 	async function run(body: Parameters<typeof live.answer>[1]): Promise<void> {
@@ -41,11 +45,11 @@
 	</div>
 
 	{#if approval.kind === 'approval'}
-		<div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto" data-testid="card-body">
+		<div class="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto" data-testid="card-body">
 			<p class="font-medium break-words" data-testid="approval-title">{summary.title}</p>
-			{#if summary.rows.length}
+			{#if rows.length}
 				<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md bg-muted p-2 text-[12.5px]">
-					{#each summary.rows as row (row.label)}
+					{#each rows as row (row.label)}
 						<dt class="text-muted-foreground">{row.label}</dt>
 						<dd class={['min-w-0 break-words whitespace-pre-wrap', row.mono && 'font-mono text-[11.5px]']}>{row.value}</dd>
 					{/each}
@@ -53,7 +57,7 @@
 			{/if}
 			{#if summary.raw}
 				<details class="text-xs text-muted-foreground">
-					<summary class="cursor-pointer select-none">Details: <span class="font-mono">{approval.toolName}</span> input</summary>
+					<summary class="cursor-pointer select-none">Details</summary>
 					<pre class="mt-1 max-h-48 overflow-auto rounded-md bg-muted p-2 font-mono text-[11.5px] whitespace-pre-wrap">{summary.raw}</pre>
 				</details>
 			{/if}
