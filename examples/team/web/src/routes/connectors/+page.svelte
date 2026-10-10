@@ -4,8 +4,10 @@
 	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlass';
 	import PlugsIcon from 'phosphor-svelte/lib/Plugs';
+	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import { untrack } from 'svelte';
-	import type { Connector } from '#lib/api/index.js';
+	import type { ConnectFlow, Connection, Connector } from '#lib/api/index.js';
+	import AddCustomConnectorDialog from '#lib/components/app/AddCustomConnectorDialog.svelte';
 	import ConnectFlowDialog from '#lib/components/app/ConnectFlowDialog.svelte';
 	import ConnectorDetail from '#lib/components/app/ConnectorDetail.svelte';
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
@@ -17,6 +19,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
 	import { categoriesOf, categoryLabel, directorySections } from '#lib/connectors/core.js';
+	import { authLabel, CUSTOM_STATE_LABEL, customConnections, customState, hostOf, initialsOf, matchesCustom } from '#lib/connectors/custom.js';
 	import { OAUTH_CLIENT_NEEDS_SETUP } from '#lib/connectors/view.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -28,11 +31,14 @@
 	let category = $state<string | null>(null);
 	let selectedId = $state<string | null>(null);
 	let detailOpen = $state(false);
+	let selectedConnectionId = $state<string | null>(null);
 
 	const sections = $derived(directorySections(store.connectors, store.connections, { query, category }));
-	const connectedCount = $derived(sections.connected.length);
-	const categories = $derived(categoriesOf(store.connectors));
-	const total = $derived(sections.connected.length + sections.available.length + sections.included.length);
+	// every custom connection is a card of its own, under the name its user gave it
+	const customs = $derived(customConnections(store.connections).filter((c) => matchesCustom(c, query) && (!category || category === 'custom')));
+	const connectedCount = $derived(sections.connected.length + customs.length);
+	const categories = $derived(categoriesOf(store.connectors, store.connections));
+	const total = $derived(sections.connected.length + sections.available.length + sections.included.length + customs.length);
 	const accountOf = (c: Connector): string | undefined => store.connections.find((x) => x.definitionId === c.id && x.accountLabel)?.accountLabel;
 	const countOf = (c: Connector): number => store.connections.filter((x) => x.definitionId === c.id).length;
 
@@ -57,7 +63,34 @@
 
 	function openDetail(c: Connector): void {
 		selectedId = c.id;
+		selectedConnectionId = null;
 		detailOpen = true;
+	}
+	function openCustom(c: Connection): void {
+		selectedId = c.definitionId;
+		selectedConnectionId = c.id;
+		detailOpen = true;
+	}
+
+	// --- add a custom connector ------------------------------------------------------------
+	let addOpen = $state(false);
+	let signInFlowId = $state<string | undefined>(undefined);
+	let signInOpen = $state(false);
+	function added(c: Connection, flow?: ConnectFlow): void {
+		void connectorsStore.load();
+		toast.success(`${c.label} added`);
+		if (flow) {
+			signInConnectionId = c.id;
+			signInFlowId = flow.id;
+			signInOpen = true;
+		}
+	}
+	// "Sign in" of a card whose connector is waiting for it
+	let signInConnectionId = $state<string | undefined>(undefined);
+	let signInConnectionOpen = $state(false);
+	function signIn(c: Connection): void {
+		signInConnectionId = c.id;
+		signInConnectionOpen = true;
 	}
 
 	// --- resume after an OAuth redirect: /connectors?flow=<id> or ?oauth_error=<message> -------
@@ -119,23 +152,69 @@
 	</div>
 {/snippet}
 
-{#snippet group(title: string, hint: string, items: Connector[])}
-	{#if items.length}
+{#snippet customCard(c: Connection)}
+	{@const state = customState(c)}
+	<div class="group relative flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4 transition-colors hover:bg-accent/40 focus-within:outline-2 focus-within:outline-ring" data-testid="custom-card">
+		<div class="flex items-start gap-3">
+			<span aria-hidden="true" class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-xs font-semibold text-muted-foreground">{initialsOf(c.label)}</span>
+			<div class="min-w-0 flex-1">
+				<h3 class="truncate text-sm font-medium">
+					<button type="button" onclick={() => openCustom(c)} class="outline-none after:absolute after:inset-0 after:rounded-xl">{c.label}</button>
+				</h3>
+				<p class="truncate text-xs text-muted-foreground">Custom · {hostOf(c) || 'remote MCP server'}</p>
+			</div>
+		</div>
+		<p class="line-clamp-2 flex-1 text-[13px] leading-snug text-muted-foreground">{authLabel(c)}{c.scope === 'agent' ? ' · one agent only' : ''}</p>
+		<div class="relative z-10 flex min-h-7 items-center justify-between gap-2">
+			<span class="flex min-w-0 items-center gap-1.5 text-xs">
+				<span class="size-1.5 shrink-0 rounded-full {state === 'connected' ? 'bg-success' : state === 'error' ? 'bg-destructive' : 'bg-warning'}"></span>
+				<span class="truncate text-muted-foreground">{CUSTOM_STATE_LABEL[state]}</span>
+			</span>
+			{#if state === 'needs-sign-in'}
+				<Button size="sm" variant="outline" onclick={() => signIn(c)}>Sign in</Button>
+			{:else}
+				<Button size="sm" variant="ghost" onclick={() => openCustom(c)}>Manage</Button>
+			{/if}
+		</div>
+	</div>
+{/snippet}
+
+{#snippet addCard()}
+	<button
+		type="button"
+		onclick={() => (addOpen = true)}
+		data-testid="add-custom-card"
+		class="flex h-full min-h-36 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border p-4 text-muted-foreground transition-colors outline-none hover:bg-accent/40 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+	>
+		<span class="flex size-10 items-center justify-center rounded-xl bg-muted"><PlusIcon class="size-5" /></span>
+		<span class="text-sm font-medium">Add custom connector</span>
+		<span class="text-xs">Any remote MCP server</span>
+	</button>
+{/snippet}
+
+{#snippet group(title: string, hint: string, items: Connector[], extra?: Connection[], withAdd?: boolean)}
+	{#if items.length || extra?.length || withAdd}
 		<section class="flex flex-col gap-3">
 			<div class="flex items-baseline gap-2">
 				<h2 class="text-sm font-medium">{title}</h2>
-				<span class="text-xs text-muted-foreground">{items.length}</span>
+				<span class="text-xs text-muted-foreground">{items.length + (extra?.length ?? 0)}</span>
 				<span class="hidden text-xs text-muted-foreground sm:inline">· {hint}</span>
 			</div>
 			<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+				{#each extra ?? [] as c (c.id)}{@render customCard(c)}{/each}
 				{#each items as c (c.id)}{@render card(c)}{/each}
+				{#if withAdd}{@render addCard()}{/if}
 			</div>
 		</section>
 	{/if}
 {/snippet}
 
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
-	<PageHeader title="Connectors" description="Connect tools and services your agents can use" />
+	<PageHeader title="Connectors" description="Connect tools and services your agents can use">
+		{#snippet actions()}
+			<Button size="sm" variant="outline" onclick={() => (addOpen = true)}><PlusIcon class="size-4" /><span class="hidden sm:inline">Add custom connector</span><span class="sm:hidden">Add</span></Button>
+		{/snippet}
+	</PageHeader>
 
 	<div class="min-h-0 flex-1 overflow-y-auto">
 		<div class="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 md:p-6">
@@ -179,7 +258,7 @@
 						<Empty.Media variant="icon"><PlugsIcon /></Empty.Media>
 						<Empty.Title class="text-sm">{query || category ? 'No connectors match' : 'No connectors yet'}</Empty.Title>
 						<Empty.Description>
-							{query || category ? `Nothing matches ${query ? `“${query.trim()}”` : categoryLabel(category ?? '')}. Try another search, or add your own remote MCP server.` : 'Connectors the server offers show up here.'}
+							{query || category ? `Nothing matches ${query ? `“${query.trim()}”` : categoryLabel(category ?? '')}. Try another search, or add your own remote MCP server with “Add custom connector”.` : 'Connectors the server offers show up here.'}
 						</Empty.Description>
 					</Empty.Header>
 					{#if query || category}
@@ -190,14 +269,17 @@
 				{#if connectedCount === 0 && !query && !category}
 					<p class="rounded-xl border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">Nothing connected yet. Pick a service below and select Connect.</p>
 				{/if}
-				{@render group('Connected', 'Ready to use by your agents', sections.connected)}
-				{@render group('Available', 'Connect with your account', sections.available)}
+				{@render group('Connected', 'Ready to use by your agents', sections.connected, customs)}
+				{@render group('Available', 'Connect with your account', sections.available, undefined, !query && (!category || category === 'custom'))}
 				{@render group('Included', 'Built in, nothing to connect', sections.included)}
 			{/if}
 		</div>
 	</div>
 </div>
 
-<ConnectorDetail bind:open={detailOpen} connectorId={selectedId} />
+<ConnectorDetail bind:open={detailOpen} connectorId={selectedId} connectionId={selectedConnectionId} />
+<AddCustomConnectorDialog bind:open={addOpen} onAdded={added} />
+<ConnectFlowDialog bind:open={signInOpen} flowId={signInFlowId} signIn label={store.connections.find((x) => x.id === signInConnectionId)?.label} onDone={() => void connectorsStore.load()} />
+<ConnectFlowDialog bind:open={signInConnectionOpen} connectionId={signInConnectionId} signIn label={store.connections.find((x) => x.id === signInConnectionId)?.label} scope="workspace" onDone={() => void connectorsStore.load()} />
 <ConnectFlowDialog bind:open={flowOpen} {flowId} onDone={() => void connectorsStore.load()} />
 <ConnectFlowDialog bind:open={connectOpen} definitionId={connectId} scope="workspace" onDone={() => void connectorsStore.load()} />

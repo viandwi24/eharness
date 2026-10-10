@@ -8,7 +8,7 @@
 import type { Database } from 'bun:sqlite'
 import type { ConnectionRecord, ConnectionStore } from 'eharness/connectors'
 import type { AgentConnectors } from '../../domain/connectors.ts'
-import { enablementFromTools } from '../../domain/connectors.ts'
+import { CUSTOM_DEFINITION, enablementFromTools, slugOf } from '../../domain/connectors.ts'
 import type { LegacyMcpServer } from '../db/schema.ts'
 
 interface LegacyRow {
@@ -91,4 +91,25 @@ export async function migrateLegacyAgents(options: {
   }
   if (report.agents > 0) options.changed?.()
   return report
+}
+
+/**
+ * Custom connections made before connectors had a stable slug keep the tool prefix they always
+ * had (the slug of their label, as `activateConnectors` derived it) and store it, so a rename never
+ * renames their tools. They are standalone custom connectors named by their current label.
+ * Idempotent: connections that already have a slug are left alone. Returns how many were updated.
+ */
+export async function backfillCustomSlugs(options: {
+  connections: ConnectionStore
+  changed?: () => void
+}): Promise<number> {
+  let n = 0
+  for (const record of await options.connections.list({ definitionId: CUSTOM_DEFINITION })) {
+    if (record.slug !== undefined) continue
+    const slug = slugOf(record.label) || slugOf(record.id) || 'connection'
+    await options.connections.put({ ...record, slug })
+    n++
+  }
+  if (n > 0) options.changed?.()
+  return n
 }

@@ -3,10 +3,11 @@ import type {
   AgentConnectors,
   ConnectionChoices,
   ConnectionPatchInput,
+  CustomConnectorInput,
   FlowActInput,
   FlowStartInput,
 } from '../domain/connectors.ts'
-import { normalizeConnectors } from '../domain/connectors.ts'
+import { normalizeConnectors, parseCustomInput } from '../domain/connectors.ts'
 import { invalid } from '../domain/errors.ts'
 import { getAgent } from './agents.ts'
 import type { Deps } from './ports.ts'
@@ -68,3 +69,23 @@ export const setOAuthClient = (
 ) => deps.connectors.setOAuthClient(definitionId, input)
 export const removeOAuthClient = (deps: Deps, definitionId: string) =>
   deps.connectors.removeOAuthClient(definitionId)
+
+/** What sign-in a server at this URL needs (nothing is saved). */
+export const probeCustomConnector = (deps: Deps, input: { url: string }) =>
+  deps.connectors.probeCustom(input)
+
+/** Add a custom connector (one named connection of the custom connector). */
+export async function createCustomConnector(deps: Deps, input: CustomConnectorInput) {
+  const clean = parseCustomInput(input)
+  if (clean.scope === 'agent') {
+    const id =
+      clean.scopeId === undefined
+        ? undefined
+        : (deps.agents.get(clean.scopeId)?.id ?? deps.agents.getBySlug(clean.scopeId)?.id)
+    if (id === undefined) throw invalid('scopeId must be the id of an agent for agent scope')
+    clean.scopeId = id
+  } else if (clean.scopeId !== undefined) {
+    throw invalid('workspace scope has no scopeId')
+  }
+  return deps.connectors.createCustom(clean)
+}

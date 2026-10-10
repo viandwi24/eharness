@@ -281,6 +281,8 @@ export interface ConnectionView {
   settings: Record<string, unknown>
   authorized: boolean
   builtin: boolean
+  /** A custom (remote MCP) connection: shown as its own connector under its own name. */
+  custom: boolean
   createdAt: number
   updatedAt: number
 }
@@ -353,4 +355,115 @@ export interface ConnectionTestResult {
   /** How many tools the server exposes (when it was listed). */
   tools?: number
   connection: ConnectionView
+}
+
+// --- custom connectors (Claude-style "Add custom connector") ---------------------------------
+
+/** The definition id every custom connection uses. */
+export const CUSTOM_DEFINITION = 'mcp-remote'
+
+/** What probing a URL found: how the server wants to be authenticated. */
+export interface CustomProbe {
+  /** `oauth`: it answered 401 (sign in needed); `none`: it answered without credentials; `unknown`: could not tell. */
+  detected: 'none' | 'oauth' | 'unknown'
+  message: string
+  serverName?: string
+  /** Tools listed without credentials (only when no sign in is needed). */
+  tools?: number
+  oauth?: {
+    /** RFC 9728 / RFC 8414 metadata was found. */
+    discovered: boolean
+    issuer?: string
+    /** The server registers clients itself (RFC 7591): no client id needed. */
+    dynamicRegistration: boolean
+  }
+}
+
+export const SIGN_IN_MODES = ['now', 'later', 'none'] as const
+export type SignInMode = (typeof SIGN_IN_MODES)[number]
+
+export interface CustomConnectorInput {
+  name: string
+  url: string
+  /** `now`: sign in right after adding; `later`: when needed; `none`: the server needs no sign in. */
+  signIn: SignInMode
+  oauthClient?: { clientId: string; clientSecret?: string } | undefined
+  headers?: Record<string, string> | undefined
+  /** Workspace scope: every agent gets it. Default false. */
+  availableToAll?: boolean | undefined
+  scope?: 'workspace' | 'agent' | undefined
+  scopeId?: string | undefined
+}
+
+export interface CustomConnectorResult {
+  connection: ConnectionView
+  /** `signIn: 'now'`: the OAuth flow to open. */
+  flow?: FlowDto
+}
+
+/** Lowercase `[a-z0-9-]` slug of at most `max` characters. */
+export function slugOf(text: string, max = 32): string {
+  return text
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, max)
+    .replace(/-+$/, '')
+}
+
+/** A tool-prefix slug from a name, unique among `taken` (`-2`, `-3`, ...). */
+export function uniqueSlug(name: string, taken: ReadonlySet<string>): string {
+  const base = slugOf(name) || 'mcp'
+  if (!taken.has(base)) return base
+  for (let n = 2; ; n++) {
+    const suffix = `-${n}`
+    const candidate = `${base.slice(0, 32 - suffix.length).replace(/-+$/, '')}${suffix}`
+    if (!taken.has(candidate)) return candidate
+  }
+}
+
+/** https, or http on localhost (the same rule as the connector's `url` setting). */
+export function isAllowedMcpUrl(value: string): boolean {
+  try {
+    const u = new URL(value)
+    return (
+      u.protocol === 'https:' ||
+      (u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1'))
+    )
+  } catch {
+    return false
+  }
+}
+
+const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/
+
+/** Validate what a client sent for a custom connector; returns the cleaned input. */
+export function parseCustomInput(input: CustomConnectorInput): CustomConnectorInput {
+  const name = input.name.trim()
+  if (name === '' || name.length > 60) throw invalid('name must be 1 to 60 characters')
+  const url = input.url.trim()
+  if (!isAllowedMcpUrl(url)) throw invalid('url must be an https URL (http only on localhost)')
+  const headers: Record<string, string> = {}
+  for (const [k, v] of Object.entries(input.headers ?? {})) {
+    if (k.trim() === '' && v === '') continue
+    if (!HEADER_NAME.test(k.trim())) {
+      throw invalid(`header name "${k}" may contain letters, digits and hyphens only`)
+    }
+    headers[k.trim()] = v
+  }
+  const clientId = input.oauthClient?.clientId.trim() ?? ''
+  const clientSecret = input.oauthClient?.clientSecret?.trim() ?? ''
+  return {
+    name,
+    url,
+    signIn: input.signIn,
+    ...(input.signIn !== 'none' && clientId !== ''
+      ? { oauthClient: { clientId, ...(clientSecret === '' ? {} : { clientSecret }) } }
+      : {}),
+    ...(Object.keys(headers).length > 0 ? { headers } : {}),
+    availableToAll: input.availableToAll ?? false,
+    scope: input.scope ?? 'workspace',
+    ...(input.scopeId === undefined ? {} : { scopeId: input.scopeId }),
+  }
 }

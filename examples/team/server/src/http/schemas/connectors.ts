@@ -101,6 +101,10 @@ export const ConnectionSchema = z
     }),
     authorized: z.boolean(),
     builtin: z.boolean(),
+    custom: z.boolean().openapi({
+      description:
+        'A custom (remote MCP) connection: its own connector in the directory, under the name its user gave it.',
+    }),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
   })
@@ -384,3 +388,64 @@ export const OAuthCallbackQuery = z.object({
   error: z.string().optional(),
   error_description: z.string().optional(),
 })
+
+export const CustomProbeBodySchema = z
+  .object({ url: z.string().min(1).max(2048).openapi({ example: 'https://mcp.example.com/mcp' }) })
+  .openapi('CustomProbeBody')
+
+export const CustomProbeSchema = z
+  .object({
+    detected: z.enum(['none', 'oauth', 'unknown']).openapi({
+      description:
+        '`oauth`: the server answered 401, sign in needed. `none`: it answered without credentials. `unknown`: could not tell (unreachable, other status).',
+    }),
+    message: z.string(),
+    serverName: z.string().optional(),
+    tools: z
+      .number()
+      .int()
+      .optional()
+      .openapi({ description: 'Tools listed without credentials.' }),
+    oauth: z
+      .object({
+        discovered: z.boolean().openapi({ description: 'RFC 9728 / RFC 8414 metadata was found.' }),
+        issuer: z.string().optional(),
+        dynamicRegistration: z
+          .boolean()
+          .openapi({ description: 'The server registers clients itself: no client id needed.' }),
+      })
+      .optional(),
+  })
+  .openapi('CustomProbe')
+
+export const CustomConnectorBodySchema = z
+  .object({
+    name: z.string().min(1).max(60).openapi({ example: 'Company docs' }),
+    url: z.string().min(1).max(2048),
+    signIn: z.enum(['now', 'later', 'none']).openapi({
+      description:
+        '`now`: sign in right after adding (the response carries the OAuth `flow` to open). `later`: saved as needs-auth, signed in when needed. `none`: no sign in; tools are discovered now.',
+    }),
+    oauthClient: z
+      .object({
+        clientId: z.string().min(1).max(512),
+        clientSecret: z.string().max(2048).optional(),
+      })
+      .optional()
+      .openapi({ description: 'Your own OAuth client (otherwise the server registers one).' }),
+    headers: z
+      .record(z.string(), z.string().max(4096))
+      .optional()
+      .openapi({ description: 'Request headers; values are secrets, stored encrypted.' }),
+    availableToAll: z
+      .boolean()
+      .optional()
+      .openapi({ description: 'Every agent gets it (workspace scope).' }),
+    scope: z.enum(['workspace', 'agent']).optional(),
+    scopeId: z.string().optional(),
+  })
+  .openapi('CustomConnectorBody')
+
+export const CustomConnectorResultSchema = z
+  .object({ connection: ConnectionSchema, flow: FlowSchema.optional() })
+  .openapi('CustomConnectorResult')

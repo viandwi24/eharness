@@ -9,6 +9,7 @@
 	import ConnectorIcon from './ConnectorIcon.svelte';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import ConnectFlowDialog from './ConnectFlowDialog.svelte';
+	import AddCustomConnectorDialog from './AddCustomConnectorDialog.svelte';
 
 	let {
 		open = $bindable(false),
@@ -35,7 +36,7 @@
 	let flowDefinition = $state<string | undefined>(undefined);
 
 	const available = $derived(availableToAdd(connectors).filter((c) => !q || `${c.name} ${c.label}`.toLowerCase().includes(q)));
-	const connectable = $derived(connectorsStore.state.connectors.filter((c) => !c.builtin && c.scopes.includes('agent') && (!q || `${c.name} ${c.description}`.toLowerCase().includes(q))));
+	const connectable = $derived(connectorsStore.state.connectors.filter((c) => !c.builtin && c.source !== 'custom' && c.scopes.includes('agent') && (!q || `${c.name} ${c.description}`.toLowerCase().includes(q))));
 
 	async function add(c: AgentConnector): Promise<void> {
 		busy = c.connectionId;
@@ -48,6 +49,10 @@
 			busy = null;
 		}
 	}
+
+	let customOpen = $state(false);
+	let signInFlow = $state<string | undefined>(undefined);
+	let signInOpen = $state(false);
 
 	function connect(definitionId: string): void {
 		flowDefinition = definitionId;
@@ -75,7 +80,7 @@
 								<ConnectorIcon icon={c.icon} size="sm" />
 								<div class="min-w-0 flex-1">
 									<p class="truncate text-sm font-medium">{c.name}</p>
-									<p class="truncate text-xs text-muted-foreground">{c.label}</p>
+									<p class="truncate text-xs text-muted-foreground">{c.source === 'custom' ? (c.status === 'needs-auth' ? 'Custom · sign in needed' : 'Custom connector') : c.label}</p>
 								</div>
 								<Button size="sm" variant="outline" disabled={busy === c.connectionId} onclick={() => add(c)}>Add</Button>
 							</li>
@@ -105,6 +110,7 @@
 				{:else}
 					<p class="text-sm text-muted-foreground">{q ? 'Nothing matches your search.' : 'No connectors can be added to a single agent.'}</p>
 				{/if}
+				<Button size="sm" variant="outline" onclick={() => (customOpen = true)}>Add custom connector</Button>
 			</section>
 			{#if error}<p class="text-sm text-destructive-text" role="alert">{error}</p>{/if}
 		</div>
@@ -125,3 +131,17 @@
 		onConnected();
 	}}
 />
+
+<AddCustomConnectorDialog
+	bind:open={customOpen}
+	{agentId}
+	onAdded={(_c, flow) => {
+		open = false;
+		onConnected();
+		if (flow) {
+			signInFlow = flow.id;
+			signInOpen = true;
+		}
+	}}
+/>
+<ConnectFlowDialog bind:open={signInOpen} flowId={signInFlow} onDone={onConnected} />

@@ -31,15 +31,27 @@
 	import { connectionStatus, runTest, type TestOutcome } from '#lib/config/status.js';
 	import { capabilitiesOf, categoryLabel, MODE_LABEL } from '#lib/connectors/core.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
+	import { authLabel, customState, hostOf, initialsOf, toolCount } from '#lib/connectors/custom.js';
 	import { alwaysAsks, KIND_LABEL, KIND_VARIANT, modeOf, OAUTH_CLIENT_NEEDS_SETUP, scopeLabel, splitMemory } from '#lib/connectors/view.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	
 	/** One connector in a wide dialog: what it can do, its connections, default permissions and actions. */
-	let { open = $bindable(false), connectorId }: { open?: boolean; connectorId: string | null } = $props();
+	let {
+		open = $bindable(false),
+		connectorId,
+		connectionId = null
+	}: {
+		open?: boolean;
+		connectorId: string | null;
+		/** A custom connector: show this one connection as the connector it is (its own name and page). */
+		connectionId?: string | null;
+	} = $props();
 
 	const store = connectorsStore.state;
 	const connector = $derived(store.connectors.find((c) => c.id === connectorId));
-	const connections = $derived(connector ? store.connections.filter((c) => c.definitionId === connector.id) : []);
+	const single = $derived(connectionId ? store.connections.find((c) => c.id === connectionId) : undefined);
+	const connections = $derived(single ? [single] : connector ? store.connections.filter((c) => c.definitionId === connector.id) : []);
+	const isCustom = $derived(single?.custom === true);
 	const agentName = (id: string): string | undefined => agentsStore.state.agents.find((a) => a.id === id)?.name;
 	const memory = $derived(connector?.id === 'memory' ? splitMemory(connections) : null);
 	const needsSetup = $derived(connector ? OAUTH_CLIENT_NEEDS_SETUP(connector) : false);
@@ -152,7 +164,8 @@
 		if (!c) return;
 		try {
 			await connectorsStore.remove(c.id);
-			toast.success('Disconnected');
+			toast.success(c.custom ? 'Removed' : 'Disconnected');
+			if (single) open = false;
 		} catch (err) {
 			toast.error(message(err));
 		}
@@ -196,7 +209,7 @@
 					<div class="flex flex-wrap items-center gap-1.5">
 						<span class="truncate text-sm font-medium">{title ?? c.label}</span>
 						{#if badge}<Badge variant="brand">{badge}</Badge>{/if}
-						<StatusBadge status={connectionStatus(c)} />
+						{#if c.custom && customState(c) === 'needs-sign-in'}<StatusBadge status="needs-auth" label="Sign in needed" />{:else}<StatusBadge status={connectionStatus(c)} />{/if}
 						{#if !c.builtin && c.scope !== 'workspace'}<Badge variant="outline">{scopeLabel(c, agentName)}</Badge>{/if}
 					</div>
 					{#if c.accountLabel}<p class="mt-0.5 truncate text-xs text-muted-foreground">Signed in as {c.accountLabel}</p>{/if}
@@ -204,8 +217,8 @@
 			</div>
 			{#if !c.builtin && renaming !== c.id}
 				<div class="flex shrink-0 items-center gap-1.5">
-					<TestButton busy={res?.busy} onclick={() => test(c)} label="Test connection" />
-					{#if c.status === 'needs-auth' || c.status === 'error'}<Button size="sm" onclick={() => reconnect(c)}>Reconnect</Button>{/if}
+					{#if !(c.custom && c.status === 'needs-auth')}<TestButton busy={res?.busy} onclick={() => test(c)} label="Test connection" />{/if}
+					{#if c.status === 'needs-auth' || c.status === 'error'}<Button size="sm" onclick={() => reconnect(c)}>{c.custom && c.status === 'needs-auth' ? 'Sign in' : 'Reconnect'}</Button>{/if}
 					<DropdownMenu.Root>
 						<DropdownMenu.Trigger>
 							{#snippet child({ props })}
@@ -219,9 +232,9 @@
 									renameValue = c.label;
 								}}>Rename</DropdownMenu.Item
 							>
-							<DropdownMenu.Item onSelect={() => reconnect(c)}>Reconnect</DropdownMenu.Item>
+							{#if !c.custom || c.settings.authMode === 'oauth'}<DropdownMenu.Item onSelect={() => reconnect(c)}>{c.custom ? 'Sign in again' : 'Reconnect'}</DropdownMenu.Item>{/if}
 							<DropdownMenu.Separator />
-							<DropdownMenu.Item variant="destructive" onSelect={() => (confirmRemove = c)}>Disconnect</DropdownMenu.Item>
+							<DropdownMenu.Item variant="destructive" onSelect={() => (confirmRemove = c)}>{c.custom ? 'Remove' : 'Disconnect'}</DropdownMenu.Item>
 						</DropdownMenu.Content>
 					</DropdownMenu.Root>
 				</div>
@@ -240,9 +253,14 @@
 			</label>
 		{/if}
 
+		{#if c.custom && caps.length === 0}
+			<p class="border-t border-border px-3.5 py-3 text-xs text-muted-foreground">
+				{c.status === 'needs-auth' ? 'Its tools appear after you sign in.' : 'No tools found yet. Test the connection to discover them.'}
+			</p>
+		{/if}
 		{#if caps.length}
 			<div class="border-t border-border px-3.5 pt-3 pb-1">
-				<h4 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">{c.builtin ? 'What it can do' : 'Default permissions'}</h4>
+				<h4 class="text-xs font-medium tracking-wide text-muted-foreground uppercase">{c.builtin ? 'What it can do' : c.custom ? `Tools · ${toolCount(caps)} found · default permissions` : 'Default permissions'}</h4>
 				<ul class="divide-y divide-border">
 					{#each caps as cap (cap.id)}
 						{@const mode = modeOf(c, cap)}
@@ -281,23 +299,44 @@
 	</div>
 {/snippet}
 
+{#snippet serverInfo(c: Connection)}
+	{@const url = typeof c.settings.url === 'string' ? c.settings.url : ''}
+	<section class="flex flex-col gap-2 rounded-xl border border-border p-3.5">
+		<div class="flex items-center justify-between gap-3 text-sm"><span class="text-muted-foreground">Authentication</span><span>{authLabel(c)}</span></div>
+		<div class="flex items-center gap-2">
+			<code class="min-w-0 flex-1 rounded-md border border-border bg-muted/40 px-2 py-1.5 font-mono text-xs break-all" data-testid="server-url">{url}</code>
+			<Button size="icon-sm" variant="outline" aria-label="Copy server URL" onclick={() => copyUri(url)}>
+				{#if copied}<CheckIcon class="size-4" />{:else}<CopyIcon class="size-4" />{/if}
+			</Button>
+		</div>
+	</section>
+{/snippet}
+
 <Dialog.Root bind:open>
 	<Dialog.Content elevation="floating" class="flex max-h-[92svh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl">
 		{#if connector}
 			<Dialog.Header class="gap-0 border-b border-border px-5 py-5 pr-12 sm:pr-14 sm:pl-6">
 				<div class="flex flex-col gap-4 sm:flex-row sm:items-start">
-					<ConnectorIcon icon={connector.icon} size="lg" />
+					{#if single}
+						<span aria-hidden="true" class="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-muted text-lg font-semibold text-muted-foreground">{initialsOf(single.label)}</span>
+					{:else}
+						<ConnectorIcon icon={connector.icon} size="lg" />
+					{/if}
 					<div class="min-w-0 flex-1">
 						<div class="flex flex-wrap items-center gap-2">
-							<Dialog.Title class="text-lg font-semibold">{connector.name}</Dialog.Title>
-							{#if connector.builtin}<Badge variant="info">Included</Badge>{:else if connections.length}<StatusBadge status="connected" />{/if}
+							<Dialog.Title class="text-lg font-semibold">{single ? single.label : connector.name}</Dialog.Title>
+							{#if connector.builtin}<Badge variant="info">Included</Badge>{:else if single}<StatusBadge status={customState(single) === 'needs-sign-in' ? 'needs-auth' : connectionStatus(single)} label={customState(single) === 'needs-sign-in' ? 'Sign in needed' : undefined} />{:else if connections.length}<StatusBadge status="connected" />{/if}
 						</div>
+						{#if single}
+							<p class="mt-0.5 text-xs text-muted-foreground">Custom connector · {hostOf(single) || 'remote MCP server'}</p>
+						{:else}
 						<p class="mt-0.5 text-xs text-muted-foreground">
 							{connector.builtin ? 'Built in' : connector.source === 'custom' ? 'Your own server' : categoryLabel(connector.category)}
 							{#if connector.auth.type !== 'none'}· Sign in with {connector.auth.type === 'oauth2' ? 'OAuth' : connector.auth.type === 'deviceCode' ? 'a device code' : 'an API key'}{/if}
 						</p>
-						<Dialog.Description class="mt-2 text-sm text-muted-foreground">{connector.description}</Dialog.Description>
-						{#if connector.publisher || connector.homepage || connector.docsUrl}
+						{/if}
+						<Dialog.Description class="mt-2 text-sm text-muted-foreground">{single ? 'Your own remote MCP server. Agents only use what you allow below.' : connector.description}</Dialog.Description>
+						{#if !single && (connector.publisher || connector.homepage || connector.docsUrl)}
 							<p class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground" data-testid="connector-links">
 								{#if connector.publisher}<span>By {connector.publisher}</span>{/if}
 								{#if connector.homepage}<a class="inline-flex items-center gap-1 underline-offset-2 hover:text-foreground hover:underline" href={connector.homepage} target="_blank" rel="noopener noreferrer">Website<ArrowSquareOutIcon class="size-3" /></a>{/if}
@@ -305,7 +344,7 @@
 							</p>
 						{/if}
 					</div>
-					{#if !connector.builtin && !needsSetup}
+					{#if !connector.builtin && !needsSetup && !single}
 						<Button class="shrink-0 sm:mt-0.5" onclick={startConnect}>
 							{#if connections.length}<PlusIcon class="size-4" />Add account{:else}Connect{/if}
 						</Button>
@@ -344,7 +383,10 @@
 					{/if}
 					<p class="text-xs text-muted-foreground">Included with every workspace, nothing to connect. Turn it on or off per agent in the agent's Connectors tab.</p>
 				{:else}
-					{#if connections.length}
+					{#if single}
+						{@render serverInfo(single)}
+						{@render connectionCard(single)}
+					{:else if connections.length}
 						<section class="flex flex-col gap-3">
 							<h3 class="text-sm font-medium">Connections</h3>
 							{#each connections as c (c.id)}{@render connectionCard(c)}{/each}
@@ -416,7 +458,7 @@
 				{/if}
 			</div>
 
-			{#if !connector.builtin && !needsSetup}
+			{#if !connector.builtin && !needsSetup && !single}
 				<div class="flex items-center justify-between gap-3 border-t border-border bg-muted/30 px-5 py-3 sm:px-6">
 					<!-- applies to the NEXT account connected here; existing accounts have their own switch above -->
 					{#if connections.length === 0}
@@ -440,6 +482,7 @@
 	connectionId={flowConnectionId}
 	scope="workspace"
 	label={flowLabel}
+	signIn={isCustom}
 	defaultEnabled={makeDefault}
 	onDone={flowDone}
 />
@@ -447,12 +490,12 @@
 <AlertDialog.Root open={confirmRemove !== null} onOpenChange={(o) => !o && (confirmRemove = null)}>
 	<AlertDialog.Content elevation="floating">
 		<AlertDialog.Header>
-			<AlertDialog.Title>Disconnect {confirmRemove?.label}?</AlertDialog.Title>
-			<AlertDialog.Description>Agents lose access to {connector?.name}. You can connect it again later.</AlertDialog.Description>
+			<AlertDialog.Title>{confirmRemove?.custom ? 'Remove' : 'Disconnect'} {confirmRemove?.label}?</AlertDialog.Title>
+			<AlertDialog.Description>{confirmRemove?.custom ? `Agents lose access to ${confirmRemove.label}, and its saved sign-in and headers are deleted. You can add it again later.` : `Agents lose access to ${connector?.name}. You can connect it again later.`}</AlertDialog.Description>
 		</AlertDialog.Header>
 		<AlertDialog.Footer>
 			<AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
-			<AlertDialog.Action variant="destructive" onclick={remove}>Disconnect</AlertDialog.Action>
+			<AlertDialog.Action variant="destructive" onclick={remove}>{confirmRemove?.custom ? 'Remove' : 'Disconnect'}</AlertDialog.Action>
 		</AlertDialog.Footer>
 	</AlertDialog.Content>
 </AlertDialog.Root>

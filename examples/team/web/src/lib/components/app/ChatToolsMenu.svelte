@@ -40,6 +40,10 @@
 		void live.state.revs.connectors; // a connection or an enablement changed
 		untrack(() => void load());
 	});
+	// opening the menu always shows the current list (cheap; covers a missed live event)
+	$effect(() => {
+		if (open) untrack(() => void load());
+	});
 
 	const rows = $derived(tools ? menuRows(tools) : { web: [], others: [] });
 	const badge = $derived(offBadge(tools));

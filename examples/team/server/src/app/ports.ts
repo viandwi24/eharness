@@ -9,6 +9,9 @@ import type {
   ConnectionTestResult,
   ConnectionView,
   ConnectorView,
+  CustomConnectorInput,
+  CustomConnectorResult,
+  CustomProbe,
   FlowActInput,
   FlowActResult,
   FlowResult,
@@ -451,6 +454,10 @@ export interface ConnectorsPort {
     agent: AgentDef,
     changes: Record<string, ConnectionChoices | null>,
   ): Promise<AgentConnectorView[]>
+  /** Ask a server which sign-in it needs (an unauthenticated MCP request + OAuth discovery). */
+  probeCustom(input: { url: string }): Promise<CustomProbe>
+  /** Add a custom connector: its own connection, named by the user. */
+  createCustom(input: CustomConnectorInput): Promise<CustomConnectorResult>
   setOAuthClient(
     definitionId: string,
     input: { clientId: string; clientSecret?: string },

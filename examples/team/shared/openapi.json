@@ -3545,6 +3545,10 @@
           "builtin": {
             "type": "boolean"
           },
+          "custom": {
+            "type": "boolean",
+            "description": "A custom (remote MCP) connection: its own connector in the directory, under the name its user gave it."
+          },
           "createdAt": {
             "type": "integer"
           },
@@ -3563,29 +3567,85 @@
           "settings",
           "authorized",
           "builtin",
+          "custom",
           "createdAt",
           "updatedAt"
         ]
       },
-      "FlowResult": {
+      "CustomProbe": {
         "type": "object",
         "properties": {
-          "flow": {
-            "$ref": "#/components/schemas/ConnectFlow"
+          "detected": {
+            "type": "string",
+            "enum": [
+              "none",
+              "oauth",
+              "unknown"
+            ],
+            "description": "`oauth`: the server answered 401, sign in needed. `none`: it answered without credentials. `unknown`: could not tell (unreachable, other status)."
           },
-          "connection": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/Connection"
+          "message": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "tools": {
+            "type": "integer",
+            "description": "Tools listed without credentials."
+          },
+          "oauth": {
+            "type": "object",
+            "properties": {
+              "discovered": {
+                "type": "boolean",
+                "description": "RFC 9728 / RFC 8414 metadata was found."
               },
-              {
-                "description": "Set once the flow finished and the connection was saved."
+              "issuer": {
+                "type": "string"
+              },
+              "dynamicRegistration": {
+                "type": "boolean",
+                "description": "The server registers clients itself: no client id needed."
               }
+            },
+            "required": [
+              "discovered",
+              "dynamicRegistration"
             ]
           }
         },
         "required": [
-          "flow"
+          "detected",
+          "message"
+        ]
+      },
+      "CustomProbeBody": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048,
+            "example": "https://mcp.example.com/mcp"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "CustomConnectorResult": {
+        "type": "object",
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/Connection"
+          },
+          "flow": {
+            "$ref": "#/components/schemas/ConnectFlow"
+          }
+        },
+        "required": [
+          "connection"
         ]
       },
       "ConnectFlow": {
@@ -3978,6 +4038,97 @@
           }
         ],
         "description": "What to show now. A closed vocabulary: render by `type`. Every action quotes the `viewId` of the view it answers."
+      },
+      "CustomConnectorBody": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60,
+            "example": "Company docs"
+          },
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2048
+          },
+          "signIn": {
+            "type": "string",
+            "enum": [
+              "now",
+              "later",
+              "none"
+            ],
+            "description": "`now`: sign in right after adding (the response carries the OAuth `flow` to open). `later`: saved as needs-auth, signed in when needed. `none`: no sign in; tools are discovered now."
+          },
+          "oauthClient": {
+            "type": "object",
+            "properties": {
+              "clientId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "clientSecret": {
+                "type": "string",
+                "maxLength": 2048
+              }
+            },
+            "required": [
+              "clientId"
+            ],
+            "description": "Your own OAuth client (otherwise the server registers one)."
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "maxLength": 4096
+            },
+            "description": "Request headers; values are secrets, stored encrypted."
+          },
+          "availableToAll": {
+            "type": "boolean",
+            "description": "Every agent gets it (workspace scope)."
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "workspace",
+              "agent"
+            ]
+          },
+          "scopeId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "url",
+          "signIn"
+        ]
+      },
+      "FlowResult": {
+        "type": "object",
+        "properties": {
+          "flow": {
+            "$ref": "#/components/schemas/ConnectFlow"
+          },
+          "connection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Connection"
+              },
+              {
+                "description": "Set once the flow finished and the connection was saved."
+              }
+            ]
+          }
+        },
+        "required": [
+          "flow"
+        ]
       },
       "FlowStart": {
         "type": "object",
@@ -8779,6 +8930,128 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connectors/custom/probe": {
+      "post": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Find out which sign-in a remote MCP server needs",
+        "description": "Sends an unauthenticated MCP `initialize` to the URL. `401` means sign in is needed (OAuth is detected through RFC 9728 / RFC 8414 discovery); a normal answer means no sign in. Nothing is saved. Never fails for an unreachable server: `detected: \"unknown\"` says why.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomProbeBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "What was found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomProbe"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/connectors/custom": {
+      "post": {
+        "tags": [
+          "connectors"
+        ],
+        "summary": "Add a custom connector",
+        "description": "Creates a new connection of the custom connector under its own name (like Claude's \"Add custom connector\"). `signIn: \"none\"` connects now and discovers the tools (a server that can not be reached saves nothing, 400 `CONNECT_FAILED`); `later` saves it as needs-auth; `now` also returns the OAuth `flow` to open. The tool prefix is derived from the name once, unique in the workspace, and never changes on rename.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CustomConnectorBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The connector",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CustomConnectorResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
             "content": {
               "application/json": {
                 "schema": {

@@ -44,6 +44,8 @@ export function directorySections(
 ): DirectorySections {
 	const out: DirectorySections = { connected: [], available: [], included: [] };
 	for (const c of connectors) {
+		// custom connections are cards of their own (see `custom.ts`), never the generic connector
+		if (c.source === 'custom') continue;
 		if (!matchesQuery(c, filter.query ?? '')) continue;
 		if (filter.category && c.category !== filter.category) continue;
 		if (c.builtin) out.included.push(c);
@@ -54,8 +56,9 @@ export function directorySections(
 }
 
 /** The categories present in the catalog, built-ins first. */
-export function categoriesOf(connectors: Connector[]): string[] {
-	return [...new Set(connectors.map((c) => c.category))];
+export function categoriesOf(connectors: Connector[], connections: Connection[] = []): string[] {
+	const ids = connectors.filter((c) => c.source !== 'custom').map((c) => c.category);
+	return [...new Set(connections.some((c) => c.custom) ? [...ids, 'custom'] : ids)];
 }
 
 export function createConnectorsCore(api: ApiClient, state: ConnectorsState) {

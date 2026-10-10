@@ -49,7 +49,7 @@ import { createChatService } from './infra/eh/chat-service.ts'
 import { createChatToolsService } from './infra/eh/chat-tools-service.ts'
 import type { CatalogOptions } from './infra/eh/connector-catalog.ts'
 import { type ConnectorsRuntime, createConnectors, SEALED_KINDS } from './infra/eh/connectors.ts'
-import { migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
+import { backfillCustomSlugs, migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
@@ -410,6 +410,10 @@ export function compose(config: ServerConfig): Server {
       console.warn(`team: re-sealed ${resealed} stored secret row(s) with the current key`)
     await migrateLegacyAgents({
       sqlite: conn.sqlite,
+      connections: connectors.stores.connections,
+      changed: () => connectors.profileChanged('connection'),
+    })
+    await backfillCustomSlugs({
       connections: connectors.stores.connections,
       changed: () => connectors.profileChanged('connection'),
     })

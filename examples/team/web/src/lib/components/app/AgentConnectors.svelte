@@ -105,10 +105,10 @@
 				<div class="flex flex-wrap items-center gap-1.5">
 					<span class="text-sm font-medium">{c.name}</span>
 					<Badge variant={c.ownership === 'workspace' ? 'secondary' : 'brand'}>{scopeBadge(c)}</Badge>
-					{#if c.status === 'needs-auth' || c.status === 'error'}<StatusBadge status={c.status} />{/if}
+					{#if c.status === 'needs-auth' || c.status === 'error'}<StatusBadge status={c.status} label={c.source === 'custom' && c.status === 'needs-auth' ? 'Sign in required' : undefined} />{/if}
 				</div>
 				<p class="truncate text-xs text-muted-foreground">
-					{[c.label !== c.name ? c.label : '', c.accountLabel ?? ''].filter(Boolean).join(' · ') || (c.source === 'builtin' ? 'Included' : 'Connected')}
+					{[c.label !== c.name ? c.label : '', c.accountLabel ?? ''].filter(Boolean).join(' · ') || (c.source === 'builtin' ? 'Included' : c.status === 'needs-auth' ? (c.source === 'custom' ? 'Sign in to use its tools' : 'Reconnect to use it') : 'Connected')}
 				</p>
 			</div>
 			{#if c.status === 'needs-auth'}
@@ -118,7 +118,7 @@
 					onclick={() => {
 						reconnectId = c.connectionId;
 						reconnectOpen = true;
-					}}><ArrowClockwiseIcon class="size-3.5" />Reconnect</Button
+					}}><ArrowClockwiseIcon class="size-3.5" />{c.source === 'custom' ? 'Sign in' : 'Reconnect'}</Button
 				>
 			{/if}
 			<Switch size="sm" checked={c.enabled} disabled={busy} aria-label="{c.name} {c.label} on or off" onCheckedChange={(v) => v !== c.enabled && save(c, withEnabled(c, v))} />

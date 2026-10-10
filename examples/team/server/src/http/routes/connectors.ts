@@ -1,11 +1,13 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import {
   actOnFlow,
+  createCustomConnector,
   getAgentConnectors,
   getConnectFlow,
   listCatalog,
   listConnections,
   oauthCallback,
+  probeCustomConnector,
   putAgentConnectors,
   removeConnection,
   removeOAuthClient,
@@ -27,6 +29,10 @@ import {
   ConnectionsQuery,
   ConnectionTestSchema,
   ConnectorListSchema,
+  CustomConnectorBodySchema,
+  CustomConnectorResultSchema,
+  CustomProbeBodySchema,
+  CustomProbeSchema,
   DefinitionIdParam,
   FlowActSchema,
   FlowConflictSchema,
@@ -253,6 +259,37 @@ const clientDelete = createRoute({
   },
 })
 
+const probeRoute = createRoute({
+  method: 'post',
+  path: '/connectors/custom/probe',
+  tags: ['connectors'],
+  summary: 'Find out which sign-in a remote MCP server needs',
+  description:
+    'Sends an unauthenticated MCP `initialize` to the URL. `401` means sign in is needed (OAuth is detected through RFC 9728 / RFC 8414 discovery); a normal answer means no sign in. Nothing is saved. Never fails for an unreachable server: `detected: "unknown"` says why.',
+  security,
+  request: { body: { required: true, content: content(CustomProbeBodySchema) } },
+  responses: {
+    200: { description: 'What was found', content: content(CustomProbeSchema) },
+    ...errorResponses,
+  },
+})
+
+const createCustomRoute = createRoute({
+  method: 'post',
+  path: '/connectors/custom',
+  tags: ['connectors'],
+  summary: 'Add a custom connector',
+  description:
+    'Creates a new connection of the custom connector under its own name (like Claude\'s "Add custom connector"). `signIn: "none"` connects now and discovers the tools (a server that can not be reached saves nothing, 400 `CONNECT_FAILED`); `later` saves it as needs-auth; `now` also returns the OAuth `flow` to open. The tool prefix is derived from the name once, unique in the workspace, and never changes on rename.',
+  security,
+  request: { body: { required: true, content: content(CustomConnectorBodySchema) } },
+  responses: {
+    201: { description: 'The connector', content: content(CustomConnectorResultSchema) },
+    404: jsonError('Unknown agent'),
+    ...errorResponses,
+  },
+})
+
 const FLOW_STATUS = {
   'stale-view': 409,
   expired: 409,
@@ -273,6 +310,12 @@ export function connectorRoutes(deps: Deps): OpenAPIHono {
     .openapi(catalog, async (c) => c.json({ connectors: await listCatalog(deps) }, 200))
     .openapi(connections, async (c) =>
       c.json({ connections: await listConnections(deps, c.req.valid('query')) }, 200),
+    )
+    .openapi(probeRoute, async (c) =>
+      c.json(await probeCustomConnector(deps, c.req.valid('json')), 200),
+    )
+    .openapi(createCustomRoute, async (c) =>
+      c.json((await createCustomConnector(deps, c.req.valid('json'))) as never, 201),
     )
     .openapi(startFlow, async (c) =>
       c.json((await startConnectFlow(deps, c.req.valid('json'))) as never, 201),

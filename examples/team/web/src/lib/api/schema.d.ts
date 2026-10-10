@@ -3265,6 +3265,137 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/connectors/custom/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Find out which sign-in a remote MCP server needs
+         * @description Sends an unauthenticated MCP `initialize` to the URL. `401` means sign in is needed (OAuth is detected through RFC 9728 / RFC 8414 discovery); a normal answer means no sign in. Nothing is saved. Never fails for an unreachable server: `detected: "unknown"` says why.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CustomProbeBody"];
+                };
+            };
+            responses: {
+                /** @description What was found */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CustomProbe"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/connectors/custom": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a custom connector
+         * @description Creates a new connection of the custom connector under its own name (like Claude's "Add custom connector"). `signIn: "none"` connects now and discovers the tools (a server that can not be reached saves nothing, 400 `CONNECT_FAILED`); `later` saves it as needs-auth; `now` also returns the OAuth `flow` to open. The tool prefix is derived from the name once, unique in the workspace, and never changes on rename.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["CustomConnectorBody"];
+                };
+            };
+            responses: {
+                /** @description The connector */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["CustomConnectorResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/connections/flows": {
         parameters: {
             query?: never;
@@ -5851,12 +5982,36 @@ export interface components {
             };
             authorized: boolean;
             builtin: boolean;
+            /** @description A custom (remote MCP) connection: its own connector in the directory, under the name its user gave it. */
+            custom: boolean;
             createdAt: number;
             updatedAt: number;
         };
-        FlowResult: {
-            flow: components["schemas"]["ConnectFlow"];
-            connection?: components["schemas"]["Connection"] & unknown;
+        CustomProbe: {
+            /**
+             * @description `oauth`: the server answered 401, sign in needed. `none`: it answered without credentials. `unknown`: could not tell (unreachable, other status).
+             * @enum {string}
+             */
+            detected: "none" | "oauth" | "unknown";
+            message: string;
+            serverName?: string;
+            /** @description Tools listed without credentials. */
+            tools?: number;
+            oauth?: {
+                /** @description RFC 9728 / RFC 8414 metadata was found. */
+                discovered: boolean;
+                issuer?: string;
+                /** @description The server registers clients itself: no client id needed. */
+                dynamicRegistration: boolean;
+            };
+        };
+        CustomProbeBody: {
+            /** @example https://mcp.example.com/mcp */
+            url: string;
+        };
+        CustomConnectorResult: {
+            connection: components["schemas"]["Connection"];
+            flow?: components["schemas"]["ConnectFlow"];
         };
         ConnectFlow: {
             id: string;
@@ -5957,6 +6112,34 @@ export interface components {
             step: string;
             message: string;
             retryable: boolean;
+        };
+        CustomConnectorBody: {
+            /** @example Company docs */
+            name: string;
+            url: string;
+            /**
+             * @description `now`: sign in right after adding (the response carries the OAuth `flow` to open). `later`: saved as needs-auth, signed in when needed. `none`: no sign in; tools are discovered now.
+             * @enum {string}
+             */
+            signIn: "now" | "later" | "none";
+            /** @description Your own OAuth client (otherwise the server registers one). */
+            oauthClient?: {
+                clientId: string;
+                clientSecret?: string;
+            };
+            /** @description Request headers; values are secrets, stored encrypted. */
+            headers?: {
+                [key: string]: string;
+            };
+            /** @description Every agent gets it (workspace scope). */
+            availableToAll?: boolean;
+            /** @enum {string} */
+            scope?: "workspace" | "agent";
+            scopeId?: string;
+        };
+        FlowResult: {
+            flow: components["schemas"]["ConnectFlow"];
+            connection?: components["schemas"]["Connection"] & unknown;
         };
         FlowStart: {
             /** @description Connect a new connection of this connector. */

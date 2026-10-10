@@ -20,6 +20,7 @@
 		label,
 		defaultEnabled,
 		flowId,
+		signIn = false,
 		onDone
 	}: {
 		open?: boolean;
@@ -35,6 +36,8 @@
 		defaultEnabled?: boolean;
 		/** Resume a flow that already exists (the OAuth redirect lands on `/connectors?flow=<id>`). */
 		flowId?: string;
+		/** A custom connector waiting for its sign in: "Sign in to <label>" instead of "Reconnect". */
+		signIn?: boolean;
 		/** Called with the saved connection when the flow finished successfully. */
 		onDone?: (connection: Connection) => void;
 	} = $props();
@@ -44,7 +47,7 @@
 	let started = false;
 
 	const name = $derived((definitionId ? connectorsStore.connector(definitionId)?.name : undefined) ?? session.state.flow?.label ?? 'connector');
-	const title = $derived(connectionId ? `Reconnect ${label ?? name}` : `Connect ${name}`);
+	const title = $derived(signIn ? `Sign in to ${label ?? name}` : connectionId ? `Reconnect ${label ?? name}` : `Connect ${name}`);
 
 	$effect(() => {
 		if (open && !started) {

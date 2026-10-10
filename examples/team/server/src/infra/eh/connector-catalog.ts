@@ -95,7 +95,14 @@ interface RemoteSettings {
   transport?: 'http' | 'sse'
   allow?: string[]
   deny?: string[]
+  /** The user's own OAuth client of this server (otherwise registered dynamically). */
+  oauthClientId?: string
+  oauthClientSecret?: string
 }
+
+/** Request headers apply in every mode (OAuth adds its token on top). */
+const hasHeaders = (s: RemoteSettings): boolean =>
+  s.headers !== undefined && Object.keys(s.headers).length > 0
 
 /** A field only the migration sets (never shown: the condition can not hold). */
 const NEVER = { field: 'authMode', in: [] as unknown[] }
@@ -122,6 +129,18 @@ function customMcp(
         description: 'Streamable HTTP, or the older SSE transport.',
         ...ehMeta({ group: 'advanced', widget: 'radio', showWhen: NEVER }),
       }),
+    // the user's own OAuth client of this server (set when adding it; never shown in the flow form)
+    oauthClientId: z
+      .string()
+      .optional()
+      .meta({ title: 'OAuth client ID', ...ehMeta({ group: 'auth', showWhen: NEVER }) }),
+    oauthClientSecret: z
+      .string()
+      .optional()
+      .meta({
+        title: 'OAuth client secret',
+        ...ehMeta({ group: 'auth', secret: true, widget: 'password', showWhen: NEVER }),
+      }),
     // tool lists of servers set up before connectors (hidden; capabilities replace them on a test)
     allow: z
       .array(z.string())
@@ -138,10 +157,31 @@ function customMcp(
     // a remote tool never shadows a built-in one and rules keep one name per tool
     toolPrefix: 'always',
     settings,
-    test: async (ctx) =>
-      (ctx.settings as unknown as RemoteSettings).transport === 'sse'
-        ? { ok: true, message: 'Saved. Tools of SSE servers are not listed.' }
-        : ((await base.test?.(ctx)) ?? { ok: true }),
+    test: async (ctx) => {
+      const s = ctx.settings as unknown as RemoteSettings
+      if (s.transport === 'sse')
+        return { ok: true, message: 'Saved. Tools of SSE servers are not listed.' }
+      const token = ctx.accessToken
+      try {
+        const tools = await listTools({
+          url: s.url,
+          ...(hasHeaders(s) ? { headers: s.headers as Record<string, string> } : {}),
+          ...(s.authMode === 'oauth' && token !== undefined
+            ? { getAccessToken: () => Promise.resolve(token) }
+            : {}),
+        })
+        return {
+          ok: true,
+          message: `Found ${tools.length} tools.`,
+          capabilities: capabilitiesFromTools(tools as RemoteToolInfo[]),
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          message: `Could not reach the server: ${error instanceof Error ? error.message.slice(0, 200) : 'unknown error'}`,
+        }
+      }
+    },
     activate: (ctx) => {
       const s = ctx.settings as unknown as RemoteSettings
       // tools are always `<slug>_<tool>` (`toolPrefix: 'always'`): `ctx.toolPrefix`
@@ -155,11 +195,7 @@ function customMcp(
           transport: {
             type: 'sse',
             url: s.url,
-            ...(s.authMode === 'headers' &&
-            s.headers !== undefined &&
-            Object.keys(s.headers).length > 0
-              ? { headers: s.headers }
-              : {}),
+            ...(hasHeaders(s) ? { headers: s.headers as Record<string, string> } : {}),
           },
           prefix,
           ...(modes.length > 0 ? { allow: on } : s.allow === undefined ? {} : { allow: s.allow }),
@@ -172,9 +208,7 @@ function customMcp(
         kind: 'mcp' as const,
         name: ctx.slug,
         url: s.url,
-        ...(s.authMode === 'headers' && s.headers !== undefined && Object.keys(s.headers).length > 0
-          ? { headers: s.headers }
-          : {}),
+        ...(hasHeaders(s) ? { headers: s.headers as Record<string, string> } : {}),
         ...(s.authMode === 'oauth' ? { getAccessToken: ctx.connection.getAccessToken } : {}),
         ...(s.allow === undefined ? {} : { allow: s.allow }),
         ...(s.deny === undefined ? {} : { deny: s.deny }),

@@ -24,11 +24,12 @@ import {
   createConnectorService,
   credentialStoreFromProfiles,
   describeConnector,
+  discoverMcpAuthorization,
   ensureBuiltinConnections,
   isConnectionEnabled,
   resolveModes,
 } from 'eharness/connectors'
-import { remoteMcpSource } from 'eharness/mcp'
+import { listRemoteMcpTools, remoteMcpSource } from 'eharness/mcp'
 import type { ProfileStore, SecretVault } from 'eharness/providers'
 import type { ConnectorsPort } from '../../app/ports.ts'
 import { type AgentDef, TOOL_ACCESS_AUTO_THRESHOLD, type ToolAccess } from '../../domain/agents.ts'
@@ -38,9 +39,13 @@ import type {
   ConnectionChoices,
   ConnectionView,
   ConnectorView,
+  CustomConnectorInput,
+  CustomConnectorResult,
+  CustomProbe,
   FlowDto,
   FlowResult,
 } from '../../domain/connectors.ts'
+import { CUSTOM_DEFINITION, isAllowedMcpUrl, slugOf, uniqueSlug } from '../../domain/connectors.ts'
 import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { NewEvent } from '../../domain/events.ts'
 import type { ChangeFeed } from './change-feed.ts'
@@ -174,7 +179,19 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     vault,
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     redirectUri: options.redirectUri,
-    clientConfig: async (id) => (await clientSource(id))?.value,
+    clientConfig: async (id, flow) => {
+      // a custom connector's own OAuth client lives in the settings of that connection
+      if (id === CUSTOM_DEFINITION) {
+        const clientId = flow.settings.oauthClientId
+        if (typeof clientId !== 'string' || clientId === '') return undefined
+        const secret = flow.settings.oauthClientSecret
+        return {
+          clientId,
+          ...(typeof secret === 'string' && secret !== '' ? { clientSecret: secret } : {}),
+        }
+      }
+      return (await clientSource(id))?.value
+    },
     lock: sqliteRefreshLock(options.lock),
   })
 
@@ -266,6 +283,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     settings: p.settings,
     authorized: p.authorized,
     builtin: isBuiltin(p.definitionId),
+    custom: defs.get(p.definitionId)?.source === 'custom',
     createdAt: p.createdAt,
     updatedAt: p.updatedAt,
   })
@@ -331,7 +349,10 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         // the app's own rules merge with the connector rules (most restrictive wins)
         appRules: appRulesOf(d),
       })
-      for (const w of out.warnings) warn(`connectors (${d.slug}): ${w.message}`)
+      for (const w of out.warnings) {
+        // a connection that still needs sign in is a normal state the UI shows, not a server problem
+        if (w.code !== 'connection-unavailable') warn(`connectors (${d.slug}): ${w.message}`)
+      }
       cache.set(d.id, { key: key(d), out })
     }
   }
@@ -364,7 +385,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
       out.push({
         connectionId: r.id,
         connectorId: d.id,
-        name: d.name,
+        // a custom connector is shown under the name its user gave it
+        name: d.source === 'custom' ? r.label : d.name,
         ...(d.icon === undefined ? {} : { icon: d.icon }),
         category: d.category,
         source: d.source,
@@ -425,6 +447,165 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     }
   }
 
+  // --- custom connectors -------------------------------------------------------------------
+
+  /** Slugs in use: stored ones, the slug the library derives for the others, connector ids. */
+  async function takenSlugs(): Promise<Set<string>> {
+    const taken = new Set<string>(definitions.map((d) => d.id))
+    for (const r of await connections.list()) {
+      taken.add(r.slug ?? (slugOf(r.label) || slugOf(r.id)))
+    }
+    return taken
+  }
+
+  /** A custom connection made by the generic flow gets its stable slug the first time it is seen. */
+  async function ensureSlug(connection: { id: string; definitionId: string } | undefined) {
+    if (connection === undefined || connection.definitionId !== CUSTOM_DEFINITION) return
+    const record = await connections.get(connection.id)
+    if (record === undefined || record.slug !== undefined) return
+    const taken = await takenSlugs()
+    taken.delete(slugOf(record.label) || slugOf(record.id))
+    await connections.put({ ...record, slug: uniqueSlug(record.label, taken) })
+  }
+
+  const fetcher = (): typeof fetch => options.fetch ?? globalThis.fetch
+  const listTools = options.listTools ?? listRemoteMcpTools
+
+  async function probeCustom(input: { url: string }): Promise<CustomProbe> {
+    if (!isAllowedMcpUrl(input.url)) {
+      throw invalid('url must be an https URL (http only on localhost)')
+    }
+    let res: Response
+    try {
+      res = await fetcher()(input.url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          accept: 'application/json, text/event-stream',
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2025-03-26',
+            capabilities: {},
+            clientInfo: { name: 'eharness-team', version: '1' },
+          },
+        }),
+        signal: AbortSignal.timeout(8000),
+      })
+    } catch {
+      return { detected: 'unknown', message: 'Could not reach the server. Check the URL.' }
+    }
+    if (res.status === 401) {
+      void res.body?.cancel().catch(() => undefined)
+      try {
+        const found = await discoverMcpAuthorization(input.url, { fetch: fetcher() })
+        return {
+          detected: 'oauth',
+          message: 'This server asks you to sign in.',
+          oauth: {
+            discovered: true,
+            issuer: found.server.issuer,
+            dynamicRegistration: found.server.registration_endpoint !== undefined,
+          },
+        }
+      } catch {
+        return {
+          detected: 'oauth',
+          message: 'This server asks you to sign in, but did not say how.',
+          oauth: { discovered: false, dynamicRegistration: false },
+        }
+      }
+    }
+    if (!res.ok) {
+      void res.body?.cancel().catch(() => undefined)
+      return {
+        detected: 'unknown',
+        message: `The server answered HTTP ${res.status}. It may need request headers.`,
+      }
+    }
+    let serverName: string | undefined
+    try {
+      const text = await res.text()
+      const line = text.startsWith('{')
+        ? text
+        : (text.split('\n').find((l) => l.startsWith('data:')) ?? '').slice(5)
+      const info = (
+        JSON.parse(line) as { result?: { serverInfo?: { name?: unknown; title?: unknown } } }
+      ).result?.serverInfo
+      const n = info?.title ?? info?.name
+      if (typeof n === 'string' && n !== '') serverName = n.slice(0, 80)
+    } catch {
+      // not JSON: the server still answered
+    }
+    let tools: number | undefined
+    try {
+      tools = (await listTools({ url: input.url })).length
+    } catch {
+      // listing is optional here
+    }
+    return {
+      detected: 'none',
+      message: 'No sign in needed.',
+      ...(serverName === undefined ? {} : { serverName }),
+      ...(tools === undefined ? {} : { tools }),
+    }
+  }
+
+  async function createCustom(input: CustomConnectorInput): Promise<CustomConnectorResult> {
+    const taken = await takenSlugs()
+    const id = `conn_${crypto.randomUUID()}`
+    const now = Date.now()
+    const oauth = input.signIn !== 'none'
+    const scope = input.scope ?? 'workspace'
+    const record: ConnectionRecord = {
+      id,
+      kind: 'connection',
+      definitionId: CUSTOM_DEFINITION,
+      label: input.name,
+      slug: uniqueSlug(input.name, taken),
+      settings: {
+        url: input.url,
+        authMode: oauth ? 'oauth' : input.headers === undefined ? 'none' : 'headers',
+        ...(input.headers === undefined ? {} : { headers: input.headers }),
+        transport: 'http',
+        ...(oauth && input.oauthClient !== undefined
+          ? {
+              oauthClientId: input.oauthClient.clientId,
+              ...(input.oauthClient.clientSecret === undefined
+                ? {}
+                : { oauthClientSecret: input.oauthClient.clientSecret }),
+            }
+          : {}),
+      },
+      enabled: true,
+      scope,
+      ...(scope === 'agent' && input.scopeId !== undefined ? { scopeId: input.scopeId } : {}),
+      status: oauth ? 'needs-auth' : 'connected',
+      ...(oauth ? { statusMessage: 'Sign in to use it.' } : {}),
+      defaultEnabled: scope === 'agent' ? true : (input.availableToAll ?? false),
+      createdAt: now,
+      updatedAt: now,
+    }
+    await connections.put(record)
+    if (!oauth) {
+      // nothing to sign in to: connect now, so the tools are discovered (a bad URL saves nothing)
+      const result = await service.test(id)
+      if (!result.ok) {
+        await service.remove(id)
+        throw invalid(result.message ?? 'Could not connect to the server.', 'CONNECT_FAILED')
+      }
+    }
+    const saved = (await service.get(id)) as NonNullable<Awaited<ReturnType<typeof service.get>>>
+    if (input.signIn === 'now') {
+      const started = await service.reconnect(id)
+      return { connection: toConnection(saved), flow: started.flow as unknown as FlowDto }
+    }
+    return { connection: toConnection(saved) }
+  }
+
   return {
     hooks,
     definitions,
@@ -475,6 +656,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           ...(input.data === undefined ? {} : { data: input.data }),
         })
         const flow = r.flow === undefined ? {} : { flow: r.flow as unknown as FlowDto }
+        await ensureSlug(r.connection)
         const connection =
           r.connection === undefined ? {} : { connection: toConnection(r.connection) }
         if (r.ok) return { ok: true as const, ...(flow as { flow: FlowDto }), ...connection }
@@ -491,6 +673,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
             : { errorDescription: query.errorDescription }),
         }),
       )
+      await ensureSlug(r.ok ? r.connection : undefined)
       if (r.flow !== undefined) return { flowId: r.flow.id }
       return { error: r.ok ? 'unknown' : r.message }
     },
@@ -556,6 +739,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
           connection: toConnection(record),
         }
       }),
+    probeCustom,
+    createCustom: (input) => wrap(() => createCustom(input)),
     agentConnectors: (agent) => agentView(agent),
     setAgentConnectors: async (agent, changes) => {
       const known = new Set((await agentView(agent)).map((v) => v.connectionId))
