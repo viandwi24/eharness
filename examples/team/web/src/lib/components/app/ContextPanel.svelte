@@ -34,23 +34,23 @@
 	import MemoryEditor from './MemoryEditor.svelte';
 	import RoutinesTab from './RoutinesTab.svelte';
 
-	/** The agent's details panel: overview, tasks, routines, files and memory. */
+	/** The agent's details panel: tasks, routines, files and memory. */
 	let { agentId, onClose }: { agentId: string; onClose?: () => void } = $props();
 	const agent = $derived(agentsStore.find(agentId));
 
-	const TABS = ['overview', 'tasks', 'routines', 'files', 'memory'] as const;
+	const TABS = ['tasks', 'routines', 'files', 'memory'] as const;
 	type TabId = (typeof TABS)[number];
-	const LABELS: Record<TabId, string> = { overview: 'Overview', tasks: 'Tasks', routines: 'Routines', files: 'Files', memory: 'Memory' };
+	const LABELS: Record<TabId, string> = { tasks: 'Tasks', routines: 'Routines', files: 'Files', memory: 'Memory' };
 
 	// The open tab is remembered per agent (try/catch inside the prefs helper).
-	let tab = $state<TabId>('overview');
+	let tab = $state<TabId>('tasks');
 	let tabFor = '';
 	$effect(() => {
 		const id = agentId;
 		if (id === tabFor) return;
 		tabFor = id;
 		const saved = readPref(panelTabKey(id));
-		tab = (TABS as readonly string[]).includes(saved ?? '') ? (saved as TabId) : 'overview';
+		tab = (TABS as readonly string[]).includes(saved ?? '') ? (saved as TabId) : 'tasks';
 	});
 	function setTab(v: string): void {
 		tab = v as TabId;
@@ -190,68 +190,6 @@
 	</div>
 
 	<div class="min-h-0 flex-1 overflow-y-auto p-3 text-sm">
-		<Tabs.Content value="overview" class="flex flex-col gap-5">
-			{#if agent}
-				<section>
-					{#if agent.description}<p class="text-[13px] leading-relaxed text-foreground">{agent.description}</p>
-					{:else}<p class="text-[13px] text-muted-foreground">No description yet.</p>{/if}
-					<Button variant="outline" size="sm" class="mt-3" onclick={() => openEditAgent(agent.id)}>
-						<PencilSimpleIcon /> Edit agent
-					</Button>
-				</section>
-
-				<section>
-					{@render heading('Configuration')}
-					<dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-[13px]">
-						<dt class="text-muted-foreground">Model</dt>
-						<dd class="truncate text-right font-mono text-xs" title={agent.model ?? context?.stats.model.id ?? ''}>
-							{agent.model ?? context?.stats.model.id ?? 'Workspace default'}
-						</dd>
-						<dt class="text-muted-foreground">Mode</dt>
-						<dd class="text-right">{modeState ? modeInfo(modeState.mode).label : '—'}</dd>
-						<dt class="text-muted-foreground">Role</dt>
-						<dd class="text-right capitalize">{agent.role}</dd>
-					</dl>
-					<Button variant="ghost" size="sm" class="mt-2 -ml-2 text-muted-foreground" href="/logs?sessionId={encodeURIComponent(`dm:${agent.id}`)}">
-						<PulseIcon /> View model calls
-					</Button>
-				</section>
-
-				<section>
-					{@render heading('Context')}
-					{#if ctxView && context}
-						<div class="flex items-baseline justify-between text-xs">
-							<span class="text-muted-foreground">{formatTokens(context.stats.context.tokens)} of {formatTokens(context.stats.context.window)}</span>
-							<span class="tabular-nums {ctxView.over ? 'text-destructive-text' : ctxView.near ? 'text-warning-text' : ''}">{ctxView.pct}%</span>
-						</div>
-						<div class="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-muted" role="img" aria-label="Context used {ctxView.pct}%">
-							<div class="h-full rounded-full {ctxView.over ? 'bg-destructive-text' : ctxView.near ? 'bg-warning-text' : 'bg-foreground/60'}" style="width: {Math.min(100, ctxView.pct)}%"></div>
-						</div>
-						<p class="mt-1.5 text-xs text-muted-foreground">Full breakdown in the composer's context meter.</p>
-					{:else if contextError}
-						{@render errorLine(contextError)}
-					{:else}
-						<Skeleton class="h-8 w-full rounded-lg" />
-					{/if}
-				</section>
-
-				<section>
-					{@render heading('Tools')}
-					{#if agent.tools.length || agent.skills.length || agent.mcpServers.length}
-						<div class="flex flex-wrap gap-1.5">
-							{#each agent.tools as t (t)}<Badge variant="secondary" class="capitalize">{toolLabel(t)}</Badge>{/each}
-							{#if agent.skills.length}<Badge variant="outline">{agent.skills.length} skill{agent.skills.length === 1 ? '' : 's'}</Badge>{/if}
-							{#if agent.mcpServers.length}<Badge variant="outline">{agent.mcpServers.length} MCP server{agent.mcpServers.length === 1 ? '' : 's'}</Badge>{/if}
-						</div>
-					{:else}
-						<p class="text-xs text-muted-foreground">No extra tools enabled.</p>
-					{/if}
-				</section>
-			{:else}
-				<div class="flex flex-col gap-3"><Skeleton class="h-4 w-full" /><Skeleton class="h-4 w-4/5" /><Skeleton class="h-20 w-full rounded-lg" /></div>
-			{/if}
-		</Tabs.Content>
-
 		<Tabs.Content value="tasks" class="flex flex-col gap-4">
 			{#if sessions && sessions.dm.pending > 0}
 				<p class="rounded-lg bg-warning-soft px-2.5 py-2 text-xs text-warning-text" role="status">
