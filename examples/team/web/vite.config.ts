@@ -3,13 +3,16 @@ import adapter from '@sveltejs/adapter-auto';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig, loadEnv } from 'vite';
 
-// Dev: `/api/*` is proxied to the team server (default port 4000, see server/src/main.ts).
-const apiTarget = process.env.TEAM_API_PROXY ?? 'http://localhost:4000';
+// Env comes from examples/team/.env (shared with the server; see ../.env.example).
+const envDir = '..';
 
 // Public env (PUBLIC_API_URL, PUBLIC_TEAM_TOKEN) is inlined at build time via `define`.
 export default defineConfig(({ mode }) => {
-	const env = loadEnv(mode, process.cwd(), 'PUBLIC_');
+	const env = loadEnv(mode, envDir, ['PUBLIC_', 'TEAM_API_PROXY']);
+	// Dev: `/api/*` is proxied to the team server (default port 4000, see server/src/main.ts).
+	const apiTarget = process.env.TEAM_API_PROXY ?? env.TEAM_API_PROXY ?? 'http://localhost:4000';
 	return {
+	envDir,
 	define: {
 		__PUBLIC_API_URL__: JSON.stringify(env.PUBLIC_API_URL ?? ''),
 		__PUBLIC_TEAM_TOKEN__: JSON.stringify(env.PUBLIC_TEAM_TOKEN ?? '')

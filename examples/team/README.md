@@ -45,16 +45,20 @@ Requirements: [Bun](https://bun.sh) (dev toolchain) and Node 22+ compatible code
 ```bash
 bun install                              # at the repo root (workspaces)
 
-# 1. server (port 4000)
-cd examples/team/server
-OPENROUTER_API_KEY=sk-or-... TEAM_TOKEN=dev-secret bun run dev
+cp examples/team/.env.example examples/team/.env
+# edit examples/team/.env: set OPENROUTER_API_KEY (or AI_GATEWAY_API_KEY) and TEAM_TOKEN
 
-# 2. web (another terminal; /api is proxied to the server)
-cd examples/team/web
-bun run dev                              # http://localhost:5173
+# 1. server (port 4000) — reads examples/team/.env
+cd examples/team/server && bun run dev
+
+# 2. web (another terminal; /api is proxied to the server) — reads the same file
+cd examples/team/web && bun run dev        # http://localhost:5173
 ```
 
-No key? Run the server offline with a scripted model: `TEAM_SCRIPTED_MODEL=steps.json bun run start`
+API docs: http://localhost:4000/docs. In the web, the token comes from `PUBLIC_TEAM_TOKEN` in the
+same `.env` (dev) or from the Settings page.
+
+No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline with a scripted model
 (a JSON array of steps, see `eharness/testing`).
 
 | Variable | Default | Meaning |

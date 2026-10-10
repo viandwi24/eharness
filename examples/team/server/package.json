@@ -5,8 +5,8 @@
   "description": "Example: team-agent server on eharness (docs/plans/P32-team-example.md).",
   "type": "module",
   "scripts": {
-    "start": "bun src/main.ts",
-    "dev": "bun --watch src/main.ts",
+    "start": "bun --env-file=../.env src/main.ts",
+    "dev": "bun --env-file=../.env --watch src/main.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit -p .",
     "db:generate": "drizzle-kit generate",
