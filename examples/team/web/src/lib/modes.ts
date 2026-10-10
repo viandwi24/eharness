@@ -24,8 +24,6 @@ export function cycleMode(current: TeamMode, available: readonly TeamMode[]): Te
 	return ring[(at + 1) % ring.length] ?? current;
 }
 
-/** Switching to Bypass asks first; every other switch is immediate. */
-export const needsConfirm = (from: TeamMode, to: TeamMode): boolean => to === 'bypass' && from !== 'bypass';
 
 // --- stored values ------------------------------------------------------------------------
 

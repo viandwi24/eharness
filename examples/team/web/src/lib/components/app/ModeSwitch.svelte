@@ -1,17 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import {
-		AlertDialog,
-		AlertDialogAction,
-		AlertDialogCancel,
-		AlertDialogContent,
-		AlertDialogDescription,
-		AlertDialogFooter,
-		AlertDialogHeader,
-		AlertDialogTitle
-	} from '#lib/components/ui/alert-dialog/index.js';
-	import { cycleMode, modeInfo, needsConfirm, teamModes, type TeamMode } from '#lib/modes.js';
+	import { cycleMode, modeInfo, teamModes, type TeamMode } from '#lib/modes.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { modesStore } from '#lib/stores/modes.svelte.js';
 
@@ -19,7 +9,6 @@
 	let { agentId }: { agentId: string } = $props();
 
 	const st = $derived(modesStore.state.byAgent[agentId]);
-	let confirmBypass = $state(false);
 
 	// Load for this agent, and again when a `mode-changed` event arrives (any tab; Auto paused).
 	$effect(() => {
@@ -31,10 +20,7 @@
 	async function pick(mode: TeamMode): Promise<void> {
 		if (!st) return;
 		if (mode === st.mode && !(mode === 'auto' && st.auto.paused)) return;
-		if (needsConfirm(st.mode, mode)) {
-			confirmBypass = true;
-			return;
-		}
+		// Bypass switches at once, like the other modes (the red mode badge is the warning).
 		await apply(mode);
 	}
 
@@ -46,7 +32,7 @@
 		}
 	}
 
-	/** Shift+Tab of the composer: the next available mode (Bypass still asks first). */
+	/** Shift+Tab of the composer: the next available mode (Bypass switches at once). */
 	export function cycle(): void {
 		if (st) void pick(cycleMode(st.mode, st.available));
 	}
@@ -107,23 +93,4 @@
 		{/if}
 	</div>
 
-	<AlertDialog bind:open={confirmBypass}>
-		<AlertDialogContent>
-			<AlertDialogHeader>
-				<AlertDialogTitle>Switch to Bypass?</AlertDialogTitle>
-				<AlertDialogDescription>
-					Everything this agent does, and the agents it delegates to, runs without asking you. Deny rules and protected paths still apply. You can switch back at any time.
-				</AlertDialogDescription>
-			</AlertDialogHeader>
-			<AlertDialogFooter>
-				<AlertDialogCancel>Cancel</AlertDialogCancel>
-				<AlertDialogAction
-					onclick={() => {
-						confirmBypass = false;
-						void apply('bypass');
-					}}
-				>Switch to Bypass</AlertDialogAction>
-			</AlertDialogFooter>
-		</AlertDialogContent>
-	</AlertDialog>
 {/if}

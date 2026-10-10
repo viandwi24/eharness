@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { agentChoiceOf, cycleMode, needsConfirm, settingsModeOf, storedOfChoice, teamModeOfSettings } from './modes';
+import { agentChoiceOf, cycleMode, settingsModeOf, storedOfChoice, teamModeOfSettings } from './modes';
 
 describe('modes', () => {
 	test('Shift+Tab cycles Manual, Auto, Bypass among the available modes', () => {
@@ -13,14 +13,6 @@ describe('modes', () => {
 		expect(cycleMode('manual', ['manual'])).toBe('manual');
 		// current mode no longer available (clamped): continue from the start of the ring
 		expect(cycleMode('auto', ['manual', 'bypass'])).toBe('manual');
-	});
-
-	test('only a switch to Bypass needs a confirm', () => {
-		expect(needsConfirm('manual', 'bypass')).toBe(true);
-		expect(needsConfirm('auto', 'bypass')).toBe(true);
-		expect(needsConfirm('bypass', 'bypass')).toBe(false);
-		expect(needsConfirm('bypass', 'manual')).toBe(false);
-		expect(needsConfirm('manual', 'auto')).toBe(false);
 	});
 
 	test('legacy stored values display as the three modes', () => {
