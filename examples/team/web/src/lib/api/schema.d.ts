@@ -1405,6 +1405,221 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/tasks/{id}/abort": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the running turn of a task (any instance)
+         * @description `requestAbort()` on the task session: the instance that runs the turn stops it within one poll. A task that waits for an approval has no running turn (`target: idle`): answer or deny the approval instead.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["TaskAbortBody"];
+                };
+            };
+            responses: {
+                /** @description Where the abort went */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskAbortResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send a message into the session of a task
+         * @description Through the durable inbox (`enqueue`), so it reaches the instance that holds the session. `steer` joins the running turn at its next step boundary; `queue` runs after it. On an idle or finished task either starts a turn of the task agent. While approvals are pending the message waits behind them.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TaskMessageBody"];
+                };
+            };
+            responses: {
+                /** @description Stored in the inbox */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["TaskMessageResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Everything the right panel of an agent shows
+         * @description Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Context */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["AgentContext"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/read": {
         parameters: {
             query?: never;
@@ -1471,6 +1686,1364 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/library": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List library files with their creator agent
+         * @description Every file outside `/memories` (agent artifacts under `/library`, uploads under `/uploads`), by path. Newest changes also arrive as `file-changed` events.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Directory prefix, e.g. `/library/research`. Default `/`. */
+                    prefix?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Files */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LibraryList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/library/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a file: text inline, binary as a download
+         * @description A text file answers JSON `{ file, content }`; a binary file (or `raw=true`) answers the bytes with its media type and `Content-Disposition: attachment` (`inline=true` only for images and PDF).
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Absolute path of the file. */
+                    path: string;
+                    /** @description Bytes instead of JSON for a text file. */
+                    raw?: "true" | "false";
+                    /** @description Show images and PDF in the browser. */
+                    inline?: "true" | "false";
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LibraryTextFile"];
+                        "application/octet-stream": string;
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such file */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        /**
+         * Write a text file as the user
+         * @description Text up to 1 MB. With `ifVersion` a stale edit loses to an agent write (409 `VERSION_CONFLICT`, `error.details.currentVersion`). Emits `file-changed`.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LibraryWriteBody"];
+                };
+            };
+            responses: {
+                /** @description Written */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LibraryWritten"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Delete a file */
+        delete: {
+            parameters: {
+                query: {
+                    /** @description Absolute path of the file. */
+                    path: string;
+                    /** @description Delete only this version. */
+                    ifVersion?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LibraryDeleted"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such file */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/library/versions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Change history of a file (metadata only)
+         * @description Writes, moves and deletes of the path, newest first, with the version hash, size and who changed it. The content of older versions is not kept.
+         */
+        get: {
+            parameters: {
+                query: {
+                    /** @description Absolute path of the file. */
+                    path: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description History */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LibraryVersions"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/library/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move or rename a file */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["LibraryMoveBody"];
+                };
+            };
+            responses: {
+                /** @description Moved */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["LibraryMoved"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such file */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `FILE_EXISTS` at the destination or `VERSION_CONFLICT` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Memory files of the workspace or of one agent
+         * @description The files the agents read and write with their memory tools: workspace memory (`/memories/workspace`, shared) and per-agent memory (`/memories/agents/<id>`).
+         */
+        get: {
+            parameters: {
+                query: {
+                    scope: components["schemas"]["MemoryScope"];
+                    /** @description Agent id or slug; required for `scope=agent`. */
+                    agentId?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Files */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MemoryList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/memory/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a memory file */
+        get: {
+            parameters: {
+                query: {
+                    scope: components["schemas"]["MemoryScope"];
+                    /** @description Agent id or slug; required for `scope=agent`. */
+                    agentId?: string;
+                    /** @description Path relative to the scope root. */
+                    path: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The file */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MemoryFile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such file or agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        /**
+         * Write a memory file as the user
+         * @description Same `ifVersion` rules as `PUT /library/file`: a stale edit loses to an agent write.
+         */
+        put: {
+            parameters: {
+                query: {
+                    scope: components["schemas"]["MemoryScope"];
+                    /** @description Agent id or slug; required for `scope=agent`. */
+                    agentId?: string;
+                    /** @description Path relative to the scope root. */
+                    path: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MemoryWriteBody"];
+                };
+            };
+            responses: {
+                /** @description Written */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MemoryWritten"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /** Delete a memory file */
+        delete: {
+            parameters: {
+                query: {
+                    scope: components["schemas"]["MemoryScope"];
+                    /** @description Agent id or slug; required for `scope=agent`. */
+                    agentId?: string;
+                    /** @description Path relative to the scope root. */
+                    path: string;
+                    ifVersion?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MemoryDeleted"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No such file or agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `FILE_EXISTS` or `VERSION_CONFLICT` (`error.details.currentVersion`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workspace settings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Settings"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change workspace settings
+         * @description Stored in the database and read by the agent factory of every instance: the agents are rebuilt on their next use, the budget limit applies to the shared ledger. `budgetUsd: null` removes the limit.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SettingsPatch"];
+                };
+            };
+            responses: {
+                /** @description The new settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Settings"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/routines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List routines */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Only this agent (id or slug). */
+                    agentId?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Routines */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RoutineList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a routine
+         * @description A scheduled prompt for an agent. Every instance ticks; the one that wins the compare-and-set on `nextFireAt` fires the slot, once (`session.enqueue` with the deterministic id `sched:<id>:<slot>`). Missed fires after downtime are skipped (or the latest one fires within `catchUpWindowMs`); overlap defaults to `skip`. A fire that needs an approval lands in `GET /approvals` (needs action) and is never approved by the scheduler.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RoutineCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Routine"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent or a schedule without a next slot */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/routines/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A routine */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The routine */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Routine"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete a routine and its run history */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The deleted routine */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Routine"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit a routine
+         * @description Changing the schedule of an active routine recomputes its next slot from now.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RoutinePatch"];
+                };
+            };
+            responses: {
+                /** @description The routine */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Routine"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Schedule without a next slot */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/routines/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pause a routine */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The routine */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Routine"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/routines/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a routine
+         * @description Recomputes the next slot from now (nothing missed while paused fires) and resets the failure counter.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The routine */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Routine"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Ended, exhausted or archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/routines/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run now
+         * @description A manual fire with the same enqueue path; the schedule is untouched. `409 ROUTINE_BUSY` when overlap is `skip` and the previous run is still in the way.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Enqueued (or failed to enqueue: see `status`) */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RoutineRun"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `ROUTINE_BUSY` or archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/routines/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Run history, newest first */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description Routine id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Runs */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["RoutineRuns"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown routine */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1491,6 +3064,27 @@ export interface components {
         };
         /** @enum {string} */
         ToolName: "library_read" | "library_write" | "memory" | "todos" | "web_search" | "web_fetch" | "ask_user" | "delegate" | "send_message" | "mcp";
+        /** @description A remote MCP server of an agent (secrets redacted). Its tools are deferred. */
+        McpServer: {
+            /**
+             * @description Tool prefix: tools are `<name>_<tool>`.
+             * @example github
+             */
+            name: string;
+            transport: {
+                /**
+                 * @description Remote transports only (no stdio).
+                 * @enum {string}
+                 */
+                type: "http" | "sse";
+                /** Format: uri */
+                url: string;
+                /** @description Names of the stored request headers. Values are never returned. */
+                headerNames: string[];
+            };
+            allow?: string[];
+            deny?: string[];
+        };
         /** @description Permission rules in `Tool(spec)` form (eharness/permissions). */
         PermissionRules: {
             /** @default [] */
@@ -1525,6 +3119,7 @@ export interface components {
             tools: components["schemas"]["ToolName"][];
             skills: string[];
             mcp: string[];
+            mcpServers: components["schemas"]["McpServer"][];
             /** @enum {string} */
             permissionMode: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
             rules: components["schemas"]["PermissionRules"];
@@ -1563,6 +3158,7 @@ export interface components {
             tools?: components["schemas"]["ToolName"][];
             skills?: string[];
             mcp?: string[];
+            mcpServers?: components["schemas"]["McpServerInput"][];
             /** @enum {string} */
             permissionMode?: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
             rules?: {
@@ -1573,6 +3169,21 @@ export interface components {
                 /** @default [] */
                 deny: string[];
             };
+        };
+        McpServerInput: {
+            name: string;
+            transport: {
+                /** @enum {string} */
+                type: "http" | "sse";
+                /** Format: uri */
+                url: string;
+                /** @description Request headers such as `Authorization`. Omitted: the stored headers of the server with the same name are kept. `{}` clears them. */
+                headers?: {
+                    [key: string]: string;
+                };
+            };
+            allow?: string[];
+            deny?: string[];
         };
         /** @description Only the given fields change; `version` bumps. */
         AgentPatch: {
@@ -1585,6 +3196,7 @@ export interface components {
             tools?: components["schemas"]["ToolName"][];
             skills?: string[];
             mcp?: string[];
+            mcpServers?: components["schemas"]["McpServerInput"][];
             /** @enum {string} */
             permissionMode?: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
             rules?: {
@@ -1699,9 +3311,9 @@ export interface components {
                 inputTokens: number;
                 outputTokens: number;
                 totalTokens: number;
-                cachedInputTokens: number;
                 costUsd: number;
-                messages: number;
+                /** @description Turns that ran at least one model step. */
+                turns: number;
             };
         };
         Upload: {
@@ -1827,7 +3439,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired";
+            type: "message-added" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -1849,9 +3461,307 @@ export interface components {
             /** @description Tasks this agent handed to others. */
             delegated: components["schemas"]["Task"][];
         };
+        TaskAbortResult: {
+            taskId: string;
+            /**
+             * @description `local`/`remote`: the turn was told to stop (here or on another instance). `idle`: nothing was running.
+             * @enum {string}
+             */
+            target: "local" | "remote" | "idle" | "unsupported";
+        };
+        TaskAbortBody: {
+            reason?: string;
+        };
+        TaskMessageResult: {
+            taskId: string;
+            /** @enum {string} */
+            mode: "steer" | "queue";
+            inboxId: string;
+            /** @enum {string} */
+            target: "local" | "remote";
+        };
+        TaskMessageBody: {
+            text: string;
+            /**
+             * @description `steer` (default): joins the running turn at its next step boundary (a queued turn when idle). `queue`: a turn of its own after the running one.
+             * @enum {string}
+             */
+            mode?: "steer" | "queue";
+        };
+        AgentContext: {
+            agent: {
+                id: string;
+                slug: string;
+                name: string;
+                role: string;
+            };
+            stats: components["schemas"]["ChatStats"];
+            tools: {
+                name: string;
+                description: string | null;
+                source: string;
+                deferred: boolean;
+                tokens: number;
+            }[];
+            memory: {
+                workspace: components["schemas"]["MemoryFileInfo"][];
+                agent: components["schemas"]["MemoryFileInfo"][];
+            };
+            routines: components["schemas"]["Routine"][];
+            tasks: {
+                owned: components["schemas"]["Task"][];
+                delegated: components["schemas"]["Task"][];
+            };
+            files: components["schemas"]["LibraryEntry"][];
+        };
+        MemoryFileInfo: {
+            /**
+             * @description Relative to the scope root.
+             * @example profile.md
+             */
+            path: string;
+            version: string;
+            size: number;
+            updatedAt: number;
+        };
+        Routine: {
+            id: string;
+            agentId: string;
+            name: string;
+            prompt: string;
+            schedule: components["schemas"]["RoutineSpec"];
+            /**
+             * @description `dm`: the fire is appended to the agent DM chat. `task`: every fire runs in a new task session `routine:<id>:<slot>` (shows on the board).
+             * @enum {string}
+             */
+            sessionMode: "dm" | "task";
+            /**
+             * @description `skip`: a fire is dropped while the previous one still runs or waits. `queue`: it queues behind.
+             * @enum {string}
+             */
+            overlap: "skip" | "queue";
+            /** @description null: fires missed during downtime are skipped. Else the latest missed slot fires once when it is younger than this. */
+            catchUpWindowMs: number | null;
+            /** @enum {string} */
+            status: "active" | "paused";
+            /** @enum {string|null} */
+            pausedReason: "manual" | "max-failures" | "max-fires" | "ended" | "completed" | "agent-archived" | null;
+            nextFireAt: number | null;
+            lastFireAt: number | null;
+            lastStatus: string | null;
+            /** @description Consecutive failed runs. */
+            failures: number;
+            /** @description The routine pauses itself at this many. */
+            maxFailures: number;
+            fireCount: number;
+            maxFires: number | null;
+            endAt: number | null;
+            createdAt: number;
+            updatedAt: number;
+        };
+        /** @description `cron` (5 or 6 fields, IANA timezone, croner syntax), `every` (interval in ms, at least 10 s) or `at` (one shot). */
+        RoutineSpec: {
+            /** @enum {string} */
+            kind: "cron";
+            /** @example 0 9 * * 1-5 */
+            expr: string;
+            /** @example Europe/Berlin */
+            tz: string;
+        } | {
+            /** @enum {string} */
+            kind: "every";
+            /** @example 3600000 */
+            everyMs: number;
+        } | {
+            /** @enum {string} */
+            kind: "at";
+            /** @description Epoch ms. */
+            at: number;
+        };
+        LibraryEntry: {
+            /** @example /library/research/notes.md */
+            path: string;
+            /** @description Content hash; pass it as `ifVersion`. */
+            version: string;
+            size: number;
+            mediaType: string | null;
+            binary: boolean;
+            createdByAgentId: string | null;
+            /** @description The agent that first wrote the file; null = a person. */
+            createdBy: {
+                id: string;
+                name: string;
+                slug: string;
+            } | null;
+            updatedAt: number;
+        };
         ReadMarker: {
             agentId: string;
             lastReadSeq: number;
+        };
+        LibraryList: {
+            files: components["schemas"]["LibraryEntry"][];
+        };
+        LibraryTextFile: {
+            file: components["schemas"]["LibraryEntry"];
+            content: string;
+        };
+        LibraryVersions: {
+            path: string;
+            versions: components["schemas"]["LibraryVersion"][];
+        };
+        LibraryVersion: {
+            seq: number;
+            /** @enum {string} */
+            action: "write" | "delete" | "move";
+            version: string | null;
+            size: number | null;
+            fromPath: string | null;
+            agentId: string | null;
+            /** @description Who made the change; null = a person. */
+            by: {
+                id: string;
+                name: string;
+                slug: string;
+            } | null;
+            at: number;
+        };
+        LibraryWritten: {
+            path: string;
+            version: string;
+        };
+        LibraryWriteBody: {
+            path: string;
+            content: string;
+            /** @description Omitted: overwrite. `null`: create only (409 `FILE_EXISTS`). A version: write only when the file still has it (409 `VERSION_CONFLICT`, `details.currentVersion`). */
+            ifVersion?: string | null;
+        };
+        LibraryDeleted: {
+            path: string;
+        };
+        LibraryMoved: {
+            from: string;
+            to: string;
+        };
+        LibraryMoveBody: {
+            from: string;
+            to: string;
+            ifVersion?: string;
+        };
+        MemoryList: {
+            scope: components["schemas"]["MemoryScope"];
+            agentId: string | null;
+            root: string;
+            files: components["schemas"]["MemoryFileInfo"][];
+        };
+        /** @enum {string} */
+        MemoryScope: "workspace" | "agent";
+        MemoryFile: {
+            scope: components["schemas"]["MemoryScope"];
+            agentId: string | null;
+            path: string;
+            version: string;
+            size: number;
+            updatedAt: number;
+            content: string;
+        };
+        MemoryWritten: {
+            scope: components["schemas"]["MemoryScope"];
+            agentId: string | null;
+            path: string;
+            version: string;
+        };
+        MemoryWriteBody: {
+            content: string;
+            ifVersion?: string | null;
+        };
+        MemoryDeleted: {
+            scope: components["schemas"]["MemoryScope"];
+            agentId: string | null;
+            path: string;
+        };
+        Settings: {
+            /**
+             * @description The mode of every agent whose own `permissionMode` is `default`; read by the agent factory on every turn.
+             * @enum {string}
+             */
+            defaultPermissionMode: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+            /** @description Monthly USD limit of the workspace budget ledger; null = tracked, not limited. */
+            budgetUsd: number | null;
+            /** @description Children the lead runs at once (`subagents` `maxConcurrent`). */
+            spawnCap: number;
+            /** @description Model id of agents without their own; null = the server default. */
+            defaultModel: string | null;
+            /** @description 0 until a person changed something. */
+            updatedAt: number;
+        };
+        SettingsPatch: {
+            /** @enum {string} */
+            defaultPermissionMode?: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+            budgetUsd?: number | null;
+            spawnCap?: number;
+            defaultModel?: string | null;
+        };
+        RoutineList: {
+            routines: components["schemas"]["Routine"][];
+        };
+        RoutineCreate: {
+            /** @description Agent id or slug. */
+            agentId: string;
+            name: string;
+            prompt: string;
+            schedule: components["schemas"]["RoutineSpec"];
+            /**
+             * @description `dm`: the fire is appended to the agent DM chat. `task`: every fire runs in a new task session `routine:<id>:<slot>` (shows on the board).
+             * @enum {string}
+             */
+            sessionMode?: "dm" | "task";
+            /**
+             * @description `skip`: a fire is dropped while the previous one still runs or waits. `queue`: it queues behind.
+             * @enum {string}
+             */
+            overlap?: "skip" | "queue";
+            catchUpWindowMs?: number | null;
+            maxFailures?: number;
+            maxFires?: number | null;
+            endAt?: number | null;
+        };
+        RoutinePatch: {
+            name?: string;
+            prompt?: string;
+            schedule?: components["schemas"]["RoutineSpec"];
+            /**
+             * @description `dm`: the fire is appended to the agent DM chat. `task`: every fire runs in a new task session `routine:<id>:<slot>` (shows on the board).
+             * @enum {string}
+             */
+            sessionMode?: "dm" | "task";
+            /**
+             * @description `skip`: a fire is dropped while the previous one still runs or waits. `queue`: it queues behind.
+             * @enum {string}
+             */
+            overlap?: "skip" | "queue";
+            catchUpWindowMs?: number | null;
+            maxFailures?: number;
+            maxFires?: number | null;
+            endAt?: number | null;
+        };
+        RoutineRun: {
+            id: string;
+            routineId: string;
+            scheduledAt: number;
+            /** @enum {string} */
+            trigger: "schedule" | "manual";
+            /** @enum {string} */
+            status: "claimed" | "enqueued" | "needs_action" | "succeeded" | "failed" | "skipped";
+            sessionId: string;
+            inboxId: string | null;
+            reason: string | null;
+            claimedAt: number;
+            firedAt: number | null;
+            finishedAt: number | null;
+        };
+        RoutineRuns: {
+            runs: components["schemas"]["RoutineRun"][];
         };
     };
     responses: never;

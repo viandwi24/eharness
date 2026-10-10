@@ -1,4 +1,4 @@
-import { createClient } from './client';
+import { createClient, toApiError } from './client';
 
 export * from './client';
 
@@ -31,3 +31,37 @@ export function setToken(token: string): void {
  * (default http://localhost:4000, override with `TEAM_API_PROXY`).
  */
 export const api = createClient({ baseUrl: __PUBLIC_API_URL__ || '/api', getToken });
+
+export const apiBase: string = __PUBLIC_API_URL__ || '/api';
+
+/**
+ * Fetch a library file's bytes with the token (an `<img>` / `<iframe>` cannot send the bearer
+ * header). `inline` asks for images and PDF to be served for display; the result is a Blob.
+ */
+export async function fetchLibraryBlob(path: string, o: { inline?: boolean; signal?: AbortSignal } = {}): Promise<Blob> {
+	const q = new URLSearchParams({ path, ...(o.inline ? { inline: 'true' } : { raw: 'true' }) });
+	const token = getToken();
+	const res = await fetch(`${apiBase.replace(/\/+$/, '')}/library/file?${q}`, {
+		headers: token ? { authorization: `Bearer ${token}` } : {},
+		signal: o.signal
+	});
+	if (!res.ok) throw new Error(`Could not load the file (${res.status})`);
+	return res.blob();
+}
+
+export type UploadedFile = { path: string; name: string; mediaType: string; size: number; version: string; url: string };
+
+/** Upload a file into `/uploads` (multipart; the typed JSON client cannot send forms). */
+export async function uploadLibraryFile(file: File): Promise<UploadedFile> {
+	const form = new FormData();
+	form.set('file', file);
+	const token = getToken();
+	const res = await fetch(`${apiBase.replace(/\/+$/, '')}/library/files`, {
+		method: 'POST',
+		headers: token ? { authorization: `Bearer ${token}` } : {},
+		body: form
+	});
+	const body: unknown = await res.json().catch(() => undefined);
+	if (!res.ok) throw toApiError(res.status, body);
+	return body as UploadedFile;
+}

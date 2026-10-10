@@ -164,8 +164,7 @@
 	</label>
 
 	{#if agent}
-		<!-- PLACEHOLDER: routines are not served by the API yet; this links to the panel tab. -->
-		<a href="/a/{agent.id}" class="text-xs text-info-text underline underline-offset-4">Routines are managed in the chat side panel (coming soon)</a>
+		<a href="/a/{agent.id}" class="text-xs text-info-text underline underline-offset-4">Routines and files are in the chat side panel</a>
 	{/if}
 
 	{#if formError && !Object.keys(errors).length}<p class="text-xs text-destructive-text" role="alert">{formError}</p>{/if}

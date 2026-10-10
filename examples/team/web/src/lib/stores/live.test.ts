@@ -68,4 +68,13 @@ describe('live store', () => {
 		await live.answer(a, { approved: true });
 		expect(live.state.approvals.some((x) => x.id === '1')).toBe(false);
 	});
+
+	test('file, routine and settings events bump their revision counters', () => {
+		const { live } = setup();
+		live.handleEvent(ev('file-changed', 'lead-id', { path: '/library/a.md' }));
+		live.handleEvent(ev('routine-changed', 'lead-id'));
+		live.handleEvent(ev('routine-fired', 'lead-id'));
+		live.handleEvent(ev('settings-changed', 'lead-id'));
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, settings: 1 });
+	});
 });

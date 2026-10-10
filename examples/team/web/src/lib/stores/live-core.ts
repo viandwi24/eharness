@@ -12,6 +12,8 @@ export type LiveState = {
 	connection: Connection;
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
+	/** Counters bumped (debounced) by file / routine / settings events; screens refetch when one moves. */
+	revs: { files: number; routines: number; settings: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
@@ -20,7 +22,8 @@ export const emptyLiveState = (): LiveState => ({
 	tasks: [],
 	tasksLoaded: false,
 	connection: 'idle',
-	viewing: null
+	viewing: null,
+	revs: { files: 0, routines: 0, settings: 0 }
 });
 
 export type LiveDeps = {
@@ -51,6 +54,10 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 	const viewingId = (): string | null => {
 		if (!state.viewing || !visible()) return null;
 		return agents.find(state.viewing)?.id ?? state.viewing;
+	};
+
+	const bump = (k: keyof LiveState['revs']) => async (): Promise<void> => {
+		state.revs[k]++;
 	};
 
 	const core = {
@@ -99,6 +106,13 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			} else if (e.type === 'approval-needed' || e.type === 'approval-decided') {
 				later('approvals', core.loadApprovals);
 				later('tasks', core.loadTasks);
+			} else if (e.type === 'file-changed') {
+				later('files', bump('files'));
+			} else if (e.type === 'routine-fired' || e.type === 'routine-changed') {
+				later('routines', bump('routines'));
+				if (e.type === 'routine-fired') later('tasks', core.loadTasks);
+			} else if (e.type === 'settings-changed') {
+				later('settings', bump('settings'));
 			}
 		},
 

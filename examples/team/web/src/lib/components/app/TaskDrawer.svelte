@@ -3,6 +3,9 @@
 	import { api } from '#lib/api/index.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
+	import { Button } from '#lib/components/ui/button/index.js';
+	import { toast } from '#lib/components/ui/sonner/index.js';
+	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
 	import { badgeFor } from '#lib/board/board.js';
 	import { formatTime } from '#lib/format.js';
@@ -50,6 +53,43 @@
 		}
 	});
 
+	let note = $state('');
+	let sending = $state(false);
+	let aborting = $state(false);
+	// Steer joins the running turn; with nothing running the server queues a turn.
+	const running = $derived(task?.status === 'running');
+
+	async function abort(): Promise<void> {
+		if (!task) return;
+		aborting = true;
+		try {
+			const r = await api.post('/tasks/{id}/abort', { params: { id: task.id } });
+			toast.success(r.target === 'idle' ? 'Nothing was running' : 'Stopping the task');
+			void load(task.id);
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not stop the task');
+		} finally {
+			aborting = false;
+		}
+	}
+
+	async function sendNote(e: SubmitEvent): Promise<void> {
+		e.preventDefault();
+		const text = note.trim();
+		if (!task || !text) return;
+		sending = true;
+		try {
+			await api.post('/tasks/{id}/messages', { params: { id: task.id }, body: { text } });
+			note = '';
+			toast.success(running ? 'Sent to the running task' : 'Message queued');
+			void load(task.id);
+		} catch (err) {
+			toast.error(err instanceof Error ? err.message : 'Could not send the message');
+		} finally {
+			sending = false;
+		}
+	}
+
 	function answerFromPart(a: { id: string; approved: boolean; reason?: string }): void {
 		const item = detail?.approvals.find((x) => x.id === a.id);
 		if (item) void live.answer(item, { approved: a.approved, ...(a.reason ? { reason: a.reason } : {}) }).catch(() => {});
@@ -68,6 +108,9 @@
 					</Sheet.Description>
 				</div>
 				{#if task}{@const b = badgeFor(task.status)}<Badge variant={b.variant}>{b.label}</Badge>{/if}
+				{#if running}
+					<Button size="sm" variant="outline" disabled={aborting} onclick={abort}>{aborting ? 'Stopping…' : 'Stop'}</Button>
+				{/if}
 			</div>
 		</Sheet.Header>
 
@@ -92,5 +135,20 @@
 				{/each}
 			{/if}
 		</div>
+		{#if task}
+			<form class="flex gap-2 border-t border-border p-3" onsubmit={sendNote}>
+				<Textarea
+					bind:value={note}
+					rows={2}
+					class="min-h-0 flex-1"
+					placeholder={running ? 'Message the running task…' : 'Send a follow-up to this task…'}
+					aria-label="Message to the task"
+					onkeydown={(e) => {
+						if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) e.currentTarget.form?.requestSubmit();
+					}}
+				/>
+				<Button type="submit" disabled={sending || !note.trim()} class="self-end">{sending ? 'Sending…' : 'Send'}</Button>
+			</form>
+		{/if}
 	</Sheet.Content>
 </Sheet.Root>
