@@ -126,9 +126,35 @@ child session id; a subagent addresses the root as `"main"`.
 - **Limits:** 20 messages per minute per (sender, target), identical repeats within 10 s dropped,
   50 undelivered per target (`messageLimits`).
 - **Restarts:** pass `selfAgent: () => agent` to rebuild names and finished agents from the
-  stored run markers when the root session is reopened. `'park'` has no `send_message` (use
-  `childAgent.session(id).enqueue(text, { mode: 'steer' })`, the core inbox).
+  stored run markers when the root session is reopened. In `'park'` the directory is always
+  rebuilt from storage (see below).
 - Every session with the plugin gets a short roster reminder of addressable agents each step.
+
+### Messaging with `approvals: 'park'` ([ADR-0041](../decisions/0041-park-mode-messaging.md))
+
+`send_message`, the `name` field of `agent`, `agent_output` and `agent_stop` are offered with
+`'park'` too, over the **durable inbox** instead of in-process closures, so they work when the
+sender and the child live in different instances. Requirements: share storage with `storage.inbox`
+(without an inbox, delivery only works inside one process), pass `selfAgent: () => thisAgent` (the
+directory is rebuilt from the session's child index and the stored `agent` calls, so names survive
+restarts and other instances), and on a child agent that sends messages install
+`subagents({ agents: {}, approvals: 'park', parentAgent: () => main, selfAgent: () => worker })`
+(`parentAgent` resolves `main` and routes reports).
+
+- **Directory:** a session addresses **its own children** (by name or child session id) and `main`.
+  There are no task ids and no peer messaging between siblings in park mode.
+- **Running child** (a live turn): `child.enqueue(framed, { mode: 'steer' })`, delivered at its next
+  step as `data-eh.input` (stored with `source: 'user'`, the body is the `<agent-message>` frame).
+  A child waiting for an approval gets a queued turn after it is answered.
+- **Finished child:** `child.enqueue(framed, { mode: 'queue' })`: a new turn on the same child
+  session, run by whichever instance holds it. When that turn ends the child's plugin enqueues the
+  report into the launcher's session as an `eh.event` (`wake`), through storage.
+- **To `main`:** `parentAgent().session(rootId).enqueue(framed, { mode: 'queue' })`: the root
+  answers in a turn of its own (immediately when idle, after the running turn or its parked
+  approvals otherwise).
+- **`agent_stop`:** `requestAbort('stopped')` on the child (works across instances); a user stop
+  cannot be told from a model stop, so a stopped agent stays resumable.
+- Limits and framing are the same; throttling counters are per session object, not shared.
 
 ## Reading a full report (`agent_output`)
 

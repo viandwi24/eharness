@@ -45,6 +45,10 @@ export type {
   SessionStateSnapshot,
   StateAdapter,
   SteerDelivery,
+  StreamLogAdapter,
+  StreamLogKey,
+  StreamLogRead,
+  StreamLogStatus,
 } from './agent/session-types.ts'
 export type {
   AgentDataTypes,
@@ -227,6 +231,8 @@ export {
   type ChatRequestBody,
   type ChatRequestOptions,
   handleChatRequest,
+  handleResumeRequest,
+  type ResumeRequestOptions,
 } from './stream/chat-request.ts'
 
 /** Package version of this build. */

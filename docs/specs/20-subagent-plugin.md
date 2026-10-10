@@ -3,7 +3,7 @@
 Status: **Draft (0.7)**. Module: `src/subagent/*`. Built only with the public core API (ADR-0008).
 Design: ADR-0034 (three deployment profiles), ADR-0035 (nested approvals park the parent), ADR-0037
 (parent / child index), ADR-0027 (external waits), ADR-0038 (agent messaging: `send_message`, names,
-resume).
+resume), ADR-0041 (messaging in park mode).
 
 `subagents(options)` adds the `agent` tool: the model delegates a self-contained task to another
 agent, which runs as a **child session** (spec 05 §13) and returns a final report.
@@ -25,7 +25,7 @@ subagents({
   toolName?: string                            // 'agent'
   maxDepth?: number                            // 2: the root is depth 0; a session at maxDepth has no tool
   maxConcurrent?: number                       // 8, per nesting depth and plugin instance
-  // tools (one pattern: `false` removes the tool, `{ name }` renames it; never with 'park')
+  // tools (one pattern: `false` removes the tool, `{ name }` renames it)
   messageTool?: boolean | { name?: string }    // true: send_message + the `name` field of `agent` (§5); false removes both
   outputTool?: boolean | { name?: string }     // agent_output (§5.7): on when background or messageTool is on; true / { name } forces it on
   stopTool?: boolean | { name?: string }       // agent_stop (§5.8): same default as outputTool
@@ -42,7 +42,7 @@ subagents({
   childSessionId?: (parentSessionId: string, toolCallId: string) => string   // `${parent}:agent:${toolCallId}`
   parkTimeoutMs?: number                       // 'park': timeout of the parent's wait (default none)
   parentAgent?: () => HarnessAgent             // see §3.1 (the agent is itself a child of a 'park' parent)
-  selfAgent?: () => HarnessAgent               // this agent: 'park' reconciles waits on open (§3.4); any strategy rebuilds names / finished agents (§5.6)
+  selfAgent?: () => HarnessAgent               // this agent: 'park' reconciles waits on open (§3.4) and rebuilds its directory from storage (§5.9); other strategies rebuild names / finished agents (§5.6)
   onParentRun?: (run: HarnessRun, parentSessionId: string) => void   // 'park', see §4
 }): HarnessPlugin<'subagent'>
 
@@ -303,12 +303,11 @@ nothing; the answering instance opens the child (and, through the hook, the pare
 > `<agent-message>` frame may change in a minor release
 > ([API stability](../engineering/api-stability.md)).
 
-Offered with `approvals: 'inline'` / `'policy'` and `messageTool !== false` (default). A session that
+Offered with every `approvals` strategy and `messageTool !== false` (default). A session that
 has the plugin gets `send_message` even without a catalog or at `maxDepth` (leaf agents need it to
 report to `main`); a child agent installs `subagents({ agents: {}, approvals: 'policy' })` for it.
-Not offered with `'park'`: a parked parent cannot call tools while its child runs, and children of
-other instances are not in the in-process directory (use the core inbox, `child.enqueue(text,
-{ mode: 'steer' })`).
+The sections below describe `'inline'` / `'policy'` (an in-process directory and closures); with
+`'park'` the directory comes from storage and delivery goes over the durable inbox: §5.9, ADR-0041.
 
 ### 5.1 Names and addressing
 
@@ -403,6 +402,41 @@ still refuse. Results: `Stopped <label>. It can be resumed by sending it a messa
 `<label> is not running (<status>).`, `ERROR: no running agent "x". …`. The `kill_shell` unknown id
 error points to it.
 
+### 5.9 `'park'` mode (ADR-0041)
+
+Same tools, names (`agent.name`), framing (§5.3), throttling (§5.4) and `AGENT_MESSAGE_INSTRUCTIONS`;
+different mechanism, because a park child may run, wait or be answered in another instance.
+
+- **Directory.** A session addresses its **own children** and `main`; no task ids (an agent is a
+  name or a child session id, the frame `id` is the child session id), no sibling messaging.
+  Rebuilt from storage with `selfAgent`: `children()` joined with the stored `agent` tool inputs
+  (`subagent_type`, `description`, `name`). Throttled (15 s for the step reminder, 500 ms on a
+  miss); the `agent` call also registers its child at once and checks the `name` against the
+  rebuilt directory. Entries are `durable`: no closures, state read from the child when needed.
+  The roster reminder lists them as `a running agent gets the message, a finished one resumes`.
+- **Delivery.** `childSession.enqueue(framed, { mode })` (spec 05 §12): `'steer'` for a child with
+  a live turn (next step, stored as `data-eh.input` with `source: 'user'`, the body is the frame);
+  `'queue'` for an idle / finished child (a new turn on the same session, by whichever instance
+  holds it) and for a child waiting for an approval (held until it is answered, rule 8).
+  `resumable: false` refuses a finished child. The frame carries `to="<receiver label>"`
+  (`relation="launcher"`: only a launcher messages its children).
+- **Report of a resumed child.** The child's `turn.end` hook (`subagents()` with `parentAgent`, or
+  `subagentChild()`) sees a first user message that is a `relation="launcher"` frame with `to` and
+  calls `parentAgent().session(<core.parent>).inject('eh.event', { name: 'subagent', text:
+  'Resumed subagent … finished.\n\n<report>', data: { sessionId, status, name? } }, { deliver:
+  'next-step', wake: true })`. The target is the stored parent, never read from the frame. A resumed
+  turn that stops `tool-pending` reports nothing automatically.
+- **To `main`.** `parentAgent().session(rootId).enqueue(framed, { mode: 'queue' })` (`'queue'`: a
+  steer meeting a `tool-pending` root is dropped, spec 05 §12 rule 7); `rootId` is found by walking
+  the stored parent links with `parentAgent`. Without `parentAgent` the tool answers `ERROR: the main
+  agent cannot be reached …`.
+- **`agent_output`** reads the child's stored messages. **`agent_stop`** is `requestAbort('stopped')`
+  on the child (a child waiting for an approval refuses); a stopped agent stays resumable (a user
+  stop is not distinguishable in storage).
+- **Needs** `storage.inbox` for cross-instance delivery, `selfAgent` for names and rebuilt
+  agents, `parentAgent` on child agents. Not applied in park mode: `maxConcurrent` for resumes,
+  usage of a resumed run in the sender's turn, shared throttling counters.
+
 ## 6. Model-visible texts (a change is a minor change)
 
 Tool description (see source `toolDescription`), `SUBAGENT_NO_USER`: "No user is available; this
@@ -417,5 +451,6 @@ deny / approve, child error, abort propagation, depth limit, per-depth concurren
 park (another instance answers; parent process restart; child finishes at once; child fails),
 `reconcileSubagentWaits` (child finished without the hook, still waiting, `selfAgent` on open),
 `pendingSubagentApprovals`, `subagentTasks` (list / tail / stop / `run` part), `background.inChildren`.
+`src/subagent/park-messaging.test.ts`: two instances over shared storage (park on a child, answer it from the other instance, message the finished agent by name, report reaches the parent), steer into a running child, child to main, throttling, refusals, `agent_stop`.
 `src/subagent/messaging.test.ts`: running target (`data-eh.input`, model order), resume with full history and the report to the sender, subagent → main wake, subagent → sibling, user-stopped refusal, one-shot refusal, unknown target, name collision / validation, throttling and queue cap, spoofed tags, `subagentTasks.send`, roster, `messageTool: false`, tool options (`{ name }` / `false`), agent directory isolation between two agents that reuse a session id, rebuild after reopening the root session.
 Core: `src/session/context-inject.int.test.ts` (`ctx.session.inject`).

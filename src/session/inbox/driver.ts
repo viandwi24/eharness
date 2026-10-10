@@ -117,6 +117,8 @@ export interface InboxDrain {
   release(ids: string[]): Promise<void>
   /** Settle items whose effect was not applied (release, retry with backoff, ack or dead). */
   settle(ids: string[], outcome: InboxSettle): Promise<void>
+  /** Drain once at `at` (epoch ms): a durable timer enqueued here becomes due (also with `pollMs: 0`). */
+  wakeAt(at: number): void
   /** A turn of another instance is live: do not claim until a state read says otherwise. */
   foreign(turnId: string): void
   /** A drain is running or a `collect` flush is scheduled (the session is not idle). */
@@ -288,6 +290,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   /** Drain once a backoff ended (the poll would find it too; this also works with `pollMs: 0`). */
   function wakeAt(at: number): void {
     if (closed) return
+    if (at - Date.now() > 2_000_000_000) return // beyond setTimeout's range: the poll finds it
     if (retryTimer !== undefined && retryTimer.at <= at) return
     if (retryTimer !== undefined) clearTimeout(retryTimer.timer)
     const timer = setTimeout(
@@ -741,6 +744,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     ack,
     release,
     settle,
+    wakeAt,
     foreign(turnId) {
       foreignTurn = turnId
     },

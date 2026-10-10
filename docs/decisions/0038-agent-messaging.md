@@ -90,9 +90,8 @@ resumable again with their old ids (the task counter is moved past them), a mark
 `running` is settled from the child's stored last stop. Rebuilt entries are not added to
 `subagentTasks.list()` until they are resumed.
 
-**Park mode.** Not offered. A parked parent cannot call tools while its child runs, children of
-different instances are not in the directory, and a wait-based report has no sender to route to.
-Cross-process messaging to a child is the core inbox (`enqueue(…, { mode: 'steer' })`).
+**Park mode.** Not offered in 0.7; offered since [ADR-0041](0041-park-mode-messaging.md), which
+replaces the in-process directory by one rebuilt from storage and delivery by the durable inbox.
 
 ## Consequences
 

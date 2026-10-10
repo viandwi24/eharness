@@ -8,12 +8,14 @@ import { asSchema, type Tool, type UIMessage } from 'ai'
 import type { AgentInternals } from '../agent/internals.ts'
 import type {
   AbortRequestResult,
+  ActiveTurn,
   CollectOptions,
   EnqueueResult,
   ForkOptions,
   HarnessRun,
   HarnessSession,
   InboxAdapter,
+  InboxItemInput,
   MessageAdapter,
   ParentInfo,
   PendingResponse,
@@ -23,6 +25,7 @@ import type {
   SessionStateSnapshot,
   StateAdapter,
   SteerDelivery,
+  StreamLogAdapter,
 } from '../agent/session-types.ts'
 import { createSessionCompaction } from '../compaction/compact.ts'
 import { manualFlushEnv } from '../compaction/flush.ts'
@@ -32,7 +35,7 @@ import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
 import { recordOutsideTurn } from '../loop/ledger.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { normalizeRawInput } from '../messages/tool-parts.ts'
-import type { HarnessUIMessage } from '../messages/types.ts'
+import type { HarnessUIMessage, TurnResult } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
 import { describeTools, instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
@@ -47,6 +50,8 @@ import { inspectRegistry, type RegistryInspection } from '../registry/turn.ts'
 import type { ToolInput, ToolSource } from '../registry/types.ts'
 import { hookFailed } from '../registry/wrap.ts'
 import { buildSessionSkills } from '../skills/registry.ts'
+import { createLogStream } from '../stream/log-reader.ts'
+import { resolveStreamLogOptions } from '../stream/log-writer.ts'
 import { createRun, failedRun } from '../stream/run.ts'
 import { createContext, defaultLogger, pendingServices } from './context.ts'
 import { createEventHub } from './events.ts'
@@ -68,6 +73,10 @@ import { createDeferredRun, type DeferredRun, type QueuedTurn } from './interact
 import { createWaitOps } from './interaction/resolve.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import { DEFAULT_STALE_MS, requestRemoteAbort } from './remote-abort.ts'
+
+/** How long `attachRemote` waits for the owner's first flush after the turn's commit point. */
+const REMOTE_START_GRACE_MS = 3_000
+
 import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
 import { createStateStore } from './state.ts'
 import { budgetOverrun, type RunningTurn, startTurn, type TurnHost } from './turn.ts'
@@ -130,6 +139,8 @@ export function createSessionHandle(args: {
   state: StateAdapter
   /** Optional durable inbox (spec 05 §12). */
   inbox?: InboxAdapter
+  /** Optional stream log (spec 04 §6.2). */
+  streams?: StreamLogAdapter
   idleMs: number
   onClosed(): void
   /** The close of the previous live handle of this id: this handle opens only after it. */
@@ -151,6 +162,7 @@ export function createSessionHandle(args: {
     options: args.options,
     messages: args.messages,
     state: createStateStore(args.state, id),
+    ...(args.streams === undefined ? {} : { streams: args.streams }),
     owner: args.owner,
     log,
     get signal() {
@@ -606,6 +618,8 @@ export function createSessionHandle(args: {
   // ─── turns ────────────────────────────────────────────────────────────────────────────────
   /** The drain of the durable inbox (`storage.inbox`), created at the end of this function. */
   let drain: InboxDrain | undefined
+  /** Caller ids of `enqueue()` without an inbox: id to item id (this session object's life). */
+  const localEnqueueIds = new Map<string, string>()
   let current: RunningTurn | undefined
   /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
   const queue: QueuedTurn[] = []
@@ -1259,6 +1273,100 @@ export function createSessionHandle(args: {
         abort: running.abort,
       })
     },
+    async attachRemote(options = {}) {
+      assertOpen()
+      const from = Math.max(0, Math.floor(options.from ?? 0))
+      // a turn of this process: the turn buffer, no extra latency
+      const running = current
+      if (running !== undefined) {
+        return createRun({
+          turnId: running.run.turnId,
+          kind: running.run.kind,
+          messageId: running.run.messageId,
+          stream: running.buffer.reader(from),
+          result: running.run.result,
+          abort: running.abort,
+        })
+      }
+      const adapter = args.streams
+      if (adapter === undefined) return undefined
+      const streamOptions = resolveStreamLogOptions(config.streams)
+      const staleMs =
+        config.recovery === false ? undefined : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
+      const readActive = async (): Promise<ActiveTurn | undefined> => {
+        const stored = await args.state.get(id)
+        const active = stored?.core?.activeTurn
+        if (active === undefined) return undefined
+        if (staleMs !== undefined && Date.now() - active.heartbeatAt > staleMs) return undefined
+        return active
+      }
+      let active: ActiveTurn | undefined
+      try {
+        active = await readActive()
+      } catch (error) {
+        log.warn('eharness: attachRemote could not read the session state', { error })
+        return undefined
+      }
+      if (active === undefined) return undefined
+      const key = { sessionId: id, turnId: active.turnId }
+      // the owner flushes in batches: right after the commit point the log may not exist yet
+      const deadline = Math.max(active.startedAt, Date.now() - 1) + REMOTE_START_GRACE_MS
+      for (;;) {
+        let probe: Awaited<ReturnType<StreamLogAdapter['read']>>
+        try {
+          probe = await adapter.read(key, from, { limit: 1 })
+        } catch (error) {
+          log.warn('eharness: attachRemote could not read the stream log', { error })
+          return undefined
+        }
+        if (probe.status !== 'missing') break
+        if (options.signal?.aborted || Date.now() >= deadline) return undefined
+        await new Promise((resolve) => setTimeout(resolve, Math.min(streamOptions.pollMs, 100)))
+      }
+      if (options.signal?.aborted) return undefined
+      const { stream, ended } = createLogStream({
+        adapter,
+        key,
+        from,
+        pollMs: streamOptions.pollMs,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        isActive: async () => {
+          try {
+            return (await readActive())?.turnId === active.turnId
+          } catch {
+            return true
+          }
+        },
+      })
+      const startedAt = active.startedAt
+      const result = ended.then((end): TurnResult<UIMessage> => {
+        const stop = (end.stop ??
+          (end.status === 'aborted' ? 'aborted' : 'error')) as TurnResult<UIMessage>['stop']
+        return {
+          turnId: active.turnId,
+          kind: active.kind,
+          stop,
+          messages: [],
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+          steps: 0,
+          durationMs: Math.max(0, Date.now() - startedAt),
+        }
+      })
+      return createRun({
+        turnId: active.turnId,
+        kind: active.kind,
+        messageId: Promise.resolve(active.messageId),
+        stream,
+        result,
+        abort: (reason) => {
+          session
+            .requestAbort(reason)
+            .catch((error: unknown) =>
+              log.warn('eharness: cross-process abort request failed', { error }),
+            )
+        },
+      })
+    },
     abort(reason) {
       assertOpen()
       dropQueue(false)
@@ -1491,6 +1599,31 @@ export function createSessionHandle(args: {
           details: { mode },
         })
       }
+      const callerId = options.id
+      if (
+        callerId !== undefined &&
+        (typeof callerId !== 'string' || callerId.length === 0 || callerId.length > 256)
+      ) {
+        throw new HarnessError(
+          'EH_INVALID_INPUT',
+          'enqueue id must be a string of 1-256 characters.',
+        )
+      }
+      const availableAt = options.availableAt
+      if (availableAt !== undefined) {
+        if (typeof availableAt !== 'number' || !Number.isFinite(availableAt)) {
+          throw new HarnessError(
+            'EH_INVALID_INPUT',
+            'enqueue availableAt must be epoch milliseconds.',
+          )
+        }
+        if (mode === 'collect') {
+          throw new HarnessError(
+            'EH_INVALID_INPUT',
+            "enqueue availableAt is not supported with mode 'collect'.",
+          )
+        }
+      }
       touch()
       const normalized = normalizeInput(input, {
         acceptClientMetadata: rt.options.acceptClientMetadata === true,
@@ -1498,21 +1631,47 @@ export function createSessionHandle(args: {
       })
       const inbox = args.inbox
       if (inbox === undefined || drain === undefined) {
+        if (availableAt !== undefined && availableAt > Date.now()) {
+          throw new HarnessError(
+            'EH_INVALID_INPUT',
+            'enqueue availableAt needs storage.inbox (a durable timer).',
+          )
+        }
+        if (callerId !== undefined) {
+          const known = localEnqueueIds.get(callerId)
+          if (known !== undefined) return { inboxId: known, target: 'local', duplicate: true }
+        }
         const inboxId = internals.generateId()
+        if (callerId !== undefined) localEnqueueIds.set(callerId, inboxId)
         events.emit({ type: 'inbox-enqueued', inboxId, kind: 'send', mode })
         enqueueLocal(normalized, mode, inboxId, options.collect)
         return { inboxId, target: 'local' }
       }
+      const item: InboxItemInput = {
+        kind: 'send',
+        mode,
+        input: toSerialized(normalized),
+        at: Date.now(),
+        ...(options.collect === undefined ? {} : { collect: { ...options.collect } }),
+        ...(availableAt === undefined ? {} : { availableAt }),
+      }
       let inboxId: string
       try {
-        inboxId = await inbox.enqueue(id, {
-          kind: 'send',
-          mode,
-          input: toSerialized(normalized),
-          at: Date.now(),
-          ...(options.collect === undefined ? {} : { collect: { ...options.collect } }),
-        })
+        if (callerId === undefined) {
+          inboxId = await inbox.enqueue(id, item)
+        } else {
+          if (inbox.enqueueOnce === undefined) {
+            throw new HarnessError(
+              'EH_INVALID_INPUT',
+              'enqueue id needs an inbox adapter that implements enqueueOnce.',
+            )
+          }
+          const stored = await inbox.enqueueOnce(id, { ...item, dedupeKey: callerId })
+          if (stored.duplicate) return { inboxId: stored.id, target: 'local', duplicate: true }
+          inboxId = stored.id
+        }
       } catch (error) {
+        if (error instanceof HarnessError && error.code === 'EH_INVALID_INPUT') throw error
         throw new HarnessError('EH_STORAGE', 'Inbox storage failed (enqueue).', { cause: error })
       }
       events.emit({ type: 'inbox-enqueued', inboxId, kind: 'send', mode })
@@ -1526,6 +1685,7 @@ export function createSessionHandle(args: {
       }
       if (target === 'remote') await notify()
       else drain.drain()
+      if (availableAt !== undefined && availableAt > Date.now()) drain.wakeAt(availableAt)
       return { inboxId, target }
     },
     async resolveWait(waitId, result, options) {
@@ -1634,6 +1794,7 @@ export function createSessionHandle(args: {
           messages: args.messages,
           state: args.state,
           ...(args.inbox === undefined ? {} : { inbox: args.inbox }),
+          ...(args.streams === undefined ? {} : { streams: args.streams }),
         },
         ...((options.runtime ?? runtime) === undefined
           ? {}

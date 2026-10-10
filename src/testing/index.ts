@@ -47,4 +47,8 @@ export {
   type StateAdapterConformanceOptions,
   stateAdapterConformance,
 } from './state-adapter.conformance.ts'
+export {
+  type StreamLogConformanceOptions,
+  streamLogConformance,
+} from './stream-log.conformance.ts'
 export type { ConformanceCase } from './types.ts'

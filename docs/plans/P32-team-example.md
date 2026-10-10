@@ -1,6 +1,6 @@
 # P32 — Team-agent example (`examples/team`)
 
-Status: todo · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
+Status: in progress (M1-M2 done) · Owner: — · Branch: `main` (direct commits, see the board) · Depends on: P31
 
 ## Goal
 
@@ -553,18 +553,18 @@ Dev first, one gate at the end of each milestone. Update this file and the board
 
 ### M1 — Workspace and server skeleton
 
-- [ ] Root `workspaces`, tsconfigs, typecheck script, empty changeset
-- [ ] Re-check the version table; `bun add` the server deps; drizzle config
-- [ ] `domain/`, `app/`, `infra/db` (schema, migrations by drizzle-kit), `http/app.ts` with
+- [x] Root `workspaces`, tsconfigs, typecheck script, empty changeset
+- [x] Re-check the version table; `bun add` the server deps; drizzle config
+- [x] `domain/`, `app/`, `infra/db` (schema, migrations by drizzle-kit), `http/app.ts` with
   `/openapi.json`, `/docs` (Scalar), error mapping, token auth
-- [ ] Agents CRUD with seeds; layering test; OpenAPI export script
+- [x] Agents CRUD with seeds; layering test; OpenAPI export script
 
 ### M2 — eharness on SQLite
 
-- [ ] `MessageAdapter`, `StateAdapter` (`setIf`), `SessionLock`, `InboxAdapter`, `BudgetLedger`
+- [x] `MessageAdapter`, `StateAdapter` (`setIf`), `SessionLock`, `InboxAdapter`, `BudgetLedger`
   on `bun:sqlite`; conformance suites green
-- [ ] DB-backed library `FileSystem` (bytes, versions, grep, glob, move); conformance green
-- [ ] `agent-factory` (plugin order, memory roots, permissions), cache by version
+- [x] DB-backed library `FileSystem` (bytes, versions, grep, glob, move); conformance green
+- [x] `agent-factory` (plugin order, memory roots, permissions), cache by version (M4 hooks left as TODO: `subagents`, MCP, `taskIndex`)
 
 ### M3 — Chat endpoints
 
@@ -636,6 +636,9 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 | R7 | **Memory scopes** (workspace / agent / user) as a documented preset of `memory({ roots })` and a path convention | every multi-agent app builds the same roots |
 | R8 | **Renderers for eharness parts** (`data-subagent.run`, `data-eh.input`, kind messages, child-session approvals) — decided (D1): built in the example only; nothing goes to edmi-ui or the library until the example has used them well; revisit after P32 | prove usefulness first |
 | R9 | A **DB-backed FileSystem helper** (SQL implementation of `list`/`grep`/`glob`/`move`/versions) as documented example, not a dependency | keep as `examples/` unless a second product needs it (ADR-0008) |
+| R11 | Built-in **tool kinds for the memory tools** (`memory_view` read, `memory_create`/`str_replace`/`insert`/`delete` write on `path`, `memory_rename` write on `old_path`) in `DEFAULT_TOOL_KINDS` of `eharness/permissions` | without them every memory write is an unknown tool and asks; the example registers the kinds itself |
+| R12 | Export the small text helpers `fileSystemConformance` and `memoryFs` share (`splitLines`, `statelessPattern`, `GREP_SCAN_CHARS`) from `eharness/filesystem`, and document that the conformance factory must return an **empty, isolated** adapter per call | the SQLite `FileSystem` re-implemented them; the first run failed on a shared database until the factory returned a fresh one |
+| R13 | An `InboxAdapter` without `notify`/`subscribe` is fine but the guide should say what the holder's poll costs and recommend `inbox.pollMs`; a `bun:sqlite` adapter has no cross-process notification (candidate: poll `PRAGMA data_version`) | the SQLite inbox is poll-only |
 | R10 | Run records: one hook or event carrying `{ sessionId, parent, kind, stop, usage, durationMs }` per turn end for every instance | the task index builds it from three hooks |
 
 ---

@@ -93,6 +93,27 @@ request is written into the state (`StateAdapter.setIf`, polled every `recovery.
 Both target the **turn**, never the session: a late Stop does not kill the next turn. Durable
 inbox items are never dropped by `abort()`.
 
+## Resuming a stream on another instance
+
+A reload that lands on another instance finds no turn buffer there. Give every instance the same
+`StreamLogAdapter` (`storage.streams`; `memoryStreamLog()` in tests, a table or Redis Streams in
+production, checked with `streamLogConformance`). The instance that runs a turn appends its chunks
+in the background (`streams: { flushMs, batchSize, retentionMs, pollMs }`); failures are
+`W_STREAM_LOG_FAILED` warnings and never fail the turn.
+
+```ts
+// GET /api/chat/:id/stream: authenticate and pick the session exactly like the POST route
+app.get('/api/chat/:id/stream', (c) =>
+  handleResumeRequest(agent.session(c.req.param('id'), { runtime }), c.req.raw))
+// client: useChat({ resume: true, transport: new DefaultChatTransport({
+//   prepareReconnectToStreamRequest: ({ id }) => ({ api: `/api/chat/${encodeURIComponent(id)}/stream` }) }) })
+```
+
+`204` means nothing is streaming: the client keeps the stored messages. The cursor is the chunk
+index (`?from=` or `Last-Event-ID`); `useChat` resumes from 0. A disconnected reader never stops
+the turn (use `requestAbort`). Committed messages stay the truth; the log lives
+`retentionMs` after the turn ends. Details: spec 04 §6.2, ADR-0039.
+
 ## Poison items
 
 An item whose unit keeps failing before its commit point (a store that rejects it, a lock race
@@ -158,6 +179,52 @@ const agent = defineHarnessAgent({
   changed the outside world in the lost attempt does not know that. Mark tools whose effects are
   safe to repeat (`tool({ metadata: { idempotent: true } })`, P21) and give the others an
   idempotency key (the `inboxId` in `metadata.eharness` of the user message is a natural one).
+
+## Routines on the inbox
+
+A routine (a cron-like "run this prompt every weekday at 9") needs no scheduler in eharness: the
+inbox already has timers, claims, leases, retry and dead-letter, and a fire is just an input.
+`session.enqueue(input, { availableAt, id })` is the whole library surface (spec 05 §12 rule 17).
+The schedule table and the cron parser (`croner`, `cron-parser`, …) stay in your app.
+
+```ts
+// table schedules(id, session_id, cron, prompt, next_at, paused, failures, running_since)
+async function tick(now = Date.now()) {
+  for (const row of await db.dueSchedules(now)) {          // next_at <= now AND NOT paused
+    // compare-and-set: only the instance that moves next_at forward fires this slot
+    const nextAt = cronNext(row.cron, now)                  // skip missed fires: next slot after NOW
+    if (!(await db.advance(row.id, { expected: row.next_at, next: nextAt }))) continue
+    const session = agent.session(row.session_id)
+    await session.enqueue(row.prompt, {
+      mode: 'queue',
+      id: `sched:${row.id}:${row.next_at}`,                 // deterministic: a retried tick is a no-op
+    })
+  }
+}
+setInterval(tick, 15_000)                                   // any number of instances may run it
+```
+
+- **Idempotent fire.** The compare-and-set already stops two instances from firing a slot; the
+  deterministic id `sched:<id>:<scheduledAt>` makes a crash between the CAS and the enqueue (or a
+  retried tick) safe: a repeat returns `{ duplicate: true }`. Keys are remembered for at least 24
+  hours after the item was processed (the dedupe horizon), so never reuse an id for a different
+  slot.
+- **Overlap `skip`.** A fire is a queued turn, so a slow run would pile fires up. Before enqueueing,
+  skip when the previous fire is still in flight (`running_since` set, cleared by `onRun` of the
+  fire's turn, or the inbox `stats({ sessionId })` showing something ready or claimed). Use `mode: 'collect'` instead when a burst of fires should merge
+  into one turn.
+- **Missed fires are skipped.** After downtime `next_at` is far in the past; set it to the next
+  slot after *now* instead of replaying every missed one (optional catch-up window: fire the
+  latest missed slot once if it is younger than N minutes).
+- **Delayed one-shots** (reminders, snooze, "retry in 10 minutes") need no table at all:
+  `enqueue(text, { availableAt: Date.now() + 600_000, id })`. The item survives restarts and is
+  claimed by whichever instance holds the session when it is due.
+- **Pause and cost guards.** `paused` is a column the tick checks; count consecutive failed runs
+  (`failures`, from `onRun` / the `inbox-dead` event) and pause after N, and cap fires per day,
+  so a broken routine cannot run up a bill. A dead-lettered fire (`inbox.retry`) is reported by
+  `onDeadLetter`.
+- Without `storage.inbox` there is no durable timer: `availableAt` in the future is refused, and
+  the tick approach above still works with `id` alone (in-process dedupe only).
 
 ## Sweeper
 

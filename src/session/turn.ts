@@ -68,6 +68,7 @@ import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
 import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.ts'
 import { describeError } from '../stream/describe-error.ts'
+import { createStreamLogWriter, resolveStreamLogOptions } from '../stream/log-writer.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
 import { forgetDelivered, recordDelivered } from './inbox/dedupe.ts'
 import type { InboxSettle, InboxUnit } from './inbox/driver.ts'
@@ -303,6 +304,17 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   let heartbeatTimer: ReturnType<typeof setInterval> | undefined
 
   const buffer = createTurnBuffer()
+  /** Drainer to `storage.streams` (spec 04 §6.2): starts at the commit point, owner only. */
+  const streamLog =
+    rt.streams === undefined
+      ? undefined
+      : createStreamLogWriter({
+          adapter: rt.streams,
+          key: { sessionId: rt.id, turnId },
+          buffer,
+          options: resolveStreamLogOptions(config.streams),
+          warn: (warning, key) => rt.warn(warning, key),
+        })
   let writer: UIMessageStreamWriterWithOutcome<UIMessage> | undefined
   let startWritten = false
   let committed = false
@@ -1232,6 +1244,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
     }
     committed = true
+    streamLog?.start()
     if (recovery) {
       // owner writes keep a foreign abort request (spec 05 §9.1 rule 4); a merged one aborts
       rt.state.guard(turnId, (request) => abortFromRequest(request.reason))
@@ -2049,7 +2062,7 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     host.onTurnEnd()
     stopObserving()
     // the stream ends last: a reader that saw `finish` can start the next turn right away
-    closeBuffer()
+    closeBuffer(stop)
   }
 
   /**
@@ -2075,9 +2088,19 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     controller.abort(reason ?? 'aborted')
   }
 
-  function closeBuffer(): void {
+  function closeBuffer(stop?: StopReason): void {
     if (terminal !== undefined) buffer.push(terminal)
     buffer.close()
+    // a turn that never committed was never written to the log (spec 05 §3)
+    if (streamLog !== undefined) {
+      const status =
+        stop === 'aborted' || stop === 'timeout' || terminal?.type === 'abort'
+          ? 'aborted'
+          : stop === 'error' || stop === undefined
+            ? 'error'
+            : 'done'
+      void streamLog.finish(status)
+    }
   }
 
   // ─── the stream ───────────────────────────────────────────────────────────────────────────

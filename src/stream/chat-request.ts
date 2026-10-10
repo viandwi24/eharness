@@ -191,3 +191,68 @@ export function handleChatRequest<
     return failedRun(kind, uuidv7, error, 409) as unknown as HarnessRun<M>
   }
 }
+
+/** Options of {@link handleResumeRequest}. */
+export interface ResumeRequestOptions {
+  /** Cursor to resume from; overrides `Last-Event-ID` and `?from=`. Default 0. */
+  from?: number
+  /** Stops this reader (never the turn). Default `request.signal`. */
+  signal?: AbortSignal
+  /** Extra headers of the stream response. */
+  headers?: HeadersInit
+}
+
+function parseCursor(value: string | null | undefined): number | undefined | 'invalid' {
+  if (value === null || value === undefined || value === '') return undefined
+  return /^\d{1,15}$/.test(value) ? Number(value) : 'invalid'
+}
+
+/**
+ * Handle the `GET` reconnect request of AI SDK `useChat({ resume: true })` (spec 04 §6.2): `204`
+ * (no body) when no stream is active, otherwise the UI message SSE stream of the active turn
+ * from `session.attachRemote()` — also when another instance runs it. The cursor (0-based chunk
+ * index; the stream starts at 0, which is what `useChat` expects) comes from `opts.from`, the
+ * `?from=` query or the `Last-Event-ID` header; AI SDK's SSE helpers do not write event ids, so a
+ * client that tracks its position sends it with `prepareReconnectToStreamRequest`. A malformed
+ * cursor answers `400`. A reader that disconnects never aborts the turn.
+ *
+ * Authenticate the request and pick the session exactly like the chat route; this function does
+ * no authorization of its own.
+ *
+ * @example
+ * ```ts
+ * app.get('/api/chat/:id/stream', async (c) => {
+ *   const session = agent.session(c.req.param('id'), { runtime: { userId } })
+ *   return handleResumeRequest(session, c.req.raw)
+ * })
+ * ```
+ * @see docs/specs/04-streaming.md#62-stream-log-port
+ */
+export async function handleResumeRequest<
+  M extends UIMessage,
+  Kinds extends Record<string, unknown> = Record<string, unknown>,
+>(
+  session: HarnessSession<M, Kinds>,
+  request: Request,
+  opts: ResumeRequestOptions = {},
+): Promise<Response> {
+  let from = opts.from
+  if (from === undefined) {
+    const url = new URL(request.url)
+    const cursor = parseCursor(url.searchParams.get('from') ?? request.headers.get('last-event-id'))
+    if (cursor === 'invalid') {
+      return new Response(
+        JSON.stringify({ error: { code: 'EH_INVALID_INPUT', message: 'Invalid resume cursor.' } }),
+        { status: 400, headers: { 'content-type': 'application/json' } },
+      )
+    }
+    from = cursor
+  }
+  const signal = opts.signal ?? request.signal
+  const run = await session.attachRemote({
+    ...(from === undefined ? {} : { from }),
+    ...(signal === undefined ? {} : { signal }),
+  })
+  if (run === undefined) return new Response(null, { status: 204 })
+  return run.toResponse(opts.headers === undefined ? undefined : { headers: opts.headers })
+}

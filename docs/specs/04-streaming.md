@@ -204,7 +204,8 @@ ordering and part shapes are identical on both sides (ADR-0003).
   (cleared when the next turn starts).
 - `session.attach(): HarnessRun | undefined` returns a run whose `stream` replays the buffer from
   the start and then follows live chunks; `undefined` when idle. This is the reconnect path (new
-  tab, dropped SSE). Cross-process resume is out of scope for v0 (the buffer is per process).
+  tab, dropped SSE) **within the process that runs the turn**. Across processes use
+  `attachRemote()` (§6.2).
 - `session.events(): ReadableStream<SessionEvent>` — long-lived channel for things that happen
   outside a turn stream. A session with an open `events()` reader is not idle-evicted.
 
@@ -228,6 +229,59 @@ export type SessionEvent =
   // 0.5.0, spec 05 §12 rule 12: an item was dead-lettered by this process (after the adapter call)
   | { type: 'inbox-dead'; inboxId: string; kind: 'send' | 'wake' | 'abort' | 'wait-timeout'; reason: string; attempts: number }
 ```
+
+### 6.2 Stream log port
+
+Cross-process resume (0.8, ADR-0039). Configure `storage.streams` (agent or session level) with a
+`StreamLogAdapter`; without one nothing below happens.
+
+```ts
+export interface StreamLogKey { sessionId: string; turnId: string }
+export type StreamLogStatus = 'streaming' | 'done' | 'error' | 'aborted' | 'missing'
+export interface StreamLogAdapter {
+  /** Returns the new length. `at`: cursor of the first chunk; stored chunks are skipped (idempotent retry); `at` > length rejects. Closed log: ignored. */
+  append(key: StreamLogKey, chunks: unknown[], options?: { at?: number }): Promise<number>
+  /** Idempotent; the first status wins. */
+  close(key: StreamLogKey, status: 'done' | 'error' | 'aborted'): Promise<void>
+  /** Never waits. `next = from + chunks.length`. `missing`: never written, expired or unknown. */
+  read(key: StreamLogKey, from: number, options?: { limit?: number }): Promise<{ chunks: unknown[]; next: number; status: StreamLogStatus }>
+  /** Called after every append and on close (a hint: readers re-read). */
+  subscribe?(key: StreamLogKey, onAppend: () => void): () => void
+  /** Drop the log `ttlMs` from now. */
+  expire?(key: StreamLogKey, ttlMs: number): Promise<void>
+}
+```
+
+Config: `HarnessAgentConfig.streams` = `{ flushMs = 100, batchSize = 64, retentionMs = 600000, pollMs = 500 }`.
+
+Rules:
+
+1. **Writer = turn owner only.** The drainer starts at the commit point (spec 05 §3: a turn that
+   fails before it writes nothing) and appends `structuredClone`s of the turn buffer's chunks in
+   order, at most `batchSize` per call, every `flushMs`. The cursor is the chunk index in the
+   turn buffer, so the log is the buffer: chunk order is the public order (§2). The terminal
+   `finish` / `abort` chunk is the last entry.
+2. **Idempotent appends.** Every call passes `at`; after a failure the same range is retried.
+3. **End.** After the buffer closed the drainer flushes, calls `close` (`aborted` for stop
+   `aborted` / `timeout`, `error` for `error`, else `done`), then `expire(key, retentionMs)`.
+   A failed call is a `W_STREAM_LOG_FAILED` warning (once per turn and operation); the turn is
+   never failed or delayed, and a log that is missing chunks is not closed.
+4. **`session.attachRemote({ from = 0, signal })`**: for a turn of this process it is `attach()`
+   from `from` (turn buffer). Otherwise it reads the stored state, takes `core.activeTurn` (none,
+   or a heartbeat older than `recovery.staleMs` → `undefined`), waits up to 3 s for the owner's
+   first flush, then replays from `from` and follows (`subscribe`, else polling every `pollMs`)
+   until the log is closed. `undefined` also without `storage.streams` and when the log is
+   missing; the client then uses the stored messages. A stream whose turn left the state and whose
+   log stays open for 5 s ends (crashed owner). `signal` and cancelling `run.stream` stop only
+   the reader; `run.abort()` is `requestAbort()`. The remote `run.result` has only `turnId`,
+   `kind` and `stop` (empty `messages`, zero usage).
+5. **`handleResumeRequest(session, request, { from?, signal?, headers? })`**: `204` when
+   `attachRemote()` is `undefined`, `400` for a malformed cursor, else the UI message stream
+   response. Cursor: `opts.from`, `?from=`, `Last-Event-ID` (digits only). AI SDK's SSE helpers do
+   not emit event ids, so a client that wants a mid-stream cursor sends it with
+   `prepareReconnectToStreamRequest` (`api: '/chat/id/stream?from=' + n`); `useChat` itself
+   resumes from 0 and reconciles by message id.
+6. Conformance: `streamLogConformance` (`eharness/testing`); memory adapter: `memoryStreamLog()`.
 
 ## 7. `HarnessRun` and responses
 

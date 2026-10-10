@@ -109,6 +109,7 @@ Each case uses random session ids, so the factory may return adapters on one sha
 | Stop a turn running in another instance (`session.abort()` / `requestAbort()`) | `StateAdapter.setIf` (atomic) |
 | At most one running turn per session, exactly | a `SessionLock` (`SessionOptions.lock`) |
 | Queue, steer, wake, collect and abort across instances (`session.enqueue()`) | an `InboxAdapter` (`storage.inbox`) |
+| Reload on another instance while a turn streams (`attachRemote`, `useChat({ resume: true })`) | a `StreamLogAdapter` (`storage.streams`, `memoryStreamLog()`, `streamLogConformance`) |
 
 ```ts
 import type { SessionLock } from 'eharness'
@@ -173,8 +174,12 @@ Checklist for the 0.5 members (spec 05 §12 rules 11–15) — needed before an 
   `DeadInboxItem`s (`sessionId`, `deadAt` epoch ms, `reason`, `lastError?`) oldest first;
   `redrive` resets `attempts` to 0 and clears `lastError`; `stats` counts `ready`, `claimed`,
   `delayed` (backoff or future `availableAt`) and `dead`.
+- `enqueueOnce(sessionId, item)` (optional, needed for `session.enqueue(…, { id })`, rule 17):
+  one atomic statement keyed by `(sessionId, item.dedupeKey)` (Postgres: `INSERT … ON CONFLICT
+  (session_id, dedupe_key) DO NOTHING RETURNING id`, then select the existing id). Keep the key
+  row for at least 24 hours after the item is acked (delete it with a TTL job, not with the item).
 - Prove it: `inboxAdapterConformance(factory, { requireRetry: true, requireDeadLetter: true,
-  requireStats: true })`. An adapter without `deadLetter` still works with `retry`: dead items are
+  requireStats: true, requireDedupe: true })`. An adapter without `deadLetter` still works with `retry`: dead items are
   acked after `inbox.onDeadLetter` ran.
 
 ## Tips

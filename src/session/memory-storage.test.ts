@@ -26,6 +26,7 @@ describe('memoryInbox() conformance', () => {
     requireRetry: true,
     requireDeadLetter: true,
     requireStats: true,
+    requireDedupe: true,
   })) {
     test(c.name, c.run)
   }

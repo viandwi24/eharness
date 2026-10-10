@@ -55,6 +55,7 @@ import type {
   MessageAdapter,
   SessionOptions,
   StateAdapter,
+  StreamLogAdapter,
 } from './session-types.ts'
 
 /**
@@ -452,7 +453,20 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   plugins?: readonly HarnessPlugin<string, DataPartMap, KindMap>[]
 
   /** Default: memory adapters; no inbox (spec 05 §12). */
-  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }
+  storage?: {
+    messages?: MessageAdapter
+    state?: StateAdapter
+    inbox?: InboxAdapter
+    /** Stream log for cross-process resume (spec 04 §6.2); default none. */
+    streams?: StreamLogAdapter
+  }
+  /**
+   * Stream log behaviour (spec 04 §6.2, needs `storage.streams`): `flushMs` (default 100) and
+   * `batchSize` (default 64 chunks) bound how long chunks wait for an append, `retentionMs`
+   * (default 600 000) is passed to `expire` after the turn closed, `pollMs` (default 500) is how
+   * often `attachRemote` reads when the adapter has no `subscribe`.
+   */
+  streams?: { flushMs?: number; batchSize?: number; retentionMs?: number; pollMs?: number }
   /**
    * Durable inbox behaviour (spec 05 §12): `pollMs` (default 2 000; `0` = no polling) is how often
    * a live session claims inbox items when no notification arrived, `claimTtlMs` (default

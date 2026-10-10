@@ -49,6 +49,7 @@ describe('core entry', () => {
       'estimateStepCostUsd',
       'externalTool',
       'handleChatRequest',
+      'handleResumeRequest',
       'isHarnessError',
       'isKindMessage',
       'isUuidV7',

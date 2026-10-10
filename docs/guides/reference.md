@@ -67,10 +67,11 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 | `respond({ approvals, toolOutputs, externals }, options?)` | answer pending approvals / client tools / external waits (`externals` is a trusted server call) and continue the same message |
 | `regenerate({ messageId?, … })`, `edit(messageId, input, options?)` | answer again / replace a user message |
 | `attach()` | replay and follow the running turn (`undefined` when idle) |
+| `attachRemote({ from, signal })` | the same across instances through `storage.streams` (`undefined`: use the stored messages) |
 | `abort(reason?)` | abort the running turn and drop queued turns; without a local turn, request the abort of a turn running in another instance |
 | `requestAbort(reason?)` | awaitable abort → `{ target: 'local' \| 'remote' \| 'idle' \| 'unsupported' }` ([long-running turns](long-running-turns.md#stopping-a-turn-from-another-instance)) |
 | `inject(kind, data, { deliver?, wake? })` | store an event message; deliver it into the running turn or wake the agent (with an inbox, also the instance running the turn) |
-| `enqueue(input, { mode?, collect? })` | hand input to whichever instance holds the session → `{ inboxId, target: 'local' \| 'remote' }`; `mode`: `'queue'` (default), `'steer'`, `'collect'` ([several instances](multi-instance.md)) |
+| `enqueue(input, { mode?, collect?, availableAt?, id? })` | hand input to whichever instance holds the session → `{ inboxId, target: 'local' \| 'remote', duplicate? }`; `mode`: `'queue'` (default), `'steer'`, `'collect'`; `availableAt` (epoch ms) is a durable timer, `id` an idempotency key per session ([several instances](multi-instance.md), [routines](multi-instance.md#routines-on-the-inbox)) |
 | `resolveWait(waitId, { output } \| { errorText }, options?)` (0.5.0) | record the result of an external wait (validated against `outputSchema`, compare-and-set, first result wins) and continue the same assistant message when nothing is left open → `{ status: 'continued', run }` \| `{ status: 'recorded', remaining }` \| `'already-resolved'` \| `'not-pending'` ([external waits](external-waits.md)) |
 | `expireWaits(now?)` (0.5.0) | apply the `onTimeout` result of every due wait (sweepers) → `{ expired, run? }` |
 | `pendingWaits()` (0.5.0) | the stored external waits (`PendingExternal[]`) for UIs and sweepers |

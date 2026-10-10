@@ -269,7 +269,8 @@ export interface CollectOptions {
  * message another instance already saved (`wake`), or an abort request (`abort`). `at` is the
  * enqueue time (epoch ms). `availableAt` (epoch ms, optional) makes the item claimable only from
  * then on: until then it is invisible and does not hold back the items after it (a durable timer,
- * not a queue entry; spec 05 §12 rule 14).
+ * not a queue entry; spec 05 §12 rule 14). `dedupeKey` (optional) is the caller id of
+ * `session.enqueue(…, { id })`: see {@link InboxAdapter.enqueueOnce} (spec 05 §12 rule 17).
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
@@ -281,10 +282,18 @@ export type InboxItemInput =
       collect?: CollectOptions
       at: number
       availableAt?: number
+      dedupeKey?: string
     }
-  | { kind: 'wake'; messageId: string; at: number; availableAt?: number }
-  | { kind: 'abort'; turnId?: string; reason?: string; at: number; availableAt?: number }
-  | { kind: 'wait-timeout'; waitId: string; at: number; availableAt?: number }
+  | { kind: 'wake'; messageId: string; at: number; availableAt?: number; dedupeKey?: string }
+  | {
+      kind: 'abort'
+      turnId?: string
+      reason?: string
+      at: number
+      availableAt?: number
+      dedupeKey?: string
+    }
+  | { kind: 'wait-timeout'; waitId: string; at: number; availableAt?: number; dedupeKey?: string }
 
 /**
  * A stored inbox item: the input plus its id (time-sortable, assigned by the adapter), the
@@ -355,6 +364,18 @@ export interface InboxAdapter {
   /** Store an item; durable before the promise resolves. Returns its id (time-sortable). */
   enqueue(sessionId: string, item: InboxItemInput): Promise<string>
   /**
+   * Optional: idempotent enqueue (spec 05 §12 rule 17). Atomically: when the session already has
+   * an item with the same `item.dedupeKey` — still stored (ready, claimed, delayed, dead) or
+   * acked within the adapter's dedupe window (at least 24 hours) — store nothing and return
+   * `{ id: <the existing item id>, duplicate: true }`; otherwise store the item like `enqueue`
+   * and return `{ id, duplicate: false }`. Keys are per session. Required for
+   * `session.enqueue(…, { id })` (without it the core throws `EH_INVALID_INPUT`).
+   */
+  enqueueOnce?(
+    sessionId: string,
+    item: InboxItemInput & { dedupeKey: string },
+  ): Promise<{ id: string; duplicate: boolean }>
+  /**
    * Atomically claim the ready items of a session for `owner`, oldest (lowest id) first, at most
    * `limit`. Claimed items are invisible to other claims until `ack` / `release` or until the
    * claim expires (`claimTtlMs`). Every claim increments `attempts`.
@@ -410,18 +431,79 @@ export interface EnqueueOptions {
    */
   mode?: 'queue' | 'steer' | 'collect'
   collect?: CollectOptions
+  /**
+   * Epoch ms: the item is not claimable before it (a durable timer, spec 05 §12 rule 14). With an
+   * inbox only (without one, a future value is `EH_INVALID_INPUT`); not with `mode: 'collect'`.
+   */
+  availableAt?: number
+  /**
+   * Caller-supplied id (1–256 chars), unique per session: a repeated id is a no-op that returns
+   * the existing item with `duplicate: true` — also after the item was processed, within the
+   * inbox's dedupe window (spec 05 §12 rule 17). A deterministic id makes a producer idempotent
+   * (`sched:<id>:<scheduledAt>`). With an inbox the adapter must implement `enqueueOnce`; without
+   * one the id is remembered for the life of the session object.
+   */
+  id?: string
 }
 
 /**
  * Result of `session.enqueue()`: the item id (`metadata.eharness.inboxId` / `collected` of the
  * user message it becomes) and where it will be applied — in this process (`'local'`) or by the
  * instance whose turn is running (`'remote'`, best effort: the holder is decided when it drains).
+ * `duplicate: true` when `options.id` was already used: nothing was stored, `inboxId` is the
+ * existing item's id.
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
 export interface EnqueueResult {
   inboxId: string
   target: 'local' | 'remote'
+  duplicate?: true
+}
+
+/** Key of one turn's chunk log (spec 04 §6.2). */
+export interface StreamLogKey {
+  sessionId: string
+  turnId: string
+}
+
+/** Lifecycle of a stream log: `missing` = never written, expired or unknown. */
+export type StreamLogStatus = 'streaming' | 'done' | 'error' | 'aborted' | 'missing'
+
+/** Result of {@link StreamLogAdapter.read}. */
+export interface StreamLogRead {
+  /** Chunks `from` … `next - 1`, in order (JSON values). */
+  chunks: unknown[]
+  /** Cursor of the first chunk not returned: `from + chunks.length`. */
+  next: number
+  status: StreamLogStatus
+}
+
+/**
+ * Short-lived, append-only log of the UI message chunks of one turn (spec 04 §6.2, ADR-0039): lets
+ * a reader in another process replay and follow a turn it does not own. Cursor = 0-based chunk
+ * index within the turn. Committed messages stay the truth; the log is only for live resume.
+ * eharness ships `memoryStreamLog()` (`eharness/storage/memory`) and `streamLogConformance`
+ * (`eharness/testing`).
+ *
+ * @see docs/specs/04-streaming.md#62-stream-log-port
+ */
+export interface StreamLogAdapter {
+  /**
+   * Append `chunks` (JSON values) and return the new length. With `at`, the first chunk takes
+   * cursor `at`: chunks that are already stored (length > `at`) are skipped, so a retried call is
+   * idempotent; `at` greater than the length rejects. Appending to a closed log is ignored
+   * (returns the length).
+   */
+  append(key: StreamLogKey, chunks: unknown[], options?: { at?: number }): Promise<number>
+  /** Mark the end of the turn. Idempotent; the first status wins. */
+  close(key: StreamLogKey, status: 'done' | 'error' | 'aborted'): Promise<void>
+  /** Read up to `limit` chunks starting at cursor `from`. Never waits. */
+  read(key: StreamLogKey, from: number, options?: { limit?: number }): Promise<StreamLogRead>
+  /** Optional push: called after every append and on close. Returns the unsubscribe function. */
+  subscribe?(key: StreamLogKey, onAppend: () => void): () => void
+  /** Optional: drop the log `ttlMs` from now (the core calls it after `close`). */
+  expire?(key: StreamLogKey, ttlMs: number): Promise<void>
 }
 
 /**
@@ -430,7 +512,12 @@ export interface EnqueueResult {
  * @see docs/specs/05-session-and-storage.md#1-session-options
  */
 export interface SessionOptions {
-  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }
+  storage?: {
+    messages?: MessageAdapter
+    state?: StateAdapter
+    inbox?: InboxAdapter
+    streams?: StreamLogAdapter
+  }
   runtime?: Record<string, unknown>
   /** AI SDK `toolsContext`: map keyed by final tool name. */
   toolsContext?: Record<string, unknown>
@@ -706,8 +793,19 @@ export interface HarnessSession<
     options: SendOptionsWithOutput<S>,
   ): HarnessRun<M, InferSchema<S>>
   edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
-  /** Replay + follow the running turn. */
+  /** Replay + follow the running turn of this process. */
   attach(): HarnessRun<M> | undefined
+  /**
+   * Replay + follow the active turn of this session from the stream log (`storage.streams`), also
+   * when another instance runs it (spec 04 §6.2, ADR-0039). Replays from cursor `from` (default 0,
+   * chunk index), then follows until the log closes; `signal` stops the reader (never the turn).
+   * Resolves `undefined` when nothing is active, no log is configured or it expired: fall back to
+   * the stored messages. A turn of this process is served from the turn buffer.
+   */
+  attachRemote(options?: {
+    from?: number
+    signal?: AbortSignal
+  }): Promise<HarnessRun<M> | undefined>
   /**
    * Called synchronously whenever ANY turn of this session starts in this process: `send`,
    * `respond`, `regenerate`, `edit`, a queued turn (`ifBusy: 'queue' | 'wait' | 'collect'`, the

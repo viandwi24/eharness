@@ -42,6 +42,7 @@ import {
   findEntry,
   frameAgentMessage,
   nameProblem,
+  parseAgentFrame,
   resolveLimits,
   rosterText,
   SEND_MESSAGE_TOOL,
@@ -202,16 +203,17 @@ export interface SubagentsOptions {
   selfAgent?: () => AnyAgent
   /**
    * The messaging tool (`send_message` by default) and the `name` field of the `agent` tool. On by
-   * default; `false` removes both; never with `approvals: 'park'`. A session that has the plugin
-   * and no catalog still gets `send_message`. ADR-0038, spec 20 §5.
+   * default; `false` removes both. With `approvals: 'park'` messages travel over the durable inbox
+   * (`child.enqueue`), names and the agent directory are rebuilt from storage (`selfAgent`),
+   * and `parentAgent` resolves `main`. A session that has the plugin and no catalog still gets
+   * `send_message`. ADR-0038, ADR-0041, spec 20 §5, §5.9.
    *
    * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
    */
   messageTool?: boolean | { name?: string }
   /**
    * The report-reading tool (`agent_output` by default). Default: on when `background` or
-   * `messageTool` is on; `false` removes it; `true` / an object forces it on. Never with
-   * `approvals: 'park'`. Spec 20 §5.6.
+   * `messageTool` is on; `false` removes it; `true` / an object forces it on. Spec 20 §5.6.
    */
   outputTool?: boolean | { name?: string }
   /**
@@ -332,7 +334,13 @@ function createSemaphore(max: number): Semaphore {
   }
 }
 
-type PartLike = { type: string; text?: string; toolName?: string; input?: unknown }
+type PartLike = {
+  type: string
+  text?: string
+  toolName?: string
+  input?: unknown
+  toolCallId?: string
+}
 type MessageLike = { id: string; role: string; parts: PartLike[] }
 
 /** Text of a message, from the last `step-start` when `afterLastStep`. */
@@ -701,7 +709,48 @@ export async function reconcileSubagentWaits(
 function createParkHook(options: {
   parentAgent: (() => AnyAgent) | undefined
   onParentRun: ((run: AnyRun, parentSessionId: string) => void) | undefined
+  /** `'park'` messaging: the report of a turn started by the launcher's message goes back to it. */
+  reportResumes: boolean
 }): (ctx: HarnessContext, e: TurnResult) => Promise<void> {
+  /**
+   * A turn that a launcher's `send_message` started (a framed `to="…"` user message, ADR-0041):
+   * enqueue the report into the launcher's session through storage, so it works from any instance.
+   */
+  const reportResume = async (
+    ctx: HarnessContext,
+    e: TurnResult,
+    parent: { sessionId: string },
+  ): Promise<void> => {
+    if (!options.reportResumes || options.parentAgent === undefined) return
+    const first = (e.messages as unknown as MessageLike[]).find((m) => m.role === 'user')
+    const frame = first === undefined ? undefined : parseAgentFrame(textOf(first, false))
+    if (frame === undefined || frame.relation !== 'launcher' || frame.to === undefined) return
+    const status = e.stop === 'complete' ? 'completed' : 'failed'
+    const text = finalText(e)
+    const body =
+      e.stop === 'complete' ? text : stoppedText(e.stop, text || (e.error?.message ?? ''))
+    const label = frame.to === ctx.session.id ? undefined : frame.to
+    const who = label === undefined ? ctx.session.id : `"${label}"`
+    try {
+      await (options.parentAgent().session(parent.sessionId) as AnySession).inject(
+        'eh.event',
+        {
+          name: 'subagent',
+          text: `Resumed subagent ${who} ${status === 'completed' ? 'finished' : 'failed'}.\n\n${reportOf(neutralizeTags(body, ['agent-message']), AGENT_REPORT_MAX_CHARS) || '(no report)'}`,
+          data: {
+            sessionId: ctx.session.id,
+            status,
+            ...(label === undefined ? {} : { name: label }),
+          },
+        },
+        { deliver: 'next-step', wake: true },
+      )
+    } catch (error) {
+      ctx.log.warn('subagent: could not deliver the report of a resumed agent', {
+        error: errText(error),
+      })
+    }
+  }
   return async (ctx, e) => {
     const parent = ctx.session.parent
     if (parent?.toolCallId === undefined || e.stop === 'tool-pending') return
@@ -716,8 +765,11 @@ function createParkHook(options: {
       return
     }
     const wait = waits.find((w) => w.waitId === waitId)
-    // not a parked child (inline, policy, background), or already resolved
-    if (wait === undefined || wait.result !== undefined) return
+    // not a parked child (inline, policy, background), or already resolved: maybe a resume
+    if (wait === undefined || wait.result !== undefined) {
+      await reportResume(ctx, e, parent)
+      return
+    }
     const result = waitResultFor(e.stop, finalText(e), e.error?.message)
     const settle = (): Promise<'done' | 'busy'> =>
       settleWait(parentSession, waitId, result, {
@@ -756,7 +808,11 @@ export function subagentChild(options: {
   parent: () => AnyAgent
   onParentRun?: (run: AnyRun, parentSessionId: string) => void
 }): HarnessPlugin<'subagent-child'> {
-  const hook = createParkHook({ parentAgent: options.parent, onParentRun: options.onParentRun })
+  const hook = createParkHook({
+    parentAgent: options.parent,
+    onParentRun: options.onParentRun,
+    reportResumes: true,
+  })
   return definePlugin({
     name: 'subagent-child',
     session: () => ({ hooks: { 'turn.end': hook } }) as SessionContribution,
@@ -875,33 +931,31 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
   }
   const childIdOf = (parentId: string, toolCallId: string): string =>
     options.childSessionId?.(parentId, toolCallId) ?? `${parentId}:agent:${toolCallId}`
+  const park = options.approvals === 'park'
   const parkHook = createParkHook({
     parentAgent: options.parentAgent,
     onParentRun: options.onParentRun,
+    reportResumes: park,
   })
 
   const nameOf = (v: boolean | { name?: string } | undefined, fallback: string): string =>
     typeof v === 'object' && v.name !== undefined ? v.name : fallback
   const messageToolName = nameOf(options.messageTool, SEND_MESSAGE_TOOL)
-  const messaging = options.messageTool !== false && options.approvals !== 'park'
+  const messaging = options.messageTool !== false
   const limits = resolveLimits(options.messageLimits)
   const outputToolName = nameOf(options.outputTool, AGENT_OUTPUT_TOOL)
   const outputEnabled =
-    options.outputTool !== false &&
-    options.approvals !== 'park' &&
-    (options.outputTool !== undefined || backgroundOn || messaging)
+    options.outputTool !== false && (options.outputTool !== undefined || backgroundOn || messaging)
   const stopToolName = nameOf(options.stopTool, AGENT_STOP_TOOL)
   const stopEnabled =
-    options.stopTool !== false &&
-    options.approvals !== 'park' &&
-    (options.stopTool !== undefined || backgroundOn || messaging)
+    options.stopTool !== false && (options.stopTool !== undefined || backgroundOn || messaging)
   const reportMax = Math.max(1, options.maxReportChars ?? AGENT_REPORT_MAX_CHARS)
 
   /** Session options that hand the root's directory to a child session (no module-level state). */
   const directoryOptions = (
     dir: AgentDirectory | undefined,
   ): { runtime: Record<string, unknown> } | Record<string, never> =>
-    dir === undefined ? {} : { runtime: { [DIRECTORY_RUNTIME_KEY]: dir } }
+    dir === undefined || park ? {} : { runtime: { [DIRECTORY_RUNTIME_KEY]: dir } }
 
   /** Where a report goes: the `inject` of some session (ADR-0038). */
   type Reporter = (text: string, data: Record<string, unknown>) => Promise<void>
@@ -914,6 +968,11 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     depth: number
     defs(): Record<string, SubagentDefinition>
     rebuilt: boolean
+    isRoot: boolean
+    /** `'park'`: when the directory was last rebuilt from storage (epoch ms). */
+    rebuiltAt: number
+    /** `'park'`: this session's name as its launcher gave it (read once from the parent). */
+    selfName?: Promise<string | undefined>
   }
 
   return definePlugin({
@@ -924,7 +983,11 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       const depth = ctx.session.parent?.depth ?? 0
       const isRoot = ctx.session.parent === undefined
       let dir: AgentDirectory | undefined
-      if (messaging) {
+      if (messaging && park) {
+        // park: the directory holds this session's own children, rebuilt from storage; messages
+        // travel over the durable inbox (ADR-0041)
+        dir = createDirectory(ctx.session.id, undefined)
+      } else if (messaging) {
         dir = isRoot
           ? createDirectory(ctx.session.id, async (text, data) => {
               await ctx.session.inject(
@@ -1001,7 +1064,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         void registry.stopAll()
         if (dir !== undefined && isRoot) dropDirectory(dir)
       }
-      scope = { ctx, registry, dir, depth, defs: getDefs, rebuilt: false }
+      scope = { ctx, registry, dir, depth, defs: getDefs, rebuilt: false, isRoot, rebuiltAt: 0 }
       const current: Scope = scope
       const tools: Record<string, ToolInput> = {}
       if (depth < maxDepth && Object.keys(getDefs()).length > 0) {
@@ -1031,7 +1094,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         })
         tools[toolName] =
           options.approvals === 'park'
-            ? (parkTool(ctx, defs, depth, description, inputSchema) as ToolInput)
+            ? (parkTool(ctx, defs, depth, description, inputSchema, current) as ToolInput)
             : (runTool(ctx, defs, depth, description, inputSchema, registry, current) as ToolInput)
       }
       if (messaging) tools[messageToolName] = messageTool(current, messageToolName)
@@ -1042,14 +1105,9 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         hooks['step.prepare'] = async () => {
           const self = roster.entries.get(ctx.session.id)
           if (self !== undefined) self.queued.length = 0
-          if (ctx.session.id === roster.rootId) roster.mainQueued.length = 0
+          if (isRoot) roster.mainQueued.length = 0
           await rebuildEntries(current)
-          const text = rosterText(
-            roster,
-            ctx.session.id,
-            ctx.session.id === roster.rootId,
-            messageToolName,
-          )
+          const text = rosterText(roster, ctx.session.id, isRoot, messageToolName)
           return text === undefined ? undefined : { reminder: text }
         }
       }
@@ -1070,6 +1128,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       taskId?: string
       status?: AgentEntry['status']
       parentInfo: AgentEntry['parentInfo']
+      durable?: true
     },
   ): AgentEntry | undefined {
     const dir = scope.dir
@@ -1086,8 +1145,10 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       queued: [],
       ...(init.name === undefined ? {} : { name: init.name }),
       ...(init.taskId === undefined ? {} : { taskId: init.taskId }),
+      ...(init.durable === true ? { durable: true as const } : {}),
     }
-    entry.resume = (text, sender) => resumeEntry(scope, entry, text, sender)
+    if (init.durable !== true)
+      entry.resume = (text, sender) => resumeEntry(scope, entry, text, sender)
     dir.entries.set(init.childSessionId, entry)
     return entry
   }
@@ -1196,10 +1257,11 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     }
     const key = to.trim()
     if (key === '') return fail('`to` is empty.')
+    if (park) return routePark(scope, sender, key, text)
     const isMain = key.toLowerCase() === 'main'
     let target = isMain ? undefined : findEntry(dir, key)
     if (!isMain && target === undefined) {
-      await rebuildEntries(scope)
+      await rebuildEntries(scope, true)
       target = findEntry(dir, key)
     }
     const known = (): string =>
@@ -1307,10 +1369,17 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         const text = message.trim()
         if (text === '') return 'ERROR: the message is empty.'
         const self = dir.entries.get(ctx.session.id)
-        const isRoot = ctx.session.id === dir.rootId
+        const isRoot = scope.isRoot
+        const parkName = park && !isRoot ? await selfNameOf(scope) : undefined
         const sender: AgentSender = {
           kind: 'agent',
-          label: isRoot ? 'main' : (self?.name ?? self?.taskId ?? self?.agent ?? 'agent'),
+          label: isRoot
+            ? 'main'
+            : (parkName ??
+              self?.name ??
+              self?.taskId ??
+              self?.agent ??
+              (park ? ctx.session.id : 'agent')),
           id: isRoot ? 'main' : (self?.taskId ?? ctx.session.id),
           sessionId: ctx.session.id,
           report: reporterOf(ctx),
@@ -1332,7 +1401,9 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
               ? 'Message sent to main. It sees it at its next step, or now if it is idle.'
               : `Message delivered to ${routed.label}. It sees it at its next step; its answer, if any, comes back as a message.`
           case 'resumed':
-            return `${routed.label} had finished; it was resumed on the same session with your message and runs in the background as ${routed.id}. Its report arrives here when it finishes.`
+            return park
+              ? `${routed.label} had finished; it was resumed on the same session with your message. Its report arrives here as a message when it finishes.`
+              : `${routed.label} had finished; it was resumed on the same session with your message and runs in the background as ${routed.id}. Its report arrives here when it finishes.`
         }
       },
     }) as ToolInput
@@ -1354,10 +1425,11 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         if (dir !== undefined) {
           entry = findEntry(dir, key)
           if (entry === undefined) {
-            await rebuildEntries(scope)
+            await rebuildEntries(scope, true)
             entry = findEntry(dir, key)
           }
         }
+        if (entry?.durable === true) return stopPark(scope, entry)
         const task = registry.get(key)
         if (task === undefined) {
           const label = entry?.name ?? entry?.taskId ?? key
@@ -1406,7 +1478,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         if (dir !== undefined) {
           entry = findEntry(dir, key)
           if (entry === undefined) {
-            await rebuildEntries(scope)
+            await rebuildEntries(scope, true)
             entry = findEntry(dir, key)
           }
         }
@@ -1423,6 +1495,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
           const unique = [...new Set(known)]
           return `ERROR: no agent "${key}".${unique.length === 0 ? ' No agents were started in this session.' : ` Known agents: ${unique.join(', ')}.`}`
         }
+        if (entry?.durable === true) await parkStatus(scope, entry).catch(() => {})
         const label = entry?.name ?? entry?.taskId ?? task?.id ?? childId
         const status = entry?.status ?? task?.status
         if (status === 'running') {
@@ -1456,7 +1529,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
                 busy = true
               }
             }
-            if (!busy) await def.agent.closeSession(childId).catch(() => {})
+            if (!busy && entry?.durable !== true)
+              await def.agent.closeSession(childId).catch(() => {})
           }
         } catch (error) {
           ctx.log.warn('subagent: could not read an agent report', { error: errText(error) })
@@ -1483,7 +1557,8 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
    * After a restart this process knows none of the earlier children: rebuild finished entries
    * from the markers and reports stored in this session (once, needs `selfAgent`).
    */
-  async function rebuildEntries(scope: Scope): Promise<void> {
+  async function rebuildEntries(scope: Scope, miss = false): Promise<void> {
+    if (park) return rebuildPark(scope, miss)
     const dir = scope.dir
     if (scope.rebuilt || dir === undefined || options.selfAgent === undefined) return
     scope.rebuilt = true
@@ -1568,6 +1643,270 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     } catch (error) {
       ctx.log.warn('subagent: could not rebuild the agent directory', { error: errText(error) })
     }
+  }
+
+  // ─── park: directory from storage, delivery over the durable inbox (ADR-0041) ───────────
+
+  type LaunchInput = { subagent_type?: string; description?: string; name?: string }
+
+  /** The `agent` tool inputs of `toolCallIds`, read from the stored messages of `session`. */
+  async function readLaunchInputs(
+    session: AnySession,
+    toolCallIds: Set<string>,
+  ): Promise<Map<string, LaunchInput>> {
+    const found = new Map<string, LaunchInput>()
+    let before: string | undefined
+    for (let page = 0; page < 5 && found.size < toolCallIds.size; page++) {
+      const batch = (await session.messages({
+        limit: 200,
+        ...(before === undefined ? {} : { beforeId: before }),
+      })) as unknown as MessageLike[]
+      if (batch.length === 0) break
+      for (const message of batch) {
+        for (const part of message.parts) {
+          if (
+            part.toolCallId !== undefined &&
+            toolCallIds.has(part.toolCallId) &&
+            typeof part.input === 'object' &&
+            part.input !== null &&
+            (part.type.startsWith('tool-') || part.type === 'dynamic-tool')
+          ) {
+            found.set(part.toolCallId, part.input as LaunchInput)
+          }
+        }
+      }
+      before = batch[0]?.id
+      if (batch.length < 200) break
+    }
+    return found
+  }
+
+  /**
+   * `'park'`: rebuild this session's agent directory from storage (the child index plus the
+   * `agent` tool inputs in its messages), so names and finished agents work in any instance.
+   * Throttled: a miss may force a rebuild after 500 ms, a step reminder every 15 s.
+   */
+  async function rebuildPark(scope: Scope, miss: boolean): Promise<void> {
+    const { dir, ctx } = scope
+    if (dir === undefined || options.selfAgent === undefined) return
+    const now = Date.now()
+    if (now - scope.rebuiltAt < (miss ? 500 : 15_000)) return
+    scope.rebuiltAt = now
+    try {
+      const session = options.selfAgent().session(ctx.session.id) as AnySession
+      const children = (await session.children()).filter(
+        (c) => c.toolCallId !== undefined && !dir.entries.has(c.sessionId),
+      )
+      if (children.length === 0) return
+      const inputs = await readLaunchInputs(
+        session,
+        new Set(children.map((c) => c.toolCallId as string)),
+      )
+      const defs = scope.defs()
+      for (const info of children) {
+        const input = inputs.get(info.toolCallId as string)
+        const type = input?.subagent_type
+        if (type === undefined || defs[type] === undefined) continue
+        addEntry(scope, {
+          childSessionId: info.sessionId,
+          agent: type,
+          description: input?.description ?? type,
+          status: 'completed',
+          durable: true,
+          ...(input?.name === undefined ? {} : { name: input.name }),
+          parentInfo: {
+            sessionId: ctx.session.id,
+            turnId: info.turnId,
+            toolCallId: info.toolCallId as string,
+            depth: scope.depth + 1,
+          },
+        })
+      }
+    } catch (error) {
+      ctx.log.warn('subagent: could not rebuild the agent directory', { error: errText(error) })
+    }
+  }
+
+  /** `'park'`: the name this (child) session was given by its launcher, read once. */
+  function selfNameOf(scope: Scope): Promise<string | undefined> {
+    scope.selfName ??= (async () => {
+      const parent = scope.ctx.session.parent
+      if (parent?.toolCallId === undefined || options.parentAgent === undefined) return undefined
+      try {
+        const session = options.parentAgent().session(parent.sessionId) as AnySession
+        const inputs = await readLaunchInputs(session, new Set([parent.toolCallId]))
+        return inputs.get(parent.toolCallId)?.name
+      } catch {
+        return undefined
+      }
+    })()
+    return scope.selfName
+  }
+
+  /** `'park'`: the root session of this (child) session, walking the stored parent links. */
+  async function rootOf(scope: Scope): Promise<string | undefined> {
+    const parent = scope.ctx.session.parent
+    if (parent === undefined) return scope.ctx.session.id
+    if (parent.depth <= 1) return parent.sessionId
+    if (options.parentAgent === undefined) return undefined
+    let id = parent.sessionId
+    try {
+      for (let hops = 0; hops < 8; hops++) {
+        const up = await (options.parentAgent().session(id) as AnySession).parentInfo()
+        if (up === undefined) return id
+        id = up.sessionId
+      }
+    } catch {
+      return undefined
+    }
+    return id
+  }
+
+  /** `'park'`: is the child running or waiting for an answer (read from storage)? */
+  async function parkStatus(
+    scope: Scope,
+    entry: AgentEntry,
+  ): Promise<{ status: AgentEntry['status']; waiting: boolean }> {
+    const def = scope.defs()[entry.agent]
+    if (def === undefined) return { status: entry.status, waiting: false }
+    // The handle is left open on purpose: closing could drop a message this process just
+    // enqueued for it; the agent evicts idle sessions (`sessionIdleMs`).
+    const child = def.agent.session(entry.childSessionId) as AnySession
+    const stats = await child.stats()
+    if (stats.activeTurn !== null || stats.pending !== null) {
+      entry.status = 'running'
+      return { status: 'running', waiting: stats.pending !== null }
+    }
+    const stored = (await child.messages({ limit: 20 })) as unknown as Array<{
+      role: string
+      metadata?: { eharness?: { stop?: string } }
+    }>
+    const last = stored.findLast((m) => m.role === 'assistant')
+    entry.status = last?.metadata?.eharness?.stop === 'complete' ? 'completed' : 'failed'
+    return { status: entry.status, waiting: false }
+  }
+
+  /** `'park'`: `agent_stop` asks the child's session to abort, wherever it runs (spec 05 §9.1). */
+  async function stopPark(scope: Scope, entry: AgentEntry): Promise<string> {
+    const label = entry.name ?? entry.childSessionId
+    const def = scope.defs()[entry.agent]
+    if (def === undefined) return `ERROR: the agent type "${entry.agent}" is not available.`
+    let state: Awaited<ReturnType<typeof parkStatus>>
+    try {
+      state = await parkStatus(scope, entry)
+    } catch (error) {
+      return `ERROR: could not read the state of ${label}: ${errText(error)}`
+    }
+    if (state.status !== 'running') return `${label} is not running (${entry.status}).`
+    if (state.waiting) {
+      return `${label} is waiting for an answer to a permission request; it cannot be stopped from here. It continues when the request is answered.`
+    }
+    try {
+      const out = await (def.agent.session(entry.childSessionId) as AnySession).requestAbort(
+        'stopped',
+      )
+      if (out.target === 'idle') return `${label} is not running (${entry.status}).`
+    } catch (error) {
+      return `ERROR: could not stop ${label}: ${errText(error)}`
+    }
+    return `Stopped ${label}.${entry.resumable ? ' It can be resumed by sending it a message.' : ''}`
+  }
+
+  /** `'park'`: deliver to `main`, the root session, over its durable inbox. */
+  async function parkToMain(scope: Scope, sender: AgentSender, text: string): Promise<Routed> {
+    const { dir, ctx } = scope
+    if (dir === undefined) return fail('messaging is not available in this session.')
+    if (sender.kind === 'user') return fail('the user talks to main in the main conversation.')
+    if (scope.isRoot) return fail('you are the main agent; you cannot message yourself.')
+    const rootId = await rootOf(scope)
+    if (rootId === undefined || options.parentAgent === undefined) {
+      return fail(
+        'the main agent cannot be reached from this session (set `parentAgent` on its subagents() plugin).',
+      )
+    }
+    const limited = throttle(dir, `${sender.id}->main`, text, limits, dir.mainQueued)
+    if (limited !== undefined) {
+      return limited.startsWith('ERROR') ? fail(limited) : { kind: 'dropped', text: limited }
+    }
+    const relation = ctx.session.parent?.sessionId === rootId ? 'child' : 'peer'
+    const framed = frameAgentMessage(text, { label: sender.label, id: sender.id }, relation)
+    try {
+      await (options.parentAgent().session(rootId) as AnySession).enqueue(framed, {
+        mode: 'steer',
+      })
+    } catch (error) {
+      return fail(`could not deliver the message to main: ${errText(error)}`)
+    }
+    return { kind: 'delivered', label: 'main', id: 'main' }
+  }
+
+  /**
+   * `'park'`: send to a child of this session over the child's durable inbox. A running child (a
+   * live turn or waiting for an answer) gets a steer; a finished one a new turn on the same
+   * session, whose report its `turn.end` hook enqueues back here.
+   */
+  async function routePark(
+    scope: Scope,
+    sender: AgentSender,
+    key: string,
+    text: string,
+  ): Promise<Routed> {
+    const { dir } = scope
+    if (dir === undefined) return fail('messaging is not available in this session.')
+    if (key.toLowerCase() === 'main') return parkToMain(scope, sender, text)
+    let entry = findEntry(dir, key)
+    if (entry === undefined) {
+      await rebuildPark(scope, true)
+      entry = findEntry(dir, key)
+    }
+    if (entry === undefined) {
+      const known = [
+        ...(scope.isRoot ? [] : ['main']),
+        ...[...dir.entries.values()].map((e) => e.name ?? e.childSessionId),
+      ].join(', ')
+      return fail(`no agent "${key}". You can message: ${known}.`)
+    }
+    const label = entry.name ?? entry.childSessionId
+    if (entry.childSessionId === scope.ctx.session.id) return fail('you cannot message yourself.')
+    const def = scope.defs()[entry.agent]
+    if (def === undefined) {
+      return fail(
+        `the agent type "${entry.agent}" is not available any more; it cannot be messaged.`,
+      )
+    }
+    if (sender.kind === 'agent') {
+      const limited = throttle(
+        dir,
+        `${sender.id}->${entry.childSessionId}`,
+        text,
+        limits,
+        entry.queued,
+      )
+      if (limited !== undefined) {
+        return limited.startsWith('ERROR') ? fail(limited) : { kind: 'dropped', text: limited }
+      }
+    }
+    const state = await parkStatus(scope, entry).catch(() => undefined)
+    if (state === undefined) return fail(`could not read the state of ${label}.`)
+    const running = state.status === 'running'
+    if (!running && !entry.resumable) {
+      return fail(
+        `${label} (${entry.agent}) has finished and cannot be resumed (a one-shot agent). Start a new agent with the ${toolName} tool if more work is needed.`,
+      )
+    }
+    const payload =
+      sender.kind === 'agent'
+        ? frameAgentMessage(text, { label: sender.label, id: sender.id }, 'launcher', label)
+        : text
+    try {
+      // the handle stays open: it drains the inbox when no other instance holds the session
+      await (def.agent.session(entry.childSessionId) as AnySession).enqueue(payload, {
+        mode: running ? 'steer' : 'queue',
+      })
+    } catch (error) {
+      return fail(`could not deliver the message to ${label}: ${errText(error)}`)
+    }
+    return running ? { kind: 'delivered', label, id: label } : { kind: 'resumed', label, id: label }
   }
 
   // ─── inline / policy: an ordinary tool that runs the child and streams progress ─────────
@@ -2097,6 +2436,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
     depth: number,
     description: string,
     inputSchema: unknown,
+    scope: Scope,
   ): ToolInput {
     /** Resolve at once with an error text (through the wait's own timeout path). */
     const failNow = (
@@ -2109,7 +2449,7 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
       description,
       inputSchema: inputSchema as FlexibleSchema<AgentInput>,
       ...(options.parkTimeoutMs === undefined ? {} : { timeoutMs: options.parkTimeoutMs }),
-      async start({ subagent_type, description: label, prompt }, event) {
+      async start({ subagent_type, description: label, prompt, name }, event) {
         const def = defs[subagent_type]
         if (def === undefined) {
           return failNow(
@@ -2120,15 +2460,33 @@ export function subagents(options: SubagentsOptions): HarnessPlugin<'subagent'> 
         if (turn === undefined)
           return failNow('ERROR: subagents can only be started inside a turn.')
         const sessionId = childIdOf(ctx.session.id, event.toolCallId)
+        const parentInfo = {
+          sessionId: ctx.session.id,
+          turnId: turn.id,
+          toolCallId: event.toolCallId,
+          depth: depth + 1,
+        }
+        if (messaging && scope.dir !== undefined) {
+          // the directory comes from storage: names are unique across instances and restarts
+          await rebuildPark(scope, true)
+          const own = scope.dir.entries.get(sessionId)
+          if (name !== undefined && own?.name !== name) {
+            const problem = nameProblem(scope.dir, name)
+            if (problem !== undefined) return failNow(problem)
+          }
+          if (own === undefined) {
+            addEntry(scope, {
+              childSessionId: sessionId,
+              agent: subagent_type,
+              description: label,
+              durable: true,
+              parentInfo,
+              ...(name === undefined ? {} : { name }),
+            })
+          }
+        }
         const base = { childSessionId: sessionId, agent: subagent_type, description: label }
-        const child = def.agent.session(sessionId, {
-          parent: {
-            sessionId: ctx.session.id,
-            turnId: turn.id,
-            toolCallId: event.toolCallId,
-            depth: depth + 1,
-          },
-        }) as AnySession
+        const child = def.agent.session(sessionId, { parent: parentInfo }) as AnySession
         const sem = semaphoreFor(depth)
         if (!(await sem.acquire(event.abortSignal))) {
           return failNow('ERROR: subagent was aborted before it started.')

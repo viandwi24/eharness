@@ -43,3 +43,6 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0036](0036-node-only-modules.md) | Node-only modules: `eharness/filesystem/node` and `eharness/shell`, enforced by `check-imports` |
 | [0037](0037-fork-and-child-index.md) | Fork keeps ids; the child index is a foreign-writable field of the parent's state |
 | [0038](0038-agent-messaging.md) | Agent messaging: `send_message`, named agents, resume of finished children |
+| [0039](0039-resumable-streams-stream-log.md) | Resumable streams via a stream log port (`storage.streams`, `attachRemote`, `handleResumeRequest`) |
+| [0040](0040-enqueue-timers-and-ids.md) | `enqueue()` timers and caller ids: routines on the inbox, no scheduler port |
+| [0041](0041-park-mode-messaging.md) | Agent messaging in `park` mode: storage-backed directory, delivery over the durable inbox (supersedes the park limit of 0038) |

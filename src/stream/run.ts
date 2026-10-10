@@ -24,8 +24,12 @@ export interface TurnBuffer {
   /** No more chunks will be written. */
   close(): void
   readonly closed: boolean
-  /** A stream that replays the buffer from the start, then follows live chunks until `close()`. */
-  reader(): ReadableStream<UIMessageChunk>
+  /** Number of chunks stored so far (the next cursor). */
+  readonly length: number
+  /** Clones of the chunks `from` … `to - 1` (used by the stream log drainer). */
+  slice(from: number, to?: number): UIMessageChunk[]
+  /** A stream that replays the buffer from chunk `from` (default 0), then follows live chunks until `close()`. */
+  reader(from?: number): ReadableStream<UIMessageChunk>
 }
 
 /** Create an empty turn buffer. */
@@ -57,8 +61,14 @@ export function createTurnBuffer(): TurnBuffer {
     get closed() {
       return closed
     },
-    reader() {
-      let index = 0
+    get length() {
+      return chunks.length
+    },
+    slice(from, to) {
+      return chunks.slice(from, to).map((chunk) => structuredClone(chunk))
+    },
+    reader(from = 0) {
+      let index = Math.max(0, Math.floor(from))
       return new ReadableStream<UIMessageChunk>({
         async pull(controller) {
           while (index >= chunks.length && !closed) await changed

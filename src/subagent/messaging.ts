@@ -103,6 +103,11 @@ export interface AgentEntry {
   resume?: (text: string, sender: AgentSender) => Promise<string>
   /** Timestamps of messages sent to it that its next step has not consumed yet. */
   queued: number[]
+  /**
+   * `'park'` mode: the entry is rebuilt from storage and carries no closures; delivery and resume
+   * go through the child's durable inbox (`child.enqueue`), its state is read when needed.
+   */
+  durable?: true
 }
 
 /** The directory of one root session. */
@@ -181,9 +186,40 @@ export function frameAgentMessage(
   body: string,
   from: { label: string; id: string },
   relation: 'launcher' | 'child' | 'peer',
+  to?: string,
 ): string {
   const safe = neutralizeTags(body, ['agent-message', 'untrusted-content', 'system-reminder'])
-  return `<agent-message from="${attr(from.label)}" id="${attr(from.id)}" relation="${relation}">\n${safe}\n</agent-message>`
+  const target = to === undefined ? '' : ` to="${attr(to)}"`
+  return `<agent-message from="${attr(from.label)}" id="${attr(from.id)}" relation="${relation}"${target}>\n${safe}\n</agent-message>`
+}
+
+const unattr = (value: string): string =>
+  value
+    .replace(/&gt;/g, '>')
+    .replace(/&lt;/g, '<')
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, '&')
+
+/**
+ * @internal Read the opening tag of an agent message frame (`park` mode: the child's `turn.end`
+ * hook finds who messaged it and what the sender called it). Undefined when `text` does not start
+ * with a frame.
+ */
+export function parseAgentFrame(
+  text: string,
+): { from: string; id: string; relation: string; to?: string } | undefined {
+  const head = /^\s*<agent-message ([^>]*)>/.exec(text)
+  if (head === null) return undefined
+  const attrs = new Map<string, string>()
+  for (const m of (head[1] ?? '').matchAll(/([a-z]+)="([^"]*)"/g)) {
+    attrs.set(m[1] as string, unattr(m[2] as string))
+  }
+  const from = attrs.get('from')
+  const id = attrs.get('id')
+  const relation = attrs.get('relation')
+  if (from === undefined || id === undefined || relation === undefined) return undefined
+  const to = attrs.get('to')
+  return { from, id, relation, ...(to === undefined ? {} : { to }) }
 }
 
 /** @internal Prune `times` older than `now - ms`. */
@@ -253,13 +289,17 @@ export function rosterText(
     const id = e.taskId ?? e.childSessionId
     const label = e.name === undefined ? id : `${e.name} (${id})`
     const state =
-      e.status === 'stopped' && e.modelStopped !== true
-        ? 'cancelled by the user, cannot be messaged'
-        : e.status === 'running'
-          ? 'running'
-          : e.resumable
-            ? `${e.status}, resumes when messaged`
-            : `${e.status}, cannot be resumed`
+      e.durable === true
+        ? e.resumable
+          ? 'a running agent gets the message, a finished one resumes'
+          : 'one-shot: a running agent gets the message, a finished one cannot be resumed'
+        : e.status === 'stopped' && e.modelStopped !== true
+          ? 'cancelled by the user, cannot be messaged'
+          : e.status === 'running'
+            ? 'running'
+            : e.resumable
+              ? `${e.status}, resumes when messaged`
+              : `${e.status}, cannot be resumed`
     return `- ${label}: ${e.agent}, ${state}`
   })
   const head = `Agents you can message with ${toolName} (to = name or id):`

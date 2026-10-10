@@ -10,7 +10,13 @@ application.
 ```ts
 export interface SessionOptions {
   /** Override agent-level storage for this session (`inbox`: optional durable inbox, §12). */
-  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }
+  storage?: {
+    messages?: MessageAdapter
+    state?: StateAdapter
+    inbox?: InboxAdapter
+    /** Short-lived chunk log for cross-process resume (spec 04 §6.2, 0.8). */
+    streams?: StreamLogAdapter
+  }
   /** Developer runtime context, exposed as ctx.runtime (tenantId, userId, feature flags…). */
   runtime?: Record<string, unknown>
   /** AI SDK toolsContext: map keyed by final tool name (spec 01 §4). */
@@ -79,6 +85,11 @@ export interface HarnessSession<
   //     : HarnessRun<M, InferSchema<S>>
   /** Replay + follow the running turn (spec 04 §6). */
   attach(): HarnessRun<M> | undefined
+  /**
+   * Replay + follow the active turn from the stream log, also when another instance runs it
+   * (spec 04 §6.2, 0.8). `undefined`: nothing active, no `storage.streams`, or the log expired.
+   */
+  attachRemote(options?: { from?: number; signal?: AbortSignal }): Promise<HarnessRun<M> | undefined>
   /**
    * 0.8. Called synchronously whenever ANY turn of this session starts in this process (see §2.1).
    * Returns the unsubscribe function.
@@ -932,6 +943,8 @@ the in-memory FIFO of spec 11 §6.2.
 export interface InboxAdapter {
   /** Durable before resolving. Returns the item id (time-sortable). */
   enqueue(sessionId: string, item: InboxItemInput): Promise<string>
+  /** Optional (rule 17): idempotent enqueue by `item.dedupeKey`; required for `enqueue(…, { id })`. */
+  enqueueOnce?(sessionId: string, item: InboxItemInput & { dedupeKey: string }): Promise<{ id: string; duplicate: boolean }>
   /** Atomically claim ready items of a session for `owner`, oldest first (at most `limit`).
    *  Claimed items are invisible to other claims until ack/release or until the claim expires
    *  (`claimTtlMs`). Every claim increments `attempts`. Head of line: never returns an item
@@ -969,7 +982,7 @@ export type InboxItemInput = (
   | { kind: 'wake'; messageId: string; at: number }     // inject(…, { wake }) from another process
   | { kind: 'abort'; turnId?: string; reason?: string; at: number }
   | { kind: 'wait-timeout'; waitId: string; at: number }   // 0.5.0: durable timeout of an external wait (rule 16)
-) & { availableAt?: number }   // 0.5.0: epoch ms; a durable timer (rule 14)
+) & { availableAt?: number; dedupeKey?: string }   // availableAt: epoch ms, a durable timer (rule 14); dedupeKey: caller id (rule 17)
 export type InboxItem = InboxItemInput & { id: string; attempts: number; lastError?: string }
 export type DeadInboxItem = InboxItem & { sessionId: string; deadAt: number; reason: string }
 export interface SerializedInput {            // a normalized input (§3 step 7) as JSON
@@ -978,6 +991,12 @@ export interface SerializedInput {            // a normalized input (§3 step 7)
   appMetadata?: Record<string, JSONValue>     // only with acceptClientMetadata
 }
 export interface CollectOptions { quietMs?: number; maxWaitMs?: number; maxItems?: number }
+export interface EnqueueOptions {
+  mode?: 'queue' | 'steer' | 'collect'; collect?: CollectOptions
+  availableAt?: number    // epoch ms: not claimable before it (rules 14, 17); not with 'collect'
+  id?: string             // caller id, 1–256 chars, unique per session: a repeat is a no-op (rule 17)
+}
+export interface EnqueueResult { inboxId: string; target: 'local' | 'remote'; duplicate?: true }
 
 // config
 storage?: { messages?; state?; inbox?: InboxAdapter }
@@ -1003,7 +1022,9 @@ expiry, `release`, `ack`, `limit`, session isolation, copies, `notify`/`subscrib
 0.5.0: `uncount`, `lastError`, attempts kept by an expired claim, delayed items holding back
 later `send`/`wake` items but not `abort`, `availableAt` timers holding nothing back — only with
 `requireRetry`, since an adapter may ignore the options — dead items skipped, listed and redriven
-in id order with attempts reset, and `stats`). A Postgres adapter (claims serialized per session by an
+in id order with attempts reset, and `stats`; rule 17 with `requireDedupe`: a repeated caller id is
+a no-op, atomic under concurrency, per session, and still a duplicate after the item was acked, a
+future-`availableAt` item is not delivered early). A Postgres adapter (claims serialized per session by an
 advisory lock, `LISTEN`/`NOTIFY`) is `examples/postgres-inbox.ts`.
 
 Normative rules:
@@ -1159,6 +1180,33 @@ without it releases carry only `owner` and rules 1–10 are the whole contract.
     carries no input, so the stored-view dedupe does not apply (recording is idempotent). Adapters
     store it like any item (the `availableAt` timer is rule 14); `InboxItemInput` gains this kind,
     so a custom adapter must store unknown members of the union as given.
+
+17. **Timers and caller ids on `enqueue()` (ADR-0040).** `session.enqueue(input, { availableAt, id })`
+    exposes two inbox features to applications (a routine's fire, a reminder, a webhook retry):
+    - `availableAt` (epoch ms, finite) stores the item as a durable timer (rule 14): invisible
+      until due, then applied in id order like any item. The enqueuing process drains again at
+      that moment (also with `pollMs: 0`); other instances find it by notify or poll. A past value
+      is a plain enqueue. Not allowed with `mode: 'collect'` (the burst is timed by `at`); without
+      `storage.inbox` a future value is `EH_INVALID_INPUT` (there is no durable timer; a
+      process-local timer would be lost on restart, so the app keeps its own).
+    - `id` (1–256 chars) is a caller-supplied idempotency key, **per session**: the first
+      `enqueue` stores the item, every later one with the same id stores nothing and returns
+      `{ inboxId: <existing item id>, target: 'local', duplicate: true }` (no event, no drain).
+      The inbox item id stays adapter-assigned and time-sortable; the key is stored as
+      `item.dedupeKey`. With an inbox the core calls `InboxAdapter.enqueueOnce`, which must be
+      atomic (one winner among concurrent callers, across instances: a unique index on
+      `(sessionId, dedupeKey)`) and must treat as duplicates the keys of items that are stored in
+      any state (ready, claimed, delayed, dead) **and of items acked within the dedupe horizon**.
+      A core without `enqueueOnce` on the adapter throws `EH_INVALID_INPUT`. Without an inbox the
+      key is remembered for the life of that `Session` object.
+    - **Dedupe horizon:** an adapter must remember the key of an acked item for at least 24 hours
+      after the ack (`memoryInbox({ dedupeWindowMs })`, default 24 h; a database adapter keeps the
+      key row and deletes it by a TTL job). A repeat after the horizon is a new item, so ids must
+      be unique per logical event (`sched:<id>:<scheduledAt>` is), not reused as slots. The horizon
+      covers at-least-once producers (a retried tick, two instances firing the same schedule),
+      not long-term uniqueness.
+    The "routines on the inbox" pattern (schedule row, compare-and-set tick, deterministic fire id,
+    overlap skip, missed-fire skip, pause) is in `docs/guides/multi-instance.md`.
 
 At-least-once and dedupe (rule 5) are unchanged: a redelivered item already applied is acked by
 the stored-view dedupe before any attempt logic runs. With a 0.4 adapter (no new members,

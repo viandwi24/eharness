@@ -22,6 +22,11 @@ export interface InboxAdapterConformanceOptions {
   /** Require `stats`. Default false: its case runs only when present. */
   requireStats?: boolean
   /**
+   * Require `enqueueOnce` (caller ids, spec 05 §12 rule 17). Default false: its cases run only
+   * when `enqueueOnce` is present (then the whole rule is checked).
+   */
+  requireDedupe?: boolean
+  /**
    * Claim expiry used by the expiry case (ms). Default 50; raise it for adapters whose clock
    * resolution is coarse (e.g. a database `now()` on another host).
    */
@@ -526,6 +531,83 @@ export function inboxAdapterConformance(
         const due = await adapter.claim(sessionId, 'owner-b')
         assertJsonEqual(ids(due), [t], 'the timer is claimable once due')
         assertJsonEqual(due[0] === undefined ? null : strip(due[0]), timer, 'availableAt kept')
+      },
+    },
+    {
+      name: 'dedupe: a repeated caller id is a no-op, atomic, per session, also after ack',
+      run: async () => {
+        const adapter = await factory()
+        if (adapter.enqueueOnce === undefined) {
+          assertTrue(options.requireDedupe !== true, 'enqueueOnce required but not implemented')
+          return
+        }
+        const sessionId = uniqueSessionId('dedupe')
+        const other = uniqueSessionId('dedupe-other')
+        const item = send('once', { dedupeKey: 'sched:a:1' })
+        const first = await adapter.enqueueOnce(sessionId, { ...item, dedupeKey: 'sched:a:1' })
+        assertTrue(!first.duplicate, 'the first enqueue stores the item')
+        const again = await adapter.enqueueOnce(sessionId, { ...item, dedupeKey: 'sched:a:1' })
+        assertTrue(again.duplicate && again.id === first.id, 'a repeat returns the existing id')
+        const race = await Promise.all(
+          [1, 2, 3, 4].map(() =>
+            adapter.enqueueOnce?.(sessionId, { ...item, dedupeKey: 'sched:a:2' }),
+          ),
+        )
+        assertJsonEqual(
+          race.filter((r) => r?.duplicate === false).length,
+          1,
+          'exactly one concurrent enqueue wins',
+        )
+        const otherSession = await adapter.enqueueOnce(other, { ...item, dedupeKey: 'sched:a:1' })
+        assertTrue(!otherSession.duplicate, 'keys are per session')
+        const claimed = await adapter.claim(sessionId, 'owner-a')
+        assertJsonEqual(
+          claimed.filter((c) => c.id === first.id).length,
+          1,
+          'the duplicate stored nothing',
+        )
+        assertJsonEqual(claimed.length, 2, 'one item per distinct key')
+        assertJsonEqual(
+          claimed[0] === undefined ? null : strip(claimed[0]),
+          { ...item, dedupeKey: 'sched:a:1' },
+          'dedupeKey is stored',
+        )
+        await adapter.ack(ids(claimed))
+        const afterAck = await adapter.enqueueOnce(sessionId, { ...item, dedupeKey: 'sched:a:1' })
+        assertTrue(
+          afterAck.duplicate && afterAck.id === first.id,
+          'a processed (acked) id stays a duplicate within the dedupe window',
+        )
+        assertJsonEqual(
+          (await adapter.claim(sessionId, 'owner-b')).length,
+          0,
+          'a duplicate after ack stores nothing',
+        )
+      },
+    },
+    {
+      name: 'dedupe: a future availableAt timer is not delivered early, then delivered',
+      run: async () => {
+        const adapter = await factory()
+        if (adapter.enqueueOnce === undefined || options.requireRetry !== true) return
+        const sessionId = uniqueSessionId('dedupe-timer')
+        const availableAt = Date.now() + ttl * 4
+        const stored = await adapter.enqueueOnce(sessionId, {
+          ...send('later', { availableAt }),
+          dedupeKey: 'sched:b:1',
+        })
+        assertJsonEqual(ids(await adapter.claim(sessionId, 'owner-a')), [], 'not delivered early')
+        const repeat = await adapter.enqueueOnce(sessionId, {
+          ...send('later', { availableAt }),
+          dedupeKey: 'sched:b:1',
+        })
+        assertTrue(repeat.duplicate && repeat.id === stored.id, 'a pending timer dedupes too')
+        await sleep(ttl * 4 + 50)
+        assertJsonEqual(
+          ids(await adapter.claim(sessionId, 'owner-b')),
+          [stored.id],
+          'delivered once due',
+        )
       },
     },
     {

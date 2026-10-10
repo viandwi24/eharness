@@ -1,5 +1,5 @@
 /**
- * `eharness/storage/memory`: in-memory `MessageAdapter`, `StateAdapter` and `InboxAdapter`.
+ * `eharness/storage/memory`: in-memory `MessageAdapter`, `StateAdapter`, `InboxAdapter`, `BudgetLedger` and `StreamLogAdapter`.
  *
  * Useful for tests, prototypes and single-process apps that do not need history after a restart.
  * Every read and write deep-copies, so callers can never change stored data by mutating objects.
@@ -13,9 +13,13 @@ import {
   type DeadInboxItem,
   type InboxAdapter,
   type InboxItem,
+  type InboxItemInput,
   type MessageAdapter,
   type SessionStateSnapshot,
   type StateAdapter,
+  type StreamLogAdapter,
+  type StreamLogKey,
+  type StreamLogStatus,
   uuidv7,
 } from '../index.ts'
 
@@ -110,6 +114,11 @@ export interface MemoryInboxOptions {
   now?: () => number
   /** Claim expiry when `claim()` is called without `claimTtlMs`. Default 120 000. */
   claimTtlMs?: number
+  /**
+   * How long the caller id (`dedupeKey`) of an acked item is remembered (spec 05 §12 rule 17).
+   * Default 86 400 000 (24 hours, the minimum an adapter must keep).
+   */
+  dedupeWindowMs?: number
 }
 
 /**
@@ -139,6 +148,9 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
   const sessions = new Map<string, Map<string, Entry>>()
   const byId = new Map<string, Entry>()
   const listeners = new Map<string, Set<() => void>>()
+  const dedupeWindowMs = options.dedupeWindowMs ?? 86_400_000
+  /** Caller ids per session; `until` is set once the item was acked (the dedupe horizon). */
+  const keys = new Map<string, Map<string, { id: string; until?: number }>>()
   const live = (entry: Entry, at: number) => entry.claim !== undefined && entry.claim.until > at
   const timer = (entry: Entry, at: number) =>
     entry.item.availableAt !== undefined && entry.item.availableAt > at
@@ -176,6 +188,11 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
   }
 
   function remove(entry: Entry): void {
+    const key = entry.item.dedupeKey
+    if (key !== undefined) {
+      const known = keys.get(entry.sessionId)?.get(key)
+      if (known !== undefined) known.until = now() + dedupeWindowMs
+    }
     byId.delete(entry.item.id)
     const items = sessions.get(entry.sessionId)
     items?.delete(entry.item.id)
@@ -191,18 +208,38 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
     }
   }
 
+  function store(sessionId: string, input: InboxItemInput): string {
+    const id = uuidv7()
+    const entry: Entry = { sessionId, item: { ...structuredClone(input), id, attempts: 0 } }
+    let items = sessions.get(sessionId)
+    if (items === undefined) {
+      items = new Map()
+      sessions.set(sessionId, items)
+    }
+    items.set(id, entry)
+    byId.set(id, entry)
+    return id
+  }
+
   return {
     async enqueue(sessionId, input) {
-      const id = uuidv7()
-      const entry: Entry = { sessionId, item: { ...structuredClone(input), id, attempts: 0 } }
-      let items = sessions.get(sessionId)
-      if (items === undefined) {
-        items = new Map()
-        sessions.set(sessionId, items)
+      return store(sessionId, input)
+    },
+    async enqueueOnce(sessionId, input) {
+      const at = now()
+      let known = keys.get(sessionId)
+      if (known === undefined) {
+        known = new Map()
+        keys.set(sessionId, known)
       }
-      items.set(id, entry)
-      byId.set(id, entry)
-      return id
+      for (const [key, value] of known) {
+        if (value.until !== undefined && value.until <= at) known.delete(key)
+      }
+      const existing = known.get(input.dedupeKey)
+      if (existing !== undefined) return { id: existing.id, duplicate: true }
+      const id = store(sessionId, input)
+      known.set(input.dedupeKey, { id })
+      return { id, duplicate: false }
     },
     async claim(sessionId, owner, opts = {}) {
       const at = now()
@@ -431,6 +468,156 @@ export function memoryBudgetLedger(options: MemoryBudgetLedgerOptions = {}): Bud
           : { scope, limitUsd, spentUsd, reservedUsd }
       })
       return { ok, scopes: out }
+    },
+  }
+}
+
+/** Options of {@link memoryStreamLog}. */
+export interface MemoryStreamLogOptions {
+  /**
+   * How long a log is kept after `close` (and, unclosed, after its last append) unless
+   * `expire(key, ttlMs)` sets another time. Default 600 000 (10 minutes).
+   */
+  retentionMs?: number
+  /** Clock (tests). Default `Date.now`. */
+  now?: () => number
+}
+
+/**
+ * In-memory {@link StreamLogAdapter} (spec 04 §6.2): ordered JSON chunks per `{ sessionId, turnId }`,
+ * idempotent appends by length, `subscribe` notifications, retention after close. Chunks are
+ * deep-copied on write and read. Several agent instances in one process (tests, examples) can
+ * share it to simulate a multi-process deployment; a real one needs a shared store (Redis
+ * Streams, a database table).
+ *
+ * @example
+ * ```ts
+ * const streams = memoryStreamLog()
+ * defineHarnessAgent({ model, storage: { messages, state, streams } })
+ * ```
+ * @see docs/specs/04-streaming.md#62-stream-log-port
+ */
+export function memoryStreamLog(options: MemoryStreamLogOptions = {}): StreamLogAdapter {
+  const now = options.now ?? (() => Date.now())
+  const defaultRetention = options.retentionMs ?? 600_000
+  type Log = {
+    chunks: string[]
+    status: 'streaming' | 'done' | 'error' | 'aborted'
+    /** Absolute expiry time; moved by append / close / expire. */
+    until: number
+    ttl: number
+    listeners: Set<() => void>
+  }
+  const logs = new Map<string, Log>()
+  const idOf = (key: StreamLogKey) => JSON.stringify([key.sessionId, key.turnId])
+
+  const live = (key: StreamLogKey): Log | undefined => {
+    const id = idOf(key)
+    const log = logs.get(id)
+    if (log === undefined) return undefined
+    if (log.until <= now()) {
+      logs.delete(id)
+      // a reader waiting on a log that expired must learn about it
+      for (const listener of [...log.listeners]) listener()
+      return undefined
+    }
+    return log
+  }
+  const sweep = (): void => {
+    for (const [id, log] of [...logs]) {
+      if (log.until <= now()) {
+        logs.delete(id)
+        for (const listener of [...log.listeners]) listener()
+      }
+    }
+  }
+  const notify = (log: Log): void => {
+    for (const listener of [...log.listeners]) {
+      try {
+        listener()
+      } catch {
+        // a subscriber never breaks the writer
+      }
+    }
+  }
+  // subscribers of a key that does not exist yet (the reader may come first)
+  const waiting = new Map<string, Set<() => void>>()
+
+  return {
+    async append(key, chunks, opts) {
+      sweep()
+      const id = idOf(key)
+      let log = logs.get(id)
+      if (log === undefined) {
+        log = {
+          chunks: [],
+          status: 'streaming',
+          until: now() + defaultRetention,
+          ttl: defaultRetention,
+          listeners: waiting.get(id) ?? new Set(),
+        }
+        waiting.delete(id)
+        logs.set(id, log)
+      }
+      if (log.status !== 'streaming') return log.chunks.length
+      let fresh = chunks
+      if (opts?.at !== undefined) {
+        if (opts.at > log.chunks.length) {
+          throw new Error(`append at ${opts.at} leaves a gap: the log has ${log.chunks.length}`)
+        }
+        fresh = chunks.slice(log.chunks.length - opts.at)
+      }
+      for (const chunk of fresh) log.chunks.push(JSON.stringify(chunk))
+      log.until = now() + log.ttl
+      if (fresh.length > 0) notify(log)
+      return log.chunks.length
+    },
+    async close(key, status) {
+      sweep()
+      const id = idOf(key)
+      let log = logs.get(id)
+      if (log === undefined) {
+        log = {
+          chunks: [],
+          status,
+          until: now() + defaultRetention,
+          ttl: defaultRetention,
+          listeners: waiting.get(id) ?? new Set(),
+        }
+        waiting.delete(id)
+        logs.set(id, log)
+      } else if (log.status === 'streaming') log.status = status
+      else return
+      log.until = now() + log.ttl
+      notify(log)
+    },
+    async read(key, from, opts) {
+      const log = live(key)
+      if (log === undefined) return { chunks: [], next: Math.max(0, from), status: 'missing' }
+      const start = Math.max(0, Math.floor(from))
+      const end =
+        opts?.limit === undefined
+          ? log.chunks.length
+          : Math.min(log.chunks.length, start + opts.limit)
+      const chunks = log.chunks.slice(start, Math.max(start, end)).map((c) => JSON.parse(c))
+      const status: StreamLogStatus = log.status
+      return { chunks, next: start + chunks.length, status }
+    },
+    subscribe(key, onAppend) {
+      const id = idOf(key)
+      const set = logs.get(id)?.listeners ?? waiting.get(id) ?? new Set<() => void>()
+      if (logs.get(id) === undefined) waiting.set(id, set)
+      set.add(onAppend)
+      return () => {
+        set.delete(onAppend)
+        if (set.size === 0 && waiting.get(id) === set) waiting.delete(id)
+      }
+    },
+    async expire(key, ttlMs) {
+      const log = live(key)
+      if (log === undefined) return
+      log.ttl = ttlMs
+      log.until = now() + ttlMs
     },
   }
 }

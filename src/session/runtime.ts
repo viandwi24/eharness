@@ -9,6 +9,7 @@ import type {
   MessageAdapter,
   SessionEvent,
   SessionOptions,
+  StreamLogAdapter,
 } from '../agent/session-types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
@@ -78,6 +79,8 @@ export interface SessionRuntime {
   options: SessionOptions
   readonly messages: MessageAdapter
   readonly state: StateStore
+  /** Optional stream log for cross-process resume (spec 04 §6.2). */
+  readonly streams?: StreamLogAdapter
   /** Random id of the agent instance (crash recovery owner). */
   readonly owner: string
   readonly log: HarnessLogger
