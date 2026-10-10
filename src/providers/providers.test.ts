@@ -327,6 +327,45 @@ describe('manager', () => {
     ...extra,
   })
 
+  test('an older overlapping reload never replaces a newer snapshot', async () => {
+    const inner = memoryProfileStore()
+    const listeners = new Set<() => void>()
+    let slowFirstList = true
+    const store: typeof inner = {
+      ...inner,
+      // the first list after a change is slow, so it finishes after the second change was written
+      list: async (q) => {
+        const rows = await inner.list(q)
+        if (slowFirstList && rows.length === 1) {
+          slowFirstList = false
+          await new Promise((r) => setTimeout(r, 40))
+        }
+        return rows
+      },
+      put: async (p) => {
+        await inner.put(p)
+        for (const l of listeners) l()
+      },
+      subscribe: (l) => {
+        listeners.add(l)
+        return () => listeners.delete(l)
+      },
+    }
+    const def = defineProvider({
+      id: 'p',
+      label: 'P',
+      settings: z.object({ apiKey: z.string().meta(ehMeta({ secret: true })) }),
+      create: () => ({ languageModel: (id: string) => id }),
+    })
+    const manager = createProviderManager({ definitions: [def], store })
+    await manager.ready()
+    await manager.putProfile({ providerId: 'p', settings: { apiKey: 'k1-aaaaaaaaaaaa' } })
+    await manager.putProfile({ providerId: 'p', settings: { apiKey: 'k2-aaaaaaaaaaaa' } })
+    await new Promise((r) => setTimeout(r, 120))
+    expect((await manager.listProfiles()).map((p) => p.id)).toEqual(['p', 'p-2'])
+    manager.dispose()
+  })
+
   test('first-colon split', () => {
     expect(parseModelRef('openrouter-2:meta-llama/llama-3.1-8b-instruct:free')).toEqual({
       profile: 'openrouter-2',

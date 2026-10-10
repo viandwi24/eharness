@@ -262,7 +262,17 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
       ? []
       : (fromEnv(options.definitions, options.env, { now }) as ProviderProfile[])
 
-  async function load(): Promise<void> {
+  // Loads can overlap (a store change notification while another change is being written): only
+  // the newest one may replace the snapshot, an older read would bring back stale profiles.
+  let loadSeq = 0
+  let latestLoad: Promise<void> = Promise.resolve()
+  function load(): Promise<void> {
+    const seq = ++loadSeq
+    latestLoad = readAndApply(seq)
+    return latestLoad
+  }
+
+  async function readAndApply(seq: number): Promise<void> {
     const rows = (await store.list({ kind: KIND })).filter(
       (p): p is ProviderProfile => p.kind === KIND,
     )
@@ -273,6 +283,7 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
         rows.push(row)
       }
     }
+    if (seq !== loadSeq) return latestLoad
     const next = new Map<string, ProviderProfile>()
     for (const p of rows) next.set(p.id, p)
     for (const p of env) next.set(p.id, p)
@@ -678,7 +689,8 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
       updatedAt: now(),
     }
     await store.put(profile)
-    map.set(id, profile)
+    // the current snapshot: a reload may have replaced the one read before the write
+    profiles().set(id, profile)
     invalidate(id)
     return publicOf(profile)
   }
