@@ -3,6 +3,7 @@ import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalAnswer, ApprovalOutcome, ApprovalView } from '../domain/approvals.ts'
 import type { NewEvent, TeamEvent } from '../domain/events.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
+import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskStatus } from '../domain/tasks.ts'
@@ -171,6 +172,8 @@ export interface TaskStore {
 export interface TeamPort {
   /** Stored messages of a task session (newest `limit`, chronological). */
   taskMessages(task: Task, limit: number): Promise<ChatMessage[]>
+  /** Resume the running turn of a task session (stream log replay + follow); 204 when none runs. */
+  resumeTask(task: Task, request: Request): Promise<Response>
   /**
    * Everything waiting for a person, across DM chats and task sessions, on any instance. With
    * `sessionId` only that session is read (cheap: used when answering).
@@ -196,6 +199,30 @@ export interface TeamPort {
     text: string,
     mode: 'steer' | 'queue',
   ): Promise<{ inboxId: string; target: 'local' | 'remote' }>
+}
+
+/** The permission mode of an agent's DM chat and what limits it (`domain/modes.ts`). */
+export interface ModeState {
+  /** Effective mode: what the next tool call runs under. */
+  mode: TeamMode
+  /** Where it comes from: the chat's own pick, the agent's mode, or the workspace default. */
+  source: ModeSource
+  /** The agent's own mode, or `inherit`. It is also the loosest mode its sessions may run in. */
+  agentMode: AgentModeChoice
+  workspaceDefault: TeamMode
+  /** Modes a person may pick now (ceiling and classifier availability applied). */
+  available: TeamMode[]
+  /** False when the server has no classifier model (scripted runs): Auto is not offered. */
+  autoAvailable: boolean
+  /** Auto mode block counters; `paused`: calls ask a person until one is approved. */
+  auto: { paused: boolean; consecutive: number; total: number }
+}
+
+/** Per-session permission modes (`infra/eh/mode-service.ts`). */
+export interface ModePort {
+  get(agent: AgentDef): ModeState
+  /** Store a pick for the agent's DM chat; the caller validated it against `available`. */
+  set(agent: AgentDef, mode: TeamMode, now: number): ModeState
 }
 
 /** Appends to the event feed from use cases (routines, settings). */
@@ -304,6 +331,7 @@ export interface Deps {
   team: TeamPort
   library: LibraryStore
   settings: SettingsStore
+  modes: ModePort
   routines: RoutineStore
   schedule: ScheduleCalc
   routineEngine: RoutineEngine

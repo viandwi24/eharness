@@ -1,7 +1,11 @@
 /** Workspace settings in the `settings` table: one row `workspace` holding the overrides. */
 import type { Database } from 'bun:sqlite'
 import type { SettingsStore } from '../../app/ports.ts'
-import type { SettingsPatch, WorkspaceSettings } from '../../domain/settings.ts'
+import {
+  type SettingsPatch,
+  toSettingsMode,
+  type WorkspaceSettings,
+} from '../../domain/settings.ts'
 
 const KEY = 'workspace'
 
@@ -27,7 +31,9 @@ export function sqliteSettingsStore(
   }
   const merged = (): WorkspaceSettings & { updatedAt: number } => {
     const { overrides, updatedAt } = read()
-    return { ...options.defaults, ...overrides, updatedAt }
+    const all = { ...options.defaults, ...overrides, updatedAt }
+    // rows written before the three modes may hold a legacy value
+    return { ...all, defaultPermissionMode: toSettingsMode(all.defaultPermissionMode) }
   }
   return {
     get: merged,

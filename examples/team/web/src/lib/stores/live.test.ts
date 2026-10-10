@@ -75,6 +75,7 @@ describe('live store', () => {
 		live.handleEvent(ev('routine-changed', 'lead-id'));
 		live.handleEvent(ev('routine-fired', 'lead-id'));
 		live.handleEvent(ev('settings-changed', 'lead-id'));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, settings: 1 });
+		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, settings: 1, modes: 1 });
 	});
 });

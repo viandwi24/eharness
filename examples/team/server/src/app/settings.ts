@@ -2,6 +2,7 @@
 import {
   checkSettingsPatch,
   type SettingsPatch,
+  toSettingsMode,
   type WorkspaceSettings,
 } from '../domain/settings.ts'
 import type { Deps } from './ports.ts'
@@ -17,6 +18,9 @@ export function patchSettings(
     Object.entries(patch).filter(([, v]) => v !== undefined),
   ) as SettingsPatch
   checkSettingsPatch(clean)
+  if (clean.defaultPermissionMode !== undefined) {
+    clean.defaultPermissionMode = toSettingsMode(clean.defaultPermissionMode)
+  }
   const next = deps.settings.patch(clean, deps.clock.now())
   deps.events.append({ type: 'settings-changed', payload: { keys: Object.keys(clean) } })
   return next

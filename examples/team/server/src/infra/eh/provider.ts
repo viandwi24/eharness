@@ -24,6 +24,11 @@ export interface ModelConfig {
   defaultModel: string
   /** Resolve a model id (or the default) to a model. */
   resolve(id: string | null): LanguageModel
+  /**
+   * Model of the Auto mode classifier (`TEAM_CLASSIFIER_MODEL`, else the default model). Absent
+   * (scripted model) = Auto mode is not offered.
+   */
+  classifierModel?: () => LanguageModel
   /** Provider web search for `web_search`; absent (scripted model) = the tool is not offered. */
   search?: SearchFn
 }
@@ -58,6 +63,7 @@ export function createModelConfig(env: Env = process.env): ModelConfig {
       provider,
       defaultModel,
       resolve,
+      classifierModel: () => resolve(env.TEAM_CLASSIFIER_MODEL || null),
       search: createSearchFn({ provider, resolveModel: (id) => resolve(id) }),
     }
   }
@@ -82,6 +88,7 @@ export function createModelConfig(env: Env = process.env): ModelConfig {
     provider,
     defaultModel,
     resolve,
+    classifierModel: () => resolve(env.TEAM_CLASSIFIER_MODEL || null),
     search: createSearchFn({ provider, resolveModel: (id) => resolve(id) }),
   }
 }

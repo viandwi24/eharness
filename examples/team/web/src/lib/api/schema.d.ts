@@ -390,6 +390,138 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/mode": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Permission mode of the agent's DM chat */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The effective mode and the modes available */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModeState"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        /**
+         * Pick the permission mode of the agent's DM chat
+         * @description Takes effect at the next tool call, a running turn included. Delegated tasks started by this chat inherit it, unless their own agent is stricter. Emits a `mode-changed` event.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ModePut"];
+                };
+            };
+            responses: {
+                /** @description The new state */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ModeState"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent, or a mode this agent does not allow (`MODE_NOT_ALLOWED`) */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/agents/{id}/chat": {
         parameters: {
             query?: never;
@@ -1039,6 +1171,85 @@ export interface paths {
                     content: {
                         "application/json": components["schemas"]["TaskDetail"];
                     };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Follow the running turn of a task (UI message stream)
+         * @description Replays the chunks of the active turn of the task session from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use `GET /tasks/{id}`. A continuation turn after an approval replays only the continuation.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0. */
+                    from?: string;
+                };
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The UI message stream from the cursor */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description No turn is streaming */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
                 };
                 /** @description Invalid request */
                 400: {
@@ -3121,7 +3332,7 @@ export interface components {
             mcp: string[];
             mcpServers: components["schemas"]["McpServer"][];
             /** @enum {string} */
-            permissionMode: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+            permissionMode: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             rules: components["schemas"]["PermissionRules"];
             /** @description Bumps on every edit. */
             version: number;
@@ -3160,7 +3371,7 @@ export interface components {
             mcp?: string[];
             mcpServers?: components["schemas"]["McpServerInput"][];
             /** @enum {string} */
-            permissionMode?: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+            permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             rules?: {
                 /** @default [] */
                 allow: string[];
@@ -3198,7 +3409,7 @@ export interface components {
             mcp?: string[];
             mcpServers?: components["schemas"]["McpServerInput"][];
             /** @enum {string} */
-            permissionMode?: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+            permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             rules?: {
                 /** @default [] */
                 allow: string[];
@@ -3218,6 +3429,40 @@ export interface components {
                 name: components["schemas"]["ToolName"];
                 reason: string;
             }[];
+        };
+        ModeState: {
+            /**
+             * @description The mode the next tool call runs under. `manual`: risky tools ask a person. `auto`: rules first, then a classifier model allows or blocks (3 blocks in a row or 20 in total pause it and calls ask again). `bypass`: everything runs; deny rules and protected paths still apply.
+             * @enum {string}
+             */
+            mode: "manual" | "auto" | "bypass";
+            /**
+             * @description `chat`: picked for this chat. `agent`: the agent's own mode. `workspace`: the Settings default.
+             * @enum {string}
+             */
+            source: "chat" | "parent" | "agent" | "workspace";
+            /**
+             * @description The agent's own mode (`inherit` = the workspace default). It is also the loosest mode its sessions may run in: an agent pinned to `manual` cannot be set to `auto` or `bypass`.
+             * @enum {string}
+             */
+            agentMode: "inherit" | "manual" | "auto" | "bypass";
+            /** @enum {string} */
+            workspaceDefault: "manual" | "auto" | "bypass";
+            /** @description Modes `PUT` accepts now (the agent ceiling and classifier availability applied). */
+            available: ("manual" | "auto" | "bypass")[];
+            /** @description False when the server has no classifier model (an offline scripted model): Auto is not offered. */
+            autoAvailable: boolean;
+            /** @description Block counters of the live session on this instance. */
+            auto: {
+                /** @description Auto was paused by repeated blocks: calls ask a person until one is approved (or Auto is picked again). */
+                paused: boolean;
+                consecutive: number;
+                total: number;
+            };
+        };
+        ModePut: {
+            /** @enum {string} */
+            mode: "manual" | "auto" | "bypass";
         };
         /** @description A turn of this chat runs on another instance: the message was stored in the durable inbox and is steered into it. Follow the turn with `GET /agents/{id}/chat/stream`. */
         ChatQueued: {
@@ -3453,7 +3698,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed";
+            type: "message-added" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -3696,10 +3941,10 @@ export interface components {
         };
         Settings: {
             /**
-             * @description The mode of every agent whose own `permissionMode` is `default`; read by the agent factory on every turn.
+             * @description The workspace default permission mode: `default` = Manual, `auto` = Auto (classifier), `bypassPermissions` = Bypass. The mode of every chat and agent that has none of its own; read on every tool call.
              * @enum {string}
              */
-            defaultPermissionMode: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+            defaultPermissionMode: "default" | "auto" | "bypassPermissions";
             /** @description Monthly USD limit of the workspace budget ledger; null = tracked, not limited. */
             budgetUsd: number | null;
             /** @description Children the lead runs at once (`subagents` `maxConcurrent`). */
@@ -3710,8 +3955,11 @@ export interface components {
             updatedAt: number;
         };
         SettingsPatch: {
-            /** @enum {string} */
-            defaultPermissionMode?: "default" | "acceptEdits" | "plan" | "dontAsk" | "bypassPermissions";
+            /**
+             * @description Legacy values (`acceptEdits`, `plan`, `dontAsk`, `manual`) are stored as `default` (Manual).
+             * @enum {string}
+             */
+            defaultPermissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             budgetUsd?: number | null;
             spawnCap?: number;
             defaultModel?: string | null;

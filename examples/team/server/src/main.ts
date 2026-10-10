@@ -5,6 +5,7 @@
  *   TEAM_TOKEN  bearer token; unset = open (localhost only, never expose such a server)
  *   PORT        default 4000
  *   OPENROUTER_API_KEY | AI_GATEWAY_API_KEY | TEAM_SCRIPTED_MODEL   model provider (see infra/eh/provider.ts)
+ *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode (default: TEAM_MODEL; none with a scripted model)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
@@ -17,6 +18,7 @@ import { areaOf } from './domain/library.ts'
 import { createApp } from './http/app.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
+import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
@@ -29,6 +31,7 @@ import {
 import { createChatService } from './infra/eh/chat-service.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
+import { createModeService } from './infra/eh/mode-service.ts'
 import { createModelConfig, type ModelConfig } from './infra/eh/provider.ts'
 import {
   createRoutineService,
@@ -51,6 +54,8 @@ export interface ServerConfig {
   seed?: boolean
   /** Model config override (tests); default from the environment. */
   models?: ModelConfig
+  /** Auto mode classifier override (tests); default: the model of `models.classifierModel`. */
+  classifier?: AgentFactoryDeps['classifier']
   /** Timers of the stream log and inbox (tests shorten them). */
   tuning?: AgentFactoryDeps['tuning']
   /** Delegation limits (spawn cap, child steps, park timeout). */
@@ -134,6 +139,7 @@ export function compose(config: ServerConfig): Server {
     onChange: (s) => setBudgetLimit(conn.sqlite, `workspace:${WORKSPACE_ID}`, s.budgetUsd),
   })
   const routineStore = sqliteRoutineStore(conn.sqlite)
+  const sessionModes = sqliteSessionModes(conn.sqlite)
   let routines: RoutineService | undefined
   const factory = createAgentFactory({
     sqlite: conn.sqlite,
@@ -142,6 +148,22 @@ export function compose(config: ServerConfig): Server {
     roster: () => agents.list().filter((a) => a.role === 'role' || a.role === 'custom'),
     lead: () => agents.list().find((a) => a.role === 'lead'),
     agentBySlug: (slug) => agents.getBySlug(slug),
+    agentById: (id) => agents.get(id),
+    ...(config.classifier === undefined ? {} : { classifier: config.classifier }),
+    sessionModes,
+    // Auto blocked / paused / resumed: the web shows "auto paused" from this event
+    onAutoEvent: ({ sessionId, agentId, event, state, mode }) =>
+      events.append({
+        type: 'mode-changed',
+        agentId,
+        sessionId,
+        payload: {
+          mode,
+          autoPaused: state.paused,
+          auto: event.type,
+          ...(event.type === 'blocked' ? { tool: event.toolName, reason: event.reason } : {}),
+        },
+      }),
     taskStore: tasks,
     settings: () => {
       const s = settings.get()
@@ -179,6 +201,10 @@ export function compose(config: ServerConfig): Server {
     team,
     library: sqliteLibraryStore(conn.sqlite, { onChange: onFileChange }),
     settings,
+    modes: createModeService(factory, {
+      store: sessionModes,
+      workspaceDefault: () => settings.get().defaultPermissionMode,
+    }),
     routines: routineStore,
     schedule,
     routineEngine: routines,

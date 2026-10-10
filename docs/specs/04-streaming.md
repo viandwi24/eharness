@@ -209,8 +209,10 @@ ordering and part shapes are identical on both sides (ADR-0003).
 - `session.events(): ReadableStream<SessionEvent>` — long-lived channel for things that happen
   outside a turn stream. A session with an open `events()` reader is not idle-evicted.
 
-- For a `respond()` continuation the buffer holds only the continuation chunks. A client that
-  resumes it with `useChat` should re-fetch the message when the turn ends (spec 11 §7).
+- For a `respond()` continuation the buffer holds only the continuation chunks (the live stream
+  of the `respond()` call is unchanged). `attach()` / `attachRemote()` and the stream log serve the
+  **replay view** of it, which starts with a rebuild of the continued message (§6.3), so AI SDK's
+  `resumeStream()` works without client help.
 - `send(…, { ifBusy: 'steer' })` returns `attach()` of the running turn.
 
 ```ts
@@ -280,8 +282,34 @@ Rules:
    response. Cursor: `opts.from`, `?from=`, `Last-Event-ID` (digits only). AI SDK's SSE helpers do
    not emit event ids, so a client that wants a mid-stream cursor sends it with
    `prepareReconnectToStreamRequest` (`api: '/chat/id/stream?from=' + n`); `useChat` itself
-   resumes from 0 and reconciles by message id.
-6. Conformance: `streamLogConformance` (`eharness/testing`); memory adapter: `memoryStreamLog()`.
+   resumes from 0 and reconciles by message id. For a continuation the stream is the replay view
+   (§6.3).
+6. The log stores the replay view (§6.3), so cursors are positions in it.
+7. Conformance: `streamLogConformance` (`eharness/testing`); memory adapter: `memoryStreamLog()`.
+
+### 6.3 Resume replay of a continuation
+
+AI SDK's `resumeStream()` treats a resume as a **full replay**: at the first `start` it resets its
+message state and rebuilds the message from the chunks that follow. The raw chunks of a `respond()`
+continuation (§2) only extend an existing message (`start { messageId: A.id }` then
+`tool-output-available` …), so replayed alone they fail with `No tool invocation found for tool
+call ID`. Therefore, for a turn that continues a stored message A' (the patched message the
+stream was opened with):
+
+- the **replay view** of the turn is `messageToChunks(A')` — `start { messageId, messageMetadata:
+  A'.metadata }`, then one chunk group per part (steps, text, reasoning, files, sources, custom,
+  persistent `data-*` parts, tool input / approval / output states; never transient parts, never
+  `finish`) — followed by the raw chunks **after** the turn's own `start`;
+- the view is what `session.attach()`, `session.attachRemote()` (turn buffer and stream log) and
+  `handleResumeRequest()` emit; the raw buffer (`run.stream` of `send` / `respond`, `onRun`
+  listeners) is unchanged, because those clients already hold A';
+- every other turn (new assistant message) has no prefix: the view equals the raw chunks;
+- **cursor**: `from` is a 0-based position in the replay view (the stream log stores the view, so
+  log cursors are view positions). `from = 0` is the full replay AI SDK expects; a log-aware
+  client that tracked its position keeps it, and a `from` inside the prefix just skips its head
+  (clients that resume mid-stream must already hold the message). The prefix is a snapshot of A'
+  taken when the continuation started, so later steps of the same turn never appear twice;
+- `messageToChunks(message)` is exported from `eharness` for adapters and tests.
 
 ## 7. `HarnessRun` and responses
 

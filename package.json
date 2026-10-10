@@ -31,8 +31,7 @@
   "workspaces": [
     ".",
     "examples/coder",
-    "examples/team/server",
-    "examples/team/web"
+    "examples/team"
   ],
   "publishConfig": {
     "access": "public"

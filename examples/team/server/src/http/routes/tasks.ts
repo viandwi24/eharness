@@ -10,6 +10,7 @@ import {
   getTask,
   listTasks,
   messageTask,
+  resumeTask,
 } from '../../app/tasks.ts'
 import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
 import {
@@ -76,6 +77,37 @@ const taskRoute = createRoute({
   request: { params: TaskIdParam },
   responses: {
     200: { description: 'The task', content: json(TaskDetailSchema) },
+    404: jsonError('Unknown task'),
+    ...errorResponses,
+  },
+})
+
+const taskStreamRoute = createRoute({
+  method: 'get',
+  path: '/tasks/{id}/stream',
+  tags: ['tasks'],
+  summary: 'Follow the running turn of a task (UI message stream)',
+  description:
+    'Replays the chunks of the active turn of the task session from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use `GET /tasks/{id}`. A continuation turn after an approval replays only the continuation.',
+  security,
+  request: {
+    params: TaskIdParam,
+    query: z.object({
+      from: z
+        .string()
+        .regex(/^\d{1,15}$/)
+        .optional()
+        .openapi({
+          description: 'Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0.',
+        }),
+    }),
+  },
+  responses: {
+    200: {
+      description: 'The UI message stream from the cursor',
+      content: { 'text/event-stream': { schema: EventsStreamSchema } },
+    },
+    204: { description: 'No turn is streaming' },
     404: jsonError('Unknown task'),
     ...errorResponses,
   },
@@ -273,6 +305,9 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
       const detail = await getTask(deps, c.req.valid('param').id)
       return c.json(detail as never, 200)
     })
+    .openapi(taskStreamRoute, async (c) =>
+      raw(await resumeTask(deps, c.req.valid('param').id, c.req.raw)),
+    )
     .openapi(approvalsRoute, async (c) => c.json({ approvals: await listApprovals(deps) }, 200))
     .openapi(answerRoute, async (c) => {
       const { id } = c.req.valid('param')

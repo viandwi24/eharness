@@ -54,6 +54,7 @@ describe('core entry', () => {
       'isKindMessage',
       'isUuidV7',
       'lookupModel',
+      'messageToChunks',
       'modelsDevCatalog',
       'neutralizeTags',
       'parseSkillMarkdown',

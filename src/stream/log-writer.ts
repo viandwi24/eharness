@@ -78,8 +78,8 @@ export function createStreamLogWriter(args: {
 
   /** Append everything not yet confirmed, batch by batch. False when an append failed. */
   async function drain(): Promise<boolean> {
-    while (sent < buffer.length) {
-      const chunks = buffer.slice(sent, sent + options.batchSize)
+    while (sent < buffer.replayLength) {
+      const chunks = buffer.replaySlice(sent, sent + options.batchSize)
       try {
         // `at` makes a retry after an unknown outcome idempotent
         await adapter.append(key, chunks, { at: sent })

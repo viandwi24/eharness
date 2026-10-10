@@ -10,6 +10,7 @@ export const EVENT_TYPES = [
   'routine-fired',
   'routine-changed',
   'settings-changed',
+  'mode-changed',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

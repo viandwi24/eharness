@@ -178,6 +178,7 @@
 			<div class="mb-2 text-center text-xs text-muted-foreground" role="status">{ac.notice}</div>
 		{/if}
 		<ChatComposer
+			{agentId}
 			onSend={send}
 			onStop={() => void ac.stop()}
 			status={chat.status}

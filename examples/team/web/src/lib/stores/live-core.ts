@@ -12,8 +12,8 @@ export type LiveState = {
 	connection: Connection;
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
-	/** Counters bumped (debounced) by file / routine / settings events; screens refetch when one moves. */
-	revs: { files: number; routines: number; settings: number };
+	/** Counters bumped (debounced) by file / routine / settings / mode events; screens refetch when one moves. */
+	revs: { files: number; routines: number; settings: number; modes: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
@@ -23,7 +23,7 @@ export const emptyLiveState = (): LiveState => ({
 	tasksLoaded: false,
 	connection: 'idle',
 	viewing: null,
-	revs: { files: 0, routines: 0, settings: 0 }
+	revs: { files: 0, routines: 0, settings: 0, modes: 0 }
 });
 
 export type LiveDeps = {
@@ -113,6 +113,9 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 				if (e.type === 'routine-fired') later('tasks', core.loadTasks);
 			} else if (e.type === 'settings-changed') {
 				later('settings', bump('settings'));
+			} else if (e.type === 'mode-changed') {
+				// a pick (any tab) or Auto paused / resumed: the mode selector refetches
+				later('modes', bump('modes'));
 			}
 		},
 

@@ -8,7 +8,8 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
-	import { modelOptions, permissionModes } from '#lib/models.js';
+	import { modelOptions } from '#lib/models.js';
+	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { sumUsage, type Usage } from '#lib/settings/usage.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
@@ -44,7 +45,7 @@
 
 	function fill(s: Settings): void {
 		settings = s;
-		mode = s.defaultPermissionMode;
+		mode = settingsModeOf(s.defaultPermissionMode);
 		budget = s.budgetUsd === null ? '' : String(s.budgetUsd);
 		spawnCap = s.spawnCap;
 		model = s.defaultModel ?? '';
@@ -125,11 +126,11 @@
 			<label class="flex flex-col gap-1">
 				<span class="font-medium">Default permission mode</span>
 				<NativeSelect bind:value={mode} disabled={!settings}>
-					{#each permissionModes as m (m.id)}
-						<NativeSelectOption value={m.id}>{m.label}</NativeSelectOption>
+					{#each settingsModes as m (m.id)}
+						<NativeSelectOption value={m.id}>{modeInfo(m.mode).label}</NativeSelectOption>
 					{/each}
 				</NativeSelect>
-				<span class="text-xs text-muted-foreground">Applies to every agent whose own mode is "Default". {permissionModes.find((m) => m.id === mode)?.hint}</span>
+				<span class="text-xs text-muted-foreground">The starting mode of every chat whose agent has no mode of its own (and of routine runs). {modeInfo(settingsModes.find((m) => m.id === mode)?.mode ?? 'manual').hint}</span>
 				{#if errors.defaultPermissionMode}<span class="text-xs text-destructive-text">{errors.defaultPermissionMode}</span>{/if}
 			</label>
 			<label class="flex flex-col gap-1">

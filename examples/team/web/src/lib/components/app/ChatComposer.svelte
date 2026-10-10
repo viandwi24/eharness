@@ -22,18 +22,32 @@
 	import type { ChatStatus } from 'ai';
 	import { toast } from 'svelte-sonner';
 	import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES } from '#lib/chat/constants.js';
+	import ModeSwitch from './ModeSwitch.svelte';
 
 	let {
 		onSend,
 		onStop,
 		status,
-		placeholder = 'Message the agent'
+		placeholder = 'Message the agent',
+		agentId
 	}: {
 		onSend: (message: PromptInputMessage) => void | Promise<void>;
 		onStop?: () => void;
 		status?: ChatStatus;
 		placeholder?: string;
+		/** The agent of this DM chat: shows its permission mode switch (Shift+Tab cycles it). */
+		agentId?: string;
 	} = $props();
+
+	let modeSwitch = $state<ModeSwitch | undefined>();
+
+	// Shift+Tab cycles Manual / Auto / Bypass instead of moving focus out of the composer.
+	function onKeydown(e: KeyboardEvent): void {
+		if (e.key === 'Tab' && e.shiftKey && agentId && modeSwitch) {
+			e.preventDefault();
+			modeSwitch.cycle();
+		}
+	}
 </script>
 
 <!-- Composer: attachments are validated here (type, 10 MB) and uploaded by the owner on send. -->
@@ -61,13 +75,14 @@
 			</PromptInputHeader>
 		{/if}
 		<PromptInputBody>
-			<PromptInputTextarea {placeholder} />
+			<PromptInputTextarea {placeholder} onkeydown={onKeydown} />
 		</PromptInputBody>
 		<PromptInputFooter>
 			<PromptInputTools>
 				<PromptInputButton aria-label="Attach files" onclick={openFileDialog}>
 					<PaperclipIcon class="size-4" />
 				</PromptInputButton>
+				{#if agentId}<ModeSwitch bind:this={modeSwitch} {agentId} />{/if}
 			</PromptInputTools>
 			<PromptInputSubmit {status} {onStop} />
 		</PromptInputFooter>

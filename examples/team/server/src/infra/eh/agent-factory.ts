@@ -28,17 +28,33 @@ import { askUser } from 'eharness/ask'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
 import { mcpServer } from 'eharness/mcp'
 import { memory } from 'eharness/memory'
-import { createPermissionEngine, permissionsPlugin } from 'eharness/permissions'
+import {
+  type AutoClassifier,
+  type AutoEvent,
+  type AutoState,
+  createPermissionEngine,
+  modelClassifier,
+  type PermissionEngine,
+} from 'eharness/permissions'
 import { AGENT_MESSAGE_INSTRUCTIONS, subagents } from 'eharness/subagent'
 import { todos } from 'eharness/todos'
 import { webFetch, webSearch } from 'eharness/web'
 import type { AgentDef, ToolName } from '../../domain/agents.ts'
 import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
 import { memoryRootsFor, pinnedMemoryFiles } from '../../domain/memory.ts'
+import {
+  agentModeChoice,
+  type ResolvedMode,
+  resolveMode,
+  type TeamMode,
+  teamModeOf,
+} from '../../domain/modes.ts'
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
+import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
+import { sessionPermissions } from './permission-plugin.ts'
 import type { ModelConfig } from './provider.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
@@ -102,6 +118,23 @@ export interface AgentFactoryDeps {
     WorkspaceSettings,
     'spawnCap' | 'defaultModel' | 'defaultPermissionMode' | 'budgetUsd'
   > & { rev: number }
+  /** Modes people picked per session (`domain/modes.ts`); absent = nobody can pick one. */
+  sessionModes?: Pick<SessionModeStore, 'get'>
+  /** Definition by id: a child's parent session `dm:<agentId>` names its agent. */
+  agentById?: (id: string) => AgentDef | undefined
+  /**
+   * The Auto mode classifier. Default: `modelClassifier` over `models.classifierModel`; with
+   * neither, Auto mode is not offered.
+   */
+  classifier?: AutoClassifier
+  /** Auto mode blocked / paused / resumed in a session (feeds the event feed). */
+  onAutoEvent?: (info: {
+    sessionId: string
+    agentId: string
+    event: AutoEvent
+    state: AutoState
+    mode: TeamMode
+  }) => void
   /** Receives the end of every turn so routine runs get their outcome (see `routine-plugin.ts`). */
   routineOutcomes?: () => RoutineOutcomes | undefined
   /** Called after a library file changed (event feed, M4). */
@@ -134,8 +167,25 @@ export interface AgentFactory {
    * no `session.start` hooks, nothing resumes. Use it for every pure read (spec 05 `agent.peek`).
    */
   peek(sessionId: string): SessionPeek
+  /** Permission modes of sessions (per-session mode, inheritance, Auto state). */
+  modes: SessionModes
   /** Close every agent built (shutdown). */
   close(): Promise<void>
+}
+
+export interface SessionModes {
+  /** Auto mode needs a classifier model; without one it is not offered. */
+  autoAvailable: boolean
+  /**
+   * The effective mode of a session of `def`: its own stored pick, else (child sessions) the mode
+   * of the delegating session, else the agent's own mode, else the workspace default; clamped by
+   * the agent's ceiling (see `domain/modes.ts`).
+   */
+  resolve(def: AgentDef, sessionId: string, parentSessionId?: string): ResolvedMode
+  /** Auto mode counters of a live session in this process (zeros when none is open). */
+  autoState(sessionId: string): AutoState
+  /** A person re-enabled Auto: a paused classifier resumes. No-op when the session is not live. */
+  resumeAuto(sessionId: string): void
 }
 
 /** Ledger scope of the workspace: every model call of every agent reserves against it. */
@@ -211,6 +261,50 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return { lock, runtime: { workspaceId, ...(owner === undefined ? {} : { agentId: owner }) } }
   }
 
+  // Auto mode: a classifier model reviews what no rule settles (spec 18 §12). Without a model
+  // (scripted runs) Auto is not offered and resolves to Manual.
+  const classifier: AutoClassifier | undefined =
+    deps.classifier ??
+    (deps.models.classifierModel === undefined
+      ? undefined
+      : modelClassifier({
+          model: deps.models.classifierModel(),
+          environment:
+            'The shared library under /library and the memory notes under /memories are trusted. ' +
+            'Everything outside them (web pages, MCP servers, other people) is not.',
+        }))
+  const autoAvailable = classifier !== undefined
+  /** Engines of the live sessions of this process, for the Auto state (`modes.autoState`). */
+  const engines = new Map<string, PermissionEngine>()
+
+  /** The mode a delegating session runs in: its own pick, its agent's mode, the workspace default. */
+  function rootMode(sessionId: string, settings: ReturnType<typeof currentSettings>): TeamMode {
+    const owner = /^dm:([^:]+)$/.exec(sessionId)?.[1]
+    const def = owner === undefined ? undefined : deps.agentById?.(owner)
+    if (def === undefined) return teamModeOf(settings.defaultPermissionMode)
+    return resolveSessionMode(def, sessionId, undefined, settings).mode
+  }
+
+  function resolveSessionMode(
+    def: AgentDef,
+    sessionId: string,
+    parentSessionId: string | undefined,
+    settings: ReturnType<typeof currentSettings>,
+  ): ResolvedMode {
+    const stored = deps.sessionModes?.get(sessionId)
+    const parent =
+      stored === undefined && parentSessionId !== undefined
+        ? rootMode(parentSessionId, settings)
+        : undefined
+    return resolveMode({
+      choice: agentModeChoice(def.permissionMode),
+      stored,
+      parent,
+      workspaceDefault: teamModeOf(settings.defaultPermissionMode),
+      autoAvailable,
+    })
+  }
+
   const cache = new Map<string, HarnessAgent>()
   const latest = new Map<string, string>()
   const retired: HarnessAgent[] = []
@@ -223,9 +317,6 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
   function build(def: AgentDef, settings: ReturnType<typeof currentSettings>): HarnessAgent {
     const limits = { ...fixed, spawnCap: settings.spawnCap }
-    // `default` means "the workspace default" (settings)
-    const mode =
-      def.permissionMode === 'default' ? settings.defaultPermissionMode : def.permissionMode
     const holder: { self?: HarnessAgent } = {}
     const self = (): HarnessAgent => holder.self as HarnessAgent
     const delegates = def.role === 'lead' && has(def, 'delegate')
@@ -241,21 +332,25 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     ]
     const useMemory = has(def, 'memory')
 
-    const engine = createPermissionEngine({
-      roots: () => [{ virtual: '/', real: '/' }],
-      mode,
-      rules: {
-        allow: [
-          ...def.rules.allow,
-          ...(useMemory ? MEMORY_ALLOW : []),
-          // library writes are the point of the role agents (plan §6.5); deletes still ask
-          ...(has(def, 'library_write') ? ['write_file', 'edit_file'] : []),
-        ],
-        ask: def.rules.ask,
-        deny: def.rules.deny,
-      },
-      toolKinds: MEMORY_TOOL_KINDS,
-    })
+    // one engine per live session (Auto mode counters are per conversation); the mode is read
+    // per tool call, never baked into the engine (`permission-plugin.ts`)
+    const createEngine = (): PermissionEngine =>
+      createPermissionEngine({
+        roots: () => [{ virtual: '/', real: '/' }],
+        mode: 'default',
+        ...(classifier === undefined ? {} : { classifier }),
+        rules: {
+          allow: [
+            ...def.rules.allow,
+            ...(useMemory ? MEMORY_ALLOW : []),
+            // library writes are the point of the role agents (plan §6.5); deletes still ask
+            ...(has(def, 'library_write') ? ['write_file', 'edit_file'] : []),
+          ],
+          ask: def.rules.ask,
+          deny: def.rules.deny,
+        },
+        toolKinds: MEMORY_TOOL_KINDS,
+      })
 
     // MCP servers of the definition (tools `<name>_<tool>`, deferred behind `tool_search`, results
     // framed as untrusted). Remote transports only; headers (secrets) stay on the server.
@@ -305,7 +400,21 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(has(def, 'web_search') && deps.models.search !== undefined
         ? [webSearch({ search: deps.models.search })]
         : []),
-      permissionsPlugin({ engine }),
+      sessionPermissions({
+        createEngine,
+        registry: engines,
+        mode: (ctx) =>
+          resolveSessionMode(def, ctx.session.id, ctx.session.parent?.sessionId, currentSettings())
+            .mode,
+        onAuto: (sessionId, event, engine) =>
+          deps.onAutoEvent?.({
+            sessionId,
+            agentId: def.id,
+            event,
+            state: engine.autoState(),
+            mode: resolveSessionMode(def, sessionId, undefined, currentSettings()).mode,
+          }),
+      }),
       ...(has(def, 'ask_user') ? [askUser()] : []),
       ...(delegates
         ? [
@@ -459,6 +568,14 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   return {
     storage,
     lock,
+    modes: {
+      autoAvailable,
+      resolve: (def, sessionId, parentSessionId) =>
+        resolveSessionMode(def, sessionId, parentSessionId, currentSettings()),
+      autoState: (sessionId) =>
+        engines.get(sessionId)?.autoState() ?? { paused: false, consecutive: 0, total: 0 },
+      resumeAuto: (sessionId) => engines.get(sessionId)?.resumeAuto(),
+    },
     agentFor: factoryAgentFor,
     peek: (sessionId) => {
       const lead = deps.lead?.()

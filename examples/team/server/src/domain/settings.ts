@@ -1,10 +1,23 @@
 /** Workspace settings (plan §6.7): defaults the factory and the use cases read. Pure. */
 import { PERMISSION_MODES, type PermissionMode } from './agents.ts'
 import { invalid } from './errors.ts'
+import { EH_MODE, type TeamMode, teamModeOf } from './modes.ts'
+
+/**
+ * The workspace default mode as stored: one of the three product modes, in eharness spelling
+ * (`default` = Manual). Legacy values (`acceptEdits`, `plan`, `dontAsk`) normalize to Manual.
+ */
+export const SETTINGS_MODES = ['default', 'auto', 'bypassPermissions'] as const
+export type SettingsMode = (typeof SETTINGS_MODES)[number]
+
+export const toSettingsMode = (stored: string | null | undefined): SettingsMode =>
+  EH_MODE[teamModeOf(stored)]
+
+export const settingsTeamMode = (stored: string | null | undefined): TeamMode => teamModeOf(stored)
 
 export interface WorkspaceSettings {
-  /** Mode of agents whose own `permissionMode` is `default` (and of agents created without one). */
-  defaultPermissionMode: PermissionMode
+  /** Mode of chats and agents that have no mode of their own (Manual, Auto or Bypass). */
+  defaultPermissionMode: SettingsMode
   /** Monthly USD limit of the workspace budget ledger; null = tracked, not limited. */
   budgetUsd: number | null
   /** Children the lead runs at once (the `subagents` `maxConcurrent`). */
@@ -15,7 +28,10 @@ export interface WorkspaceSettings {
 
 export const SPAWN_CAP_MAX = 32
 
-export type SettingsPatch = Partial<WorkspaceSettings>
+/** A patch accepts any stored mode (legacy spellings too); the store keeps the normalized one. */
+export type SettingsPatch = Partial<Omit<WorkspaceSettings, 'defaultPermissionMode'>> & {
+  defaultPermissionMode?: PermissionMode | SettingsMode
+}
 
 export function checkSettingsPatch(patch: SettingsPatch): void {
   if (

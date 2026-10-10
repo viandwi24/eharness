@@ -11,11 +11,3 @@ export const modelOptions: { id: string | null; label: string }[] = [
 ];
 
 export const agentColors = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6', '#64748b'];
-
-export const permissionModes: { id: 'default' | 'acceptEdits' | 'plan' | 'dontAsk' | 'bypassPermissions'; label: string; hint: string }[] = [
-	{ id: 'default', label: 'Default', hint: 'Ask before risky tools.' },
-	{ id: 'acceptEdits', label: 'Accept edits', hint: 'File edits go through without asking.' },
-	{ id: 'plan', label: 'Plan', hint: 'Read-only: the agent plans, nothing changes.' },
-	{ id: 'dontAsk', label: 'Do not ask', hint: 'Only pre-allowed tools run; the rest is denied.' },
-	{ id: 'bypassPermissions', label: 'Bypass', hint: 'Everything runs without asking. Use with care.' }
-];

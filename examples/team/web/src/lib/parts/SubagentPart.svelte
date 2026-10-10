@@ -2,7 +2,7 @@
 	import ArrowSquareOutIcon from 'phosphor-svelte/lib/ArrowSquareOut';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge, type BadgeVariant } from '#lib/components/ui/badge/index.js';
-	import { Button } from '#lib/components/ui/button/index.js';
+	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotch';
 	import type { PartView, SubagentProgress, SubagentRun } from './map.js';
 
 	// Accepts either the merged `agent` tool view or a standalone `data-subagent.run` view.
@@ -49,21 +49,33 @@
 	const latest = $derived(progress?.text?.trim().split('\n').filter(Boolean).at(-1));
 </script>
 
-<div class="flex w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-[13.5px]">
+{#snippet body()}
 	<AgentAvatar seed={agent} size={28} label={label} />
 	<div class="min-w-0 flex-1">
 		<div class="flex flex-wrap items-center gap-2">
 			<span class="font-medium">{label}</span>
 			{#if label !== agent}<span class="text-xs text-muted-foreground">{agent}</span>{/if}
 			<Badge shape="pill" variant={variants[status]}>{status}</Badge>
+			{#if status === 'running'}<CircleNotchIcon class="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />{/if}
 			{#if detail}<span class="font-mono text-[11.5px] text-muted-foreground">{detail}</span>{/if}
 		</div>
 		{#if description}<p class="mt-0.5 truncate text-muted-foreground">{description}</p>{/if}
 		{#if latest && status === 'running'}<p class="mt-1 line-clamp-2 text-foreground-2">{latest}</p>{/if}
 	</div>
-	{#if sessionId && onOpenSession}
-		<Button variant="ghost" size="icon-sm" aria-label="Open child session" onclick={() => onOpenSession(sessionId)}>
-			<ArrowSquareOutIcon class="size-4" />
-		</Button>
-	{/if}
-</div>
+	{#if sessionId && onOpenSession}<ArrowSquareOutIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />{/if}
+{/snippet}
+
+{#if sessionId && onOpenSession}
+	<button
+		type="button"
+		aria-label={`Open ${label} session`}
+		class="flex w-full cursor-pointer items-start gap-3 rounded-xl border border-border bg-card p-3 text-left text-[13.5px] transition-colors hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+		onclick={() => onOpenSession(sessionId)}
+	>
+		{@render body()}
+	</button>
+{:else}
+	<div class="flex w-full items-start gap-3 rounded-xl border border-border bg-card p-3 text-[13.5px]">
+		{@render body()}
+	</div>
+{/if}

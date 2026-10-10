@@ -13,6 +13,7 @@ import { agentRoutes } from './routes/agents.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { healthRoutes } from './routes/health.ts'
 import { libraryRoutes } from './routes/library.ts'
+import { modeRoutes } from './routes/modes.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { taskRoutes } from './routes/tasks.ts'
@@ -158,6 +159,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
     healthRoutes(() => options.deps.clock.now()),
   )
   app.route('/', agentRoutes(options.deps))
+  app.route('/', modeRoutes(options.deps))
   app.route('/', chatRoutes(options.deps))
   app.route('/', uploadRoutes(options.deps))
   app.route('/', taskRoutes(options.deps))

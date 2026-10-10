@@ -8,8 +8,9 @@
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
-	import { fieldErrors, type Agent, type PermissionMode, type ToolName } from '#lib/api/index.js';
-	import { agentColors, modelOptions, permissionModes } from '#lib/models.js';
+	import { fieldErrors, type Agent, type ToolName } from '#lib/api/index.js';
+	import { agentColors, modelOptions } from '#lib/models.js';
+	import { agentChoiceOf, agentChoices, storedOfChoice, type AgentChoice } from '#lib/modes.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { toolsStore } from '#lib/stores/tools.svelte.js';
 
@@ -29,7 +30,7 @@
 	// svelte-ignore state_referenced_locally
 	let tools = $state<ToolName[]>([...(agent?.tools ?? ['library_read', 'memory', 'todos'])]);
 	// svelte-ignore state_referenced_locally
-	let permissionMode = $state<PermissionMode>(agent?.permissionMode ?? 'default');
+	let modeChoice = $state<AgentChoice>(agentChoiceOf(agent?.permissionMode));
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 	let saving = $state(false);
@@ -60,7 +61,7 @@
 			instructions,
 			model: model || null,
 			tools,
-			permissionMode
+			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode']
 		};
 		try {
 			if (agent) {
@@ -155,12 +156,15 @@
 
 	<label class="flex flex-col gap-1">
 		<span class="font-medium">Permission mode</span>
-		<NativeSelect bind:value={permissionMode}>
-			{#each permissionModes as m (m.id)}
+		<NativeSelect bind:value={modeChoice}>
+			{#each agentChoices as m (m.id)}
 				<NativeSelectOption value={m.id}>{m.label}</NativeSelectOption>
 			{/each}
 		</NativeSelect>
-		<span class="text-xs text-muted-foreground">{permissionModes.find((m) => m.id === permissionMode)?.hint}</span>
+		<span class="text-xs text-muted-foreground">
+			{agentChoices.find((m) => m.id === modeChoice)?.hint}
+			A mode set here is also the loosest this agent can run in; delegated tasks follow the chat that started them, unless this agent is stricter.
+		</span>
 	</label>
 
 	{#if agent}

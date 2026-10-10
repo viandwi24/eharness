@@ -217,8 +217,9 @@ function parseCursor(value: string | null | undefined): number | undefined | 'in
  * from `session.attachRemote()` — also when another instance runs it. The cursor (0-based chunk
  * index; the stream starts at 0, which is what `useChat` expects) comes from `opts.from`, the
  * `?from=` query or the `Last-Event-ID` header; AI SDK's SSE helpers do not write event ids, so a
- * client that tracks its position sends it with `prepareReconnectToStreamRequest`. A malformed
- * cursor answers `400`. A reader that disconnects never aborts the turn.
+ * client that tracks its position sends it with `prepareReconnectToStreamRequest`. The stream of a `respond()` continuation starts with a replay of the
+ * continued message, so AI SDK's `resumeStream()` rebuilds it (spec 04 §6.3; `from` counts replay
+ * chunks). A malformed cursor answers `400`. A reader that disconnects never aborts the turn.
  *
  * Authenticate the request and pick the session exactly like the chat route; this function does
  * no authorization of its own.

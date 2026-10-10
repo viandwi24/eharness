@@ -181,6 +181,8 @@ export class AgentChat {
 			this.following = false;
 		}
 		await this.refetch();
+		// A failed resume leaves the chat in `error`: storage is the truth now, so go back to ready.
+		if (this.chat.status === 'error') this.chat.clearError();
 	}
 
 	/** Load the next older page (scroll-up pagination). Returns the number of messages added. */

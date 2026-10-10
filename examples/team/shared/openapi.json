@@ -313,10 +313,12 @@
             "type": "string",
             "enum": [
               "default",
+              "manual",
+              "auto",
+              "bypassPermissions",
               "acceptEdits",
               "plan",
-              "dontAsk",
-              "bypassPermissions"
+              "dontAsk"
             ]
           },
           "rules": {
@@ -461,10 +463,12 @@
             "type": "string",
             "enum": [
               "default",
+              "manual",
+              "auto",
+              "bypassPermissions",
               "acceptEdits",
               "plan",
-              "dontAsk",
-              "bypassPermissions"
+              "dontAsk"
             ]
           },
           "rules": {
@@ -611,10 +615,12 @@
             "type": "string",
             "enum": [
               "default",
+              "manual",
+              "auto",
+              "bypassPermissions",
               "acceptEdits",
               "plan",
-              "dontAsk",
-              "bypassPermissions"
+              "dontAsk"
             ]
           },
           "rules": {
@@ -689,6 +695,110 @@
         },
         "required": [
           "tools"
+        ]
+      },
+      "ModeState": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "auto",
+              "bypass"
+            ],
+            "description": "The mode the next tool call runs under. `manual`: risky tools ask a person. `auto`: rules first, then a classifier model allows or blocks (3 blocks in a row or 20 in total pause it and calls ask again). `bypass`: everything runs; deny rules and protected paths still apply."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "parent",
+              "agent",
+              "workspace"
+            ],
+            "description": "`chat`: picked for this chat. `agent`: the agent's own mode. `workspace`: the Settings default."
+          },
+          "agentMode": {
+            "type": "string",
+            "enum": [
+              "inherit",
+              "manual",
+              "auto",
+              "bypass"
+            ],
+            "description": "The agent's own mode (`inherit` = the workspace default). It is also the loosest mode its sessions may run in: an agent pinned to `manual` cannot be set to `auto` or `bypass`."
+          },
+          "workspaceDefault": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "auto",
+              "bypass"
+            ]
+          },
+          "available": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "manual",
+                "auto",
+                "bypass"
+              ]
+            },
+            "description": "Modes `PUT` accepts now (the agent ceiling and classifier availability applied)."
+          },
+          "autoAvailable": {
+            "type": "boolean",
+            "description": "False when the server has no classifier model (an offline scripted model): Auto is not offered."
+          },
+          "auto": {
+            "type": "object",
+            "properties": {
+              "paused": {
+                "type": "boolean",
+                "description": "Auto was paused by repeated blocks: calls ask a person until one is approved (or Auto is picked again)."
+              },
+              "consecutive": {
+                "type": "integer"
+              },
+              "total": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "paused",
+              "consecutive",
+              "total"
+            ],
+            "description": "Block counters of the live session on this instance."
+          }
+        },
+        "required": [
+          "mode",
+          "source",
+          "agentMode",
+          "workspaceDefault",
+          "available",
+          "autoAvailable",
+          "auto"
+        ]
+      },
+      "ModePut": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "manual",
+              "auto",
+              "bypass"
+            ]
+          }
+        },
+        "required": [
+          "mode"
         ]
       },
       "ChatQueued": {
@@ -1520,7 +1630,8 @@
               "agent-changed",
               "routine-fired",
               "routine-changed",
-              "settings-changed"
+              "settings-changed",
+              "mode-changed"
             ]
           },
           "agentId": {
@@ -2490,12 +2601,10 @@
             "type": "string",
             "enum": [
               "default",
-              "acceptEdits",
-              "plan",
-              "dontAsk",
+              "auto",
               "bypassPermissions"
             ],
-            "description": "The mode of every agent whose own `permissionMode` is `default`; read by the agent factory on every turn."
+            "description": "The workspace default permission mode: `default` = Manual, `auto` = Auto (classifier), `bypassPermissions` = Bypass. The mode of every chat and agent that has none of its own; read on every tool call."
           },
           "budgetUsd": {
             "type": [
@@ -2538,11 +2647,14 @@
             "type": "string",
             "enum": [
               "default",
+              "manual",
+              "auto",
+              "bypassPermissions",
               "acceptEdits",
               "plan",
-              "dontAsk",
-              "bypassPermissions"
-            ]
+              "dontAsk"
+            ],
+            "description": "Legacy values (`acceptEdits`, `plan`, `dontAsk`, `manual`) are stored as `default` (Manual)."
           },
           "budgetUsd": {
             "type": [
@@ -3211,6 +3323,163 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/mode": {
+      "get": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Permission mode of the agent's DM chat",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The effective mode and the modes available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModeState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "agents"
+        ],
+        "summary": "Pick the permission mode of the agent's DM chat",
+        "description": "Takes effect at the next tool call, a running turn included. Delegated tasks started by this chat inherit it, unless their own agent is stricter. Emits a `mode-changed` event.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModePut"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModeState"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent, or a mode this agent does not allow (`MODE_NOT_ALLOWED`)",
             "content": {
               "application/json": {
                 "schema": {
@@ -3970,6 +4239,92 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/stream": {
+      "get": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Follow the running turn of a task (UI message stream)",
+        "description": "Replays the chunks of the active turn of the task session from `from` and follows it until it ends, also when another instance runs it (stream log, ADR-0039). `204` when nothing streams: use `GET /tasks/{id}`. A continuation turn after an approval replays only the continuation.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "pattern": "^\\d{1,15}$",
+              "description": "Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0."
+            },
+            "required": false,
+            "description": "Chunk cursor (0-based). Also read from `Last-Event-ID`. Default 0.",
+            "name": "from",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The UI message stream from the cursor",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open.",
+                  "example": "id: 12\nevent: task-changed\ndata: {\"seq\":12,\"type\":\"task-changed\",…}\n\n"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No turn is streaming"
           },
           "400": {
             "description": "Invalid request",

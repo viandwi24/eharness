@@ -28,8 +28,19 @@ export interface TurnBuffer {
   readonly length: number
   /** Clones of the chunks `from` … `to - 1` (used by the stream log drainer). */
   slice(from: number, to?: number): UIMessageChunk[]
-  /** A stream that replays the buffer from chunk `from` (default 0), then follows live chunks until `close()`. */
+  /** A stream of the RAW chunks of the turn from chunk `from` (default 0), then live chunks until `close()`. */
   reader(from?: number): ReadableStream<UIMessageChunk>
+  /**
+   * Continuation turns only (spec 04 §6.3): the chunks that rebuild the continued message, from `start`
+   * on. Set before the first `push`; lazy (built when a replay needs it).
+   */
+  setReplayPrefix(make: () => UIMessageChunk[]): void
+  /** Length of the replay view (spec 04 §6.3): the replay prefix, then the raw chunks after the first. */
+  readonly replayLength: number
+  /** Clones of the replay view chunks `from` … `to - 1` (the stream log stores the replay view). */
+  replaySlice(from: number, to?: number): UIMessageChunk[]
+  /** Like {@link TurnBuffer.reader} over the replay view: cursor `from` counts replay chunks. */
+  replayReader(from?: number): ReadableStream<UIMessageChunk>
 }
 
 /** Create an empty turn buffer. */
@@ -40,6 +51,25 @@ export function createTurnBuffer(): TurnBuffer {
   let changed = new Promise<void>((resolve) => {
     wake = resolve
   })
+  let makePrefix: (() => UIMessageChunk[]) | undefined
+  let prefixCache: UIMessageChunk[] | undefined
+  const prefix = (): UIMessageChunk[] | undefined => {
+    if (makePrefix === undefined) return undefined
+    prefixCache ??= makePrefix()
+    return prefixCache
+  }
+  /** Chunk `index` of the replay view, `undefined` past its end. */
+  const viewAt = (index: number): UIMessageChunk | undefined => {
+    const head = prefix()
+    if (head === undefined) return chunks[index]
+    if (chunks.length === 0) return undefined
+    return index < head.length ? head[index] : chunks[index - head.length + 1]
+  }
+  const viewLength = (): number => {
+    const head = prefix()
+    if (head === undefined) return chunks.length
+    return chunks.length === 0 ? 0 : head.length + chunks.length - 1
+  }
   const notify = () => {
     const resolve = wake
     changed = new Promise<void>((next) => {
@@ -75,6 +105,33 @@ export function createTurnBuffer(): TurnBuffer {
           if (index < chunks.length) {
             // every consumer gets its own copy (readers mutate data parts while reconciling)
             controller.enqueue(structuredClone(chunks[index++] as UIMessageChunk))
+            return
+          }
+          controller.close()
+        },
+      })
+    },
+    setReplayPrefix(make) {
+      if (chunks.length === 0) makePrefix = make
+    },
+    get replayLength() {
+      return viewLength()
+    },
+    replaySlice(from, to) {
+      const end = Math.min(to ?? viewLength(), viewLength())
+      const out: UIMessageChunk[] = []
+      for (let i = Math.max(0, from); i < end; i++) {
+        out.push(structuredClone(viewAt(i) as UIMessageChunk))
+      }
+      return out
+    },
+    replayReader(from = 0) {
+      let index = Math.max(0, Math.floor(from))
+      return new ReadableStream<UIMessageChunk>({
+        async pull(controller) {
+          while (index >= viewLength() && !closed) await changed
+          if (index < viewLength()) {
+            controller.enqueue(structuredClone(viewAt(index++) as UIMessageChunk))
             return
           }
           controller.close()

@@ -1364,7 +1364,7 @@ export function createSessionHandle(args: {
         turnId: running.run.turnId,
         kind: running.run.kind,
         messageId: running.run.messageId,
-        stream: running.buffer.reader(),
+        stream: running.buffer.replayReader(),
         result: running.run.result,
         abort: running.abort,
       })
@@ -1379,7 +1379,7 @@ export function createSessionHandle(args: {
           turnId: running.run.turnId,
           kind: running.run.kind,
           messageId: running.run.messageId,
-          stream: running.buffer.reader(from),
+          stream: running.buffer.replayReader(from),
           result: running.run.result,
           abort: running.abort,
         })

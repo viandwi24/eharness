@@ -13,7 +13,7 @@
  *    hold a parked wait (a crash between "child finished" and "wait resolved"), then a drift pass
  *    comparing the task rows with the session state.
  */
-import type { HarnessSession } from 'eharness'
+import { type HarnessSession, handleResumeRequest } from 'eharness'
 import { ASK_TOOL, answerOutput, pendingQuestions } from 'eharness/ask'
 import { pendingSubagentApprovals, reconcileSubagentWaits } from 'eharness/subagent'
 import type { AgentRepo, ChatMessage, TeamPort } from '../../app/ports.ts'
@@ -358,9 +358,16 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return { inboxId: queued.inboxId, target: queued.target }
   }
 
+  async function resumeTask(task: Task, request: Request): Promise<Response> {
+    const session = sessionOfTask(task)
+    if (session === undefined) throw notFound('agent', task.agentId)
+    return handleResumeRequest(session, request)
+  }
+
   return {
     approvals,
     answer,
+    resumeTask,
     abortTask,
     messageTask,
     taskMessages,

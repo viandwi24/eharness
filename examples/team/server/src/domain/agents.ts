@@ -4,12 +4,20 @@ import { invalid } from './errors.ts'
 export const AGENT_ROLES = ['lead', 'role', 'custom'] as const
 export type AgentRole = (typeof AGENT_ROLES)[number]
 
+/**
+ * Stored values of an agent's `permissionMode`. The product offers three (`domain/modes.ts`):
+ * `manual`, `auto` and `bypassPermissions`, plus `default` = "inherit the workspace default"
+ * (the legacy meaning, kept for stored rows). `acceptEdits`, `plan` and `dontAsk` are legacy
+ * values: they still parse and display as Manual.
+ */
 export const PERMISSION_MODES = [
   'default',
+  'manual',
+  'auto',
+  'bypassPermissions',
   'acceptEdits',
   'plan',
   'dontAsk',
-  'bypassPermissions',
 ] as const
 export type PermissionMode = (typeof PERMISSION_MODES)[number]
 

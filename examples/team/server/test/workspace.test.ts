@@ -307,7 +307,7 @@ describe('settings', () => {
         budgetUsd: 12.5,
         spawnCap: 2,
         defaultModel: 'acme/m-1',
-        defaultPermissionMode: 'acceptEdits',
+        defaultPermissionMode: 'bypassPermissions',
       }),
     )
     expect(patched.status).toBe(200)
@@ -315,7 +315,7 @@ describe('settings', () => {
       budgetUsd: 12.5,
       spawnCap: 2,
       defaultModel: 'acme/m-1',
-      defaultPermissionMode: 'acceptEdits',
+      defaultPermissionMode: 'bypassPermissions',
     })
     expect(
       ((await (await app.request('/settings')).json()) as { updatedAt: number }).updatedAt,

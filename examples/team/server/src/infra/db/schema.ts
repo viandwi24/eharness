@@ -65,6 +65,16 @@ export const chats = sqliteTable('chats', {
 })
 
 /**
+ * The permission mode a person picked for a session (`manual|auto|bypass`, `domain/modes.ts`):
+ * the DM chat of an agent today. No row = no pick: the mode follows the agent / workspace default.
+ */
+export const sessionModes = sqliteTable('session_modes', {
+  sessionId: text('session_id').primaryKey(),
+  mode: text('mode').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+/**
  * Index derived from sessions (request R1); the session stays the truth. One row per task session
  * (a child of the lead, later a routine run): written by the `taskIndex` plugin on whichever
  * instance runs the turn, repaired by the boot / periodic drift pass (`infra/eh/team-service.ts`).

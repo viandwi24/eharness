@@ -41,6 +41,7 @@ import {
 } from '../loop/steps.ts'
 import { waitIdOf } from '../loop/stop.ts'
 import { createKindMessage } from '../messages/kinds.ts'
+import { messageToChunks } from '../messages/replay.ts'
 import {
   DENIED_NEW_INPUT,
   INTERRUPTED_CRASH,
@@ -539,6 +540,11 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   /** `start`; a continuation writes it without metadata (A's createdAt/turnId are kept). */
   function writeStart(id: string, parentId: string | null | undefined, metadata = true): void {
     startWritten = true
+    // a continuation: resume readers get the continued message rebuilt first (spec 04 §6.3)
+    if (!metadata && original?.[0] !== undefined) {
+      const base = original[0]
+      buffer.setReplayPrefix(() => messageToChunks(base))
+    }
     write(
       metadata
         ? {

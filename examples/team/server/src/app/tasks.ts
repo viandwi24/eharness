@@ -67,6 +67,11 @@ function taskOrThrow(deps: Deps, id: string): Task {
   return task
 }
 
+/** The live UI message stream of a task session's active turn (`204` when none runs). */
+export function resumeTask(deps: Deps, id: string, request: Request): Promise<Response> {
+  return deps.team.resumeTask(taskOrThrow(deps, id), request)
+}
+
 /** Stop the running turn of a task session (any instance). `idle` = nothing was running. */
 export async function abortTask(deps: Deps, id: string, reason?: string) {
   const task = taskOrThrow(deps, id)
