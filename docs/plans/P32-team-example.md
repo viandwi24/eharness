@@ -628,13 +628,13 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 | # | Candidate | Why |
 |---|---|---|
 | R1 | A **cross-session index**: list sessions by state (`pending`, `running`, parent) through an optional `StateAdapter` / storage query, plus a `SessionSummary` (title, last message time, last stop, pending kinds) | the board and the sidebar need "all sessions with pending approvals" across the workspace; today only `children()` of a known parent exists, so the example keeps a derived `tasks` table |
-| R2 | **Cross-instance attach**: a stream store (chunk log in storage or pub/sub) so `attach()` works for a turn that runs on another instance | reload on instance B while A streams shows nothing until the turn ends |
+| R2 | **Cross-instance attach** — decided (D2): a core **port** `StreamLogAdapter` (append-only chunk log per `{ sessionId, turnId }`, cursor = chunk index, optional `subscribe`, short retention) with an in-memory default; `session.attachRemote({ from })` and `handleResumeRequest()` for AI SDK `useChat({ resume: true })`; the example ships a SQLite adapter; ADR + conformance suite | reload on instance B while A streams shows nothing until the turn ends |
 | R3 | A **cross-instance session event feed** (`events()` over storage / notify), including turn start/end and pending changes | the example polls its own `events` table fed by hooks |
 | R4 | **Messaging in `park` mode**: `send_message`/names/resume for park children, or an exported `messageSession()` helper (framing, neutralisation, throttling) over `enqueue`; background children in park mode | the lead cannot follow up with a role agent across processes without app code |
-| R5 | A **durable scheduler**: `enqueue(…, { availableAt })` (expose the inbox timer) and/or a `schedules` port with lease and idempotent fire keys; cron/interval helper outside the core | every team/ops product needs routines; today each app writes the lease and PK dance |
+| R5 | **Routines on the durable inbox** — decided (D3): no scheduler port; the library adds `enqueue(…, { availableAt, id })` (expose the inbox timer; a caller id makes a fire idempotent) and a guide for the schedule-row + compare-and-set tick pattern (skip overlap and skip missed fires by default, optional catch-up window, pause/resume); the schedule table and cron parsing (`croner`) stay in the example; promote to `eharness/scheduler` only if a second product repeats it | every team/ops product needs routines |
 | R6 | A **team/agent registry** helper: definition-as-data, cached agent per version, roster for `subagents` | the factory and cache are generic |
 | R7 | **Memory scopes** (workspace / agent / user) as a documented preset of `memory({ roots })` and a path convention | every multi-agent app builds the same roots |
-| R8 | **Renderers for eharness parts** in UI kits (`data-subagent.run`, `data-eh.input`, kind messages, approvals of child sessions): a headless "parts -> view model" helper in the library and thin component bindings in edmi-ui | the web mapper is generic; see open question 2 |
+| R8 | **Renderers for eharness parts** (`data-subagent.run`, `data-eh.input`, kind messages, child-session approvals) — decided (D1): built in the example only; nothing goes to edmi-ui or the library until the example has used them well; revisit after P32 | prove usefulness first |
 | R9 | A **DB-backed FileSystem helper** (SQL implementation of `list`/`grep`/`glob`/`move`/versions) as documented example, not a dependency | keep as `examples/` unless a second product needs it (ADR-0008) |
 | R10 | Run records: one hook or event carrying `{ sessionId, parent, kind, stop, usage, durationMs }` per turn end for every instance | the task index builds it from three hooks |
 
@@ -659,20 +659,50 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 - **Shipping a team module in the library first**: premature (rule: promote after the example
   proves it, as P31 did).
 
+## Decisions (2026-10-10, after research)
+
+Research covered resumable streams (AI SDK `resumable-stream` and the chatbot template,
+assistant-ui, LibreChat, Cloudflare Agents, LangGraph Platform, OpenAI Responses background mode,
+Mastra), schedulers (Cloudflare Agents `schedule()`, LangGraph crons, Mastra, Temporal Schedules,
+BullMQ, pg-boss, graphile-worker, Inngest) and lead/supervisor patterns (LangGraph supervisor,
+OpenAI Agents SDK handoffs and agents-as-tools, CrewAI hierarchical, Claude Code agent teams,
+Anthropic's multi-agent research system). Sources are listed below.
+
+- **D1 — Part renderers stay in the example.** edmi-ui is a UI kit; nothing moves there (or into
+  the library) until the example proves the components. Revisit after P32.
+- **D2 — Resumable streams: a core port with a memory default** (R2). A cursor log (OpenAI
+  `sequence_number`, LangGraph `lastEventId`, LibreChat Redis Streams) survives the producer
+  instance; pub/sub with producer replay (`resumable-stream`) does not, and has no cursor
+  contract, so it is not used in core (chunk order is public API). Shape: `StreamLogAdapter`
+  (`append`, `close`, `read(from)`, optional `subscribe`/`expire`), cursor = chunk index per
+  `turnId`, local readers keep using the in-memory turn buffer, a batched drainer appends, adapter
+  failures are warnings, a reader disconnect never aborts (stop stays `requestAbort`). Committed
+  messages remain the truth; the log is short-lived. Lands in M3 with an ADR and a conformance
+  suite; the example implements it on SQLite.
+- **D3 — Routines on the durable inbox, no scheduler port** (R5). The inbox already has timers,
+  claims, leases, retry and dead-letter; a fire is an input. Library change: expose
+  `enqueue(…, { availableAt, id })`. The schedule row, the compare-and-set tick and `croner` live in
+  the example; defaults follow the research: overlap `skip`, missed fires skipped (optional
+  catch-up window, latest fire only), deterministic fire id `sched:<id>:<scheduledAt>`,
+  pause-after-N-failures and a max-fires guard against cost runaways. A guide documents the
+  pattern; an `eharness/scheduler` module only if a second product repeats it.
+- **D4 — The lead is a convention, not a library role.** eharness already has the parts teams
+  rely on (named agents, `agent` tool, park approvals, background, `send_message`, roster,
+  parent/child index, inbox). LangGraph moved away from its `create_supervisor` wrapper toward
+  plain tools. P32 writes a "Lead and role agents" guide; an optional prompt helper
+  (`leadInstructions(roster)`) is added only if the example's prompt proves generic. A shared task
+  board with claims (as in Claude Code agent teams) is the one element without an eharness
+  equivalent: deferred until the example needs it. Budgets matter (multi-agent runs cost many
+  times a chat): the example sets a per-workspace budget and a spawn cap.
+
 ## Open questions
 
-1. Are `data-*` renderers (R8) a generic edmi-ui concern (a "eharness bindings" package) or do
-   they stay in each app? The plan builds them in the example and proposes extraction after M6.
-2. Is a stored, resumable stream (R2) acceptable in core, or only as a port with a memory default?
-3. Scheduler: library helper (R5) or documentation only? The inbox timer exposure is small
-   either way.
-4. Should the lead agent be special in the library (a role) or only a convention? Plan: convention.
-5. Multi-user later: `actor`, per-user DM sessions (`dm:<userId>:<agentId>`), workspace members,
+1. Multi-user later: `actor`, per-user DM sessions (`dm:<userId>:<agentId>`), workspace members,
    per-user memory roots. v1 keeps `actor` in every call so this is additive.
-6. Verify at M5 that `@ai-sdk/svelte` 5.x matches the AI SDK v7 UI contract (`resume`,
+2. Verify at M5 that `@ai-sdk/svelte` 5.x matches the AI SDK v7 UI contract (`resume`,
    `addToolApprovalResponse`, `sendAutomaticallyWhen`); if it lags, the example adds a thin
    adapter and records it as a gap against the AI SDK.
-7. Verify at M5 that edmi-ui's registry URLs and `Confirmation` / `Tool` states still match.
+3. Verify at M5 that edmi-ui's registry URLs and `Confirmation` / `Tool` states still match.
 
 ## Sources
 
@@ -687,3 +717,14 @@ follow-up phase (P33) with spec text and, where it changes a decision, an ADR.
 - https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat (`Chat`, transport, resume,
   `addToolApprovalResponse`, `sendAutomaticallyWhen`)
 - https://viandwi24.github.io/edmi-ui/ (registry, kits) and the maintainer's install notes
+
+Research for D2–D4:
+- https://ai-sdk.dev/v7/docs/ai-sdk-ui/chatbot-resume-streams · https://github.com/vercel/resumable-stream
+- https://www.assistant-ui.com/docs/guides/resumable-streams · https://www.librechat.ai/docs/features/resumable_streams
+- https://developers.cloudflare.com/agents/api-reference/chat-agents/ · https://developers.cloudflare.com/agents/api-reference/schedule-tasks/
+- https://developers.openai.com/api/docs/guides/background · https://reference.langchain.com/javascript/langchain-langgraph-sdk/client/RunsClient/joinStream
+- https://mastra.ai/docs/harness/durable-agents · https://mastra.ai/docs/workflows/scheduled-workflows.md
+- https://docs.temporal.io/evaluate/features/schedules · https://docs.bullmq.io/guide/job-schedulers/repeat-options
+- https://worker.graphile.org/docs/cron · https://www.inngest.com/docs/guides/scheduled-functions · https://github.com/Hexagon/croner
+- https://github.com/langchain-ai/langgraph-supervisor-py · https://code.claude.com/docs/en/agent-teams
+- https://www.anthropic.com/engineering/multi-agent-research-system · https://docs.crewai.com/en/learn/hierarchical-process
