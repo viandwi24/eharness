@@ -4,11 +4,20 @@
  * integration.test.ts); what is tested here is the app's part: the merged list and stop, and that
  * a run the controller did not start (a wake) is driven through `session.onRun`.
  */
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { scriptedModel } from 'eharness/testing'
 import { makeController, nextPending, routerModel } from './helpers.ts'
+
+// controller turns with background subagents are slow on loaded CI runners
+setDefaultTimeout(30_000)
+
+/** Poll until `fn` holds or the deadline passes (slow CI runners need far more than 2 s). */
+async function waitFor(fn: () => boolean, ms = 15_000): Promise<void> {
+  const start = Date.now()
+  while (!fn() && Date.now() - start < ms) await new Promise((r) => setTimeout(r, 10))
+}
 
 describe('background subagents in the task list', () => {
   test('the subagentTasks service feeds /tasks: running with a tail, stoppable', async () => {
@@ -75,18 +84,15 @@ describe('messaging background subagents', () => {
       flags: { permissionMode: 'bypassPermissions' },
     })
     await controller.run('go', { onRun() {} })
-    for (let i = 0; i < 200 && controller.tasks()[0]?.status !== 'completed'; i++) {
-      await new Promise((r) => setTimeout(r, 10))
-    }
+    await waitFor(() => controller.tasks()[0]?.status === 'completed')
     expect(controller.tasks()[0]).toMatchObject({ id: 'agent-1', status: 'completed' })
     expect(controller.tasks()[0]?.label).toBe('rev (general-purpose): look around')
     const result = await controller.sendAgentMessage('rev', 'one more thing')
     expect(result).toMatchObject({ ok: true, status: 'resumed', id: 'agent-1' })
     expect(controller.tasks()).toHaveLength(1)
-    for (let i = 0; i < 200; i++) {
-      if (controller.tasks()[0]?.status === 'completed' && controller.tasks()[0]?.tail !== '') break
-      await new Promise((r) => setTimeout(r, 10))
-    }
+    await waitFor(
+      () => controller.tasks()[0]?.status === 'completed' && controller.tasks()[0]?.tail !== '',
+    )
     expect(controller.tasks()[0]).toMatchObject({ id: 'agent-1', status: 'completed' })
     expect(await controller.sendAgentMessage('nobody', 'x')).toMatchObject({ ok: false })
   })
@@ -102,9 +108,7 @@ describe('messaging background subagents', () => {
       flags: { permissionMode: 'bypassPermissions' },
     })
     await controller.run('go', { onRun() {} })
-    for (let i = 0; i < 200 && controller.tasks()[0]?.status !== 'completed'; i++) {
-      await new Promise((r) => setTimeout(r, 10))
-    }
+    await waitFor(() => controller.tasks()[0]?.status === 'completed')
     const result = await controller.sendAgentMessage('rev', 'more')
     expect(result.ok).toBe(false)
     expect(JSON.stringify(result)).toContain('cannot be resumed')

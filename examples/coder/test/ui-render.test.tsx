@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { render } from 'ink-testing-library'
 import { App } from '../src/ui/App.tsx'
+import { sym } from '../src/ui/theme.ts'
 import { fakeController } from './fake-controller.ts'
 
 const ENTER = '\r'
@@ -15,6 +16,9 @@ async function until(fn: () => boolean, label: string, ms = 8000): Promise<void>
     await tick(10)
   }
 }
+
+// Ink renders and subscribes input handlers asynchronously; loaded CI runners need slack
+setDefaultTimeout(20_000)
 
 let cleanup: Array<() => void> = []
 afterEach(() => {
@@ -36,13 +40,21 @@ function mount(opts: Parameters<typeof fakeController>[0] = {}) {
   const press = async (key: string, done: () => boolean, label: string): Promise<void> => {
     const start = Date.now()
     while (!done()) {
-      if (Date.now() - start > 8000) throw new Error(`timeout waiting for ${label}`)
+      if (Date.now() - start > 15_000) throw new Error(`timeout waiting for ${label}`)
       app.stdin.write(key)
       const sent = Date.now()
-      while (!done() && Date.now() - sent < 400) await tick(10)
+      while (!done() && Date.now() - sent < 1000) await tick(10)
     }
   }
-  return { ...fake, app, frame, type, press }
+  /** A line of the frame shows the selection pointer next to `text`. */
+  const pointerOn = (text: string): boolean =>
+    frame()
+      .split('\n')
+      .some((l) => l.includes(sym.pointer) && l.includes(text))
+  // A dialog that just appeared may not have subscribed its input handler yet: keys that must
+  // NOT reach the main prompt (negative tests) wait for it to settle first.
+  const settle = (): Promise<void> => tick(150)
+  return { ...fake, app, frame, type, press, pointerOn, settle }
 }
 
 describe('render', () => {
@@ -98,13 +110,11 @@ describe('render', () => {
   })
 
   test('Shift+Tab cycles the mode and the status bar follows', async () => {
-    const { frame, type, calls } = mount()
+    const { frame, press, calls } = mount()
     await until(() => frame().includes('default'), 'status')
-    await type(SHIFT_TAB)
-    await until(() => frame().includes('accept edits on'), 'acceptEdits')
+    await press(SHIFT_TAB, () => frame().includes('accept edits on'), 'acceptEdits')
     expect(calls).toContain('cycleMode')
-    await type(SHIFT_TAB)
-    await until(() => frame().includes('plan mode on'), 'plan')
+    await press(SHIFT_TAB, () => frame().includes('plan mode on'), 'plan')
   })
 
   test('Esc while running calls abort', async () => {
@@ -145,11 +155,10 @@ describe('render', () => {
   })
 
   test('@ mention shows file completions and Tab completes', async () => {
-    const { type, frame } = mount()
+    const { type, frame, press } = mount()
     await type('see @READ')
     await until(() => frame().includes('@README.md'), 'completion')
-    await type('\t')
-    await until(() => frame().includes('see @README.md'), 'completed')
+    await press('\t', () => frame().includes('see @README.md'), 'completed')
   })
 })
 
@@ -188,19 +197,18 @@ describe('permission prompt', () => {
   })
 
   test('key 4 denies; Tab on No then feedback + Enter denies with the feedback', async () => {
-    const { frame, broker, type, press } = mount()
+    const { frame, broker, press, pointerOn } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
     await press('4', () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]).toEqual({ id: 'ap1', answer: { approved: false } })
     broker.push({ ...request, id: 'ap3' })
     await until(() => frame().includes('Bash command'), 'prompt 2')
-    await type('\x1b[B\x1b[B\x1b[B')
-    await type('\t')
-    await until(() => frame().includes('Tell coder:'), 'field')
-    await type('use bun run')
-    await type(ENTER)
-    await until(() => broker.answers.length === 2, 'answer 2')
+    // Up wraps from option 1 to option 4 (No): one key, resent only while nothing moved
+    await press('\x1b[A', () => pointerOn('4.'), 'option 4')
+    await press('\t', () => frame().includes('Tell coder:'), 'field')
+    await press('use bun run', () => frame().includes('use bun run'), 'feedback')
+    await press(ENTER, () => broker.answers.length === 2, 'answer 2')
     expect(broker.answers[1]).toEqual({
       id: 'ap3',
       answer: { approved: false, feedback: 'use bun run' },
@@ -217,9 +225,10 @@ describe('permission prompt', () => {
   })
 
   test('typing into the prompt input is blocked while a request is pending', async () => {
-    const { frame, broker, type } = mount()
+    const { frame, broker, type, settle } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
+    await settle()
     await type('x')
     expect(broker.answers).toHaveLength(0)
   })
@@ -239,14 +248,14 @@ describe('question dialog in the app', () => {
   }
 
   test('shows above the prompt, blocks Shift+Tab and answers on Enter', async () => {
-    const { frame, broker, type, calls } = mount()
+    const { frame, broker, type, press, settle, pointerOn, calls } = mount()
     broker.pushQuestion(single)
     await until(() => frame().includes('Which database?'), 'dialog')
+    await settle()
     await type(SHIFT_TAB)
     expect(calls).not.toContain('cycleMode')
-    await type('\x1b[B')
-    await type(ENTER)
-    await until(() => broker.questionAnswers.length === 1, 'answer')
+    await press('\x1b[B', () => pointerOn('Postgres'), 'Postgres')
+    await press(ENTER, () => broker.questionAnswers.length === 1, 'answer')
     expect(broker.questionAnswers[0]).toEqual({
       id: 'q1',
       result: { answers: [{ question: 'Which database?', selected: ['Postgres'] }] },
@@ -265,7 +274,7 @@ describe('question dialog in the app', () => {
 
 describe('session picker', () => {
   test('config.resume === true opens the picker; Enter resumes the selection', async () => {
-    const { frame, type, calls } = mount({
+    const { frame, press, pointerOn, calls } = mount({
       resume: true,
       sessions: [
         { id: 'sess-1', updatedAt: Date.UTC(2026, 0, 2, 3, 4), firstPrompt: 'first session' },
@@ -275,9 +284,8 @@ describe('session picker', () => {
     await until(() => frame().includes('Resume a session'), 'picker')
     expect(frame()).toContain('2026-01-02 03:04')
     expect(frame()).toContain('first session')
-    await type('\x1b[B')
-    await type(ENTER)
-    await until(() => calls.includes('resume:sess-2'), 'resume')
+    await press('\x1b[B', () => pointerOn('second session'), 'second session')
+    await press(ENTER, () => calls.includes('resume:sess-2'), 'resume')
     await until(() => frame().includes('Resumed session sess-2.'), 'note')
     expect(frame()).not.toContain('Resume a session')
   })
@@ -289,13 +297,12 @@ describe('session picker', () => {
   })
 
   test('Esc cancels the picker', async () => {
-    const { frame, type } = mount({
+    const { frame, press } = mount({
       resume: true,
       sessions: [{ id: 'a', updatedAt: 0, firstPrompt: 'x' }],
     })
     await until(() => frame().includes('Resume a session'), 'picker')
-    await type(ESC)
-    await until(() => !frame().includes('Resume a session'), 'closed')
+    await press(ESC, () => !frame().includes('Resume a session'), 'closed')
   })
 })
 
@@ -309,24 +316,25 @@ describe('review fixes', () => {
   }
 
   test('Shift+Tab is ignored while a permission prompt is open', async () => {
-    const { frame, broker, type, press, calls } = mount()
+    const { frame, broker, type, press, settle, calls } = mount()
     broker.push(request)
     await until(() => frame().includes('Bash command'), 'prompt')
+    await settle()
     await type(SHIFT_TAB)
     await tick(50)
     expect(calls).not.toContain('cycleMode')
     expect(frame()).toContain('❯ 1. Yes')
     await press('1', () => broker.answers.length === 1, 'answer')
-    await type(SHIFT_TAB)
-    await until(() => calls.includes('cycleMode'), 'cycle after prompt')
+    await press(SHIFT_TAB, () => calls.includes('cycleMode'), 'cycle after prompt')
   })
 
   test('Shift+Tab is ignored while the session picker is open', async () => {
-    const { frame, type, calls } = mount({
+    const { frame, type, settle, calls } = mount({
       resume: true,
       sessions: [{ id: 'a', updatedAt: 0, firstPrompt: 'x' }],
     })
     await until(() => frame().includes('Resume a session'), 'picker')
+    await settle()
     await type(SHIFT_TAB)
     await tick(50)
     expect(calls).not.toContain('cycleMode')
@@ -504,27 +512,26 @@ describe('plan approval dialog', () => {
   })
 
   test('3 keeps planning; Tab on 3 sends feedback; Tab on 1 adds a note; Esc is option 3', async () => {
-    const { broker, type, frame, press } = await open()
+    const { broker, frame, press, pointerOn } = await open()
+    // every key goes through `press`: a key sent before Ink subscribed the new dialog's input
+    // handler is lost on slow runners, so it is resent until its visible effect shows up
     await press('3', () => broker.answers.length === 1, 'answer')
     expect(broker.answers[0]?.answer).toEqual({ approved: false })
 
     broker.push({ ...plan, id: 'pl2' })
     await until(() => frame().includes('Ready to code?'), 'again')
-    await type('\x1b[B\x1b[B')
-    await type('\t')
-    await until(() => frame().includes('Tell coder:'), 'field')
-    await type('split step two')
-    await type(ENTER)
-    await until(() => broker.answers.length === 2, 'answer 2')
+    // Up wraps from option 1 to option 3; one key per try, retried only while nothing moved
+    await press('\x1b[A', () => pointerOn('3.'), 'option 3')
+    await press('\t', () => frame().includes('Tell coder:'), 'field')
+    await press('split step two', () => frame().includes('split step two'), 'feedback text')
+    await press(ENTER, () => broker.answers.length === 2, 'answer 2')
     expect(broker.answers[1]?.answer).toEqual({ approved: false, feedback: 'split step two' })
 
     broker.push({ ...plan, id: 'pl3' })
     await until(() => frame().includes('Ready to code?'), 'third')
-    await type('\t')
-    await until(() => frame().includes('Note:'), 'note field')
-    await type('go fast')
-    await type(ENTER)
-    await until(() => broker.answers.length === 3, 'answer 3')
+    await press('\t', () => frame().includes('Note:'), 'note field')
+    await press('go fast', () => frame().includes('go fast'), 'note text')
+    await press(ENTER, () => broker.answers.length === 3, 'answer 3')
     expect(broker.answers[2]?.answer).toEqual({
       approved: true,
       mode: 'acceptEdits',
@@ -533,8 +540,7 @@ describe('plan approval dialog', () => {
 
     broker.push({ ...plan, id: 'pl4' })
     await until(() => frame().includes('Ready to code?'), 'fourth')
-    await type(ESC)
-    await until(() => broker.answers.length === 4, 'answer 4')
+    await press(ESC, () => broker.answers.length === 4, 'answer 4')
     expect(broker.answers[3]?.answer).toEqual({ approved: false })
     // four dialogs in a row: under load the default 5 s test timeout is too tight
   }, 30_000)

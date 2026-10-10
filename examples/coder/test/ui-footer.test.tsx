@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { render } from 'ink-testing-library'
 import type { BackgroundTask } from '../src/contracts.ts'
 import { MODE_CYCLE, TOOL } from '../src/contracts.ts'
@@ -20,12 +20,17 @@ const CTRL_C = '\x03'
 const ALT_P = '\x1bp'
 const tick = (ms = 30): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
-async function until(fn: () => boolean, label: string, ms = 4000): Promise<void> {
+// Ink renders and subscribes input handlers asynchronously; loaded CI runners need slack
+setDefaultTimeout(20_000)
+
+async function until(fn: () => boolean, label: string, ms = 15_000): Promise<void> {
   const start = Date.now()
   while (!fn()) {
     if (Date.now() - start > ms) throw new Error(`timeout waiting for ${label}`)
     await tick(10)
   }
+  // what just rendered may subscribe its input handler in an effect: let it settle before keys
+  await tick(50)
 }
 
 let cleanup: Array<() => void> = []
@@ -43,7 +48,17 @@ function mount(opts: Parameters<typeof fakeController>[0] = {}) {
     app.stdin.write(text)
     await tick()
   }
-  return { ...fake, app, frame, type }
+  // resend a key until its visible effect shows up (a key sent before the handler subscribed is lost)
+  const press = async (key: string, done: () => boolean, label: string): Promise<void> => {
+    const start = Date.now()
+    while (!done()) {
+      if (Date.now() - start > 15_000) throw new Error(`timeout waiting for ${label}`)
+      app.stdin.write(key)
+      const sent = Date.now()
+      while (!done() && Date.now() - sent < 1000) await tick(10)
+    }
+  }
+  return { ...fake, app, frame, type, press }
 }
 
 const TASKS: BackgroundTask[] = [
@@ -308,10 +323,8 @@ describe('dialogs and Ctrl+C', () => {
       suggestedRule: 'Edit(/work/**)',
     })
     await until(() => m.frame().includes('Do you want to make this edit'), 'prompt')
-    await m.type(SHIFT_TAB)
-    await until(() => m.frame().includes("❯ 2. Yes, and don't ask again"), 'highlight')
-    await m.type(ENTER)
-    await until(() => m.broker.answers.length === 1, 'answered')
+    await m.press(SHIFT_TAB, () => m.frame().includes("❯ 2. Yes, and don't ask again"), 'highlight')
+    await m.press(ENTER, () => m.broker.answers.length === 1, 'answered')
     expect(m.broker.answers[0]?.answer).toMatchObject({ approved: true, remember: 'session' })
   })
 
