@@ -231,6 +231,22 @@ describe('activation', () => {
     expect(out.instructions).toEqual(['GITHUB INSTRUCTIONS'])
   })
 
+  test('a stored slug is the prefix, whatever the label says now', async () => {
+    const out = await activateConnectors({
+      definitions: [github],
+      connections: [
+        conn('a', 'github', { label: 'Renamed', slug: 'docs' }),
+        conn('b', 'github', { label: 'Other', slug: 'Not Valid!' }),
+      ],
+      agent: { id: 'a1' },
+      mcp: mcpFactory([]),
+    })
+    expect(out.connections.map((c) => [c.connectionId, c.toolPrefix])).toEqual([
+      ['a', 'docs_'],
+      ['b', 'other_'],
+    ])
+  })
+
   test('a single connection has no prefix', async () => {
     const out = await activateConnectors({
       definitions: [github],

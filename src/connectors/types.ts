@@ -251,6 +251,8 @@ export interface FlowStepContext {
   readonly notice: { errors?: Record<string, string>; message?: string } | undefined
   /** True when an existing connection is being reconnected. */
   readonly reconnect: boolean
+  /** Label of the connection being made or reconnected ("Company docs"), when known. */
+  readonly label: string | undefined
   now(): number
 }
 
@@ -375,6 +377,11 @@ export interface ConnectionRecord extends ConfigProfile {
   choices?: Record<string, unknown>
   /** Capabilities discovered at connect time; replace the definition's when present. */
   capabilities?: CapabilityDef[]
+  /**
+   * Stable tool-prefix slug (`^[a-z0-9-]{1,32}$`). When present it is used as the connection slug
+   * instead of the slug of the label, so renaming the connection never renames its tools.
+   */
+  slug?: string
   createdAt: number
 }
 
@@ -627,6 +634,8 @@ export interface ClientConfigContext {
   scope: ConnectorScope
   scopeId: string | undefined
   reconnect: boolean
+  /** The settings of the connection being connected (secrets included: do not send them out). */
+  settings: Record<string, unknown>
 }
 
 /** {@link FlowDeps} with defaults applied. */

@@ -96,7 +96,7 @@ polls honour the server interval and `slow_down`). `completeOAuth` finds the flo
 
 Custom steps (`FlowStepDef`): `id`, `skip?`, `auto?`, `enter?`, `view(ctx)`, `advance(ctx, input)`
 returning `{ next } | { goto } | { stay, errors?, message? } | { pending } | { error, retryable? }`.
-`ctx.scratch` is JSON that is sealed between requests.
+`ctx.scratch` is JSON that is sealed between requests. `ctx.label` is the connection's label when known (the OAuth and device-code views are titled `Authorize <label>`, else the connector name).
 
 ## 3. Enablement and precedence
 
@@ -174,7 +174,7 @@ activateConnectors({ definitions, connections, enablement?, agent, user?, orderi
   same order applies to `plugins`, `mcpSources` and `instructions` (one block per connector, only
   when something is on).
 - **Several connections of one connector**: each is activated with `toolPrefix` `<slug>_` (slug of
-  the label, unique); `instances: 'single'` keeps the first and warns `duplicate-instance`;
+  the label, unique; a connection that stores `slug` keeps it, so a rename never renames its tools); `instances: 'single'` keeps the first and warns `duplicate-instance`;
   `combine(ctxs)` merges them (memory). `toolPrefix` sets when the prefix applies: `'multiple'`
   (default, as described), `'always'` (also for a single connection, so a remote server's tool names
   never depend on how many connections exist and rules keep the same names), `'never'` (fixed names). `toolNameMap` maps each final tool name to
@@ -243,7 +243,7 @@ refreshed tokens apply without reconnecting (spec 09 §3).
 `createConnectorService({ definitions, connections, credentials, enablement, flows, vault, fetch?,
 redirectUri?, clientConfig?, lock?, ttlMs?, now?, newId? })` is what an app's routes call; every
 return value is browser-safe (redacted connections, flows without scratch, no tokens):
-`clientConfig(definitionId, { flowId, scope, scopeId, reconnect })` returns the OAuth app of
+`clientConfig(definitionId, { flowId, scope, scopeId, reconnect, settings })` returns the OAuth app of
 the asking flow (an app may keep one per scope or hand out one entered earlier in the same flow;
 a dedicated "enter the OAuth app" flow step is not part of the library: apps save the client
 before connecting, see ADR-0053). `catalog()`, `list`, `get`, `startConnect`, `reconnect`, `getFlow`, `advance`, `completeOAuth`

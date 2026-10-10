@@ -284,7 +284,11 @@ export async function activateConnectors(options: ActivateOptions): Promise<Acti
       policy === 'always' ? !combine : policy === 'never' ? false : list.length > 1 && !combine
     const taken = new Set<string>()
     const entries: Entry[] = list.map(({ record }) => {
-      let slug = slugify(record.label) || slugify(record.id) || 'connection'
+      let slug =
+        (record.slug !== undefined && /^[a-z0-9-]{1,32}$/.test(record.slug) ? record.slug : '') ||
+        slugify(record.label) ||
+        slugify(record.id) ||
+        'connection'
       if (taken.has(slug)) slug = `${slug.slice(0, 28)}-${taken.size + 1}`
       taken.add(slug)
       const modes = resolveModes(capabilitiesOf(definition, record), record, enablement[record.id])

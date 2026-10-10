@@ -140,6 +140,7 @@ async function oauthClient(
     scope: ctx.scope,
     scopeId: ctx.scopeId,
     reconnect: ctx.reconnect,
+    settings: settingsOf(ctx.scratch),
   })
   if (config !== undefined) {
     const parsed =
@@ -254,7 +255,7 @@ function authorizeStep(): FlowStepDef {
       const oauth = ctx.scratch.oauth as { authorizeUrl: string; expiresAt: number }
       return {
         type: 'oauth',
-        title: `Authorize ${ctx.definition.name}`,
+        title: `Authorize ${ctx.label ?? ctx.definition.name}`,
         authorizeUrl: oauth.authorizeUrl,
         pollIntervalMs: POLL_MS,
         expiresAt: oauth.expiresAt,
@@ -354,7 +355,7 @@ function deviceStep(): FlowStepDef {
       }
       return {
         type: 'deviceCode',
-        title: `Authorize ${ctx.definition.name}`,
+        title: `Authorize ${ctx.label ?? ctx.definition.name}`,
         userCode: d.userCode,
         verificationUrl: d.verificationUrl,
         ...(d.verificationUrlComplete === undefined
@@ -536,6 +537,7 @@ function stepContext(m: Machine, notice?: FlowStepContext['notice']): FlowStepCo
     scratch: m.scratch,
     notice,
     reconnect: m.scratch.reconnect === true,
+    label: m.state.label || undefined,
     now: m.deps.now,
   }
 }
@@ -656,7 +658,7 @@ async function settle(
         {
           type: 'status',
           state: 'success',
-          message: `${m.definition.name} is connected.`,
+          message: `${m.state.label || m.definition.name} is connected.`,
           ...(account === undefined ? {} : { account }),
         },
         true,

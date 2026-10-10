@@ -408,7 +408,10 @@ describe('device code, choose and custom steps', () => {
     })
     const s0 = await startFlow({ definition: device, scope: 'workspace' }, d)
     expect(seen).toEqual([
-      ['dev', { flowId: s0.id, scope: 'workspace', scopeId: undefined, reconnect: false }],
+      [
+        'dev',
+        { flowId: s0.id, scope: 'workspace', scopeId: undefined, reconnect: false, settings: {} },
+      ],
     ])
   })
 
