@@ -7,7 +7,8 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import { Spinner } from '#lib/components/ui/spinner/index.js';
-	import { filterModels, formatContext, formatPricing, hasModelPolicy, isModelEnabled, type ModelPolicy, type ProviderModel } from '#lib/providers/models.js';
+	import { addCustomModel, filterModels, formatContext, formatPricing, hasModelPolicy, isModelEnabled, type ModelPolicy, type ProviderModel } from '#lib/providers/models.js';
+	import { api } from '#lib/api/index.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
 
 	/**
@@ -76,6 +77,35 @@
 	const customBlocked = $derived(hasModelPolicy(policy) && query.trim() !== '' && !isModelEnabled(policy, query.trim()));
 	const exact = $derived(models.some((m) => m.id === query.trim()));
 
+	const listProfile = $derived(listProfileId ? providersStore.profile(listProfileId) : undefined);
+	const readOnlyProfile = $derived(listProfile?.source === 'env');
+	let adding = $state(false);
+	let addError = $state('');
+
+	/** Add a typed id to the profile's models (extra, allow, not deny) and pick it. */
+	async function addAndUse(): Promise<void> {
+		const mid = query.trim();
+		if (!listProfileId || !mid) return;
+		adding = true;
+		addError = '';
+		try {
+			const next = addCustomModel(policy, mid);
+			if (!isModelEnabled(next, mid)) {
+				addError = `A deny pattern of this profile still hides ${mid}. Edit it under Settings, Providers.`;
+				return;
+			}
+			await api.patch('/providers/profiles/{id}', { params: { id: listProfileId }, body: { models: next } });
+			providersStore.forget(listProfileId);
+			await providersStore.load();
+			pick(mid);
+			void load(listProfileId, true);
+		} catch (e) {
+			addError = e instanceof Error ? e.message : 'Could not update the profile';
+		} finally {
+			adding = false;
+		}
+	}
+
 	function onProfile(e: Event): void {
 		const v = (e.currentTarget as HTMLSelectElement).value;
 		profileId = v === '' ? null : v;
@@ -130,9 +160,19 @@
 								</Command.Item>
 							{/if}
 							{#if query.trim() && !exact && customBlocked}
-								<p class="px-3 py-2 text-xs text-muted-foreground" data-testid="custom-blocked">
-									<span class="font-mono">{query.trim()}</span> is not enabled for this profile. Turn it on under Settings, Providers.
-								</p>
+								{#if readOnlyProfile}
+									<p class="px-3 py-2 text-xs text-muted-foreground" data-testid="custom-blocked">
+										<span class="font-mono">{query.trim()}</span> is not enabled for this profile, and it comes from environment variables (read-only). Change its model list in the environment.
+									</p>
+								{:else}
+									<div class="px-3 py-2 text-xs text-muted-foreground" data-testid="custom-blocked">
+										<p><span class="font-mono">{query.trim()}</span> is not enabled for this profile.</p>
+										<Button type="button" variant="outline" size="xs" class="mt-1.5" disabled={adding} onclick={addAndUse} data-testid="add-custom-model">
+											{#if adding}<Spinner class="size-3.5" />{/if}Add <span class="font-mono">{query.trim()}</span> to {listProfile?.label ?? listProfileId} and use it
+										</Button>
+										{#if addError}<p class="mt-1 text-destructive-text" role="alert">{addError}</p>{/if}
+									</div>
+								{/if}
 							{:else if query.trim() && !exact}
 								<Command.Item value="__custom__" onSelect={() => pick(query.trim())} class="h-auto py-1.5">
 									<span class="text-sm">Use <span class="font-mono">{query.trim()}</span></span>

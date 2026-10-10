@@ -13,7 +13,8 @@
 	// svelte-ignore state_referenced_locally
 	usePolling(session, () => view);
 	const clock = useNow();
-	const ok = $derived(safeUrl(view.authorizeUrl));
+	const expired = $derived(view.expiresAt <= clock.value);
+	const ok = $derived(safeUrl(view.authorizeUrl) && !expired);
 
 	// only ever opened by a click, so popup blockers stay quiet; no popup: the plain link works
 	function open(e: MouseEvent): void {
@@ -24,10 +25,10 @@
 </script>
 
 <div class="flex flex-col items-center gap-3 pt-2 pb-3 text-center">
-	<span class="flex size-12 items-center justify-center rounded-full bg-muted"><Spinner class="size-5" /></span>
+	<span class="flex size-12 items-center justify-center rounded-full bg-muted">{#if !expired}<Spinner class="size-5" />{/if}</span>
 	<div class="flex flex-col gap-1">
 		<h3 class="text-sm font-medium">{view.title}</h3>
-		<p class="text-[13px] text-muted-foreground" role="status">Finish signing in, in the window that opened. This page updates by itself.</p>
+		<p class="text-[13px] text-muted-foreground" role="status">{expired ? 'This sign-in expired. Cancel and connect again.' : 'Finish signing in, in the window that opened. This page updates by itself.'}</p>
 	</div>
 	{#if ok}
 		<Button variant="outline" href={view.authorizeUrl} target="_blank" rel="noopener noreferrer" onclick={open}><ArrowSquareOutIcon class="size-4" />Open the sign-in window</Button>

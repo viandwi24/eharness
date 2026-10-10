@@ -90,6 +90,13 @@ export function createEventsClient(o: EventsClientOptions): {
 		setStatus('live');
 		o.onResync?.();
 		const parser = createSseParser((m) => {
+			if (m.event === 'resync') {
+				// the server pruned events newer than our cursor: refetch state, continue from its mark
+				const seq = (JSON.parse(m.data) as { seq?: unknown }).seq;
+				if (typeof seq === 'number' && (lastSeq === null || seq > lastSeq)) lastSeq = seq;
+				o.onResync?.();
+				return;
+			}
 			const e = parseEvent(m.data);
 			if (e) deliver(e);
 		});
@@ -106,13 +113,13 @@ export function createEventsClient(o: EventsClientOptions): {
 		}
 	}
 
-	async function pollPage(signal: AbortSignal, after: number): Promise<{ events: TeamEvent[]; lastSeq: number }> {
+	async function pollPage(signal: AbortSignal, after: number): Promise<{ events: TeamEvent[]; lastSeq: number; resync?: boolean }> {
 		const res = await doFetch(`${base}/events?after=${after}&limit=${POLL_LIMIT}`, {
 			headers: { ...headers(), accept: 'application/json' },
 			signal
 		});
 		if (!res.ok) throw new Error(`events poll ${res.status}`);
-		return (await res.json()) as { events: TeamEvent[]; lastSeq: number };
+		return (await res.json()) as { events: TeamEvent[]; lastSeq: number; resync?: boolean };
 	}
 
 	async function poll(signal: AbortSignal): Promise<void> {
@@ -130,6 +137,10 @@ export function createEventsClient(o: EventsClientOptions): {
 		}
 		for (;;) {
 			const page = await pollPage(signal, lastSeq);
+			if (page.resync) {
+				// events between our cursor and the retention mark are gone: refetch state
+				o.onResync?.();
+			}
 			for (const e of page.events) deliver(e);
 			if (page.events.length < POLL_LIMIT) break;
 		}

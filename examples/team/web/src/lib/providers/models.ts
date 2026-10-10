@@ -91,6 +91,20 @@ export function setModelEnabled(policy: ModelPolicy | undefined, id: string, on:
 	return tidy(next);
 }
 
+/**
+ * The policy after adding a custom model id: it goes into `extra`, leaves `deny` and, in allow-list
+ * mode, joins `allow` (so it stays on even if `extra` precedence changes). A deny pattern (`x-*`)
+ * that still hides it cannot be undone per model: check `isModelEnabled` on the result.
+ */
+export function addCustomModel(policy: ModelPolicy | undefined, id: string): ModelPolicy {
+	const next: ModelPolicy = { ...policy };
+	if (!(next.extra ?? []).some((x) => x.id === id)) next.extra = [...(next.extra ?? []), { id }];
+	next.deny = (next.deny ?? []).filter((p) => p !== id);
+	if (next.deny.length === 0) delete next.deny;
+	if (next.allow !== undefined && !next.allow.some((p) => glob(p, id))) next.allow = [...next.allow, id];
+	return next;
+}
+
 /** Every model on again: no allow list, no deny entries (extras stay). */
 export const enableAllModels = (policy: ModelPolicy | undefined): ModelPolicy | null => tidy({ ...(policy?.extra ? { extra: policy.extra } : {}) });
 

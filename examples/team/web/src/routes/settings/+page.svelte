@@ -28,6 +28,7 @@
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { sumUsage, type Usage } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
+	import { AUTO_THRESHOLD } from '#lib/connectors/tool-access.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { formatUsd } from '#lib/time.js';
@@ -51,6 +52,7 @@
 	let mode = $state<Settings['defaultPermissionMode']>('default');
 	let budget = $state('');
 	let spawnCap = $state('4');
+	let toolAccess = $state<Settings['toolAccess']>('auto');
 	let model = $state<string | null>(null);
 	let profile = $state<string | null>(null);
 	let errors = $state<Record<string, string>>({});
@@ -60,6 +62,7 @@
 	const dirty = $derived(
 		!!settings &&
 			(mode !== settingsModeOf(settings.defaultPermissionMode) ||
+				toolAccess !== settings.toolAccess ||
 				budget.trim() !== (settings.budgetUsd === null ? '' : String(settings.budgetUsd)) ||
 				spawnCap.trim() !== String(settings.spawnCap) ||
 				model !== settings.defaultModel ||
@@ -71,6 +74,7 @@
 		mode = settingsModeOf(s.defaultPermissionMode);
 		budget = s.budgetUsd === null ? '' : String(s.budgetUsd);
 		spawnCap = String(s.spawnCap);
+		toolAccess = s.toolAccess;
 		model = s.defaultModel;
 		profile = s.defaultProfile;
 	}
@@ -104,7 +108,7 @@
 		errors = {};
 		saving = true;
 		try {
-			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, defaultModel: model || null, defaultProfile: profile || null } }));
+			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, toolAccess, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, defaultModel: model || null, defaultProfile: profile || null } }));
 			toast.success('Settings saved');
 		} catch (err) {
 			errors = fieldErrors(err);
@@ -226,6 +230,16 @@
 										{/if}
 										<Field.Description>The starting mode of every chat whose agent has no mode of its own, and of routine runs. {modeHint}</Field.Description>
 										{#if errors.defaultPermissionMode}<Field.Error>{errors.defaultPermissionMode}</Field.Error>{/if}
+									</Field.Field>
+									<Field.Field>
+										<Field.Label for="s-tool-access">Tool access</Field.Label>
+										{#if !settings}<Skeleton class="h-9 w-full max-w-sm" />{:else}
+											<NativeSelect id="s-tool-access" bind:value={toolAccess} class="w-full max-w-sm">
+												<NativeSelectOption value="auto">Auto</NativeSelectOption>
+												<NativeSelectOption value="on-demand">On demand</NativeSelectOption>
+											</NativeSelect>
+										{/if}
+										<Field.Description>How the tools of connected apps reach the model. Auto loads them up front, and switches to on demand at {AUTO_THRESHOLD} or more tools. On demand lets the model search for them: fewer tokens with many connectors. Agents can override this; built-in connectors always load.</Field.Description>
 									</Field.Field>
 									<Field.Field data-invalid={!!errors.budgetUsd}>
 										<Field.Label for="s-budget">Monthly budget (USD)</Field.Label>

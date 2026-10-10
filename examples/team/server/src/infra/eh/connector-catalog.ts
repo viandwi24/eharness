@@ -75,6 +75,11 @@ export interface CatalogOptions {
   hooks: CatalogHooks
   /** Lists the tools of a remote MCP server (default `listRemoteMcpTools`; tests inject a fake). */
   listTools?: typeof listRemoteMcpTools
+  /**
+   * `defer` of the remote MCP servers of the agent being activated (tool access: `true` = found
+   * with `tool_search`, `'auto'` = the library's per-server threshold). Default `true`.
+   */
+  defer?: () => boolean | 'auto'
 }
 
 /** Connection label of the two memory scopes, as people and the model read them. */
@@ -96,7 +101,10 @@ interface RemoteSettings {
 const NEVER = { field: 'authMode', in: [] as unknown[] }
 
 /** The custom remote MCP connector, extended with the legacy SSE transport and a stable tool prefix. */
-function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
+function customMcp(
+  listTools: typeof listRemoteMcpTools,
+  defer: () => boolean | 'auto',
+): AnyConnectorDefinition {
   const base = remoteMcpConnector({
     id: 'mcp-remote',
     name: 'Custom connector',
@@ -156,7 +164,7 @@ function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition
           prefix,
           ...(modes.length > 0 ? { allow: on } : s.allow === undefined ? {} : { allow: s.allow }),
           ...(off.length > 0 || s.deny !== undefined ? { deny: [...off, ...(s.deny ?? [])] } : {}),
-          defer: true,
+          defer: defer(),
           wrapUntrusted: true,
         })
       }
@@ -170,7 +178,7 @@ function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition
         ...(s.authMode === 'oauth' ? { getAccessToken: ctx.connection.getAccessToken } : {}),
         ...(s.allow === undefined ? {} : { allow: s.allow }),
         ...(s.deny === undefined ? {} : { deny: s.deny }),
-        defer: true as const,
+        defer: defer(),
       }
     },
   })
@@ -179,7 +187,10 @@ function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition
 const GITHUB_API = 'https://api.github.com'
 
 /** GitHub through its remote MCP server: OAuth app (admin credentials) or a personal access token. */
-function github(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
+function github(
+  listTools: typeof listRemoteMcpTools,
+  defer: () => boolean | 'auto',
+): AnyConnectorDefinition {
   return defineConnector({
     id: 'github',
     version: '1',
@@ -275,7 +286,7 @@ function github(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
         ...(s.authMode === 'token' && s.token !== undefined
           ? { headers: { Authorization: `Bearer ${s.token}` } }
           : { getAccessToken: ctx.connection.getAccessToken }),
-        defer: true as const,
+        defer: defer(),
       }
     },
   })
@@ -348,5 +359,6 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
     team: { plugin: (input, ctx) => options.hooks.team?.(defOf(ctx.agent.id), input) },
   })
   const listTools = options.listTools ?? listRemoteMcpTools
-  return [...builtins, github(listTools), customMcp(listTools)]
+  const defer = options.defer ?? ((): boolean => true)
+  return [...builtins, github(listTools, defer), customMcp(listTools, defer)]
 }

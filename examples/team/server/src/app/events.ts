@@ -6,9 +6,16 @@ import type { Deps } from './ports.ts'
 export function listEvents(
   deps: Deps,
   query: { after: number; limit: number },
-): { events: TeamEvent[]; lastSeq: number } {
+): { events: TeamEvent[]; lastSeq: number; resync?: true } {
   const events = deps.tasks.events(query.after, query.limit)
-  return { events, lastSeq: events.at(-1)?.seq ?? Math.max(query.after, deps.tasks.lastSeq()) }
+  const prunedThrough = deps.tasks.prunedThrough()
+  // a cursor below the retention mark may have missed events: tell the client to refetch
+  const resync = query.after > 0 && query.after < prunedThrough
+  return {
+    events,
+    lastSeq: events.at(-1)?.seq ?? Math.max(query.after, deps.tasks.lastSeq()),
+    ...(resync ? { resync: true as const } : {}),
+  }
 }
 
 export function markAgentRead(

@@ -18,6 +18,7 @@
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
+ *   TEAM_EVENTS_RETENTION_HOURS / TEAM_EVENTS_MAX_ROWS   events feed retention (default 72 h, 100000 rows; 0 hours = by count only)
  */
 import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
@@ -111,6 +112,11 @@ export interface ServerConfig {
   logs?: { maxRows?: number; retentionDays?: number; jsonCap?: number }
   /** Poll interval of the SSE events feed (ms, default 500). */
   eventsPollMs?: number
+  /**
+   * Events table retention: hours kept (default 72) and rows kept (default 100 000), pruned at
+   * boot and every `pruneEveryMs` (default 10 min; 0 = never again). `retentionHours: 0` keeps by count only.
+   */
+  events?: { retentionHours?: number; maxRows?: number; pruneEveryMs?: number }
   /** Routine ticker (interval, lookahead, grace, recovery). `tickMs: 0` = no timer. */
   routines?: RoutineEngineConfig
   /**
@@ -236,8 +242,25 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   activityLog.prune()
+  const eventsRetentionMs = (config.events?.retentionHours ?? 72) * 3_600_000
+  const eventsMaxRows = config.events?.maxRows ?? 100_000
+  const pruneEvents = (): void => {
+    try {
+      tasks.pruneEvents({
+        ...(eventsRetentionMs > 0 ? { before: Date.now() - eventsRetentionMs } : {}),
+        maxRows: eventsMaxRows,
+      })
+    } catch (error) {
+      console.warn(`team: pruning events failed: ${String(error)}`)
+    }
+  }
+  pruneEvents()
+  const pruneEveryMs = config.events?.pruneEveryMs ?? 600_000
+  const pruneTimer = pruneEveryMs > 0 ? setInterval(pruneEvents, pruneEveryMs) : undefined
+  pruneTimer?.unref()
   const settings = sqliteSettingsStore(conn.sqlite, {
     defaults: {
+      toolAccess: 'auto',
       defaultPermissionMode: 'default',
       budgetUsd: config.budgetUsd ?? null,
       spawnCap: config.limits?.spawnCap ?? 4,
@@ -271,6 +294,7 @@ export function compose(config: ServerConfig): Server {
     redirectUri: `${publicUrl}/oauth/callback`,
     events,
     changes,
+    toolAccess: () => settings.get().toolAccess,
     instance,
   })
   connectorsRef = connectors
@@ -417,6 +441,7 @@ export function compose(config: ServerConfig): Server {
     reconcile,
     async close() {
       if (timer !== undefined) clearInterval(timer)
+      if (pruneTimer !== undefined) clearInterval(pruneTimer)
       await routines?.stop()
       await ready
       await repairing?.catch(() => undefined)
@@ -438,6 +463,8 @@ if (import.meta.main) {
   const tickMs = Number(process.env.TEAM_ROUTINE_TICK_MS)
   const logRows = Number(process.env.TEAM_LOG_MAX_ROWS)
   const logDays = Number(process.env.TEAM_LOG_RETENTION_DAYS)
+  const eventHours = Number(process.env.TEAM_EVENTS_RETENTION_HOURS)
+  const eventRows = Number(process.env.TEAM_EVENTS_MAX_ROWS)
   const dbFile = process.env.TEAM_DB ?? './data/team.db'
   const server = compose({
     dbFile,
@@ -447,6 +474,14 @@ if (import.meta.main) {
     logs: {
       ...(Number.isFinite(logRows) && logRows > 0 ? { maxRows: logRows } : {}),
       ...(Number.isFinite(logDays) && logDays > 0 ? { retentionDays: logDays } : {}),
+    },
+    events: {
+      ...(process.env.TEAM_EVENTS_RETENTION_HOURS !== undefined &&
+      Number.isFinite(eventHours) &&
+      eventHours >= 0
+        ? { retentionHours: eventHours }
+        : {}),
+      ...(Number.isFinite(eventRows) && eventRows > 0 ? { maxRows: eventRows } : {}),
     },
     ...(process.env.TEAM_ROUTINE_TICK_MS !== undefined && Number.isFinite(tickMs) && tickMs >= 0
       ? { routines: { tickMs } }

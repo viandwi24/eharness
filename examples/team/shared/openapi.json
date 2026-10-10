@@ -269,6 +269,18 @@
             ],
             "description": "Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile."
           },
+          "toolAccess": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "auto",
+              "on-demand",
+              null
+            ],
+            "description": "How the tools of third-party connectors reach the model: `auto` (up front until the agent has 20 or more, then found with `tool_search`) or `on-demand` (always found with `tool_search`); null = the workspace default (`GET /settings`). Built-in connectors are never deferred."
+          },
           "connectors": {
             "type": "object",
             "additionalProperties": {
@@ -326,6 +338,7 @@
           "instructions",
           "model",
           "modelProfile",
+          "toolAccess",
           "connectors",
           "skills",
           "permissionMode",
@@ -420,6 +433,18 @@
               "$ref": "#/components/schemas/ConnectionChoices"
             },
             "description": "Replaces the whole enablement. Default for a new agent: Files (read only), Memory and Planning. Prefer `PUT /agents/{id}/connectors`."
+          },
+          "toolAccess": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "auto",
+              "on-demand",
+              null
+            ],
+            "description": "See `Agent.toolAccess`; null = the workspace default."
           },
           "skills": {
             "type": "array",
@@ -516,6 +541,18 @@
               "$ref": "#/components/schemas/ConnectionChoices"
             },
             "description": "Replaces the whole enablement. Default for a new agent: Files (read only), Memory and Planning. Prefer `PUT /agents/{id}/connectors`."
+          },
+          "toolAccess": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "auto",
+              "on-demand",
+              null
+            ],
+            "description": "See `Agent.toolAccess`; null = the workspace default."
           },
           "skills": {
             "type": "array",
@@ -1614,6 +1651,13 @@
           "lastSeq": {
             "type": "integer",
             "description": "Cursor for the next call: the `seq` of the last event, else the current head."
+          },
+          "resync": {
+            "type": "boolean",
+            "enum": [
+              true
+            ],
+            "description": "Present when `after` is older than the events kept by retention: some events were missed, refetch the state (agents, tasks, chats) and continue from `lastSeq`."
           }
         },
         "required": [
@@ -2619,6 +2663,14 @@
             ],
             "description": "The workspace default permission mode: `default` = Manual, `auto` = Auto (classifier), `bypassPermissions` = Bypass. The mode of every chat and agent that has none of its own; read on every tool call."
           },
+          "toolAccess": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "on-demand"
+            ],
+            "description": "Tool access of agents without their own setting: `auto` or `on-demand` (third-party connector tools found with `tool_search`)."
+          },
           "budgetUsd": {
             "type": [
               "number",
@@ -2654,6 +2706,7 @@
         },
         "required": [
           "defaultPermissionMode",
+          "toolAccess",
           "budgetUsd",
           "spawnCap",
           "defaultModel",
@@ -2676,6 +2729,13 @@
               "dontAsk"
             ],
             "description": "Legacy values (`acceptEdits`, `plan`, `dontAsk`, `manual`) are stored as `default` (Manual)."
+          },
+          "toolAccess": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "on-demand"
+            ]
           },
           "budgetUsd": {
             "type": [
@@ -6550,7 +6610,7 @@
               "text/event-stream": {
                 "schema": {
                   "type": "string",
-                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open.",
+                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open. When the requested cursor is older than the events kept (`TEAM_EVENTS_RETENTION_HOURS`), the stream first sends `event: resync` (data `{ \"seq\": <kept cursor> }`): refetch the state, then keep reading.",
                   "example": "id: 12\nevent: task-changed\ndata: {\"seq\":12,\"type\":\"task-changed\",…}\n\n"
                 }
               }
@@ -6828,7 +6888,7 @@
               "text/event-stream": {
                 "schema": {
                   "type": "string",
-                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open.",
+                  "description": "Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open. When the requested cursor is older than the events kept (`TEAM_EVENTS_RETENTION_HOURS`), the stream first sends `event: resync` (data `{ \"seq\": <kept cursor> }`): refetch the state, then keep reading.",
                   "example": "id: 12\nevent: task-changed\ndata: {\"seq\":12,\"type\":\"task-changed\",…}\n\n"
                 }
               }

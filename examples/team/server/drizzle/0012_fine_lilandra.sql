@@ -1,0 +1,1 @@
+ALTER TABLE `agents` ADD `tool_access` text;

@@ -79,7 +79,7 @@ which has no `session.start` hooks and resumes nothing
 
 **Events feed.** The `events` table (autoincrement `seq`) is written by hooks; `GET /events/stream`
 tails it (poll, 500 ms) and replays from a cursor. It is app infrastructure; a library-level feed
-is request R3.
+is request R3. It is pruned by age and count (`TEAM_EVENTS_RETENTION_HOURS`, `TEAM_EVENTS_MAX_ROWS`; the head and the latest message of each agent stay). The high-water mark of pruned `seq` lives in the `settings` row `events-pruned-through`: a client whose cursor is below it receives `event: resync` (SSE) or `resync: true` (`GET /events`) and refetches its state.
 
 **Model call log (Logs page).** The `activityLog` plugin (`infra/eh/activity-log.ts`) is registered on
 every agent and persists each `model.call` event

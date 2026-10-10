@@ -5,6 +5,7 @@
 	import { toast } from 'svelte-sonner';
 	import { api } from '#lib/api/index.js';
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
+	import ToolAccessControl from '#lib/components/app/ToolAccessControl.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
@@ -116,6 +117,7 @@
 					{#each rows.others as c (c.connectionId)}{@render row(c)}{/each}
 				</ul>
 			{/if}
+			<ToolAccessControl {agentId} variant="menu" />
 			<div class="flex items-center justify-between gap-2 border-t border-border px-3 py-2">
 				<span class="text-xs text-muted-foreground">{tools.offCount > 0 ? `${tools.offCount} off in this chat` : 'All on'}</span>
 				<Button type="button" variant="ghost" size="xs" onclick={manage}>Manage connectors</Button>

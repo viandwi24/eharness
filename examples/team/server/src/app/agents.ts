@@ -5,6 +5,7 @@ import {
   type AgentDraft,
   PERMISSION_MODES,
   slugify,
+  TOOL_ACCESS,
   validateSlug,
 } from '../domain/agents.ts'
 import {
@@ -54,6 +55,9 @@ function checkDraft(draft: AgentDraft): void {
   }
   if (draft.permissionMode !== undefined && !PERMISSION_MODES.includes(draft.permissionMode)) {
     throw invalid(`unknown permission mode: ${draft.permissionMode}`)
+  }
+  if (draft.toolAccess != null && !TOOL_ACCESS.includes(draft.toolAccess)) {
+    throw invalid(`toolAccess must be one of ${TOOL_ACCESS.join(', ')}`)
   }
 }
 
@@ -111,6 +115,7 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     description: draft.description ?? '',
     instructions: draft.instructions,
     ...pick(deps, draft.modelProfile, draft.model),
+    toolAccess: draft.toolAccess ?? null,
     skills: draft.skills ?? [],
     permissionMode: draft.permissionMode ?? 'default',
     connectors:
@@ -154,6 +159,7 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
           patch.modelProfile === undefined ? current.modelProfile : patch.modelProfile,
           patch.model === undefined ? current.model : patch.model,
         )),
+    toolAccess: patch.toolAccess === undefined ? current.toolAccess : patch.toolAccess,
     skills: patch.skills ?? current.skills,
     connectors:
       patch.connectors === undefined ? current.connectors : normalizeConnectors(patch.connectors),

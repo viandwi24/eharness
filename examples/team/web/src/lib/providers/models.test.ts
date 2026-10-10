@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { disableAllModels, enableAllModels, filterModels, formatContext, formatPrice, formatPricing, hasModelPolicy, isModelEnabled, setModelEnabled, type ProviderModel } from './models';
+import { addCustomModel, disableAllModels, enableAllModels, filterModels, formatContext, formatPrice, formatPricing, hasModelPolicy, isModelEnabled, setModelEnabled, type ProviderModel } from './models';
 
 const m = (id: string, name = id): ProviderModel => ({ id, name, source: 'catalog' });
 
@@ -73,5 +73,24 @@ describe('model policy', () => {
 		expect(isModelEnabled(disableAllModels(p), 'mine')).toBe(false);
 		expect(enableAllModels(disableAllModels(p))).toEqual({ extra: [{ id: 'mine' }] });
 		expect(enableAllModels({ allow: ['a'], deny: ['b'] })).toBeNull();
+	});
+});
+
+describe('addCustomModel', () => {
+	test('allow-list mode: extra and allow, out of deny', () => {
+		const next = addCustomModel({ allow: ['a'], deny: ['x', 'new'] }, 'new');
+		expect(next).toEqual({ allow: ['a', 'new'], deny: ['x'], extra: [{ id: 'new' }] });
+		expect(isModelEnabled(next, 'new')).toBe(true);
+	});
+	test('deny-only mode: extra, deny entry dropped, no allow list created', () => {
+		const next = addCustomModel({ deny: ['new'] }, 'new');
+		expect(next).toEqual({ extra: [{ id: 'new' }] });
+	});
+	test('a deny pattern still hides it', () => {
+		expect(isModelEnabled(addCustomModel({ deny: ['n*'] }, 'new'), 'new')).toBe(false);
+	});
+	test('is idempotent', () => {
+		const once = addCustomModel(undefined, 'm');
+		expect(addCustomModel(once, 'm')).toEqual(once);
 	});
 });

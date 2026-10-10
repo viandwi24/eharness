@@ -1,11 +1,15 @@
 import { z } from '@hono/zod-openapi'
-import { PERMISSION_MODES, SETTINGS_MODES } from '../../app/catalog.ts'
+import { PERMISSION_MODES, SETTINGS_MODES, TOOL_ACCESS } from '../../app/catalog.ts'
 
 export const SettingsSchema = z
   .object({
     defaultPermissionMode: z.enum(SETTINGS_MODES).openapi({
       description:
         'The workspace default permission mode: `default` = Manual, `auto` = Auto (classifier), `bypassPermissions` = Bypass. The mode of every chat and agent that has none of its own; read on every tool call.',
+    }),
+    toolAccess: z.enum(TOOL_ACCESS).openapi({
+      description:
+        'Tool access of agents without their own setting: `auto` or `on-demand` (third-party connector tools found with `tool_search`).',
     }),
     budgetUsd: z.number().positive().nullable().openapi({
       description: 'Monthly USD limit of the workspace budget ledger; null = tracked, not limited.',
@@ -31,6 +35,7 @@ export const SettingsPatchSchema = z
       description:
         'Legacy values (`acceptEdits`, `plan`, `dontAsk`, `manual`) are stored as `default` (Manual).',
     }),
+    toolAccess: z.enum(TOOL_ACCESS).optional(),
     budgetUsd: z.number().positive().nullable().optional(),
     spawnCap: z.number().int().min(1).max(32).optional(),
     defaultModel: z.string().min(1).max(200).nullable().optional().openapi({

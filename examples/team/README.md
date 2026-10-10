@@ -82,6 +82,8 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_ROUTINE_TICK_MS` | `15000` | routine ticker interval (`0` = off) |
 | `TEAM_LOG_MAX_ROWS` | `5000` | model call log (Logs page): rows kept |
 | `TEAM_LOG_RETENTION_DAYS` | `7` | model call log: days kept |
+| `TEAM_EVENTS_RETENTION_HOURS` | `72` | events feed (SSE source, includes one `model-call` row per model call): hours kept, pruned at boot and every 10 min; `0` = by count only |
+| `TEAM_EVENTS_MAX_ROWS` | `100000` | events feed: rows kept (the oldest go first). The newest event and the latest message of each agent are always kept. A client resuming from a pruned cursor gets a `resync` signal (SSE `event: resync`, or `resync: true` on `GET /events`) and refetches its state |
 | `PUBLIC_TEAM_TOKEN` | - | web only: token the browser sends (else saved from Settings) |
 | `TEAM_API_PROXY` | `http://localhost:4000` | web dev server only: where `/api` goes |
 

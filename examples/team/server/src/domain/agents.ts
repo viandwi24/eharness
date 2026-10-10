@@ -2,6 +2,16 @@
 import type { AgentConnectors } from './connectors.ts'
 import { invalid } from './errors.ts'
 
+/**
+ * How the tools of third-party connectors reach the model (Claude's "Tool access"): `auto` loads
+ * them up front until an agent has {@link TOOL_ACCESS_AUTO_THRESHOLD} or more (then they are found
+ * with `tool_search`); `on-demand` always defers them. Built-in connectors are never deferred.
+ */
+export const TOOL_ACCESS = ['auto', 'on-demand'] as const
+export type ToolAccess = (typeof TOOL_ACCESS)[number]
+/** Third-party tools an agent may have loaded up front in `auto` mode (the MCP auto-defer threshold). */
+export const TOOL_ACCESS_AUTO_THRESHOLD = 20
+
 export const AGENT_ROLES = ['lead', 'role', 'custom'] as const
 export type AgentRole = (typeof AGENT_ROLES)[number]
 
@@ -44,6 +54,8 @@ export interface AgentDef {
   modelProfile: string | null
   /** Connector enablement: which connections the agent uses and how freely (domain/connectors.ts). */
   connectors: AgentConnectors
+  /** Tool access of third-party connectors; null = the workspace default. */
+  toolAccess: ToolAccess | null
   skills: string[]
   permissionMode: PermissionMode
   rules: PermissionRules
@@ -65,6 +77,8 @@ export interface AgentDraft {
   instructions: string
   model?: string | null | undefined
   modelProfile?: string | null | undefined
+  /** Null/absent = the workspace default. */
+  toolAccess?: ToolAccess | null | undefined
   /** Default: the legacy default checklist as enablement (files read, memory, planning). */
   connectors?: AgentConnectors | undefined
   /** Seeds and tests: a legacy tool checklist (`library_read`, `memory`, ...) mapped onto connectors. */

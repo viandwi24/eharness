@@ -1,5 +1,5 @@
 import { z } from '@hono/zod-openapi'
-import { AGENT_ROLES, PERMISSION_MODES } from '../../app/catalog.ts'
+import { AGENT_ROLES, PERMISSION_MODES, TOOL_ACCESS } from '../../app/catalog.ts'
 import { ConnectionChoicesSchema } from './connectors.ts'
 import { ActivitySchema } from './tasks.ts'
 
@@ -31,6 +31,10 @@ export const AgentSchema = z
     modelProfile: z.string().nullable().openapi({
       description:
         'Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile.',
+    }),
+    toolAccess: z.enum(TOOL_ACCESS).nullable().openapi({
+      description:
+        'How the tools of third-party connectors reach the model: `auto` (up front until the agent has 20 or more, then found with `tool_search`) or `on-demand` (always found with `tool_search`); null = the workspace default (`GET /settings`). Built-in connectors are never deferred.',
     }),
     connectors: z.record(z.string(), ConnectionChoicesSchema).openapi({
       description:
@@ -70,6 +74,9 @@ export const AgentCreateSchema = z
     connectors: z.record(z.string(), ConnectionChoicesSchema).optional().openapi({
       description:
         'Replaces the whole enablement. Default for a new agent: Files (read only), Memory and Planning. Prefer `PUT /agents/{id}/connectors`.',
+    }),
+    toolAccess: z.enum(TOOL_ACCESS).nullable().optional().openapi({
+      description: 'See `Agent.toolAccess`; null = the workspace default.',
     }),
     skills: z.array(z.string()).optional(),
     permissionMode: z.enum(PERMISSION_MODES).optional(),

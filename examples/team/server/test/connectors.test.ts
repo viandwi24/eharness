@@ -65,7 +65,7 @@ const call = async (server: Server, method: string, path: string, body?: unknown
 }
 
 /** A minimal MCP server: initialize, tools/list, tools/call; records auth headers and calls. */
-function fakeMcp() {
+function fakeMcp(extraTools = 0) {
   const seen = { auth: [] as string[], calls: [] as string[] }
   const srv = Bun.serve({
     port: 0,
@@ -96,6 +96,12 @@ function fakeMcp() {
                   description: 'Create a note.',
                   inputSchema: { type: 'object', properties: { q: { type: 'string' } } },
                 },
+                ...Array.from({ length: extraTools }, (_, i) => ({
+                  name: `extra_${i}`,
+                  description: `Extra tool ${i}.`,
+                  inputSchema: { type: 'object', properties: {} },
+                  annotations: { readOnlyHint: true },
+                })),
               ],
             }
           case 'tools/call':
@@ -114,8 +120,8 @@ const mcps: Array<ReturnType<typeof Bun.serve>> = []
 afterEach(() => {
   for (const m of mcps.splice(0)) m.stop(true)
 })
-const startMcp = () => {
-  const m = fakeMcp()
+const startMcp = (extraTools = 0) => {
+  const m = fakeMcp(extraTools)
   mcps.push(m.srv)
   return m
 }
@@ -322,6 +328,7 @@ describe('migration of the tool checklist and MCP servers', () => {
       { text: 'done' },
     ])
     const server = await boot({ dbFile, model, seed: false })
+    await call(server, 'PATCH', '/settings', { toolAccess: 'on-demand' })
     const ops = server.deps.agents.getBySlug('ops')
     if (ops === undefined) throw new Error('ops')
     await server.factory.prepare(ops)
@@ -714,6 +721,7 @@ describe('enablement', () => {
       { text: 'done' },
     ])
     const server = await boot({ model })
+    await call(server, 'PATCH', '/settings', { toolAccess: 'on-demand' })
     const done = await connectCustom(server, url, {}, {}, { defaultEnabled: true })
     const id = done.connection.id as string
     const writer = server.deps.agents.getBySlug('writer')
@@ -811,5 +819,82 @@ describe('two instances', () => {
     await call(a, 'DELETE', `/connections/${id}`)
     const list = (await call(b, 'GET', '/connections')).json.connections as Json[]
     expect(list.some((c) => c.id === id)).toBe(false)
+  })
+})
+
+// --- tool access (Auto / On demand) --------------------------------------------------------------
+
+describe('tool access', () => {
+  /** The tool names of the first model call of a fresh turn of `slug`, in the order offered. */
+  async function offered(server: Server, model: ReturnType<typeof scriptedModel>, slug: string) {
+    const def = server.deps.agents.getBySlug(slug)
+    if (def === undefined) throw new Error(`no agent ${slug}`)
+    await server.factory.prepare(def)
+    const before = model.calls.length
+    await server.factory.openSession(def, `dm:${def.id}:${before}`).send('hi').result
+    return (model.calls[before]?.tools ?? []).map((t: { name: string }) => t.name)
+  }
+  const script = () => scriptedModel(Array.from({ length: 12 }, () => ({ text: 'ok' })))
+  const patchAgent = (server: Server, slug: string, body: Json) => {
+    const id = server.deps.agents.getBySlug(slug)?.id
+    return call(server, 'PATCH', `/agents/${id}`, body)
+  }
+
+  test('Auto loads connector tools up front, On demand finds them with tool_search; built-ins never defer', async () => {
+    const { url } = startMcp()
+    const model = script()
+    const server = await boot({ model })
+    await connectCustom(server, url, {}, {}, { defaultEnabled: true })
+
+    const auto = await offered(server, model, 'writer')
+    expect(auto).toEqual(expect.arrayContaining(['docs_lookup', 'docs_create_note']))
+    expect(auto).not.toContain('tool_search')
+    expect((await call(server, 'GET', '/settings')).json.toolAccess).toBe('auto')
+
+    expect((await patchAgent(server, 'writer', { toolAccess: 'on-demand' })).status).toBe(200)
+    const onDemand = await offered(server, model, 'writer')
+    expect(onDemand).toContain('tool_search')
+    expect(onDemand).not.toContain('docs_lookup')
+    // the built-in tools (files, memory, ...) stay up front, in the same order as in Auto
+    const builtins = (names: string[]) =>
+      names.filter((n) => n !== 'tool_search' && !n.startsWith('docs_'))
+    expect(builtins(onDemand)).toEqual(builtins(auto))
+    expect(builtins(onDemand)).toContain('read_file')
+  })
+
+  test('the workspace default applies to agents without a setting; an agent setting wins', async () => {
+    const { url } = startMcp()
+    const model = script()
+    const server = await boot({ model })
+    await connectCustom(server, url, {}, {}, { defaultEnabled: true })
+
+    expect(
+      (await call(server, 'PATCH', '/settings', { toolAccess: 'on-demand' })).json.toolAccess,
+    ).toBe('on-demand')
+    expect(await offered(server, model, 'writer')).not.toContain('docs_lookup')
+    expect(await offered(server, model, 'researcher')).not.toContain('docs_lookup')
+    // one agent opts out of the default
+    await patchAgent(server, 'writer', { toolAccess: 'auto' })
+    expect(await offered(server, model, 'writer')).toContain('docs_lookup')
+    expect(await offered(server, model, 'researcher')).not.toContain('docs_lookup')
+    // back to the workspace default
+    expect((await patchAgent(server, 'writer', { toolAccess: null })).json.toolAccess).toBeNull()
+    expect(await offered(server, model, 'writer')).not.toContain('docs_lookup')
+    // invalid values are refused
+    expect((await call(server, 'PATCH', '/settings', { toolAccess: 'sometimes' })).status).toBe(400)
+    expect((await patchAgent(server, 'writer', { toolAccess: 'sometimes' })).status).toBe(400)
+  })
+
+  test('Auto switches to tool_search once an agent has 20 or more third-party tools', async () => {
+    const { url } = startMcp(30) // 32 tools
+    const model = script()
+    const server = await boot({ model })
+    await connectCustom(server, url, {}, {}, { defaultEnabled: true })
+    const names = await offered(server, model, 'writer')
+    expect(names).toContain('tool_search')
+    expect(names).not.toContain('docs_lookup')
+    // On demand stays on demand
+    await patchAgent(server, 'writer', { toolAccess: 'on-demand' })
+    expect(await offered(server, model, 'writer')).toContain('tool_search')
   })
 })

@@ -229,6 +229,11 @@ export interface TaskStore {
   /** Events with `seq > after`, oldest first. */
   events(after: number, limit: number): TeamEvent[]
   lastSeq(): number
+  /**
+   * Highest `seq` removed by event retention (0 = never pruned). A client whose cursor is below it
+   * may have missed events and must refetch its state.
+   */
+  prunedThrough(): number
   /** Activity of every agent that has any, by agent id. */
   activity(): Map<string, AgentActivity>
   /** Everything up to the latest message event is read. Returns the marker. */

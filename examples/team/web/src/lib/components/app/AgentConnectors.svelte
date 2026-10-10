@@ -19,6 +19,8 @@
 	import { applyChoices, groupConnectors, originLabel, scopeBadge, withCapabilityMode, withEnabled, withToolMode } from '#lib/connectors/agent-view.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import AddConnectorDialog from './AddConnectorDialog.svelte';
+	import ToolAccessControl from './ToolAccessControl.svelte';
+	import { thirdPartyToolCount } from '#lib/connectors/tool-access.js';
 	import ConnectFlowDialog from './ConnectFlowDialog.svelte';
 
 	let { agentId, compact = false }: { agentId: string; compact?: boolean } = $props();
@@ -208,6 +210,7 @@
 	{:else if !loaded}
 		<div class="space-y-2"><Skeleton class="h-16 rounded-xl" /><Skeleton class="h-16 rounded-xl" /></div>
 	{:else}
+		<ToolAccessControl {agentId} tools={thirdPartyToolCount(list)} />
 		<section class="space-y-2">
 			<h3 class="text-sm font-medium">Connected apps</h3>
 			{#if groups.connected.length}

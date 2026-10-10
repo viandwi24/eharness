@@ -1,5 +1,5 @@
 /** Workspace settings (plan §6.7): defaults the factory and the use cases read. Pure. */
-import { PERMISSION_MODES, type PermissionMode } from './agents.ts'
+import { PERMISSION_MODES, type PermissionMode, TOOL_ACCESS, type ToolAccess } from './agents.ts'
 import { invalid } from './errors.ts'
 import { EH_MODE, type TeamMode, teamModeOf } from './modes.ts'
 
@@ -16,6 +16,8 @@ export const toSettingsMode = (stored: string | null | undefined): SettingsMode 
 export const settingsTeamMode = (stored: string | null | undefined): TeamMode => teamModeOf(stored)
 
 export interface WorkspaceSettings {
+  /** Tool access of agents that have no setting of their own. */
+  toolAccess: ToolAccess
   /** Mode of chats and agents that have no mode of their own (Manual, Auto or Bypass). */
   defaultPermissionMode: SettingsMode
   /** Monthly USD limit of the workspace budget ledger; null = tracked, not limited. */
@@ -36,6 +38,9 @@ export type SettingsPatch = Partial<Omit<WorkspaceSettings, 'defaultPermissionMo
 }
 
 export function checkSettingsPatch(patch: SettingsPatch): void {
+  if (patch.toolAccess !== undefined && !TOOL_ACCESS.includes(patch.toolAccess)) {
+    throw invalid(`toolAccess must be one of ${TOOL_ACCESS.join(', ')}`, 'INVALID_SETTINGS')
+  }
   if (
     patch.defaultPermissionMode !== undefined &&
     !PERMISSION_MODES.includes(patch.defaultPermissionMode)

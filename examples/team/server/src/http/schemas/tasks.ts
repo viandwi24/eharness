@@ -179,12 +179,16 @@ export const EventListSchema = z
     lastSeq: z.number().int().openapi({
       description: 'Cursor for the next call: the `seq` of the last event, else the current head.',
     }),
+    resync: z.literal(true).optional().openapi({
+      description:
+        'Present when `after` is older than the events kept by retention: some events were missed, refetch the state (agents, tasks, chats) and continue from `lastSeq`.',
+    }),
   })
   .openapi('EventList')
 
 export const EventsStreamSchema = z.string().openapi({
   description:
-    'Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open.',
+    'Server-sent events: `id` = seq, `event` = type, `data` = the JSON event. A comment line every 15 s keeps the connection open. When the requested cursor is older than the events kept (`TEAM_EVENTS_RETENTION_HOURS`), the stream first sends `event: resync` (data `{ "seq": <kept cursor> }`): refetch the state, then keep reading.',
   example: 'id: 12\nevent: task-changed\ndata: {"seq":12,"type":"task-changed",…}\n\n',
 })
 

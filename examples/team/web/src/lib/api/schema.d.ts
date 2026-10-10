@@ -4902,6 +4902,11 @@ export interface components {
             model: string | null;
             /** @description Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile. */
             modelProfile: string | null;
+            /**
+             * @description How the tools of third-party connectors reach the model: `auto` (up front until the agent has 20 or more, then found with `tool_search`) or `on-demand` (always found with `tool_search`); null = the workspace default (`GET /settings`). Built-in connectors are never deferred.
+             * @enum {string|null}
+             */
+            toolAccess: "auto" | "on-demand" | null;
             /** @description This agent's own choices per connection id (on / off / inherit, capability modes). Use `GET /agents/{id}/connectors` for the effective view. */
             connectors: {
                 [key: string]: components["schemas"]["ConnectionChoices"];
@@ -4949,6 +4954,11 @@ export interface components {
             connectors?: {
                 [key: string]: components["schemas"]["ConnectionChoices"];
             };
+            /**
+             * @description See `Agent.toolAccess`; null = the workspace default.
+             * @enum {string|null}
+             */
+            toolAccess?: "auto" | "on-demand" | null;
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
@@ -4976,6 +4986,11 @@ export interface components {
             connectors?: {
                 [key: string]: components["schemas"]["ConnectionChoices"];
             };
+            /**
+             * @description See `Agent.toolAccess`; null = the workspace default.
+             * @enum {string|null}
+             */
+            toolAccess?: "auto" | "on-demand" | null;
             skills?: string[];
             /** @enum {string} */
             permissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
@@ -5296,6 +5311,11 @@ export interface components {
             events: components["schemas"]["TeamEvent"][];
             /** @description Cursor for the next call: the `seq` of the last event, else the current head. */
             lastSeq: number;
+            /**
+             * @description Present when `after` is older than the events kept by retention: some events were missed, refetch the state (agents, tasks, chats) and continue from `lastSeq`.
+             * @enum {boolean}
+             */
+            resync?: true;
         };
         /** @description `message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page). */
         TeamEvent: {
@@ -5548,6 +5568,11 @@ export interface components {
              * @enum {string}
              */
             defaultPermissionMode: "default" | "auto" | "bypassPermissions";
+            /**
+             * @description Tool access of agents without their own setting: `auto` or `on-demand` (third-party connector tools found with `tool_search`).
+             * @enum {string}
+             */
+            toolAccess: "auto" | "on-demand";
             /** @description Monthly USD limit of the workspace budget ledger; null = tracked, not limited. */
             budgetUsd: number | null;
             /** @description Children the lead runs at once (`subagents` `maxConcurrent`). */
@@ -5565,6 +5590,8 @@ export interface components {
              * @enum {string}
              */
             defaultPermissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
+            /** @enum {string} */
+            toolAccess?: "auto" | "on-demand";
             budgetUsd?: number | null;
             spawnCap?: number;
             /** @description A model id, or the legacy `profile:model` (split when the prefix names a profile). */

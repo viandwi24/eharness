@@ -46,6 +46,8 @@ export const agents = sqliteTable(
     model: text('model'),
     /** Profile the model comes from (`provider_profiles.id`); null = the default profile. */
     modelProfile: text('model_profile'),
+    /** Tool access of third-party connectors (`auto` | `on-demand`); null = the workspace default. */
+    toolAccess: text('tool_access'),
     /** Legacy tool checklist (before connectors): read by the boot migration only, never written. */
     tools: json<string[]>('tools').notNull(),
     skills: json<string[]>('skills').notNull(),

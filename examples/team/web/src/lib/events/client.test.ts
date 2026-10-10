@@ -77,4 +77,21 @@ describe('events client', () => {
 		expect(r.events).toEqual([]);
 		expect(r.status.at(-1)).toBe('stopped');
 	});
+
+	test('a resync frame refetches state and moves the cursor to the retention mark', async () => {
+		const resyncFrame = 'event: resync\ndata: {"seq":40}\n\n';
+		const r = await drive((_url, n) => (n === 1 ? sse(resyncFrame + frame(ev(41))) : sse('')), 2);
+		expect(r.events.map((e) => e.seq)).toEqual([41]);
+		expect(r.resyncs).toBe(3); // connect, the frame, the reconnect
+		expect(r.calls[1]?.url).toBe('/api/events/stream?after=41');
+	});
+
+	test('a poll page flagged resync refetches state', async () => {
+		const r = await drive((url, n) => {
+			if (url.includes('/events/stream')) return n === 1 ? sse(frame(ev(5))) : new Response('no', { status: 500 });
+			return json({ events: [ev(9)], lastSeq: 9, resync: true });
+		}, 4);
+		expect(r.events.map((e) => e.seq)).toEqual([5, 9]);
+		expect(r.resyncs).toBeGreaterThanOrEqual(2);
+	});
 });

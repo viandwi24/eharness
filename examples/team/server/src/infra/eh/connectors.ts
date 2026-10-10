@@ -31,7 +31,7 @@ import {
 import { remoteMcpSource } from 'eharness/mcp'
 import type { ProfileStore, SecretVault } from 'eharness/providers'
 import type { ConnectorsPort } from '../../app/ports.ts'
-import type { AgentDef } from '../../domain/agents.ts'
+import { type AgentDef, TOOL_ACCESS_AUTO_THRESHOLD, type ToolAccess } from '../../domain/agents.ts'
 import type {
   AgentConnectorView,
   CapabilityMode,
@@ -41,7 +41,7 @@ import type {
   FlowDto,
   FlowResult,
 } from '../../domain/connectors.ts'
-import { conflict, DomainError, invalid, notFound } from '../../domain/errors.ts'
+import { conflict, invalid, notFound } from '../../domain/errors.ts'
 import type { NewEvent } from '../../domain/events.ts'
 import type { ChangeFeed } from './change-feed.ts'
 import { mapConfigError } from './config-errors.ts'
@@ -78,6 +78,8 @@ export interface ConnectorsOptions {
   /** The OAuth callback URL of this server. */
   redirectUri: string
   events?: { append(event: NewEvent): number }
+  /** Workspace default tool access (settings); default `auto`. Read on every `prepare`. */
+  toolAccess?: () => ToolAccess
   /** Other instances' changes (`connectors-changed`) bump the revision. */
   changes?: ChangeFeed
   /** Id of this instance (its own events are ignored). */
@@ -117,7 +119,10 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   const env = options.env ?? process.env
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
   const hooks: CatalogHooks = {}
+  // `defer` of the remote MCP servers of the agent `doPrepare` is activating (activation is serialized)
+  let deferNow: boolean | 'auto' = true
   const definitions = createConnectorDefinitions({
+    defer: () => deferNow,
     sqlite: options.sqlite,
     agentById: options.agentById,
     ...(options.search === undefined ? {} : { search: options.search }),
@@ -275,7 +280,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   const cache = new Map<string, { key: string; out: ActivatedConnectors }>()
   const ensured = new Set<string>()
   let busy: Promise<void> = Promise.resolve()
-  const keyOf = (d: AgentDef): string => `${d.version}@${revision}`
+  const accessOf = (d: AgentDef): ToolAccess => d.toolAccess ?? options.toolAccess?.() ?? 'auto'
+  const keyOf = (d: AgentDef): string => `${d.version}@${revision}@${accessOf(d)}`
 
   async function ensureBuiltins(list: readonly AgentDef[]): Promise<void> {
     const todo = list.filter((a) => !ensured.has(a.id))
@@ -289,6 +295,23 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     }
   }
 
+  /**
+   * `on-demand`: the tools of third-party connectors are found with `tool_search`. `auto`: they
+   * load up front until the agent has {@link TOOL_ACCESS_AUTO_THRESHOLD} or more (counted from the
+   * capabilities the connections declare), then they are deferred; below it a server that lists
+   * more tools than the MCP threshold still defers by itself.
+   */
+  async function deferOf(d: AgentDef): Promise<boolean | 'auto'> {
+    if (accessOf(d) === 'on-demand') return true
+    const views = await agentView(d)
+    let n = 0
+    for (const v of views) {
+      if (v.source === 'builtin' || !v.enabled) continue
+      for (const c of v.capabilities) n += c.toolModes.filter((t) => t.mode !== 'off').length
+    }
+    return n >= TOOL_ACCESS_AUTO_THRESHOLD ? true : 'auto'
+  }
+
   async function doPrepare(list: readonly AgentDef[]): Promise<void> {
     await ensureBuiltins(list)
     const need = list.filter((d) => cache.get(d.id)?.key !== keyOf(d))
@@ -296,6 +319,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     const key = (d: AgentDef): string => keyOf(d)
     const records = await connections.list()
     for (const d of need) {
+      deferNow = await deferOf(d)
       const out = await activateConnectors({
         definitions,
         connections: records,

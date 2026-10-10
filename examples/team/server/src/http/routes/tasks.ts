@@ -357,6 +357,16 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
             // Flush the response at once (proxies and fetch() resolve only on the first bytes):
             // a reconnect delay hint plus a comment, before the first poll.
             await stream.write('retry: 3000\n: connected\n\n')
+            // a cursor below the retention mark missed events: tell the client to refetch, then
+            // continue from the mark (the events after it are replayed below)
+            const prunedThrough = deps.tasks.prunedThrough()
+            if (explicit !== undefined && cursor > 0 && cursor < prunedThrough) {
+              await stream.writeSSE({
+                event: 'resync',
+                data: JSON.stringify({ seq: prunedThrough }),
+              })
+              cursor = prunedThrough
+            }
             while (!stream.aborted && !stream.closed) {
               const { events } = listEvents(deps, { after: cursor, limit: 200 })
               for (const event of events) {
