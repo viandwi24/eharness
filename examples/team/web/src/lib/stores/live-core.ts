@@ -152,6 +152,21 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			later('tasks', core.loadTasks);
 		},
 
+		/**
+		 * What this agent's chat must show inline: its own questions (`ask_user_question`; its own
+		 * tool approvals render inside the message) plus every approval or question of the child
+		 * sessions it delegated to — like the coder's prompt labelled "from <agent>".
+		 */
+		chatPending(agentId: string): Approval[] {
+			const agent = agents.find(agentId);
+			const ids = [agent?.id, agent?.slug, agentId].filter((x): x is string => !!x);
+			const own = (a: Approval): boolean => ids.some((id) => a.sessionId === `dm:${id}`);
+			return [
+				...state.approvals.filter((a) => own(a) && a.kind === 'question'),
+				...core.childApprovals(agentId)
+			];
+		},
+
 		/** Approvals waiting in child sessions of this agent's delegations (lead hint). */
 		childApprovals(agentId: string): Approval[] {
 			const agent = agents.find(agentId);

@@ -4,7 +4,7 @@
 	import HandPalmIcon from 'phosphor-svelte/lib/HandPalm';
 	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
-	import ApprovalCard from '#lib/components/app/ApprovalCard.svelte';
+	import PendingCard from '#lib/components/app/PendingCard.svelte';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Kanban from '#lib/components/ui/kanban-column/index.js';
@@ -53,7 +53,7 @@
 			<Kanban.Root title={col.title} meta={String(items.length + (col.id === 'needs' ? loose.length : 0))} class="w-full">
 				{#if col.id === 'needs'}
 					{#each loose as a (a.sessionId + a.id)}
-						<ApprovalCard approval={a} onOpenTask={openTask} />
+						<PendingCard approval={a} onOpenTask={openTask} />
 					{/each}
 				{/if}
 				{#each items as t (t.id)}
@@ -74,7 +74,7 @@
 						{/snippet}
 					</Kanban.Item>
 					{#each own as a (a.sessionId + a.id)}
-						<ApprovalCard approval={a} onOpenTask={openTask} />
+						<PendingCard approval={a} onOpenTask={openTask} />
 					{/each}
 				{/each}
 				{#if items.length === 0 && !(col.id === 'needs' && loose.length)}

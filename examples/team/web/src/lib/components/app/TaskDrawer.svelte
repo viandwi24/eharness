@@ -13,7 +13,7 @@
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { closeTask, drawer, openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import ApprovalCard from './ApprovalCard.svelte';
+	import PendingCard from './PendingCard.svelte';
 
 	let detail = $state<TaskDetail | null>(null);
 	let error = $state<string | null>(null);
@@ -121,7 +121,7 @@
 				<p class="text-sm text-muted-foreground">Loading…</p>
 			{:else if detail}
 				{#each detail.approvals as a (a.sessionId + a.id)}
-					<ApprovalCard approval={a} />
+					<PendingCard approval={a} />
 				{/each}
 				{#each detail.messages as m (m.id)}
 					<MessageView

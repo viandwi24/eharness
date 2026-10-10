@@ -5,7 +5,7 @@
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import ApprovalCard from './ApprovalCard.svelte';
+	import PendingCard from './PendingCard.svelte';
 
 	const count = $derived(live.state.approvals.length);
 	let open = $state(false);
@@ -25,7 +25,7 @@
 	<Popover.Content align="end" class="flex max-h-[70svh] w-[min(92vw,24rem)] flex-col gap-2 overflow-y-auto p-2">
 		<div class="px-1 pt-1 text-sm font-medium">Needs your approval</div>
 		{#each live.state.approvals as a (a.sessionId + a.id)}
-			<ApprovalCard
+			<PendingCard
 				approval={a}
 				onOpenTask={(id) => {
 					open = false;

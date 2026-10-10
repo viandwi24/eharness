@@ -12,6 +12,7 @@
 	} from '#lib/components/ai/conversation/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { onDestroy, tick } from 'svelte';
+	import PendingCard from './PendingCard.svelte';
 	import ApprovalsPopover from './ApprovalsPopover.svelte';
 	import { toast } from 'svelte-sonner';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
@@ -49,6 +50,8 @@
 
 	// Scroll-up pagination: load the next older page near the top and keep the viewport anchored.
 	let root = $state<HTMLElement | null>(null);
+	// Height of the floating dock (pending card + composer), used to pad the conversation.
+	let dockHeight = $state(0);
 	let busyOlder = false;
 	async function maybeLoadOlder(): Promise<void> {
 		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
@@ -78,8 +81,11 @@
 		live.setViewing(agentId);
 	});
 	onDestroy(() => live.setViewing(null));
-	// Approvals in child sessions of this agent's delegations (lead hint).
-	const waiting = $derived(live.childApprovals(agentId));
+	// Questions of this chat and approvals of the role agents it delegated to, answered inline.
+	const inline = $derived(live.chatPending(agentId));
+	let pendingIdx = $state(0);
+	// After an inline answer the turn continues on the server: follow it into this chat.
+	const followAfterAnswer = (): void => void ac.follow();
 	$effect(() => {
 		if (!agentsStore.find(agentId)) void agentsStore.get(agentId).catch(() => {});
 	});
@@ -106,10 +112,13 @@
 		</Button>
 	</header>
 
+	<!-- The conversation fills the pane to the bottom; the pending card and the composer float over
+	     it (dock), and the content is padded by the dock's height so the last message stays visible. -->
+	<div class="relative flex min-h-0 flex-1 flex-col">
 	<div bind:this={root} class="flex min-h-0 flex-1 flex-col">
 		{#key agentId}
 			<Conversation class="min-h-0 flex-1">
-				<ConversationContent class="mx-auto w-full max-w-3xl gap-6 px-4 py-6">
+				<ConversationContent class="mx-auto w-full max-w-3xl gap-6 px-4 pt-6" style={`padding-bottom: ${dockHeight + 24}px`}>
 					{#if ac.loadingOlder}
 						<div class="text-center text-xs text-muted-foreground">Loading earlier messages...</div>
 					{/if}
@@ -138,22 +147,31 @@
 						<div class="text-sm text-muted-foreground">Thinking...</div>
 					{/if}
 				</ConversationContent>
-				<ConversationScrollButton />
+				<ConversationScrollButton style={`bottom: ${dockHeight + 12}px`} />
 			</Conversation>
 		{/key}
 	</div>
 
-	<div class="mx-auto w-full max-w-3xl shrink-0 p-3">
-		{#if waiting.length}
-			<div class="mb-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 rounded-lg border border-border bg-warning-soft px-3 py-1.5 text-xs text-warning-text" role="status">
-				{#each waiting as w, i (w.sessionId + w.id)}
-					<span>
-						Waiting for approval in <strong>{w.agentName}</strong>
-						{#if w.taskId}
-							<button class="underline underline-offset-4" onclick={() => openTask(w.taskId!)}>Review</button>
-						{/if}{i < waiting.length - 1 ? ',' : ''}
-					</span>
-				{/each}
+	<div
+		class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background from-60% to-transparent pt-6"
+		bind:clientHeight={dockHeight}
+	>
+	<div class="pointer-events-auto mx-auto w-full max-w-3xl p-3">
+		{#if inline.length}
+			{@const cur = inline[Math.min(pendingIdx, inline.length - 1)]}
+			<div class="mb-2 flex flex-col gap-1" role="region" aria-label="Waiting for your answer">
+				{#if inline.length > 1}
+					<div class="flex items-center justify-end gap-1 text-xs text-muted-foreground" data-testid="pending-pager">
+						<button class="rounded px-1.5 py-0.5 hover:bg-muted disabled:opacity-40" aria-label="Previous request" disabled={pendingIdx <= 0} onclick={() => (pendingIdx = Math.max(0, pendingIdx - 1))}>‹</button>
+						<span>{Math.min(pendingIdx, inline.length - 1) + 1} of {inline.length}</span>
+						<button class="rounded px-1.5 py-0.5 hover:bg-muted disabled:opacity-40" aria-label="Next request" disabled={pendingIdx >= inline.length - 1} onclick={() => (pendingIdx = Math.min(inline.length - 1, pendingIdx + 1))}>›</button>
+					</div>
+				{/if}
+				{#if cur}
+					{#key cur.sessionId + cur.id}
+						<PendingCard approval={cur} onOpenTask={(id) => openTask(id)} onAnswered={followAfterAnswer} />
+					{/key}
+				{/if}
 			</div>
 		{/if}
 		{#if ac.notice}
@@ -165,5 +183,7 @@
 			status={chat.status}
 			placeholder={agent ? `Message ${agent.name}` : 'Message the agent'}
 		/>
+	</div>
+	</div>
 	</div>
 </section>
