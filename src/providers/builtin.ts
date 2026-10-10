@@ -243,6 +243,8 @@ export function gatewayProvider(options: GatewayProviderOptions = {}): ProviderD
     label: options.label ?? 'Vercel AI Gateway',
     doc: 'https://vercel.com/docs/ai-gateway',
     settings: gatewaySettings,
+    // `@ai-sdk/gateway` reads only AI_GATEWAY_API_KEY from the environment (checked in 4.0.110: no
+    // base-URL variable exists), so `baseURL` has no env mapping: set it on the profile.
     envMap: { apiKey: 'AI_GATEWAY_API_KEY' },
     defaultModel: 'anthropic/claude-sonnet-4.6',
     catalog: { modelsDevKey: GATEWAY_MODELS_DEV_PROVIDERS },

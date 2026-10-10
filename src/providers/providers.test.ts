@@ -670,6 +670,8 @@ describe('built-in definitions', () => {
       expect(spec.fields.find((f) => f.path === 'apiKey')?.secret).toBe(true)
       expect(spec.fields.find((f) => f.path === 'headers')?.secretValues).toBe(true)
     }
+    // the AI SDK gateway has no base-URL environment variable: only the key is mapped
+    expect(defs[1]?.envMap).toEqual({ apiKey: 'AI_GATEWAY_API_KEY' })
     expect(defs.map((d) => d.id)).toEqual([
       'openrouter',
       'gateway',

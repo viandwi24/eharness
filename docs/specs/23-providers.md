@@ -163,7 +163,7 @@ Each takes the provider package factory and optional `id` / `label`; settings fi
 | Helper | Factory option | envMap | Models / catalog |
 |---|---|---|---|
 | `openRouterProvider` | `createOpenRouter` | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` | `catalog.kind: 'openrouter'`; `live: true` adds `GET <baseURL>/models` |
-| `gatewayProvider` | `createGateway?` (none: plain id strings, key from the AI SDK environment) | `AI_GATEWAY_API_KEY` | models.dev providers (`GATEWAY_MODELS_DEV_PROVIDERS`); with `createGateway`, live `getAvailableModels()` with prices |
+| `gatewayProvider` | `createGateway?` (none: plain id strings, key from the AI SDK environment) | `AI_GATEWAY_API_KEY` (the AI SDK gateway has no base-URL environment variable: set `baseURL` on the profile) | models.dev providers (`GATEWAY_MODELS_DEV_PROVIDERS`); with `createGateway`, live `getAvailableModels()` with prices |
 | `openAICompatibleProvider` | `createOpenAICompatible` | none | live `GET <baseURL>/models`; `baseURL` required, `apiKeyOptional`, `defaultBaseURL`, `id` for presets |
 | `openAIProvider` | `createOpenAI` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` | models.dev `openai` + live `GET /models` (embedding/audio/image ids dropped) |
 | `anthropicProvider` | `createAnthropic` | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | models.dev `anthropic` + live `GET /v1/models` |
