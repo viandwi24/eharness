@@ -7,10 +7,12 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { Checkbox } from '#lib/components/ui/checkbox/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
+	import ModelPicker from '#lib/components/app/ModelPicker.svelte';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { fieldErrors, type Agent, type ToolName } from '#lib/api/index.js';
-	import { agentColors, modelOptions } from '#lib/models.js';
+	import { agentColors } from '#lib/models.js';
+	import { providersStore } from '#lib/providers/store.svelte.js';
 	import { agentChoiceOf, agentChoices, storedOfChoice, type AgentChoice } from '#lib/modes.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { toolsStore } from '#lib/stores/tools.svelte.js';
@@ -45,7 +47,9 @@
 	// svelte-ignore state_referenced_locally
 	let instructions = $state(agent?.instructions ?? '');
 	// svelte-ignore state_referenced_locally
-	let model = $state<string>(agent?.model ?? '');
+	let model = $state<string | null>(agent?.model ?? null);
+	// svelte-ignore state_referenced_locally
+	let modelProfile = $state<string | null>(agent?.modelProfile ?? null);
 	// svelte-ignore state_referenced_locally
 	let tools = $state<ToolName[]>([...(agent?.tools ?? ['library_read', 'memory', 'todos'])]);
 	// svelte-ignore state_referenced_locally
@@ -58,14 +62,12 @@
 	});
 
 	const isLead = $derived(agent?.role === 'lead');
-	const models = $derived(
-		agent?.model && !modelOptions.some((m) => m.id === agent.model)
-			? [...modelOptions, { id: agent.model, label: agent.model }]
-			: modelOptions
-	);
 	const toolError = $derived(Object.entries(errors).find(([k]) => k.startsWith('tools'))?.[1]);
 
-	onMount(() => void toolsStore.load());
+	onMount(() => {
+		void toolsStore.load();
+		void providersStore.load();
+	});
 
 	function toggleTool(t: ToolName, on: boolean) {
 		tools = on ? [...tools.filter((x) => x !== t), t] : tools.filter((x) => x !== t);
@@ -82,6 +84,7 @@
 			description,
 			instructions,
 			model: model || null,
+			modelProfile: modelProfile || null,
 			tools,
 			permissionMode: storedOfChoice(modeChoice) as Agent['permissionMode']
 		};
@@ -153,15 +156,11 @@
 		{#if errors.instructions}<span class="text-xs text-destructive-text">{errors.instructions}</span>{/if}
 	</label>
 
-	<label class="flex flex-col gap-1">
-		<span class="font-medium">Model</span>
-		<NativeSelect bind:value={model}>
-			{#each models as m (m.id ?? '')}
-				<NativeSelectOption value={m.id ?? ''}>{m.label}</NativeSelectOption>
-			{/each}
-		</NativeSelect>
-		{#if errors.model}<span class="text-xs text-destructive-text">{errors.model}</span>{/if}
-	</label>
+	<div class="flex flex-col gap-1">
+		<span class="font-medium" id="agent-model-label">Model</span>
+		<ModelPicker bind:profileId={modelProfile} bind:modelId={model} id="agent-model" />
+		{#if errors.model || errors.modelProfile}<span class="text-xs text-destructive-text">{errors.model ?? errors.modelProfile}</span>{/if}
+	</div>
 
 	<fieldset class="flex flex-col gap-2">
 		<legend class="mb-1 font-medium">Tools</legend>

@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import BrainIcon from 'phosphor-svelte/lib/Brain';
+	import CubeIcon from 'phosphor-svelte/lib/Cube';
 	import ChartBarIcon from 'phosphor-svelte/lib/ChartBar';
 	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
 	import SlidersIcon from 'phosphor-svelte/lib/Sliders';
@@ -16,12 +17,14 @@
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import * as Field from '#lib/components/ui/field/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
+	import ModelPicker from '#lib/components/app/ModelPicker.svelte';
+	import ProvidersSettings from '#lib/components/app/ProvidersSettings.svelte';
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { StatTile } from '#lib/components/ui/stat-tile/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
-	import { modelOptions } from '#lib/models.js';
+	import { providersStore } from '#lib/providers/store.svelte.js';
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
 	import { sumUsage, type Usage } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
@@ -33,6 +36,7 @@
 
 	const sections = [
 		{ id: 'general', label: 'General', icon: SlidersIcon },
+		{ id: 'providers', label: 'Providers', icon: CubeIcon },
 		{ id: 'usage', label: 'Usage', icon: ChartBarIcon },
 		{ id: 'memory', label: 'Memory', icon: BrainIcon },
 		{ id: 'connection', label: 'Connection', icon: PlugsConnectedIcon }
@@ -47,23 +51,19 @@
 	let mode = $state<Settings['defaultPermissionMode']>('default');
 	let budget = $state('');
 	let spawnCap = $state('4');
-	let model = $state('');
+	let model = $state<string | null>(null);
+	let profile = $state<string | null>(null);
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 	let saving = $state(false);
-
-	const models = $derived(
-		settings?.defaultModel && !modelOptions.some((m) => m.id === settings?.defaultModel)
-			? [...modelOptions, { id: settings.defaultModel, label: settings.defaultModel }]
-			: modelOptions
-	);
 
 	const dirty = $derived(
 		!!settings &&
 			(mode !== settingsModeOf(settings.defaultPermissionMode) ||
 				budget.trim() !== (settings.budgetUsd === null ? '' : String(settings.budgetUsd)) ||
 				spawnCap.trim() !== String(settings.spawnCap) ||
-				model !== (settings.defaultModel ?? ''))
+				model !== settings.defaultModel ||
+				profile !== settings.defaultProfile)
 	);
 
 	function fill(s: Settings): void {
@@ -71,7 +71,8 @@
 		mode = settingsModeOf(s.defaultPermissionMode);
 		budget = s.budgetUsd === null ? '' : String(s.budgetUsd);
 		spawnCap = String(s.spawnCap);
-		model = s.defaultModel ?? '';
+		model = s.defaultModel;
+		profile = s.defaultProfile;
 	}
 
 	async function loadSettings(): Promise<void> {
@@ -103,7 +104,7 @@
 		errors = {};
 		saving = true;
 		try {
-			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, defaultModel: model || null } }));
+			fill(await api.patch('/settings', { body: { defaultPermissionMode: mode, budgetUsd: v.value.budgetUsd, spawnCap: v.value.spawnCap, defaultModel: model || null, defaultProfile: profile || null } }));
 			toast.success('Settings saved');
 		} catch (err) {
 			errors = fieldErrors(err);
@@ -162,6 +163,7 @@
 
 	// Initial load, and a refresh when another tab changes settings.
 	$effect(() => {
+		void providersStore.load();
 		void live.state.revs.settings;
 		untrack(() => {
 			void loadSettings();
@@ -191,7 +193,9 @@
 
 		<div class="min-h-0 min-w-0 flex-1 overflow-y-auto">
 			<div class="mx-auto flex w-full max-w-3xl flex-col gap-4 p-4 md:p-6">
-				{#if section === 'general'}
+				{#if section === 'providers'}
+					<ProvidersSettings />
+				{:else if section === 'general'}
 					<form id="general" onsubmit={save} class="flex flex-col gap-4">
 						<Card.Root>
 							<Card.Header>
@@ -206,13 +210,9 @@
 									<Field.Field data-invalid={!!errors.defaultModel}>
 										<Field.Label for="s-model">Default model</Field.Label>
 										{#if !settings}<Skeleton class="h-9 w-full max-w-sm" />{:else}
-											<NativeSelect id="s-model" bind:value={model} class="w-full max-w-sm">
-												{#each models as m (m.id ?? '')}
-													<NativeSelectOption value={m.id ?? ''}>{m.id === null ? 'Server default' : m.label}</NativeSelectOption>
-												{/each}
-											</NativeSelect>
+											<ModelPicker id="s-model" bind:profileId={profile} bind:modelId={model} defaultLabel="Server default" />
 										{/if}
-										<Field.Description>Used for agents without their own model.</Field.Description>
+										<Field.Description>The provider profile and model of agents that do not pick their own. Profiles are managed under Providers.</Field.Description>
 										{#if errors.defaultModel}<Field.Error>{errors.defaultModel}</Field.Error>{/if}
 									</Field.Field>
 									<Field.Field data-invalid={!!errors.defaultPermissionMode}>

@@ -1,29 +1,46 @@
 /**
- * Model provider config (as examples/coder): OpenRouter (`OPENROUTER_API_KEY`) or the Vercel AI
- * Gateway (`AI_GATEWAY_API_KEY`), and an offline scripted model (`TEAM_SCRIPTED_MODEL`).
- * Keys are read from the environment only and never logged.
+ * The model port of the agent factory: which model an agent runs on, which model decides in Auto
+ * mode, which one answers `web_search`, and the catalog (prices, context windows).
+ *
+ * - `scriptedModelConfig` / `TEAM_SCRIPTED_MODEL` (offline, tests): one fixed model, wins over
+ *   everything;
+ * - `providerModelConfig`: profiles of `eharness/providers` (`providers.ts`): an agent picks
+ *   `{ profileId, modelId }`; a missing profile follows the workspace default.
+ *
+ * Keys are never logged; the profile settings stay inside the provider manager.
  */
 import { readFileSync } from 'node:fs'
-import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import type { LanguageModel } from 'ai'
+import type { ModelCatalog } from 'eharness'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
-import { createSearchFn, type SearchFn } from './web-search.ts'
+import { conflict } from '../../domain/errors.ts'
+import { normalizeSelection } from '../../domain/providers.ts'
+import type { ProviderService } from './providers.ts'
+import { createSearchFn, SEARCH_MODEL, type SearchFn } from './web-search.ts'
 
-export type ModelProviderName = 'openrouter' | 'gateway' | 'scripted'
+export type ModelProviderName = 'providers' | 'scripted'
 
-export const DEFAULT_MODEL: Record<Exclude<ModelProviderName, 'scripted'>, string> = {
-  openrouter: 'anthropic/claude-sonnet-5.5',
-  gateway: 'anthropic/claude-sonnet-4.6',
+/** The profile and model a selection ends up on. */
+export interface ResolvedSelection {
+  profileId: string
+  modelId: string
 }
-
-type Env = Record<string, string | undefined>
 
 export interface ModelConfig {
   provider: ModelProviderName
-  /** Id used when a definition has no model of its own. */
+  /** Model id shown when nothing names one (informational). */
   defaultModel: string
-  /** Resolve a model id (or the default) to a model. */
-  resolve(id: string | null): LanguageModel
+  /**
+   * The model of a pick (the factory already applied the workspace default pick). A null profile
+   * is the default profile, a null model that profile's default model. A plain `modelId` is on the
+   * default profile; a legacy `profile:model` id is split when the prefix names a profile.
+   * Synchronous: the profiles are loaded at boot.
+   */
+  resolve(modelId: string | null, profileId?: string | null): LanguageModel
+  /** Where a pick ends up (profile + model id); absent for fixed (scripted) models. */
+  effective?(modelId: string | null, profileId?: string | null): ResolvedSelection | undefined
+  /** Prices and context windows of the models `resolve` makes. */
+  catalog?: ModelCatalog
   /**
    * Model of the Auto mode classifier (`TEAM_CLASSIFIER_MODEL`, else the default model). Absent
    * (scripted model) = Auto mode is not offered.
@@ -31,69 +48,104 @@ export interface ModelConfig {
   classifierModel?: () => LanguageModel
   /** Provider web search for `web_search`; absent (scripted model) = the tool is not offered. */
   search?: SearchFn
+  /** Bumps when the profiles change (agents are rebuilt). */
+  rev?: () => number
 }
 
-/**
- * Pick the provider from the environment: `TEAM_SCRIPTED_MODEL` (path to a JSON array of
- * scripted steps) wins, then OpenRouter, then the gateway. Throws a readable error when no
- * provider is configured, so the server fails at boot rather than at the first chat.
- */
-export function createModelConfig(env: Env = process.env): ModelConfig {
-  const scriptFile = env.TEAM_SCRIPTED_MODEL
-  if (scriptFile !== undefined && scriptFile !== '') {
-    const steps = JSON.parse(readFileSync(scriptFile, 'utf8')) as ScriptedStepInput[]
-    return scriptedModelConfig(scriptedModel(steps))
-  }
-  const forced = env.TEAM_PROVIDER
-  const provider: Exclude<ModelProviderName, 'scripted'> =
-    forced === 'gateway' || forced === 'openrouter'
-      ? forced
-      : env.OPENROUTER_API_KEY
-        ? 'openrouter'
-        : 'gateway'
-  const defaultModel = env.TEAM_MODEL ?? DEFAULT_MODEL[provider]
-  if (provider === 'gateway') {
-    if (!env.AI_GATEWAY_API_KEY) {
-      throw new Error(
-        'no model provider: set OPENROUTER_API_KEY, AI_GATEWAY_API_KEY or TEAM_SCRIPTED_MODEL',
-      )
-    }
-    const resolve = (id: string | null): LanguageModel => id ?? defaultModel
-    return {
-      provider,
-      defaultModel,
-      resolve,
-      classifierModel: () => resolve(env.TEAM_CLASSIFIER_MODEL || null),
-      search: createSearchFn({ provider, resolveModel: (id) => resolve(id) }),
-    }
-  }
-  if (!env.OPENROUTER_API_KEY) {
-    throw new Error('provider "openrouter" needs OPENROUTER_API_KEY')
-  }
-  const openrouter = createOpenRouter({
-    apiKey: env.OPENROUTER_API_KEY,
-    ...(env.OPENROUTER_BASE_URL ? { baseURL: env.OPENROUTER_BASE_URL } : {}),
-  })
-  const cache = new Map<string, LanguageModel>()
-  const resolve = (id: string | null): LanguageModel => {
-    const wanted = id ?? defaultModel
-    let model = cache.get(wanted)
-    if (model === undefined) {
-      model = openrouter(wanted) as unknown as LanguageModel
-      cache.set(wanted, model)
-    }
-    return model
-  }
-  return {
-    provider,
-    defaultModel,
-    resolve,
-    classifierModel: () => resolve(env.TEAM_CLASSIFIER_MODEL || null),
-    search: createSearchFn({ provider, resolveModel: (id) => resolve(id) }),
-  }
-}
+type Env = Record<string, string | undefined>
 
 /** A model config that always returns `model` (tests, offline runs). */
 export function scriptedModelConfig(model: LanguageModel): ModelConfig {
   return { provider: 'scripted', defaultModel: 'scripted', resolve: () => model }
+}
+
+/** `TEAM_SCRIPTED_MODEL`: path to a JSON array of scripted steps; undefined when unset. */
+export function scriptedModelConfigFromEnv(env: Env = process.env): ModelConfig | undefined {
+  const file = env.TEAM_SCRIPTED_MODEL
+  if (file === undefined || file === '') return undefined
+  const steps = JSON.parse(readFileSync(file, 'utf8')) as ScriptedStepInput[]
+  return scriptedModelConfig(scriptedModel(steps))
+}
+
+/** The model config over a provider service. */
+export function providerModelConfig(service: ProviderService): ModelConfig {
+  const { manager } = service
+
+  const effective = (
+    modelId: string | null,
+    profileId: string | null = null,
+  ): ResolvedSelection => {
+    const picked = normalizeSelection(profileId, modelId, service.profileIds())
+    const profile = picked.profileId ?? service.defaultProfileId()
+    if (profile === undefined) {
+      throw conflict(
+        'no model provider is configured: add one in Settings > Providers, or set OPENROUTER_API_KEY / AI_GATEWAY_API_KEY',
+        'NO_PROVIDER',
+      )
+    }
+    return { profileId: profile, modelId: picked.modelId ?? service.defaultModelOf(profile) }
+  }
+
+  /** `TEAM_*_MODEL`: `profile:model`, or a plain id on the default profile. */
+  const fromEnvModel = (value: string | undefined): ResolvedSelection | undefined => {
+    if (value === undefined || value === '') return undefined
+    const n = normalizeSelection(null, value, service.profileIds())
+    return effective(n.modelId, n.profileId)
+  }
+
+  const defaultResolved = (): ResolvedSelection => effective(null)
+
+  const search: SearchFn = createSearchFn({
+    target: () => {
+      const profiles = service.profiles()
+      const kindOf = (id: string): 'openrouter' | 'gateway' | undefined => {
+        const d = profiles.find((p) => p.id === id && p.enabled)?.definitionId
+        return d === 'openrouter' || d === 'gateway' ? d : undefined
+      }
+      let pick = fromEnvModel(service.env.TEAM_SEARCH_MODEL)
+      let provider = pick === undefined ? undefined : kindOf(pick.profileId)
+      if (pick === undefined || provider === undefined) {
+        // the default profile if it can search, else the first profile that can
+        const defaultId = service.defaultProfileId()
+        const profileId =
+          defaultId !== undefined && kindOf(defaultId) !== undefined
+            ? defaultId
+            : profiles.find((p) => p.enabled && kindOf(p.id) !== undefined)?.id
+        if (profileId === undefined) {
+          throw new Error(
+            'web search needs an OpenRouter or AI Gateway profile (Settings > Providers)',
+          )
+        }
+        provider = kindOf(profileId) as 'openrouter' | 'gateway'
+        pick = { profileId, modelId: SEARCH_MODEL[provider] }
+      }
+      return {
+        provider: provider as 'openrouter' | 'gateway',
+        model: manager.resolve({ profile: pick.profileId, model: pick.modelId }),
+      }
+    },
+  })
+
+  return {
+    provider: 'providers',
+    defaultModel: 'default profile',
+    resolve(modelId, profileId) {
+      const r = effective(modelId, profileId)
+      return manager.resolve({ profile: r.profileId, model: r.modelId })
+    },
+    effective: (modelId, profileId) => {
+      try {
+        return effective(modelId, profileId)
+      } catch {
+        return undefined
+      }
+    },
+    catalog: manager.catalog(),
+    classifierModel: () => {
+      const r = fromEnvModel(service.env.TEAM_CLASSIFIER_MODEL) ?? defaultResolved()
+      return manager.resolve({ profile: r.profileId, model: r.modelId })
+    },
+    search,
+    rev: service.rev,
+  }
 }

@@ -1,4 +1,6 @@
 /** Workspace settings use cases. */
+import { invalid } from '../domain/errors.ts'
+import { normalizeSelection } from '../domain/providers.ts'
 import {
   checkSettingsPatch,
   type SettingsPatch,
@@ -18,6 +20,20 @@ export function patchSettings(
     Object.entries(patch).filter(([, v]) => v !== undefined),
   ) as SettingsPatch
   checkSettingsPatch(clean)
+  if (clean.defaultModel !== undefined || clean.defaultProfile !== undefined) {
+    const known = deps.providers.profileIds()
+    const current = deps.settings.get()
+    const sel = normalizeSelection(
+      clean.defaultProfile === undefined ? current.defaultProfile : clean.defaultProfile,
+      clean.defaultModel === undefined ? current.defaultModel : clean.defaultModel,
+      known,
+    )
+    if (sel.profileId !== null && !known.includes(sel.profileId)) {
+      throw invalid(`unknown provider profile: ${sel.profileId}`, 'UNKNOWN_PROFILE')
+    }
+    clean.defaultProfile = sel.profileId
+    clean.defaultModel = sel.modelId
+  }
   if (clean.defaultPermissionMode !== undefined) {
     clean.defaultPermissionMode = toSettingsMode(clean.defaultPermissionMode)
   }

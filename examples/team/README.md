@@ -59,12 +59,20 @@ regenerate the web types), `db:generate`, `test:instances`, `test:restart`, `smo
 API docs: http://localhost:4000/docs. In the web, the token comes from `PUBLIC_TEAM_TOKEN` in the
 same `.env` (dev) or from the Settings page.
 
+Providers: open Settings > Providers to add profiles (several per provider, for example two OpenRouter
+keys with their own headers). Each agent picks a profile and a model; the Settings default model is a
+profile and a model too. Keys never leave the server (the API returns `{ set, hint }`) and are stored
+encrypted. Environment keys keep working with an empty database as read-only profiles.
+
 No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline with a scripted model
 (a JSON array of steps, see `eharness/testing`).
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `OPENROUTER_API_KEY` / `AI_GATEWAY_API_KEY` | - | model provider (`TEAM_PROVIDER`, `TEAM_MODEL` override the choice) |
+| `OPENROUTER_API_KEY` / `AI_GATEWAY_API_KEY` | - | read-only **env profiles** of those providers (more providers and profiles are added in Settings > Providers; `TEAM_PROVIDER`, `TEAM_MODEL` choose the default profile and model) |
+| `TEAM_SECRET_KEY` | dev key file | 32 bytes, base64 (`openssl rand -base64 32`): encrypts provider secrets saved from the web (AES-GCM). Unset in dev = a key is generated into `data/secret.key` (git-ignored) with a warning; set it for anything shared. `TEAM_SECRET_KEY_PREVIOUS` (comma separated) keeps old keys that can still open rows after a rotation |
+| `TEAM_OFFLINE` | - | `1` = never fetch the public model catalogs (cached in the database, refreshed every 24 h) |
+| `TEAM_CLASSIFIER_MODEL` / `TEAM_SEARCH_MODEL` | - | Auto-mode classifier / `web_search` model: `profile:model` or a plain id on the default profile |
 | `TEAM_SCRIPTED_MODEL` | - | path to a JSON array of scripted steps: offline runs and tests (wins over the keys) |
 | `TEAM_TOKEN` | - | bearer token for every route except `/health`, `/docs`, `/openapi.json`. **Unset = the API is open**: localhost only |
 | `TEAM_DB` | `./data/team.db` | SQLite file (WAL). Several instances may share it |

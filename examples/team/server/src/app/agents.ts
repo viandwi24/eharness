@@ -10,6 +10,7 @@ import {
   validateSlug,
 } from '../domain/agents.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
+import { normalizeSelection } from '../domain/providers.ts'
 import type { Deps } from './ports.ts'
 
 const COLORS = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899']
@@ -52,6 +53,23 @@ function checkDraft(draft: AgentDraft): void {
   }
 }
 
+/**
+ * The `{ profileId, modelId }` pick of a draft: a legacy `profile:model` string is split, an
+ * explicit profile must exist, a plain id follows the default profile.
+ */
+function pick(
+  deps: Deps,
+  profile: string | null | undefined,
+  model: string | null | undefined,
+): { model: string | null; modelProfile: string | null } {
+  const known = deps.providers.profileIds()
+  const sel = normalizeSelection(profile, model, known)
+  if (sel.profileId !== null && !known.includes(sel.profileId)) {
+    throw invalid(`unknown provider profile: ${sel.profileId}`, 'UNKNOWN_PROFILE')
+  }
+  return { model: sel.modelId, modelProfile: sel.profileId }
+}
+
 export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
   checkDraft(draft)
   const role = draft.role ?? 'custom'
@@ -79,7 +97,7 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
     color: draft.color ?? (COLORS[deps.agents.count() % COLORS.length] as string),
     description: draft.description ?? '',
     instructions: draft.instructions,
-    model: draft.model ?? null,
+    ...pick(deps, draft.modelProfile, draft.model),
     tools: normalizeTools(draft.tools ?? ['library_read', 'memory', 'todos'], role),
     skills: draft.skills ?? [],
     mcp: draft.mcp ?? [],
@@ -114,7 +132,13 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
     avatar: patch.avatar === undefined ? current.avatar : patch.avatar,
     color: patch.color ?? current.color,
     description: patch.description ?? current.description,
-    model: patch.model === undefined ? current.model : patch.model,
+    ...(patch.model === undefined && patch.modelProfile === undefined
+      ? { model: current.model, modelProfile: current.modelProfile }
+      : pick(
+          deps,
+          patch.modelProfile === undefined ? current.modelProfile : patch.modelProfile,
+          patch.model === undefined ? current.model : patch.model,
+        )),
     tools: patch.tools === undefined ? current.tools : normalizeTools(patch.tools, current.role),
     skills: patch.skills ?? current.skills,
     mcp: patch.mcp ?? current.mcp,

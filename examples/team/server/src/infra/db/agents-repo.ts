@@ -17,6 +17,7 @@ const toDef = (row: Row): AgentDef => ({
   description: row.description,
   instructions: row.instructions,
   model: row.model,
+  modelProfile: row.modelProfile,
   tools: row.tools as ToolName[],
   skills: row.skills,
   mcp: row.mcp,

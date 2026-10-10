@@ -18,19 +18,26 @@ export const SEARCH_MODEL = {
 const PROMPT = (query: string): string =>
   `Search the web for: ${query}\n\nAnswer with the facts the search found, concisely, and name the sources you used. Do not invent anything that the results do not say.`
 
-export interface CreateSearchOptions {
+/** What one search call runs on: the provider kind (its search mechanism) and the model. */
+export interface SearchTarget {
   provider: 'openrouter' | 'gateway'
-  resolveModel: (id: string) => LanguageModel
-  model?: string
+  model: LanguageModel
+}
+
+export interface CreateSearchOptions {
+  /**
+   * The target of each call (read per call, so a profile edited in Settings applies at once).
+   * Throws a readable error when the workspace has no provider that can search.
+   */
+  target: () => SearchTarget
 }
 
 export function createSearchFn(opts: CreateSearchOptions): SearchFn {
-  const modelId = opts.model ?? process.env.TEAM_SEARCH_MODEL ?? SEARCH_MODEL[opts.provider]
   return async (query, { allowedDomains, blockedDomains, signal } = {}) => {
-    const model = opts.resolveModel(modelId)
+    const { provider, model } = opts.target()
     const common = { model, prompt: PROMPT(query), ...(signal ? { abortSignal: signal } : {}) }
     const result =
-      opts.provider === 'openrouter'
+      provider === 'openrouter'
         ? await generateText({
             ...common,
             providerOptions: {

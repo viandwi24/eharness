@@ -38,6 +38,8 @@ export const agents = sqliteTable(
     description: text('description').notNull().default(''),
     instructions: text('instructions').notNull(),
     model: text('model'),
+    /** Profile the model comes from (`provider_profiles.id`); null = the default profile. */
+    modelProfile: text('model_profile'),
     tools: json<string[]>('tools').notNull(),
     skills: json<string[]>('skills').notNull(),
     mcp: json<string[]>('mcp').notNull(),
@@ -406,3 +408,31 @@ export const ehStreamChunks = sqliteTable(
   },
   (t) => [primaryKey({ columns: [t.sessionId, t.turnId, t.idx] })],
 )
+
+/**
+ * Provider profiles (`eharness/providers`, spec 23): one saved connection per row. `settings` is
+ * the profile's settings JSON ENCRYPTED with AES-GCM (`infra/eh/secret-box.ts`); every other
+ * column is plain. `kind` namespaces profiles (`provider` today, connectors later).
+ */
+export const configProfiles = sqliteTable(
+  'config_profiles',
+  {
+    kind: text('kind').notNull(),
+    id: text('id').notNull(),
+    definitionId: text('definition_id').notNull(),
+    label: text('label').notNull(),
+    /** `v1:<keyId>:<iv>:<ciphertext>`: never plaintext. */
+    settings: text('settings').notNull(),
+    models: json<unknown>('models'),
+    enabled: integer('enabled').notNull().default(1),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.kind, t.id] })],
+)
+
+/** Raw public model catalogs (models.dev, OpenRouter) cached between runs (`CatalogCache`). */
+export const catalogCache = sqliteTable('catalog_cache', {
+  key: text('key').primaryKey(),
+  data: text('data').notNull(),
+  fetchedAt: integer('fetched_at').notNull(),
+})

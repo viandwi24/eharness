@@ -2654,6 +2654,416 @@ export interface paths {
         };
         trace?: never;
     };
+    "/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Provider definitions and their saved profiles
+         * @description Each definition carries the fields of its settings form (and the JSON Schema they came from), so a client renders the form without knowing the provider. Profiles are redacted: a secret is `{ set, hint }`. Profiles with `source: "env"` come from environment variables and are read-only.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Definitions and profiles */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Providers"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a provider profile
+         * @description Several profiles of the same provider can exist (for example two OpenRouter keys). Secrets are encrypted at rest and never returned.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProviderProfileCreate"];
+                };
+            };
+            responses: {
+                /** @description The new profile, redacted */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderProfile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description A profile with this id exists */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/profiles/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a provider profile
+         * @description Refused (409) for environment profiles and while an agent or the workspace default still uses the profile.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Deleted */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Read-only, or still in use */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit a provider profile
+         * @description Keep-secret semantics: a secret omitted, `""` or `{ "keep": true }` keeps the stored value. Environment profiles cannot be edited (409).
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProviderProfilePatch"];
+                };
+            };
+            responses: {
+                /** @description The profile, redacted */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderProfile"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Read-only environment profile */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/providers/profiles/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test the connection of a profile
+         * @description Never fails with an error status for a bad key: `ok: false` carries the reason (secrets scrubbed).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Provider profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Result */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderTestResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/providers/profiles/{id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Models of a profile with their metadata
+         * @description Merged from the profile policy (`extra`), the live listing of the provider and the public catalogs (OpenRouter, models.dev): context window, prices per 1M tokens, reasoning and tool support. Works without a key from the cached catalog.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Ask the provider again instead of using the 5 minute cached list. */
+                    refresh?: "true" | "false";
+                };
+                header?: never;
+                path: {
+                    /** @description Provider profile id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Models */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProviderModelList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown profile */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/routines": {
         parameters: {
             query?: never;
@@ -3564,8 +3974,10 @@ export interface components {
             color: string;
             description: string;
             instructions: string;
-            /** @description Model id; null = the workspace default. */
+            /** @description Model id; null = the workspace default model. */
             model: string | null;
+            /** @description Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile. */
+            modelProfile: string | null;
             tools: components["schemas"]["ToolName"][];
             skills: string[];
             mcp: string[];
@@ -3604,7 +4016,10 @@ export interface components {
             color?: string;
             description?: string;
             instructions: string;
+            /** @description Model id. A legacy `profile:model` string is split when the prefix names a profile; a plain id follows `modelProfile`, else the default profile. */
             model?: string | null;
+            /** @description Provider profile id from `GET /providers`; null = the default profile. */
+            modelProfile?: string | null;
             tools?: components["schemas"]["ToolName"][];
             skills?: string[];
             mcp?: string[];
@@ -3642,7 +4057,10 @@ export interface components {
             color?: string;
             description?: string;
             instructions?: string;
+            /** @description Model id. A legacy `profile:model` string is split when the prefix names a profile; a plain id follows `modelProfile`, else the default profile. */
             model?: string | null;
+            /** @description Provider profile id from `GET /providers`; null = the default profile. */
+            modelProfile?: string | null;
             tools?: components["schemas"]["ToolName"][];
             skills?: string[];
             mcp?: string[];
@@ -3762,6 +4180,8 @@ export interface components {
             /** @description The model of the agent; no pricing = unknown to the catalog. */
             model: {
                 id: string;
+                /** @description The provider profile the model is reached through. */
+                profileId?: string;
                 contextWindow?: number;
                 maxOutputTokens?: number;
                 /** @description USD per 1M tokens, from the model catalog. */
@@ -3955,7 +4375,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "turn-started" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call";
+            type: "message-added" | "turn-started" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -4206,8 +4626,10 @@ export interface components {
             budgetUsd: number | null;
             /** @description Children the lead runs at once (`subagents` `maxConcurrent`). */
             spawnCap: number;
-            /** @description Model id of agents without their own; null = the server default. */
+            /** @description Model id of agents without their own; null = the default model of the default profile. */
             defaultModel: string | null;
+            /** @description Provider profile of agents without their own pick; null = the server default (the env profile, else the first enabled one). */
+            defaultProfile: string | null;
             /** @description 0 until a person changed something. */
             updatedAt: number;
         };
@@ -4219,7 +4641,177 @@ export interface components {
             defaultPermissionMode?: "default" | "manual" | "auto" | "bypassPermissions" | "acceptEdits" | "plan" | "dontAsk";
             budgetUsd?: number | null;
             spawnCap?: number;
+            /** @description A model id, or the legacy `profile:model` (split when the prefix names a profile). */
             defaultModel?: string | null;
+            defaultProfile?: string | null;
+        };
+        Providers: {
+            providers: components["schemas"]["ProviderDefinition"][];
+            profiles: components["schemas"]["ProviderProfile"][];
+        };
+        ProviderDefinition: {
+            /** @example openrouter */
+            id: string;
+            /** @example OpenRouter */
+            label: string;
+            /** @description Documentation URL. */
+            doc?: string;
+            defaultModel?: string;
+            /** @description The settings form, in display order. Render it with any form component. */
+            fields: components["schemas"]["ProviderField"][];
+            /** @description JSON Schema of the settings (input shape) the fields were derived from. */
+            jsonSchema: {
+                [key: string]: unknown;
+            };
+            /** @description Settings field -> environment variable that creates a read-only `env` profile. */
+            envMap: {
+                [key: string]: string;
+            };
+            canListModels: boolean;
+        };
+        ProviderField: {
+            /** @description Dotted path in the settings object. */
+            path: string;
+            /** @enum {string} */
+            kind: "string" | "number" | "integer" | "boolean" | "enum" | "record" | "array" | "json";
+            /**
+             * @description Suggested input; absent = the default of the kind.
+             * @enum {string}
+             */
+            widget?: "password" | "textarea" | "keyvalue" | "radio" | "select";
+            label: string;
+            description?: string;
+            required: boolean;
+            /** @description The value is a secret: shown as `{ set, hint }`, kept when an edit omits it, sent as plain text only when changed. */
+            secret: boolean;
+            /** @description A `keyvalue` field whose values are secrets (header values). */
+            secretValues: boolean;
+            options?: {
+                value: string | number | boolean;
+                label: string;
+            }[];
+            default?: unknown;
+            /**
+             * @description Where the field goes in the form; `advanced` is collapsed by default.
+             * @enum {string}
+             */
+            group: "auth" | "endpoint" | "advanced";
+            /** @description Show the field only while another field has this value. */
+            showWhen?: {
+                field: string;
+                equals?: unknown;
+                in?: unknown[];
+            };
+            placeholder?: string;
+            /** @description Environment variable that can supply it. */
+            envHint?: string;
+            format?: string;
+            min?: number;
+            max?: number;
+        };
+        ProviderProfile: {
+            /** @example openrouter-2 */
+            id: string;
+            /** @description The provider definition (`GET /providers`). */
+            definitionId: string;
+            label: string;
+            enabled: boolean;
+            /**
+             * @description `env`: created from environment variables, read-only. `store`: saved in the database, secrets encrypted.
+             * @enum {string}
+             */
+            source: "env" | "store";
+            /**
+             * @description The settings with every secret replaced by `{ set, hint? }` (headers: one per key).
+             * @example {
+             *       "apiKey": {
+             *         "set": true,
+             *         "hint": "…a1b2"
+             *       }
+             *     }
+             */
+            settings: {
+                [key: string]: unknown;
+            };
+            models?: components["schemas"]["ProfileModels"];
+            updatedAt: number;
+            /** @description The profile agents without their own pick use. */
+            isDefault: boolean;
+        };
+        /** @description Model policy of a profile. `allow` / `deny` entries may use `*`; `extra` adds models by hand (with `contextWindow`, `pricing`). */
+        ProfileModels: {
+            allow?: string[];
+            deny?: string[];
+            extra?: ({
+                id: string;
+                name?: string;
+            } & {
+                [key: string]: unknown;
+            })[];
+        };
+        ProviderProfileCreate: {
+            /** @description A definition id of `GET /providers`. */
+            providerId: string;
+            /** @description Profile id: letters, digits, `.`, `_`, `-`; no `:`. Default: the provider id, then `-2`, `-3`, ... */
+            id?: string;
+            label?: string;
+            /** @description Settings by the definition fields; secrets in plain text (stored encrypted). */
+            settings?: {
+                [key: string]: unknown;
+            };
+            enabled?: boolean;
+        };
+        ProviderProfilePatch: {
+            label?: string;
+            /** @description A patch: omitted fields keep their value. A secret given as `""` or `{ "keep": true }` keeps the stored one; `null` removes a field; a header key sent as `""` / `{ keep: true }` keeps its stored value and keys left out are dropped. */
+            settings?: {
+                [key: string]: unknown;
+            };
+            enabled?: boolean;
+            /** @description `null` clears the policy. */
+            models?: {
+                allow?: string[];
+                deny?: string[];
+                extra?: ({
+                    id: string;
+                    name?: string;
+                } & {
+                    [key: string]: unknown;
+                })[];
+            } | null;
+        };
+        ProviderTestResult: {
+            ok: boolean;
+            /** @description Never contains a secret. */
+            message?: string;
+            latencyMs?: number;
+        };
+        ProviderModelList: {
+            models: components["schemas"]["ProviderModel"][];
+        };
+        ProviderModel: {
+            /** @example anthropic/claude-sonnet-5.5 */
+            id: string;
+            name: string;
+            description?: string;
+            /** @description Tokens. */
+            contextWindow?: number;
+            maxOutputTokens?: number;
+            /** @description USD per 1M tokens. */
+            pricing?: {
+                input: number;
+                output: number;
+                cacheRead?: number;
+                cacheWrite?: number;
+            };
+            reasoning?: boolean;
+            /** @description Supports tool calling. */
+            tools?: boolean;
+            /**
+             * @description Where the entry comes from: added by hand, the provider API, or the public catalog.
+             * @enum {string}
+             */
+            source: "extra" | "live" | "catalog";
         };
         RoutineList: {
             routines: components["schemas"]["Routine"][];

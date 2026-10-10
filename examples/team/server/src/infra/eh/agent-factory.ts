@@ -15,7 +15,9 @@
  * of resumed turns find their way back. All instances build the same plugin set, which waits
  * and reconcile need.
  */
+
 import type { Database } from 'bun:sqlite'
+import type { LanguageModel } from 'ai'
 import {
   defineHarnessAgent,
   type HarnessAgent,
@@ -124,7 +126,7 @@ export interface AgentFactoryDeps {
    */
   settings?: () => Pick<
     WorkspaceSettings,
-    'spawnCap' | 'defaultModel' | 'defaultPermissionMode' | 'budgetUsd'
+    'spawnCap' | 'defaultModel' | 'defaultProfile' | 'defaultPermissionMode' | 'budgetUsd'
   > & { rev: number }
   /** Modes people picked per session (`domain/modes.ts`); absent = nobody can pick one. */
   sessionModes?: Pick<SessionModeStore, 'get'>
@@ -184,7 +186,7 @@ export interface AgentFactory {
 }
 
 /** A model id and its catalog entry (no entry fields = unknown to the catalog). */
-export type ModelInfoOf = { id: string } & ModelInfo
+export type ModelInfoOf = { id: string; profileId?: string } & ModelInfo
 
 export interface SessionModes {
   /** Auto mode needs a classifier model; without one it is not offered. */
@@ -230,6 +232,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     ...(deps.lockLeaseMs !== undefined ? { leaseMs: deps.lockLeaseMs } : {}),
   })
   const workspaceId = deps.workspaceId ?? 'default'
+  // an explicit catalog wins (tests); else the one of the provider manager (live profiles)
+  const catalog = deps.catalog ?? deps.models.catalog
   const ledger = sqliteBudgetLedger(sqlite)
   const fixed = {
     childMaxTurns: deps.limits?.childMaxTurns ?? 25,
@@ -240,6 +244,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     deps.settings?.() ?? {
       spawnCap: deps.limits?.spawnCap ?? 4,
       defaultModel: null,
+      defaultProfile: null,
       defaultPermissionMode: 'default' as const,
       budgetUsd: deps.budgetUsd ?? null,
       rev: 0,
@@ -529,12 +534,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
     const agent = defineHarnessAgent({
       id: def.slug,
-      model: deps.models.resolve(def.model ?? settings.defaultModel),
+      model: deps.models.resolve(...selectionOf(def, settings)),
       // the catalog knows the window of real models; 200k only for models it does not list
-      ...(modelInfoOf(def, settings.defaultModel).contextWindow === undefined
-        ? { contextWindow: 200_000 }
-        : {}),
-      ...(deps.catalog === undefined ? {} : { models: deps.catalog }),
+      ...(modelInfoOf(def, settings).contextWindow === undefined ? { contextWindow: 200_000 } : {}),
+      ...(catalog === undefined ? {} : { models: catalog }),
       instructions: [
         TEAM_PREAMBLE,
         ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
@@ -572,15 +575,44 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return agent
   }
 
-  function modelInfoOf(def: AgentDef, defaultModel: string | null): ModelInfoOf {
-    const id = def.model ?? defaultModel ?? deps.models.defaultModel
-    const info = lookupModel(deps.catalog, id)
-    return { id, ...(info ?? {}) }
+  /**
+   * The pick of an agent as `ModelConfig.resolve` takes it: the model id and the profile. An agent
+   * without a profile follows the workspace default profile, and without a model the workspace
+   * default model (only while the profile is the workspace's: a profile of its own has its own
+   * default model).
+   */
+  function selectionOf(
+    def: AgentDef,
+    settings: Pick<ReturnType<typeof currentSettings>, 'defaultModel' | 'defaultProfile'>,
+  ): [string | null, string | null] {
+    return [
+      def.model ?? (def.modelProfile === null ? settings.defaultModel : null),
+      def.modelProfile ?? settings.defaultProfile,
+    ]
+  }
+
+  function modelInfoOf(
+    def: AgentDef,
+    settings: Pick<ReturnType<typeof currentSettings>, 'defaultModel' | 'defaultProfile'>,
+  ): ModelInfoOf {
+    const sel = deps.models.effective?.(...selectionOf(def, settings))
+    if (sel !== undefined) {
+      let model: LanguageModel | undefined
+      try {
+        model = deps.models.resolve(...selectionOf(def, settings))
+      } catch {
+        model = undefined
+      }
+      const info = model === undefined ? undefined : lookupModel(catalog, model)
+      return { id: sel.modelId, profileId: sel.profileId, ...(info ?? {}) }
+    }
+    const id = def.model ?? settings.defaultModel ?? deps.models.defaultModel
+    return { id, ...(lookupModel(catalog, id) ?? {}) }
   }
 
   function factoryAgentFor(def: AgentDef): HarnessAgent {
     const settings = currentSettings()
-    const key = `${def.id}@${def.version}@${settings.rev}`
+    const key = `${def.id}@${def.version}@${settings.rev}@${deps.models.rev?.() ?? 0}`
     let agent = cache.get(key)
     if (agent === undefined) {
       // the workspace limit is a row of the shared ledger: applied by whoever builds first
@@ -612,7 +644,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       resumeAuto: (sessionId) => engines.get(sessionId)?.resumeAuto(),
     },
     agentFor: factoryAgentFor,
-    modelInfo: (def) => modelInfoOf(def, currentSettings().defaultModel),
+    modelInfo: (def) => modelInfoOf(def, currentSettings()),
     peek: (sessionId) => {
       const lead = deps.lead?.()
       const any = lead ?? deps.roster?.()[0]

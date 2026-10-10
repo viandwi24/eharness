@@ -43,6 +43,14 @@ is fixed (prompt-cache prefix): filesystem (library) -> memory -> todos -> web -
 ask -> subagents -> task index. MCP servers are the root `mcp` option. Static text goes in
 `instructions`; the date and the roster go in a turn reminder.
 
+**Providers and profiles.** `infra/eh/providers.ts` wires the `eharness/providers` manager:
+OpenRouter and the AI Gateway as definitions, environment variables as read-only `env` profiles, and
+profiles saved from the web in `config_profiles` with the whole settings object AES-GCM encrypted
+(`secret-box.ts`, key from `TEAM_SECRET_KEY`). An agent's model is `{ modelProfile, model }`; a plain
+model id (old rows) means the default profile. The manager's `catalog()` feeds cost and context window
+into the agent. A change appends `providers-changed`; other instances tail the feed and reload.
+The public catalogs are cached in `catalog_cache`.
+
 **DM sessions and task sessions.** Each agent has one DM session `dm:<agentId>`. Delegated work
 runs in a **child session** (`<leadSession>:agent:<toolCallId>`), so a task has its own history and
 its approvals do not block the DM. Routines run in the agent's DM or in their own session
@@ -145,6 +153,6 @@ A boot and periodic `reconcile()` re-reads waits and task rows that never reache
 - Opening a lead session reconciles parked waits, so a list of approvals can resume a parked lead
   (a model call): intended healing, but reads are not strictly free there.
 - The spawn cap counts live delegations; there is no per-day or per-turn limit besides the budget.
-- No web search provider is configured: the `web_search` tool errors until you wire one.
+- `web_search` needs an OpenRouter or AI Gateway profile (it uses the provider's own search); other providers have none.
 - MCP: no stdio, no OAuth flow (static headers only), URLs are not checked against private
   networks (SSRF) because the single user is trusted: add an allow list before multi-user use.

@@ -14,7 +14,12 @@ export const SettingsSchema = z
       description: 'Children the lead runs at once (`subagents` `maxConcurrent`).',
     }),
     defaultModel: z.string().nullable().openapi({
-      description: 'Model id of agents without their own; null = the server default.',
+      description:
+        'Model id of agents without their own; null = the default model of the default profile.',
+    }),
+    defaultProfile: z.string().nullable().openapi({
+      description:
+        'Provider profile of agents without their own pick; null = the server default (the env profile, else the first enabled one).',
     }),
     updatedAt: z.number().int().openapi({ description: '0 until a person changed something.' }),
   })
@@ -28,6 +33,10 @@ export const SettingsPatchSchema = z
     }),
     budgetUsd: z.number().positive().nullable().optional(),
     spawnCap: z.number().int().min(1).max(32).optional(),
-    defaultModel: z.string().min(1).max(200).nullable().optional(),
+    defaultModel: z.string().min(1).max(200).nullable().optional().openapi({
+      description:
+        'A model id, or the legacy `profile:model` (split when the prefix names a profile).',
+    }),
+    defaultProfile: z.string().min(1).max(64).nullable().optional(),
   })
   .openapi('SettingsPatch')

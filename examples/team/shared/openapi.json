@@ -31,6 +31,10 @@
       "description": "Workspace settings read by the agent factory."
     },
     {
+      "name": "providers",
+      "description": "Model providers: definitions with their form fields, saved profiles (secrets encrypted, never returned), connection tests and model lists with prices and context windows."
+    },
+    {
       "name": "routines",
       "description": "Scheduled prompts per agent (multi-instance safe, on the durable inbox)."
     },
@@ -287,7 +291,14 @@
               "string",
               "null"
             ],
-            "description": "Model id; null = the workspace default."
+            "description": "Model id; null = the workspace default model."
+          },
+          "modelProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile."
           },
           "tools": {
             "type": "array",
@@ -356,6 +367,7 @@
           "description",
           "instructions",
           "model",
+          "modelProfile",
           "tools",
           "skills",
           "mcp",
@@ -436,7 +448,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Model id. A legacy `profile:model` string is split when the prefix names a profile; a plain id follows `modelProfile`, else the default profile."
+          },
+          "modelProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider profile id from `GET /providers`; null = the default profile."
           },
           "tools": {
             "type": "array",
@@ -588,7 +608,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Model id. A legacy `profile:model` string is split when the prefix names a profile; a plain id follows `modelProfile`, else the default profile."
+          },
+          "modelProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider profile id from `GET /providers`; null = the default profile."
           },
           "tools": {
             "type": "array",
@@ -990,6 +1018,10 @@
             "properties": {
               "id": {
                 "type": "string"
+              },
+              "profileId": {
+                "type": "string",
+                "description": "The provider profile the model is reached through."
               },
               "contextWindow": {
                 "type": "number"
@@ -1685,7 +1717,8 @@
               "routine-changed",
               "settings-changed",
               "mode-changed",
-              "model-call"
+              "model-call",
+              "providers-changed"
             ]
           },
           "agentId": {
@@ -2679,7 +2712,14 @@
               "string",
               "null"
             ],
-            "description": "Model id of agents without their own; null = the server default."
+            "description": "Model id of agents without their own; null = the default model of the default profile."
+          },
+          "defaultProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Provider profile of agents without their own pick; null = the server default (the env profile, else the first enabled one)."
           },
           "updatedAt": {
             "type": "integer",
@@ -2691,6 +2731,7 @@
           "budgetUsd",
           "spawnCap",
           "defaultModel",
+          "defaultProfile",
           "updatedAt"
         ]
       },
@@ -2728,9 +2769,499 @@
               "null"
             ],
             "minLength": 1,
-            "maxLength": 200
+            "maxLength": 200,
+            "description": "A model id, or the legacy `profile:model` (split when the prefix names a profile)."
+          },
+          "defaultProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 64
           }
         }
+      },
+      "Providers": {
+        "type": "object",
+        "properties": {
+          "providers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderDefinition"
+            }
+          },
+          "profiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderProfile"
+            }
+          }
+        },
+        "required": [
+          "providers",
+          "profiles"
+        ]
+      },
+      "ProviderDefinition": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "openrouter"
+          },
+          "label": {
+            "type": "string",
+            "example": "OpenRouter"
+          },
+          "doc": {
+            "type": "string",
+            "description": "Documentation URL."
+          },
+          "defaultModel": {
+            "type": "string"
+          },
+          "fields": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderField"
+            },
+            "description": "The settings form, in display order. Render it with any form component."
+          },
+          "jsonSchema": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "JSON Schema of the settings (input shape) the fields were derived from."
+          },
+          "envMap": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Settings field -> environment variable that creates a read-only `env` profile."
+          },
+          "canListModels": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "fields",
+          "jsonSchema",
+          "envMap",
+          "canListModels"
+        ]
+      },
+      "ProviderField": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Dotted path in the settings object."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "string",
+              "number",
+              "integer",
+              "boolean",
+              "enum",
+              "record",
+              "array",
+              "json"
+            ]
+          },
+          "widget": {
+            "type": "string",
+            "enum": [
+              "password",
+              "textarea",
+              "keyvalue",
+              "radio",
+              "select"
+            ],
+            "description": "Suggested input; absent = the default of the kind."
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "secret": {
+            "type": "boolean",
+            "description": "The value is a secret: shown as `{ set, hint }`, kept when an edit omits it, sent as plain text only when changed."
+          },
+          "secretValues": {
+            "type": "boolean",
+            "description": "A `keyvalue` field whose values are secrets (header values)."
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "value": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "boolean"
+                    }
+                  ]
+                },
+                "label": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value",
+                "label"
+              ]
+            }
+          },
+          "default": {},
+          "group": {
+            "type": "string",
+            "enum": [
+              "auth",
+              "endpoint",
+              "advanced"
+            ],
+            "description": "Where the field goes in the form; `advanced` is collapsed by default."
+          },
+          "showWhen": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string"
+              },
+              "equals": {},
+              "in": {
+                "type": "array",
+                "items": {}
+              }
+            },
+            "required": [
+              "field"
+            ],
+            "description": "Show the field only while another field has this value."
+          },
+          "placeholder": {
+            "type": "string"
+          },
+          "envHint": {
+            "type": "string",
+            "description": "Environment variable that can supply it."
+          },
+          "format": {
+            "type": "string"
+          },
+          "min": {
+            "type": "number"
+          },
+          "max": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "path",
+          "kind",
+          "label",
+          "required",
+          "secret",
+          "secretValues",
+          "group"
+        ]
+      },
+      "ProviderProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "openrouter-2"
+          },
+          "definitionId": {
+            "type": "string",
+            "description": "The provider definition (`GET /providers`)."
+          },
+          "label": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "env",
+              "store"
+            ],
+            "description": "`env`: created from environment variables, read-only. `store`: saved in the database, secrets encrypted."
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "The settings with every secret replaced by `{ set, hint? }` (headers: one per key).",
+            "example": {
+              "apiKey": {
+                "set": true,
+                "hint": "…a1b2"
+              }
+            }
+          },
+          "models": {
+            "$ref": "#/components/schemas/ProfileModels"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "isDefault": {
+            "type": "boolean",
+            "description": "The profile agents without their own pick use."
+          }
+        },
+        "required": [
+          "id",
+          "definitionId",
+          "label",
+          "enabled",
+          "source",
+          "settings",
+          "updatedAt",
+          "isDefault"
+        ]
+      },
+      "ProfileModels": {
+        "type": "object",
+        "properties": {
+          "allow": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deny": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "extra": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "additionalProperties": {}
+            }
+          }
+        },
+        "description": "Model policy of a profile. `allow` / `deny` entries may use `*`; `extra` adds models by hand (with `contextWindow`, `pricing`)."
+      },
+      "ProviderProfileCreate": {
+        "type": "object",
+        "properties": {
+          "providerId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "A definition id of `GET /providers`."
+          },
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Profile id: letters, digits, `.`, `_`, `-`; no `:`. Default: the provider id, then `-2`, `-3`, ..."
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "Settings by the definition fields; secrets in plain text (stored encrypted)."
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "providerId"
+        ]
+      },
+      "ProviderProfilePatch": {
+        "type": "object",
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "settings": {
+            "type": "object",
+            "additionalProperties": {},
+            "description": "A patch: omitted fields keep their value. A secret given as `\"\"` or `{ \"keep\": true }` keeps the stored one; `null` removes a field; a header key sent as `\"\"` / `{ keep: true }` keeps its stored value and keys left out are dropped."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "models": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "allow": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "deny": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "extra": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id"
+                  ],
+                  "additionalProperties": {}
+                }
+              }
+            },
+            "description": "`null` clears the policy."
+          }
+        }
+      },
+      "ProviderTestResult": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string",
+            "description": "Never contains a secret."
+          },
+          "latencyMs": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "ProviderModelList": {
+        "type": "object",
+        "properties": {
+          "models": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderModel"
+            }
+          }
+        },
+        "required": [
+          "models"
+        ]
+      },
+      "ProviderModel": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "example": "anthropic/claude-sonnet-5.5"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "contextWindow": {
+            "type": "number",
+            "description": "Tokens."
+          },
+          "maxOutputTokens": {
+            "type": "number"
+          },
+          "pricing": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number"
+              },
+              "output": {
+                "type": "number"
+              },
+              "cacheRead": {
+                "type": "number"
+              },
+              "cacheWrite": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "input",
+              "output"
+            ],
+            "description": "USD per 1M tokens."
+          },
+          "reasoning": {
+            "type": "boolean"
+          },
+          "tools": {
+            "type": "boolean",
+            "description": "Supports tool calling."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "extra",
+              "live",
+              "catalog"
+            ],
+            "description": "Where the entry comes from: added by hand, the provider API, or the public catalog."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "source"
+        ]
       },
       "RoutineList": {
         "type": "object",
@@ -6479,6 +7010,433 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Provider definitions and their saved profiles",
+        "description": "Each definition carries the fields of its settings form (and the JSON Schema they came from), so a client renders the form without knowing the provider. Profiles are redacted: a secret is `{ set, hint }`. Profiles with `source: \"env\"` come from environment variables and are read-only.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Definitions and profiles",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Providers"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/profiles": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Create a provider profile",
+        "description": "Several profiles of the same provider can exist (for example two OpenRouter keys). Secrets are encrypted at rest and never returned.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderProfileCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new profile, redacted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A profile with this id exists",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/profiles/{id}": {
+      "patch": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Edit a provider profile",
+        "description": "Keep-secret semantics: a secret omitted, `\"\"` or `{ \"keep\": true }` keeps the stored value. Environment profiles cannot be edited (409).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "openrouter",
+              "description": "Provider profile id."
+            },
+            "required": true,
+            "description": "Provider profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderProfilePatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The profile, redacted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderProfile"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Read-only environment profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Delete a provider profile",
+        "description": "Refused (409) for environment profiles and while an agent or the workspace default still uses the profile.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "openrouter",
+              "description": "Provider profile id."
+            },
+            "required": true,
+            "description": "Provider profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Read-only, or still in use",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/profiles/{id}/test": {
+      "post": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Test the connection of a profile",
+        "description": "Never fails with an error status for a bad key: `ok: false` carries the reason (secrets scrubbed).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "openrouter",
+              "description": "Provider profile id."
+            },
+            "required": true,
+            "description": "Provider profile id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderTestResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/providers/profiles/{id}/models": {
+      "get": {
+        "tags": [
+          "providers"
+        ],
+        "summary": "Models of a profile with their metadata",
+        "description": "Merged from the profile policy (`extra`), the live listing of the provider and the public catalogs (OpenRouter, models.dev): context window, prices per 1M tokens, reasoning and tool support. Works without a key from the cached catalog.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "openrouter",
+              "description": "Provider profile id."
+            },
+            "required": true,
+            "description": "Provider profile id.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Ask the provider again instead of using the 5 minute cached list."
+            },
+            "required": false,
+            "description": "Ask the provider again instead of using the 5 minute cached list.",
+            "name": "refresh",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderModelList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown profile",
             "content": {
               "application/json": {
                 "schema": {

@@ -88,6 +88,10 @@ export const ChatStatsSchema = z
     model: z
       .object({
         id: z.string(),
+        profileId: z
+          .string()
+          .optional()
+          .openapi({ description: 'The provider profile the model is reached through.' }),
         contextWindow: z.number().optional(),
         maxOutputTokens: z.number().optional(),
         pricing: z

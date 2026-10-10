@@ -8,11 +8,14 @@ import {
   fileSystemConformance,
   inboxAdapterConformance,
   messageAdapterConformance,
+  profileStoreConformance,
   stateAdapterConformance,
   streamLogConformance,
 } from 'eharness/testing'
 import { type Connection, openDatabase } from '../src/infra/db/client.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
+import { sqliteProfileStore } from '../src/infra/eh/profile-store.ts'
+import { createSecretBox, generateSecretKey, parseSecretKey } from '../src/infra/eh/secret-box.ts'
 import {
   setBudgetLimit,
   sqliteBudgetLedger,
@@ -99,3 +102,14 @@ describe('SessionLock (SQLite)', () => {
     await again()
   })
 })
+
+suite(
+  'ProfileStore conformance (SQLite, encrypted settings)',
+  // every case gets an empty store: a fresh database and a fresh key
+  profileStoreConformance(async () =>
+    sqliteProfileStore(
+      openDatabase(':memory:').sqlite,
+      await createSecretBox([parseSecretKey(generateSecretKey())]),
+    ),
+  ),
+)

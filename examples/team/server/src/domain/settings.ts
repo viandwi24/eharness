@@ -22,8 +22,10 @@ export interface WorkspaceSettings {
   budgetUsd: number | null
   /** Children the lead runs at once (the `subagents` `maxConcurrent`). */
   spawnCap: number
-  /** Model id of agents without their own; null = the server's configured default. */
+  /** Model id of agents without their own; null = the default profile's default model. */
   defaultModel: string | null
+  /** Provider profile of agents without their own; null = the server's default profile. */
+  defaultProfile: string | null
 }
 
 export const SPAWN_CAP_MAX = 32
@@ -57,5 +59,11 @@ export function checkSettingsPatch(patch: SettingsPatch): void {
     (patch.defaultModel.trim() === '' || patch.defaultModel.length > 200)
   ) {
     throw invalid('defaultModel must be 1-200 characters or null', 'INVALID_SETTINGS')
+  }
+  if (
+    patch.defaultProfile != null &&
+    (patch.defaultProfile.trim() === '' || patch.defaultProfile.length > 64)
+  ) {
+    throw invalid('defaultProfile must be 1-64 characters or null', 'INVALID_SETTINGS')
   }
 }

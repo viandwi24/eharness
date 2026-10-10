@@ -15,6 +15,7 @@ import { healthRoutes } from './routes/health.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
+import { providerRoutes } from './routes/providers.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { taskRoutes } from './routes/tasks.ts'
@@ -49,6 +50,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
     { name: 'library', description: 'Shared files: agent artifacts, uploads, version history.' },
     { name: 'memory', description: 'Workspace and per-agent memory files.' },
     { name: 'settings', description: 'Workspace settings read by the agent factory.' },
+    {
+      name: 'providers',
+      description:
+        'Model providers: definitions with their form fields, saved profiles (secrets encrypted, never returned), connection tests and model lists with prices and context windows.',
+    },
     {
       name: 'routines',
       description: 'Scheduled prompts per agent (multi-instance safe, on the durable inbox).',
@@ -170,6 +176,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', taskRoutes(options.deps))
   app.route('/', libraryRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
+  app.route('/', providerRoutes(options.deps))
   app.route('/', routineRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
 

@@ -4,11 +4,15 @@
  *   TEAM_DB     database file (default ./data/team.db; `:memory:` works)
  *   TEAM_TOKEN  bearer token; unset = open (localhost only, never expose such a server)
  *   PORT        default 4000
- *   OPENROUTER_API_KEY | AI_GATEWAY_API_KEY | TEAM_SCRIPTED_MODEL   model provider (see infra/eh/provider.ts)
- *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode (default: TEAM_MODEL; none with a scripted model)
+ *   OPENROUTER_API_KEY | AI_GATEWAY_API_KEY   read-only env provider profiles (more profiles are
+ *                     added in Settings > Providers and stored encrypted); TEAM_SCRIPTED_MODEL wins over all
+ *   TEAM_PROVIDER / TEAM_MODEL   default profile (openrouter | gateway) and its default model
+ *   TEAM_SECRET_KEY   32 bytes base64: encrypts provider secrets at rest (dev: a key file next to the DB)
+ *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
+ *   TEAM_SEARCH_MODEL   model of web_search, same format
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
- *   TEAM_OFFLINE      1 = never fetch the model catalog (cached in the TEAM_DB folder, refreshed every 24 h)
+ *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
  */
@@ -38,13 +42,18 @@ import { createChatService } from './infra/eh/chat-service.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
-import { loadModelCatalog } from './infra/eh/model-catalog.ts'
-import { createModelConfig, type ModelConfig } from './infra/eh/provider.ts'
+import {
+  type ModelConfig,
+  providerModelConfig,
+  scriptedModelConfigFromEnv,
+} from './infra/eh/provider.ts'
+import { createProviderService, type ProviderService } from './infra/eh/providers.ts'
 import {
   createRoutineService,
   type RoutineEngineConfig,
   type RoutineService,
 } from './infra/eh/routine-service.ts'
+import { lazySecretBox, type SealOpen, secretBoxFromEnv } from './infra/eh/secret-box.ts'
 import { setBudgetLimit } from './infra/eh/storage.ts'
 import {
   createTeamService,
@@ -61,8 +70,18 @@ export interface ServerConfig {
   seed?: boolean
   /** Model config override (tests); default from the environment. */
   models?: ModelConfig
-  /** Context windows and prices of models; default none (unpriced, 200k window). */
+  /** Context windows and prices of models; default: the catalog of the provider manager. */
   catalog?: ModelCatalog
+  /** Environment of the provider profiles (default `process.env`); tests pass `{}`. */
+  env?: Record<string, string | undefined>
+  /** Key of the provider secrets (default: `TEAM_SECRET_KEY`, else a dev key file next to the DB). */
+  secretBox?: SealOpen
+  /** Never fetch the public model catalogs (default: `TEAM_OFFLINE=1`). */
+  offline?: boolean
+  /** The fetch of model lists, connection tests and catalogs (default: global). */
+  fetch?: typeof fetch
+  /** Poll interval of the provider-change feed (ms, default 1000; 0 = off). */
+  providersPollMs?: number
   /** Auto mode classifier override (tests); default: the model of `models.classifierModel`. */
   classifier?: AgentFactoryDeps['classifier']
   /** Timers of the stream log and inbox (tests shorten them). */
@@ -93,6 +112,10 @@ export interface Server {
   routines: RoutineService
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
   activityLog: ActivityLog
+  /** The provider manager behind `GET /providers` and the model port. */
+  providers: ProviderService
+  /** Resolves when the provider profiles and catalogs are loaded (await before serving chats). */
+  providersReady: Promise<void>
   /** Resolves when the boot repair pass finished. */
   ready: Promise<void>
   /** Run the repair pass now (idempotent; every instance may run it). */
@@ -106,27 +129,34 @@ export function compose(config: ServerConfig): Server {
   const conn = openDatabase(config.dbFile)
   const agents = drizzleAgentRepo(conn.db)
 
-  let models = config.models
-  if (models === undefined) {
-    try {
-      models = createModelConfig()
-    } catch (error) {
-      console.warn(`warning: ${error instanceof Error ? error.message : String(error)}`)
-      console.warn('warning: chats are unavailable until a model provider is configured')
-      const message = error instanceof Error ? error.message : String(error)
-      models = {
-        provider: 'scripted',
-        defaultModel: 'none',
-        resolve: () => {
-          throw new Error(message)
-        },
-      }
-    }
-  }
   const tasks = sqliteTaskStore(conn.sqlite)
   const events = {
     append: (e: Parameters<typeof tasks.appendEvent>[0]) => tasks.appendEvent(e, Date.now()),
   }
+  // model providers: env profiles + encrypted profiles from the web; TEAM_SCRIPTED_MODEL wins
+  const providers = createProviderService({
+    sqlite: conn.sqlite,
+    box:
+      config.secretBox ??
+      lazySecretBox(() =>
+        secretBoxFromEnv({
+          ...(config.env === undefined ? {} : { env: config.env }),
+          dataDir: config.dbFile === ':memory:' ? undefined : dirname(config.dbFile),
+        }),
+      ),
+    ...(config.env === undefined ? {} : { env: config.env }),
+    ...(config.offline === undefined ? {} : { offline: config.offline }),
+    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+    events,
+    feed: tasks,
+    ...(config.providersPollMs === undefined ? {} : { pollMs: config.providersPollMs }),
+  })
+  const models: ModelConfig =
+    config.models ?? scriptedModelConfigFromEnv(config.env) ?? providerModelConfig(providers)
+  // profiles and catalogs load in the background; `resolve` needs them (main awaits this)
+  const providersReady = providers.ready()
+  providersReady.catch(() => undefined)
+
   // every change of a library file (agents, uploads, people) reaches the event feed
   const onFileChange = (c: LibraryChange): void => {
     events.append({
@@ -161,6 +191,7 @@ export function compose(config: ServerConfig): Server {
       budgetUsd: config.budgetUsd ?? null,
       spawnCap: config.limits?.spawnCap ?? 4,
       defaultModel: null,
+      defaultProfile: null,
     },
     // the limit is a row of the shared ledger: apply it now; other instances read the row
     onChange: (s) => setBudgetLimit(conn.sqlite, `workspace:${WORKSPACE_ID}`, s.budgetUsd),
@@ -230,6 +261,7 @@ export function compose(config: ServerConfig): Server {
     team,
     library: sqliteLibraryStore(conn.sqlite, { onChange: onFileChange }),
     settings,
+    providers,
     modes: createModeService(factory, {
       store: sessionModes,
       workspaceDefault: () => settings.get().defaultPermissionMode,
@@ -269,7 +301,9 @@ export function compose(config: ServerConfig): Server {
       () => undefined,
       (error) => console.warn(`team: reconcile failed: ${String(error)}`),
     )
-  const ready = config.reconcile?.onBoot === false ? Promise.resolve() : quiet()
+  // the repair pass opens sessions, which needs the provider profiles to be loaded
+  const ready =
+    config.reconcile?.onBoot === false ? Promise.resolve() : providersReady.then(quiet, quiet)
   const everyMs = config.reconcile?.everyMs ?? 60_000
   const timer = everyMs > 0 ? setInterval(() => void quiet(), everyMs) : undefined
   timer?.unref()
@@ -284,6 +318,8 @@ export function compose(config: ServerConfig): Server {
     team,
     routines,
     activityLog,
+    providers,
+    providersReady,
     ready,
     reconcile,
     async close() {
@@ -292,6 +328,8 @@ export function compose(config: ServerConfig): Server {
       await ready
       await repairing?.catch(() => undefined)
       await factory.close()
+      providers.close()
+      await providersReady.catch(() => undefined)
       conn.close()
     },
   }
@@ -305,19 +343,9 @@ if (import.meta.main) {
   const logRows = Number(process.env.TEAM_LOG_MAX_ROWS)
   const logDays = Number(process.env.TEAM_LOG_RETENTION_DAYS)
   const dbFile = process.env.TEAM_DB ?? './data/team.db'
-  // prices and context windows: cached next to the database, never fatal (offline = no catalog)
-  let catalog: ModelCatalog | undefined
-  try {
-    const provider = createModelConfig().provider
-    const dataDir = dbFile === ':memory:' ? undefined : dirname(dbFile)
-    if (dataDir !== undefined) catalog = (await loadModelCatalog(provider, dataDir)).catalog
-  } catch {
-    catalog = undefined
-  }
   const server = compose({
     dbFile,
     token,
-    ...(catalog === undefined ? {} : { catalog }),
     ...(Number.isFinite(budget) && budget > 0 ? { budgetUsd: budget } : {}),
     ...(Number.isFinite(spawnCap) && spawnCap > 0 ? { limits: { spawnCap } } : {}),
     logs: {
@@ -328,6 +356,15 @@ if (import.meta.main) {
       ? { routines: { tickMs } }
       : {}),
   })
+  try {
+    // profiles (decrypting them needs a valid TEAM_SECRET_KEY) and catalogs
+    await server.providersReady
+  } catch (error) {
+    console.error(
+      `provider setup failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    process.exit(1)
+  }
   const port = Number(process.env.PORT ?? 4000)
   const http = Bun.serve({ port, fetch: server.app.fetch })
   console.log(

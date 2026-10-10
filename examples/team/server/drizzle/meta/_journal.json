@@ -57,6 +57,13 @@
       "when": 1791630300708,
       "tag": "0007_graceful_terror",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1791645126725,
+      "tag": "0008_black_scarecrow",
+      "breakpoints": true
     }
   ]
 }

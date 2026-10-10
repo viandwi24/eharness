@@ -13,6 +13,7 @@ export const EVENT_TYPES = [
   'settings-changed',
   'mode-changed',
   'model-call',
+  'providers-changed',
 ] as const
 export type EventType = (typeof EVENT_TYPES)[number]
 

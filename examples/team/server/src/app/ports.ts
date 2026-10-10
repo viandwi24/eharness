@@ -11,6 +11,14 @@ import type {
   ModelCallStats,
 } from '../domain/model-calls.ts'
 import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
+import type {
+  ModelView,
+  ProfileCreate,
+  ProfilePatch,
+  ProfileView,
+  ProviderDefinitionView,
+  TestResultView,
+} from '../domain/providers.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskStatus } from '../domain/tasks.ts'
@@ -61,6 +69,8 @@ export interface ChatStats {
   /** The model of the agent and what the catalog knows of it (prices per 1M tokens). */
   model: {
     id: string
+    /** The provider profile the model is reached through. */
+    profileId?: string
     contextWindow?: number
     maxOutputTokens?: number
     pricing?: { input: number; output: number; cacheRead?: number; cacheWrite?: number }
@@ -346,6 +356,22 @@ export interface RoutineEngine {
   runNow(routine: Routine): Promise<RoutineRun>
 }
 
+/**
+ * Model providers and their saved profiles (`infra/eh/providers.ts` over `eharness/providers`).
+ * Secrets never leave it: every view is redacted.
+ */
+export interface ProvidersPort {
+  /** Provider definitions (form fields, JSON Schema) and the profiles, redacted. */
+  describe(): Promise<{ providers: ProviderDefinitionView[]; profiles: ProfileView[] }>
+  /** Ids of the profiles known now (synchronous snapshot, for validating picks). */
+  profileIds(): string[]
+  create(input: ProfileCreate): Promise<ProfileView>
+  update(id: string, patch: ProfilePatch): Promise<ProfileView>
+  remove(id: string): Promise<void>
+  test(id: string): Promise<TestResultView>
+  models(id: string, options: { refresh: boolean }): Promise<ModelView[]>
+}
+
 export interface Deps {
   agents: AgentRepo
   chat: ChatPort
@@ -354,6 +380,7 @@ export interface Deps {
   team: TeamPort
   library: LibraryStore
   settings: SettingsStore
+  providers: ProvidersPort
   modes: ModePort
   routines: RoutineStore
   schedule: ScheduleCalc

@@ -36,9 +36,10 @@ export function createChatService(
     }) as HarnessSession
 
   const modelOf = (def: AgentDef): ChatStats['model'] => {
-    const { id, contextWindow, maxOutputTokens, pricing } = factory.modelInfo(def)
+    const { id, profileId, contextWindow, maxOutputTokens, pricing } = factory.modelInfo(def)
     return {
       id,
+      ...(profileId === undefined ? {} : { profileId }),
       ...(contextWindow === undefined ? {} : { contextWindow }),
       ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
       ...(pricing === undefined

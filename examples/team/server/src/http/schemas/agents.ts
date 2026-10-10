@@ -66,7 +66,11 @@ export const AgentSchema = z
     model: z
       .string()
       .nullable()
-      .openapi({ description: 'Model id; null = the workspace default.' }),
+      .openapi({ description: 'Model id; null = the workspace default model.' }),
+    modelProfile: z.string().nullable().openapi({
+      description:
+        'Provider profile the model is reached through (with `model` it is the `{ profileId, modelId }` pick); null = the default profile.',
+    }),
     tools: z.array(ToolName),
     skills: z.array(z.string()),
     mcp: z.array(z.string()),
@@ -94,7 +98,13 @@ export const AgentCreateSchema = z
     color: z.string().optional(),
     description: z.string().max(280).optional(),
     instructions: z.string().min(1),
-    model: z.string().nullable().optional(),
+    model: z.string().nullable().optional().openapi({
+      description:
+        'Model id. A legacy `profile:model` string is split when the prefix names a profile; a plain id follows `modelProfile`, else the default profile.',
+    }),
+    modelProfile: z.string().nullable().optional().openapi({
+      description: 'Provider profile id from `GET /providers`; null = the default profile.',
+    }),
     tools: z.array(ToolName).optional(),
     skills: z.array(z.string()).optional(),
     mcp: z.array(z.string()).optional(),

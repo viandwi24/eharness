@@ -160,8 +160,10 @@ export interface AgentDef {
   color: string
   description: string
   instructions: string
-  /** Model id (provider-specific); null = the workspace default. */
+  /** Model id (provider-specific); null = the workspace default model. */
   model: string | null
+  /** Provider profile the model comes from; null = the default profile (`{ profileId, modelId }`). */
+  modelProfile: string | null
   tools: ToolName[]
   skills: string[]
   mcp: string[]
@@ -186,6 +188,7 @@ export interface AgentDraft {
   description?: string | undefined
   instructions: string
   model?: string | null | undefined
+  modelProfile?: string | null | undefined
   tools?: string[] | undefined
   skills?: string[] | undefined
   mcp?: string[] | undefined
