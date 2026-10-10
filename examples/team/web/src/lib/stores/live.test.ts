@@ -77,7 +77,8 @@ describe('live store', () => {
 		live.handleEvent(ev('settings-changed', 'lead-id'));
 		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
 		live.handleEvent(ev('providers-changed', 'lead-id', { profileId: 'openrouter', action: 'put' }));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, settings: 1, modes: 1, chat: 0, providers: 1 });
+		live.handleEvent(ev('connectors-changed', 'lead-id', { instance: 'x' }));
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1 });
 		// a stored message moves the context size of the open chat
 		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant' }));
 		expect(live.state.revs.chat).toBe(1);

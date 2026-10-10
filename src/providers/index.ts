@@ -100,4 +100,10 @@ export type {
   ShowWhen,
   TestResult,
 } from './types.ts'
-export { plaintextVault, type VaultKeys, webCryptoVault } from './vault.ts'
+export {
+  type LegacyOpener,
+  plaintextVault,
+  type VaultKeys,
+  webCryptoVault,
+  withLegacyVault,
+} from './vault.ts'

@@ -32,6 +32,7 @@ defineConnector({
   instructions?: string,                                 // static block
   scopeDefaults?: { [scope]: { label?, defaultEnabled?, defaultModes? } },
   instances?: 'prefix' | 'single',
+  toolPrefix?: 'always' | 'multiple' | 'never',          // default 'multiple'
   activate?(ctx) => plugin | toolSource | McpSourceSpec | array | void,
   combine?(ctxs) => ...,                                 // one contribution for all connections
   test?(ctx) => { ok, message?, accountLabel?, capabilities? },
@@ -172,7 +173,9 @@ activateConnectors({ definitions, connections, enablement?, agent, user?, orderi
   when something is on).
 - **Several connections of one connector**: each is activated with `toolPrefix` `<slug>_` (slug of
   the label, unique); `instances: 'single'` keeps the first and warns `duplicate-instance`;
-  `combine(ctxs)` merges them (memory). `toolNameMap` maps each final tool name to
+  `combine(ctxs)` merges them (memory). `toolPrefix` sets when the prefix applies: `'multiple'`
+  (default, as described), `'always'` (also for a single connection, so a remote server's tool names
+  never depend on how many connections exist and rules keep the same names), `'never'` (fixed names). `toolNameMap` maps each final tool name to
   `{ connectorId, connectionIds, capabilityId, tool }`.
 - **Contributions**: a plugin goes to `plugins`, a `ToolSource` to `mcpSources`, an `McpSourceSpec`
   (`{ kind: 'mcp', name, url, headers?, getAccessToken?, … }`) is passed to `mcp(spec)` with
@@ -238,7 +241,10 @@ refreshed tokens apply without reconnecting (spec 09 §3).
 `createConnectorService({ definitions, connections, credentials, enablement, flows, vault, fetch?,
 redirectUri?, clientConfig?, lock?, ttlMs?, now?, newId? })` is what an app's routes call; every
 return value is browser-safe (redacted connections, flows without scratch, no tokens):
-`catalog()`, `list`, `get`, `startConnect`, `reconnect`, `getFlow`, `advance`, `completeOAuth`
+`clientConfig(definitionId, { flowId, scope, scopeId, reconnect })` returns the OAuth app of
+the asking flow (an app may keep one per scope or hand out one entered earlier in the same flow;
+a dedicated "enter the OAuth app" flow step is not part of the library: apps save the client
+before connecting, see ADR-0053). `catalog()`, `list`, `get`, `startConnect`, `reconnect`, `getFlow`, `advance`, `completeOAuth`
 (the callback route), `update` (secret patch + validation), `remove` (connection, credentials,
 every agent's entry), `enablement`, `setEnablement`, `test` (records status, account, discovered
 capabilities), `accessToken` (server side only), `activate`, `sweep`. A finished flow saves the

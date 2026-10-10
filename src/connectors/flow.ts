@@ -67,7 +67,7 @@ export function resolveFlowDeps(deps: FlowDeps): ResolvedFlowDeps {
     newId: deps.newId ?? uuidv7,
     redirectUri: (definitionId) =>
       typeof deps.redirectUri === 'function' ? deps.redirectUri(definitionId) : deps.redirectUri,
-    clientConfig: async (definitionId) => deps.clientConfig?.(definitionId),
+    clientConfig: async (definitionId, flow) => deps.clientConfig?.(definitionId, flow),
     ttlMs: deps.ttlMs ?? DEFAULT_FLOW_TTL_MS,
   }
 }
@@ -135,7 +135,12 @@ async function oauthClient(
   auth: { client?: OAuth2Auth['client'] },
   register?: { url: string; redirectUri: string; scopes: string[] },
 ): Promise<OAuthClient> {
-  const config = await ctx.deps.clientConfig(ctx.definition.id)
+  const config = await ctx.deps.clientConfig(ctx.definition.id, {
+    flowId: ctx.flowId,
+    scope: ctx.scope,
+    scopeId: ctx.scopeId,
+    reconnect: ctx.reconnect,
+  })
   if (config !== undefined) {
     const parsed =
       auth.client === undefined ? { success: true, data: config } : auth.client.safeParse(config)

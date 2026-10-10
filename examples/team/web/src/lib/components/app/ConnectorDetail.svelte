@@ -6,6 +6,11 @@
 	import { api } from '#lib/api/index.js';
 	import type { Capability, CapabilityMode, Connection } from '#lib/api/index.js';
 	import ConnectFlowDialog from '#lib/components/app/ConnectFlowDialog.svelte';
+	import ConfigCard from '#lib/components/app/config/ConfigCard.svelte';
+	import EnvNotice from '#lib/components/app/config/EnvNotice.svelte';
+	import StatusBadge from '#lib/components/app/config/StatusBadge.svelte';
+	import TestButton from '#lib/components/app/config/TestButton.svelte';
+	import TestResult from '#lib/components/app/config/TestResult.svelte';
 	import ConnectorIcon from '#lib/components/app/ConnectorIcon.svelte';
 	import * as AlertDialog from '#lib/components/ui/alert-dialog/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
@@ -14,12 +19,12 @@
 	import * as Field from '#lib/components/ui/field/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import * as Sheet from '#lib/components/ui/sheet/index.js';
-	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
+	import { connectionStatus, runTest, type TestOutcome } from '#lib/config/status.js';
 	import { capabilitiesOf, categoryLabel, MODE_LABEL, MODES } from '#lib/connectors/core.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
-	import { alwaysAsks, KIND_LABEL, KIND_VARIANT, modeOf, OAUTH_CLIENT_NEEDS_SETUP, scopeLabel, splitMemory, statusInfo } from '#lib/connectors/view.js';
+	import { alwaysAsks, KIND_LABEL, KIND_VARIANT, modeOf, OAUTH_CLIENT_NEEDS_SETUP, scopeLabel, splitMemory } from '#lib/connectors/view.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { cn } from '#lib/utils.js';
 
@@ -94,18 +99,13 @@
 	}
 
 	// --- connection actions -------------------------------------------------------------------
-	let testing = $state<Record<string, boolean>>({});
-	let results = $state<Record<string, { ok: boolean; message?: string; tools?: number }>>({});
+	let results = $state<Record<string, TestOutcome>>({});
 	async function test(c: Connection): Promise<void> {
-		testing[c.id] = true;
-		try {
+		results[c.id] = { ok: false, busy: true };
+		results[c.id] = await runTest(async () => {
 			const r = await connectorsStore.test(c.id);
-			results[c.id] = { ok: r.ok, message: r.message, tools: r.tools };
-		} catch (err) {
-			results[c.id] = { ok: false, message: message(err) };
-		} finally {
-			testing[c.id] = false;
-		}
+			return { ok: r.ok, message: r.message, tools: r.tools };
+		});
 	}
 
 	let renaming = $state<string | null>(null);
@@ -168,11 +168,10 @@
 {/snippet}
 
 {#snippet connectionCard(c: Connection, title?: string, badge?: string)}
-	{@const st = statusInfo(c)}
 	{@const caps = capabilitiesOf(connector, c)}
 	{@const res = results[c.id]}
-	<div class="flex flex-col gap-3 rounded-xl border border-border p-3">
-		<div class="flex flex-wrap items-center gap-2">
+	<ConfigCard class="gap-3 shadow-none">
+		{#snippet title()}
 			{#if renaming === c.id}
 				<Input
 					class="h-8 max-w-56"
@@ -186,13 +185,15 @@
 				<Button size="sm" onclick={() => rename(c)}>Save</Button>
 				<Button size="sm" variant="ghost" onclick={() => (renaming = null)}>Cancel</Button>
 			{:else}
-				<span class="min-w-0 truncate text-sm font-medium">{title ?? c.label}</span>
+				{title ?? c.label}
 			{/if}
+		{/snippet}
+		{#snippet badges()}
 			{#if badge}<Badge variant="brand">{badge}</Badge>{/if}
-			<Badge variant={st.variant}>{st.label}</Badge>
+			<StatusBadge status={connectionStatus(c)} />
 			{#if !c.builtin}<Badge variant="outline">{scopeLabel(c, agentName)}</Badge>{/if}
-		</div>
-		{#if c.accountLabel}<p class="text-xs text-muted-foreground">Signed in as {c.accountLabel}</p>{/if}
+		{/snippet}
+		{#snippet subtitle()}{#if c.accountLabel}Signed in as {c.accountLabel}{/if}{/snippet}
 		{#if c.statusMessage && c.status !== 'connected'}<p class="text-xs text-destructive-text" role="alert">{c.statusMessage}</p>{/if}
 
 		{#if c.scope === 'workspace' && !c.builtin}
@@ -250,17 +251,11 @@
 			</Collapsible.Root>
 		{/if}
 
-		{#if res}
-			<p class={cn('text-xs', res.ok ? 'text-success-text' : 'text-destructive-text')} role="status">
-				{res.ok ? 'Working' : 'Test failed'}{res.message ? `: ${res.message}` : ''}{res.ok && res.tools !== undefined ? ` · ${res.tools} tools` : ''}
-			</p>
-		{/if}
+		<TestResult result={res} />
 
 		{#if !c.builtin}
 			<div class="flex flex-wrap gap-2">
-				<Button size="sm" variant="outline" disabled={testing[c.id]} onclick={() => test(c)}>
-					{#if testing[c.id]}<Spinner class="size-3.5" />{/if}Test
-				</Button>
+				<TestButton busy={res?.busy} onclick={() => test(c)} />
 				<Button
 					size="sm"
 					variant="outline"
@@ -273,7 +268,7 @@
 				<Button size="sm" variant="ghost" class="text-destructive-text" onclick={() => (confirmRemove = c)}>Disconnect</Button>
 			</div>
 		{/if}
-	</div>
+	</ConfigCard>
 {/snippet}
 
 <Sheet.Root bind:open>
@@ -367,14 +362,14 @@
 							</form>
 						</section>
 					{:else if connector.oauthClient?.required && connector.oauthClient.configured}
-						<p class="flex items-center gap-2 text-xs text-muted-foreground">
-							{#if connector.oauthClient.source === 'stored'}
+						{#if connector.oauthClient.source === 'stored'}
+							<p class="flex items-center gap-2 text-xs text-muted-foreground">
 								OAuth app configured.
 								<button type="button" class="underline underline-offset-2 hover:text-foreground" onclick={removeClient}>Remove</button>
-							{:else}
-								OAuth app is set by the server.
-							{/if}
-						</p>
+							</p>
+						{:else}
+							<EnvNotice vars={connector.oauthClient.envVars} hint="Change it there." />
+						{/if}
 					{/if}
 
 					<section class="flex flex-col gap-3">

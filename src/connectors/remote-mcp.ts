@@ -41,6 +41,8 @@ export interface RemoteMcpConnectorOptions {
   }) => Promise<RemoteToolInfo[]>
   /** Instruction block. */
   instructions?: string
+  /** See `ConnectorDefinition.toolPrefix` (default `'multiple'`). */
+  toolPrefix?: 'always' | 'multiple' | 'never'
 }
 
 const settingsSchema: z.ZodObject = z.object({
@@ -185,6 +187,7 @@ export function remoteMcpConnector(options: RemoteMcpConnectorOptions = {}): Con
     },
     capabilities: [],
     ...(options.instructions === undefined ? {} : { instructions: options.instructions }),
+    ...(options.toolPrefix === undefined ? {} : { toolPrefix: options.toolPrefix }),
     test: async (ctx): Promise<ConnectorTestResult> => {
       const s = ctx.settings as unknown as Settings
       if (listTools === undefined) return { ok: true, message: 'Saved. Tools are not listed.' }

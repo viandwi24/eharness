@@ -142,6 +142,7 @@ export type {
   ChooseOption,
   ChooseSpec,
   ChooseView,
+  ClientConfigContext,
   ConfirmView,
   ConnectionCredentials,
   ConnectionEnablement,

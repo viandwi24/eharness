@@ -396,6 +396,22 @@ describe('device code, choose and custom steps', () => {
     }),
   })
 
+  test('clientConfig receives the flow context (flow id, scope)', async () => {
+    const seen: unknown[] = []
+    const d = deps({
+      definitions: [device],
+      fetch: fakeAuthServer().fetch,
+      clientConfig: (id, flow) => {
+        seen.push([id, flow])
+        return { clientId: 'cid' }
+      },
+    })
+    const s0 = await startFlow({ definition: device, scope: 'workspace' }, d)
+    expect(seen).toEqual([
+      ['dev', { flowId: s0.id, scope: 'workspace', scopeId: undefined, reconnect: false }],
+    ])
+  })
+
   test('device code view, poll respects the interval, then choose validates', async () => {
     const server = fakeAuthServer()
     server.devicePolls = ['authorization_pending', 'slow_down']

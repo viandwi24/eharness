@@ -5,6 +5,7 @@
 	import LockIcon from 'phosphor-svelte/lib/Lock';
 	import ArrowClockwiseIcon from 'phosphor-svelte/lib/ArrowClockwise';
 	import type { AgentConnector, CapabilityMode, ConnectionChoices } from '#lib/api/index.js';
+	import StatusBadge from '#lib/components/app/config/StatusBadge.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Collapsible from '#lib/components/ui/collapsible/index.js';
@@ -14,6 +15,7 @@
 	import { MODES, MODE_LABEL } from '#lib/connectors/core.js';
 	import { applyChoices, groupConnectors, originLabel, scopeBadge, withCapabilityMode, withEnabled, withToolMode } from '#lib/connectors/agent-view.js';
 	import { connectorIcon } from '#lib/connectors/icons.js';
+	import { live } from '#lib/stores/live.svelte.js';
 	import AddConnectorDialog from './AddConnectorDialog.svelte';
 	import ConnectFlowDialog from './ConnectFlowDialog.svelte';
 
@@ -44,6 +46,19 @@
 		void agentId;
 		untrack(() => {
 			loaded = false;
+			void connectorsStore.load();
+			void reload();
+		});
+	});
+
+	// another tab or instance changed a connection or an enablement: refetch quietly (no spinner)
+	let seenRev = live.state.revs.connectors;
+	$effect(() => {
+		const rev = live.state.revs.connectors;
+		untrack(() => {
+			if (rev === seenRev) return;
+			seenRev = rev;
+			if (saving !== null) return; // our own save answers with the fresh list
 			void connectorsStore.load();
 			void reload();
 		});
@@ -100,8 +115,7 @@
 				<div class="flex flex-wrap items-center gap-1.5">
 					<span class="text-sm font-medium">{c.name}</span>
 					<Badge variant={c.ownership === 'workspace' ? 'secondary' : 'brand'}>{scopeBadge(c)}</Badge>
-					{#if c.status === 'needs-auth'}<Badge variant="warning">Reconnect needed</Badge>{/if}
-					{#if c.status === 'error'}<Badge variant="destructive">Error</Badge>{/if}
+					{#if c.status === 'needs-auth' || c.status === 'error'}<StatusBadge status={c.status} />{/if}
 				</div>
 				<p class="truncate text-xs text-muted-foreground">
 					{c.label}{c.accountLabel ? ` · ${c.accountLabel}` : ''}{c.source === 'builtin' ? '' : ` · ${originLabel(c)}`}

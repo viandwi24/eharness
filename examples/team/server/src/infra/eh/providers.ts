@@ -4,10 +4,10 @@
  * - definitions: OpenRouter (`@openrouter/ai-sdk-provider`) and the Vercel AI Gateway (`ai`);
  * - profiles: environment variables are read-only `env` profiles (`OPENROUTER_API_KEY`,
  *   `OPENROUTER_BASE_URL`, `AI_GATEWAY_API_KEY`); everything saved from the web lives in
- *   `config_profiles` with its secrets AES-GCM encrypted (`profile-store.ts`, `secret-box.ts`);
+ *   `config_profiles`, sealed by the server's one vault (`profile-store.ts`, `secret-vault.ts`);
  * - catalogs (prices, context windows): cached in `catalog_cache`; `TEAM_OFFLINE=1` never fetches;
- * - several instances: a profile change appends a `providers-changed` event, the others tail the
- *   feed and reload their manager.
+ * - several instances: a profile change appends a `providers-changed` event; the shared change
+ *   feed (`change-feed.ts`) makes the others reload their manager.
  *
  * `createProviderService` implements `ProvidersPort` (the HTTP routes) and is the source of the
  * `ModelConfig` the agent factory resolves models with (`provider.ts`).
@@ -24,7 +24,7 @@ import {
   type PublicProfile,
 } from 'eharness/providers'
 import type { ProvidersPort } from '../../app/ports.ts'
-import { conflict, DomainError, invalid, notFound } from '../../domain/errors.ts'
+import { DomainError, invalid, notFound } from '../../domain/errors.ts'
 import type {
   ModelView,
   ProfileView,
@@ -32,6 +32,8 @@ import type {
   TestResultView,
 } from '../../domain/providers.ts'
 import { sqliteCatalogCache } from './catalog-cache.ts'
+import type { ChangeFeed } from './change-feed.ts'
+import { mapConfigError } from './config-errors.ts'
 
 type Env = Record<string, string | undefined>
 
@@ -44,28 +46,18 @@ export const DEFAULT_MODEL: Record<string, string> = {
 export interface ProviderServiceOptions {
   sqlite: Database
   /**
-   * The server's profile store (`sqliteProfileStore`): provider profiles, connections and
-   * credentials share the table and the secret box. The caller appends `providers-changed` for
-   * `provider` rows (with this service's `instance`).
+   * The server's sealed profile store (`sealedProfileStore` over `sqliteProfileStore`): provider
+   * profiles, connections and credentials share the table and the vault. The caller appends
+   * `providers-changed` for `provider` rows.
    */
   store: ProfileStore
-  /** Id of this instance: its own `providers-changed` events are ignored. */
-  instance?: string
   /** Default `process.env`: env profiles, `TEAM_PROVIDER`, `TEAM_MODEL`. */
   env?: Env
   /** Never fetch the public model catalogs (default: `TEAM_OFFLINE=1`). */
   offline?: boolean
   fetch?: typeof fetch
-  /** Reads the event feed (other instances' changes). */
-  feed?: {
-    lastSeq(): number
-    events(
-      after: number,
-      limit: number,
-    ): Array<{ seq: number; type: string; payload: Record<string, unknown> }>
-  }
-  /** Poll interval of the feed (ms, default 1000; 0 = off). */
-  pollMs?: number
+  /** Other instances' changes (`providers-changed`) reload the manager. */
+  changes?: ChangeFeed
   warn?: (message: string) => void
 }
 
@@ -86,20 +78,13 @@ export interface ProviderService extends ProvidersPort {
   close(): void
 }
 
-function mapError(error: unknown): never {
-  if (error instanceof DomainError) throw error
-  const e = error as { code?: unknown; message?: string; details?: Record<string, unknown> }
-  if (e?.code === 'EH_CONFIG_INVALID') {
-    const reason = String(e.details?.reason ?? 'invalid')
-    const message = e.message ?? 'invalid provider configuration'
-    if (reason === 'profile-not-found')
-      throw notFound('provider profile', String(e.details?.profileId ?? ''))
-    if (reason === 'read-only') throw conflict(message, 'READ_ONLY_PROFILE')
-    if (reason === 'profile-exists') throw conflict(message, 'PROFILE_EXISTS')
-    throw new DomainError('invalid', reason.toUpperCase().replaceAll('-', '_'), message, e.details)
-  }
-  throw error
-}
+const mapError = (error: unknown): never =>
+  mapConfigError(error, {
+    noun: 'provider profile',
+    idKey: 'profileId',
+    notFoundReasons: ['profile-not-found'],
+    conflicts: { 'read-only': 'READ_ONLY_PROFILE', 'profile-exists': 'PROFILE_EXISTS' },
+  })
 
 /** `kind` of provider rows in the profile table. */
 export const PROVIDER_KIND = 'provider'
@@ -107,7 +92,6 @@ export const PROVIDER_KIND = 'provider'
 export function createProviderService(options: ProviderServiceOptions): ProviderService {
   const env = options.env ?? process.env
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
-  const instance = options.instance ?? crypto.randomUUID()
   const store = options.store
   const manager = createProviderManager({
     definitions: [openRouterProvider({ createOpenRouter }), gatewayProvider({ createGateway })],
@@ -173,44 +157,13 @@ export function createProviderService(options: ProviderServiceOptions): Provider
     await refresh()
   }
 
-  let timer: ReturnType<typeof setInterval> | undefined
-  const startFeed = (): void => {
-    const { feed } = options
-    const pollMs = options.pollMs ?? 1000
-    if (feed === undefined || pollMs <= 0) return
-    let after = feed.lastSeq()
-    let busy = false
-    timer = setInterval(() => {
-      if (busy) return
-      busy = true
-      void (async () => {
-        try {
-          let changed = false
-          for (;;) {
-            const batch = feed.events(after, 100)
-            if (batch.length === 0) break
-            for (const e of batch) {
-              after = e.seq
-              if (e.type === 'providers-changed' && e.payload.instance !== instance) changed = true
-            }
-          }
-          if (changed) await reloadFromFeed()
-        } catch (error) {
-          warn(`reloading provider profiles failed: ${String(error)}`)
-        } finally {
-          busy = false
-        }
-      })()
-    }, pollMs)
-    timer.unref()
-  }
+  options.changes?.on('providers-changed', reloadFromFeed)
 
   const ready = (): Promise<void> => {
     readyPromise ??= (async () => {
       await manager.ready()
       await loadDefinitions()
       await refresh()
-      startFeed()
       // prices and context windows; a failure leaves the catalog empty, never fatal
       await manager.loadCatalogs().then(
         (r) => void r.refresh?.catch(() => undefined),
@@ -334,8 +287,6 @@ export function createProviderService(options: ProviderServiceOptions): Provider
       }
     },
     close() {
-      if (timer !== undefined) clearInterval(timer)
-      timer = undefined
       manager.dispose()
     },
   }

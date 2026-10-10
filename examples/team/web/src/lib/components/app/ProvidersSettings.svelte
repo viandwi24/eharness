@@ -1,5 +1,4 @@
 <script lang="ts">
-	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
 	import CloudIcon from 'phosphor-svelte/lib/Cloud';
 	import LightningIcon from 'phosphor-svelte/lib/Lightning';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimple';
@@ -7,12 +6,14 @@
 	import PlusIcon from 'phosphor-svelte/lib/Plus';
 	import StackIcon from 'phosphor-svelte/lib/Stack';
 	import TrashIcon from 'phosphor-svelte/lib/Trash';
-	import WarningIcon from 'phosphor-svelte/lib/Warning';
 	import { untrack } from 'svelte';
 	import { api, fieldErrors } from '#lib/api/index.js';
 	import SchemaForm from '#lib/components/app/SchemaForm.svelte';
-	import Surface from '#lib/components/app/Surface.svelte';
-	import { Badge } from '#lib/components/ui/badge/index.js';
+	import ConfigCard from '#lib/components/app/config/ConfigCard.svelte';
+	import EnvNotice from '#lib/components/app/config/EnvNotice.svelte';
+	import StatusBadge from '#lib/components/app/config/StatusBadge.svelte';
+	import TestButton from '#lib/components/app/config/TestButton.svelte';
+	import TestResult from '#lib/components/app/config/TestResult.svelte';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Card from '#lib/components/ui/card/index.js';
 	import * as Dialog from '#lib/components/ui/dialog/index.js';
@@ -20,15 +21,13 @@
 	import * as Field from '#lib/components/ui/field/index.js';
 	import { Input } from '#lib/components/ui/input/index.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
-	import { Spinner } from '#lib/components/ui/spinner/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Switch } from '#lib/components/ui/switch/index.js';
+	import { profileStatuses, runTest, type TestOutcome } from '#lib/config/status.js';
 	import { buildSettings, envVariables, initialValues, type FormValues } from '#lib/providers/form.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
 	import type { ProviderDefinition, ProviderProfile } from '#lib/providers/store-core.js';
 	import { live } from '#lib/stores/live.svelte.js';
-
-	type TestResult = { ok: boolean; message?: string; latencyMs?: number };
 
 	const store = providersStore.state;
 
@@ -44,18 +43,12 @@
 	});
 
 	// --- test results (per profile, this session) ---------------------------------------------
-	let results = $state<Record<string, TestResult & { busy?: boolean }>>({});
-	async function test(id: string): Promise<TestResult> {
+	let results = $state<Record<string, TestOutcome>>({});
+	async function test(id: string): Promise<TestOutcome> {
 		results[id] = { ok: false, busy: true };
-		try {
-			const r = await api.post('/providers/profiles/{id}/test', { params: { id } });
-			results[id] = r;
-			return r;
-		} catch (e) {
-			const r = { ok: false, message: e instanceof Error ? e.message : 'Test failed' };
-			results[id] = r;
-			return r;
-		}
+		const r = await runTest(() => api.post('/providers/profiles/{id}/test', { params: { id } }));
+		results[id] = r;
+		return r;
 	}
 
 	// --- dialog: add / edit --------------------------------------------------------------------
@@ -69,7 +62,7 @@
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 	let saving = $state(false);
-	let dialogTest = $state<(TestResult & { busy?: boolean }) | undefined>(undefined);
+	let dialogTest = $state<TestOutcome | undefined>(undefined);
 
 	function startAdd(): void {
 		mode = 'create';
@@ -196,10 +189,9 @@
 		}
 	}
 
-	const envNote = (p: ProviderProfile): string => {
+	const envVars = (p: ProviderProfile): string[] => {
 		const def = providersStore.definition(p.definitionId);
-		const vars = def ? envVariables(def.envMap, p.settings) : [];
-		return vars.length ? vars.join(', ') : 'environment variables';
+		return def ? envVariables(def.envMap, p.settings) : [];
 	};
 </script>
 
@@ -229,41 +221,25 @@
 				{@const Icon = iconOf(p.definitionId)}
 				{@const def = providersStore.definition(p.definitionId)}
 				{@const r = results[p.id]}
-				<Surface class="flex flex-col gap-2 rounded-xl p-3.5">
-					<div class="flex items-center gap-3">
-						<span class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon class="size-5" /></span>
-						<div class="min-w-0 flex-1">
-							<div class="flex flex-wrap items-center gap-1.5">
-								<span class="truncate text-sm font-medium">{p.label}</span>
-								<Badge variant={p.source === 'env' ? 'secondary' : 'outline'}>{p.source === 'env' ? 'Env' : 'Custom'}</Badge>
-								{#if p.isDefault}<Badge variant="brand">Default</Badge>{/if}
-								{#if !p.enabled}<Badge variant="warning">Disabled</Badge>{/if}
-							</div>
-							<div class="truncate text-xs text-muted-foreground">
-								{def?.label ?? p.definitionId} · <span class="font-mono">{p.id}</span>
-								{#if p.settings.apiKey && typeof p.settings.apiKey === 'object' && 'hint' in p.settings.apiKey}· key <span class="font-mono">{(p.settings.apiKey as { hint?: string }).hint}</span>{/if}
-							</div>
-						</div>
-						<div class="flex shrink-0 items-center gap-1">
-							<Button type="button" variant="outline" size="sm" disabled={r?.busy} onclick={() => test(p.id)}>
-								{#if r?.busy}<Spinner class="size-3.5" />{:else}<PlugsConnectedIcon class="size-3.5" />{/if}Test
-							</Button>
-							{#if !p.isDefault && p.enabled}<Button type="button" variant="ghost" size="sm" onclick={() => makeDefault(p)}>Make default</Button>{/if}
-							{#if p.source === 'store'}
-								<Button type="button" variant="ghost" size="icon-sm" aria-label="Edit {p.label}" onclick={() => startEdit(p)}><PencilSimpleIcon class="size-4" /></Button>
-								<Button type="button" variant="ghost" size="icon-sm" aria-label="Delete {p.label}" onclick={() => remove(p)}><TrashIcon class="size-4" /></Button>
-							{/if}
-						</div>
-					</div>
-					{#if p.source === 'env'}
-						<p class="text-xs text-muted-foreground">Read-only: set by <span class="font-mono">{envNote(p)}</span> in the server environment. Change it there, or add a custom profile here.</p>
-					{/if}
-					{#if r && !r.busy}
-						<p class="flex items-center gap-1.5 text-xs {r.ok ? 'text-success-text' : 'text-destructive-text'}" role="status">
-							{#if r.ok}<CheckCircleIcon class="size-3.5" />Connected{r.message ? `: ${r.message}` : ''}{r.latencyMs ? ` (${r.latencyMs} ms)` : ''}{:else}<WarningIcon class="size-3.5" />{r.message ?? 'Connection failed'}{/if}
-						</p>
-					{/if}
-				</Surface>
+				<ConfigCard>
+					{#snippet icon()}<Icon class="size-5" />{/snippet}
+					{#snippet title()}{p.label}{/snippet}
+					{#snippet badges()}{#each profileStatuses(p) as st (st)}<StatusBadge status={st} />{/each}{/snippet}
+					{#snippet subtitle()}
+						{def?.label ?? p.definitionId} · <span class="font-mono">{p.id}</span>
+						{#if p.settings.apiKey && typeof p.settings.apiKey === 'object' && 'hint' in p.settings.apiKey}· key <span class="font-mono">{(p.settings.apiKey as { hint?: string }).hint}</span>{/if}
+					{/snippet}
+					{#snippet actions()}
+						<TestButton busy={r?.busy} onclick={() => test(p.id)} />
+						{#if !p.isDefault && p.enabled}<Button type="button" variant="ghost" size="sm" onclick={() => makeDefault(p)}>Make default</Button>{/if}
+						{#if p.source === 'store'}
+							<Button type="button" variant="ghost" size="icon-sm" aria-label="Edit {p.label}" onclick={() => startEdit(p)}><PencilSimpleIcon class="size-4" /></Button>
+							<Button type="button" variant="ghost" size="icon-sm" aria-label="Delete {p.label}" onclick={() => remove(p)}><TrashIcon class="size-4" /></Button>
+						{/if}
+					{/snippet}
+					{#if p.source === 'env'}<EnvNotice vars={envVars(p)} />{/if}
+					{#if r && !r.busy}<TestResult result={r} />{/if}
+				</ConfigCard>
 			{/each}
 		{/if}
 	</Card.Content>
@@ -310,11 +286,7 @@
 					<Switch id="pf-enabled" bind:checked={enabled} aria-label="Enabled" />
 				</Field.Field>
 				{#if formError && !Object.keys(errors).length}<p class="text-sm text-destructive-text" role="alert">{formError}</p>{/if}
-				{#if dialogTest}
-					<p class="flex items-center gap-1.5 text-sm {dialogTest.busy ? 'text-muted-foreground' : dialogTest.ok ? 'text-success-text' : 'text-destructive-text'}" role="status">
-						{#if dialogTest.busy}<Spinner class="size-4" />Testing…{:else if dialogTest.ok}<CheckCircleIcon class="size-4" />Connected{dialogTest.message ? `: ${dialogTest.message}` : ''}{:else}<WarningIcon class="size-4" />{dialogTest.message ?? 'Connection failed'}{/if}
-					</p>
-				{/if}
+				<TestResult result={dialogTest} class="text-sm" />
 			</form>
 			<Dialog.Footer class="border-t border-border px-5 py-3">
 				<Button type="button" variant="ghost" onclick={() => (open = false)}>Cancel</Button>

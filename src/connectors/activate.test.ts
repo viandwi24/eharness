@@ -241,6 +241,28 @@ describe('activation', () => {
     expect(Object.keys(out.toolNameMap)).toContain('get_issue')
   })
 
+  test("toolPrefix 'always' prefixes a single connection, 'never' never prefixes", async () => {
+    for (const [policy, many, expected] of [
+      ['always', false, ['a1_get_issue']],
+      ['never', true, ['get_issue']],
+    ] as const) {
+      const specs: McpSourceSpec[] = []
+      const out = await activateConnectors({
+        definitions: [{ ...github, toolPrefix: policy }],
+        connections: many
+          ? [conn('a', 'github', { label: 'One' }), conn('b', 'github', { label: 'Two' })]
+          : [conn('a', 'github', { label: 'A1' })],
+        agent: { id: 'a1' },
+        mcp: mcpFactory(specs),
+      })
+      expect(Object.keys(out.toolNameMap).filter((n) => n.endsWith('get_issue'))[0]).toBe(
+        expected[0],
+      )
+      expect(out.rules.allow.includes(expected[0] as string)).toBe(true)
+      expect(specs[0]?.prefix).toBe(policy === 'always' ? 'a1_' : '')
+    }
+  })
+
   test('order is stable: builtins in a fixed order, then connectors by id, connections by id; independent of input order', async () => {
     const names = ['zeta', 'alpha']
     const custom = names.map((id) =>

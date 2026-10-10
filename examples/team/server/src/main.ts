@@ -22,6 +22,7 @@
 import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { ModelCatalog } from 'eharness'
+import { type SecretVault, sealedProfileStore } from 'eharness/providers'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import { newId } from './domain/ids.ts'
@@ -41,9 +42,10 @@ import {
   createAgentFactory,
   type TeamLimits,
 } from './infra/eh/agent-factory.ts'
+import { createChangeFeed } from './infra/eh/change-feed.ts'
 import { createChatService } from './infra/eh/chat-service.ts'
 import type { CatalogOptions } from './infra/eh/connector-catalog.ts'
-import { type ConnectorsRuntime, createConnectors } from './infra/eh/connectors.ts'
+import { type ConnectorsRuntime, createConnectors, SEALED_KINDS } from './infra/eh/connectors.ts'
 import { migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
@@ -60,7 +62,7 @@ import {
   type RoutineEngineConfig,
   type RoutineService,
 } from './infra/eh/routine-service.ts'
-import { lazySecretBox, type SealOpen, secretBoxFromEnv } from './infra/eh/secret-box.ts'
+import { teamVaultFromEnv } from './infra/eh/secret-vault.ts'
 import { setBudgetLimit, sqliteLock } from './infra/eh/storage.ts'
 import {
   createTeamService,
@@ -81,18 +83,16 @@ export interface ServerConfig {
   catalog?: ModelCatalog
   /** Environment of the provider profiles (default `process.env`); tests pass `{}`. */
   env?: Record<string, string | undefined>
-  /** Key of the provider secrets (default: `TEAM_SECRET_KEY`, else a dev key file next to the DB). */
-  secretBox?: SealOpen
+  /** The secret vault (default: `TEAM_SECRET_KEY`, else a dev key file next to the DB). */
+  vault?: SecretVault
   /** Never fetch the public model catalogs (default: `TEAM_OFFLINE=1`). */
   offline?: boolean
   /** The fetch of model lists, connection tests and catalogs (default: global). */
   fetch?: typeof fetch
-  /** Poll interval of the provider-change feed (ms, default 1000; 0 = off). */
-  providersPollMs?: number
+  /** Poll interval of the change feed shared by providers and connectors (ms, default 1000; 0 = off). */
+  changePollMs?: number
   /** Lists the tools of a remote MCP server when a connection is tested (tests inject a fake). */
   mcpListTools?: CatalogOptions['listTools']
-  /** Poll interval of the connectors-change feed (ms, default 1000; 0 = off). */
-  connectorsPollMs?: number
   /** Public URL of this server (OAuth redirect URI base). Default `TEAM_PUBLIC_URL`, else `http://localhost:4000`. */
   publicUrl?: string
   /** URL of the web app (the OAuth callback redirects there). Default `TEAM_WEB_URL`, else `http://localhost:5173`. */
@@ -152,41 +152,53 @@ export function compose(config: ServerConfig): Server {
   const events = {
     append: (e: Parameters<typeof tasks.appendEvent>[0]) => tasks.appendEvent(e, Date.now()),
   }
-  // ONE secret box and ONE profile table: provider profiles, connections, their credentials and
-  // OAuth app credentials. Provider rows are sealed by the store (legacy format), connector rows by
-  // `sealedProfileStore` (`infra/eh/connectors.ts`).
+  // ONE vault, ONE profile table and ONE sealing path: provider profiles, connections, their
+  // credentials and OAuth app credentials all go through `sealedProfileStore`. Rows written by
+  // earlier versions (legacy `v1:` blobs) open through the vault's legacy reader and are
+  // re-sealed in the background below.
   const instance = crypto.randomUUID()
-  const box =
-    config.secretBox ??
-    lazySecretBox(() =>
-      secretBoxFromEnv({
-        ...(config.env === undefined ? {} : { env: config.env }),
-        dataDir: config.dbFile === ':memory:' ? undefined : dirname(config.dbFile),
-      }),
-    )
+  const vault =
+    config.vault ??
+    teamVaultFromEnv({
+      ...(config.env === undefined ? {} : { env: config.env }),
+      dataDir: config.dbFile === ':memory:' ? undefined : dirname(config.dbFile),
+    })
   let connectorsRef: ConnectorsRuntime | undefined
-  const profileStore = sqliteProfileStore(conn.sqlite, box, {
-    sealKinds: [PROVIDER_KIND],
-    warn: (message) => console.warn(`team: ${message}`),
-    onChange: ({ kind, id, action }) => {
-      if (kind === PROVIDER_KIND) {
-        events.append({ type: 'providers-changed', payload: { profileId: id, action, instance } })
-      } else if (kind === 'connection') {
-        // appends `connectors-changed` and bumps the local revision
-        connectorsRef?.profileChanged(kind)
-      }
+  const profileStore = sealedProfileStore(
+    sqliteProfileStore(conn.sqlite, {
+      onChange: ({ kind, id, action }) => {
+        if (kind === PROVIDER_KIND) {
+          events.append({ type: 'providers-changed', payload: { profileId: id, action, instance } })
+        } else if (kind === 'connection') {
+          // appends `connectors-changed` and bumps the local revision
+          connectorsRef?.profileChanged(kind)
+        }
+      },
+    }),
+    vault,
+    {
+      kinds: [PROVIDER_KIND, ...SEALED_KINDS],
+      // a row whose key was lost is skipped (and says so), never fatal for the others
+      onUnreadable: ({ kind, id, error }) =>
+        console.warn(
+          `team: ${kind} "${id}" is unreadable and was skipped: ${error instanceof Error ? error.message : String(error)}`,
+        ),
     },
+  )
+  // one poller of the event feed for every kind of configuration change
+  const changes = createChangeFeed({
+    feed: tasks,
+    instance,
+    ...(config.changePollMs === undefined ? {} : { pollMs: config.changePollMs }),
   })
   // model providers: env profiles + encrypted profiles from the web; TEAM_SCRIPTED_MODEL wins
   const providers = createProviderService({
     sqlite: conn.sqlite,
     store: profileStore,
-    instance,
     ...(config.env === undefined ? {} : { env: config.env }),
     ...(config.offline === undefined ? {} : { offline: config.offline }),
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
-    feed: tasks,
-    ...(config.providersPollMs === undefined ? {} : { pollMs: config.providersPollMs }),
+    changes,
   })
   const models: ModelConfig =
     config.models ?? scriptedModelConfigFromEnv(config.env) ?? providerModelConfig(providers)
@@ -245,7 +257,7 @@ export function compose(config: ServerConfig): Server {
   const connectors = createConnectors({
     sqlite: conn.sqlite,
     profiles: profileStore,
-    box,
+    vault,
     lock: sqliteLock(conn.sqlite),
     agentById: (id) => agents.get(id),
     agents: () => agents.list(),
@@ -256,8 +268,7 @@ export function compose(config: ServerConfig): Server {
     ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
     redirectUri: `${publicUrl}/oauth/callback`,
     events,
-    feed: tasks,
-    ...(config.connectorsPollMs === undefined ? {} : { pollMs: config.connectorsPollMs }),
+    changes,
     instance,
   })
   connectorsRef = connectors
@@ -361,6 +372,10 @@ export function compose(config: ServerConfig): Server {
     )
   // agents from before connectors get their enablement, then every agent's connectors activate
   const connectorsReady = providersReady.then(async () => {
+    // legacy `v1:` blobs (and rows of a rotated-out key) are rewritten with the current key
+    const resealed = await profileStore.reseal()
+    if (resealed > 0)
+      console.warn(`team: re-sealed ${resealed} stored secret row(s) with the current key`)
     await migrateLegacyAgents({
       sqlite: conn.sqlite,
       connections: connectors.stores.connections,
@@ -398,6 +413,7 @@ export function compose(config: ServerConfig): Server {
       await ready
       await repairing?.catch(() => undefined)
       await factory.close()
+      changes.close()
       providers.close()
       connectors.close()
       await connectorsReady.catch(() => undefined)

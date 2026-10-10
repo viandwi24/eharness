@@ -1,5 +1,5 @@
 /** Provider profile use cases (the HTTP routes call these; the port does the work). */
-import { conflict } from '../domain/errors.ts'
+import { inUse } from '../domain/errors.ts'
 import type { ProfileCreate, ProfilePatch } from '../domain/providers.ts'
 import type { Deps } from './ports.ts'
 
@@ -20,11 +20,10 @@ export async function deleteProfile(deps: Deps, id: string): Promise<void> {
       ...agents.map((a) => `agent ${a.slug}`),
       ...(isDefault ? ['the workspace default'] : []),
     ]
-    throw conflict(
-      `profile "${id}" is still used by ${where.join(', ')}: pick another profile there first`,
-      'PROFILE_IN_USE',
-      { agents: agents.map((a) => a.slug), workspaceDefault: isDefault },
-    )
+    throw inUse('profile', id, where, 'PROFILE_IN_USE', {
+      agents: agents.map((a) => a.slug),
+      workspaceDefault: isDefault,
+    })
   }
   await deps.providers.remove(id)
 }

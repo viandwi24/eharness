@@ -27,11 +27,17 @@ export interface SealedProfileStoreOptions {
    * (nothing about the shape leaks) and works for credentials and any schema-less kind.
    */
   schemaOf?: (profile: ConfigProfile) => z.ZodObject | undefined
+  /**
+   * `list` leaves out a row that cannot be opened (lost key, corrupted blob) and calls this with
+   * the row's kind, id and the error, instead of rejecting for every row. `get` still rejects.
+   * Never log the value.
+   */
+  onUnreadable?: (row: { kind: string; id: string; error: unknown }) => void
 }
 
 /** A {@link ProfileStore} that seals secrets, plus re-sealing after a key rotation. */
 export interface SealedProfileStore extends ProfileStore {
-  /** Re-seal every sealed row whose blob was made with an old key. Returns how many were rewritten. */
+  /** Re-seal every sealed row whose blob was made with an old key. Returns how many were rewritten (unopenable rows are reported to `onUnreadable` when given, else reject). */
   reseal(): Promise<number>
 }
 
@@ -67,7 +73,7 @@ function setAt(root: Json, path: string, value: unknown): void {
  * database) only ever holds ciphertext. The blob is bound to `(kind, id)`, so a row cannot be
  * moved to another id. `subscribe` is passed through (cross-instance invalidation uses the same
  * shape). A row that cannot be opened (wrong key) makes `get` reject with `EH_CONFIG_INVALID`
- * (`details.reason: 'vault-open'`); `list` rejects too rather than hiding rows.
+ * (`details.reason: 'vault-open'`); `list` rejects too rather than hiding rows, unless `onUnreadable` is given (then the row is skipped and reported).
  *
  * @example
  * ```ts
@@ -150,7 +156,19 @@ export function sealedProfileStore(
   }
 
   return {
-    list: async (query) => Promise.all((await inner.list(query)).map(open)),
+    list: async (query) => {
+      const rows = await inner.list(query)
+      if (options.onUnreadable === undefined) return Promise.all(rows.map(open))
+      const out: ConfigProfile[] = []
+      for (const row of rows) {
+        try {
+          out.push(await open(row))
+        } catch (error) {
+          options.onUnreadable({ kind: row.kind, id: row.id, error })
+        }
+      }
+      return out
+    },
     get: async (kind, id) => {
       const profile = await inner.get(kind, id)
       return profile === undefined ? undefined : open(profile)
@@ -169,8 +187,13 @@ export function sealedProfileStore(
       for (const raw of await inner.list()) {
         if (!applies(raw.kind) || !blobsOf(raw).some((b) => vault.needsReseal?.(b) === true))
           continue
-        await inner.put(await seal(await open(raw)))
-        count++
+        try {
+          await inner.put(await seal(await open(raw)))
+          count++
+        } catch (error) {
+          if (options.onUnreadable === undefined) throw error
+          options.onUnreadable({ kind: raw.kind, id: raw.id, error })
+        }
       }
       return count
     },

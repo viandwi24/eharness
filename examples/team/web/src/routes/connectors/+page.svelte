@@ -16,7 +16,10 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { connectorsStore } from '#lib/connectors/connectors.svelte.js';
 	import { categoriesOf, categoryLabel, directorySections } from '#lib/connectors/core.js';
+	import StatusBadge from '#lib/components/app/config/StatusBadge.svelte';
+	import { OAUTH_CLIENT_NEEDS_SETUP } from '#lib/connectors/view.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
+	import { live } from '#lib/stores/live.svelte.js';
 	import { cn } from '#lib/utils.js';
 
 	const store = connectorsStore.state;
@@ -32,12 +35,24 @@
 	const accountOf = (c: Connector): string | undefined => store.connections.find((x) => x.definitionId === c.id && x.accountLabel)?.accountLabel;
 	const countOf = (c: Connector): number => store.connections.filter((x) => x.definitionId === c.id).length;
 
+	// first load, and a refetch when another tab or instance changes a connection
 	$effect(() => {
+		void live.state.revs.connectors;
 		untrack(() => {
 			void connectorsStore.load();
 			if (!agentsStore.state.loaded) void agentsStore.load();
 		});
 	});
+
+	// the Connect button of a card starts the flow right away (like Claude); a connector whose
+	// OAuth app is not set up yet opens its details, where the admin sets it up
+	let connectId = $state<string | undefined>(undefined);
+	let connectOpen = $state(false);
+	function connect(c: Connector): void {
+		if (OAUTH_CLIENT_NEEDS_SETUP(c)) return openDetail(c);
+		connectId = c.id;
+		connectOpen = true;
+	}
 
 	function openDetail(c: Connector): void {
 		selectedId = c.id;
@@ -75,30 +90,32 @@
 {#snippet card(c: Connector)}
 	{@const account = accountOf(c)}
 	{@const n = countOf(c)}
-	<button
-		type="button"
-		onclick={() => openDetail(c)}
-		class="flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-4 text-left transition-colors outline-none hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-ring"
-	>
-		<div class="flex items-start gap-3">
-			<ConnectorIcon icon={c.icon} />
-			<div class="min-w-0 flex-1">
-				<p class="truncate text-sm font-medium">{c.name}</p>
-				<Badge variant="secondary" class="mt-1">{categoryLabel(c.category)}</Badge>
+	<div class="flex h-full flex-col rounded-xl border border-border bg-card transition-colors hover:bg-accent/50">
+		<button
+			type="button"
+			onclick={() => openDetail(c)}
+			class="flex flex-1 flex-col gap-3 rounded-t-xl p-4 pb-2 text-left outline-none focus-visible:outline-2 focus-visible:outline-ring"
+		>
+			<div class="flex items-start gap-3">
+				<ConnectorIcon icon={c.icon} />
+				<div class="min-w-0 flex-1">
+					<p class="truncate text-sm font-medium">{c.name}</p>
+					<Badge variant="secondary" class="mt-1">{categoryLabel(c.category)}</Badge>
+				</div>
 			</div>
-		</div>
-		<p class="line-clamp-2 text-[13px] text-muted-foreground">{c.description}</p>
-		<div class="mt-auto flex items-center gap-2">
+			<p class="line-clamp-2 text-[13px] text-muted-foreground">{c.description}</p>
+		</button>
+		<div class="flex items-center gap-2 px-4 pt-1 pb-4">
 			{#if c.builtin}
-				<Badge variant="info">Included</Badge>
+				<StatusBadge status="included" />
 			{:else if n > 0}
-				<Badge variant="success">Connected</Badge>
+				<StatusBadge status="connected" />
 				{#if account}<span class="min-w-0 truncate text-xs text-muted-foreground">{account}</span>{/if}
 			{:else}
-				<span class="inline-flex h-7 items-center rounded-md border border-input px-2.5 text-xs font-medium">Connect</span>
+				<Button size="sm" variant="outline" onclick={() => connect(c)}>Connect</Button>
 			{/if}
 		</div>
-	</button>
+	</div>
 {/snippet}
 
 {#snippet group(title: string, items: Connector[])}
@@ -169,3 +186,4 @@
 
 <ConnectorDetail bind:open={detailOpen} connectorId={selectedId} />
 <ConnectFlowDialog bind:open={flowOpen} {flowId} onDone={() => void connectorsStore.load()} />
+<ConnectFlowDialog bind:open={connectOpen} definitionId={connectId} scope="workspace" onDone={() => void connectorsStore.load()} />

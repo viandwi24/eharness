@@ -279,7 +279,9 @@ export async function activateConnectors(options: ActivateOptions): Promise<Acti
       }
       list = list.slice(0, 1)
     }
-    const prefixed = list.length > 1 && !combine
+    const policy = definition.toolPrefix ?? 'multiple'
+    const prefixed =
+      policy === 'always' ? !combine : policy === 'never' ? false : list.length > 1 && !combine
     const taken = new Set<string>()
     const entries: Entry[] = list.map(({ record }) => {
       let slug = slugify(record.label) || slugify(record.id) || 'connection'

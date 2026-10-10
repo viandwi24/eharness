@@ -193,6 +193,8 @@ interface SecretVault {
 
 - `webCryptoVault(key | { keys, current })`: AES-256-GCM over `crypto.subtle`, fresh IV per seal,
   `context` authenticated, blob `v2.<keyId>.<base64url(iv || ct)>`. Several keys support rotation.
+  `withLegacyVault(vault, { matches, open })` reads blobs of an older format and writes the
+  current one (`needsReseal` is true for legacy blobs, so `reseal()` migrates them).
   `plaintextVault()` is for tests only. An app that already has a secret box implements the
   three-method port around it.
 - `sealedProfileStore(inner, vault, { kinds?, schemaOf? })` wraps any `ProfileStore`: `put`
@@ -200,6 +202,7 @@ interface SecretVault {
   database only ciphertext. Default: the whole `settings` JSON becomes `{ "~sealed": blob }`,
   bound to `profile:<kind>:<id>` (a row cannot be moved to another id). With `schemaOf(profile)`
   only the `secret` / `secretValues` fields are sealed (the rest stays queryable). `kinds` limits
-  sealing to some kinds. `subscribe` is passed through. `reseal()` rewrites rows sealed with an
+  sealing to some kinds. `onUnreadable({ kind, id, error })` makes `list` / `reseal` skip rows that
+  cannot be opened (lost key) and report them instead of rejecting. `subscribe` is passed through. `reseal()` rewrites rows sealed with an
   old key and returns how many. An unopenable row makes `get` / `list` reject with
   `EH_CONFIG_INVALID` (`details.reason: 'vault-open'`).

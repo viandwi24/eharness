@@ -9,15 +9,16 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { lookupModel } from 'eharness'
+import type { SecretVault } from 'eharness/providers'
 import { scriptedModel } from 'eharness/testing'
 import { sqliteCatalogCache } from '../src/infra/eh/catalog-cache.ts'
 import { scriptedModelConfig } from '../src/infra/eh/provider.ts'
 import {
-  createSecretBox,
   generateSecretKey,
   parseSecretKey,
-  secretBoxFromEnv,
-} from '../src/infra/eh/secret-box.ts'
+  secretKeysFromEnv,
+  teamVault,
+} from '../src/infra/eh/secret-vault.ts'
 import { compose, type Server } from '../src/main.ts'
 
 const dirs: string[] = []
@@ -62,8 +63,8 @@ function stubFetch(calls: string[] = [], keyStatus = 200): typeof fetch {
 
 const SECRET = 'sk-or-v1-SUPERSECRETVALUE-0123456789'
 
-async function box() {
-  return createSecretBox([parseSecretKey(generateSecretKey())])
+function box(): SecretVault {
+  return teamVault([parseSecretKey(generateSecretKey())])
 }
 
 interface BootOptions {
@@ -72,7 +73,7 @@ interface BootOptions {
   calls?: string[]
   keyStatus?: number
   pollMs?: number
-  secretBox?: Awaited<ReturnType<typeof box>>
+  secretBox?: SecretVault
 }
 
 async function boot(options: BootOptions = {}): Promise<Server> {
@@ -81,8 +82,8 @@ async function boot(options: BootOptions = {}): Promise<Server> {
     env: options.env ?? {},
     offline: false,
     fetch: stubFetch(options.calls, options.keyStatus),
-    secretBox: options.secretBox ?? (await box()),
-    providersPollMs: options.pollMs ?? 0,
+    vault: options.secretBox ?? box(),
+    changePollMs: options.pollMs ?? 0,
     models: undefined,
     reconcile: { onBoot: false, everyMs: 0 },
     routines: { tickMs: 0 },
@@ -98,45 +99,148 @@ const send = (method: string, body?: unknown): RequestInit => ({
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 })
 
-describe('secret box', () => {
-  test('seals and opens; every seal is different; tampering and unknown keys fail', async () => {
-    const key = parseSecretKey(generateSecretKey())
-    const b = await createSecretBox([key])
-    const a = await b.seal('hello')
-    expect(a.startsWith(`v1:${b.keyId}:`)).toBe(true)
+describe('secret vault', () => {
+  test('seals and opens bound to a context; tampering, other context and unknown keys fail', async () => {
+    const v = teamVault([parseSecretKey(generateSecretKey())])
+    const a = await v.seal('hello', 'ctx')
+    expect(a.startsWith('v2.')).toBe(true)
     expect(a).not.toContain('hello')
-    expect(await b.seal('hello')).not.toBe(a)
-    expect(await b.open(a)).toBe('hello')
-    const parts = a.split(':')
-    parts[3] = `${parts[3]?.slice(0, -2)}AA`
-    await expect(b.open(parts.join(':'))).rejects.toThrow(/decrypted/)
-    const other = await createSecretBox([parseSecretKey(generateSecretKey())])
-    await expect(other.open(a)).rejects.toThrow(/not configured/)
+    expect(await v.seal('hello', 'ctx')).not.toBe(a)
+    expect(await v.open(a, 'ctx')).toBe('hello')
+    await expect(v.open(a, 'other')).rejects.toThrow()
+    await expect(v.open(`${a.slice(0, -3)}AAA`, 'ctx')).rejects.toThrow()
+    const other = teamVault([parseSecretKey(generateSecretKey())])
+    await expect(other.open(a, 'ctx')).rejects.toThrow()
   })
 
-  test('rotation: the new key seals, the previous key still opens', async () => {
+  test('rotation: the new key seals, the previous key still opens, needsReseal flags old blobs', async () => {
     const oldKey = parseSecretKey(generateSecretKey())
     const newKey = parseSecretKey(generateSecretKey())
-    const sealedOld = await (await createSecretBox([oldKey])).seal('x')
-    const rotated = await createSecretBox([newKey, oldKey])
-    expect(await rotated.open(sealedOld)).toBe('x')
-    expect((await rotated.seal('y')).split(':')[1]).toBe(rotated.keyId)
-    expect(rotated.keyId).not.toBe(sealedOld.split(':')[1])
+    const sealedOld = await teamVault([oldKey]).seal('x', 'c')
+    const rotated = teamVault([newKey, oldKey])
+    expect(await rotated.open(sealedOld, 'c')).toBe('x')
+    expect(rotated.needsReseal?.(sealedOld)).toBe(true)
+    const fresh = await rotated.seal('y', 'c')
+    expect(rotated.needsReseal?.(fresh)).toBe(false)
   })
 
-  test('a malformed TEAM_SECRET_KEY is an error; without one a dev key file is created and reused', async () => {
-    await expect(secretBoxFromEnv({ env: { TEAM_SECRET_KEY: 'short' } })).rejects.toThrow(
-      /32 bytes/,
-    )
+  test('a malformed TEAM_SECRET_KEY is an error; without one a dev key file is created and reused', () => {
+    expect(() => secretKeysFromEnv({ env: { TEAM_SECRET_KEY: 'short' } })).toThrow(/32 bytes/)
     const dir = tmp()
     const warnings: string[] = []
-    const first = await secretBoxFromEnv({ env: {}, dataDir: dir, warn: (m) => warnings.push(m) })
+    const first = teamVault(
+      secretKeysFromEnv({ env: {}, dataDir: dir, warn: (m) => warnings.push(m) }),
+    )
     expect(warnings.join('\n')).toMatch(/TEAM_SECRET_KEY is not set/)
     const keyFile = join(dir, 'secret.key')
     const text = readFileSync(keyFile, 'utf8')
-    const second = await secretBoxFromEnv({ env: {}, dataDir: dir, warn: () => undefined })
-    expect(await second.open(await first.seal('same key'))).toBe('same key')
-    expect(readFileSync(keyFile, 'utf8')).toBe(text)
+    const second = teamVault(secretKeysFromEnv({ env: {}, dataDir: dir, warn: () => undefined }))
+    return first
+      .seal('same key', 'c')
+      .then((blob) => second.open(blob, 'c'))
+      .then((plain) => {
+        expect(plain).toBe('same key')
+        expect(readFileSync(keyFile, 'utf8')).toBe(text)
+      })
+  })
+})
+
+describe('legacy sealed rows', () => {
+  // the earlier secret box: `v1:<keyId>:<iv>:<ct>`, plain settings (providers) or `{ c, p }` (connections)
+  async function legacySeal(keyBytes: Uint8Array<ArrayBuffer>, plain: string): Promise<string> {
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', keyBytes))
+    const id = [...digest.slice(0, 4)].map((b) => b.toString(16).padStart(2, '0')).join('')
+    const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt'])
+    const iv = crypto.getRandomValues(new Uint8Array(12))
+    const data = new Uint8Array(
+      await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)),
+    )
+    const b64 = (b: Uint8Array): string => Buffer.from(b).toString('base64url')
+    return `v1:${id}:${b64(iv)}:${b64(data)}`
+  }
+
+  test('v1 provider and connection rows still open, are re-sealed at boot, survive a rotation', async () => {
+    const dir = tmp()
+    const dbFile = join(dir, 'team.db')
+    const oldKey = parseSecretKey(generateSecretKey())
+    const newKey = parseSecretKey(generateSecretKey())
+    const first = await boot({ dbFile, secretBox: teamVault([oldKey]) })
+    const at = Date.now()
+    const insert = first.conn.sqlite.query(
+      'INSERT INTO config_profiles (kind, id, definition_id, label, settings, models, extra, enabled, updated_at) VALUES (?, ?, ?, ?, ?, NULL, NULL, 1, ?)',
+    )
+    insert.run(
+      'provider',
+      'legacy',
+      'openrouter',
+      'Legacy',
+      await legacySeal(oldKey, JSON.stringify({ apiKey: SECRET })),
+      at,
+    )
+    insert.run(
+      'connection',
+      'legacy-conn',
+      'mcp-remote',
+      'Legacy conn',
+      JSON.stringify({
+        '~sealed': await legacySeal(
+          oldKey,
+          JSON.stringify({
+            c: 'profile:connection:legacy-conn',
+            p: JSON.stringify({ url: 'https://mcp.example.com/mcp', authMode: 'none' }),
+          }),
+        ),
+      }),
+      at,
+    )
+    await first.close()
+    servers.pop()
+
+    // new key first, the old one kept for the rotation: rows open and are rewritten with v2
+    const second = await boot({ dbFile, secretBox: teamVault([newKey, oldKey]) })
+    await second.connectorsReady
+    expect(second.providers.profileIds()).toContain('legacy')
+    const rows = second.conn.sqlite
+      .query<{ settings: string }, []>(
+        "SELECT settings FROM config_profiles WHERE id IN ('legacy', 'legacy-conn')",
+      )
+      .all()
+    expect(rows).toHaveLength(2)
+    for (const row of rows) {
+      expect(row.settings.startsWith('{"~sealed":"v2.')).toBe(true)
+      expect(row.settings).not.toContain('SUPERSECRET')
+    }
+    await second.close()
+    servers.pop()
+
+    // the old key is gone: the migrated rows open with the new key alone
+    const third = await boot({ dbFile, secretBox: teamVault([newKey]) })
+    expect(third.providers.profileIds()).toContain('legacy')
+    const res = await third.app.request('/providers/profiles/legacy/test', send('POST'))
+    expect(res.status).toBe(200)
+  })
+
+  test('a row of a lost key is skipped with a warning; the other rows still load', async () => {
+    const dir = tmp()
+    const dbFile = join(dir, 'team.db')
+    const a = await boot({ dbFile, secretBox: box() })
+    await a.app.request(
+      '/providers/profiles',
+      send('POST', { providerId: 'openrouter', id: 'gone', settings: { apiKey: SECRET } }),
+    )
+    await a.close()
+    servers.pop()
+    const warn = console.warn
+    const lines: string[] = []
+    console.warn = (m: unknown) => void lines.push(String(m))
+    try {
+      const b = await boot({ dbFile, secretBox: box() })
+      expect(b.providers.profileIds()).toEqual([])
+      expect(lines.join('\n')).toContain('"gone" is unreadable')
+      expect(lines.join('\n')).not.toContain('SUPERSECRET')
+    } finally {
+      console.warn = warn
+    }
   })
 })
 
@@ -216,7 +320,7 @@ describe('profiles API', () => {
       .all()
     expect(rows).toHaveLength(2)
     for (const row of rows) {
-      expect(row.settings.startsWith('v1:')).toBe(true)
+      expect(row.settings.startsWith('{"~sealed":"v2.')).toBe(true)
       expect(row.settings).not.toContain('SUPERSECRET')
     }
     const raw = readFileSync(dbFile)
@@ -629,7 +733,7 @@ describe('scripted model wins over profiles', () => {
       dbFile: ':memory:',
       env: { OPENROUTER_API_KEY: SECRET },
       models: scriptedModelConfig(scriptedModel([{ text: 'hi' }]) as never),
-      secretBox: await box(),
+      vault: box(),
       reconcile: { onBoot: false, everyMs: 0 },
       routines: { tickMs: 0 },
       offline: true,
@@ -659,9 +763,9 @@ describe('catalog cache and the change feed', () => {
       env: { OPENROUTER_API_KEY: SECRET },
       offline: true,
       fetch: stubFetch(offlineCalls),
-      secretBox: await box(),
+      vault: box(),
       models: undefined,
-      providersPollMs: 0,
+      changePollMs: 0,
       reconcile: { onBoot: false, everyMs: 0 },
       routines: { tickMs: 0 },
     })
@@ -675,7 +779,7 @@ describe('catalog cache and the change feed', () => {
   test('a profile created on one instance reaches the other through the event feed', async () => {
     const dir = tmp()
     const dbFile = join(dir, 'team.db')
-    const key = await box()
+    const key = box()
     const a = await boot({ dbFile, secretBox: key, pollMs: 20 })
     const b = await boot({ dbFile, secretBox: key, pollMs: 20 })
     expect(b.providers.profileIds()).toEqual([])

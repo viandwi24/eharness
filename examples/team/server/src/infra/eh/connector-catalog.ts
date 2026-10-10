@@ -126,6 +126,8 @@ function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition
   })
   return defineConnector({
     ...base,
+    // a remote tool never shadows a built-in one and rules keep one name per tool
+    toolPrefix: 'always',
     settings,
     test: async (ctx) =>
       (ctx.settings as unknown as RemoteSettings).transport === 'sse'
@@ -133,8 +135,8 @@ function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition
         : ((await base.test?.(ctx)) ?? { ok: true }),
     activate: (ctx) => {
       const s = ctx.settings as unknown as RemoteSettings
-      // tools are always `<slug>_<tool>` (a remote tool never shadows a built-in one)
-      const prefix = `${ctx.slug}_`
+      // tools are always `<slug>_<tool>` (`toolPrefix: 'always'`): `ctx.toolPrefix`
+      const prefix = ctx.toolPrefix
       if (s.transport === 'sse') {
         const modes = Object.entries(ctx.toolModes)
         const off = modes.filter(([, m]) => m === 'off').map(([t]) => t)
@@ -165,7 +167,6 @@ function customMcp(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition
           ? { headers: s.headers }
           : {}),
         ...(s.authMode === 'oauth' ? { getAccessToken: ctx.connection.getAccessToken } : {}),
-        prefix,
         ...(s.allow === undefined ? {} : { allow: s.allow }),
         ...(s.deny === undefined ? {} : { deny: s.deny }),
         defer: true as const,
@@ -187,6 +188,7 @@ function github(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
     category: 'development',
     source: 'curated',
     scopes: ['workspace', 'agent'],
+    toolPrefix: 'always',
     settings: z.object({
       authMode: z
         .enum(['oauth', 'token'])
@@ -269,7 +271,6 @@ function github(listTools: typeof listRemoteMcpTools): AnyConnectorDefinition {
         ...(s.authMode === 'token' && s.token !== undefined
           ? { headers: { Authorization: `Bearer ${s.token}` } }
           : { getAccessToken: ctx.connection.getAccessToken }),
-        prefix: `${ctx.slug}_`,
         defer: true as const,
       }
     },

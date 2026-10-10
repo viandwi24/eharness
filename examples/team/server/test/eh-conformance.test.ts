@@ -3,6 +3,7 @@ import { afterAll, describe, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { sealedProfileStore } from 'eharness/providers'
 import {
   budgetLedgerConformance,
   fileSystemConformance,
@@ -15,7 +16,7 @@ import {
 import { type Connection, openDatabase } from '../src/infra/db/client.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
 import { sqliteProfileStore } from '../src/infra/eh/profile-store.ts'
-import { createSecretBox, generateSecretKey, parseSecretKey } from '../src/infra/eh/secret-box.ts'
+import { generateSecretKey, parseSecretKey, teamVault } from '../src/infra/eh/secret-vault.ts'
 import {
   setBudgetLimit,
   sqliteBudgetLedger,
@@ -107,9 +108,9 @@ suite(
   'ProfileStore conformance (SQLite, encrypted settings)',
   // every case gets an empty store: a fresh database and a fresh key
   profileStoreConformance(async () =>
-    sqliteProfileStore(
-      openDatabase(':memory:').sqlite,
-      await createSecretBox([parseSecretKey(generateSecretKey())]),
+    sealedProfileStore(
+      sqliteProfileStore(openDatabase(':memory:').sqlite),
+      teamVault([parseSecretKey(generateSecretKey())]),
     ),
   ),
 )

@@ -1,9 +1,9 @@
 /**
  * Connectors of the team server: `eharness/connectors` over the app's pieces.
  *
- * - ONE secret system: the server's AES-GCM box (`secret-box.ts`) as the library's `SecretVault`
- *   (`vaultFromBox`); connections, credentials and OAuth app credentials are rows of the same
- *   `config_profiles` table as provider profiles, sealed with `sealedProfileStore`;
+ * - ONE secret system: the server's `SecretVault` (`secret-vault.ts`); connections, credentials
+ *   and OAuth app credentials are rows of the same `config_profiles` table as provider profiles,
+ *   sealed by the one `sealedProfileStore` `compose` builds (this module also seals flow scratch);
  * - flows in `connector_flows`, enablement in `agent_connectors`, the refresh lock in `eh_locks`;
  * - several instances: a change of a connection or of an enablement appends `connectors-changed`;
  *   the others tail the feed and rebuild their agents (token refreshes write credentials only and
@@ -26,11 +26,10 @@ import {
   describeConnector,
   ensureBuiltinConnections,
   isConnectionEnabled,
-  mergeConnectorRules,
   resolveModes,
 } from 'eharness/connectors'
 import { remoteMcpSource } from 'eharness/mcp'
-import { type ProfileStore, sealedProfileStore } from 'eharness/providers'
+import type { ProfileStore, SecretVault } from 'eharness/providers'
 import type { ConnectorsPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import type {
@@ -44,6 +43,8 @@ import type {
 } from '../../domain/connectors.ts'
 import { conflict, DomainError, invalid, notFound } from '../../domain/errors.ts'
 import type { NewEvent } from '../../domain/events.ts'
+import type { ChangeFeed } from './change-feed.ts'
+import { mapConfigError } from './config-errors.ts'
 import {
   appRulesOf,
   type CatalogHooks,
@@ -53,20 +54,19 @@ import {
 import { sqliteEnablementStore, sqliteFlowStore, sqliteRefreshLock } from './connector-stores.ts'
 import type { LibraryChange } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
-import type { SealOpen } from './secret-box.ts'
-import { vaultFromBox } from './secret-box.ts'
 
 type Env = Record<string, string | undefined>
 
-/** Rows of the profile table that hold secrets and are sealed by `sealedProfileStore`. */
+/** Rows of the profile table that hold secrets (with the `provider` kind): sealed by `compose`. */
 export const SEALED_KINDS = ['connection', 'connection-credentials', 'connector-client'] as const
 const CLIENT_KIND = 'connector-client'
 
 export interface ConnectorsOptions {
   sqlite: Database
-  /** The raw profile store (`sqliteProfileStore`, sealing only provider rows). */
+  /** The sealed profile store (`sealedProfileStore` over `sqliteProfileStore`). */
   profiles: ProfileStore
-  box: SealOpen
+  /** The server's vault (flow scratch). */
+  vault: SecretVault
   lock: SessionLock
   agentById: (id: string) => AgentDef | undefined
   agents: () => AgentDef[]
@@ -78,15 +78,8 @@ export interface ConnectorsOptions {
   /** The OAuth callback URL of this server. */
   redirectUri: string
   events?: { append(event: NewEvent): number }
-  feed?: {
-    lastSeq(): number
-    events(
-      after: number,
-      limit: number,
-    ): Array<{ seq: number; type: string; payload: Record<string, unknown> }>
-  }
-  /** Poll interval of the feed (ms, default 1000; 0 = off). */
-  pollMs?: number
+  /** Other instances' changes (`connectors-changed`) bump the revision. */
+  changes?: ChangeFeed
   /** Id of this instance (its own events are ignored). */
   instance: string
   warn?: (message: string) => void
@@ -120,35 +113,6 @@ export interface ConnectorsRuntime extends ConnectorsPort {
 const envName = (definitionId: string, suffix: string): string =>
   `TEAM_${definitionId.toUpperCase().replaceAll('-', '_')}_${suffix}`
 
-/** Rename tool rules of connectors whose tools were activated with a prefix the rules do not know. */
-function withMcpPrefixes(
-  out: ActivatedConnectors,
-  definitions: ReadonlyMap<string, AnyConnectorDefinition>,
-): ActivatedConnectors {
-  const rename = new Map<string, string>()
-  for (const [name, origin] of Object.entries(out.toolNameMap)) {
-    if (definitions.get(origin.connectorId)?.source === 'builtin') continue
-    const id = origin.connectionIds[0]
-    const conn = out.connections.find((c) => c.connectionId === id)
-    if (conn !== undefined && conn.toolPrefix === '') rename.set(name, `${conn.slug}_${name}`)
-  }
-  if (rename.size === 0) return out
-  const map = (n: string): string => rename.get(n) ?? n
-  const kinds: ActivatedConnectors['rules']['toolKinds'] = {}
-  for (const [k, v] of Object.entries(out.rules.toolKinds)) kinds[map(k)] = v
-  return {
-    ...out,
-    rules: {
-      allow: out.rules.allow.map(map),
-      ask: out.rules.ask.map(map),
-      deny: out.rules.deny.map(map),
-      pinnedAsk: out.rules.pinnedAsk.map(map),
-      toolKinds: kinds,
-    },
-    toolNameMap: Object.fromEntries(Object.entries(out.toolNameMap).map(([k, v]) => [map(k), v])),
-  }
-}
-
 export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime {
   const env = options.env ?? process.env
   const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
@@ -162,8 +126,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     hooks,
   })
   const defs = new Map(definitions.map((d) => [d.id, d]))
-  const vault = vaultFromBox(options.box)
-  const sealed = sealedProfileStore(options.profiles, vault, { kinds: [...SEALED_KINDS] })
+  const vault = options.vault
+  const sealed = options.profiles
   const connections = connectionStoreFromProfiles(sealed)
   const credentials = credentialStoreFromProfiles(sealed)
   const flows = sqliteFlowStore(options.sqlite)
@@ -219,18 +183,11 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     try {
       return await fn()
     } catch (error) {
-      if (error instanceof DomainError) throw error
-      const e = error as { code?: unknown; message?: string; details?: Record<string, unknown> }
-      if (e?.code === 'EH_CONFIG_INVALID') {
-        const reason = String(e.details?.reason ?? 'invalid')
-        if (reason === 'not-found') throw notFound('connection', String(e.details?.id ?? ''))
-        throw new DomainError(
-          'invalid',
-          reason.toUpperCase().replaceAll('-', '_'),
-          e.message ?? 'invalid connector configuration',
-        )
-      }
-      throw error
+      return mapConfigError(error, {
+        noun: 'connection',
+        idKey: 'id',
+        notFoundReasons: ['not-found'],
+      })
     }
   }
 
@@ -344,15 +301,11 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         accessToken: (id) => service.accessToken(id),
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
         mcp: remoteMcpSource,
+        // the app's own rules merge with the connector rules (most restrictive wins)
+        appRules: appRulesOf(d),
       })
       for (const w of out.warnings) warn(`connectors (${d.slug}): ${w.message}`)
-      // the connector rules name tools as activated: fix MCP prefixes first, then merge the app's
-      // own rules (most restrictive wins), so both sides speak of the same names
-      const prefixed = withMcpPrefixes(out, defs)
-      cache.set(d.id, {
-        key: key(d),
-        out: { ...prefixed, rules: mergeConnectorRules(prefixed.rules, appRulesOf(d)) },
-      })
+      cache.set(d.id, { key: key(d), out })
     }
   }
 
@@ -421,36 +374,10 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     )
   }
 
-  // --- feed ----------------------------------------------------------------------------------
-
-  let timer: ReturnType<typeof setInterval> | undefined
-  if (options.feed !== undefined && (options.pollMs ?? 1000) > 0) {
-    const feed = options.feed
-    let after = feed.lastSeq()
-    let polling = false
-    timer = setInterval(() => {
-      if (polling) return
-      polling = true
-      try {
-        for (;;) {
-          const batch = feed.events(after, 100)
-          if (batch.length === 0) break
-          for (const e of batch) {
-            after = e.seq
-            if (e.type === 'connectors-changed' && e.payload.instance !== options.instance) {
-              revision++
-              // a connection of another instance may be one this one has not ensured
-            }
-          }
-        }
-      } catch (error) {
-        warn(`reading the connectors feed failed: ${String(error)}`)
-      } finally {
-        polling = false
-      }
-    }, options.pollMs ?? 1000)
-    timer.unref()
-  }
+  // another instance changed a connection or an enablement: agents rebuild from the new revision
+  options.changes?.on('connectors-changed', () => {
+    revision++
+  })
 
   // --- the port ------------------------------------------------------------------------------
 
@@ -483,10 +410,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     },
     ensureBuiltins,
     stores: { connections },
-    close() {
-      if (timer !== undefined) clearInterval(timer)
-      timer = undefined
-    },
+    close() {},
 
     catalog: () => Promise.all(definitions.map(catalogEntry)),
     connections: async (query) =>

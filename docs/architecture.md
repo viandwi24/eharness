@@ -247,3 +247,12 @@ process died mid-turn ──▶ next operation recovers: dangling calls answered
 - **Errors:** boot conflicts throw; turn operations throw only `EH_SESSION_BUSY` / `EH_SESSION_CLOSED`;
   every other turn failure ends the turn with `stop: 'error'` and never rejects `run.result`
   (spec 05 §2, spec 10).
+
+## Providers and connectors share one config layer
+
+Both are rows of one profile table (`config_profiles`), sealed by one `SecretVault` through one
+`sealedProfileStore`, redacted and patched with the same `redactProfile` / `mergeSecretPatch`, and
+invalidated across instances by one poller of the event feed. They stay separate areas in a UI
+(model providers are admin infrastructure picked per agent; connectors are a per-agent tool
+directory), as in Dify (Model Provider settings vs. tool plugins) and LibreChat (endpoints vs. MCP
+servers); they share the building blocks. See ADR-0053.

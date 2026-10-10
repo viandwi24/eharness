@@ -56,3 +56,4 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0050](0050-flow-view-vocabulary.md) | Setup flows are server-driven views from a closed vocabulary (stale-view guard, sealed scratch) |
 | [0051](0051-precedence-and-pinned-ask.md) | Mode precedence, most-restrictive combination and pinned asks under bypass |
 | [0052](0052-generic-secret-vault.md) | One generic `SecretVault` and `sealedProfileStore` for providers and connectors |
+| [0053](0053-providers-connectors-consolidation.md) | One sealing format, `toolPrefix`, per-flow `clientConfig`; providers and connectors share building blocks but stay separate areas |

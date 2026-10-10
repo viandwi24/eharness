@@ -1,4 +1,5 @@
 // Pure view helpers of the connectors UI: labels, badges, memory grouping. No raw tool names here.
+import { connectionStatus, STATUS_BADGE } from '../config/status';
 import type { Capability, CapabilityMode, Connection, Connector } from '../api/client';
 
 export const KIND_LABEL: Record<Capability['kind'], string> = { read: 'Read', write: 'Write', destructive: 'Destructive', external: 'External' };
@@ -15,12 +16,7 @@ export type IconKey = (typeof KNOWN_ICONS)[number];
 export const iconKey = (name: string | undefined): IconKey => ((KNOWN_ICONS as readonly string[]).includes(name ?? '') ? (name as IconKey) : 'plugs');
 
 export type StatusInfo = { label: string; variant: 'success' | 'warning' | 'destructive' | 'secondary' };
-export function statusInfo(c: Pick<Connection, 'status' | 'enabled'>): StatusInfo {
-	if (!c.enabled || c.status === 'disabled') return { label: 'Off', variant: 'secondary' };
-	if (c.status === 'needs-auth') return { label: 'Reconnect needed', variant: 'warning' };
-	if (c.status === 'error') return { label: 'Error', variant: 'destructive' };
-	return { label: 'Connected', variant: 'success' };
-}
+export const statusInfo = (c: Pick<Connection, 'status' | 'enabled'>): StatusInfo => STATUS_BADGE[connectionStatus(c)] as StatusInfo;
 
 /** "Whole workspace" or "Only <agent>". */
 export function scopeLabel(c: Pick<Connection, 'scope' | 'scopeId'>, agentName: (id: string) => string | undefined): string {

@@ -1,15 +1,16 @@
 /**
- * `ProfileStore` of `eharness/providers` on SQLite (`config_profiles`). The whole `settings`
- * object (API keys, header values) is sealed with AES-GCM (`secret-box.ts`) before it touches the
- * database; every other column is plain. Adapters return copies (spec 23 §3).
+ * `ProfileStore` of `eharness/providers` on SQLite (`config_profiles`): the ONE table of provider
+ * profiles, connections, their credentials and OAuth app credentials. This store does not
+ * encrypt: `compose` wraps it in `sealedProfileStore` with the server's vault (`secret-vault.ts`),
+ * so `settings` holds `{ "~sealed": blob }` for every secret-bearing kind. A row written before
+ * that (the whole column was a `v1:` blob) reads as `{ "~sealed": "v1:…" }` and the vault's legacy
+ * reader opens it; `reseal()` rewrites it. Adapters return copies (spec 23 §3).
  *
- * Changes made on any instance append a `providers-changed` event; the provider service tails
- * the event feed and reloads the manager (`infra/eh/providers.ts`). `subscribe` is the in-process
- * half: it fires after a local put / delete.
+ * `onChange` fires after a local put / delete (the caller appends the change event);
+ * `subscribe` is the in-process half.
  */
 import type { Database } from 'bun:sqlite'
 import type { ConfigProfile, ProfileStore } from 'eharness/providers'
-import type { SealOpen } from './secret-box.ts'
 
 interface Row {
   kind: string
@@ -24,21 +25,12 @@ interface Row {
 }
 
 export interface ProfileStoreOptions {
-  /** Called after a put / delete (append the `providers-changed` event here). */
+  /** Called after a put / delete (append the change event here). */
   onChange?: (change: { kind: string; id: string; action: 'put' | 'delete' }) => void
-  /**
-   * Kinds whose `settings` the box seals here (default: every kind). Pass `['provider']` when the
-   * other kinds are sealed by `sealedProfileStore` (connections, credentials), so nothing is
-   * encrypted twice.
-   */
-  sealKinds?: readonly string[]
-  /** A row that cannot be opened (lost key, corrupted) is skipped; say why (never the value). */
-  warn?: (message: string) => void
 }
 
 export function sqliteProfileStore(
   sqlite: Database,
-  box: SealOpen,
   options: ProfileStoreOptions = {},
 ): ProfileStore {
   const listeners = new Set<() => void>()
@@ -51,20 +43,11 @@ export function sqliteProfileStore(
       }
     }
   }
-  const seals = (kind: string): boolean =>
-    options.sealKinds === undefined || options.sealKinds.includes(kind)
-  const unrow = async (row: Row): Promise<ConfigProfile | undefined> => {
-    let settings: Record<string, unknown>
-    try {
-      settings = JSON.parse(
-        seals(row.kind) ? await box.open(row.settings) : row.settings,
-      ) as Record<string, unknown>
-    } catch (error) {
-      options.warn?.(
-        `profile "${row.id}" is unreadable and was skipped: ${error instanceof Error ? error.message : String(error)}`,
-      )
-      return undefined
-    }
+  const unrow = (row: Row): ConfigProfile => {
+    // a pre-vault provider row: the whole column is one `v1:` blob
+    const settings = row.settings.startsWith('v1:')
+      ? { '~sealed': row.settings }
+      : (JSON.parse(row.settings) as Record<string, unknown>)
     return {
       ...(row.extra === null ? {} : (JSON.parse(row.extra) as Record<string, unknown>)),
       id: row.id,
@@ -88,12 +71,7 @@ export function sqliteProfileStore(
                 'SELECT * FROM config_profiles WHERE kind = ? ORDER BY updated_at, id',
               )
               .all(query.kind)
-      const out: ConfigProfile[] = []
-      for (const row of rows) {
-        const p = await unrow(row)
-        if (p !== undefined) out.push(p)
-      }
-      return out
+      return rows.map(unrow)
     },
     async get(kind, id) {
       const row = sqlite
@@ -103,7 +81,6 @@ export function sqliteProfileStore(
     },
     async put(profile) {
       const text = JSON.stringify(profile.settings ?? {})
-      const sealed = seals(profile.kind) ? await box.seal(text) : text
       const {
         id,
         kind,
@@ -130,7 +107,7 @@ export function sqliteProfileStore(
           id,
           definitionId,
           label,
-          sealed,
+          text,
           models === undefined ? null : JSON.stringify(models),
           extra,
           enabled ? 1 : 0,

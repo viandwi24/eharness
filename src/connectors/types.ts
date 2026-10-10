@@ -197,7 +197,7 @@ export interface ConnectorActivationContext<S extends z.ZodObject = z.ZodObject>
   tools: string[]
   /** Mode of every tool (per-tool overrides applied). */
   toolModes: Record<string, CapabilityMode>
-  /** `''`, or `<connection-slug>_` when the agent has several connections of this connector. */
+  /** `''`, or `<connection-slug>_` (see the definition's `toolPrefix` policy). */
   toolPrefix: string
   /** Connection slug (`^[a-z0-9-]{1,32}$`). */
   slug: string
@@ -281,6 +281,13 @@ export interface ConnectorDefinition<S extends z.ZodObject = z.ZodObject> {
    * (plugins whose tool names are fixed), and `combine` (below) merges them.
    */
   instances?: 'prefix' | 'single'
+  /**
+   * When tool names get the connection-slug prefix (`<slug>_<tool>`): `'multiple'` (default) only
+   * when an agent uses several connections of this connector, `'always'` for every connection
+   * (a remote server's tool never shadows another tool and rules always use the same names), and
+   * `'never'` for plugins whose tool names are fixed. `ctx.toolPrefix` carries the result.
+   */
+  toolPrefix?: 'always' | 'multiple' | 'never'
   /** Contribute for one connection. */
   activate?: (ctx: ConnectorActivationContext<S>) => Awaitable<ConnectorActivation>
   /** Contribute once for all connections of this connector an agent uses (merged roots). */
@@ -595,12 +602,25 @@ export interface FlowDeps {
   newId?: () => string
   /** OAuth redirect URI (the app's callback route), or one per definition. */
   redirectUri?: string | ((definitionId: string) => string)
-  /** Admin OAuth client configuration of a definition (validated against `auth.client`). */
+  /**
+   * OAuth client configuration of a definition (validated against `auth.client`). The second
+   * argument says which flow asks (`flowId`, `scope`, `scopeId`, `reconnect`), so an app can keep
+   * per-scope clients or hand out a client entered earlier in the same flow.
+   */
   clientConfig?: (
     definitionId: string,
+    flow: ClientConfigContext,
   ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>
   /** Flow lifetime. Default 15 minutes. */
   ttlMs?: number
+}
+
+/** Which flow asks for an OAuth client configuration (see {@link FlowDeps.clientConfig}). */
+export interface ClientConfigContext {
+  flowId: string
+  scope: ConnectorScope
+  scopeId: string | undefined
+  reconnect: boolean
 }
 
 /** {@link FlowDeps} with defaults applied. */
@@ -611,7 +631,10 @@ export interface ResolvedFlowDeps {
   now: () => number
   newId: () => string
   redirectUri(definitionId: string): string | undefined
-  clientConfig(definitionId: string): Promise<Record<string, unknown> | undefined>
+  clientConfig(
+    definitionId: string,
+    flow: ClientConfigContext,
+  ): Promise<Record<string, unknown> | undefined>
   ttlMs: number
 }
 

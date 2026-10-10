@@ -13,7 +13,7 @@ export type LiveState = {
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
 	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
-	revs: { files: number; routines: number; settings: number; modes: number; chat: number; providers: number };
+	revs: { files: number; routines: number; settings: number; modes: number; chat: number; providers: number; connectors: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
@@ -23,7 +23,7 @@ export const emptyLiveState = (): LiveState => ({
 	tasksLoaded: false,
 	connection: 'idle',
 	viewing: null,
-	revs: { files: 0, routines: 0, settings: 0, modes: 0, chat: 0, providers: 0 }
+	revs: { files: 0, routines: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
 });
 
 export type LiveDeps = {
@@ -163,6 +163,9 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			} else if (e.type === 'providers-changed') {
 				// a profile was added, edited or removed (any tab or instance): lists refetch
 				later('providers', bump('providers'));
+			} else if (e.type === 'connectors-changed') {
+				// a connection, a credential or an agent's enablement changed (any tab or instance)
+				later('connectors', bump('connectors'));
 			} else if (e.type === 'settings-changed') {
 				later('settings', bump('settings'));
 			} else if (e.type === 'mode-changed') {
