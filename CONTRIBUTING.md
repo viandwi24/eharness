@@ -3,7 +3,8 @@
 ## Setup
 
 ```bash
-bun install
+bun install                          # the library, examples/coder and examples/team/server (workspaces)
+bun install --cwd examples/team/web  # the team web has its own lockfile (TypeScript 5 for svelte-check)
 bun run lint && bun run typecheck && bun test && bun run build && bun run check:package && bun run check:imports
 ```
 

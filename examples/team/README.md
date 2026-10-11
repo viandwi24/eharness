@@ -49,7 +49,8 @@ Screenshots (to be added under `docs/img/`): `chat.png` (chat with the context p
 Requirements: [Bun](https://bun.sh) (dev toolchain) and Node 22+ compatible code; one model key.
 
 ```bash
-bun install                              # at the repo root (workspaces)
+bun install                              # at the repo root (workspaces: the library, coder, team server)
+bun install --cwd examples/team/web      # the SvelteKit web has its own lockfile
 
 cp examples/team/.env.example examples/team/.env
 # edit examples/team/.env: set OPENROUTER_API_KEY (or AI_GATEWAY_API_KEY) and TEAM_TOKEN
