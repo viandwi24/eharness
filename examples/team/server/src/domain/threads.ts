@@ -84,6 +84,8 @@ export function parseChatSession(sessionId: string): ParsedChatSession | undefin
 
 /** A thread's own session (not a child of it). */
 export const isThreadSession = (sessionId: string): boolean => {
+  // a channel conversation (`channel:<connection>:<conversation>`, `infra/channels`) is a thread too
+  if (sessionId.startsWith('channel:')) return !/:agent:[^:]+$/.test(sessionId)
   const p = parseChatSession(sessionId)
   return p !== undefined && !p.child
 }

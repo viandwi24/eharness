@@ -12,8 +12,10 @@ export function withThreadActivity(inner: EventAppender, threads: ThreadStore): 
     append(event) {
       inner.append(event)
       if (event.type !== 'message-added' || event.sessionId == null) return
+      // channel sessions (`infra/channels`) are threads of their agent too
       const chat = parseChatSession(event.sessionId)
-      if (chat === undefined || chat.child) return
+      const channel = event.sessionId.startsWith('channel:')
+      if (!channel && (chat === undefined || chat.child)) return
       try {
         const preview = typeof event.payload.preview === 'string' ? event.payload.preview : null
         threads.touch(event.sessionId, {

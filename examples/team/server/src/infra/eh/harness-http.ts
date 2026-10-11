@@ -77,6 +77,12 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
       const def = thread === undefined ? undefined : agents.get(thread.agentId)
       return def === undefined ? undefined : { def, id: sessionId }
     }
+    if (sessionId.startsWith('channel:')) {
+      // a channel conversation exists only as a thread row (`infra/channels`)
+      const thread = options.threads.getBySession(sessionId)
+      const def = thread === undefined ? undefined : agents.get(thread.agentId)
+      return def === undefined ? undefined : { def, id: sessionId }
+    }
     if (isDmSession(sessionId)) {
       const key = sessionId.slice('dm:'.length)
       const def = agents.get(key) ?? agents.getBySlug(key)

@@ -85,8 +85,13 @@ export function getThread(deps: Deps, agentIdOrSlug: string, threadId: string): 
 export function threadSessionOf(deps: Deps, agent: AgentDef, threadId?: string): string {
   if (threadId !== undefined) return getThread(deps, agent.id, threadId).sessionId
   ensureFirstThread(deps, agent)
+  // a busy channel conversation never takes over the chat the web app opens on
   const open = listThreads(deps, agent.id)
-  return (open[0] ?? sortThreads(deps.threads.list(agent.id))[0])?.sessionId as string
+  return (
+    open.find((t) => t.source !== 'channel') ??
+    open[0] ??
+    sortThreads(deps.threads.list(agent.id))[0]
+  )?.sessionId as string
 }
 
 export function createThread(

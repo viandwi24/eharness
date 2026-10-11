@@ -84,6 +84,7 @@ import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
+import { type ChannelGateway, channels } from '../channels/index.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
@@ -183,6 +184,11 @@ export interface AgentFactoryDeps {
    * like `decisions`; absent = no heartbeat tools.
    */
   heartbeat?: () => HeartbeatIntake | undefined
+  /**
+   * The channels gateway (`infra/channels`): channel tools, the observed-messages reminder and
+   * reply delivery of channel sessions. Late-bound; absent = no channel tools.
+   */
+  channels?: () => ChannelGateway | undefined
   /** The work queue intake (`work-queue-plugin.ts`): `create_task`, `list_tasks`, `update_task`, `complete_task`. */
   workQueue?: () => WorkQueueIntake | undefined
   /** The big-data toolkit (`infra/bigdata`): sources and `run_code` limits. Needs `programs`. */
@@ -768,6 +774,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             }),
           ]),
       ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
+      ...(deps.channels === undefined
+        ? []
+        : [channels({ gateway: deps.channels, agentOf: (slug) => deps.agentBySlug?.(slug) })]),
       sessionPermissions({
         createEngine,
         gate: gateOf,

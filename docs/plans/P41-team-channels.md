@@ -121,11 +121,41 @@ template; stores only what a task needs. Operators must review these terms for t
 
 ## Checklist
 
-- [ ] L1
+- [x] L1 (gateway core in `examples/team/server/src/infra/channels`, mock adapter, scripted U1/U2/U3 flows in `test/channels.test.ts`; migration 0021)
 - [ ] L2
 - [ ] L3
 - [ ] L4
 - [ ] U1, U2, U3 scripted flows green; manual checks with a real test bot and test account
+
+## L1 notes (as built)
+
+- Code: `infra/channels/` (`types.ts` contract, `policy.ts` pure rules and config schema, `store.ts`
+  SQLite stores, `outbound.ts` queue, `gateway.ts`, `plugin.ts` tools and hooks, `mock-adapter.ts`,
+  `vault.ts`). Nothing there names a platform. Wiring: `main.ts` (`Server.channels`), the plugin in
+  `agent-factory.ts` (late-bound like the heartbeat), read-only tools allowed in `appRulesOf`.
+- Tables (migration 0021): `channel_connections` (config JSON, no secrets), `channel_conversations`,
+  `channel_messages` (body sealed with the channel vault: its own key `TEAM_CHANNEL_KEY`, dev file
+  `channel.key`), `channel_identities`, `channel_pairing_tokens` (hash only).
+- Sessions `channel:<connectionId>:<conversation id>` are `chat_threads` rows with `source: 'channel'`
+  and label `<platform> · <title>`. `isThreadSession` and the HTTP `resolve` accept them, so the web
+  can open and continue them (a turn that no channel message started posts nothing back).
+  `threadSessionOf` skips channel threads when it picks the default chat.
+- Wake: `session.enqueue(…, { mode: 'collect', id: 'ev:<platform message id>' })`; the log row's
+  `handled` flag lets a redelivery of an event that crashed before enqueue repeat the enqueue, and
+  drops a finished duplicate. Delivery reads the trigger from the stored user message
+  (`metadata.eharness.inboxKey` / `collected`), so it needs no extra state.
+- Observed messages are rows with `pending = 1`; the turn reminder (an instruction with
+  `refresh: 'turn'`) shows the newest 50, `turn.end` clears the ones it showed.
+- Tool permissions: `channel_describe` / `channel_read` are allowed by rule, `channel_send`
+  (external) and `channel_manage` (destructive) keep their risk: in a chat they ask, a program names
+  them in its authority. In a rehearsal they are simulated. Native action tools are deferred and
+  keep their own risk; a read-risk native action still asks (no allow rule for names the app does
+  not know).
+- Limits of L1, on purpose: tools are built when a session opens (a binding made later reaches the
+  next session); a reply is at-most-once (a process that dies between the turn and the delivery
+  loses the reply; a reconcile pass can come with L3); reactions are not stored; `/new` and owner-only
+  commands are not built; an approval a channel turn needs is answered in the web app (nothing can be
+  answered in the chat); the agent of a conversation is fixed by its first wake.
 
 ## Open questions
 

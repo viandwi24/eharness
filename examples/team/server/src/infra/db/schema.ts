@@ -721,3 +721,92 @@ export const catalogCache = sqliteTable('catalog_cache', {
   data: text('data').notNull(),
   fetchedAt: integer('fetched_at').notNull(),
 })
+
+// --- Channels (docs/plans/P41-team-channels.md, phase L1; `infra/channels`) ---------------------
+
+/** Configuration of a channel connection (policy, binding, limits): JSON, no secrets. */
+export const channelConnections = sqliteTable('channel_connections', {
+  connectionId: text('connection_id').primaryKey(),
+  config: text('config').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+/**
+ * A conversation the gateway woke an agent in: its session, the agent, the reference the adapter
+ * gave (JSON) and the label. One session per conversation (`channel:<connection>:<id>`).
+ */
+export const channelConversations = sqliteTable(
+  'channel_conversations',
+  {
+    connectionId: text('connection_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    ref: text('ref').notNull(),
+    label: text('label'),
+    /** Days the log keeps this conversation (null = the workspace default). */
+    retentionDays: integer('retention_days'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.conversationId] }),
+    uniqueIndex('channel_conversations_session').on(t.sessionId),
+  ],
+)
+
+/**
+ * The channel log: normalized messages of allowed conversations. `body` is sealed with the
+ * channel vault (its own key). `pending` = observed and not yet shown to a run; `handled` = the
+ * gateway finished acting on it (a redelivery of an unhandled one repeats the action).
+ */
+export const channelMessages = sqliteTable(
+  'channel_messages',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    platformId: text('platform_id').notNull(),
+    at: integer('at').notNull(),
+    self: integer('self').notNull().default(0),
+    pending: integer('pending').notNull().default(0),
+    handled: integer('handled').notNull().default(0),
+    editedAt: integer('edited_at'),
+    deletedAt: integer('deleted_at'),
+    body: text('body').notNull(),
+  },
+  (t) => [
+    uniqueIndex('channel_messages_platform').on(t.connectionId, t.conversationId, t.platformId),
+    index('channel_messages_conversation').on(t.connectionId, t.conversationId, t.id),
+    index('channel_messages_at').on(t.at),
+  ],
+)
+
+/** Platform user to team member (set by a pairing token). */
+export const channelIdentities = sqliteTable(
+  'channel_identities',
+  {
+    connectionId: text('connection_id').notNull(),
+    peerId: text('peer_id').notNull(),
+    memberId: text('member_id').notNull(),
+    name: text('name'),
+    linkedAt: integer('linked_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.connectionId, t.peerId] }),
+    index('channel_identities_member').on(t.connectionId, t.memberId),
+  ],
+)
+
+/** One-time pairing tokens (only the hash is stored). */
+export const channelPairingTokens = sqliteTable(
+  'channel_pairing_tokens',
+  {
+    tokenHash: text('token_hash').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    memberId: text('member_id').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+    usedAt: integer('used_at'),
+  },
+  (t) => [index('channel_pairing_expiry').on(t.expiresAt)],
+)

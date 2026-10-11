@@ -6,7 +6,7 @@
  */
 import { Database } from 'bun:sqlite'
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
@@ -258,11 +258,23 @@ describe('migration of the single DM', () => {
 
     // the database as it was before this phase: no thread tables, migration 0020 not applied
     const db = new Database(join(dir, 'team.db'))
-    for (const table of ['chat_threads', 'notifications', 'briefings'])
-      db.run(`DROP TABLE ${table}`)
-    db.run(
-      'DELETE FROM __drizzle_migrations WHERE created_at = (SELECT MAX(created_at) FROM __drizzle_migrations)',
-    )
+    // (and the tables of the migrations after it: they would be created again by the replay)
+    for (const table of [
+      'chat_threads',
+      'notifications',
+      'briefings',
+      'channel_connections',
+      'channel_conversations',
+      'channel_messages',
+      'channel_identities',
+      'channel_pairing_tokens',
+    ])
+      db.run(`DROP TABLE IF EXISTS ${table}`)
+    const journal = JSON.parse(
+      readFileSync(new URL('../drizzle/meta/_journal.json', import.meta.url), 'utf8'),
+    ) as { entries: Array<{ tag: string; when: number }> }
+    const since = journal.entries.find((e) => e.tag.startsWith('0020_'))?.when as number
+    db.run('DELETE FROM __drizzle_migrations WHERE created_at >= ?', [since])
     db.close()
 
     const b = instance(dir, { lead: [{ text: 'New answer' }] }, { first: false })

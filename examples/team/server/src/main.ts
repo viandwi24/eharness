@@ -9,6 +9,7 @@
  *   OPENROUTER_API_KEY | AI_GATEWAY_API_KEY   read-only env provider profiles (more profiles are
  *                     added in Settings > Providers and stored encrypted); TEAM_SCRIPTED_MODEL wins over all
  *   TEAM_PROVIDER / TEAM_MODEL   default profile (openrouter | gateway) and its default model
+ *   TEAM_CHANNEL_KEY  32 bytes base64: encrypts the channel log at rest (its own key; dev: `channel.key` next to the DB)
  *   TEAM_SECRET_KEY   32 bytes base64: encrypts provider secrets, connection secrets and tokens at rest (dev: a key file next to the DB)
  *   TEAM_ALLOWED_ORIGINS extra browser origins allowed to send state-changing requests (the origins of TEAM_WEB_URL and TEAM_PUBLIC_URL always are; other `Origin`s get 403 FORBIDDEN_ORIGIN, the CSRF guard)
  *   TEAM_PUBLIC_URL   where this server is reached by the browser (OAuth callback `<url>/oauth/callback`; default http://localhost:PORT)
@@ -38,7 +39,7 @@ import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
 import { hostAllowed, type ListenConfig, listenConfig, originOf } from './app/auth.ts'
 import { briefingsText } from './app/briefings.ts'
-import { checkChatBody } from './app/chat.ts'
+import { checkChatBody, uploadFile } from './app/chat.ts'
 import {
   createAmendment,
   createEscalation,
@@ -67,6 +68,11 @@ import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
 import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
+import {
+  type ChannelGateway,
+  channelVaultFromEnv,
+  createChannelGateway,
+} from './infra/channels/index.ts'
 import { sqliteActivityStore } from './infra/db/activity-store.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
@@ -194,6 +200,19 @@ export interface ServerConfig {
    * `everyMs` (default 60 000; 0 = never).
    */
   reconcile?: { onBoot?: boolean; everyMs?: number }
+  /**
+   * Channels gateway (`infra/channels`). `vault` seals the channel log (default `TEAM_CHANNEL_KEY`,
+   * else a dev key file next to the DB); the rest are timers tests shorten.
+   */
+  channels?: {
+    vault?: SecretVault
+    collect?: { quietMs: number; maxWaitMs: number; maxItems: number }
+    typingEveryMs?: number
+    /** Outbound queue clock (tests). */
+    outbound?: { now?: () => number; sleep?: (ms: number) => Promise<void> }
+    /** Purge of the channel log past its retention: every `purgeEveryMs` (default 1 h; 0 = boot only). */
+    purgeEveryMs?: number
+  }
 }
 
 export interface Server {
@@ -211,6 +230,8 @@ export interface Server {
   decisions: DecisionService
   /** Heartbeat beats and the daily digest (`infra/eh/heartbeat-service.ts`). */
   heartbeats: HeartbeatService
+  /** The channels gateway: connections, adapters, pairing, the channel log (`infra/channels`). */
+  channels: ChannelGateway
   /** Operational counters of the runtime (`config.observe`): failed spans, hook timeouts, ... */
   metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
@@ -401,6 +422,8 @@ export function compose(config: ServerConfig): Server {
   // the same for the heartbeat tools (`team_status`) and the hook that records a beat
   let heartbeatIntake: HeartbeatIntake | undefined
   let workQueueIntake: WorkQueueIntake | undefined
+  // the channels gateway needs the app deps too
+  let channelGateway: ChannelGateway | undefined
   // the fixture community source is a demo: it is only there when asked for
   const bigDataConfig: BigDataConfig = {
     ...config.bigData,
@@ -430,6 +453,7 @@ export function compose(config: ServerConfig): Server {
     decisions: () => decisionIntake,
     heartbeat: () => heartbeatIntake,
     workQueue: () => workQueueIntake,
+    channels: () => channelGateway,
     chatTools: chatToolsStore,
     // Auto blocked / paused / resumed: the web shows "auto paused" from this event
     onAutoEvent: ({ sessionId, agentId, event, state, mode }) =>
@@ -616,6 +640,82 @@ export function compose(config: ServerConfig): Server {
     canReadBriefings: (slug) => agents.getBySlug(slug)?.role === 'lead',
     briefings: (query) => briefingsText(deps, query),
   }
+  // channels: chat platforms as sessions of an agent (docs/plans/P41-team-channels.md)
+  const channelFiles = libraryFs(conn.sqlite)
+  channelGateway = createChannelGateway({
+    sqlite: conn.sqlite,
+    vault:
+      config.channels?.vault ??
+      channelVaultFromEnv({
+        ...(config.env === undefined ? {} : { env: config.env }),
+        dataDir: config.dbFile === ':memory:' ? undefined : dirname(config.dbFile),
+      }),
+    agents,
+    threads: threadStore,
+    events,
+    sessions: {
+      async enqueue(agentId, sessionId, input, options) {
+        const def = agents.get(agentId)
+        if (def === undefined) throw new Error(`no such agent: ${agentId}`)
+        await factory.prepare(def)
+        await factory.openSession(def, sessionId).enqueue(input as never, options)
+      },
+    },
+    attachments: {
+      store: async (file) => {
+        const stored = await uploadFile(deps, file)
+        return {
+          url: stored.url,
+          mediaType: stored.mediaType,
+          name: stored.name,
+          path: stored.path,
+        }
+      },
+    },
+    files: {
+      read: async (path) => {
+        const file = await channelFiles.readBytes?.(path)
+        if (file === null || file === undefined) return undefined
+        return {
+          bytes: file.bytes,
+          mediaType: file.mediaType ?? file.meta.mediaType ?? 'application/octet-stream',
+        }
+      },
+    },
+    notify: (n) => {
+      const added = deps.notifications.insert({
+        id: deps.ids.next(),
+        kind: 'alert',
+        key: n.key,
+        title: n.title,
+        body: n.body,
+        link: null,
+        agentId: n.agentId,
+        createdAt: Date.now(),
+      })
+      if (added !== undefined)
+        events.append({ type: 'notification-changed', payload: { kind: 'alert' } })
+    },
+    ...(config.channels?.collect === undefined ? {} : { collect: config.channels.collect }),
+    ...(config.channels?.typingEveryMs === undefined
+      ? {}
+      : { typingEveryMs: config.channels.typingEveryMs }),
+    ...(config.channels?.outbound === undefined ? {} : { outbound: config.channels.outbound }),
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
+  const channels = channelGateway
+  const purgeChannels = (): void => {
+    try {
+      channels.purge()
+    } catch (error) {
+      console.warn(`team: purging the channel log failed: ${String(error)}`)
+    }
+  }
+  purgeChannels()
+  const channelPurgeMs = config.channels?.purgeEveryMs ?? 3_600_000
+  const channelPurgeTimer =
+    channelPurgeMs > 0 ? setInterval(purgeChannels, channelPurgeMs) : undefined
+  channelPurgeTimer?.unref()
   if (config.seed !== false) seedAgents(deps)
   // agents from before threads keep their single DM as their first thread
   ensureAllFirstThreads(deps)
@@ -714,6 +814,7 @@ export function compose(config: ServerConfig): Server {
     rehearsals: rehearsalService,
     decisions: decisionService,
     heartbeats,
+    channels,
     activityLog,
     metrics: observer.snapshot,
     providers,
@@ -725,6 +826,8 @@ export function compose(config: ServerConfig): Server {
     async close() {
       if (timer !== undefined) clearInterval(timer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
+      if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
+      await channels.stop()
       await routines?.stop()
       await ready
       await repairing?.catch(() => undefined)

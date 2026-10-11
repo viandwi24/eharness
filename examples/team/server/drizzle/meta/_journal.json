@@ -148,6 +148,13 @@
       "when": 1791746457365,
       "tag": "0020_glossy_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1791748734203,
+      "tag": "0021_pale_lord_hawal",
+      "breakpoints": true
     }
   ]
 }

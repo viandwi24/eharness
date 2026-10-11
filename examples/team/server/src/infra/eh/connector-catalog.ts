@@ -30,6 +30,7 @@ import type { AgentDef } from '../../domain/agents.ts'
 import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
+import { CHANNEL_READ_TOOLS } from '../channels/index.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
@@ -68,6 +69,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       ...WORK_QUEUE_TOOLS,
       // reading the Briefing page is read-only
       READ_BRIEFINGS_TOOL,
+      // reading and describing chat channels is read-only; posting keeps its own risk (`infra/channels`)
+      ...CHANNEL_READ_TOOLS,
     ],
     ask: [...def.rules.ask],
     deny: [...def.rules.deny],

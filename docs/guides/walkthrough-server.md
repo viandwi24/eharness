@@ -1110,6 +1110,68 @@ briefing, alerts, `read_briefings`, discuss seeding), `heartbeat.test.ts`, and t
 `lib/threads/model.test.ts`, `lib/briefings/model.test.ts`, `lib/stores/threads.test.ts`,
 `lib/stores/live.test.ts`.
 
+## 28. Channels: chat platforms as sessions of an agent (P41 phase L1)
+
+**What.** An agent can live in a chat platform the way an employee does. The *gateway*
+([`infra/channels`](../../examples/team/server/src/infra/channels)) sits between platform
+*adapters* and the agent sessions and never names a platform; a Telegram bot, a Slack app or the
+in-memory `mock-adapter.ts` all implement the same `ChannelAdapter` (normalized inbound events,
+`send`/`edit`/`delete`/`react`/`typing`, optional history, members and a native action catalog,
+`capabilities` with the text limit). The contract is `types.ts`; the rules that need no I/O (scope
+resolution, the wake test, splitting text, the loop guard) are `policy.ts`.
+
+**One event, in order.** `gateway.handle(event)`: drop the agent's own messages and bots (unless
+`allowBots`, then the loop guard: 20 events in 300 s puts the conversation in a 600 s cooldown);
+the allowlist (`groupPolicy: allowlist` by default, per group and per topic overrides of `agentId`,
+`wake`, `delivery`, `retentionDays`); a DM only from a mapped employee (a one-time `/start <token>`
+link, `pairing.issue`, only the token's hash is stored); then **wake** or **observe**. A message
+wakes the agent when it mentions it, replies to it, matches an alias, is in the agent's own topic,
+or the scope says `wake: 'always'`; a message that mentions somebody else and not the agent is only
+observed; `wake: 'never'` is an audit chat. Every kept message goes to the **channel log**
+(`channel_messages`, body sealed with its own key; unique per platform message id, which is the
+dedupe), then a wake is `session.enqueue(input, { mode: 'collect', id: 'ev:<message id>' })`:
+a burst of messages becomes one turn, and the inbox's caller id makes a redelivery a no-op.
+An observed message is just the log row marked `pending`.
+
+**Sessions.** `channel:<connection>:<conversation id>`, one per group, per forum topic and per DM
+peer (the adapter composes the conversation id). Each is registered as a `chat_threads` row with
+`source: 'channel'` and a label, so it shows in the agent's thread list. Turns are prefixed with
+the sender (`[Ana Putri @ana] ...`), inbound files are stored like web uploads (same allowlist and
+size limit) and reach the model as file parts. At the next wake the messages observed since the
+last one (at most 50) arrive as a **turn reminder** (an instruction with `refresh: 'turn'`: never
+in the system prompt, so the prompt cache holds) and are cleared after the run.
+
+**Replies.** `final_text` (default): at `turn.end` the final assistant text (after the last tool
+call) is posted back, quoting the message that woke the agent, in the same topic, split at the
+adapter's `maxTextLength` on newlines. `message_tool`: only `channel_send` posts. The exact text
+`NO_REPLY` is swallowed only in `wake: 'always'` scopes. The agent gets a 👀 reaction on an
+addressed group message and a typing indicator while it works.
+
+**Outbound queue** ([`outbound.ts`](../../examples/team/server/src/infra/channels/outbound.ts)).
+Everything that talks to a platform (replies, `channel_send`, reactions, pairing replies) is one
+operation in a queue per conversation: in order, at least `chatMinIntervalMs` apart (1 s), at most
+20 a minute to a group, 25 a second over a connection (all in the connection's config). A
+`rate_limit` error parks the connection for the time the platform asked and retries (never a
+tight loop); a `fatal` error, or five failures in a row, opens a **circuit breaker** that refuses
+sends until its cooldown ends and raises one bell notification.
+
+**Tools.** `channel_describe` and `channel_read` (history from the log or the platform, members,
+download an attachment into the library) are read-only; `channel_send` (`external`: send, reply,
+upload, react, also to a mapped member's DM) and `channel_manage` (`destructive`: edit, delete,
+pin) keep one static risk each, so permissions, program authority and rehearsals work unchanged.
+A target must be a conversation the gateway knows or a configured group or channel; the tools
+return readable errors. The native actions of an adapter become **deferred tools** found with
+`tool_search`, each with its own risk. *Without the split by risk:* one `channel(action)` tool would
+be `destructive` for everybody, or `read` for nobody.
+
+**Test it.** `server/test/channels.test.ts` with a scripted model and the mock adapter: the pure
+policy, the sealed log and its retention, pairing, U3 (mention wakes with the observed context and
+replies quoting the trigger in its topic; unmapped DM ignored; two agents in one group; the loop
+guard), U1 (an audit chat never wakes), U2 (a program posts three updates through the queue at the
+configured rate and reads them back), rate-limit parking, the breaker and the bell, dedupe of a
+redelivered event and a restart that keeps the log, pairing and session.
+`bun scripts/channels-demo.ts` runs a small demo on the mock adapter.
+
 ## What to change when you copy it
 
 | In the example | In your harness |
