@@ -96,3 +96,31 @@ describe('harness client', () => {
     expect(isNetworkError(new HarnessHttpError(502, 'HTTP_502', 'network down'))).toBe(false)
   })
 })
+
+describe('harness client: headers and fetch options', () => {
+  test('a headers function may return undefined values (dropped)', async () => {
+    const seen: Array<Record<string, string>> = []
+    const client = createHarnessClient({
+      baseUrl: '/api',
+      headers: () => ({ authorization: undefined, 'x-app': '1' }),
+      fetch: (async (_u: RequestInfo | URL, init: RequestInit = {}) => {
+        seen.push(Object.fromEntries(new Headers(init.headers)))
+        return json({ ok: true })
+      }) as typeof fetch,
+    })
+    await client.health()
+    expect(seen[0]?.authorization).toBeUndefined()
+    expect(seen[0]?.['x-app']).toBe('1')
+  })
+
+  test('health is never cached; init passes fetch options per call', async () => {
+    const { client, calls } = setup(() => json({ ok: true }))
+    await client.health()
+    await client.sessions.get('s1', { init: { cache: 'reload', headers: { 'x-extra': 'y' } } })
+    expect(calls[0]?.init.cache).toBe('no-store')
+    expect(calls[1]?.init.cache).toBe('reload')
+    expect(calls[1]?.headers['x-extra']).toBe('y')
+    expect(calls[1]?.headers.authorization).toBe('Bearer t')
+    expect(calls[1]?.init.method).toBe('GET')
+  })
+})

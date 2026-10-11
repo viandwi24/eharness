@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { ActivityRecord, AttentionItem } from '../activity/index.ts'
-import { createAttentionList } from './attention.ts'
+import { ATTENTION_EVENTS, createAttentionList } from './attention.ts'
 import type { Clock } from './clock.ts'
 import { createHarnessClient } from './http-client.ts'
 
@@ -297,5 +297,59 @@ describe('attention list: decided while a fetch is in flight', () => {
     t.w.hold[0]?.()
     await inflight
     expect(t.ids()).toEqual(['a', 'c'])
+  })
+})
+
+describe('attention list: list source, events, answers', () => {
+  type Row = { id: string; sessionId: string; agentName: string }
+  const rows: Row[] = [
+    { id: 'a', sessionId: 's1', agentName: 'Ann' },
+    { id: 'b', sessionId: 's2', agentName: 'Bo' },
+  ]
+
+  test('a custom list source gives typed rows and an extensible answer', async () => {
+    let answered: unknown
+    const client = createHarnessClient({
+      baseUrl: '/api',
+      fetch: (async (_url: RequestInfo | URL, init?: RequestInit) => {
+        answered = JSON.parse(String(init?.body))
+        return json({ status: 'resumed', id: 'a', sessionId: 's1' })
+      }) as typeof fetch,
+    })
+    const list = createAttentionList<Row, { kind: 'question'; answers: string[][] }>({
+      client,
+      list: async () => rows,
+      clock: manualClock(),
+    })
+    await list.refresh()
+    const first: Row | undefined = list.get().items[0]
+    expect(first?.agentName).toBe('Ann')
+    await list.answer(rows[0] as Row, { kind: 'question', answers: [['x']] })
+    expect(answered).toEqual({ sessionId: 's1', answer: { kind: 'question', answers: [['x']] } })
+    expect(list.get().items.map((i) => i.id)).toEqual(['b'])
+  })
+
+  test('events replaces the refetch triggers', async () => {
+    const clock = manualClock()
+    let lists = 0
+    const list = createAttentionList<Row>({
+      client: createHarnessClient({
+        baseUrl: '/api',
+        fetch: (async (_i: RequestInfo | URL) => json({})) as typeof fetch,
+      }),
+      list: async () => {
+        lists++
+        return rows
+      },
+      events: [...ATTENTION_EVENTS, 'task-changed'],
+      clock,
+    })
+    list.handleActivity(record('message-added'))
+    expect(clock.pending()).toBe(0)
+    list.handleActivity(record('task-changed'))
+    expect(clock.pending()).toBe(1)
+    clock.run()
+    await flush()
+    expect(lists).toBe(1)
   })
 })

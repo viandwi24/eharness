@@ -140,10 +140,11 @@ export type AttentionAnswerWire =
   | { kind: 'client-tool' | 'wait'; errorText: string }
 
 /** `POST /attention/:id/answer` request body. */
-export interface AnswerRequest {
+export interface AnswerRequest<Answer = AttentionAnswerWire> {
   /** The session that owns the item (`AttentionItem.sessionId`). */
   sessionId: string
-  answer: AttentionAnswerWire
+  /** The wire answers, or the app-defined shapes its `parseAnswer` accepts. */
+  answer: Answer
 }
 
 /** `POST /attention/:id/answer` answer (`not-found` is a 404 error body instead). */

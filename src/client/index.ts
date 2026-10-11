@@ -15,6 +15,7 @@ export type {
   AnswerRequest,
   AnswerResponse,
   AttentionAnswerWire,
+  AttentionItemWire,
   AttentionListResponse,
   ChatQueued,
   HealthResponse,
@@ -37,6 +38,8 @@ export {
   type ResyncReason,
 } from './activity-feed.ts'
 export {
+  ATTENTION_EVENTS,
+  type AttentionKey,
   type AttentionList,
   type AttentionListOptions,
   type AttentionState,
@@ -60,6 +63,11 @@ export {
   createChatSession,
 } from './chat-session.ts'
 export { type Clock, systemClock } from './clock.ts'
+export {
+  type FollowOptions,
+  type FollowResult,
+  followSessionStream,
+} from './follow.ts'
 export {
   type AttentionApi,
   type CallOptions,

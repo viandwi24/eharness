@@ -10,6 +10,7 @@ import type { ActivityPage } from '../activity/index.ts'
 import type {
   AnswerRequest,
   AnswerResponse,
+  AttentionAnswerWire,
   AttentionListResponse,
   ChatQueued,
   HealthResponse,
@@ -29,8 +30,12 @@ export interface HarnessClientOptions {
   baseUrl: string
   /** Default `globalThis.fetch`. */
   fetch?: typeof fetch
-  /** Headers of every request (an `authorization` token goes here); may be a function. */
-  headers?: Resolvable<HeadersInit>
+  /**
+   * Headers of every request (an `authorization` token goes here); may be a function. A plain
+   * record may hold `undefined` values (dropped), so `() => ({ authorization: token ? ... : undefined })`
+   * needs no annotation.
+   */
+  headers?: Resolvable<HeadersInit | Record<string, string | undefined>>
   credentials?: RequestCredentials
 }
 
@@ -102,6 +107,11 @@ export async function readHttpError(response: Response): Promise<HarnessHttpErro
 /** Options of a JSON call. */
 export interface CallOptions {
   signal?: AbortSignal
+  /**
+   * Extra `fetch` options of this call (`cache`, `keepalive`, `priority`, ...). `method`, `body`
+   * and `signal` are owned by the client; `headers` are merged over the client's.
+   */
+  init?: Omit<RequestInit, 'method' | 'body' | 'signal'>
 }
 
 /** Options of {@link SessionsApi.send}. */
@@ -139,9 +149,10 @@ export interface SessionsApi {
 /** `/attention*` calls. */
 export interface AttentionApi {
   list(options?: CallOptions): Promise<AttentionListResponse>
-  answer(
+  /** `Answer` widens the wire answer with the app-defined kinds its `parseAnswer` accepts. */
+  answer<Answer = never>(
     attentionId: string,
-    request: AnswerRequest,
+    request: AnswerRequest<AttentionAnswerWire | Answer>,
     options?: CallOptions,
   ): Promise<AnswerResponse>
 }
@@ -157,6 +168,7 @@ export interface HarnessClient {
    * (`init.headers` win). Does not map errors.
    */
   request(url: string, init?: RequestInit): Promise<Response>
+  /** `GET /health`; never cached (it is the restart probe), `init` may override. */
   health(options?: CallOptions): Promise<HealthResponse>
   sessions: SessionsApi
   attention: AttentionApi
@@ -167,6 +179,17 @@ export interface HarnessClient {
 
 async function resolve<T>(value: Resolvable<T> | undefined): Promise<T | undefined> {
   return typeof value === 'function' ? await (value as () => T | Promise<T>)() : value
+}
+
+/** `HeadersInit` or a record whose `undefined` values are dropped, as `Headers`. */
+function toHeaders(input: HeadersInit | Record<string, string | undefined> | undefined): Headers {
+  const headers = new Headers()
+  if (input === undefined) return headers
+  if (input instanceof Headers || Array.isArray(input)) return new Headers(input)
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== undefined) headers.set(key, value)
+  }
+  return headers
 }
 
 /** Create the client of an `eharness/http` mount. */
@@ -187,7 +210,7 @@ export function createHarnessClient(options: HarnessClientOptions): HarnessClien
   }
 
   const request = async (target: string, init: RequestInit = {}): Promise<Response> => {
-    const headers = new Headers(await resolve(options.headers))
+    const headers = toHeaders(await resolve(options.headers))
     for (const [key, value] of new Headers(init.headers)) headers.set(key, value)
     const credentials = init.credentials ?? options.credentials
     const doFetch = options.fetch ?? ((input, i) => globalThis.fetch(input, i))
@@ -202,13 +225,19 @@ export function createHarnessClient(options: HarnessClientOptions): HarnessClien
     method: 'GET' | 'POST',
     target: string,
     body?: unknown,
-    signal?: AbortSignal,
+    o?: CallOptions,
+    defaults?: RequestInit,
   ): Promise<T> => {
+    const signal = o?.signal
+    const extra = o?.init
     const response = await request(target, {
+      ...defaults,
+      ...extra,
       method,
       headers: {
         accept: 'application/json',
         ...(body === undefined ? {} : { 'content-type': 'application/json' }),
+        ...Object.fromEntries(new Headers(extra?.headers)),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       ...(signal === undefined ? {} : { signal }),
@@ -224,18 +253,18 @@ export function createHarnessClient(options: HarnessClientOptions): HarnessClien
     baseUrl,
     url,
     request,
-    health: (o) => call('GET', url('/health'), undefined, o?.signal),
+    health: (o) => call('GET', url('/health'), undefined, o, { cache: 'no-store' }),
     sessions: {
-      list: (query, o) => call('GET', url('/sessions', { ...query }), undefined, o?.signal),
-      get: (id, o) => call('GET', url(`/sessions/${seg(id)}`), undefined, o?.signal),
+      list: (query, o) => call('GET', url('/sessions', { ...query }), undefined, o),
+      get: (id, o) => call('GET', url(`/sessions/${seg(id)}`), undefined, o),
       messages: (id, query, o) =>
-        call('GET', url(`/sessions/${seg(id)}/messages`, { ...query }), undefined, o?.signal),
+        call('GET', url(`/sessions/${seg(id)}/messages`, { ...query }), undefined, o),
       interrupt: (id, reason, o) =>
         call(
           'POST',
           url(`/sessions/${seg(id)}/interrupt`),
           reason === undefined ? {} : { reason },
-          o?.signal,
+          o,
         ),
       async send(id, message, o) {
         const key = o?.idempotencyKey ?? message.id
@@ -260,11 +289,11 @@ export function createHarnessClient(options: HarnessClientOptions): HarnessClien
       },
     },
     attention: {
-      list: (o) => call('GET', url('/attention'), undefined, o?.signal),
-      answer: (id, body, o) => call('POST', url(`/attention/${seg(id)}/answer`), body, o?.signal),
+      list: (o) => call('GET', url('/attention'), undefined, o),
+      answer: (id, body, o) => call('POST', url(`/attention/${seg(id)}/answer`), body, o),
     },
     activity: {
-      page: (query, o) => call('GET', url('/activity', { ...query }), undefined, o?.signal),
+      page: (query, o) => call('GET', url('/activity', { ...query }), undefined, o),
     },
   }
 }

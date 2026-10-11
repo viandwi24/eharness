@@ -50,18 +50,21 @@ createStore<T>(initial: T, lifecycle?: { onActive?; onIdle?; graceMs?; timers? }
 ## 2. `createHarnessClient`
 
 ```ts
-createHarnessClient({ baseUrl, fetch?, headers?: HeadersInit | (() => HeadersInit | Promise<HeadersInit>), credentials? }): HarnessClient
+createHarnessClient({ baseUrl, fetch?, headers?: Resolvable<HeadersInit | Record<string, string | undefined>>, credentials? }): HarnessClient
 interface HarnessClient {
   baseUrl: string; url(path, query?): string; request(url, init?): Promise<Response>  // raw, no error mapping
-  health(opts?): Promise<HealthResponse>
+  health(opts?): Promise<HealthResponse>        // always `cache: 'no-store'` (the restart probe)
   sessions: { list, get, messages(id, { before?, limit? }), interrupt(id, reason?), send(id, message, { ifBusy?, idempotencyKey? }) }
-  attention: { list(), answer(id, { sessionId, answer }) }
+  attention: { list(), answer<Answer>(id, { sessionId, answer: AttentionAnswerWire | Answer }) }
   activity: { page({ after?, limit? }) }
 }
 ```
 
 Every method except `request` rejects with `HarnessHttpError` for a non-2xx answer. `headers` is
-resolved on every request (a token that rotates). `request` merges the client headers under the
+resolved on every request (a token that rotates); a plain record may hold `undefined` values, which
+are dropped (`() => ({ authorization: token ? \`Bearer ${token}\` : undefined })`). Every JSON call
+takes `{ signal?, init? }`: `init` is extra `fetch` options (`cache`, `keepalive`, ...; `method`,
+`body` and `signal` stay the client's, `headers` merge over the client's). `request` merges the client headers under the
 per-request headers and applies `credentials`. `sessions.send` is the chat POST without a chat
 framework: `{ kind: 'stream', response }` (`200`, the caller reads or cancels the body) or `{ kind:
 'queued', queued }` (`202`); it sends `Idempotency-Key` (the message id when it is a valid key).
@@ -125,7 +128,7 @@ type ResyncReason = 'connect' | 'resync-event' | 'boot-changed' | 'poll-gap'
   a changed boot id triggered; `'poll-gap'` is a polled page flagged `resync`.
 - **Boot**: the `boot` event and `GET /health` carry the server's boot id; `onBoot(id, restarted)`
   runs the first time and on every change.
-- **Liveness**: no bytes (not even the 15 s keep-alive) for `idleMs` (default 20 s) drops the
+- **Liveness**: no bytes (not even the server keep-alive, 8 s by default) for `idleMs` (default 20 s) drops the
   connection. Every second the feed checks `shouldPing`: while `isBusy()` is true it pings
   `/health` about every 5 s (and always when the stream is stale). A failed ping on a live stream,
   or a changed boot id, reconnects at once without waiting out the backoff. `check()` pings now
@@ -197,14 +200,19 @@ Svelte recipe: `const session = createChatSession({ client, sessionId }); const 
 ## 6. Attention list
 
 ```ts
-createAttentionList({ client, debounceMs?, sessionId?, onError?, clock? }): AttentionList
-interface AttentionList extends Store<{ items: readonly AttentionItem[]; loaded: boolean; error: unknown }> {
-  refresh(); answer(item, answer: AttentionAnswerWire): Promise<AnswerResponse>
+createAttentionList<Item extends { id: string; sessionId: string } = AttentionItemWire, Answer = AttentionAnswerWire>(
+  { client, list?, events?, debounceMs?, sessionId?, onError?, clock? }): AttentionList<Item, Answer>
+interface AttentionList<Item, Answer> extends Store<{ items: readonly Item[]; loaded: boolean; error: unknown }> {
+  refresh(); answer(item: Item, answer: Answer): Promise<AnswerResponse>
   handleActivity(record); handleResync(); attach(feed): () => void
 }
 ```
 
-- `refresh()` reads `GET /attention`. A **generation guard** keeps a list fetched before a newer
+- `refresh()` reads `list()` (default `client.attention.list()`, i.e. `GET /attention`, whose items
+  carry the app's `attention.decorate` output as `extra`). An app with its own enriched view passes
+  `list` and sets `Item` to its row type (rows need `id` and `sessionId`; `rootSessionId`, when
+  present, is used by `sessionId` scoping). `Answer` is the answer type: set it to the union of the
+  wire answers and the app-defined kinds the server's `attention.parseAnswer` accepts (spec 26). A **generation guard** keeps a list fetched before a newer
   event from winning: only the newest request writes, a response that saw a later event schedules a
   refetch, and an item decided while a request was in flight is filtered from its response.
 - `answer(item, answer)` is **optimistic**: the item leaves at once, `POST /attention/:id/answer`
@@ -212,9 +220,10 @@ interface AttentionList extends Store<{ items: readonly AttentionItem[]; loaded:
   failure the item returns at its place, except when it was answered elsewhere (`409
   EH_HTTP_ALREADY_ANSWERED` or `404`): it stays gone. The error is rethrown. A `200` with status
   `already-answered` is a result.
-- `handleActivity` reacts to `pending-changed`, `approval-decided` (removes the card at once),
-  `attention-answered`, `turn-ended`, `session-recovered` and `child-reported` with one debounced
-  refetch; `handleResync` refetches now. `attach(feed)` wires both to a feed.
+- `handleActivity` reacts to the `events` types (default `ATTENTION_EVENTS`: `pending-changed`,
+  `approval-decided` (removes the card at once), `attention-answered`, `turn-ended`,
+  `session-recovered`, `child-reported`; an app adds its own, e.g. `[...ATTENTION_EVENTS,
+  'task-changed']`) with one debounced refetch; `handleResync` refetches now. `attach(feed)` wires both to a feed.
 - `sessionId` keeps the items of that session and of the sessions below it (`rootSessionId`).
 
 ## 7. React (`eharness/client/react`)
@@ -235,7 +244,21 @@ chatBridgeOf(() => useChatResult): ChatBridge
 a bridge on mount and runs `init()`. `chatBridgeOf` reads the latest `useChat` result and shows its
 own writes to `messages` at once (React would show them after the next render).
 
-## 8. Out of scope
+## 8. Following a session
+
+```ts
+followSessionStream(client, sessionId, { signal?, onMessage?, onChunk?, onError? }): Promise<'streamed' | 'idle' | 'error'>
+```
+
+A read-only follower of the active turn of a session this tab did not start (a task, a routine, a
+turn of another tab). It reads `GET /sessions/:id/chat/stream` through the chat transport (the AI
+SDK's `reconnectToStream`) and folds the chunks with `readUIMessageStream`, so it builds on the
+SDK's reducer and SSE parser. `idle` = nothing streams (`204`); `error` = a failed request, a
+broken stream or an abort (also reported to `onError`); it never throws. The server replays the
+whole message first, also for a `respond()` continuation (spec 04 §6.3), so `onMessage` receives
+complete states of the message; clone them before keeping them.
+
+## 9. Out of scope
 
 Uploads, compaction, tool lists and stats stay app routes; the client has no route for them. A
 Svelte subpath is not shipped (the recipe above is the integration). `EventSource` is not used.
