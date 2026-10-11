@@ -134,3 +134,9 @@ cannot change what they test. `bun run dev`, `dev:server` and `start` read `exam
 - [docs/api.md](docs/api.md): OpenAPI at `/docs`, auth, errors, the streaming endpoints
 - [docs/operations.md](docs/operations.md): several instances, swapping the database, tuning, backups
 - [Lead and role agents](../../docs/guides/lead-and-role-agents.md): the pattern this app uses
+
+## Integrating into your own system
+
+To connect these agents to an existing company system (users, roles, permissions, an OpenAPI
+backend on Hono or Express) as bot users, without writing the business logic twice, see
+[docs/examples/integrate-team-to-your-system.md](../../docs/examples/integrate-team-to-your-system.md).
