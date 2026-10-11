@@ -10,21 +10,13 @@ import { createHarnessHttp, openAccess } from '../http/index.ts'
 import { defineHarnessAgent, type HarnessAgent } from '../index.ts'
 import { memoryInbox, memoryMessages, memoryState, memoryStreamLog } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { until } from '../testing/test-utils.ts'
 import { createActivityFeed, type ResyncReason } from './activity-feed.ts'
 import { createChatSession } from './chat-session.ts'
 import { createHarnessClient, isHarnessHttpError } from './http-client.ts'
 import { createHarnessTransport } from './transport.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-async function until(what: string, condition: () => boolean, ms = 4000) {
-  const end = Date.now() + ms
-  while (!condition()) {
-    if (Date.now() > end) throw new Error(`timed out waiting for: ${what}`)
-    await sleep(5)
-  }
-}
-
 // biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
 type Agent = HarnessAgent<any>
 

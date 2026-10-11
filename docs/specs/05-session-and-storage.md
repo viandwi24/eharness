@@ -810,7 +810,10 @@ export interface SessionLock {
 
 Postgres example: `SELECT pg_try_advisory_lock(hashtextextended($1, 0))` on a dedicated
 connection; reject when it returns `false`; release with `pg_advisory_unlock` in the returned
-function. The library ships no lock implementation.
+function. The library ships no lock implementation. `lockConformance` (`eharness/testing`) checks
+the contract: prompt rejection while held, release frees only its own acquire (idempotent, a stale
+release never frees a newer holder), one winner among parallel acquires, cross-handle exclusion
+and, for lease locks, takeover of an expired holder.
 
 ## 9. Crash recovery
 

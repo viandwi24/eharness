@@ -85,6 +85,7 @@ state. It is small and written a few times per turn.
 import { describe, test } from 'bun:test' // or vitest / node:test
 import {
   inboxAdapterConformance,
+  lockConformance,
   messageAdapterConformance,
   stateAdapterConformance,
 } from 'eharness/testing'
@@ -95,6 +96,10 @@ describe('my storage', () => {
   }
   for (const c of stateAdapterConformance(() => myState())) test(c.name, c.run)
   for (const c of inboxAdapterConformance(() => myInbox())) test(c.name, c.run)
+  // `peer`: a second handle on the same lock space; `expire`: let a holder's lease run out
+  for (const c of lockConformance(() => ({ lock: myLock(), peer: () => myLock() }))) {
+    test(c.name, c.run)
+  }
 })
 ```
 
@@ -124,7 +129,10 @@ const lock: SessionLock = {
 agent.session('s1', { lock })
 ```
 
-The Postgres example implements it with `pg_try_advisory_lock` on a dedicated connection.
+The Postgres example implements it with `pg_try_advisory_lock` on a dedicated connection. Check
+your lock with `lockConformance` (above): a second acquire rejects at once, a release only frees
+its own acquire (a stale release must not free a newer holder), and a lease-based lock takes over
+an expired holder.
 Without a lock, the core still marks the running turn in the state (`activeTurn` + heartbeat), so
 a second instance fails fast with `EH_SESSION_BUSY` (best effort), and a turn whose process died
 is recovered on the next operation.

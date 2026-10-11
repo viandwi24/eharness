@@ -1,8 +1,14 @@
 import { describe, expect, test } from 'bun:test'
-import type { InboxAdapter, InboxItem, MessageAdapter } from '../agent/session-types.ts'
+import type {
+  InboxAdapter,
+  InboxItem,
+  MessageAdapter,
+  SessionLock,
+} from '../agent/session-types.ts'
 import { uuidv7 } from '../messages/ids.ts'
 import { memoryInbox, memoryMessages, memoryState } from '../storage/memory.ts'
 import { inboxAdapterConformance } from '../testing/inbox-adapter.conformance.ts'
+import { lockConformance } from '../testing/lock.conformance.ts'
 import { messageAdapterConformance } from '../testing/message-adapter.conformance.ts'
 import { multiInstanceConformance } from '../testing/multi-instance.conformance.ts'
 import { stateAdapterConformance } from '../testing/state-adapter.conformance.ts'
@@ -174,23 +180,60 @@ describe('inboxAdapterConformance detects broken adapters', () => {
   })
 })
 
-describe('multi-instance conformance (memory adapters)', () => {
-  const makeStorage = () => {
-    const held = new Set<string>()
+/** An in-memory `SessionLock` over a shared owner map: a release only frees its own acquire. */
+function memoryLock(
+  held: Map<string, symbol> = new Map(),
+): SessionLock & { held: Map<string, symbol> } {
+  return {
+    held,
+    async acquire(sessionId: string) {
+      if (held.has(sessionId)) throw new Error('locked')
+      const owner = Symbol(sessionId)
+      held.set(sessionId, owner)
+      return async () => {
+        if (held.get(sessionId) === owner) held.delete(sessionId)
+      }
+    },
+  }
+}
+
+describe('SessionLock conformance (memory lock)', () => {
+  const cases = lockConformance(() => {
+    const lock = memoryLock()
     return {
-      messages: memoryMessages(),
-      state: memoryState(),
-      inbox: memoryInbox(),
-      lock: {
-        async acquire(sessionId: string) {
+      lock,
+      peer: () => memoryLock(lock.held),
+      expire: (sessionId) => {
+        lock.held.delete(sessionId)
+      },
+    }
+  })
+  for (const c of cases) test(c.name, c.run)
+
+  test('a lock whose release frees any holder fails the suite', async () => {
+    const broken = (): SessionLock => {
+      const held = new Set<string>()
+      return {
+        async acquire(sessionId) {
           if (held.has(sessionId)) throw new Error('locked')
           held.add(sessionId)
           return async () => {
             held.delete(sessionId)
           }
         },
-      },
+      }
     }
-  }
+    const stale = lockConformance(broken).find((c) => c.name.includes('stale release'))
+    await expect(stale?.run()).rejects.toThrow()
+  })
+})
+
+describe('multi-instance conformance (memory adapters)', () => {
+  const makeStorage = () => ({
+    messages: memoryMessages(),
+    state: memoryState(),
+    inbox: memoryInbox(),
+    lock: memoryLock(),
+  })
   for (const c of multiInstanceConformance({ makeStorage })) test(c.name, c.run, 20_000)
 })

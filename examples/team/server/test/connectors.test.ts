@@ -307,7 +307,7 @@ describe('migration of the tool checklist and MCP servers', () => {
           },
           {
             name: 'legacy-sse',
-            transport: { type: 'sse', url: 'https://sse.example.com/sse', headers: {} },
+            transport: { type: 'sse', url: 'http://127.0.0.1:9/sse', headers: {} },
             deny: ['danger'],
           },
         ],

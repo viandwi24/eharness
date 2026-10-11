@@ -13,6 +13,12 @@ export interface HttpUnderTest {
 export interface HttpConformanceOptions {
   /** Cleanup after every case (stop a server, close the agent). */
   dispose?: () => void | Promise<void>
+  /**
+   * Maps the session id the suite suggests (`conf-stream-…`, unique per case) to one the handler
+   * accepts and that the handler reports back unchanged. Use it when the app only serves sessions
+   * it knows (create the owning agent or row here and return its session id). Default: identity.
+   */
+  sessionId?: (suggested: string) => string | Promise<string>
 }
 
 const JSON_HEADERS = { 'content-type': 'application/json' }
@@ -54,6 +60,9 @@ export function httpConformance(
       }
     },
   })
+
+  const sessionFor = async (suggested: string): Promise<string> =>
+    (await options.sessionId?.(suggested)) ?? suggested
 
   const errorShape = async (
     res: Response,
@@ -149,7 +158,7 @@ export function httpConformance(
     wrap(
       'a turn streams: the first chunk arrives before the turn ends, then the stream ends',
       async ({ fetch, baseUrl }) => {
-        const id = uniqueSessionId('conf-stream')
+        const id = await sessionFor(uniqueSessionId('conf-stream'))
         const res = await fetch(
           new Request(`${baseUrl}/sessions/${id}/chat`, {
             method: 'POST',
@@ -202,7 +211,7 @@ export function httpConformance(
       },
     ),
     wrap('aborting the request ends the stream', async ({ fetch, baseUrl }) => {
-      const id = uniqueSessionId('conf-abort')
+      const id = await sessionFor(uniqueSessionId('conf-abort'))
       const controller = new AbortController()
       const res = await fetch(
         new Request(`${baseUrl}/sessions/${id}/chat`, {
@@ -239,15 +248,15 @@ export function httpConformance(
     wrap(
       'messages: an invalid limit is a 400 and a missing session is empty',
       async ({ fetch, baseUrl }) => {
+        const limited = await sessionFor(uniqueSessionId('conf-limit'))
         await errorShape(
-          await fetch(new Request(`${baseUrl}/sessions/x/messages?limit=0`)),
+          await fetch(new Request(`${baseUrl}/sessions/${limited}/messages?limit=0`)),
           400,
           'EH_INVALID_INPUT',
           'limit 0',
         )
-        const res = await fetch(
-          new Request(`${baseUrl}/sessions/${uniqueSessionId('conf-none')}/messages`),
-        )
+        const none = await sessionFor(uniqueSessionId('conf-none'))
+        const res = await fetch(new Request(`${baseUrl}/sessions/${none}/messages`))
         const body = (await res.json()) as { messages: unknown[] }
         assertTrue(
           res.status === 200 && body.messages.length === 0,
@@ -258,7 +267,7 @@ export function httpConformance(
     wrap(
       'resume: 204 when nothing runs, 400 for a malformed cursor',
       async ({ fetch, baseUrl }) => {
-        const id = uniqueSessionId('conf-resume')
+        const id = await sessionFor(uniqueSessionId('conf-resume'))
         const idle = await fetch(new Request(`${baseUrl}/sessions/${id}/chat/stream`))
         assertTrue(idle.status === 204, `idle resume: status ${idle.status}`)
         const bad = await fetch(new Request(`${baseUrl}/sessions/${id}/chat/stream?from=abc`))
@@ -266,7 +275,7 @@ export function httpConformance(
       },
     ),
     wrap('interrupt of an idle session answers { target: "idle" }', async ({ fetch, baseUrl }) => {
-      const id = uniqueSessionId('conf-int')
+      const id = await sessionFor(uniqueSessionId('conf-int'))
       const res = await fetch(
         new Request(`${baseUrl}/sessions/${id}/interrupt`, {
           method: 'POST',

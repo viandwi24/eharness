@@ -10,18 +10,10 @@ import { z } from 'zod/v4'
 import { defineHarnessAgent, type HarnessAgent } from '../index.ts'
 import { memoryInbox, memoryMessages, memoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { until } from '../testing/test-utils.ts'
 import { reconcileBackgroundChildren, subagents } from './index.ts'
 
-const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-async function until(what: string, condition: () => boolean | Promise<boolean>, ms = 5000) {
-  const end = Date.now() + ms
-  while (!(await condition())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for: ${what}`)
-    await sleep(5)
-  }
-}
-// biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
+const silent = { debug() {}, info() {}, warn() {}, error() {} } // biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
 type Agent = HarnessAgent<any>
 type Steps = Parameters<typeof scriptedModel>[0]
 

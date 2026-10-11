@@ -9,11 +9,11 @@ import { definePlugin } from '../plugin/define-plugin.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import { handleChatRequest } from '../stream/chat-request.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
+import { prng, sleep } from '../testing/test-utils.ts'
 import { collect, spyMessages } from './int-kit.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 function setup(
   config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
@@ -48,17 +48,6 @@ function slowState(inner: StateAdapter, maxMs: number, random: () => number): St
       await delay()
       return (await inner.setIf?.(id, value, rev)) ?? false
     },
-  }
-}
-
-/** Deterministic PRNG (mulberry32) so a failing iteration can be reproduced. */
-function prng(seed: number): () => number {
-  let a = seed
-  return () => {
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
   }
 }
 

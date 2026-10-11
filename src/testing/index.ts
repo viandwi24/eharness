@@ -44,6 +44,11 @@ export {
   inboxAdapterConformance,
 } from './inbox-adapter.conformance.ts'
 export {
+  type LockConformanceOptions,
+  type LockUnderTest,
+  lockConformance,
+} from './lock.conformance.ts'
+export {
   type MessageAdapterConformanceOptions,
   messageAdapterConformance,
 } from './message-adapter.conformance.ts'

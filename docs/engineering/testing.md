@@ -37,7 +37,8 @@ same script in call order, so one scripted model can drive a conversation that c
 | Integration | full turns with `scriptedModel`: streaming, persistence per step, compaction triggers, abort, errors, hooks order, plugins, skills, fs tools | `src/**/*.int.test.ts` |
 | Golden | projection outputs and stream chunk sequences (`__golden__/*.json`) | updated only intentionally (`UPDATE_GOLDEN=1 bun test`) |
 | Package | build + publint + attw + Node import smoke | CI (`bun run check:package`, node-compat job) |
-| Type tests | inference of `InferHarnessUIMessage`, namespaced data parts, `ctx.stream.data` keys | `src/**/*.test-d.ts` checked by `tsc` |
+| Team example | web tests (standalone), real-process scripts `test:instances` / `test:restart` (SIGKILL, two instances on one SQLite file; ephemeral ports, temp dirs, an overall timeout that also kills the servers) | CI `team` job |
+| Type tests | inference of `InferHarnessUIMessage`, namespaced data parts, `ctx.stream.data` keys; the 0.8 generics of `eharness/client` (`createAttentionList<Item, Answer>`, `attention.answer<Answer>`, `createChatSession<UI>`, activity records) and of the `eharness/http` principal `P` | `src/**/*.test-d.ts` checked by `tsc` |
 
 ## Conformance suites (public, in `eharness/testing`)
 
@@ -55,7 +56,35 @@ describe('postgres MessageAdapter', () => {
 
 Suites: `messageAdapterConformance`, `stateAdapterConformance`, `fileSystemConformance`,
 `skillSourceConformance`, `idGeneratorConformance`, `inboxAdapterConformance` (0.4.0),
-`multiInstanceConformance` (a whole storage backend shared by several agent instances, see below), `budgetLedgerConformance` (0.5.0; the factory receives the case's static limits), `profileStoreConformance` (`eharness/providers` stores), `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`, `flowStoreConformance` (`eharness/connectors` stores), `activityStoreConformance` (`eharness/activity` stores; the factory returns `{ store, peer? }`, a second handle on the same log), `httpConformance` (`eharness/http` handlers; the factory returns `{ fetch, baseUrl? }`, the agent behind it streams a slow reply). `scriptedProvider` is a provider definition with scripted models.
+`lockConformance` (a `SessionLock`, see below), `multiInstanceConformance` (a whole storage backend shared by several agent instances, see below), `budgetLedgerConformance` (0.5.0; the factory receives the case's static limits), `profileStoreConformance` (`eharness/providers` stores), `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`, `flowStoreConformance` (`eharness/connectors` stores), `activityStoreConformance` (`eharness/activity` stores; the factory returns `{ store, peer? }`, a second handle on the same log), `httpConformance` (`eharness/http` handlers; the factory returns `{ fetch, baseUrl? }`, the agent behind it streams a slow reply). `scriptedProvider` is a provider definition with scripted models.
+
+### Lock conformance
+
+`lockConformance(factory, { concurrency?, maxAcquireMs? })` pins the `SessionLock` contract (spec 05
+§8). The factory returns a fresh `SessionLock`, or `{ lock, peer?, expire? }`: `peer()` is a second
+handle on the **same** lock space (another connection or process object), `expire(sessionId)`
+simulates a crashed holder by letting its lease run out without calling the release function (a
+lease table: set `until` in the past). Cases: acquire returns a release function and release frees
+the session; a held session rejects a second acquire promptly (it must never block); sessions are
+independent; release is idempotent and a stale release never frees a newer holder; exactly one of N
+parallel acquires wins; with `peer`, a lock held through one handle is held for the other and a
+stale release of one handle does not free the other's lock; with `expire`, a crashed holder is
+taken over and its late release is a no-op. Adapter-specific options (the team example's
+`takeOver`) get their own tests next to the adapter.
+
+```ts
+import { lockConformance } from 'eharness/testing'
+
+for (const c of lockConformance(() => ({
+  lock: myLock(db),
+  peer: () => myLock(openConnection()),
+  expire: (id) => db.run('UPDATE locks SET until = 0 WHERE session_id = ?', id),
+}))) test(c.name, c.run)
+```
+
+It runs against the in-memory lock of `src/session/memory-storage.test.ts` and the team example's
+SQLite lock (`examples/team/server/test/eh-conformance.test.ts`, with a second connection as the
+peer). The Postgres advisory lock is tied to a connection and has no lease: omit `expire`.
 
 ### Multi-instance conformance
 
@@ -64,7 +93,7 @@ scripted model, no network) on **one** storage shared by several instances. `mak
 fresh `{ messages, state, inbox?, lock? }` per case; `connect(shared, index)` may return the view of
 instance `index` (a new database connection); `cleanup` drops the schema. Cases that need an inbox
 or a lock are skipped when the storage has none. The memory adapters run it in
-`src/session/memory-storage.test.ts`; an application adapter (Postgres, MySQL, Redis) runs it
+`src/session/memory-storage.test.ts` and the team example's SQLite adapters (one connection per instance, one database file) in `examples/team/server/test/eh-conformance.test.ts`; an application adapter (Postgres, MySQL, Redis) runs it
 exactly like the adapter suites:
 
 ```ts
@@ -104,7 +133,10 @@ leftover is driven to completion (answer pending, recover) and the quiescent inv
 checked. A failure prints the seed, the stored messages and the op log; reproduce with
 `FUZZ_ONLY=<seed> bun test src/session/fuzz.int.test.ts`. `FUZZ_SEEDS` (default 250, about 25 s)
 and `FUZZ_START` widen the search; run a few thousand seeds before a release that touches the
-session runtime.
+session runtime. `FUZZ_TRACE=1` prints `seed <n>` before each seed runs, so a hang or a crash that
+kills the process still names the seed that caused it (`FUZZ_ONLY` additionally prints the op log
+of that seed). The `Fuzz` workflow (`.github/workflows/fuzz.yml`) runs `FUZZ_SEEDS=5000` every
+Monday (and on demand, with `seeds` / `start` inputs); a red run lists the failing seeds.
 
 Minimum cases for `budgetLedgerConformance`: unknown scopes have no limit; reserve up to the limit
 and refuse beyond it (refused scope, limit, spent + reserved); a used-up scope refuses a zero
@@ -215,6 +247,35 @@ Harness interaction and robustness (spec 05, 11; mostly P2 and P7):
     `turn.prepare` can switch model; a model switch drops foreign-provider reasoning in projection.
 36. Chunk cloning: `attach()` replays chunks equal to what the first reader saw even when a data
     part was later reconciled by id.
+
+## Shared test helpers
+
+`src/testing/test-utils.ts` (internal: not exported from `eharness/testing`, not bundled) holds
+`sleep`, `until(what, condition, ms)` and the seeded `prng(seed)`. Waiting for an effect is
+`await until('what', () => ...)`, never a fixed `sleep` that assumes an order; a random delay comes
+from `prng(seed)` with a constant seed so a failure reproduces. No `Math.random()` in tests.
+
+## CI-only guards and environment
+
+- `examples/examples.test.ts` fails (instead of skipping the Postgres block) when `CI` is set and
+  `DATABASE_URL` is empty.
+- Tests never touch the network: the team MCP legacy-SSE case points at `127.0.0.1:9` (refused at
+  once), not a real host.
+- `examples/team/web` tests are plain bun tests; they run in the root `bun test` and again
+  standalone in the CI `team` job.
+- The process scripts blank every `TEAM_*` variable and pass `--no-env-file` to the server, so a
+  developer's `examples/team/.env` (a `TEAM_TOKEN`) cannot change what they test.
+
+## Why the suite does not run under Node
+
+CI runs the whole suite on Bun only. The tests are `bun:test` files (`describe/test/expect`
+imported from `bun:test`, `mock`, `Bun.serve`, `bun:sqlite` in the examples), so they cannot run
+under `node --test` or vitest without rewriting every file. Runtime neutrality of `src/` is
+instead enforced by `bun run check:imports` (no `Bun.*`, no `node:` outside the Node-only modules)
+and by the `node-compat` job, which installs the packed tarball in a clean project on Node 22 and
+24 and imports every entry point. A Node run of a conformance subset would need a second runner
+adapter for the cases (they are runner-agnostic `{ name, run }` lists, so it is possible); it is
+not worth a second harness until a Node-specific bug escapes.
 
 ## Coverage
 

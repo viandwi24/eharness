@@ -77,7 +77,11 @@ export function connectionStoreConformance(
         const store = await factory()
         const record = connection('a', { scopeId: undefined, choices: { repos: ['x'] } })
         await store.put(record)
-        assertJsonEqual(await store.get('a'), record, 'get')
+        // a store over a profile store may add `source: 'store'` (the documented default of
+        // `ConfigProfile.source`); anything else must round-trip unchanged
+        const { source, ...got } = ((await store.get('a')) ?? {}) as Record<string, unknown>
+        assertTrue(source === undefined || source === 'store', 'source is absent or "store"')
+        assertJsonEqual(got, record, 'get')
       },
     },
     {

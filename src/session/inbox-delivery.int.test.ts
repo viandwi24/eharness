@@ -10,19 +10,11 @@ import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { InboxItemInput } from '../agent/session-types.ts'
 import { memoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { sleep, until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const never = () => new Promise<never>(() => {})
-
-async function until(what: string, condition: () => boolean | Promise<boolean>, ms = 3_000) {
-  const end = Date.now() + ms
-  while (!(await condition())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for: ${what}`)
-    await sleep(2)
-  }
-}
 
 /** A tool that runs until `release()` (or its abort). */
 function gateTool() {

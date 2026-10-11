@@ -433,6 +433,14 @@ describe('custom-fs-adapter conformance', () => {
 })
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
+// CI provides a Postgres service (ci.yml); without DATABASE_URL the block below would skip silently.
+test('CI runs the Postgres adapters (DATABASE_URL is set)', () => {
+  if (process.env.CI && databaseUrl === '') {
+    throw new Error(
+      'CI is set but DATABASE_URL is empty: the postgres-storage tests would be skipped',
+    )
+  }
+})
 describe.skipIf(databaseUrl === '')('postgres-storage (DATABASE_URL)', () => {
   const schema = `eharness_test_${crypto.randomUUID().replaceAll('-', '').slice(0, 12)}`
   let db: Awaited<ReturnType<typeof bunSqlPool>>

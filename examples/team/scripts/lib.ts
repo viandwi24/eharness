@@ -9,6 +9,44 @@ import { dirname, join, resolve } from 'node:path'
 export const SERVER_MAIN = resolve(dirname(import.meta.path), '../server/src/main.ts')
 export const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Free TCP ports for the instances (the OS picks them, so parallel runs and busy machines never
+ * clash). All `n` are held open at once so they are distinct, then released.
+ */
+export function freePorts(n: number): number[] {
+  const servers = Array.from({ length: n }, () =>
+    Bun.serve({ port: 0, fetch: () => new Response('') }),
+  )
+  const ports = servers.map((s) => s.port as number)
+  for (const s of servers) s.stop(true)
+  return ports
+}
+
+/** Every server process a script started: killed on any exit so a crash never leaves one behind. */
+const spawned = new Set<ReturnType<typeof Bun.spawn>>()
+const killAll = (): void => {
+  for (const proc of spawned) if (proc.exitCode === null) proc.kill('SIGKILL')
+}
+process.on('exit', killAll)
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    killAll()
+    process.exit(130)
+  })
+}
+/**
+ * Overall limit of a script run (a hung server or scenario must not hang CI). `--wait-stale`
+ * really waits about 2.5 minutes, so it gets more.
+ */
+const OVERALL_MS = Number(
+  process.env.SCRIPT_TIMEOUT_MS ?? (process.argv.includes('--wait-stale') ? 600_000 : 240_000),
+)
+setTimeout(() => {
+  console.error(`\nFAIL: the script did not finish within ${OVERALL_MS} ms`)
+  killAll()
+  process.exit(124)
+}, OVERALL_MS).unref()
+
 export type Step = Record<string, unknown>
 export type Chunk = { type: string; [key: string]: unknown }
 
@@ -48,9 +86,14 @@ export async function startInstance(
   env: Record<string, string> = {},
 ): Promise<Instance> {
   const log: string[] = []
-  const proc = Bun.spawn(['bun', SERVER_MAIN], {
+  // Hermetic: a developer's `.env` (a `TEAM_TOKEN`, a budget, a model) or exported `TEAM_*`
+  // variables must not change what the scenarios see, so none of them reaches the server.
+  const inherited = Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('TEAM_') && key !== 'PORT'),
+  )
+  const proc = Bun.spawn(['bun', '--no-env-file', SERVER_MAIN], {
     env: {
-      ...process.env,
+      ...inherited,
       OPENROUTER_API_KEY: '',
       AI_GATEWAY_API_KEY: '',
       TEAM_DB: work.db,
@@ -65,6 +108,7 @@ export async function startInstance(
     const decoder = new TextDecoder()
     for await (const part of stream) log.push(...decoder.decode(part).split('\n').filter(Boolean))
   }
+  spawned.add(proc)
   void pump(proc.stdout as ReadableStream<Uint8Array>)
   void pump(proc.stderr as ReadableStream<Uint8Array>)
   const url = `http://localhost:${port}`

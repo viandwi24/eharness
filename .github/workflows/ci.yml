@@ -55,6 +55,40 @@ jobs:
           !startsWith(github.head_ref, 'dependabot/')
         run: bunx changeset status --since=origin/${{ github.base_ref }}
 
+  # The team example's own checks that `bun test` at the root does not cover: the web tests run
+  # standalone (as a developer runs them) and the two real-process scripts (SIGKILL / restart and
+  # two instances on one SQLite file). Ports are picked by the OS, the database lives in a temp dir
+  # and every script has an overall limit that also kills the servers it started.
+  team:
+    name: Team example · web tests · real-process scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Web tests (standalone)
+        working-directory: examples/team/web
+        timeout-minutes: 3
+        run: bun test
+
+      - name: Two instances on one database (real processes)
+        timeout-minutes: 6
+        run: bun run --cwd examples/team test:instances
+        env:
+          SCRIPT_TIMEOUT_MS: '300000'
+
+      - name: SIGKILL and restart (real processes)
+        timeout-minutes: 6
+        run: bun run --cwd examples/team test:restart
+        env:
+          SCRIPT_TIMEOUT_MS: '300000'
+
   node-compat:
     name: Node ${{ matrix.node }} · packed tarball smoke test
     needs: check

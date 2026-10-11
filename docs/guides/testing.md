@@ -86,6 +86,7 @@ describe('my storage', () => {
 | `stateAdapterConformance(factory)` | `StateAdapter` | `requireSetIf` |
 | `fileSystemConformance(factory)` | `FileSystem` ([filesystem guide](filesystem.md)) | `requireStat`, `requireGrep` |
 | `skillSourceConformance((skills) => source)` | `SkillSource` ([skills guide](skills.md)); serve exactly `SKILL_SOURCE_FIXTURE` | `context`, `meta` |
+| `lockConformance(factory)` | `SessionLock` ([storage guide](writing-a-storage-adapter.md)); the factory returns a lock or `{ lock, peer?, expire? }` | `concurrency`, `maxAcquireMs` |
 | `idGeneratorConformance(factory)` | a custom `generateId` (ids must sort by creation time) | `uuidv7`, `floor`, `count` |
 
 Cases use random session ids, so a factory may return adapters over one shared test database.

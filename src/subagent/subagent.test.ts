@@ -11,6 +11,7 @@ import {
 } from '../index.ts'
 import { memoryMessages, memoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { sleep, until } from '../testing/test-utils.ts'
 import {
   pendingSubagentApprovals,
   reconcileSubagentWaits,
@@ -23,15 +24,6 @@ import {
 } from './index.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-async function until(what: string, condition: () => boolean | Promise<boolean>, ms = 4000) {
-  const end = Date.now() + ms
-  while (!(await condition())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for: ${what}`)
-    await sleep(5)
-  }
-}
 
 type Storage = { messages: ReturnType<typeof memoryMessages>; state: StateAdapter }
 const shared = (): Storage => ({ messages: memoryMessages(), state: memoryState() })

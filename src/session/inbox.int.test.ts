@@ -13,18 +13,10 @@ import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { memoryInbox } from '../storage/memory.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
+import { sleep, until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-async function until(what: string, condition: () => boolean | Promise<boolean>, ms = 3_000) {
-  const end = Date.now() + ms
-  while (!(await condition())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for: ${what}`)
-    await sleep(2)
-  }
-}
 
 /** A memory inbox that records claims, acks and releases; `loseAcks` drops acks (a crash). */
 function spyInbox(inner: InboxAdapter = memoryInbox()) {

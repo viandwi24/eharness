@@ -9,18 +9,10 @@ import { definePlugin } from '../plugin/define-plugin.ts'
 import type { HarnessContext, TurnSource } from '../plugin/types.ts'
 import { memoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-async function until(what: string, condition: () => boolean | Promise<boolean>) {
-  const end = Date.now() + 3_000
-  while (!(await condition())) {
-    if (Date.now() > end) throw new Error(`timed out waiting for: ${what}`)
-    await sleep(5)
-  }
-}
 
 const appOf = (m: HarnessUIMessage | undefined): unknown =>
   (m?.metadata as { app?: unknown } | undefined)?.app

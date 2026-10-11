@@ -1,0 +1,43 @@
+# Weekly deep fuzz run of the session runtime (docs/engineering/testing.md, "Fuzz test").
+# CI runs 250 seeds on every push; this job runs thousands. A failure prints the seed and the op
+# log: reproduce with `FUZZ_ONLY=<seed> FUZZ_TRACE=1 bun test src/session/fuzz.int.test.ts`.
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '17 3 * * 1' # Mondays 03:17 UTC
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: Number of seeds
+        default: '5000'
+      start:
+        description: First seed
+        default: '1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    name: Session fuzz (${{ inputs.seeds || '5000' }} seeds)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install --frozen-lockfile
+
+      - name: Fuzz the session runtime
+        run: bun test src/session/fuzz.int.test.ts
+        env:
+          FUZZ_SEEDS: ${{ inputs.seeds || '5000' }}
+          FUZZ_START: ${{ inputs.start || '1' }}

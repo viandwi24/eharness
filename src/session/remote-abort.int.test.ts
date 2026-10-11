@@ -11,21 +11,22 @@ import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { prng, sleep } from '../testing/test-utils.ts'
 import { collect } from './int-kit.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 import { requestRemoteAbort } from './remote-abort.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /** Shared storage with call counting, optional random delays and an optional missing `setIf`. */
-function sharedStorage(options: { setIf?: boolean; jitterMs?: number } = {}) {
+function sharedStorage(options: { setIf?: boolean; jitterMs?: number; seed?: number } = {}) {
+  const random = prng(options.seed ?? 1)
   const inner = defaultMemoryState()
   const messages = defaultMemoryMessages()
   const writes: SessionStateSnapshot[] = []
   const counts = { gets: 0 }
   const jitter = async () => {
-    if (options.jitterMs !== undefined) await sleep(Math.random() * options.jitterMs)
+    if (options.jitterMs !== undefined) await sleep(random() * options.jitterMs)
   }
   const state: StateAdapter = {
     async get(id) {
@@ -410,7 +411,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
 
   test('no lost update of abortRequest, pending or grants under randomized delays', async () => {
     for (let round = 0; round < 5; round++) {
-      const storage = sharedStorage({ jitterMs: 3 })
+      const storage = sharedStorage({ jitterMs: 3, seed: 3 })
       await storage.inner.set('s1', {
         v: 1,
         rev: 1,
@@ -426,7 +427,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
       const b = instance(storage, { model: scriptedModel([]) })
       const run = a.agent.session('s1').send('go')
       await started
-      await sleep(Math.random() * 6)
+      await sleep(prng(6)() * 6)
       const results = await Promise.all([
         b.agent.session('s1').requestAbort('r1'),
         b.agent.session('s1').requestAbort('r2'),

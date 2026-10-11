@@ -7,21 +7,13 @@ import type { HarnessRun } from '../agent/session-types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { sleep, until } from '../testing/test-utils.ts'
 import { collect } from './int-kit.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: runs of a loosely typed test agent
 type AnyRun = HarnessRun<any>
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
-
-async function until(what: string, condition: () => boolean, ms = 3000) {
-  const end = Date.now() + ms
-  while (!condition()) {
-    if (Date.now() > end) throw new Error(`timed out waiting for: ${what}`)
-    await sleep(5)
-  }
-}
 
 function setup(steps: Parameters<typeof scriptedModel>[0], capture: { ctx?: HarnessContext } = {}) {
   const agent = defineHarnessAgent({

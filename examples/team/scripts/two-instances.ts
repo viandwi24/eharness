@@ -1,5 +1,5 @@
 /**
- * Two real server processes (:4101, :4102) on one database file, scripted model (no network).
+ * Two real server processes (ephemeral ports) on one database file, scripted model (no network).
  * Run: bun examples/team/scripts/two-instances.ts
  */
 import {
@@ -9,6 +9,7 @@ import {
   delegate,
   deleteOld,
   finish,
+  freePorts,
   type Instance,
   json,
   messages,
@@ -26,8 +27,7 @@ import {
 } from './lib.ts'
 
 let disagreement: string | undefined
-const A_PORT = 4101
-const B_PORT = 4102
+const [A_PORT, B_PORT] = freePorts(2) as [number, number] // ephemeral: no fixed ports
 
 async function withPair(
   aSteps: Step[],
