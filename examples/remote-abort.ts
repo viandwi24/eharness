@@ -8,12 +8,12 @@
  */
 import { tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
-import { memoryMessages, memoryState } from 'eharness/storage/memory'
+import { inMemoryMessages, inMemoryState } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
 // shared storage: in production a database (`setIf` = UPDATE … WHERE rev = $expected)
-const storage = { messages: memoryMessages(), state: memoryState() }
+const storage = { messages: inMemoryMessages(), state: inMemoryState() }
 
 let started!: () => void
 const toolStarted = new Promise<void>((resolve) => {
@@ -55,8 +55,8 @@ await toolStarted
 console.log('A: turn running, tool started')
 
 // the user presses Stop; the request lands on B, which has no turn of this session
-const { target } = await processB.session('chat-1').requestAbort('user pressed stop')
-console.log(`B: requestAbort → ${target}`) // 'remote' ('local' if the turn ran here)
+const { target } = await processB.session('chat-1').abort('user pressed stop')
+console.log(`B: abort → ${target}`) // 'remote' ('local' if the turn ran here)
 
 const result = await run.result
 console.log(`A: turn ended → ${result.stop} after ${result.steps} step(s)`)

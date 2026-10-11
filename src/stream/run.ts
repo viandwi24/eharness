@@ -154,6 +154,7 @@ export function statusOfError(code: string | undefined): number {
     case 'EH_INVALID_MESSAGE':
       return 400
     case 'EH_STORAGE':
+    case 'EH_LOCK_UNAVAILABLE':
       return 503
     default:
       return 500
@@ -173,7 +174,7 @@ export function createRun<M extends UIMessage>(init: {
 }): HarnessRun<M> {
   const stream = init.stream as HarnessRun<M>['stream']
   const accepted = init.accepted ?? Promise.resolve(undefined)
-  const toResponse: HarnessRun<M>['toResponse'] = (responseInit) =>
+  const toStreamResponse: HarnessRun<M>['toStreamResponse'] = (responseInit) =>
     createUIMessageStreamResponse({
       ...responseInit,
       stream: stream as ReadableStream<UIMessageChunk>,
@@ -186,10 +187,10 @@ export function createRun<M extends UIMessage>(init: {
     result: init.result as Promise<TurnResult<M, never>>,
     accepted,
     abort: init.abort,
-    toResponse,
-    async toHttpResponse(responseInit) {
+    toStreamResponse,
+    async toResponse(responseInit) {
       const error = await accepted
-      if (error === undefined) return toResponse(responseInit)
+      if (error === undefined) return toStreamResponse(responseInit)
       const body = JSON.stringify({ error: { code: error.code, message: error.message } })
       const headers = new Headers(responseInit?.headers)
       headers.set('content-type', 'application/json')
@@ -208,7 +209,7 @@ export function createRun<M extends UIMessage>(init: {
 /**
  * A run that fails before it starts: a valid stream (`start` → `error` → `message-metadata` →
  * `finish`) and a resolved `run.result` (`stop: 'error'`). With `status`, `toResponse()` /
- * `pipeTo()` answer that HTTP status with a JSON body `{ error: { code, message } }` instead of
+ * `toStreamResponse()` / `pipeTo()` answer that HTTP status with a JSON body `{ error: { code, message } }` instead of
  * the stream (e.g. 409 for `EH_SESSION_BUSY` from `handleChatRequest`, spec 11 §7).
  */
 export function failedRun(
@@ -259,13 +260,13 @@ export function failedRun(
   const body = JSON.stringify({ error: { code: error.code, message: error.message } })
   return {
     ...run,
-    toResponse(init) {
+    toStreamResponse(init) {
       const headers = new Headers(init?.headers)
       headers.set('content-type', 'application/json')
       return new Response(body, { ...init, status, headers })
     },
-    async toHttpResponse(init) {
-      return this.toResponse(init)
+    async toResponse(init) {
+      return this.toStreamResponse(init)
     },
     async pipeTo(response) {
       response.writeHead(status, { 'content-type': 'application/json' })

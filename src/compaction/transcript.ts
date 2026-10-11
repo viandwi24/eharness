@@ -8,8 +8,8 @@ import type { FilePart, TextPart } from 'ai'
 import { kindOf } from '../messages/kinds.ts'
 import type { MessageRegistry } from '../messages/registry.ts'
 import { isToolPart, type ToolPartLike, toolNameOf } from '../messages/tool-parts.ts'
+import { truncateMiddle } from '../messages/truncate.ts'
 import type { HarnessUIMessage, InputPartData, ProjectionContext } from '../messages/types.ts'
-import { truncateMiddle } from './truncate.ts'
 
 /** Max characters of a tool input in the transcript. */
 export const TRANSCRIPT_INPUT_CHARS = 500

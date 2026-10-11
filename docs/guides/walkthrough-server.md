@@ -46,7 +46,7 @@ product, not harness, and are not covered here.
 **What.** An agent is a database row (`AgentDef`); the factory turns it into a `HarnessAgent` with
 `defineHarnessAgent`. One agent object serves every session of a definition version; the cache key
 is `agentId@version@settingsRev@modelsRev@activation`
-([`agent-factory.ts:690`](../../examples/team/server/src/infra/eh/agent-factory.ts)).
+(`agentFor` in [`agent-factory.ts`](../../examples/team/server/src/infra/eh/agent-factory.ts)).
 
 ```ts
 const agent = defineHarnessAgent({
@@ -76,7 +76,7 @@ Why it is shaped like this:
   offline demos. See [providers and profiles](providers-and-profiles.md).
 - **An explicit `maxOutputTokens`.** *Without it:* OpenRouter-style gateways reserve and credit-check
   the model's maximum output on every call, and calls fail on small balances
-  (comment at `agent-factory.ts:~589`).
+  (see `outputCapOf` in `agent-factory.ts`).
 
 Take from it: build agents from data, key the cache by everything that changes the build, keep the
 prompt prefix identical across sessions.
@@ -84,7 +84,7 @@ prompt prefix identical across sessions.
 ## 2. Storage: messages and state
 
 **What.** `MessageAdapter` + `StateAdapter` on `bun:sqlite`
-([`storage.ts:53`](../../examples/team/server/src/infra/eh/storage.ts) and `:122`). Contract:
+(`sqliteMessages` and `sqliteState` in [`storage.ts`](../../examples/team/server/src/infra/eh/storage.ts)). Contract:
 [writing a storage adapter](writing-a-storage-adapter.md), spec 05, the `eharness/testing`
 conformance suites (the example's tests run them).
 
@@ -109,14 +109,14 @@ Why:
   returns) or a rejected request leaves a ghost behind.
 
 *Without a real adapter:* the default memory adapters lose every conversation and every pending
-approval on restart ([getting started](getting-started.md#6-defaults-worth-knowing)).
+approval on restart ([getting started](getting-started.md#8-defaults-worth-knowing)).
 
 ## 3. The shared lock
 
 **What.** `SessionLock` (spec 05 §8): at most one turn per session across all processes. The SQLite
 version is a row with a lease that the holder renews every third of the lease
-([`storage.ts:179`](../../examples/team/server/src/infra/eh/storage.ts)). It is passed with
-`agent.session(id, { lock })` ([`openSession`, `agent-factory.ts:~704`](../../examples/team/server/src/infra/eh/agent-factory.ts)).
+(`sqliteLock` in [`storage.ts`](../../examples/team/server/src/infra/eh/storage.ts)). It is passed with
+`agent.session(id, { lock })` (`openSession` in [`agent-factory.ts`](../../examples/team/server/src/infra/eh/agent-factory.ts)).
 
 ```ts
 const lock = sqliteLock(sqlite, {
@@ -134,7 +134,7 @@ and interleave messages. The lease means a crashed holder frees the session by i
 **What.** `StreamLogAdapter` (spec 04 §6.2, [ADR-0039](../decisions/0039-resumable-streams-stream-log.md)):
 the chunks of a turn, appended by the instance that runs it and read by any instance that serves a
 resumed stream ([`stream-log.ts`](../../examples/team/server/src/infra/eh/stream-log.ts)). It is
-picked up automatically from `storage.streams` (`createStorage`, `agent-factory.ts:228`).
+picked up automatically from `storage.streams` (`createStorage` in `agent-factory.ts`).
 
 Why:
 
@@ -146,8 +146,9 @@ Why:
 - **Retention (`expires_at`) bounds the table.** An expired log reads as `missing`; the client falls
   back to stored messages.
 - **Continuations are replayed in full** ([ADR-0045](../decisions/0045-resume-replay-of-continuations.md)):
-  a `respond()` continuation streams into an existing assistant message. *Before that fix* AI SDK's
-  `resumeStream()` threw `No tool invocation found for tool call ID` and the chat stayed in error.
+  a `respond()` continuation streams into an existing assistant message, so the log replays the
+  whole continuation; *otherwise* AI SDK's `resumeStream()` throws `No tool invocation found for
+  tool call ID` and the chat stays in error.
 
 SQLite has no pub/sub, so readers poll (`streams.pollMs`, tuned in `AgentFactoryDeps.tuning`).
 
@@ -155,7 +156,7 @@ SQLite has no pub/sub, so readers poll (`streams.pollMs`, tuned in `AgentFactory
 
 **What.** `InboxAdapter` (spec 05 §12): the durable queue behind `enqueue`, steering, wakes and
 timers, with claims, leases, retries and dead letters
-([`storage.ts:265`](../../examples/team/server/src/infra/eh/storage.ts), [multi-instance](multi-instance.md#the-inbox)).
+(`sqliteInbox` in [`storage.ts`](../../examples/team/server/src/infra/eh/storage.ts), [multi-instance](multi-instance.md#the-inbox)).
 
 Why:
 
@@ -193,13 +194,13 @@ minutes ([ADR-0056](../decisions/0056-restart-recovery-and-background-reconcile.
 unique among live instances of one database: the example derives it from the port.
 
 **6b. Lock takeover with the same owner prefix.** The SQLite lock is created with
-`owner: instanceId, takeOver: true` (`storage.ts:~197`): a lease whose owner starts with this
+`owner: instanceId, takeOver: true` (`sqliteLock`): a lease whose owner starts with this
 instance's id, and that this process does not hold, belongs to a dead previous run and is deleted at
 once. *Without it:* the turn was recoverable but the lock lease (30 s) still said busy.
 
 **6c. `session.recover()` at boot.** Recovery normally happens at the next user message. A server
 does not want an interrupted chat to look stuck until someone types, so
-[`recoverOrphans`](../../examples/team/server/src/infra/eh/team-service.ts) (`team-service.ts:257`)
+[`recoverOrphans`](../../examples/team/server/src/infra/eh/team-service.ts) (in `team-service.ts`)
 walks every session that can hold a turn, checks `peek(id).stats().activeTurn` and calls
 `openSession(def, id).recover()`. It answers dangling tool calls with `Interrupted:` results
 ([ADR-0014](../decisions/0014-interrupted-tool-calls-answered.md)), closes open text parts, stores an
@@ -218,9 +219,9 @@ timer and boot can overlap.
 
 ## 7. Background children and `reconcile`
 
-**What.** The lead delegates with `subagents({ approvals: 'park', background: { default: true } })`
+**What.** The lead delegates with `subagent({ approvals: 'park', background: { default: true } })`
 and role agents run as child sessions, on any instance
-([`teamPlugin`, `agent-factory.ts:~398`](../../examples/team/server/src/infra/eh/agent-factory.ts);
+(the Team connector plugin in [`agent-factory.ts`](../../examples/team/server/src/infra/eh/agent-factory.ts);
 [subagents](subagents.md), [ADR-0046](../decisions/0046-durable-background-subagents-in-park-mode.md)).
 Every other agent gets the *child side* of the same plugin (`parentAgent`, `selfAgent`), so reports
 of resumed turns find their way back. All instances must build the same plugin set.
@@ -237,7 +238,7 @@ Why park + background:
   `backgroundTimeoutMs`. Multi-agent runs cost many times a chat.
 
 **Reconcile** repairs what a crash leaves between "child finished" and "parent told".
-`team.reconcile()` ([`team-service.ts:473`](../../examples/team/server/src/infra/eh/team-service.ts))
+`team.reconcile()` ([`team-service.ts`](../../examples/team/server/src/infra/eh/team-service.ts))
 runs, in order: `recoverOrphans`, `reconcileSubagentWaits`, `reconcileBackgroundChildren`, a drift pass
 for the app's own task rows, and a stranded-report pass.
 
@@ -283,21 +284,21 @@ Answers do not go through the assistant message. The web posts them to `/attenti
 ## 9. Ask
 
 `ask_user_question` is the `ask` built-in of the connectors catalog (`eharness/connectors` wires
-`askUser()` in `src/connectors/builtin.ts`; the team lists it in
+`ask()` in `src/connectors/builtin.ts`; the team lists it in
 [`connector-catalog.ts`](../../examples/team/server/src/infra/eh/connector-catalog.ts)).
 In a server it is a *client tool*: the turn stops `tool-pending` with the question in the pending
 state, and the answer arrives later as a tool output. The app adds one thing: a `question` answer
-kind. [`parseAnswer`](../../examples/team/server/src/infra/eh/harness-http.ts) (`harness-http.ts:85`)
+kind. [`parseAnswer`](../../examples/team/server/src/infra/eh/harness-http.ts) (in `harness-http.ts`)
 turns `{ kind: 'question', answers }` into a tool output with `answerOutput`, and
-[`team-service.ts`](../../examples/team/server/src/infra/eh/team-service.ts) (`:150`) reads the
+[`team-service.ts`](../../examples/team/server/src/infra/eh/team-service.ts) reads the
 questions back with `pendingQuestions` for the inbox. Guide: [ask](ask.md).
 *Without a non-interactive setting* an autonomous run (a routine, a background child nobody
-watches) parks on a question nobody sees; use `askUser({ interactive: false })` or switch the
+watches) parks on a question nobody sees; use `ask({ interactive: false })` or switch the
 built-in off for those agents (see the guide).
 
 ## 10. Todos
 
-`todos()` is the `planning` built-in ([`connector-catalog.ts:381`](../../examples/team/server/src/infra/eh/connector-catalog.ts)): a `todo_write` tool whose list is
+`todos()` is the `planning` built-in ([`connector-catalog.ts`](../../examples/team/server/src/infra/eh/connector-catalog.ts)): a `todo_write` tool whose list is
 stored as a data part of the message and rendered by the web ([todos](todos.md)). It is optional for
 a harness, but it is the cheapest way to make long turns *visible*, and it costs nothing at the
 transport level because the list is a persistent data part, not a side table. The CLI uses it too
@@ -311,7 +312,7 @@ toolOutput: { maxChars: 30_000, strategy: 'evict' },
 ```
 
 - **Compaction** summarizes older turns when the context reaches 80 % of the window. It needs the
-  window, so the factory sets `contextWindow` from the catalog (`agent-factory.ts:585`) and falls
+  window, so the factory sets `contextWindow` from the catalog (`agent-factory.ts`) and falls
   back to 200 000 only for unlisted models. *Without a known window:* compaction cannot trigger and
   a long chat ends in a provider "too long" error ([compaction](compaction.md)).
 - **`prune: {}`** drops old tool outputs first, which is cheaper than a summary call.
@@ -324,17 +325,36 @@ toolOutput: { maxChars: 30_000, strategy: 'evict' },
 ## 12. Cost and limits
 
 The workspace budget is a row in a shared ledger
-([`sqliteBudgetLedger`, `storage.ts:521`](../../examples/team/server/src/infra/eh/storage.ts)),
+(`sqliteBudgetLedger` in [`storage.ts`](../../examples/team/server/src/infra/eh/storage.ts)),
 attached with `budget: { ledger: { adapter, scopes } }`. Reservations are all-or-nothing in one
 transaction, per calendar month. *Without a shared ledger:* each instance has its own budget and the
 real spend is N times the limit. Per-turn caps: `loop.maxSteps` (40 lead, 25 role),
 `maxOutputTokens`, spawn cap. See [models and cost](models-and-cost.md#budgets-across-sessions).
 
+**Bounded waits.** Nothing a turn awaits may hang it, so `build()` in `agent-factory.ts` sets the
+limits explicitly (they equal the library defaults; a production app tunes them to its providers):
+`hooks.timeoutMs` (30 s, an awaited hook that stalls is a `W_HOOK_TIMEOUT`),
+`settings.timeout` with `firstChunkMs` / `chunkMs` of 120 s (a model stream that goes silent fails
+the step), `toolSources` with `timeoutMs` 30 s and `retryAfterMs` 5 s (a down MCP server costs one
+timeout, then backs off instead of failing every turn), and `timeoutMs: 15_000` on every remote MCP
+source (`EH_MCP_TIMEOUT`). The Auto classifier gets `maxCallChars`, so an action longer than the
+judge reads in full asks a person instead of being judged on a cut-off input. The app uses
+permissions Auto mode only, not the approval guard, so there is no second judge to share a model
+with ([LLM judge](llm-judge.md#combining-both)); if you add `guard()`, give it the classifier's
+model instance and the same limits so one call answers both.
+
+**Observability.** `config.observe` is wired to [`observe.ts`](../../examples/team/server/src/infra/eh/observe.ts):
+a cheap synchronous adapter that logs a span only when it is slow or failed (model calls and tool
+runs have their own, longer threshold), logs every `hook.timeout` / `tool-source.backoff` counter
+and keeps failure counts in memory (`server.metrics()`). `warnings.dedupeWindowMs` prints a repeated
+warning once a minute with a repeat count. See [observability](observability.md) for an
+OpenTelemetry bridge in place of the Map.
+
 ## 13. The activity feed
 
 **What.** `eharness/activity` ([ADR-0058](../decisions/0058-activity-feed-and-attention-queue.md),
 spec 25): an `activity()` plugin that writes session events to an `ActivityStore`
-(`turn-started`, `message-added`, `pending-changed`, `approval-decided`, `child-reported`, ...), and
+(`turn-started`, `message-saved`, `pending-changed`, `approval-decided`, `child-reported`, ...; the team turns the library's `message-saved` off with `messages: false` and writes its own `message-added` events), and
 SSE helpers that tail it. The team's store is the `events` table
 ([`activity-store.ts`](../../examples/team/server/src/infra/db/activity-store.ts)); the app appends
 its own types (`providers-changed`, `task-changed`) to the same log through
@@ -352,16 +372,16 @@ routine started a turn" without refetching everything. Why it is shaped this way
   events refetches.
 - **Retention is a prefix prune.** `prune()` removes the oldest rows, never the newest, and keeps a
   monotonic `prunedThrough`; `keepLatestOf: [{ type: 'message-added', by: 'agentId' }]` keeps the
-  last message of every agent for the sidebar preview (`main.ts:262-268`). A client with a cursor
+  last message of every agent for the sidebar preview (`pruneEvents` in `main.ts`). A client with a cursor
   below `prunedThrough` gets one `resync` event and refetches. *Without a retention policy* the
   table grows without bound; *with a naive one* clients silently miss events.
 - **The store must be atomic across processes.** `seq` is `AUTOINCREMENT` so it is never reused;
   `append` is a transaction. The library's `activityStoreConformance` runs against this adapter.
 - **A boot id on the stream.** The first frame carries `bootId`; a client that sees a new one knows
   the server restarted and refetches (section 15).
-- **The keep-alive is 8 s by default.** *Before the fix* it was 15 s, `Bun.serve` closes a socket
-  after 10 s without bytes, and a quiet feed was dropped and fully resynced every 10 s
-  (commit `bcf43a8`, see section 16).
+- **The keep-alive is 8 s by default** (`keepAliveMs`). `Bun.serve` closes a socket after 10 s
+  without bytes, so a longer keep-alive would drop a quiet feed and force a full resync every 10 s
+  (see section 16).
 
 ## 14. `eharness/http`
 
@@ -373,19 +393,22 @@ steering and interrupt; session reads; attention list and answers; the activity 
 
 The hooks, in the order a request meets them:
 
-1. **`authorize`** (`:112`) runs first, before the body is read or a session is opened, and returns a
-   principal or a denial. *Without it* there is no access control; the option is required by the types
-   (`openAccess` exists for development and is unsafe).
+1. **`authorize`** runs first, before the body is read or a session is opened, and returns a
+   principal object or a denial. It fails closed: any other result (`undefined`, a string) is a
+   `401 EH_HTTP_UNAUTHORIZED`. *Without it* there is no access control; the option is required
+   (`openAccess` exists for local development and is unsafe).
 2. **`maxBodyBytes`** is enforced by the module on the stream. Chat attachments are base64 data
    URLs, so the limit is 16 MB (`body-limit.ts`).
-3. **`chat.authorizeKind`** (`:140`) applies product rules after the request is classified: a
-   task session takes messages through the inbox, an archived agent is read-only.
-4. **`chat.validate`** (`:155`) checks the attachments (`library:` references against the upload
+3. **`chat.authorizeKind`** applies product rules after the request is classified: a task
+   session is refused (its messages go through the task route), an archived agent is read-only.
+4. **`chat.validate`** checks the attachments (`library:` references against the upload
    store) after the library sanitised the body. The library keeps only the last user message, only
-   `text` and `file` parts, no client `metadata`, and never reads `actor`, `runtime`, `model` or
+   `text` and `file` parts, no client `metadata`, accepts only `data:` URLs in file parts unless
+   `chat.allowFileUrls` says otherwise (the team allows its own `library:` references, never
+   client-chosen http URLs, which would be SSRF), and never reads `actor`, `runtime`, `model` or
    `maxSteps` from the body. *Do not undo that.* Trusting client messages is how a user forges an
    assistant message or approval.
-5. **`session` and `peek`** (`:118`, `:125`) map a session id to the agent that runs it.
+5. **`session` and `peek`** map a session id to the agent that runs it.
    `peek` is a pure read with no `session.start` hooks, and must go through the agent that runs the
    session so `busy()` can tell a turn of this process from another instance's. *If reads open real
    sessions:* every page load fires start hooks and can resume work.
@@ -402,6 +425,14 @@ The hooks, in the order a request meets them:
    not errors, so a double click is quiet instead of a 404.
 8. **`onError` / `onFailure`**: `onError` maps the app's `DomainError` to a status; 5xx answers carry
    generic text and the real error goes to `onFailure`.
+
+**Turn errors have a code.** `TurnResult.error.code` is always set. The app maps what matters:
+`EH_PROVIDER_AUTH` answers 502 with the fix ("set the API key in Settings > Providers") and a
+failed routine run or task carries the same hint (`routine-service.ts`, `task-index.ts`);
+`EH_LOCK_UNAVAILABLE` is a 503 "storage unavailable" and a routine run it fails does not count
+toward pausing the routine (the lock service was down, not the routine); everything else keeps the
+server's text. `authorize` returns an object principal (`OWNER`), never a bare boolean, and
+`chat.allowFileUrls` accepts only the app's `library:` references.
 
 ## 15. `eharness/client` in the Svelte web
 
@@ -422,17 +453,21 @@ turn after reload (`follow()`), steering, and recovery (`interruptedTurn`, `cont
 starts one `createActivityFeed` per tab. `onResync` refetches everything; `isBusy` pings `/health`
 while something runs so a killed server is noticed at once; `check()` runs on `focus`, `online` and
 `visibilitychange` because a sleeping tab may have missed a restart. The status
-(`live | polling | ...`) drives a "Reconnecting" bar.
+(`live | polling | unauthorized | ...`) drives a "Reconnecting" bar; `unauthorized` is terminal (the
+server answered 401/403, retrying cannot help) and says to set the token. In the chat,
+`ChatSessionState.stopping` disables the stop button and shows "Stopping…" until the server confirms
+the stop, and the stored `metadata.eharness.error.code` of the last turn turns `EH_PROVIDER_AUTH`
+into the "set your API key" hint ([`chat/errors.ts`](../../examples/team/web/src/lib/chat/errors.ts)).
 
 **The attention list.** [`stores/live-core.ts`](../../examples/team/web/src/lib/stores/live-core.ts)
 uses `createAttentionList` with the app's own `list` source (an enriched `/approvals`), the app's
 extra event (`task-changed`) and the app's `question` answer kind. It gives optimistic answers, a
-generation guard against stale refetches and a debounce. The task session view uses `followSessionStream` ([`SessionView.svelte:120`](../../examples/team/web/src/lib/components/app/SessionView.svelte);
+generation guard against stale refetches and a debounce. The task session view uses `followSessionStream` ([`SessionView.svelte`](../../examples/team/web/src/lib/components/app/SessionView.svelte);
 merge logic in [`tasks/follow.ts`](../../examples/team/web/src/lib/tasks/follow.ts)) to merge the
 live stream of a child with stored messages.
 
 *Without the client module:* about 2 600 lines of SSE parsing, liveness checks, chat bridging and
-optimistic lists (the size removed by `7d92acd`), each with bugs the library had already fixed.
+optimistic lists, each with edge cases the library already handles.
 
 ## 16. `Bun.serve` and `idleTimeout: 0`
 
@@ -456,7 +491,10 @@ timers, MCP clients). Graceful close is a courtesy; sections 6 and 7 are what ma
 [`examples/team/scripts`](../../examples/team/scripts) run real processes: `two-instances.ts` (two
 servers on one database, kill one while a delegated task waits for approval, answer on the other)
 and `kill-restart.ts` (SIGKILL a turn mid-stream, restart, and check the recovery; it ages the heartbeat and lease with SQL to stay fast, `--wait-stale` really waits). A conformance suite proves an
-adapter; only a kill proves your recovery wiring. See [testing](testing.md).
+adapter; only a kill proves your recovery wiring. See [testing](testing.md). The server's own
+tests run with `debug: { invariants: true }` (`TEAM_DEBUG_INVARIANTS=1`, set by
+`server/bunfig.toml`'s preload): the core never infers it from `NODE_ENV`, so a test setup that
+relied on it must say so.
 
 ## What to change when you copy it
 

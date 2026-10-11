@@ -1,7 +1,7 @@
 /**
  * The activity routes: `GET /activity/stream` (SSE) and `GET /activity` (a page).
  *
- * @see docs/specs/26-http.md#10-activity-routes
+ * @see docs/specs/26-http.md#8-activity-routes
  */
 import {
   activityCursor,

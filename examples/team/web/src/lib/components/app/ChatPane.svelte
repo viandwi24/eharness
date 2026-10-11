@@ -32,6 +32,7 @@
 	import PendingCard from './PendingCard.svelte';
 	import { toast } from 'svelte-sonner';
 	import { answerFailureText } from '#lib/approval/outcome.js';
+	import { errorHint, lastTurnErrorCode, requestFailureText } from '#lib/chat/errors.js';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import { agentChat } from '#lib/chat/chats.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -164,10 +165,9 @@
 			if (r.compacted) await ac.refetch(); // the divider in the chat is the confirmation
 			else toast('Nothing to compact yet', { description: 'The conversation is still short; recent turns are always kept as they are.' });
 		} catch (e) {
-			const text = e instanceof Error ? e.message : '';
 			const busyCode = (e as { code?: unknown } | null)?.code === 'EH_SESSION_BUSY';
 			toast.error('Could not compact the conversation', {
-				description: busyCode ? 'A turn is running. Try again when it has finished.' : text || undefined
+				description: busyCode ? 'A turn is running. Try again when it has finished.' : requestFailureText(e, '') || undefined
 			});
 		} finally {
 			compacting = false;
@@ -181,6 +181,8 @@
 		if (first && first.length >= 6 && first.length <= 64) out.push(`Help me with: ${first.charAt(0).toLowerCase()}${first.slice(1)}`);
 		return out;
 	});
+	// the stored error code of the last turn (`TurnResult.error.code`): a hint for the ones with a fix
+	const turnErrorHint = $derived(errorHint(lastTurnErrorCode(chat.messages)));
 	const busy = $derived(chat.status === 'submitted' || chat.status === 'streaming');
 	// A turn the server no longer runs (it was killed, the connection went silent): resync.
 	$effect(() => {
@@ -358,6 +360,12 @@
 								<Button size="xs" variant="ghost" onclick={() => ac.dismissProblem()}>Dismiss</Button>
 							</div>
 						{/if}
+						{#if turnErrorHint && !chat.error && !busy}
+							<div class="flex items-start gap-2 rounded-lg border border-border bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert" data-testid="chat-turn-error">
+								<WarningCircleIcon class="mt-0.5 size-4 shrink-0" />
+								<span class="min-w-0 flex-1 break-words">{turnErrorHint}</span>
+							</div>
+						{/if}
 						{#if chat.error}
 							<div class="flex items-center gap-2 rounded-lg border border-border bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert">
 								<WarningCircleIcon class="size-4 shrink-0" />
@@ -398,7 +406,9 @@
 						{/if}
 					</div>
 				{/if}
-				{#if ac.notice}
+				{#if ac.stopping}
+					<div class="mb-2 text-center text-xs text-muted-foreground" role="status" data-testid="chat-stopping">Stopping…</div>
+				{:else if ac.notice}
 					<div class="mb-2 text-center text-xs text-muted-foreground" role="status">{ac.notice}</div>
 				{/if}
 				<ChatComposer
@@ -406,6 +416,7 @@
 					onSend={send}
 					onStop={() => void ac.stop()}
 					status={chat.status}
+					stopping={ac.stopping}
 					placeholder={agent ? `Message ${agent.name}` : 'Message the agent'}
 				/>
 			</div>

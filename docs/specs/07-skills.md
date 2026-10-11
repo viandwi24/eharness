@@ -78,7 +78,7 @@ the index stays cache-stable when only versions change.
 
 Contract tests: `skillSourceConformance(factory, options?)` in `eharness/testing`. The factory
 receives the fixture skills (`SKILL_SOURCE_FIXTURE`: nested files, non-ASCII text, one extra
-frontmatter field, one `version` (0.4.0; opt out with `{ version: false }`)) and returns a source serving exactly them. It checks `id`/`refresh`, metadata-only
+frontmatter field, one `version` (opt out with `{ version: false }`)) and returns a source serving exactly them. It checks `id`/`refresh`, metadata-only
 `list()` whose items pass §1, `load()` bodies (compared trimmed) and manifests (valid relative
 paths, no `SKILL.md`, UTF-8 sizes when given), exact `readFile()` text, `null` for unknown
 skills/paths, `SKILL.md`, other skills' files and directories, copies on read, and well-formed `search()` / `locate()` results when
@@ -152,8 +152,9 @@ nothing.
 | `load_skill` | `{ name }` | frontmatter summary + body + `Files:` manifest list (+ notes from `skill.load` hooks) |
 | `read_skill_file` | `{ name, path }` | file text (binary → `[binary <mediaType>, N bytes]`), or `ERROR: …` |
 
-`fsSkillSource` (spec 08) returns `{ type: 'binary', mediaType, data }` for a binary supporting file when the file system has `readBytes` (media type from the adapter, the magic bytes or the extension, else `application/octet-stream`); text files stay `{ type: 'text' }`. Without `readBytes` a binary file is not readable.
 | `search_skills` | `{ query }` | when the session can reach search mode (see below) |
+
+`fsSkillSource` (spec 08) returns `{ type: 'binary', mediaType, data }` for a binary supporting file when the file system has `readBytes` (media type from the adapter, the magic bytes or the extension, else `application/octet-stream`); text files stay `{ type: 'text' }`. Without `readBytes` a binary file is not readable.
 
 Errors are returned as strings (`ERROR: skill "x" not found`, `ERROR: invalid path`). Skill content
 enters history as tool results, never the system prompt (prompt-cache rule, spec 02 §6).
@@ -239,16 +240,16 @@ The core knows nothing about executors; this is entirely hook-driven.
 ## 8. Filesystem autoload (in `eharness/filesystem`)
 
 ```ts
-filesystem({ fs: memoryFs(seed), skills: { root: '/skills', refresh: 'turn' } })
+filesystem({ fs: inMemoryFs({ seed }), skills: { root: '/skills', refresh: 'turn' } })
 ```
 
-Adds `fsSkillSource(fs, { root })`:
+Adds `fsSkillSource({ fs, root })`:
 
 - `list`: find `<root>/<name>/SKILL.md` (one level deep), parse YAML frontmatter
   (`name`, `description`, others → `meta`). Invalid or mismatched `name` → skip + `W_INVALID_SKILL`.
   The parser is a small built-in YAML **subset** (scalars, quoted strings, flow/block lists of
   scalars, one level of nesting) — no YAML dependency (CLAUDE.md rule 10). Unsupported syntax →
-  `W_INVALID_SKILL`. Exactly (implemented in `parseSkillMarkdown`, P4): plain scalars (`true`/
+  `W_INVALID_SKILL`. Exactly (implemented in `parseSkillMarkdown`): plain scalars (`true`/
   `false`, `null`/`~`/empty, numbers, strings), `'…'` (`''` escape) and `"…"` (JSON escapes)
   strings, one-line flow lists, block lists (`- item`, indented or not), block scalars for
   strings (`|`, `|-` literal; `>`, `>-` folded; clip or strip chomping; indentation taken from the
@@ -271,7 +272,7 @@ Adds `fsSkillSource(fs, { root })`:
 - `readFile`: `fs.read(join(root, name, path))` after §5 validation (re-validated by the source;
   invalid names or paths → `null`).
 - `locate`: `{ service: 'fs', root: '<root>/<name>' }` (the service name of the filesystem plugin).
-- Exported as `fsSkillSource(fs, { root, refresh? })` from `eharness/filesystem` (id
+- Exported as `fsSkillSource({ fs, root, refresh? })` from `eharness/filesystem` (id
   `fs:<normalized root>`, default `refresh: 'session'`; an invalid root or refresh throws
   `EH_CONFIG_INVALID`), usable without the plugin. The plugin's `skills` option adds one per
   session over its `fs`.

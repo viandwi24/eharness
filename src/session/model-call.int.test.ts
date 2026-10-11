@@ -5,11 +5,11 @@ import { defineHarnessAgent } from '../agent/define-agent.ts'
 import { summarizerModel } from '../compaction/test-kit.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { isUuidV7 } from '../messages/ids.ts'
+import { observeForSession } from '../models/model-calls.ts'
 import type { ModelCallEvent } from '../models/observe.ts'
 import { observeModel } from '../models/observe.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { observeForSession } from './model-calls.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 

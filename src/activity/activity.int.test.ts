@@ -2,8 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent, externalTool, type HarnessAgent, type StateAdapter } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
-import { subagentChild, subagents } from '../subagent/index.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
+import { subagent, subagentChild } from '../subagent/index.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { until } from '../testing/test-utils.ts'
 import {
@@ -11,15 +11,15 @@ import {
   activityStream,
   answerAttention,
   handleActivityStream,
+  inMemoryActivityStore,
   listAttention,
-  memoryActivityStore,
   readActivityPage,
 } from './index.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
-type Storage = { messages: ReturnType<typeof memoryMessages>; state: StateAdapter }
-const shared = (): Storage => ({ messages: memoryMessages(), state: memoryState() })
+type Storage = { messages: ReturnType<typeof inMemoryMessages>; state: StateAdapter }
+const shared = (): Storage => ({ messages: inMemoryMessages(), state: inMemoryState() })
 // biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
 type Agent = HarnessAgent<any>
 
@@ -36,7 +36,7 @@ const pay = (log: string[] = []) =>
 function payAgent(
   storage: Storage,
   steps: Parameters<typeof scriptedModel>[0],
-  store: ReturnType<typeof memoryActivityStore>,
+  store: ReturnType<typeof inMemoryActivityStore>,
   log: string[] = [],
   extra: unknown[] = [],
 ): Agent {
@@ -52,14 +52,14 @@ function payAgent(
   }) as Agent
 }
 
-const types = async (store: ReturnType<typeof memoryActivityStore>, sessionId?: string) =>
+const types = async (store: ReturnType<typeof inMemoryActivityStore>, sessionId?: string) =>
   (
     await store.read({ after: 0, limit: 500, ...(sessionId === undefined ? {} : { sessionId }) })
   ).map((r) => r.type)
 
 describe('activity() plugin', () => {
   test('a plain turn: turn-started, step-finished, message-saved, turn-ended', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const agent = payAgent(shared(), [{ text: 'hello' }], store)
     const run = agent.session('s1').send('hi')
     await run.result
@@ -86,7 +86,7 @@ describe('activity() plugin', () => {
   })
 
   test('an approval opens a pending item; answering resolves it and records the decision', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const agent = payAgent(
       shared(),
       [{ toolCalls: [{ toolName: 'pay', input: { amount: 5 } }] }, { text: 'done' }],
@@ -120,7 +120,7 @@ describe('activity() plugin', () => {
   })
 
   test('types and sessions options narrow the feed', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const agent = defineHarnessAgent({
       model: scriptedModel([{ text: 'a' }, { text: 'b' }]),
       contextWindow: 100_000,
@@ -138,7 +138,7 @@ describe('activity() plugin', () => {
 
   test('a crashed turn that was recovered emits session-recovered', async () => {
     const storage = shared()
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const a = payAgent(storage, [{ text: 'never' }], store)
     const s = a.session('s1')
     await s.ready()
@@ -168,7 +168,7 @@ describe('activity() plugin', () => {
 
 describe('attention queue', () => {
   const setup = async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const log: string[] = []
     const storage = shared()
     const agent = payAgent(
@@ -260,7 +260,7 @@ describe('attention queue', () => {
   })
 
   test('the same item answered from two instances at once: one resumes, the other is late', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const storage = shared()
     const log: string[] = []
     const a = payAgent(
@@ -289,7 +289,7 @@ describe('attention queue', () => {
   })
 
   test('a partial batch is recorded (remaining), the last answer resumes', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const agent = payAgent(
       shared(),
       [
@@ -325,7 +325,7 @@ describe('attention queue', () => {
   })
 
   test('client tool questions are answered with an output', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const ask = tool({ description: 'Ask', inputSchema: z.object({ q: z.string() }) })
     const agent = defineHarnessAgent({
       model: scriptedModel([
@@ -354,7 +354,7 @@ describe('attention queue', () => {
   })
 
   test('external waits are listed on request and resolved through answerAttention', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const approve = externalTool({
       description: 'Waits for a person outside',
       inputSchema: z.object({ what: z.string() }),
@@ -400,7 +400,7 @@ describe('attention queue', () => {
 describe('child approvals while the parent is parked', () => {
   test('listAttention finds the child through the parent; the answer goes to the child, the parent resumes', async () => {
     const storage = shared()
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const log: string[] = []
     const holder: { main?: Agent } = {}
     const worker = defineHarnessAgent({
@@ -445,7 +445,7 @@ describe('child approvals while the parent is parked', () => {
       logger: silent,
       plugins: [
         activity({ store }),
-        subagents({
+        subagent({
           agents: { worker: { agent: worker, description: 'works' } },
           approvals: 'park',
         }),
@@ -520,7 +520,7 @@ describe('sse', () => {
   }
 
   test('first flush has retry, a comment and the boot event; new events follow with id: seq', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const ac = new AbortController()
     const response = handleActivityStream(new Request('http://x/events', { signal: ac.signal }), {
       store,
@@ -538,7 +538,7 @@ describe('sse', () => {
   })
 
   test('Last-Event-ID resumes after the cursor; a cursor from before the prune mark gets resync', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     for (let i = 0; i < 8; i++) await store.append({ type: 'e', payload: { i } })
     const resumed = handleActivityStream(
       new Request('http://x/events', { headers: { 'last-event-id': '6' } }),
@@ -569,7 +569,7 @@ describe('sse', () => {
   })
 
   test('a cursor ahead of the head (the log was reset) gets resync; an invalid cursor is a 400', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     await store.append({ type: 'e' })
     const ahead = handleActivityStream(new Request('http://x/events?after=99'), {
       store,
@@ -582,7 +582,7 @@ describe('sse', () => {
   })
 
   test('filter hides records but the cursor advances; keep-alive comments flow while quiet', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     const stream = activityStream({
       store,
       after: 0,
@@ -604,8 +604,32 @@ describe('sse', () => {
     expect(text).toContain(': keep-alive')
   })
 
+  test('a failing store sends `event: error` (no details) and reports onError, not a silent clean close', async () => {
+    const store = inMemoryActivityStore()
+    const failing = { ...store, read: async () => Promise.reject(new Error('db password=hunter2')) }
+    const errors: unknown[] = []
+    const stream = activityStream({
+      store: failing as typeof store,
+      bootId: 'b1',
+      pollMs: 5,
+      onError: (e) => errors.push(e),
+    })
+    const reader = stream.getReader()
+    const decoder = new TextDecoder()
+    let text = ''
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      text += decoder.decode(value)
+    }
+    expect(text).toContain('event: boot')
+    expect(text).toContain('event: error\ndata: {"code":"EH_STORAGE"')
+    expect(text).not.toContain('hunter2')
+    expect(errors).toHaveLength(1)
+  })
+
   test('readActivityPage mirrors the stream: lastSeq, resync flag', async () => {
-    const store = memoryActivityStore()
+    const store = inMemoryActivityStore()
     for (let i = 0; i < 6; i++) await store.append({ type: 'e' })
     await store.prune({ keepLast: 2 }) // mark 4
     const page = await readActivityPage(store, { after: 1, limit: 10 })

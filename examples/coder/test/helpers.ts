@@ -173,7 +173,7 @@ export async function makeAgentsEnv(opts: {
   const agents = await createAgents({
     config,
     workspace,
-    sandbox: localSandbox(config.root),
+    sandbox: localSandbox({ root: config.root }),
     permissions,
     broker,
     describe,

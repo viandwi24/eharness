@@ -12,6 +12,7 @@
 import type { GenericToolApprovalFunction, Tool, ToolInputRefinement, ToolSet } from 'ai'
 import type { ApprovalConfig, ToolErrorTextFn, ToolOutputConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
+import type { Observer } from '../internal/observe.ts'
 import { neutralizeTags } from '../messages/framing.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
@@ -33,6 +34,7 @@ import {
   renderPageContext,
 } from './request-tools.ts'
 import type { NormalizedInstruction } from './static.ts'
+import { withToolFields } from './tool-copy.ts'
 import type { TurnToolEntry } from './tools.ts'
 import {
   type ApprovalGrants,
@@ -171,6 +173,7 @@ export async function inspectRegistry(args: {
   open: OpenSession
   toolOrder?: readonly string[] | undefined
   deferTools?: readonly string[] | undefined
+  hookTimeoutMs?: number | undefined
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
 }): Promise<RegistryInspection> {
@@ -189,6 +192,7 @@ export async function inspectRegistry(args: {
     contextOf,
     warn: args.warn,
     deferTools: args.deferTools,
+    hookTimeoutMs: args.hookTimeoutMs,
   })
   const deferredText = deferredToolsReminder(collected.entries)
   open.toolOrderWarned ??= new Set()
@@ -232,8 +236,16 @@ export async function resolveTurnRegistry(args: {
   deferTools?: readonly string[] | undefined
   /** `config.toolErrorText` (spec 10 §1.1). */
   toolErrorText?: ToolErrorTextFn | undefined
+  /** `config.hooks.timeoutMs` for the tool hooks. */
+  hookTimeoutMs?: number | undefined
+  /** Turn signal that cuts a running tool hook short. */
+  signal?: AbortSignal | undefined
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
+  /** `config.observe` (spec 10 §8): tool execution spans, tool-source backoff counters. */
+  observe?: Observer | undefined
+  sessionId?: string | undefined
+  turnId?: string | undefined
   status: (toolName: string) => void
   /** Session approval grants (spec 11 §3.1). */
   grants?: ApprovalGrants
@@ -265,7 +277,10 @@ export async function resolveTurnRegistry(args: {
     skills,
     contextOf,
     warn: args.warn,
+    observe: args.observe,
+    sessionId: args.sessionId,
     deferTools: args.deferTools,
+    hookTimeoutMs: args.hookTimeoutMs,
   })
   const deferredText = deferredToolsReminder(collected.entries)
   const instructionReminder = appendBlock(joinParts(turnParts), deferredText)
@@ -295,6 +310,11 @@ export async function resolveTurnRegistry(args: {
     contextOf,
     warn: args.warn,
     status: args.status,
+    ...(args.observe === undefined
+      ? {}
+      : { observe: args.observe, sessionId: args.sessionId, turnId: args.turnId }),
+    ...(args.hookTimeoutMs === undefined ? {} : { hookTimeoutMs: args.hookTimeoutMs }),
+    ...(args.signal === undefined ? {} : { signal: args.signal }),
     ...(args.toolErrorText === undefined ? {} : { toolErrorText: args.toolErrorText }),
     limits: {
       config: args.toolOutput,
@@ -372,7 +392,7 @@ export async function resolveTurnRegistry(args: {
       const out: ToolSet = {}
       for (const [name, tool] of Object.entries(tools)) {
         if ((tool as Tool).deferLoading === true && discovered.has(name)) {
-          out[name] = { ...(tool as Tool), deferLoading: false } as Tool
+          out[name] = withToolFields(tool as Tool, { deferLoading: false })
           changed = true
         } else {
           out[name] = tool

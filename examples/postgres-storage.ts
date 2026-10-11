@@ -25,6 +25,7 @@
  */
 import {
   defineHarnessAgent,
+  HarnessError,
   type MessageAdapter,
   type SessionLock,
   type SessionStateSnapshot,
@@ -210,7 +211,8 @@ export function postgresLock(db: SqlPool): SessionLock {
           `SELECT pg_try_advisory_lock(${key}) AS locked`,
           [sessionId],
         )
-        if (row?.locked !== true) throw new Error(`session ${sessionId} is locked elsewhere`)
+        if (row?.locked !== true)
+          throw new HarnessError('EH_SESSION_BUSY', `session ${sessionId} is locked elsewhere`)
       } catch (error) {
         await connection.release()
         throw error

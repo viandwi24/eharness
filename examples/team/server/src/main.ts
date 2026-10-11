@@ -10,12 +10,14 @@
  *                     added in Settings > Providers and stored encrypted); TEAM_SCRIPTED_MODEL wins over all
  *   TEAM_PROVIDER / TEAM_MODEL   default profile (openrouter | gateway) and its default model
  *   TEAM_SECRET_KEY   32 bytes base64: encrypts provider secrets, connection secrets and tokens at rest (dev: a key file next to the DB)
+ *   TEAM_ALLOWED_ORIGINS extra browser origins allowed to send state-changing requests (the origins of TEAM_WEB_URL and TEAM_PUBLIC_URL always are; other `Origin`s get 403 FORBIDDEN_ORIGIN, the CSRF guard)
  *   TEAM_PUBLIC_URL   where this server is reached by the browser (OAuth callback `<url>/oauth/callback`; default http://localhost:PORT)
  *   TEAM_WEB_URL      where the web app lives (the OAuth callback redirects to `<url>/connectors`; default http://localhost:5173)
  *   TEAM_<CONNECTOR>_CLIENT_ID / _CLIENT_SECRET   OAuth app of a curated connector (e.g. TEAM_GITHUB_CLIENT_ID); or save it in the web app
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
  *   TEAM_SEARCH_MODEL   model of web_search, same format
  *   TEAM_INSTANCE_ID  stable id of this instance (default team-<PORT>): a restarted instance recovers its own interrupted turns at boot
+ *   TEAM_DEBUG_INVARIANTS   1 = debug.invariants on every agent (tests set it; a broken session invariant fails the turn)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
  *   TEAM_OFFLINE      1 = never fetch the model catalogs (cached in the database, refreshed every 24 h)
@@ -30,13 +32,12 @@
  */
 import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
-import type { ModelCatalog } from 'eharness'
+import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
-import { hostAllowed, type ListenConfig, listenConfig } from './app/auth.ts'
+import { hostAllowed, type ListenConfig, listenConfig, originOf } from './app/auth.ts'
 import { checkChatBody } from './app/chat.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
-import { newId } from './domain/ids.ts'
 import { areaOf } from './domain/library.ts'
 import { createApp } from './http/app.ts'
 import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
@@ -69,6 +70,7 @@ import { createTeamHttp } from './infra/eh/harness-http.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
+import { createObserver } from './infra/eh/observe.ts'
 import { sqliteProfileStore } from './infra/eh/profile-store.ts'
 import {
   type ModelConfig,
@@ -123,6 +125,8 @@ export interface ServerConfig {
   webUrl?: string
   /** Auto mode classifier override (tests); default: the model of `models.classifierModel`. */
   classifier?: AgentFactoryDeps['classifier']
+  /** `debug.invariants` of every agent (default `TEAM_DEBUG_INVARIANTS=1`; the tests turn it on). */
+  debug?: { invariants?: boolean }
   /** Timers of the stream log and inbox (tests shorten them). */
   tuning?: AgentFactoryDeps['tuning']
   /** Delegation limits (spawn cap, child steps, park timeout). */
@@ -156,6 +160,8 @@ export interface Server {
   factory: AgentFactory
   team: TeamService
   routines: RoutineService
+  /** Operational counters of the runtime (`config.observe`): failed spans, hook timeouts, ... */
+  metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
   activityLog: ActivityLog
   /** Connectors: connections, flows, enablement, activation. */
@@ -197,8 +203,8 @@ export function compose(config: ServerConfig): Server {
       dataDir: config.dbFile === ':memory:' ? undefined : dirname(config.dbFile),
     })
   let connectorsRef: ConnectorsRuntime | undefined
-  const profileStore = sealedProfileStore(
-    sqliteProfileStore(conn.sqlite, {
+  const profileStore = sealedProfileStore({
+    inner: sqliteProfileStore(conn.sqlite, {
       onChange: ({ kind, id, action }) => {
         if (kind === PROVIDER_KIND) {
           events.append({ type: 'providers-changed', payload: { profileId: id, action, instance } })
@@ -209,15 +215,10 @@ export function compose(config: ServerConfig): Server {
       },
     }),
     vault,
-    {
-      kinds: [PROVIDER_KIND, ...SEALED_KINDS],
-      // a row whose key was lost is skipped (and says so), never fatal for the others
-      onUnreadable: ({ kind, id, error }) =>
-        console.warn(
-          `team: ${kind} "${id}" is unreadable and was skipped: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-    },
-  )
+    kinds: [PROVIDER_KIND, ...SEALED_KINDS],
+    onUnreadable: ({ kind, id, error }) =>
+      console.warn(`team: ${kind} "${id}" is unreadable and was skipped: ${errorText(error)}`),
+  })
   // one poller of the event feed for every kind of configuration change
   const changes = createChangeFeed({
     feed: activityStore,
@@ -342,6 +343,7 @@ export function compose(config: ServerConfig): Server {
   const sessionModes = sqliteSessionModes(conn.sqlite)
   const chatToolsStore = sqliteChatTools(conn.sqlite)
   let routines: RoutineService | undefined
+  const observer = createObserver({ log: (message) => console.warn(message) })
   const factory = createAgentFactory({
     sqlite: conn.sqlite,
     models,
@@ -386,6 +388,8 @@ export function compose(config: ServerConfig): Server {
       if (w.code === 'W_MODEL_UNPRICED' && models.provider === 'scripted') return
       console.warn(`eharness warning ${w.code}: ${w.message}`)
     },
+    observe: observer.observe,
+    debug: { invariants: config.debug?.invariants ?? process.env.TEAM_DEBUG_INVARIANTS === '1' },
     ...(config.tuning === undefined ? {} : { tuning: config.tuning }),
     ...(config.instanceId === undefined ? {} : { instanceId: config.instanceId }),
   })
@@ -431,7 +435,7 @@ export function compose(config: ServerConfig): Server {
     events,
     modelCalls,
     clock: { now: () => Date.now() },
-    ids: { next: () => newId() },
+    ids: { next: () => uuidv7() },
     workspaceId: WORKSPACE_ID,
   }
   if (config.seed !== false) seedAgents(deps)
@@ -487,7 +491,14 @@ export function compose(config: ServerConfig): Server {
     maxBodyBytes: MAX_REQUEST_BYTES,
     checkChatBody: (body) => checkChatBody(deps, body),
   })
-  const app = createApp({ deps, token: config.token, harness })
+  const allowedOrigins = [
+    ...new Set(
+      [webUrl, publicUrl, ...(process.env.TEAM_ALLOWED_ORIGINS ?? '').split(',')]
+        .map((u) => originOf(u.trim()))
+        .filter((o): o is string => o !== undefined),
+    ),
+  ]
+  const app = createApp({ deps, token: config.token, harness, allowedOrigins })
   routines.start()
   return {
     app,
@@ -497,6 +508,7 @@ export function compose(config: ServerConfig): Server {
     team,
     routines,
     activityLog,
+    metrics: observer.snapshot,
     providers,
     providersReady,
     connectors,
@@ -573,9 +585,7 @@ if (import.meta.main) {
     await server.providersReady
     await server.connectorsReady
   } catch (error) {
-    console.error(
-      `provider setup failed: ${error instanceof Error ? error.message : String(error)}`,
-    )
+    console.error(`provider setup failed: ${errorText(error)}`)
     process.exit(1)
   }
   const port = Number(process.env.PORT ?? 4000)
@@ -583,7 +593,7 @@ if (import.meta.main) {
   try {
     listen = listenConfig(process.env)
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error))
+    console.error(errorText(error))
     process.exit(1)
   }
   // idleTimeout 0: Bun closes a connection after 10 s without bytes by default, which cuts chat
@@ -625,7 +635,7 @@ if (import.meta.main) {
       await http.stop(true)
       await server.close()
     } catch (error) {
-      console.error(`shutdown failed: ${error instanceof Error ? error.message : String(error)}`)
+      console.error(`shutdown failed: ${errorText(error)}`)
       process.exit(1)
     }
     process.exit(0)

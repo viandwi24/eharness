@@ -5,14 +5,15 @@
  * Expected failures are returned as `ERROR: …` strings, never thrown (CLAUDE.md rule 6). A path
  * that fails `validateSkillPath` never reaches `SkillSource.readFile` (spec 07 §5).
  *
- * @see docs/specs/07-skills.md#43-tools-added-automatically-when-any-skill-exists
+ * @see docs/specs/07-skills.md#43-tools-added-automatically-when-any-skill-source-is-configured
  */
 import { type Tool, tool } from 'ai'
 import { z } from 'zod/v4'
-import type { HarnessWarning } from '../errors.ts'
+import { configError, type HarnessWarning } from '../errors.ts'
+import { hookFailed, runHook } from '../internal/hook-run.ts'
+import { errorText } from '../internal/util.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { SkillDoc, SkillFileContent, SkillMeta } from '../registry/types.ts'
-import { hookFailed } from '../registry/wrap.ts'
 import type { HookRunner } from '../session/hooks.ts'
 import { serializeFrontmatter } from './frontmatter.ts'
 import { validateSkillPath } from './paths.ts'
@@ -30,10 +31,8 @@ export interface SkillToolDeps {
   hooks: HookRunner
   contextOf(owner: string): HarnessContext
   warn(warning: HarnessWarning, key?: string): void
-}
-
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  /** `config.hooks.timeoutMs` for the `skill.load` hook. */
+  hookTimeoutMs?: number | undefined
 }
 
 /** `ERROR: skill "x" not found` (model-visible). */
@@ -115,14 +114,14 @@ async function locate(
     if (location === null || location === undefined) return undefined
     const { service, root } = location as { service?: unknown; root?: unknown }
     if (typeof service !== 'string' || typeof root !== 'string') {
-      throw new Error('locate() must return null or { service, root }')
+      throw configError('locate() must return null or { service, root }')
     }
     return { service, root }
   } catch (error) {
     deps.warn(
       {
         code: 'W_SKILL_SOURCE_FAILED',
-        message: `Skill source '${entry.source.id}' failed to locate skill '${name}': ${describe(error)}`,
+        message: `Skill source '${entry.source.id}' failed to locate skill '${name}': ${errorText(error)}`,
         details: { source: entry.source.id, owner: entry.owner, skill: name },
       },
       `${entry.source.id}:locate`,
@@ -144,7 +143,7 @@ export async function loadSkillText(deps: SkillToolDeps, name: string): Promise<
   try {
     doc = await entry.source.load(name, deps.contextOf(entry.owner))
   } catch (error) {
-    return `ERROR: skill ${JSON.stringify(name)} could not be loaded: ${describe(error)}`
+    return `ERROR: skill ${JSON.stringify(name)} could not be loaded: ${errorText(error)}`
   }
   if (doc === null || doc === undefined) return skillNotFound(name)
   if (!isDoc(doc)) {
@@ -160,15 +159,19 @@ export async function loadSkillText(deps: SkillToolDeps, name: string): Promise<
   const location = hooks.length > 0 ? await locate(deps, entry, name) : undefined
   for (const hook of hooks) {
     try {
-      const out = await hook.fn(deps.contextOf(hook.owner), {
-        skill: current,
-        source: entry.source.id,
-        ...(location === undefined ? {} : { location }),
-        ...(typeof current.version === 'string' ? { version: current.version } : {}),
-      })
+      const out = await runHook(
+        () =>
+          hook.fn(deps.contextOf(hook.owner), {
+            skill: current,
+            source: entry.source.id,
+            ...(location === undefined ? {} : { location }),
+            ...(typeof current.version === 'string' ? { version: current.version } : {}),
+          }),
+        { hook: 'skill.load', owner: hook.owner, timeoutMs: deps.hookTimeoutMs },
+      )
       if (out === undefined || out === null) continue
       if (out.skill !== undefined) {
-        if (!isDoc(out.skill)) throw new Error('skill.load returned an invalid `skill`')
+        if (!isDoc(out.skill)) throw configError('skill.load returned an invalid `skill`')
         current = out.skill
       }
       for (const note of out.notes ?? []) if (typeof note === 'string') notes.push(note)
@@ -179,7 +182,7 @@ export async function loadSkillText(deps: SkillToolDeps, name: string): Promise<
   try {
     return formatSkillDoc(name, current, notes)
   } catch (error) {
-    return `ERROR: skill ${JSON.stringify(name)} could not be loaded: ${describe(error)}`
+    return `ERROR: skill ${JSON.stringify(name)} could not be loaded: ${errorText(error)}`
   }
 }
 
@@ -197,7 +200,7 @@ export async function readSkillFileText(
   try {
     content = await entry.source.readFile(name, checked.path, deps.contextOf(entry.owner))
   } catch (error) {
-    return `ERROR: file ${JSON.stringify(checked.path)} of skill ${JSON.stringify(name)} could not be read: ${describe(error)}`
+    return `ERROR: file ${JSON.stringify(checked.path)} of skill ${JSON.stringify(name)} could not be read: ${errorText(error)}`
   }
   if (content === null || content === undefined) {
     return `ERROR: file ${JSON.stringify(checked.path)} not found in skill ${JSON.stringify(name)}`
@@ -244,7 +247,7 @@ export async function searchSkillsText(deps: SkillToolDeps, query: string): Prom
     if (typeof search === 'function' && query.trim().length > 0) {
       try {
         const found = await search.call(entry.source, query, deps.contextOf(entry.owner))
-        if (!Array.isArray(found)) throw new Error('search() must return an array')
+        if (!Array.isArray(found)) throw configError('search() must return an array')
         const ownByName = new Map(own.map((m) => [m.name, m]))
         const seen = new Set<string>()
         for (const item of found as unknown[]) {
@@ -260,7 +263,7 @@ export async function searchSkillsText(deps: SkillToolDeps, query: string): Prom
         deps.warn(
           {
             code: 'W_SKILL_SOURCE_FAILED',
-            message: `Skill source '${entry.source.id}' failed to search: ${describe(error)}; using the built-in matcher.`,
+            message: `Skill source '${entry.source.id}' failed to search: ${errorText(error)}; using the built-in matcher.`,
             details: { source: entry.source.id, owner: entry.owner },
           },
           `${entry.source.id}:search`,

@@ -39,3 +39,7 @@ Chain of events:
 
 Integration suites save through `spyMessages`, which now validates every saved message with AI SDK
 `safeValidateUIMessages`, so a schema-invalid stored message fails the test that produced it.
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): `AutoVerdict.decision` gains `'ask'`: a classifier that cannot or should not decide hands the action to a person. Classifier and judge outages and over-long inputs ask a person, they never deny and never approve. The classifier is now the `decide` role of the shared judge engine (ADR-0060).

@@ -3,7 +3,7 @@
  * `eharness/connectors` needs (`ActivateOptions.mcp`, the custom MCP connector's test) without
  * importing this module itself.
  *
- * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
+ * @see docs/specs/09-tools-and-mcp.md#3-mcpserversource-eharnessmcp
  * @see docs/specs/24-connectors.md#9-remote-mcp
  */
 import type {
@@ -12,8 +12,13 @@ import type {
   McpToolAnnotations,
   OAuthClientProvider,
 } from '@ai-sdk/mcp'
-import type { ToolRisk, ToolSource } from '../index.ts'
-import { createMcpServer, type McpTransportConfig } from './server.ts'
+import { HarnessError, type ToolRisk, type ToolSource } from '../index.ts'
+import {
+  createMcpServer,
+  DEFAULT_TIMEOUT_MS,
+  type McpTransportConfig,
+  withTimeout,
+} from './server.ts'
 
 /** A remote (streamable HTTP) MCP server, as `eharness/connectors` describes it. */
 export interface RemoteMcpSpec {
@@ -30,6 +35,8 @@ export interface RemoteMcpSpec {
   prefix?: string
   defer?: boolean | 'auto'
   risk?: ToolRisk
+  /** Connect/list timeout in ms (default 15000), as `McpServerSourceOptions.timeoutMs`. */
+  timeoutMs?: number
 }
 
 /**
@@ -39,7 +46,11 @@ export interface RemoteMcpSpec {
  */
 export function bearerAuthProvider(getAccessToken: () => Promise<string>): OAuthClientProvider {
   const reconnect = (): never => {
-    throw new Error('The access token was rejected; reconnect the connector.')
+    throw new HarnessError(
+      'EH_PROVIDER_AUTH',
+      'The access token was rejected; reconnect the connector.',
+      { details: { reason: 'needs-auth' } },
+    )
   }
   return {
     tokens: async () => ({ access_token: await getAccessToken(), token_type: 'Bearer' }),
@@ -74,7 +85,7 @@ type McpModule = {
 }
 
 /**
- * A {@link mcpServer}-style tool source for a remote server, with a per-request bearer token
+ * A {@link mcpServerSource}-style tool source for a remote server, with a per-request bearer token
  * when `getAccessToken` is given. Use it as `activateConnectors({ mcp: remoteMcpSource })`.
  *
  * @example
@@ -121,12 +132,26 @@ export async function listRemoteMcpTools(
   spec: Omit<RemoteMcpSpec, 'name'>,
   load: () => Promise<McpModule> = async () => (await import('@ai-sdk/mcp')) as McpModule,
 ): Promise<RemoteMcpTool[]> {
+  const timeoutMs = spec.timeoutMs ?? DEFAULT_TIMEOUT_MS
+  if (!(Number.isFinite(timeoutMs) && timeoutMs > 0)) {
+    throw new HarnessError(
+      'EH_CONFIG_INVALID',
+      'listRemoteMcpTools: `timeoutMs` must be a positive number.',
+    )
+  }
   const mod = await load()
-  const client = await mod.createMCPClient({
-    transport: remoteMcpTransport({ name: 'probe', ...spec }),
-  })
+  const client = await withTimeout(
+    mod.createMCPClient({ transport: remoteMcpTransport({ name: 'probe', ...spec }) }),
+    timeoutMs,
+    'Connecting to the MCP server did not finish',
+    (late) => void late.close().catch(() => undefined),
+  )
   try {
-    const tools = (await client.tools()) as unknown as Record<
+    const tools = (await withTimeout(
+      client.tools(),
+      timeoutMs,
+      'Listing the MCP tools did not finish',
+    )) as unknown as Record<
       string,
       { description?: string; metadata?: { annotations?: McpToolAnnotations } }
     >

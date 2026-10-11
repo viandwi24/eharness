@@ -33,8 +33,11 @@ export function statusOfCode(code: HttpErrorCode): number {
     case 'EH_HTTP_UNSUPPORTED_MEDIA_TYPE':
       return 415
     case 'EH_COMPACTION_FAILED':
+    case 'EH_PROVIDER':
+    case 'EH_PROVIDER_AUTH':
       return 502
     case 'EH_STORAGE':
+    case 'EH_LOCK_UNAVAILABLE':
       return 503
     default:
       return 500

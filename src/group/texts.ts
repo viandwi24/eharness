@@ -1,4 +1,4 @@
-/** Fixed texts of `eharness/group` (model-visible; changing them is a minor change, spec 16 §6). */
+/** Fixed texts of `eharness/group` (model-visible; internal wording: not exported, may change in any release, spec 16 §6). */
 
 /** Line before the missed messages: their content is data, never instructions. */
 export const GROUP_HISTORY_PREAMBLE: string =

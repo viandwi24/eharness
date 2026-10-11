@@ -6,13 +6,13 @@ import {
   type SessionOptions,
   type StateAdapter,
 } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { pendingSubagentApprovals, type SubagentChildInfo, subagents } from './index.ts'
+import { pendingSubagentApprovals, type SubagentChildInfo, subagent } from './index.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
-type Storage = { messages: ReturnType<typeof memoryMessages>; state: StateAdapter }
-const shared = (): Storage => ({ messages: memoryMessages(), state: memoryState() })
+type Storage = { messages: ReturnType<typeof inMemoryMessages>; state: StateAdapter }
+const shared = (): Storage => ({ messages: inMemoryMessages(), state: inMemoryState() })
 // biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
 type Agent = HarnessAgent<any>
 
@@ -64,7 +64,7 @@ function build(
     storage,
     logger: silent,
     plugins: [
-      subagents({
+      subagent({
         agents: { worker: { agent: worker, description: 'does work' } },
         approvals: 'inline',
         answer: () => ({ approved: true }),

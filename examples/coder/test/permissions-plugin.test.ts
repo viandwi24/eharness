@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { defineHarnessAgent } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
-import { type PermissionsPluginOptions, permissionsPlugin } from 'eharness/permissions'
-import { memoryMessages, memoryState } from 'eharness/storage/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
+import { type PermissionsOptions, permissions } from 'eharness/permissions'
+import { inMemoryMessages, inMemoryState } from 'eharness/storage/memory'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import {
   type CoderConfig,
@@ -27,7 +27,7 @@ function setup(
   mode: PermissionMode,
   opts: {
     rules?: Partial<PermissionRules>
-    plugin?: Partial<PermissionsPluginOptions>
+    plugin?: Partial<PermissionsOptions>
     seed?: Record<string, string>
   } = {},
 ) {
@@ -41,14 +41,14 @@ function setup(
     config,
     mounts: () => [{ virtual: '/', real: tmp, readonly: false }],
   })
-  const fs = memoryFs(opts.seed ?? { '/a.txt': 'hello\n' })
+  const fs = inMemoryFs({ seed: opts.seed ?? { '/a.txt': 'hello\n' } })
   const model = scriptedModel(steps)
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState() },
+    storage: { messages: inMemoryMessages(), state: inMemoryState() },
     logger: silent,
-    plugins: [filesystem({ fs }), permissionsPlugin({ engine, ...opts.plugin })],
+    plugins: [filesystem({ fs }), permissions({ engine, ...opts.plugin })],
   })
   return { agent, engine, fs, model }
 }

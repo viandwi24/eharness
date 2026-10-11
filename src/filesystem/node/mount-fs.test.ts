@@ -3,7 +3,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { memoryFs } from '../memory.ts'
+import { HarnessError } from '../../index.ts'
+import { inMemoryFs } from '../memory.ts'
 import { diskFs } from './disk-fs.ts'
 import { type FsMount, mountFs } from './mount-fs.ts'
 import { nodeWorkspace } from './workspace.ts'
@@ -30,10 +31,10 @@ describe('mountFs', () => {
     await writeFile(join(root, '@dirs/lib/shadow.txt'), 'shadowed by root')
     await writeFile(join(lib, 'x.txt'), 'lib x')
     const mounts: FsMount[] = [
-      { virtual: '/', fs: diskFs(root) },
-      { virtual: '/@dirs/lib/', fs: diskFs(lib) },
+      { virtual: '/', fs: diskFs({ root }) },
+      { virtual: '/@dirs/lib/', fs: diskFs({ root: lib }) },
     ]
-    const fs = mountFs(() => mounts)
+    const fs = mountFs({ mounts: () => mounts })
     expect((await fs.read('/@dirs/lib/x.txt'))?.content).toBe('lib x')
     expect((await fs.read('/@dirs/lib/x.txt'))?.path).toBe('/@dirs/lib/x.txt')
     expect(await fs.read('/@dirs/lib/shadow.txt')).toBeNull()
@@ -53,9 +54,9 @@ describe('mountFs', () => {
   })
 
   test('mounts added at runtime are visible; unmounted paths throw; any FileSystem mounts', async () => {
-    const mem = memoryFs({ '/e.txt': 'e' })
-    const mounts: FsMount[] = [{ virtual: '/@dirs/root/', fs: memoryFs() }]
-    const fs = mountFs(() => mounts)
+    const mem = inMemoryFs({ seed: { '/e.txt': 'e' } })
+    const mounts: FsMount[] = [{ virtual: '/@dirs/root/', fs: inMemoryFs() }]
+    const fs = mountFs({ mounts: () => mounts })
     await expect(fs.read('/nowhere.txt')).rejects.toThrow('path outside the workspace')
     mounts.push({ virtual: '/@dirs/extra/', fs: mem })
     expect((await fs.read('/@dirs/extra/e.txt'))?.content).toBe('e')
@@ -63,18 +64,20 @@ describe('mountFs', () => {
   })
 
   test('invalid virtual prefixes throw', async () => {
-    const fs = mountFs(() => [{ virtual: '/x', fs: memoryFs() }])
-    await expect(fs.read('/x/a')).rejects.toThrow(TypeError)
+    const fs = mountFs({ mounts: () => [{ virtual: '/x', fs: inMemoryFs() }] })
+    await expect(fs.read('/x/a')).rejects.toThrow(HarnessError)
   })
 
   test('move across mounts copies then deletes; same mount uses rename', async () => {
     const root = await temp('root')
     const lib = await temp('lib')
     await writeFile(join(root, 'a.txt'), 'A')
-    const fs = mountFs(() => [
-      { virtual: '/', fs: diskFs(root) },
-      { virtual: '/@dirs/lib/', fs: diskFs(lib) },
-    ])
+    const fs = mountFs({
+      mounts: () => [
+        { virtual: '/', fs: diskFs({ root }) },
+        { virtual: '/@dirs/lib/', fs: diskFs({ root: lib }) },
+      ],
+    })
     expect(await fs.move?.('/a.txt', '/@dirs/lib/a.txt')).toEqual({ ok: true })
     expect(await readFile(join(lib, 'a.txt'), 'utf8')).toBe('A')
     expect(await fs.read('/a.txt')).toBeNull()
@@ -92,7 +95,7 @@ describe('mountFs', () => {
   test('a readonly mount refuses writes, deletes and moves into it', async () => {
     const root = await temp('root')
     await writeFile(join(root, 'a.txt'), 'a')
-    const fs = mountFs(() => [{ virtual: '/', fs: diskFs(root), readonly: true }])
+    const fs = mountFs({ mounts: () => [{ virtual: '/', fs: diskFs({ root }), readonly: true }] })
     await expect(fs.write('/a.txt', 'x')).rejects.toThrow('read-only directory')
     await expect(fs.delete('/a.txt')).rejects.toThrow('read-only directory')
     await expect(fs.move?.('/a.txt', '/b.txt')).rejects.toThrow('read-only directory')

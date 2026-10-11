@@ -1,6 +1,6 @@
 /** `parseCommand`: splitting, wrapper stripping, env assignments, complex forms and redirects. */
 import { describe, expect, test } from 'bun:test'
-import { parseCommand } from './command.ts'
+import { parseCommand, restrictiveForms } from './command.ts'
 
 const subs = (command: string): string[] => parseCommand(command).subcommands
 
@@ -266,5 +266,25 @@ describe('parseCommand: tokenizer (library implementation)', () => {
   test('an escaped substitution is plain text', () => {
     expect(parseCommand('echo \\$(x)').complex).toBe(true) // the `(` is still a group
     expect(parseCommand('echo "\\$(x)"').complex).toBe(false)
+  })
+})
+
+describe('restrictiveForms: more wrappers (P5-10)', () => {
+  const forms = (c: string): string[] => restrictiveForms(c).subcommands
+  test('xargs with flags, find -exec, busybox, setsid and flock are peeled', () => {
+    expect(forms('xargs -0 -n1 rm')).toContain('rm')
+    expect(forms('ls | xargs -I {} rm {}')).toContain('rm {}')
+    expect(forms('find . -name x -exec rm -rf {} +')).toContain('rm -rf {}')
+    expect(forms('find . -execdir rm {} ;')).toContain('rm {}')
+    expect(forms('busybox rm x')).toContain('rm x')
+    expect(forms('setsid rm x')).toContain('rm x')
+    expect(forms('flock /tmp/l rm x')).toContain('rm x')
+  })
+  test('inline interpreter code is flagged', () => {
+    for (const c of ["python3 -c 'x'", "node -e 'x'", "perl -e 'x'", "ruby -e 'x'", "php -r 'x'"]) {
+      expect(restrictiveForms(c).inlineCode).toBe(true)
+    }
+    expect(restrictiveForms('python3 script.py').inlineCode).toBe(false)
+    expect(restrictiveForms('git status').inlineCode).toBe(false)
   })
 })

@@ -3,8 +3,8 @@
  */
 import type { ModelMessage } from 'ai'
 import { MockLanguageModelV4 } from 'ai/test'
+import { defaultCountTokens, wireTokens } from '../models/tokens.ts'
 import type { ScriptedCallOptions, ScriptedStep } from '../testing/scripted-model.ts'
-import { defaultCountTokens, wireTokens } from './tokens.ts'
 
 type DoGenerate = MockLanguageModelV4['doGenerate']
 type GenerateCall = Parameters<DoGenerate>[0]

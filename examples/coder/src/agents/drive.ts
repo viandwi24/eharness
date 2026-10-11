@@ -1,7 +1,7 @@
 /**
  * Drives a turn of the MAIN agent to its end: answers every `tool-pending` stop through the
  * approval broker (and `ask_user_question` through the broker's questions) and continues with
- * `respond()`. The children of the `agent` tool are driven by the library's `subagents()` plugin
+ * `respond()`. The children of the `agent` tool are driven by the library's `subagent()` plugin
  * with `approvals: 'inline'`; its `answer` callback is `agents/subagents.ts`.
  */
 import type { HarnessRun, HarnessSession, TurnResult } from 'eharness'
@@ -98,7 +98,7 @@ export async function driveTurn(
         answer = { approved: false }
       }
       if (signal?.aborted) {
-        session.abort()
+        void session.abort().catch(() => {})
         return result
       }
       if (answer.approved) {
@@ -149,7 +149,7 @@ export async function driveTurn(
         signal,
       )
       if (signal?.aborted) {
-        session.abort()
+        void session.abort().catch(() => {})
         return result
       }
       toolOutputs.push(

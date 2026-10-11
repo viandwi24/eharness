@@ -269,6 +269,68 @@ export function messageAdapterConformance(
       },
     },
     {
+      name: 'concurrent saves of the same id end with one row (last write wins, persistEachStep)',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('conc-same')
+        const [a] = ids(1) as [string]
+        const versions = Array.from({ length: 8 }, (_, i) => message(a, `v${i}`))
+        await Promise.all(versions.map((m) => adapter.save(sessionId, [m])))
+        const loaded = await adapter.load({ sessionId })
+        assertTrue(loaded.length === 1, `expected one row, got ${loaded.length}`)
+        const text = (loaded[0]!.parts[0] as { text: string }).text
+        assertTrue(
+          versions.some((m) => (m.parts[0] as { text: string }).text === text),
+          `stored text ${text} is not one of the saved versions`,
+        )
+      },
+    },
+    {
+      name: 'concurrent disjoint batches are all visible, in id order',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('conc-disjoint')
+        const list = ids(12)
+        const batches = [0, 1, 2, 3].map((k) => list.filter((_, i) => i % 4 === k))
+        await Promise.all(
+          batches.map((batch) =>
+            adapter.save(
+              sessionId,
+              batch.map((id) => message(id, id)),
+            ),
+          ),
+        )
+        assertJsonEqual(idsOf(await adapter.load({ sessionId })), list, 'load({}) after batches')
+      },
+    },
+    {
+      name: 'ids sharing a millisecond prefix keep a deterministic (lexicographic) order',
+      run: async () => {
+        const adapter = await factory()
+        const sessionId = uniqueSessionId('same-ms')
+        const prefix = '01900000-0000-7000-8000-'
+        const list = ['000000000003', '000000000001', '000000000002', '00000000000a'].map(
+          (suffix) => prefix + suffix,
+        )
+        const sorted = [...list].sort()
+        await adapter.save(
+          sessionId,
+          list.map((id) => message(id, id)),
+        )
+        assertJsonEqual(idsOf(await adapter.load({ sessionId })), sorted, 'load({})')
+        assertJsonEqual(
+          idsOf(await adapter.load({ sessionId, limit: 2 })),
+          sorted.slice(2),
+          'load({ limit })',
+        )
+        assertJsonEqual(
+          idsOf(await adapter.load({ sessionId, fromId: sorted[1] as string })),
+          sorted.slice(1),
+          'load({ fromId })',
+        )
+      },
+    },
+    {
       name: 'lastId returns the newest id (or null for an empty session)',
       run: async () => {
         const adapter = await factory()

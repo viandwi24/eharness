@@ -1,12 +1,12 @@
 /**
- * The `groupChat()` plugin: one agent in a chat with two humans and another bot. The agent answers
+ * The `group()` plugin: one agent in a chat with two humans and another bot. The agent answers
  * only when mentioned or replied to, sees the messages it missed (once, in order) with its next
  * answer, and cannot be dragged into a bot-to-bot loop.
  *
  *   bun examples/group-chat.ts
  */
 import { defineHarnessAgent } from 'eharness'
-import { groupChat, routeGroupMessage } from 'eharness/group'
+import { group, routeGroupMessage } from 'eharness/group'
 import { exampleModel } from './shared/model.ts'
 
 const model = exampleModel([
@@ -16,7 +16,7 @@ const model = exampleModel([
   { text: 'Acknowledged again.' },
 ])
 
-const group = groupChat({
+const groupPlugin = group({
   botId: 'harness-bot',
   botName: 'Harness',
   allowBots: ['helper-bot'],
@@ -27,7 +27,7 @@ const agent = defineHarnessAgent({
   model,
   contextWindow: 200_000,
   instructions: 'You are Harness, a friendly assistant in a team chat.',
-  plugins: [group],
+  plugins: [groupPlugin],
 })
 
 // `acceptClientMetadata` lets the speaker metadata (`metadata.group`) reach storage
@@ -49,7 +49,7 @@ const incoming = [
 ]
 
 for (const message of incoming) {
-  const result = await routeGroupMessage(group, session, message)
+  const result = await routeGroupMessage(groupPlugin, session, message)
   if (result.responded) {
     const done = await result.run.result
     console.log(`${message.author.name}: answered (${done.stop})`)

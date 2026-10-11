@@ -33,7 +33,7 @@ Input `{ todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'co
   marked {n}. Send the list again.` (the list is unchanged).
 - Otherwise result `Todo list updated: {open} open, {completed} completed.` followed by one line
   per todo: `[x]` completed, `[>]` in progress, `[ ]` pending, `[-]` cancelled.
-- Static instruction `TODOS_INSTRUCTION` (instructions block 1, cache-stable).
+- A static, cache-stable instruction (instructions block 1) tells the model how to use the tool (internal text, not exported).
 
 ## 3. Where the list lives
 
@@ -42,7 +42,7 @@ Input `{ todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'co
   `step.prepare`. A call denied by approval (`execution-denied`) never ran and counts as a failed
   write. Regenerate, edit and rewind therefore always see the right list.
 - **UI:** every successful write streams `data-todos.list` `{ todos }` with id `list` (reconciled
-  within the message, persisted, `model: 'omit'`). `latestTodos(messages)` returns the last one.
+  within the message, persisted, `model: 'omit'`). `latestTodos(messages)` returns the last one; `openTodos`, `renderTodos` and `TODO_TOOL` are exported too.
 - **Compaction:** `compaction.prompt` computes the list from the messages being summarized (its
   `out.messages`: the last successful `todo_write` part) or, when they have none, from the
   carried list — never from in-memory state, which is empty on a fresh instance (a restart
@@ -54,14 +54,13 @@ Input `{ todos: Array<{ content: string; status: 'pending' | 'in_progress' | 'co
 ## 4. Reminders (volatile)
 
 At `step.prepare`, when open todos (`pending` / `in_progress`) exist and either `remindEvery` model
-steps passed since the last `todo_write`, or a compaction just carried the list, the step gets the
-reminder `TODOS_REMINDER` (`Open todos (update them with todo_write as you work):\n{list}`). It is
+steps passed since the last `todo_write`, or a compaction just carried the list, the step gets a
+reminder listing the open todos (internal text, not exported). It is
 a step reminder (spec 02 §5): never stored, never in the system prompt.
 
 ## 5. Enforcement (`enforce: true`)
 
-`turn.beforeEnd` for stop `'complete'` with open todos returns `{ continue: { reason:
-TODOS_CONTINUE } }` (the open list, "continue with the next one, or mark it cancelled and say why,
+`turn.beforeEnd` for stop `'complete'` with open todos returns `{ continue: { reason } }` (the open list, "continue with the next one, or mark it cancelled and say why,
 or ask the user"), unless:
 
 - `maxNudges` continuations were already asked in this turn; or

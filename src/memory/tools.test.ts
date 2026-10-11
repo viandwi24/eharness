@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { memoryFs } from '../filesystem/memory.ts'
+import { inMemoryFs } from '../filesystem/memory.ts'
 import { normalizePath } from '../filesystem/paths.ts'
 import type { FileSystem } from '../filesystem/types.ts'
 import { contentVersion } from '../filesystem/version.ts'
@@ -41,7 +41,7 @@ function withoutMove(fs: FileSystem): FileSystem {
 
 describe('executeMemoryCommand: view', () => {
   test('a file is shown cat -n style; view_range is 1-based inclusive; -1 means the end', async () => {
-    const { run } = env(memoryFs({ '/memories/u1/a.md': 'one\ntwo\nthree\n' }))
+    const { run } = env(inMemoryFs({ seed: { '/memories/u1/a.md': 'one\ntwo\nthree\n' } }))
     expect(await run({ command: 'view', path: '/memories/u1/a.md' })).toBe(
       '     1\tone\n     2\ttwo\n     3\tthree',
     )
@@ -58,7 +58,7 @@ describe('executeMemoryCommand: view', () => {
   })
 
   test('view_range bounds', async () => {
-    const { run } = env(memoryFs({ '/memories/u1/a.md': 'one\ntwo\nthree' }))
+    const { run } = env(inMemoryFs({ seed: { '/memories/u1/a.md': 'one\ntwo\nthree' } }))
     for (const range of [
       [0, 2],
       [4, 4],
@@ -73,7 +73,12 @@ describe('executeMemoryCommand: view', () => {
 
   test('the output of a large file is capped at maxFileChars with a view_range hint', async () => {
     const content = Array.from({ length: 50 }, (_, i) => `line ${i + 1}`).join('\n')
-    const fs = memoryFs({ '/memories/u1/big.md': content, '/memories/u1/wide.md': 'x'.repeat(500) })
+    const fs = inMemoryFs({
+      seed: {
+        '/memories/u1/big.md': content,
+        '/memories/u1/wide.md': 'x'.repeat(500),
+      },
+    })
     const { run } = env(fs, { maxFileChars: 100 })
     const out = await run({ command: 'view', path: '/memories/u1/big.md' })
     const [shown, note] = out.split('\n(') as [string, string]
@@ -92,16 +97,18 @@ describe('executeMemoryCommand: view', () => {
   })
 
   test('an empty file', async () => {
-    const { run } = env(memoryFs({ '/memories/u1/e.md': '' }))
+    const { run } = env(inMemoryFs({ seed: { '/memories/u1/e.md': '' } }))
     expect(await run({ command: 'view', path: '/memories/u1/e.md' })).toBe('(empty file)')
   })
 
   test('a directory lists its files with sizes; an empty root says so', async () => {
     const { run } = env(
-      memoryFs({
-        '/memories/u1/b.md': 'ø',
-        '/memories/u1/sub/a.md': 'abc',
-        '/memories/u2/secret.md': 'hidden',
+      inMemoryFs({
+        seed: {
+          '/memories/u1/b.md': 'ø',
+          '/memories/u1/sub/a.md': 'abc',
+          '/memories/u2/secret.md': 'hidden',
+        },
       }),
     )
     expect(await run({ command: 'view', path: '/memories/u1' })).toBe(
@@ -119,7 +126,7 @@ describe('executeMemoryCommand: view', () => {
 
 describe('executeMemoryCommand: mutations', () => {
   test('create, str_replace, insert, delete and rename with exact results and write events', async () => {
-    const fs = memoryFs()
+    const fs = inMemoryFs()
     const { run, events } = env(fs, { toolCallId: 'call-1' })
     expect(await run({ command: 'create', path: '/memories/u1/a.md', file_text: 'hello\n' })).toBe(
       'Created /memories/u1/a.md.',
@@ -208,7 +215,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('insert into a file without a final line break and into an empty file', async () => {
-    const fs = memoryFs({ '/memories/u1/a.md': 'a\nb', '/memories/u1/e.md': '' })
+    const fs = inMemoryFs({ seed: { '/memories/u1/a.md': 'a\nb', '/memories/u1/e.md': '' } })
     const { run } = env(fs)
     await run({ command: 'insert', path: '/memories/u1/a.md', insert_line: 1, insert_text: 'x' })
     expect((await fs.read('/memories/u1/a.md'))?.content).toBe('a\nx\nb')
@@ -222,7 +229,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('insert of an empty text is an error', async () => {
-    const fs = memoryFs({ '/memories/u1/a.md': 'a\n' })
+    const fs = inMemoryFs({ seed: { '/memories/u1/a.md': 'a\n' } })
     expect(
       await env(fs).run({
         command: 'insert',
@@ -235,10 +242,12 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('expected failures are prefixed strings', async () => {
-    const fs = memoryFs({
-      '/memories/u1/a.md': 'x x',
-      '/memories/u1/dir/f.md': 'f',
-      '/org/policy.md': 'p',
+    const fs = inMemoryFs({
+      seed: {
+        '/memories/u1/a.md': 'x x',
+        '/memories/u1/dir/f.md': 'f',
+        '/org/policy.md': 'p',
+      },
     })
     const { run, events } = env(fs)
     const cases: Array<[Record<string, unknown>, string]> = [
@@ -324,7 +333,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('traversal and invalid paths never reach outside the roots', async () => {
-    const fs = memoryFs({ '/memories/u2/secret.md': 'secret', '/etc/passwd': 'root' })
+    const fs = inMemoryFs({ seed: { '/memories/u2/secret.md': 'secret', '/etc/passwd': 'root' } })
     const { run } = env(fs)
     expect(await run({ command: 'view', path: '/memories/u1/../u2/secret.md' })).toBe(
       'REJECTED: /memories/u2/secret.md is outside the memory roots.',
@@ -352,7 +361,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('size limit on create and after an edit', async () => {
-    const fs = memoryFs({ '/memories/u1/a.md': '12345' })
+    const fs = inMemoryFs({ seed: { '/memories/u1/a.md': '12345' } })
     const { run } = env(fs, { maxFileChars: 6 })
     expect(await run({ command: 'create', path: '/memories/u1/b.md', file_text: '1234567' })).toBe(
       'ERROR: /memories/u1/b.md would exceed 6 characters.',
@@ -377,7 +386,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('a concurrent writer between read and write → CONFLICT, nothing written', async () => {
-    const base = memoryFs({ '/memories/u1/a.md': 'one' })
+    const base = inMemoryFs({ seed: { '/memories/u1/a.md': 'one' } })
     let interfere = true
     let writes = 0
     const racing: FileSystem = {
@@ -420,7 +429,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('rename without move falls back to write + delete', async () => {
-    const fs = withoutMove(memoryFs({ '/memories/u1/a.md': 'a' }))
+    const fs = withoutMove(inMemoryFs({ seed: { '/memories/u1/a.md': 'a' } }))
     const { run, events } = env(fs)
     expect(
       await run({
@@ -434,7 +443,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('rename fallback: a failure after the copy removes the copy and returns CONFLICT', async () => {
-    const base = withoutMove(memoryFs({ '/memories/u1/a.md': 'a' }))
+    const base = withoutMove(inMemoryFs({ seed: { '/memories/u1/a.md': 'a' } }))
     const fs: FileSystem = {
       ...base,
       write: async (path, content, opts) => {
@@ -459,7 +468,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('rename fallback: an adapter error on the source delete removes the copy and propagates', async () => {
-    const base = withoutMove(memoryFs({ '/memories/u1/a.md': 'a' }))
+    const base = withoutMove(inMemoryFs({ seed: { '/memories/u1/a.md': 'a' } }))
     const fs: FileSystem = {
       ...base,
       delete: async (path, opts) => {
@@ -480,7 +489,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('rename fallback: the event carries the version of the copy', async () => {
-    const base = withoutMove(memoryFs({ '/memories/u1/a.md': 'a' }))
+    const base = withoutMove(inMemoryFs({ seed: { '/memories/u1/a.md': 'a' } }))
     const fs: FileSystem = {
       ...base,
       write: async (path, content, opts) => {
@@ -501,7 +510,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('rename with move: a conflicting move is CONFLICT; the target exists is ERROR', async () => {
-    const base = memoryFs({ '/memories/u1/a.md': 'a' })
+    const base = inMemoryFs({ seed: { '/memories/u1/a.md': 'a' } })
     const fs: FileSystem = {
       ...base,
       move: async () => ({ ok: false, reason: 'conflict' }),
@@ -525,7 +534,7 @@ describe('executeMemoryCommand: mutations', () => {
 
   test('onWrite errors never change the result; they go to onWriteError', async () => {
     const errors: unknown[] = []
-    const { run } = env(memoryFs(), {
+    const { run } = env(inMemoryFs(), {
       onWrite: () => {
         throw new Error('audit down')
       },
@@ -540,7 +549,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('the most specific root decides write access', async () => {
-    const fs = memoryFs()
+    const fs = inMemoryFs()
     const run = (input: MemoryCommand) =>
       executeMemoryCommand(input, {
         fs,
@@ -555,7 +564,7 @@ describe('executeMemoryCommand: mutations', () => {
   })
 
   test('invalid roots are a programmer error (EH_CONFIG_INVALID)', async () => {
-    const fs = memoryFs()
+    const fs = inMemoryFs()
     const codeOf = (promise: Promise<string>) =>
       promise.then(
         () => 'resolved',
@@ -579,7 +588,7 @@ describe('executeMemoryCommand: mutations', () => {
   test('no roots: everything is outside', async () => {
     const out = await executeMemoryCommand(
       { command: 'view', path: '/' },
-      { fs: memoryFs(), roots: [] },
+      { fs: inMemoryFs(), roots: [] },
     )
     expect(out).toBe('REJECTED: / is outside the memory roots.')
   })
@@ -629,7 +638,9 @@ describe('property: no path outside the roots is read or written', () => {
     }
     const outside = { '/memories/u2/secret.md': 'TOP-SECRET-U2', '/secret.md': 'TOP-SECRET-ROOT' }
     for (const fsKind of ['move', 'no-move'] as const) {
-      const base = memoryFs({ ...outside, '/org/a.md': 'org', '/memories/u1/a.md': 'mine' })
+      const base = inMemoryFs({
+        seed: { ...outside, '/org/a.md': 'org', '/memories/u1/a.md': 'mine' },
+      })
       const fs = fsKind === 'move' ? base : withoutMove(base)
       const { run } = env(fs)
       for (let i = 0; i < 400; i++) {

@@ -11,6 +11,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname } from 'node:path'
 import type { LanguageModel } from 'ai'
+import { nodeContainsProtected, nodeRealpath } from 'eharness/filesystem/node'
 import {
   type AutoClassifier,
   createPermissionEngine as createLibraryEngine,
@@ -115,6 +116,10 @@ export function createPermissionEngine(opts: {
         workingDir: m.virtual !== TOOL_OUTPUTS_VIRTUAL,
       })),
     home: homedir(),
+    // a symlink inside the project cannot smuggle a path past the root, protected-path and rule checks
+    realpath: nodeRealpath,
+    // a recursive read (grep -r, rg) of a directory holding .env files or protected paths asks
+    containsProtected: nodeContainsProtected,
     mode: config.mode,
     ...(classifier ? { classifier } : {}),
     // Shift+Tab: default, acceptEdits, plan, then bypassPermissions (opt-in), then auto

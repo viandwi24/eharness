@@ -3,32 +3,33 @@
 Status: **Draft (0.5)**. Module: `src/openapi/*`. Built only with the public core API (ADR-0008).
 Design: [ADR-0032](../decisions/0032-openapi-tools-outbound-http.md).
 
-`openApiTools(spec, options)` turns an OpenAPI 3.0 / 3.1 document into a `ToolSource` (spec 02
-§3.2, shape of `mcpServer`, spec 09 §3): one AI SDK `tool()` per selected operation with a
+`openApiSource({ spec, ...options })` turns an OpenAPI 3.0 / 3.1 document into a `ToolSource` (spec 02
+§3.2, shape of `mcpServerSource`, spec 09 §3): one AI SDK `tool()` per selected operation with a
 `jsonSchema()` input. Calls use the Web `fetch`.
 
 ## 1. API
 
 ```ts
-import { openApiTools, riskFromMethod, OPENAPI_AUTO_DEFER_THRESHOLD } from 'eharness/openapi'
+import { openApiSource } from 'eharness/openapi'
 
-openApiTools(spec: object | string /* JSON */, {
-  name: string                         // source id 'openapi:<name>', default prefix `${name}_`; ^[a-z0-9-]{1,32}$
-  baseUrl?: string | ((ctx: HarnessContext) => string)   // required unless useSpecServers
-  useSpecServers?: boolean             // default false
-  headers?: (ctx, op: OperationInfo) => HeadersInit | Promise<HeadersInit>
-  include?: OperationFilter | OperationFilter[]
-  exclude?: OperationFilter | OperationFilter[]
-  names?: Record<string, string> | ((op) => string)       // operationId → name, before prefixing
-  prefix?: string
-  risk?: (op) => ToolRisk | undefined
-  maxTools?: number                    // 64
-  defer?: boolean | 'auto'             // 'auto': deferred above 20 tools
-  timeoutMs?: number                   // 30_000
-  maxResponseChars?: number            // 50_000
+openApiSource(options: OpenApiSourceOptions): ToolSource
+interface OpenApiSourceOptions {
+  spec: object | string                  // parsed document or JSON text
+  name: string                           // ^[a-z0-9-]{1,32}$: source id `openapi:<name>`, default prefix `<name>_`
+  baseUrl?: string | ((ctx) => string)   // §2.5
+  useSpecServers?: boolean               // default false
+  headers?: (ctx, op: OperationInfo) => HeadersInit | Promise<HeadersInit>   // §2.6
+  include?: OperationFilter | OperationFilter[]; exclude?: OperationFilter | OperationFilter[]
+  names?: Record<string, string> | ((op) => string); prefix?: string
+  risk?: (op: OperationInfo) => ToolRisk | undefined
+  maxTools?: number                      // default 64
+  defer?: boolean | 'auto'               // default 'auto'
+  timeoutMs?: number                     // default 30_000
+  maxResponseChars?: number              // default 50_000
   schema?: { maxDepth?: number /* 6 */; maxDescriptionChars?: number /* 300 */; maxSchemaBytes?: number /* 16_384 */ }
+  wrapUntrusted?: boolean                // default true
   fetch?: typeof fetch
-}): ToolSource
+}
 
 type OperationFilter =
   | { methods?: string[]; paths?: string[] /* globs */; tags?: string[]; operationIds?: string[] }
@@ -37,18 +38,21 @@ interface OperationInfo {
   method: string /* lowercase */; path: string; operationId?: string; tags: string[]
   summary?: string; description?: string; deprecated: boolean
 }
-riskFromMethod(method: string): ToolRisk
 ```
+
+`OpenApiSourceOptions`, `OperationFilter` and `OperationInfo` are the exported types; the method
+risk default and the auto-defer threshold are internal.
 
 ## 2. Rules
 
 1. **Input.** A parsed object or a JSON string. `openapi` must be `3.0.x` / `3.1.x`. YAML text,
    Swagger 2.0 and other versions throw `EH_CONFIG_INVALID` (with a conversion hint) from
-   `openApiTools()` — never at call time. Remote `$ref`s throw `EH_CONFIG_INVALID`.
+   `openApiSource()` — never at call time. Remote `$ref`s throw `EH_CONFIG_INVALID`.
 2. **Selection.** Every `get | put | post | delete | options | head | patch` operation is
    selected unless `include` excludes it or `exclude` matches (`exclude` wins). Within one filter
    object all given fields must match (list fields match any entry; `paths` are globs: `*` within a
-   segment, `**` across); an array of filters matches if any does.
+   segment, `**` across; the shared core glob compiler, so a pattern over its star caps throws
+   `EH_CONFIG_INVALID` at `openApiSource()`); an array of filters matches if any does.
 3. **Tools.** Name = `names` → `operationId` → `<method>_<path slug>`, sanitized to
    `^[a-zA-Z0-9_-]{1,64}$` and prefixed (`<name>_` by default). Duplicates throw
    `EH_CONFIG_INVALID`. Description = `METHOD /path`, summary, description (capped). Input schema:
@@ -80,10 +84,13 @@ riskFromMethod(method: string): ToolRisk
    `content-type`, `content-length`, `transfer-encoding`, `connection`, any `apiKey`-in-header name
    from `components.securitySchemes`, or an undeclared header: `REJECTED: …` (nothing is sent).
    Credentials are never part of a result.
-7. **Risk.** `metadata.risk = risk(op) ?? riskFromMethod(method)`; an invalid `risk()` result or
+7. **Risk.** `metadata.risk = risk(op) ?? <method default>` (GET/HEAD/OPTIONS `read`, DELETE `destructive`, others `write`); an invalid `risk()` result or
    a throw falls back to the method default with `ctx.log.warn`. `metadata.openapi` carries
    `{ method, path, operationId? }`.
-8. **Results.** Never throws for expected failures (hard rule 6). 2xx JSON → the parsed value;
+8. **Results.** Never throws for expected failures (hard rule 6). With `wrapUntrusted` (default `true`,
+   like MCP text) successful content is framed `<untrusted-content source="openapi" name="<name>/<tool>">`
+   (spec 03 §10) and a JSON body becomes its compact JSON text inside the frame; errors, status lines and
+   `UNSUPPORTED` stay unwrapped. With `wrapUntrusted: false`: 2xx JSON → the parsed value;
    text types → the text; 204/205/empty → `OK: HTTP <status> <text>`; binary or other content
    types → `UNSUPPORTED: …`. Non-2xx → `HTTP <status> <statusText>: <first 500 chars of the
    body>`. Bodies are read only up to `maxResponseChars`; longer ones return the head plus
@@ -93,9 +100,9 @@ riskFromMethod(method: string): ToolRisk
    (spec 09 §4) apply afterwards.
 9. **Count guard and deferral.** More than `maxTools` selected operations throws
    `EH_CONFIG_INVALID` naming the count and the filters. `defer: 'auto'` (default) sets
-   `deferLoading` above `OPENAPI_AUTO_DEFER_THRESHOLD` (20) tools (spec 02 §3.3).
+   `deferLoading` above 20 selected tools (spec 02 §3.3).
 
-## 3. Not in 0.5.0
+## 3. Out of scope
 
 Cookie parameters, non-JSON request bodies (forms, multipart, binary), binary or streamed
 responses, `outputSchema`, remote refs, security-scheme flows (OAuth) — the application's

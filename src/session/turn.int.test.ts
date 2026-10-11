@@ -3,12 +3,12 @@ import { APICallError, tool, type UIMessageChunk } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
-import { isHarnessError } from '../errors.ts'
+import { HarnessError, isHarnessError } from '../errors.ts'
 import { defineDataPart } from '../messages/data-parts.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { chunkTypes, collect, normalizeVolatile, spyMessages, spyState } from './int-kit.ts'
+import { chunkTypes, collect, normalizeVolatile, spyMessages, spyState } from './test-kit.ts'
 
 const weather = tool({
   description: 'Weather for a city',
@@ -97,9 +97,9 @@ describe('scenario 1: two-step turn (tool call → answer)', () => {
     expect(messages.saves).toHaveLength(4)
   })
 
-  test('toResponse() serves the stream as SSE', async () => {
+  test('toStreamResponse() serves the stream as SSE', async () => {
     const { agent } = makeAgent()
-    const response = agent.session('s1').send('Weather in Oslo?').toResponse()
+    const response = agent.session('s1').send('Weather in Oslo?').toStreamResponse()
     expect(response.headers.get('content-type')).toContain('text/event-stream')
     const text = await response.text()
     expect(text).toContain('"type":"finish"')
@@ -306,7 +306,7 @@ describe('scenario 15: failure semantics', () => {
     const { agent, messages, state } = makeAgent()
     const lock = {
       acquire: async () => {
-        throw new Error('locked elsewhere')
+        throw new HarnessError('EH_SESSION_BUSY', 'locked elsewhere')
       },
     }
     const run = agent.session('s1', { lock }).send('Hi')
@@ -316,6 +316,24 @@ describe('scenario 15: failure semantics', () => {
     expect(result.error?.code).toBe('EH_SESSION_BUSY')
     expect(messages.saves).toHaveLength(0)
     expect(state.writes).toHaveLength(0)
+  })
+
+  test('a failing lock service → EH_LOCK_UNAVAILABLE (not busy), logged, recover() says so (K-11)', async () => {
+    const { agent, messages, state } = makeAgent()
+    const lock = {
+      acquire: async () => {
+        throw new Error('redis is down')
+      },
+    }
+    const session = agent.session('s1', { lock })
+    const run = session.send('Hi')
+    expectEarlyFailure(await collect(run.stream))
+    const result = await run.result
+    expect(result.error?.code).toBe('EH_LOCK_UNAVAILABLE')
+    expect(result.error?.message).toContain('redis is down')
+    expect(messages.saves).toHaveLength(0)
+    expect(state.writes).toHaveLength(0)
+    expect(await session.recover()).toEqual({ recovered: false, reason: 'lock-unavailable' })
   })
 
   test('the lock is released at the end of a turn', async () => {

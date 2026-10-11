@@ -1,4 +1,4 @@
-/** Model-visible texts of the shell plugin (API: changing them is a minor change, spec 19 §2). */
+/** Model-visible texts of the shell plugin (internal wording: not exported, may change in any release, spec 19 §2). */
 
 /** Description of the `bash` tool (`{toolName}` is not substituted: the tool keeps its own name). */
 export const BASH_DESCRIPTION = `Run a shell command in the project root and return its combined output and exit code.

@@ -42,7 +42,7 @@ async function withoutRg<T>(work: () => Promise<T>): Promise<T> {
 
 for (const grep of ['auto', 'js'] as const) {
   describe(`diskFs conformance (grep: ${grep})`, () => {
-    for (const c of fileSystemConformance(async () => diskFs(await temp(), { grep }), {
+    for (const c of fileSystemConformance(async () => diskFs({ root: await temp(), grep }), {
       requireStat: true,
       requireGrep: true,
       requireMove: true,
@@ -60,7 +60,7 @@ describe('diskFs', () => {
 
   test('normalised paths and ".." are rejected', async () => {
     const root = await temp()
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     await fs.write('/a/./b//c.txt', 'x')
     expect(await readFile(join(root, 'a/b/c.txt'), 'utf8')).toBe('x')
     await expect(fs.read('/a/../../etc/passwd')).rejects.toThrow('path outside the workspace')
@@ -72,12 +72,12 @@ describe('diskFs', () => {
     const root = await temp()
     const other = await temp()
     await writeFile(join(other, 'secret.txt'), 'secret')
-    expect(await diskFs(root).read(join(other, 'secret.txt'))).toBeNull()
+    expect(await diskFs({ root }).read(join(other, 'secret.txt'))).toBeNull()
   })
 
   test('writes create parent directories', async () => {
     const root = await temp()
-    expect((await diskFs(root).write('/x/y/z/file.txt', 'deep')).ok).toBe(true)
+    expect((await diskFs({ root }).write('/x/y/z/file.txt', 'deep')).ok).toBe(true)
     expect(await readFile(join(root, 'x/y/z/file.txt'), 'utf8')).toBe('deep')
   })
 
@@ -88,7 +88,7 @@ describe('diskFs', () => {
     await symlink(join(outside, 'secret.txt'), join(root, 'link.txt'))
     await symlink(outside, join(root, 'linkdir'))
     await writeFile(join(root, 'ok.txt'), 'ok')
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
 
     await expect(fs.read('/link.txt')).rejects.toThrow('path outside the workspace')
     await expect(fs.read('/linkdir/secret.txt')).rejects.toThrow('path outside the workspace')
@@ -107,7 +107,7 @@ describe('diskFs', () => {
     const root = await temp()
     await writeFile(join(root, 'real.txt'), 'hello')
     await symlink(join(root, 'real.txt'), join(root, 'alias.txt'))
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     expect((await fs.read('/alias.txt'))?.content).toBe('hello')
     expect((await fs.list()).map((m) => m.path)).toEqual(['/alias.txt', '/real.txt'])
   })
@@ -117,7 +117,7 @@ describe('diskFs', () => {
     const outside = await temp()
     await writeFile(join(outside, 'target.txt'), 'outside')
     await writeFile(join(root, 'file.txt'), 'one')
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     expect((await fs.read('/file.txt'))?.content).toBe('one')
     await rm(join(root, 'file.txt'))
     await symlink(join(outside, 'target.txt'), join(root, 'file.txt'))
@@ -130,7 +130,7 @@ describe('diskFs', () => {
     await writeFile(join(root, 'bin.dat'), new Uint8Array([0xff, 0xfe, 0x00, 0xc3, 0x28]))
     await writeFile(join(root, 'big.txt'), 'a'.repeat(2 * 1024 * 1024 + 1))
     await writeFile(join(root, 'small.txt'), 'ok')
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     await expect(fs.read('/bin.dat')).rejects.toThrow('binary file: /bin.dat')
     await expect(fs.read('/big.txt')).rejects.toThrow(
       'too large file: /big.txt (text files up to 2 MB only)',
@@ -144,7 +144,7 @@ describe('diskFs', () => {
   test('maxFileBytes changes the limit and the message', async () => {
     const root = await temp()
     await writeFile(join(root, 'a.txt'), 'a'.repeat(3000))
-    const fs = diskFs(root, { maxFileBytes: 2048 })
+    const fs = diskFs({ root, maxFileBytes: 2048 })
     await expect(fs.read('/a.txt')).rejects.toThrow('text files up to 2 KB only')
     expect(await fs.list()).toEqual([])
   })
@@ -152,7 +152,7 @@ describe('diskFs', () => {
   test('read-only mode rejects write, delete and move', async () => {
     const root = await temp()
     await writeFile(join(root, 'a.txt'), 'a')
-    const fs = diskFs(root, { readonly: true })
+    const fs = diskFs({ root, readonly: true })
     await expect(fs.write('/a.txt', 'b')).rejects.toThrow('read-only directory')
     await expect(fs.delete('/a.txt')).rejects.toThrow('read-only directory')
     await expect(fs.move?.('/a.txt', '/b.txt')).rejects.toThrow('read-only directory')
@@ -160,7 +160,7 @@ describe('diskFs', () => {
   })
 
   test('concurrent create-only writes: exactly one wins', async () => {
-    const fs = diskFs(await temp())
+    const fs = diskFs({ root: await temp() })
     const results = await Promise.all(
       Array.from({ length: 8 }, (_, i) => fs.write('/race.txt', `v${i}`, { ifVersion: null })),
     )
@@ -171,7 +171,7 @@ describe('diskFs', () => {
     const root = await temp()
     await writeFile(join(root, 'run.sh'), '#!/bin/sh\n')
     await chmod(join(root, 'run.sh'), 0o755)
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     expect((await fs.write('/run.sh', '#!/bin/sh\necho hi\n')).ok).toBe(true)
     expect((await stat(join(root, 'run.sh'))).mode & 0o777).toBe(0o755)
     expect((await fs.list()).map((m) => m.path)).toEqual(['/run.sh'])
@@ -195,7 +195,7 @@ describe('diskFs', () => {
 
   test('ignored paths are hidden from list, grep and glob but readable by path', async () => {
     const root = await ignoreTree()
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     expect((await fs.list()).map((m) => m.path)).toEqual(['/.gitignore', '/src.ts'])
     expect((await fs.grep?.(/needle/))?.map((h) => h.path)).toEqual(['/src.ts'])
     expect((await fs.glob?.('**/*', { prefix: '/', limit: 10 }))?.map((m) => m.path)).toEqual([
@@ -209,14 +209,14 @@ describe('diskFs', () => {
 
   test('ignore options: gitignore false and extra hidden patterns', async () => {
     const root = await ignoreTree()
-    const all = diskFs(root, { ignore: { gitignore: false } })
+    const all = diskFs({ root, ignore: { gitignore: false } })
     expect((await all.list()).map((m) => m.path)).toEqual([
       '/.gitignore',
       '/debug.log',
       '/dist/out.js',
       '/src.ts',
     ])
-    const extra = diskFs(root, { ignore: { hidden: ['src.ts'] } })
+    const extra = diskFs({ root, ignore: { hidden: ['src.ts'] } })
     expect((await extra.list()).map((m) => m.path)).toEqual(['/.gitignore'])
     expect(await extra.grep?.(/needle/)).toEqual([])
   })
@@ -229,20 +229,20 @@ describe('diskFs', () => {
       { path: '/multi.txt', line: 3, text: 'three needle' },
       { path: '/src.ts', line: 1, text: 'needle src' },
     ]
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     await withoutRg(async () => {
       expect(await fs.grep?.(/needle/i)).toEqual(expected)
       expect((await fs.grep?.(/needle/, { maxHits: 1 }))?.length).toBe(1)
       expect((await fs.grep?.(/needle/i, { prefix: '/multi' }))?.length).toBe(2)
     })
-    expect(await diskFs(root, { grep: 'js' }).grep?.(/needle/i)).toEqual(expected)
+    expect(await diskFs({ root, grep: 'js' }).grep?.(/needle/i)).toEqual(expected)
   })
 
   test.skipIf(!rgOnPath())('grep with rg matches the JS implementation', async () => {
     const root = await ignoreTree()
     await writeFile(join(root, 'multi.txt'), 'one\nNeedle two\nthree needle\n')
-    const withRg = await diskFs(root).grep?.(/needle/i)
-    const js = await diskFs(root, { grep: 'js' }).grep?.(/needle/i)
+    const withRg = await diskFs({ root }).grep?.(/needle/i)
+    const js = await diskFs({ root, grep: 'js' }).grep?.(/needle/i)
     expect(withRg).toEqual(js)
     expect(withRg?.map((h) => h.path)).toEqual(['/multi.txt', '/multi.txt', '/src.ts'])
   })
@@ -275,14 +275,14 @@ exit ${exitCode}
     const path = process.env.PATH
     process.env.PATH = bin
     try {
-      const hits = await diskFs(root).grep?.(/needle/i)
+      const hits = await diskFs({ root }).grep?.(/needle/i)
       expect(hits).toEqual([{ path: '/src.ts', line: 1, text: 'needle src' }])
       const seen = (await readFile(args, 'utf8')).split('\n')
       expect(seen).toContain('--ignore-case')
       expect(seen).toContain('--no-ignore')
       expect(seen).toContain(String(2 * 1024 * 1024))
       await rm(args)
-      await diskFs(root, { grep: 'js' }).grep?.(/needle/i)
+      await diskFs({ root, grep: 'js' }).grep?.(/needle/i)
       await expect(readFile(args, 'utf8')).rejects.toThrow()
     } finally {
       process.env.PATH = path
@@ -296,9 +296,56 @@ exit ${exitCode}
     const path = process.env.PATH
     process.env.PATH = bin
     try {
-      expect(await diskFs(root).grep?.(/needle/)).toEqual([
+      expect(await diskFs({ root }).grep?.(/needle/)).toEqual([
         { path: '/real.ts', line: 1, text: 'needle real' },
       ])
+    } finally {
+      process.env.PATH = path
+    }
+  })
+
+  test('a hung rg is killed after the timeout and the JS path answers, reporting why', async () => {
+    const root = await temp()
+    await writeFile(join(root, 'real.ts'), 'needle real')
+    const bin = await temp()
+    await writeFile(join(bin, 'rg'), '#!/bin/sh\nexec sleep 30\n')
+    await chmod(join(bin, 'rg'), 0o755)
+    const path = process.env.PATH
+    process.env.PATH = `${bin}:${path}`
+    const reasons: string[] = []
+    try {
+      const started = Date.now()
+      const hits = await diskFs({
+        root,
+        grepTimeoutMs: 150,
+        onGrepFallback: (r) => reasons.push(r),
+      }).grep?.(/needle/)
+      expect(hits).toEqual([{ path: '/real.ts', line: 1, text: 'needle real' }])
+      expect(Date.now() - started).toBeLessThan(5000)
+      expect(reasons).toEqual(['ripgrep timed out after 150 ms'])
+    } finally {
+      process.env.PATH = path
+    }
+  })
+
+  test('rg output over the byte cap falls back to JS; --max-count follows maxHits', async () => {
+    const root = await temp()
+    await writeFile(join(root, 'real.ts'), 'needle real')
+    const { bin, args } = await fakeRg(0)
+    const path = process.env.PATH
+    process.env.PATH = bin
+    const reasons: string[] = []
+    try {
+      const hits = await diskFs({
+        root,
+        grepMaxOutputBytes: 10,
+        onGrepFallback: (r) => reasons.push(r),
+      }).grep?.(/needle/, { maxHits: 3 })
+      expect(hits).toEqual([{ path: '/real.ts', line: 1, text: 'needle real' }])
+      expect(reasons[0]).toContain('exceeded 10 bytes')
+      const seen = (await readFile(args, 'utf8')).split('\n')
+      expect(seen).toContain('--max-count')
+      expect(seen).toContain('3')
     } finally {
       process.env.PATH = path
     }

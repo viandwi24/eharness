@@ -26,3 +26,7 @@ the library into a maintenance sink.
 ## Alternatives considered
 
 - Adapters-as-plugins (rejected).
+
+## Amendment note (2026-10-11)
+
+Naming (0.8, P39): the factory name of a plugin is its runtime `name` (`ask`, `guard`, `permissions`, `group`, `subagent`), in-memory adapters use the `inMemory` prefix, tool and skill sources end in `Source`, and every plugin, source, adapter and store factory takes one `options` object (conventions.md, "Naming"). Runtime plugin names, and so persisted plugin state, did not change. The shipped modules still use only the public API; the public surface is additionally pinned by a committed exports snapshot (`scripts/exports.snapshot.json`).

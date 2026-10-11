@@ -12,9 +12,9 @@ import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { prng, sleep } from '../testing/test-utils.ts'
-import { collect } from './int-kit.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 import { requestRemoteAbort } from './remote-abort.ts'
+import { collect } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -97,7 +97,7 @@ async function stored(storage: Storage): Promise<SessionStateSnapshot | null> {
 }
 
 describe('cross-process abort (spec 05 §9.1)', () => {
-  test("B's requestAbort stops A's turn at the next step boundary", async () => {
+  test("B's abort stops A's turn at the next step boundary", async () => {
     const storage = sharedStorage()
     let release!: () => void
     const gate = new Promise<void>((resolve) => {
@@ -123,7 +123,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
     const run = a.agent.session('s1').send('go')
     const chunks = collect(run.stream)
     await started
-    const requested = await b.agent.session('s1').requestAbort('user stop')
+    const requested = await b.agent.session('s1').abort('user stop')
     expect(requested).toEqual({ target: 'remote' })
     expect((await stored(storage))?.core.abortRequest).toMatchObject({
       turnId: run.turnId,
@@ -155,7 +155,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
     const session = a.agent.session('s1')
     const run = session.send('go')
     await started
-    expect(await b.agent.session('s1').requestAbort()).toEqual({ target: 'remote' })
+    expect(await b.agent.session('s1').abort()).toEqual({ target: 'remote' })
     const result = await run.result
     expect(result.stop).toBe('aborted')
     expect(seen.aborted).toBe(true)
@@ -207,7 +207,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
     await started
     const queued = session.send('later', { ifBusy: 'queue' })
     session.send('steer me', { ifBusy: 'steer' })
-    expect(await b.agent.session('s1').requestAbort()).toEqual({ target: 'remote' })
+    expect(await b.agent.session('s1').abort()).toEqual({ target: 'remote' })
     expect((await run.result).stop).toBe('aborted')
     expect((await queued.result).stop).toBe('aborted')
     await session.idle()
@@ -276,7 +276,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
     const run = a.agent.session('s1').send('go')
     await started
     await sleep(8) // let a heartbeat write happen first
-    expect(await b.agent.session('s1').requestAbort('race')).toEqual({ target: 'remote' })
+    expect(await b.agent.session('s1').abort('race')).toEqual({ target: 'remote' })
     const result = await run.result
     expect(result.stop).toBe('aborted')
     expect(seen.aborted).toBe(true)
@@ -307,7 +307,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
     await started
     const gets = storage.counts.gets
     const writes = storage.writes.length
-    expect(await b.agent.session('s1').requestAbort()).toEqual({ target: 'unsupported' })
+    expect(await b.agent.session('s1').abort()).toEqual({ target: 'unsupported' })
     expect(b.warnings.map((w) => w.code)).toContain('W_ABORT_UNSUPPORTED')
     expect(storage.writes.length).toBe(writes)
     await sleep(10)
@@ -322,20 +322,20 @@ describe('cross-process abort (spec 05 §9.1)', () => {
     const { wait, started } = waitTool()
     const a = instance(storage, { model: scriptedModel([waitCall]), tools: { wait } })
     const session = a.agent.session('s1')
-    expect(await session.requestAbort()).toEqual({ target: 'idle' })
+    expect(await session.abort()).toEqual({ target: 'idle' })
     expect(storage.writes.length).toBe(0)
 
     const run = session.send('go')
     await started
-    expect(await session.requestAbort('mine')).toEqual({ target: 'local' })
+    expect(await session.abort('mine')).toEqual({ target: 'local' })
     expect((await run.result).stop).toBe('aborted')
     // finished turn: nothing to abort anywhere
     const writes = storage.writes.length
-    expect(await a.agent.session('s1').requestAbort()).toEqual({ target: 'idle' })
+    expect(await a.agent.session('s1').abort()).toEqual({ target: 'idle' })
     expect(storage.writes.length).toBe(writes)
 
     const off = instance(storage, { model: scriptedModel([]), recovery: false })
-    expect(await off.agent.session('s1').requestAbort()).toEqual({ target: 'unsupported' })
+    expect(await off.agent.session('s1').abort()).toEqual({ target: 'unsupported' })
     expect(off.warnings.map((w) => w.code)).toContain('W_ABORT_UNSUPPORTED')
   })
 
@@ -357,7 +357,7 @@ describe('cross-process abort (spec 05 §9.1)', () => {
       plugins: {},
     })
     const b = instance(storage, { model: scriptedModel([]), recovery: { staleMs: 1_000 } })
-    expect(await b.agent.session('s1').requestAbort()).toEqual({ target: 'idle' })
+    expect(await b.agent.session('s1').abort()).toEqual({ target: 'idle' })
     expect((await stored(storage))?.rev).toBe(3)
   })
 
@@ -429,8 +429,8 @@ describe('cross-process abort (spec 05 §9.1)', () => {
       await started
       await sleep(prng(6)() * 6)
       const results = await Promise.all([
-        b.agent.session('s1').requestAbort('r1'),
-        b.agent.session('s1').requestAbort('r2'),
+        b.agent.session('s1').abort('r1'),
+        b.agent.session('s1').abort('r2'),
       ])
       for (const r of results) expect(r.target).toBe('remote')
       expect((await run.result).stop).toBe('aborted')

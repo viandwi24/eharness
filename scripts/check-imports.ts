@@ -16,6 +16,15 @@
  * 2. Non-test files under `src/` never use `Bun.` or import `node:` built-ins, except the Node-only
  *    modules listed in `nodeOnly` (ADR-0036): they may import `node:` built-ins (never `Bun.`).
  *
+ * 3. Runtime-neutral files (everything outside `nodeOnly`, tests excluded) also never use Node-only
+ *    globals or bare built-in specifiers: `Buffer`, `process.`, `setImmediate`, `require(`,
+ *    `__dirname`/`__filename`, and `fs`, `path`, `os`, `child_process`, `crypto`, ... without the
+ *    `node:` prefix. `allowedNodeGlobals` lists the reviewed exceptions.
+ *
+ * 4. Production files never import a test kit (`test-kit.ts`) or `src/testing/**`, so test helpers are
+ *    never bundled. Only subpath modules named in `allowedImports` may use `src/testing` (it is a
+ *    subpath itself); core files (e.g. `src/session/*.ts`) may not.
+ *
  * Exits with code 1 and lists every violation.
  */
 
@@ -56,12 +65,56 @@ const allowedImports: Record<string, string[]> = {
   testing: ['activity', 'http'],
 }
 /** Node-only modules (ADR-0036): `node:` built-ins allowed. */
-const nodeOnly = ['filesystem/node.ts', 'filesystem/node/', 'shell/']
+const nodeOnly = ['filesystem/node.ts', 'filesystem/node/', 'shell/', 'web/node.ts']
+/**
+ * Reviewed exceptions to rule 3: file -> patterns (as source text of the rule name) that may appear.
+ * `src/session` reads `globalThis.process` behind a `typeof` guard (no bare `process.` use).
+ */
+const allowedNodeGlobals: Record<string, string[]> = {
+  'session/session.ts': ['process.'],
+}
+const neutralGlobals: Array<[name: string, pattern: RegExp]> = [
+  ['Buffer', /\bBuffer\b/],
+  ['process.', /(?<![\w.])process\./],
+  ['setImmediate', /\bsetImmediate\b/],
+  ['require(', /(?<![\w.])require\s*\(/],
+  ['__dirname', /\b__(?:dirname|filename)\b/],
+]
+const bareBuiltins = new Set([
+  'fs',
+  'path',
+  'os',
+  'child_process',
+  'crypto',
+  'url',
+  'util',
+  'stream',
+  'events',
+  'http',
+  'https',
+  'net',
+  'zlib',
+  'buffer',
+  'assert',
+  'tty',
+  'worker_threads',
+  'readline',
+  'dns',
+  'timers',
+  'module',
+  'vm',
+])
+/** Source without comments, so prose mentioning `Buffer` is not flagged. */
+function stripComments(text: string): string {
+  return text
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
+    .replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
+}
 const coreIndex = join(src, 'index.ts')
 
 const specifierPattern =
   /(?:^|[\s;])(?:import|export)\s[^'"`]*?from\s*['"]([^'"]+)['"]|(?:^|[^\w.])import\s*\(\s*['"]([^'"]+)['"]\s*\)|(?:^|[\s;])import\s*['"]([^'"]+)['"]/gm
-const testFile = /\.(?:int\.)?test(?:-d)?\.ts$/
+const testFile = /\.(?:int\.)?test(?:-d)?\.ts$|(?:^|\/)test-kit\.ts$/
 
 const violations: string[] = []
 
@@ -100,6 +153,14 @@ for await (const file of new Glob('**/*.{ts,mts,cts,js,mjs}').scan({ cwd: src })
   const subpath = subpaths.find((name) => file.startsWith(`${name}/`))
 
   if (!isTest && /\bBun\./.test(text)) violations.push(`${shown}: uses the Bun global`)
+  if (!isTest && !nodeOnly.some((p) => file.startsWith(p))) {
+    const code = stripComments(text)
+    for (const [name, pattern] of neutralGlobals) {
+      if (pattern.test(code) && !allowedNodeGlobals[file]?.includes(name)) {
+        violations.push(`${shown}: runtime-neutral module uses '${name}' (Node-only)`)
+      }
+    }
+  }
   if (!isTest && file.startsWith('client/')) checkClientFile(file, shown, text)
 
   for (const match of text.matchAll(specifierPattern)) {
@@ -108,6 +169,15 @@ for await (const file of new Glob('**/*.{ts,mts,cts,js,mjs}').scan({ cwd: src })
 
     if (!isTest && specifier.startsWith('node:') && !nodeOnly.some((p) => file.startsWith(p))) {
       violations.push(`${shown}: imports Node built-in '${specifier}'`)
+    }
+    if (!isTest && bareBuiltins.has(specifier) && !nodeOnly.some((p) => file.startsWith(p))) {
+      violations.push(`${shown}: imports bare Node built-in '${specifier}'`)
+    }
+    if (!isTest && specifier.startsWith('.') && subpath !== 'testing') {
+      const target = resolve(dirname(path), specifier)
+      if (/(^|\/)test-kit(\.ts)?$/.test(target) || target.startsWith(`${join(src, 'testing')}/`)) {
+        violations.push(`${shown}: production code imports test helper '${specifier}'`)
+      }
     }
     if (subpath === undefined) continue
 

@@ -31,12 +31,12 @@ jobs:
         options: >-
           --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # changeset status needs the base branch
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2 # version from package.json "packageManager"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - run: bun install --frozen-lockfile
       - run: bun run lint
@@ -55,6 +55,35 @@ jobs:
           !startsWith(github.head_ref, 'dependabot/')
         run: bunx changeset status --since=origin/${{ github.base_ref }}
 
+  # Peer-range compatibility (P1-4/P1-15). `latest` catches upstream renames of the experimental AI
+  # SDK options we rely on (docs/engineering/api-stability.md §experimental dependencies); `lowest`
+  # runs the oldest supported zod. Dependencies are overridden after the frozen install, nothing is
+  # committed.
+  compat:
+    name: Peers · ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: ai@latest + @ai-sdk/mcp@latest
+            packages: ai@latest @ai-sdk/mcp@latest
+          - name: zod@3.25.76 (lowest supported)
+            packages: zod@3.25.76
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+
+      - run: bun install --frozen-lockfile
+      - name: Override peers
+        run: bun add --no-save ${{ matrix.packages }}
+      - run: bun run typecheck
+      - run: bun test src
+
   # The team example's own checks that `bun test` at the root does not cover: the web tests run
   # standalone (as a developer runs them) and the two real-process scripts (SIGKILL / restart and
   # two instances on one SQLite file). Ports are picked by the OS, the database lives in a temp dir
@@ -64,11 +93,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
       - run: bun install --frozen-lockfile
 
@@ -99,13 +128,13 @@ jobs:
       matrix:
         node: [22, 24]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
           package-manager-cache: false

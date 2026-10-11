@@ -7,8 +7,6 @@
  * keep the run short; `--wait-stale` really waits (about 2.5 minutes) and touches no state.
  */
 import { Database } from 'bun:sqlite'
-import { readFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import {
   answerItem,
   approvals,
@@ -331,15 +329,5 @@ await scenario(
     }
   },
 )
-
-await scenario('routine due during downtime is skipped and fires once later', async () => {
-  const spec = JSON.parse(
-    readFileSync(join(dirname(import.meta.path), '../shared/openapi.json'), 'utf8'),
-  ) as { paths: Record<string, unknown> }
-  if (!Object.keys(spec.paths).some((p) => p.startsWith('/routines'))) {
-    return 'SKIP (routines not built yet)'
-  }
-  return 'SKIP (routines routes exist now: add the scenario here)'
-})
 
 finish()

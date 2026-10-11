@@ -208,11 +208,11 @@ describe('multi-instance conformance (SQLite, one connection per instance)', () 
 
 describe('connector stores (SQLite)', () => {
   const sealedFor = (kinds: string[]) =>
-    sealedProfileStore(
-      sqliteProfileStore(openDatabase(':memory:').sqlite),
-      teamVault([parseSecretKey(generateSecretKey())]),
-      { kinds },
-    )
+    sealedProfileStore({
+      inner: sqliteProfileStore(openDatabase(':memory:').sqlite),
+      vault: teamVault([parseSecretKey(generateSecretKey())]),
+      kinds,
+    })
   suite(
     'ConnectionStore conformance (sealed profile rows)',
     connectionStoreConformance(() => connectionStoreFromProfiles(sealedFor([CONNECTION_KIND]))),
@@ -235,9 +235,9 @@ suite(
   'ProfileStore conformance (SQLite, encrypted settings)',
   // every case gets an empty store: a fresh database and a fresh key
   profileStoreConformance(async () =>
-    sealedProfileStore(
-      sqliteProfileStore(openDatabase(':memory:').sqlite),
-      teamVault([parseSecretKey(generateSecretKey())]),
-    ),
+    sealedProfileStore({
+      inner: sqliteProfileStore(openDatabase(':memory:').sqlite),
+      vault: teamVault([parseSecretKey(generateSecretKey())]),
+    }),
   ),
 )

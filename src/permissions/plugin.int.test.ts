@@ -3,13 +3,13 @@ import { describe, expect, test } from 'bun:test'
 import { tool, type UIMessage } from 'ai'
 import { z } from 'zod/v4'
 import { filesystem } from '../filesystem/index.ts'
-import { memoryFs } from '../filesystem/memory.ts'
+import { inMemoryFs } from '../filesystem/memory.ts'
 import { type ApprovalDecision, defineHarnessAgent } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { schemaCheckedMessages } from '../testing/schema-checked-messages.ts'
 import { type ScriptedStep, scriptedModel } from '../testing/scripted-model.ts'
 import { createPermissionEngine, type PermissionEngineOptions } from './engine.ts'
-import { type PermissionsPluginOptions, permissionsPlugin } from './plugin.ts'
+import { type PermissionsOptions, permissions } from './plugin.ts'
 import {
   type AutoAction,
   type AutoClassifier,
@@ -33,7 +33,7 @@ const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 /** Memory messages that reject a schema-invalid save and record what was saved. */
 function checkedMessages() {
-  const inner = schemaCheckedMessages(memoryMessages())
+  const inner = schemaCheckedMessages(inMemoryMessages())
   const saves: UIMessage[][] = []
   return {
     saves,
@@ -50,7 +50,7 @@ function setup(
   mode: PermissionMode,
   opts: {
     rules?: Partial<PermissionRules>
-    plugin?: Partial<PermissionsPluginOptions>
+    plugin?: Partial<PermissionsOptions>
     engine?: Partial<PermissionEngineOptions>
     seed?: Record<string, string>
   } = {},
@@ -61,14 +61,14 @@ function setup(
     rules: opts.rules ?? {},
     ...opts.engine,
   })
-  const fs = memoryFs(opts.seed ?? { '/a.txt': 'hello\n' })
+  const fs = inMemoryFs({ seed: opts.seed ?? { '/a.txt': 'hello\n' } })
   const model = scriptedModel(steps)
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
-    storage: { messages: checkedMessages(), state: memoryState() },
+    storage: { messages: checkedMessages(), state: inMemoryState() },
     logger: silent,
-    plugins: [filesystem({ fs }), permissionsPlugin({ engine, ...opts.plugin })],
+    plugins: [filesystem({ fs }), permissions({ engine, ...opts.plugin })],
   })
   return { agent, engine, fs, model }
 }
@@ -515,7 +515,7 @@ describe('auto mode', () => {
     const agent = defineHarnessAgent({
       model,
       contextWindow: 100_000,
-      storage: { messages, state: memoryState() },
+      storage: { messages, state: inMemoryState() },
       logger: silent,
       tools: {
         bash: tool({
@@ -527,7 +527,7 @@ describe('auto mode', () => {
           },
         }),
       },
-      plugins: [permissionsPlugin({ engine })],
+      plugins: [permissions({ engine })],
     })
     return { agent, engine, model, ran, messages }
   }
@@ -631,7 +631,7 @@ describe('auto mode', () => {
     const agent = defineHarnessAgent({
       model: scriptedModel([run('x'), { text: 'Done.' }]),
       contextWindow: 100_000,
-      storage: { messages, state: memoryState() },
+      storage: { messages, state: inMemoryState() },
       logger: silent,
       tools: {
         bash: tool({

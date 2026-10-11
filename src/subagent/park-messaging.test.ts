@@ -7,10 +7,10 @@ import { describe, expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent, type HarnessAgent, type HarnessUIMessage } from '../index.ts'
-import { memoryInbox, memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryInbox, inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { type ScriptedModel, scriptedModel } from '../testing/scripted-model.ts'
 import { until } from '../testing/test-utils.ts'
-import { pendingSubagentApprovals, type SubagentsOptions, subagents } from './index.ts'
+import { pendingSubagentApprovals, type SubagentOptions, subagent } from './index.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -19,9 +19,9 @@ type Steps = Parameters<typeof scriptedModel>[0]
 type Agent = HarnessAgent<any>
 
 const newStorage = () => ({
-  messages: memoryMessages(),
-  state: memoryState(),
-  inbox: memoryInbox(),
+  messages: inMemoryMessages(),
+  state: inMemoryState(),
+  inbox: inMemoryInbox(),
 })
 type Storage = ReturnType<typeof newStorage>
 
@@ -74,8 +74,8 @@ function process_(
     worker: Steps
     approve?: boolean
     tools?: Record<string, unknown>
-    mainOptions?: Partial<SubagentsOptions>
-    workerOptions?: Partial<SubagentsOptions>
+    mainOptions?: Partial<SubagentOptions>
+    workerOptions?: Partial<SubagentOptions>
     resumable?: boolean
   },
 ): { main: Agent; worker: Agent; mainModel: ScriptedModel; workerModel: ScriptedModel } {
@@ -91,7 +91,7 @@ function process_(
     tools: { danger, ...opts.tools } as never,
     ...(opts.approve === true ? { approval: { policy: { danger: 'user-approval' } } } : {}),
     plugins: [
-      subagents({
+      subagent({
         agents: {},
         approvals: 'park',
         parentAgent: () => holder.main as Agent,
@@ -108,7 +108,7 @@ function process_(
     logger: silent,
     inbox: { pollMs: 20 },
     plugins: [
-      subagents({
+      subagent({
         agents: {
           worker: {
             agent: worker,

@@ -11,6 +11,7 @@ runs out of its step, token, time or USD budget. Contracts: spec 05 §3.1–3.2,
 ```ts
 import { defineHarnessAgent } from 'eharness'
 
+// yours: `model` is an AI SDK LanguageModel
 const agent = defineHarnessAgent({
   model,
   contextWindow: 200_000,
@@ -21,6 +22,7 @@ const agent = defineHarnessAgent({
       repeats: 3, // default — the same call with the same result 3× in the window
       window: 20, // default — the last 20 steps that called tools
       errorStreak: 5, // default — 5 steps in a row whose tool calls all failed
+      toolErrorStreak: 8, // default — 8 failed results in a row of one tool, whatever the inputs
       nudges: 1, // default — reminders before stopping; 0 stops at once
       ignoreTools: ['wait_for_ci'], // tools that may repeat legitimately (polling)
     },
@@ -57,6 +59,7 @@ Outside a step: `'aborted'` (`run.abort()`, `session.abort()`, your `abortSignal
 the step, token or USD limits, so the final numbers can exceed a limit by one step.
 
 ```ts
+// yours: `session` from agent.session(id), `notifyOwner` your alerting
 const result = await session.send('Migrate the test suite').result
 switch (result.stop) {
   case 'complete':
@@ -81,8 +84,8 @@ JSON with sorted keys. Denied calls and `ignoreTools` are skipped.
 - **Error streak:** `errorStreak` (5) steps in a row whose tool calls all returned errors.
 - **Tool error streak:** `toolErrorStreak` (8) failed results in a row of one tool, whatever the inputs.
 
-The first time, the next step gets the reminder `PROGRESS_NUDGE` ("You are not making progress: …
-Try a different approach, or stop and explain what blocks you.") and `W_LOOP_STUCK` is raised with
+The first time, the next step gets a built-in reminder ("You are not making progress: … Try a
+different approach, or stop and explain what blocks you.") and `W_LOOP_STUCK` is raised with
 `details: { kind, toolName?, count, stepIndex }`; the window is cleared. If the model gets stuck
 again, the turn stops with `'stuck'`. The reminder is a step reminder: never stored, never in the
 system prompt, so the prompt cache is unaffected.
@@ -94,9 +97,8 @@ for the error streak, but still counts for repeats when the same call keeps prod
 ## The wrap-up step
 
 When the step budget runs out (and no `turn.beforeEnd` hook extended it), the loop runs **one**
-more step with tools disabled (`toolChoice: 'none'`) and the reminder `MAX_STEPS_WRAP_UP`: "The
-step limit of this turn is reached and tools are disabled. Summarize what you did, what is left,
-and how to continue." The turn still ends with `'max-steps'`, but the user gets a useful last
+more step with tools disabled (`toolChoice: 'none'`) and a built-in reminder that the step limit is reached
+and asks for a summary of what was done, what is left and how to continue. The turn still ends with `'max-steps'`, but the user gets a useful last
 message instead of a half-finished tool call. `loop.wrapUp: false` stops immediately; a used-up
 USD budget skips the wrap-up step too.
 
@@ -149,10 +151,11 @@ turn. `session.abort()` handles that too: when no turn of the session runs in th
 writes an abort request into the session state, and the owning instance stops the turn at its next
 step boundary — or mid-tool, through the tool's `abortSignal` — with `stop: 'aborted'`, exactly
 like a local abort (partial output saved, queue dropped, waiting steers reported as
-`input-dropped`). Use `requestAbort()` to know where the abort went:
+`input-dropped`). Use `abort()` to know where the abort went:
 
 ```ts
-const { target } = await agent.session(chatId).requestAbort('user pressed stop')
+// yours: `chatId` is your session id
+const { target } = await agent.session(chatId).abort('user pressed stop')
 // 'local'       — the turn ran in this process and was aborted
 // 'remote'      — the turn runs in another instance; it stops within `abortPollMs`
 // 'idle'        — no turn runs anywhere (nothing written)
@@ -171,6 +174,14 @@ Requirements and cost:
 
 Runnable: [`examples/remote-abort.ts`](../../examples/remote-abort.ts).
 
+## Background subagents
+
+A background child started by the [subagent plugin](subagents.md) is bounded by default:
+`background.timeoutMs` is one hour (`Number.POSITIVE_INFINITY` removes the bound) and
+`background.stopOnTimeout` is `true`, so a child that outlives it gets one "timed out" report and is
+stopped. Set `stopOnTimeout: false` to only report it. `reconcileEveryMs` (default
+`min(60 000, timeoutMs / 4)`, at least 1 000) is how often the session checks while it is open.
+
 ## Budgets for unattended runs
 
 Nothing limits spending by default. For agents that run without a person watching, combine:
@@ -178,7 +189,8 @@ Nothing limits spending by default. For agents that run without a person watchin
 - `budget: { maxTurnUsd, maxSessionUsd }` with `models` pricing ([models and cost](models-and-cost.md));
 - `loop.turnTimeoutMs` for a wall-clock limit;
 - `loop.maxTurnOutputTokens` if you think in tokens rather than dollars;
-- `settings.maxRetries` for provider rate limits (AI SDK retries 429/5xx).
+- `settings.maxRetries` for provider rate limits (AI SDK retries 429/5xx; the default is 2);
+- `settings.timeout` (`firstChunkMs` / `chunkMs`, default 120 000 each; `timeout: false` turns it off) so a model stream that goes silent cannot hang a step.
 
 Long turns also grow the context: compaction summarizes older turns and, mid-turn, older steps of
 the running turn (spec 06), and `toolOutput.maxChars` keeps single tool results bounded.

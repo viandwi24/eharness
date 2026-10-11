@@ -22,7 +22,11 @@ import type {
 /** Ids of the built-in connectors. */
 export type BuiltinId = 'files' | 'memory' | 'planning' | 'web' | 'ask' | 'team'
 
-/** Tool names of the built-in connectors (the names the shipped plugins register). */
+/**
+ * Tool names of the built-in connectors (the names the shipped plugins register). The module may
+ * not import the plugins (dogfooding rule); `builtin-tools.test.ts` asserts these match the
+ * plugins' own constants. Not part of the public API.
+ */
 export const BUILTIN_TOOLS = {
   filesRead: ['read_file', 'list_files', 'grep', 'glob'],
   filesEdit: ['write_file', 'edit_file'],
@@ -114,9 +118,9 @@ export interface BuiltinConnectorsOptions {
   planning?: { plugin: BuiltinFactory }
   /** `webSearch({ search })` and `webFetch()`; a capability exists only when its factory is given. */
   web?: { search?: BuiltinFactory; read?: BuiltinFactory }
-  /** `askUser()`. */
+  /** `ask()`. */
   ask?: { plugin: BuiltinFactory }
-  /** `subagents({ agents })`: delegate work and message agents (one plugin). */
+  /** `subagent({ agents })`: delegate work and message agents (one plugin). */
   team?: { plugin: BuiltinFactory }
 }
 

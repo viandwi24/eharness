@@ -4,8 +4,7 @@ Patterns for running an eharness agent behind a real product: what goes into the
 being stored, long-term and episodic memory, events from background jobs, several server
 instances, poison items, long waits and webhooks, cross-session budgets, an LLM approval guard,
 browser tools, group bots, OpenAPI tools, scheduled check-ins, skills from a database, and the
-security decisions eharness leaves to the application. Every pattern uses public API only; most of
-it existed before 0.4.0, the rest is new in 0.4.0 / 0.5.0 and linked to its guide.
+security decisions eharness leaves to the application. Every pattern uses public API only and links to its guide.
 
 Rule of thumb: **eharness runs turns; your application owns everything around them** — users and
 permissions, schedules, job queues, databases, and which session a request may touch.
@@ -142,15 +141,15 @@ Retrieve episodes in a later session with the `step.prepare` pattern above. A ho
 
 **Save before summarizing.** A summary is lossy. With the memory plugin, the agent gets one
 internal, bounded turn to write facts into memory files right before the summarizer runs
-(0.4.0, [compaction guide](compaction.md#saving-facts-before-summarizing)):
+([compaction guide](compaction.md#saving-facts-before-summarizing)):
 
 ```ts
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { memory } from 'eharness/memory'
 
 const plugins = [
-  filesystem({ fs: memoryFs(), hiddenPrefixes: ['/memories'] }),
+  filesystem({ fs: inMemoryFs(), hiddenPrefixes: ['/memories'] }),
   memory({
     roots: (ctx) => [
       { path: `/memories/users/${String(ctx.runtime.userId)}/`, write: true, label: 'this user' },
@@ -226,8 +225,8 @@ Behind a load balancer any instance may get any session's request. What each gua
 | Exactly-once approvals, no lost state updates | `StateAdapter.setIf` (compare-and-set on `rev`) |
 | See history written by another instance | `MessageAdapter.lastId` |
 | Take over turns of a crashed instance | nothing: `recovery.staleMs` (default 120 s) marks a turn without heartbeat as interrupted |
-| Stop a turn running elsewhere (0.4.0) | `StateAdapter.setIf` (polled every `recovery.abortPollMs`), or an inbox |
-| Queue, steer, wake and collect across instances (0.4.0) | `storage.inbox` (`InboxAdapter`, e.g. [`examples/postgres-inbox.ts`](../../examples/postgres-inbox.ts)) |
+| Stop a turn running elsewhere | `StateAdapter.setIf` (polled every `recovery.abortPollMs`), or an inbox |
+| Queue, steer, wake and collect across instances | `storage.inbox` (`InboxAdapter`, e.g. [`examples/postgres-inbox.ts`](../../examples/postgres-inbox.ts)) |
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
@@ -239,13 +238,13 @@ const agent = defineHarnessAgent({
 })
 const session = agent.session(chatId, { lock: postgresLock(pool) })
 
-await session.requestAbort('user pressed stop') // → { target: 'local' | 'remote' | 'idle' | 'unsupported' }
+await session.abort('user pressed stop') // → { target: 'local' | 'remote' | 'idle' | 'unsupported' }
 await session.enqueue('Also check the invoices.', { mode: 'steer' }) // → { inboxId, target }
 ```
 
 In one process, a second message while a turn runs is decided by `ifBusy`: `'reject'` (default,
 `EH_SESSION_BUSY`), `'queue'`, `'steer'`, `'collect'` (debounce a burst into one turn) or
-`'wait'` (0.4.0: wait for the running turn and the queue, then run). `session.idle()` resolves
+`'wait'` (wait for the running turn and the queue, then run). `session.idle()` resolves
 when nothing runs or waits. `handleChatRequest` never throws on a busy session: it answers
 **409** `{ error: { code: 'EH_SESSION_BUSY', message } }`. The stream of a turn ends only after the
 turn is persisted, so a client that saw `finish` can send again at once.
@@ -271,7 +270,7 @@ export async function POST(req: Request): Promise<Response> {
   return handleChatRequest(session, body, {
     ifBusy: 'wait',
     runtime: { userId: user.id }, // per-request identity: SendOptions.runtime
-  }).toHttpResponse() // not toResponse(): pre-commit failures keep their HTTP status
+  }).toResponse() // not toStreamResponse(): pre-commit failures keep their HTTP status
 }
 ```
 
@@ -281,7 +280,7 @@ Guides: [several instances](multi-instance.md), [writing a storage adapter](writ
 
 ## Poison items and alerting
 
-A queue item that can never succeed must not block its session forever (0.5.0). Turn on
+A queue item that can never succeed must not block its session forever. Turn on
 `inbox.retry`, page a human from `onDeadLetter`, and watch the counts:
 
 ```ts
@@ -307,7 +306,7 @@ if (stats !== undefined && stats.dead > 0) await alerts.warn(`${stats.dead} dead
   `redrive(ids)` (an admin route, not a core method).
 - Retries make side effects **at-least-once**: mark safe tools `metadata: { idempotent: true }` and
   give the rest an idempotency key (the `waitId` of an external wait, the `inboxId` of a message).
-- Leave `retry` off for a 0.4-era custom adapter: it may not honour `release` options and would
+- Leave `retry` off for a custom adapter that does not pass the retry conformance cases: it may not honour `release` options and would
   dead-letter healthy items behind a long turn.
 
 Guide: [several instances → poison items](multi-instance.md#poison-items). Contract: spec 05 §12
@@ -316,7 +315,7 @@ rules 11–15; ADR-0026.
 ## Long waits and webhooks
 
 A CI build, a payment confirmation or a human review takes longer than a request. Park the turn
-instead of holding a worker (0.5.0): the tool is an `externalTool()`, the result arrives at **any**
+instead of holding a worker: the tool is an `externalTool()`, the result arrives at **any**
 instance through `resolveWait()`, and a sweeper or an inbox timer expires waits nobody answers.
 
 ```ts
@@ -369,7 +368,7 @@ Guide: [external waits](external-waits.md). Contract: spec 11 §4.2; ADR-0027. R
 ## Cross-session budgets
 
 `maxTurnUsd` / `maxSessionUsd` cap one turn and one session; a user with many sessions is not
-capped (see [security](#budgets-are-per-turn-and-per-session)). `budget.ledger` (0.5.0) is the
+capped (see [security](#budgets-are-per-turn-and-per-session)). `budget.ledger` is the
 inside-the-loop counterpart for **per-user, per-tenant, per-month** limits:
 
 ```ts
@@ -408,13 +407,13 @@ Contract: spec 12 §4.1; ADR-0029.
 
 ## Guard in production
 
-`approvalGuard()` (0.5.0, `eharness/guard`) is a second model on the approval chain that can only
+`guard()` (`eharness/guard`) is a second model on the approval chain that can only
 **tighten**: deny a call with a reason the agent reads, or ask a person. Treat it as one layer
 after deterministic rules, not a replacement:
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { approvalGuard } from 'eharness/guard'
+import { guard } from 'eharness/guard'
 
 const agent = defineHarnessAgent({
   model,
@@ -424,7 +423,7 @@ const agent = defineHarnessAgent({
     risk: { read: 'approved', write: 'approved', external: 'approved', destructive: 'user-approval' },
   },
   plugins: [
-    approvalGuard({
+    guard({
       model: 'openai/gpt-5-mini', // cheap and fast; price it in `models` to see USD
       policy: 'Emails go only to @acme.com addresses the user named. Never delete customer data.',
       skipTools: ['search_docs'], // calls that never need review
@@ -453,7 +452,7 @@ Guide: [approval guard](guard.md). Contract: spec 15; ADR-0030. Runnable:
 ## Browser tools and page context
 
 The frontend can run tools the server cannot (read the location, fill a form) and knows what is on
-screen. With the opt-in (0.5.0) a request declares both for one turn; the server treats them as
+screen. With the opt-in, a request declares both for one turn; the server treats them as
 **untrusted input**:
 
 ```ts
@@ -467,7 +466,7 @@ export async function POST(req: Request): Promise<Response> {
     runtime: { userId: user.id },
     clientTools: { allow: ['get_location', 'open_dialog'], maxTools: 8, timeoutMs: 120_000 },
     pageContext: { maxChars: 4_000 },
-  }).toHttpResponse() // not toResponse(): pre-commit failures keep their HTTP status
+  }).toResponse() // not toStreamResponse(): pre-commit failures keep their HTTP status
 }
 ```
 
@@ -479,7 +478,7 @@ export async function POST(req: Request): Promise<Response> {
   `onTimeout`) through a timer, an inbox item or `expireWaits()`.
 - **Cache:** a changing set of declarations busts the cached prefix (`W_CACHE_BUST`); keep them
   stable per page.
-- **Page context is data:** framed with `PAGE_CONTEXT_PREAMBLE`, capped, never stored; do not put
+- **Page context is data:** framed as data with a fixed preamble, capped, never stored; do not put
   secrets or instructions you rely on in it.
 
 Guide: [frontend tools and page context](client-tools.md). Contract: spec 11 §7.1; ADR-0028.
@@ -487,19 +486,19 @@ Guide: [frontend tools and page context](client-tools.md). Contract: spec 11 §7
 ## Group bots
 
 A bot in a group chat must not answer everything, must still know what it missed and must not
-loop with other bots. `eharness/group` (0.5.0) decides per incoming message; your channel code
+loop with other bots. `eharness/group` decides per incoming message; your channel code
 supplies the facts:
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { groupChat, routeGroupMessage } from 'eharness/group'
+import { group, routeGroupMessage } from 'eharness/group'
 
-const group = groupChat({ botId, botName: 'Harness', maxBotTurns: { count: 3, windowMs: 60_000 } })
-const agent = defineHarnessAgent({ model, plugins: [group] })
+const groupPlugin = group({ botId, botName: 'Harness', maxBotTurns: { count: 3, windowMs: 60_000 } })
+const agent = defineHarnessAgent({ model, plugins: [groupPlugin] })
 
 export async function onChannelMessage(m: ChannelMessage): Promise<void> {
   const session = agent.session(`telegram:${m.chatId}`, { acceptClientMetadata: true })
-  const result = await routeGroupMessage(group, session, {
+  const result = await routeGroupMessage(groupPlugin, session, {
     text: m.text,
     author: { id: m.authorId, name: m.authorName, isBot: m.isBot },
     mentionsBot: m.mentionsBot, // the channel adapter's facts
@@ -523,21 +522,14 @@ Guide: [group chat](group-chat.md). Contract: spec 16; ADR-0031.
 
 ## OpenAPI tools
 
-`openApiTools()` (0.5.0, `eharness/openapi`) turns an OpenAPI 3.x JSON document into tools. In
+`openApiSource()` (`eharness/openapi`) turns an OpenAPI 3.x JSON document into tools. In
 production the rules are about **what you do not expose**:
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { openApiTools } from 'eharness/openapi'
+import { openApiSource } from 'eharness/openapi'
 
-const orders = openApiTools(specJson, {
-  name: 'orders',
-  baseUrl: 'https://orders.example.com/v1', // yours: the spec's `servers` are ignored
-  headers: (ctx) => ({ authorization: `Bearer ${String(ctx.runtime.apiToken)}` }),
-  include: { tags: ['orders'] },
-  // third-party API: everything that changes state is external
-  risk: (op) => (op.method === 'get' ? 'read' : 'external'),
-})
+const orders = openApiSource({ spec: specJson, name: 'orders', baseUrl: 'https://orders.example.com/v1', headers: (ctx) => ({ authorization: `Bearer ${String(ctx.runtime.apiToken)}` }), include: { tags: ['orders'] }, risk: (op) => (op.method === 'get' ? 'read' : 'external') })
 
 const agent = defineHarnessAgent({
   model,
@@ -617,7 +609,7 @@ Runnable: [`examples/background-events.ts`](../../examples/background-events.ts)
 ## Skills from a database
 
 Skills that admins edit in your product live in your database. A custom `SkillSource` lists them
-(metadata only), loads one body on demand, and may carry a `version` (0.4.0) that the model sees in
+(metadata only), loads one body on demand, and may carry a `version` that the model sees in
 `load_skill` and hooks receive — so you can audit which version a turn used:
 
 ```ts
@@ -664,7 +656,7 @@ Contract: spec 07 §3.
 
 ## Pipeline workers and tool-heavy agents
 
-**Structured output (0.4.0).** An agent used as a pipeline step needs a typed result, not free
+**Structured output.** An agent used as a pipeline step needs a typed result, not free
 text. `session.send(input, { output: { schema } })` adds a `final_answer` tool for the turn (or
 passes AI SDK `Output.object` with `mode: 'native'`), sends validation errors back to the model
 up to `maxRetries` times (default 2) and returns the valid answer typed in `result.output`; a turn
@@ -677,7 +669,7 @@ if (stop === 'complete') await queue.push(output)
 
 Guide: [structured output](structured-output.md). Contract: spec 05 §3.3, ADR-0023.
 
-**Prune for tool-heavy agents (0.4.0).** Agents that read files, search or call APIs fill their
+**Prune for tool-heavy agents.** Agents that read files, search or call APIs fill their
 context with old tool outputs. Pruning replaces large outputs of older turns by a short
 placeholder in the request only — cheaper than summarizing, storage untouched:
 
@@ -719,7 +711,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const user = await authenticate(req)
   if (!(await userOwnsChat(user.id, id))) return new Response(null, { status: 404 })
   const run = agent.session(id).attach()
-  return run ? await run.toHttpResponse() : new Response(null, { status: 204 })
+  return run ? await run.toResponse() : new Response(null, { status: 204 })
 }
 ```
 
@@ -743,7 +735,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
 - **Default:** no budget at all unless configured.
 - **Do:** enforce per-user and per-tenant quotas in your application (read `TurnResult.usage.costUsd`
   or `state.core.usage` after every turn, refuse new turns over quota), or let a
-  [`budget.ledger`](#cross-session-budgets) (0.5.0) enforce per-user and per-tenant scopes inside
+  [`budget.ledger`](#cross-session-budgets) enforce per-user and per-tenant scopes inside
   the loop. Keep a turn budget for unattended work (heartbeats, wake turns).
 
 ### Path rules are exact prefixes
@@ -752,8 +744,10 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   paths with directory semantics (`'/skills'` covers `/skills/**`, not `/skillsx`). They know
   nothing about your backend: on a case-insensitive store `/Skills/x` is not under `/skills`, and a
   symlink can point a visible path at a hidden one.
-- **Default:** exact, case-sensitive prefix match after `normalizePath`.
-- **Do:** make your `FileSystem` adapter canonical: lower-case keys (or reject case variants) on
+- **Default:** exact prefix match after `normalizePath`; the shipped filesystem tools compare
+  case-insensitively on NFC-folded segments, `diskFs` does not follow symlinks out of its root,
+  and the permissions engine can resolve symlinks too (`realpath: nodeRealpath`).
+- **Do:** make your own `FileSystem` adapter canonical: lower-case keys (or reject case variants) on
   case-insensitive stores, never follow symlinks out of the adapter's root, and keep secrets out of
   any file system the model can reach.
 
@@ -795,9 +789,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   a thrown tool error becomes the tool result the UI, storage and model see.
 - **Default:** `String(error)` for tool errors; provider errors are described from AI SDK
   `APICallError` / `StreamProviderError` only, with URLs, query strings and key-like tokens
-  redacted and capped at 300 characters (0.4.0); other errors with a status read `HTTP <status>`.
+  redacted and capped at 300 characters; other errors with a status read `HTTP <status>`.
 - **Do:** set `logger` (structured, scrubbed) and `onWarning`; set `toolErrorText` to map thrown
-  tool errors to safe text (0.4.0). Treat the redaction as defence in depth, not a filter you rely
+  tool errors to safe text. Treat the redaction as defence in depth, not a filter you rely
   on.
 
 ```ts
@@ -815,10 +809,11 @@ const agent = defineHarnessAgent({
 
 - **Risk:** a user `file` part with a URL is downloaded by AI SDK or the provider. A URL to an
   internal address is an SSRF vector; an expired URL used to break every later turn.
-- **Default (0.4.0):** `inputFiles: { protocols: ['data:', 'https:'], maxBytes: 20 MB }` — other
+- **Default:** `inputFiles: { protocols: ['data:', 'https:'], maxBytes: 20 MB }` — other
   protocols and larger `data:` URLs are `EH_INVALID_INPUT`; a file of an earlier turn that can no
   longer be downloaded is replaced by `FILE_UNAVAILABLE` on the wire.
-- **Do:** in SSRF-sensitive deployments allow only `data:` (`inputFiles: { protocols: ['data:'] }`)
+- **Do:** `eharness/http` already drops client file parts that are not `data:` URLs
+  (`chat.allowFileUrls` opts in to http/https or a predicate). In SSRF-sensitive deployments allow only `data:` (`inputFiles: { protocols: ['data:'] }`)
   or upload files to your own object store first and pass its URLs; never pass `http:` unless the
   store is yours.
 
@@ -833,8 +828,15 @@ const agent = defineHarnessAgent({
   shared or exposed.
 - The approver's identity and authorization are yours: check them before `respond()` and pass
   `actor` for the audit trail (`approval.decided`).
-- `grep` accepts only a conservative safe subset of regular expressions (no catastrophic
-  backtracking); file tools enforce read-only,
-  hidden and undeletable rules; memory tools reject paths outside the resolved roots.
+- `grep` and the shell's `bash_output` filter accept only a conservative safe subset of regular
+  expressions (no catastrophic backtracking); glob patterns share one bounded compiler; file tools
+  enforce read-only, hidden and undeletable rules (compared case-insensitively on NFC-folded
+  segments); `diskFs` opens files with `O_NOFOLLOW` and re-checks containment; memory tools reject
+  paths outside the resolved roots.
+- Nothing the core awaits can hang a turn: hooks, model streams, MCP connects, tool-source listing
+  and OAuth requests all have default time limits ([production checklist](production-checklist.md#timeouts-and-bounds)).
+- Network defaults fail closed: `eharness/http` accepts only `data:` file URLs from clients,
+  `authorize` returning a non-object answers 401, OAuth refuses private hosts, OpenAPI and MCP
+  results are framed as untrusted content, shell commands inherit only an env allow-list.
 - Nothing is persisted before the commit point of a turn: a failed lock or a rejected input leaves
   storage untouched.

@@ -12,7 +12,7 @@
  *   (synchronous) agent factory.
  */
 import type { Database } from 'bun:sqlite'
-import type { SessionLock } from 'eharness'
+import { isPrivateHost, type SessionLock } from 'eharness'
 import {
   type ActivatedConnectors,
   type AgentEnablement,
@@ -31,7 +31,6 @@ import {
 } from 'eharness/connectors'
 import { listRemoteMcpTools, remoteMcpSource } from 'eharness/mcp'
 import type { ProfileStore, SecretVault } from 'eharness/providers'
-import { isPrivateHost } from 'eharness/web'
 import type { ConnectorsPort } from '../../app/ports.ts'
 import { type AgentDef, TOOL_ACCESS_AUTO_THRESHOLD, type ToolAccess } from '../../domain/agents.ts'
 import type {
@@ -62,6 +61,9 @@ import {
 import { sqliteEnablementStore, sqliteFlowStore, sqliteRefreshLock } from './connector-stores.ts'
 import type { LibraryChange } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
+
+/** Connect and listing limit of every remote MCP server (library default 15 s, set explicitly). */
+const MCP_TIMEOUT_MS = 15_000
 
 type Env = Record<string, string | undefined>
 
@@ -188,6 +190,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     flows,
     vault,
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    // OAuth requests refuse private hosts by default; local MCP servers are a dev opt-in
+    oauth: { allowPrivateNetwork: env.TEAM_ALLOW_PRIVATE_MCP === '1' },
     redirectUri: options.redirectUri,
     clientConfig: async (id, flow) => {
       // a custom connector's own OAuth client lives in the settings of that connection
@@ -477,7 +481,8 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         agent: { id: d.id },
         accessToken: (id) => service.accessToken(id),
         ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
-        mcp: remoteMcpSource,
+        // bounded connect/list (EH_MCP_TIMEOUT): a dead server costs one timeout, not a hung turn
+        mcp: (spec) => remoteMcpSource({ ...spec, timeoutMs: MCP_TIMEOUT_MS }),
         // the app's own rules merge with the connector rules (most restrictive wins)
         appRules: appRulesOf(d),
       })
@@ -628,6 +633,25 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     if (addresses.some((a) => isPrivateHost(a))) refuse()
   }
 
+  /**
+   * The fetch of the probe: every request URL is checked again (a hostname is resolved right
+   * before it is fetched, so a name that flipped to a private address since the form was checked is
+   * refused) and redirects are never followed (a 3xx to an internal host is returned as is).
+   *
+   * Residual risk, documented on purpose: this is check-then-connect. A DNS server that answers a
+   * public address to the check and a private one to the connection (DNS rebinding, a few
+   * milliseconds apart) can still win the race, and the stored connector is fetched again later by
+   * the library at runtime. Bun's `fetch` cannot pin a resolved IP without breaking TLS (SNI and
+   * certificate checks need the host name). Close the gap at the network: run the server with an
+   * egress policy that blocks private ranges and the metadata address, or send MCP traffic through
+   * a DNS-pinning proxy.
+   */
+  const guardedProbeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+    await assertPublicEndpoint(url)
+    return fetcher()(input, { ...init, redirect: 'manual' })
+  }) as typeof fetch
+
   async function probeCustom(input: { url: string }): Promise<CustomProbe> {
     if (!isAllowedMcpUrl(input.url)) {
       throw invalid('url must be an https URL (http only on localhost)')
@@ -635,7 +659,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     await assertPublicEndpoint(input.url)
     let res: Response
     try {
-      res = await fetcher()(input.url, {
+      res = await guardedProbeFetch(input.url, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -659,7 +683,10 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     if (res.status === 401) {
       void res.body?.cancel().catch(() => undefined)
       try {
-        const found = await discoverMcpAuthorization(input.url, { fetch: fetcher() })
+        const found = await discoverMcpAuthorization(input.url, {
+          fetch: guardedProbeFetch,
+          allowPrivateNetwork: env.TEAM_ALLOW_PRIVATE_MCP === '1',
+        })
         return {
           detected: 'oauth',
           message: 'This server asks you to sign in.',
@@ -829,6 +856,10 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
         return { ok: false as const, error: r.error, message: r.message, ...flow, ...connection }
       }),
     oauthCallback: async (query) => {
+      // `/oauth/callback` is a browser redirect without the bearer token, so the example cannot
+      // bind the flow to a person. An app with browser sessions passes `principal` here and to
+      // `startConnect` / `reconnect` / `act` (the `principal` option), so a callback delivered in
+      // another person's browser fails with `principal-mismatch` (login CSRF).
       const r = await wrap(() =>
         service.completeOAuth({
           state: query.state ?? '',

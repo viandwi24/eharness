@@ -55,7 +55,7 @@ const regenerated = session.regenerate({ output: { schema: ticket } })
 type _regenerate = Expect<
   Equal<Awaited<typeof regenerated.result>['output'], z.infer<typeof ticket> | undefined>
 >
-const edited = session.edit('id', 'again', { output: { schema: ticket } })
+const edited = session.edit({ messageId: 'id', input: 'again', output: { schema: ticket } })
 type _edit = Expect<
   Equal<Awaited<typeof edited.result>['output'], z.infer<typeof ticket> | undefined>
 >

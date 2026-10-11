@@ -82,9 +82,14 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_CLASSIFIER_MODEL` / `TEAM_SEARCH_MODEL` | - | Auto-mode classifier / `web_search` model: `profile:model` or a plain id on the default profile |
 | `TEAM_SCRIPTED_MODEL` | - | path to a JSON array of scripted steps: offline runs and tests (wins over the keys) |
 | `TEAM_TOKEN` | - | bearer token for every route except `/health`, `/docs`, `/openapi.json`, `/oauth/callback`. **Unset = the API is open**, so the server listens on loopback only and refuses to start with a non-loopback `TEAM_HOST` |
-| `TEAM_HOST` | `127.0.0.1` | bind address. A non-loopback value (for example `0.0.0.0`) requires `TEAM_TOKEN` |
+| `TEAM_HOST` | `127.0.0.1` | bind address. A non-loopback value (for example `0.0.0.0`) requires `TEAM_TOKEN` of at least 16 characters that does not start with `dev-` (`openssl rand -base64 32`) |
+| `TEAM_ALLOWED_ORIGINS` | - | comma-separated extra browser origins allowed to send POST/PUT/PATCH/DELETE; a request with another `Origin` header gets `403 FORBIDDEN_ORIGIN` (CSRF guard, also protects the token-less loopback setup; the origins of `TEAM_WEB_URL` and `TEAM_PUBLIC_URL` always pass; requests without `Origin`, like curl, are not affected) |
 | `TEAM_ALLOWED_HOSTS` | - | comma-separated `Host` header names accepted besides loopback, `TEAM_HOST` and the host of `TEAM_PUBLIC_URL` (DNS rebinding guard: other hosts get `403 FORBIDDEN_HOST`) |
+| `TEAM_DEBUG_INVARIANTS` | - | `1` = `debug.invariants` on every agent (explicit in eharness; the server tests set it through `server/bunfig.toml`). A broken session invariant then fails the turn instead of only warning |
 | `TEAM_ALLOW_PRIVATE_MCP` | - | `1` = custom connector URLs may point at private/loopback hosts (local MCP servers; dev only) |
+| `TEAM_PUBLIC_URL` / `TEAM_WEB_URL` | `http://localhost:$PORT` / `http://localhost:5173` | where browsers reach the server (OAuth redirect URI `<url>/oauth/callback`; its host and origin are always allowed) / where the OAuth callback sends the browser back (`<url>/connectors`; its origin is always allowed) |
+| `TEAM_<CONNECTOR>_CLIENT_ID` / `_CLIENT_SECRET` | - | OAuth app of a curated connector (for example `TEAM_GITHUB_CLIENT_ID`); or save it on the Connectors page (stored encrypted) |
+| `OPENROUTER_BASE_URL` | - | base URL of the OpenRouter env profile (proxies) |
 | `TEAM_DB` | `./data/team.db` | SQLite file (WAL). Several instances may share it |
 | `PORT` | `4000` | HTTP port of the server |
 | `TEAM_BUDGET_USD` | unset | monthly USD limit of the workspace ledger (also in Settings) |
@@ -115,7 +120,10 @@ bun examples/team/scripts/kill-restart.ts
 bun examples/team/scripts/smoke-real.ts        # one real turn, costs money
 ```
 
-Details of the scripts: [scripts/README.md](scripts/README.md).
+The process scripts are hermetic: they start the server with `bun --no-env-file` and drop every
+`TEAM_*` variable and `PORT` from the environment, so a developer's `.env` (a `TEAM_TOKEN`, a model, a budget)
+cannot change what they test. `bun run dev`, `dev:server` and `start` read `examples/team/.env`
+(`bun --env-file=../.env`). Details of the scripts: [scripts/README.md](scripts/README.md).
 
 ## Docs
 

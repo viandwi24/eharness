@@ -4,9 +4,9 @@ import { defineDataPart } from '../messages/data-parts.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { createCoreMessageRegistry } from '../messages/registry.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
+import { defaultCountTokens } from '../models/tokens.ts'
 import { chunkEntries, summarize } from './summarize.ts'
 import { summarizerModel, summarizerPromptText } from './test-kit.ts'
-import { defaultCountTokens } from './tokens.ts'
 import { renderTranscript, renderTranscriptEntries } from './transcript.ts'
 
 async function expectGolden(name: string, value: string): Promise<void> {

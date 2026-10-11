@@ -6,7 +6,9 @@
  */
 import type { JSONValue } from 'ai'
 import type { AbortRequest, SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
-import { HarnessError, isHarnessError } from '../errors.ts'
+import { storageError } from '../errors.ts'
+import { type Observer, observeCount, observeSpan } from '../internal/observe.ts'
+import { isRecord } from '../internal/util.ts'
 import type { PluginState } from '../plugin/types.ts'
 
 /** The session state of one live session. */
@@ -80,7 +82,7 @@ function empty(): SessionStateSnapshot {
 
 function stable(value: unknown): string {
   return JSON.stringify(value, (_key, v: unknown) =>
-    typeof v === 'object' && v !== null && !Array.isArray(v)
+    isRecord(v)
       ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
       : v,
   )
@@ -92,13 +94,12 @@ function signature(snapshot: SessionStateSnapshot): string {
   return stable([core, snapshot.plugins ?? {}])
 }
 
-function storageError(what: string, cause: unknown): HarnessError {
-  if (isHarnessError(cause)) return cause
-  return new HarnessError('EH_STORAGE', `State storage failed (${what}).`, { cause })
-}
-
 /** Create the state store of one session. */
-export function createStateStore(adapter: StateAdapter, sessionId: string): StateStore {
+export function createStateStore(
+  adapter: StateAdapter,
+  sessionId: string,
+  observer?: Observer,
+): StateStore {
   let snapshot = empty()
   /** rev of the stored snapshot (`null` = nothing stored yet). */
   let persistedRev: number | null = null
@@ -133,7 +134,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
       try {
         return await adapter.get(sessionId)
       } catch (error) {
-        throw storageError('get', error)
+        throw storageError('State', 'get', error)
       }
     },
     guard(turnId, onRequest) {
@@ -144,7 +145,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
       try {
         stored = await adapter.get(sessionId)
       } catch (error) {
-        throw storageError('get', error)
+        throw storageError('State', 'get', error)
       }
       if (stored === null) {
         snapshot = empty()
@@ -206,6 +207,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
             if (adapter.setIf !== undefined) {
               const ok = await adapter.setIf(sessionId, next, persistedRev)
               if (!ok) {
+                observeCount(observer, 'state.conflict', { sessionId })
                 if (options.cas === true) {
                   // only `core.children` changed (a child registered, spec 05 §13): not a conflict
                   if (attempt < GUARD_RETRIES && (await mergeChildrenOnly())) continue
@@ -228,7 +230,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
               await adapter.set(sessionId, next)
             }
           } catch (error) {
-            throw storageError('set', error)
+            throw storageError('State', 'set', error)
           }
           snapshot.rev = next.rev
           persistedRev = next.rev
@@ -337,7 +339,8 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
         // stored state, so a retry that conflicts again merges against the newest one
         base = structuredClone({ ...theirs, rev: snapshot.rev })
       }
-      const result = queue.then(run, run)
+      const timed = (): Promise<boolean> => observeSpan(observer, 'state.write', { sessionId }, run)
+      const result = queue.then(timed, timed)
       queue = result.catch(() => undefined)
       return result
     },

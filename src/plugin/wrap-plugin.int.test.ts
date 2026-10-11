@@ -5,9 +5,9 @@
 import { describe, expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
-import { memoryFs } from '../filesystem/memory.ts'
+import { inMemoryFs } from '../filesystem/memory.ts'
 import { filesystem } from '../filesystem/plugin.ts'
-import { approvalGuard } from '../guard/index.ts'
+import { guard } from '../guard/index.ts'
 import {
   defineDataPart,
   defineHarnessAgent,
@@ -17,7 +17,7 @@ import {
   wrapPlugin,
 } from '../index.ts'
 import { memory } from '../memory/index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
@@ -31,7 +31,7 @@ function agentOf(
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState() },
+    storage: { messages: inMemoryMessages(), state: inMemoryState() },
     logger: silent,
     plugins,
     ...config,
@@ -219,15 +219,15 @@ describe('wrapPlugin', () => {
     expect(wrapped.name).toBe('renamed')
   })
 
-  test('wraps approvalGuard: per-request judge model and a tighten-only combination', async () => {
+  test('wraps guard: per-request judge model and a tighten-only combination', async () => {
     const judgeA = scriptedModel([{ text: '{"decision":"allow","reason":"fine."}' }])
     const judgeB = scriptedModel([{ text: '{"decision":"deny","reason":"nope."}' }])
     const sent: string[] = []
-    const guard = wrapPlugin(approvalGuard({ model: judgeA }), {
+    const wrapped = wrapPlugin(guard({ model: judgeA }), {
       session: (ctx, next) =>
         ctx.runtime.judge === undefined
           ? next()
-          : next.using(approvalGuard({ model: ctx.runtime.judge as never })),
+          : next.using(guard({ model: ctx.runtime.judge as never })),
       hooks: {
         'tool.approve': async (_ctx, _e, next) => {
           const status = await next()
@@ -238,7 +238,7 @@ describe('wrapPlugin', () => {
     })
     const send = (to: string) => ({ toolCalls: [{ toolName: 'send_email', input: { to } }] })
     const { agent } = agentOf(
-      [guard],
+      [wrapped],
       {
         approval: { risk: { external: 'approved' } },
         tools: {
@@ -266,7 +266,7 @@ describe('wrapPlugin', () => {
   })
 
   test('wraps memory: roots stay, the wrapper adds its own instructions per session', async () => {
-    const fs = memoryFs({ '/memories/org/x.md': 'org fact' })
+    const fs = inMemoryFs({ seed: { '/memories/org/x.md': 'org fact' } })
     const wrapped = wrapPlugin(memory({ roots: () => [{ path: '/memories/org', label: 'org' }] }), {
       session: async (ctx, next) => {
         const inner = await next()

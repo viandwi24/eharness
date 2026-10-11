@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { HarnessError } from '../errors.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { handleChatRequest } from '../stream/chat-request.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { spyMessages, spyState } from './int-kit.ts'
+import { spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -70,7 +71,7 @@ describe('R14: busy() and HTTP status of pre-start failures', () => {
     const b = agentOn(storage, { model: scriptedModel([{ text: 'x' }]) })
     const first = a.session('s1').send('hi')
     await until(async () => (await b.session('s1').busy()) !== null)
-    const response = await handleChatRequest(b.session('s1'), body('again')).toHttpResponse()
+    const response = await handleChatRequest(b.session('s1'), body('again')).toResponse()
     expect(response.status).toBe(409)
     expect(response.headers.get('content-type')).toBe('application/json')
     expect((await response.json()).error.code).toBe('EH_SESSION_BUSY')
@@ -83,20 +84,20 @@ describe('R14: busy() and HTTP status of pre-start failures', () => {
     const session = agent.session('s1', {
       lock: {
         acquire: async () => {
-          throw new Error('locked elsewhere')
+          throw new HarnessError('EH_SESSION_BUSY', 'locked elsewhere')
         },
       },
     })
     const run = handleChatRequest(session, body('hi'))
     expect(await run.accepted).toMatchObject({ code: 'EH_SESSION_BUSY' })
-    const response = await run.toHttpResponse()
+    const response = await run.toResponse()
     expect(response.status).toBe(409)
     expect((await response.json()).error.code).toBe('EH_SESSION_BUSY')
     expect(storage.messages.saves).toHaveLength(0)
   })
 
   test('a lock held elsewhere answers 409 also when an inbox gates the send (deferred run)', async () => {
-    const storage = { ...shared(), inbox: memoryInbox() }
+    const storage = { ...shared(), inbox: inMemoryInbox() }
     const agent = defineHarnessAgent({
       contextWindow: 100_000,
       storage,
@@ -106,13 +107,13 @@ describe('R14: busy() and HTTP status of pre-start failures', () => {
     const session = agent.session('s1', {
       lock: {
         acquire: async () => {
-          throw new Error('locked elsewhere')
+          throw new HarnessError('EH_SESSION_BUSY', 'locked elsewhere')
         },
       },
     })
     const run = handleChatRequest(session, body('hi'))
     expect(await run.accepted).toMatchObject({ code: 'EH_SESSION_BUSY' })
-    const response = await run.toHttpResponse()
+    const response = await run.toResponse()
     expect(response.status).toBe(409)
     expect(storage.messages.saves).toHaveLength(0)
   })
@@ -128,7 +129,7 @@ describe('R14: busy() and HTTP status of pre-start failures', () => {
           parts: [{ type: 'file', mediaType: 'image/png', url: 'javascript:alert(1)' }],
         },
       ],
-    }).toHttpResponse()
+    }).toResponse()
     expect(response.status).toBe(400)
     expect((await response.json()).error.code).toBe('EH_INVALID_INPUT')
     expect(storage.messages.saves).toHaveLength(0)
@@ -137,7 +138,7 @@ describe('R14: busy() and HTTP status of pre-start failures', () => {
   test('a successful turn streams with 200; a failure after the stream started stays in-stream', async () => {
     const storage = shared()
     const ok = agentOn(storage, { model: scriptedModel([{ text: 'fine' }]) })
-    const good = await handleChatRequest(ok.session('s1'), body('hi')).toHttpResponse()
+    const good = await handleChatRequest(ok.session('s1'), body('hi')).toResponse()
     expect(good.status).toBe(200)
     expect(await good.text()).toContain('fine')
 
@@ -146,17 +147,17 @@ describe('R14: busy() and HTTP status of pre-start failures', () => {
     })
     const run = handleChatRequest(failing.session('s2'), body('hi'))
     expect(await run.accepted).toBeUndefined()
-    const response = await run.toHttpResponse()
+    const response = await run.toResponse()
     expect(response.status).toBe(200)
     expect(await response.text()).toContain('"type":"error"')
     expect((await run.result).stop).toBe('error')
   })
 
-  test('toHttpResponse of the in-process busy run keeps 409', async () => {
+  test('toResponse of the in-process busy run keeps 409', async () => {
     const agent = agentOn(shared(), { model: scriptedModel([{ text: 'slow', delayMs: 50 }]) })
     const session = agent.session('s1')
     const first = session.send('hi')
-    const response = await handleChatRequest(session, body('again')).toHttpResponse()
+    const response = await handleChatRequest(session, body('again')).toResponse()
     expect(response.status).toBe(409)
     await first.result
   })

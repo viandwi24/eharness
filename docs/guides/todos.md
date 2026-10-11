@@ -9,6 +9,7 @@ on its own list. Contract: spec 13, ADR-0018. Runnable: [`examples/todos.ts`](..
 import { defineHarnessAgent } from 'eharness'
 import { todos } from 'eharness/todos'
 
+// yours: model (LanguageModel)
 const agent = defineHarnessAgent({
   model,
   contextWindow: 200_000,
@@ -28,7 +29,7 @@ or older models, and long unattended turns, benefit most.
 
 ## What the model gets
 
-- The static instruction `TODOS_INSTRUCTION`: write the full list once the steps are known, keep
+- A static instruction (internal text, not exported): write the full list once the steps are known, keep
   exactly one item `in_progress`, mark items `completed` as soon as they are done, mark them
   `cancelled` (never silently drop them) when no longer needed, and skip the tool for one-step
   requests.
@@ -49,6 +50,7 @@ id `list`, so the message keeps one, always-current list (the model never sees t
 import { defineHarnessAgent, type InferHarnessUIMessage } from 'eharness'
 import { latestTodos, renderTodos, type Todo, todos } from 'eharness/todos'
 
+// yours: model
 const agent = defineHarnessAgent({ model, plugins: [todos()] })
 type ChatMessage = InferHarnessUIMessage<typeof agent>
 
@@ -80,14 +82,14 @@ after the compaction. (Known limit: rewinding behind a compaction marker to a po
 ## Reminders
 
 When open todos exist and `remindEvery` model steps passed without a `todo_write` (or a compaction
-just carried the list), the next step gets `TODOS_REMINDER` with the open list. It is a step
+just carried the list), the next step gets a reminder with the open list. It is a step
 reminder: never stored and never part of the system prompt, so the prompt cache prefix stays
 stable.
 
 ## Enforcement (`enforce: true`)
 
 When the model stops with `'complete'` while todos are open, the plugin's `turn.beforeEnd` hook
-continues the turn with `TODOS_CONTINUE`: the open list, and "continue with the next one; if an
+continues the turn with a continuation reason: the open list, and "continue with the next one; if an
 item is blocked or no longer needed, mark it cancelled and say why; if you need the user, ask". The
 reason is stored in the assistant message as a `data-eh.input` part with `source: 'plugin:todos'`.
 
@@ -110,5 +112,5 @@ without touching the list (or at once by marking the blocked items `cancelled`).
 | `todos(options?)` | the plugin (`HarnessPlugin<'todos', TodosDataParts>`) |
 | `latestTodos(messages)` | last `data-todos.list` of a message list, `[]` if none |
 | `openTodos(list)`, `renderTodos(list)` | helpers for UIs and logs |
-| `TODO_TOOL`, `TODOS_INSTRUCTION`, `TODOS_REMINDER`, `TODOS_CONTINUE` | the tool name and the fixed model-visible texts (changing them is a minor change) |
+| `TODO_TOOL` | the tool name (the instruction, reminder and continuation texts are internal and may change in any release) |
 | `Todo`, `TodoStatus`, `TodoListData`, `TodosOptions`, `TodosDataParts` | types |

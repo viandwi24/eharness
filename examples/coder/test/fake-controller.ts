@@ -1,7 +1,7 @@
 /** An in-memory `CoderController` for the render tests, backed by a real eharness session. */
 import { type FileUIPart, tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
-import { memoryMessages, memoryState } from 'eharness/storage/memory'
+import { inMemoryMessages, inMemoryState } from 'eharness/storage/memory'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { z } from 'zod/v4'
 import type {
@@ -319,7 +319,7 @@ export function fakeController(opts: FakeOptions = {}) {
   const agent = defineHarnessAgent({
     model: scriptedModel(opts.script ?? [{ text: 'ok' }]),
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState() },
+    storage: { messages: inMemoryMessages(), state: inMemoryState() },
     logger: { debug() {}, info() {}, warn() {}, error() {} },
     tools: {
       read_file: tool({ inputSchema: files, execute: async () => 'line one\nline two' }),

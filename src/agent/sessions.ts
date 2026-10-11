@@ -5,11 +5,13 @@
  * @see docs/specs/05-session-and-storage.md#1-session-options
  */
 import type { UIMessage } from 'ai'
+import { invalidInputError } from '../errors.ts'
 import { uuidv7 } from '../messages/ids.ts'
+import type { SessionHandle } from '../session/handle/ctx.ts'
 import { defaultMemoryMessages, defaultMemoryState } from '../session/memory-storage.ts'
 import { createSessionPeek } from '../session/peek.ts'
 import { DEFAULT_STALE_MS as DEFAULT_STALE } from '../session/remote-abort.ts'
-import { createSessionHandle, type SessionHandle } from '../session/session.ts'
+import { createSessionHandle } from '../session/session.ts'
 import type { AgentInternals } from './internals.ts'
 import type {
   HarnessSession,
@@ -65,7 +67,7 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
   const agent: AgentSessions = {
     session(id, options = {}) {
       if (typeof id !== 'string' || id.length === 0) {
-        throw new TypeError('agent.session(id): id must be a non-empty string.')
+        throw invalidInputError('agent.session(id): id must be a non-empty string.')
       }
       const cached = sessions.get(id)
       if (cached !== undefined && !cached.rt.closed) {
@@ -135,7 +137,7 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
     },
     peek(id, options = {}) {
       if (typeof id !== 'string' || id.length === 0) {
-        throw new TypeError('agent.peek(id): id must be a non-empty string.')
+        throw invalidInputError('agent.peek(id): id must be a non-empty string.')
       }
       const storage = storageFor(options)
       const recovery = internals.config.recovery

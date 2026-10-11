@@ -45,16 +45,32 @@ process, user or restart is involved.
 
 ## Security
 
-- [ ] `authorize` is real (not `openAccess`) and runs before the body is read; denial is a return value. [Server §14](walkthrough-server.md#14-eharnesshttp), [spec 26](../specs/26-http.md)
+- [ ] `authorize` is real (not `openAccess`) and runs before the body is read; denial is a return value, and a non-object result (`undefined`, `null`) is a 401 (fail closed). [Server §14](walkthrough-server.md#14-eharnesshttp), [spec 26](../specs/26-http.md)
 - [ ] Never trust client messages: only the last user message with `text`/`file` parts is read; `actor`, `runtime`, `model`, `maxSteps` and `metadata` come from the server. [Production patterns: security](production-patterns.md#session-ownership), [spec 05 §3](../specs/05-session-and-storage.md)
 - [ ] Sessions are owned: a user can read, chat with and answer only the sessions the server maps to them (`roots`, `canAnswer`, `resolve`). [Server §14](walkthrough-server.md#14-eharnesshttp)
 - [ ] Attachments are validated (type allowlist, size, `library:` references) and the body size is limited. [Server §14](walkthrough-server.md#14-eharnesshttp), [client tools](client-tools.md)
 - [ ] Permission rules, modes and protected paths are configured; write and destructive tools of third-party connectors ask even in Bypass. [Permissions](permissions.md), [server §8](walkthrough-server.md#8-permissions-and-approvals)
 - [ ] A person's approval is never re-judged by an Auto-mode classifier (a classifier outage must not deny what a person approved). [ADR-0055](../decisions/0055-approval-answer-wins-and-schema-valid-denials.md), [guard](guard.md)
 - [ ] Filesystem and shell are contained (virtual paths, roots, sandbox, output caps); repo-provided skills, agents and commands load only for trusted projects. [Filesystem](filesystem.md), [shell](shell.md), [CLI §3, §9](walkthrough-cli.md#3-workspace-filesystem-and-the-shell)
-- [ ] `web_fetch` guards against SSRF; URLs fetched by the provider are allowlisted. [Web](web.md), [production patterns](production-patterns.md#urls-fetched-by-the-provider)
+- [ ] `web_fetch` guards against SSRF: pass `resolveHost: nodeResolveHost` (`eharness/web/node`) or `onlyAllowed` (without either you get `W_WEB_NO_RESOLVER`); a pinned-IP `fetch` closes the DNS rebinding gap; URLs fetched by the provider are allowlisted. [Web](web.md), [production patterns](production-patterns.md#urls-fetched-by-the-provider)
+- [ ] `eharness/http` accepts only `data:` URLs in client file parts; turn on `chat.allowFileUrls` (http/https or a predicate) only with an allowlist. [HTTP server](http-server.md), [production patterns](production-patterns.md#urls-fetched-by-the-provider)
+- [ ] Connector OAuth refuses private, loopback and link-local hosts and cross-origin redirects; set `oauth: { allowPrivateNetwork: true }` only for local development, and bind flows to a `principal` so a callback cannot be completed by another user. [Connectors](connectors.md)
+- [ ] The permissions engine gets `realpath: nodeRealpath` (`eharness/filesystem/node`) so protected paths and Read/Edit rules match the symlink-resolved path; a recursive `grep -r`/`rg` of a directory that holds `.env` files asks only with `containsProtected: nodeContainsProtected` next to it (otherwise recursive reads are lexical); session grants never cover high-risk flags. [Permissions](permissions.md), [filesystem](filesystem.md)
+- [ ] Shell commands inherit only the env allow-list (`PATH`, `HOME`, `LANG`, ...); add what a project needs through `env`, and use `inheritEnv: true` only on a machine with no secrets in `process.env`. [Shell](shell.md)
+- [ ] Remote MCP servers keep `pinDefinitions` on (the default) and `wrapUntrusted` on; OpenAPI responses stay framed as untrusted content. [Tools and MCP](tools-and-mcp.md), [OpenAPI tools](openapi-tools.md)
 - [ ] Secrets (provider keys, connector tokens) are sealed at rest and never logged; error texts to clients are generic for 5xx. [Providers](providers-and-profiles.md), [production patterns](production-patterns.md#logs-and-error-texts)
 - [ ] Model-call logs hold raw prompts: apply retention and access control. [Debugging and activity logs](debugging-and-activity-logs.md)
+
+## Timeouts and bounds
+
+Nothing the core awaits can hang a turn forever; check the defaults fit your slowest legitimate work.
+
+- [ ] `hooks.timeoutMs` (default 30 000) fits your slowest hook; a timed-out hook warns (`W_HOOK_TIMEOUT`), `input.submit` and `tool.approve` stay fail-closed. [Spec 01](../specs/01-agent-and-plugins.md)
+- [ ] The model idle timeout (`settings.timeout`: `firstChunkMs` / `chunkMs`, default 120 000 each; `false` turns it off) is longer than your slowest reasoning model's silence, and `maxRetries` (default 2) is what you want. [Models and cost](models-and-cost.md)
+- [ ] MCP connect and tool listing have `timeoutMs` (default 15 000, `EH_MCP_TIMEOUT`); `toolSources.timeoutMs` and `toolSources.retryAfterMs` bound listing and the backoff of a failing source. [Tools and MCP](tools-and-mcp.md)
+- [ ] OAuth requests (discovery, registration, token, refresh) have the default 15 000 ms limit and a 1 MiB response cap. [Connectors](connectors.md)
+- [ ] Background subagents have `background.timeoutMs` (default one hour) with `stopOnTimeout`; `diskFs` ripgrep has `grepTimeoutMs` / `grepMaxOutputBytes`. [Subagents](subagents.md), [filesystem](filesystem.md)
+- [ ] Every numeric option is bounds-checked at boot (`EH_CONFIG_INVALID`; durations above one day are rejected), so a typo fails the deploy, not the first turn.
 
 ## Cost and limits
 
@@ -69,7 +85,10 @@ process, user or restart is involved.
 ## Observability
 
 - [ ] A `model.call` log (raw request and response, tokens, cost, latency) with retention. [Debugging and activity logs](debugging-and-activity-logs.md), [ADR-0047](../decisions/0047-model-call-observer.md)
-- [ ] `onWarning` is wired to your logger; `W_*` codes are alerts or metrics, not console noise. [Spec 10](../specs/10-errors-and-stop-reasons.md)
+- [ ] `onWarning` is wired to your logger; `W_*` codes are alerts or metrics, not console noise (the default handler dedupes per code and key within `warnings.dedupeWindowMs`). [Spec 10](../specs/10-errors-and-stop-reasons.md)
+- [ ] `observe` feeds your metrics: phase durations (`lock.wait`, `model.call`, `tool.execute`, ...) and the counters `hook.failed`, `hook.timeout`, `events.overflow`, `state.conflict`, `tool-source.backoff`. [Observability](observability.md)
+- [ ] `W_INVARIANT_VIOLATION` is an alert in production and a failing test in CI (`debug: { invariants: true }` in your test setup; it is never switched on from `NODE_ENV`). [Testing](testing.md)
+- [ ] `EH_LOCK_UNAVAILABLE` (a failing lock service, HTTP 503) and `EH_PROVIDER_AUTH` (bad or missing provider key) are monitored separately from `EH_SESSION_BUSY`. [Spec 10](../specs/10-errors-and-stop-reasons.md)
 - [ ] Stop reasons are recorded and alerted on (`error`, `stuck`, `max-steps`, `cost-cap`, `timeout`, `interrupted`). [Long-running turns](long-running-turns.md), [spec 10](../specs/10-errors-and-stop-reasons.md)
 - [ ] Audit permission decisions and approval answers (who, what, when). [Approvals](approvals-and-interaction.md), CLI [`permissions/audit.ts`](../../examples/coder/src/permissions/audit.ts)
 - [ ] Inbox dead letters, reconcile reports and recovered turns are logged; `onFailure` reports 5xx errors server side. [Server §6, §14](walkthrough-server.md#6-recovery-surviving-sigkill)

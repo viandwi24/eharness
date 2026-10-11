@@ -37,6 +37,12 @@ default or a wire/stream shape counts as breaking even when it is a feature.
 
 The changeset for a breaking change starts with `**BREAKING:**` and includes a migration snippet.
 
+Any change to a public export (a name added to or removed from a barrel) also changes
+`scripts/exports.snapshot.json`: run `bun scripts/exports-snapshot.ts --write` and review the diff
+(testing.md, "Exports snapshot workflow"). Removing or renaming a name is breaking; an added name needs
+a changeset line. A changeset describes the **final** names of the release: when a later change in the
+same release renames a symbol, edit the earlier changeset instead of leaving both spellings.
+
 ## 3. Writing changesets
 
 ```bash
@@ -129,7 +135,9 @@ Do these once, in order. Values: GitHub `OWNER/eharness`, npm package `eharness`
 
 | File | Trigger | Jobs | Permissions |
 |---|---|---|---|
-| `.github/workflows/ci.yml` | PR, push main/next | `check` (lint, typecheck incl. `examples/`, test incl. the examples with a Postgres service container, build, publint+attw, import rule, changeset status), `node-compat` (Node 22 & 24: pack tarball → clean install → `scripts/smoke.mjs`) | `contents: read` |
+| `.github/workflows/ci.yml` | PR, push main/next | `check` (lint incl. `check-throws`, typecheck incl. `examples/`, test incl. the examples with a Postgres service container and the exports snapshot, build, publint+attw and the exports snapshot against `dist/`, import-rule and cycle check, changeset status), `peers` (suite against `ai@latest` / `@ai-sdk/mcp@latest` and the lowest supported `zod`), `team` (web tests and the real-process scripts), `node-compat` (Node 22 & 24: pack tarball → clean install → `scripts/smoke.mjs`) | `contents: read` |
+| `.github/workflows/fuzz.yml` | Mondays, manual (`seeds` / `start`) | session fuzz, 5000 seeds | `contents: read` |
+| `.github/workflows/codeql.yml` | PR, push, Mondays | CodeQL (javascript-typescript) | `security-events: write` |
 | `.github/workflows/release.yml` | push main/next, manual (main/next only) | `select-mode` → `version` (`GITHUB_TOKEN`) or `pack` → `publish` (environment `npm`) | least privilege per job; `id-token: write` only on `publish` |
 | `.github/dependabot.yml` | weekly | actions + bun deps; peer majors ignored | — |
 

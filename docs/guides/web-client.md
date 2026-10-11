@@ -10,7 +10,9 @@ connection or a restart), the activity feed and the approvals inbox. Contract:
 ```ts
 import { createHarnessClient } from 'eharness/client'
 
-const client = createHarnessClient({
+declare function getToken(): string // yours: your auth token source
+
+export const client = createHarnessClient({
   baseUrl: '/api',
   headers: () => ({ authorization: `Bearer ${getToken()}` }), // resolved on every request
 })
@@ -32,6 +34,7 @@ No Svelte-specific code ships; `Chat` from `@ai-sdk/svelte` is the chat object.
   import { createActivityFeed, createAttentionList, createChatSession } from 'eharness/client'
   import { client } from './client'
 
+  // yours: toast(level, text), <Banner>, <Message>, and `text` (the composer input)
   let { sessionId } = $props<{ sessionId: string }>()
 
   const session = createChatSession({
@@ -95,6 +98,7 @@ export const { useStore, useActivityFeed, useAttention, useChatSession } = creat
 ```
 
 ```tsx
+// yours: client (see above), <Message>, <Banner>, <Composer>
 function Chat({ sessionId }: { sessionId: string }) {
   const { session, state, chat } = useChatSession({ client, sessionId }, useChat)
   const { list, state: inbox } = useAttention({ client })

@@ -1,0 +1,3 @@
+# Tests run with the library's session invariants on (`debug.invariants` is explicit-only in 0.8).
+[test]
+preload = ["./test/preload.ts"]

@@ -29,10 +29,21 @@ export interface OsSandboxOptions {
 
 /** Options of {@link localSandbox}. */
 export interface LocalSandboxOptions {
+  /** Absolute project root: the default working directory of every command. */
+  root: string
   /** OS isolation of commands (default: off). */
   os?: OsSandboxOptions
-  /** Extra environment variables of every command (on top of `process.env`). */
+  /**
+   * Extra environment variables of every command, on top of the inherited ones. By default a
+   * command sees only the {@link SAFE_ENV_NAMES} of `process.env`, so API keys and database URLs
+   * of the host process do not reach commands the model writes.
+   */
   env?: Record<string, string>
+  /**
+   * Pass the whole `process.env` to commands (inherit the whole process environment). Default `false`: only the
+   * safe allow-list ({@link SAFE_ENV_NAMES}, `LC_*`) is inherited.
+   */
+  inheritEnv?: boolean
   /** Shell binary (`<shell> -c <command>`). Default `/bin/bash`, else `/bin/sh`. */
   shell?: string
 }
@@ -52,6 +63,41 @@ export type LocalSandbox = Sandbox & {
   state(): SandboxState
   /** Replace the OS sandbox settings; applies to commands started afterwards. */
   setOs(opts: OsSandboxOptions): void
+}
+
+/** Names of `process.env` variables a command inherits by default (also `LC_*`), see {@link safeEnv}. */
+export const SAFE_ENV_NAMES: readonly string[] = [
+  'PATH',
+  'HOME',
+  'USER',
+  'LOGNAME',
+  'SHELL',
+  'LANG',
+  'TERM',
+  'TMPDIR',
+  'TZ',
+  // Windows
+  'SYSTEMROOT',
+  'SYSTEMDRIVE',
+  'WINDIR',
+  'COMSPEC',
+  'PATHEXT',
+  'TEMP',
+  'TMP',
+  'USERPROFILE',
+]
+
+/** The allow-listed part of an environment: {@link SAFE_ENV_NAMES} and `LC_*` (names compared upper-case). */
+export function safeEnv(
+  source: Record<string, string | undefined> = process.env,
+): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined) continue
+    const key = name.toUpperCase()
+    if (SAFE_ENV_NAMES.includes(key) || key.startsWith('LC_')) out[name] = value
+  }
+  return out
 }
 
 type ProcessOptions = Parameters<SandboxSession['spawn']>[0]
@@ -113,9 +159,10 @@ function isMissing(error: unknown): boolean {
  * abort reason when the abort signal fires. File reads/writes check the abort signal only before
  * starting (they are not interruptible mid-flight).
  *
- * @param root Absolute project root.
+ * @param options See {@link LocalSandboxOptions} (`root` is the absolute project root).
  */
-export function localSandbox(root: string, opts: LocalSandboxOptions = {}): LocalSandbox {
+export function localSandbox(options: LocalSandboxOptions): LocalSandbox {
+  const { root, ...opts } = options
   const detected = detectOsSandbox()
   const shellBin = opts.shell ?? defaultShell()
   const normalize = (o: OsSandboxOptions): Required<OsSandboxOptions> => ({
@@ -174,7 +221,7 @@ export function localSandbox(root: string, opts: LocalSandboxOptions = {}): Loca
       : [shellBin, '-c', options.command]
     const child: ChildProcess = spawnChild(cmd as string, args, {
       cwd: options.workingDirectory ? abs(options.workingDirectory) : root,
-      env: { ...process.env, ...opts.env, ...options.env },
+      env: { ...(opts.inheritEnv === true ? process.env : safeEnv()), ...opts.env, ...options.env },
       detached: true,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -215,18 +262,38 @@ export function localSandbox(root: string, opts: LocalSandboxOptions = {}): Loca
     signal?.addEventListener('abort', onAbort, { once: true })
 
     const waited = new Promise<{ exitCode: number }>((ok, fail) => {
+      let settled = false
+      let drainTimer: ReturnType<typeof setTimeout> | undefined
+      const settle = (code: number | null, sig: NodeJS.Signals | null): void => {
+        if (settled) return
+        settled = true
+        exited = true
+        if (groupPid !== undefined) liveGroups.delete(groupPid)
+        if (killTimer) clearTimeout(killTimer)
+        if (drainTimer) clearTimeout(drainTimer)
+        signal?.removeEventListener('abort', onAbort)
+        if (aborted) fail(signal?.reason ?? new Error('Aborted'))
+        else ok({ exitCode: code ?? 128 + (SIGNAL_NUMBERS[sig ?? ''] ?? 1) })
+      }
       child.once('error', (e) => {
         if (groupPid !== undefined) liveGroups.delete(groupPid)
         fail(e)
       })
-      child.once('close', (code, sig) => {
-        exited = true
-        if (groupPid !== undefined) liveGroups.delete(groupPid)
-        if (killTimer) clearTimeout(killTimer)
-        signal?.removeEventListener('abort', onAbort)
-        if (aborted) fail(signal?.reason ?? new Error('Aborted'))
-        else ok({ exitCode: code ?? 128 + (SIGNAL_NUMBERS[sig ?? ''] ?? 1) })
+      // `close` waits for the stdio pipes to end; a grandchild that escaped the process group
+      // (setsid, detached) can hold them open forever. Resolve from `exit` after a grace period
+      // and destroy the pipes so the tool cannot hang.
+      child.once('exit', (code, sig) => {
+        drainTimer = setTimeout(() => {
+          for (const pipe of [child.stdout, child.stderr]) {
+            if (!pipe) continue
+            // end the stream normally (readers see EOF, not an error), then release the fd
+            pipe.once('end', () => pipe.destroy())
+            pipe.push(null)
+          }
+          settle(code, sig)
+        }, KILL_GRACE_MS)
       })
+      child.once('close', (code, sig) => settle(code, sig))
     })
     waited.catch(() => {}) // callers may only read the streams; avoid unhandled rejections
 

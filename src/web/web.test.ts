@@ -1,11 +1,9 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { defineHarnessAgent } from '../index.ts'
+import { defineHarnessAgent, isPrivateHost } from '../index.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { htmlToText, matchHost } from './fetch.ts'
 import type { WebSearchOptions } from './index.ts'
 import {
-  htmlToText,
-  isPrivateHost,
-  matchHost,
   WEB_FETCH_TOOL,
   WEB_SEARCH_TOOL,
   type WebFetchOptions,
@@ -16,6 +14,12 @@ import {
 const HTML = `<!doctype html><html><head><title>T</title><style>.x{}</style><script>evil()</script></head>
 <body><nav><a href="/">Home</a></nav><main><h1>Title</h1><p>Hello <b>world</b> &amp; <a href="https://e.com/a">link</a></p>
 <ul><li>one</li><li>two</li></ul><pre><code>const a = 1</code></pre></main><footer>copyright</footer></body></html>`
+
+/** Released in afterAll: `/slow` answers only when the test run ends (no fixed delay). */
+let releaseSlow: () => void = () => {}
+const slowGate = new Promise<void>((resolve) => {
+  releaseSlow = resolve
+})
 
 const server = Bun.serve({
   hostname: '127.0.0.1',
@@ -47,14 +51,17 @@ const server = Bun.serve({
       case '/img':
         return new Response(new Uint8Array([1, 2, 3]), { headers: { 'content-type': 'image/png' } })
       case '/slow':
-        await new Promise((r) => setTimeout(r, 1000))
+        await slowGate
         return new Response('late')
       default:
         return new Response('nope', { status: 404, statusText: 'Not Found' })
     }
   },
 })
-afterAll(() => server.stop(true))
+afterAll(() => {
+  releaseSlow()
+  server.stop(true)
+})
 const base = `http://127.0.0.1:${server.port}`
 
 /** Run one tool call through a real session and return the tool output text. */
@@ -65,7 +72,12 @@ async function callTool(
   signal?: AbortSignal,
 ): Promise<string> {
   const model = scriptedModel([{ toolCalls: [{ toolName, input }] }, { text: 'ok' }])
-  const agent = defineHarnessAgent({ model, contextWindow: 100_000, plugins: [plugin] })
+  const agent = defineHarnessAgent({
+    model,
+    contextWindow: 100_000,
+    plugins: [plugin],
+    onWarning: () => {},
+  })
   const session = agent.session('s')
   await session.send('go', signal ? { abortSignal: signal } : undefined).result
   const messages = await session.messages()
@@ -175,6 +187,25 @@ describe('web_fetch', () => {
     expect(
       await fetchTool({ resolveHost: async () => ['10.0.0.5'] }, { url: 'https://example.com/x' }),
     ).toContain('resolves to a private address')
+  })
+
+  test('warns once when created without resolveHost', async () => {
+    const warnings: string[] = []
+    const run = async (opts: WebFetchOptions): Promise<void> => {
+      const agent = defineHarnessAgent({
+        model: scriptedModel([{ text: 'ok' }]),
+        contextWindow: 100_000,
+        plugins: [webFetch(opts)],
+        onWarning: (w) => warnings.push(w.code),
+      })
+      await agent.session('w').send('go').result
+    }
+    await run({})
+    expect(warnings).toContain('W_WEB_NO_RESOLVER')
+    warnings.length = 0
+    await run({ resolveHost: async () => [] })
+    await run({ onlyAllowed: true })
+    expect(warnings).not.toContain('W_WEB_NO_RESOLVER')
   })
 
   test('deny wins, onlyAllowed is a strict allow-list, https upgrade', async () => {

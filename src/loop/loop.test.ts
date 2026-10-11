@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type { ModelMessage, Tool } from 'ai'
 import { applyCache, deepMerge, isAnthropicModel, layoutMessages, systemBlocks } from './prompt.ts'
-import { stepEndEvent, toolSearchNames } from './steps.ts'
+import { stepEndEvent, toolSearchNames } from './step-events.ts'
 import { decideStop, findPending, type StepFacts } from './stop.ts'
 
 const facts = (patch: Partial<StepFacts>): StepFacts => ({
@@ -136,8 +136,12 @@ describe('prompt layout (spec 02 §5)', () => {
     })
     const marked = result.messages.flatMap((m, i) => (m.providerOptions === undefined ? [] : [i]))
     expect(marked).toEqual([24, 39])
-    expect(result.system[0]?.providerOptions).toBeDefined()
-    expect((result.tools.t as Tool).providerOptions).toBeDefined()
+    expect(result.system[0]?.providerOptions).toMatchObject({
+      anthropic: { cacheControl: { type: 'ephemeral' } },
+    })
+    expect((result.tools.t as Tool).providerOptions).toMatchObject({
+      anthropic: { cacheControl: { type: 'ephemeral' } },
+    })
   })
 })
 

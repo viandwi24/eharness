@@ -51,3 +51,7 @@ tool may run twice.
 - Use `idempotentHint` for retries (rejected: untrusted and loosening).
 - A `trustHints` server option that lets `readOnlyHint` yield `read` (deferred: `mcpServer({ risk })`
   covers trusted servers explicitly).
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): the factory is `mcpServerSource()`. `pinDefinitions` now defaults to `true` for remote servers (`false` for stdio and `MCPTransport` instances), and structured tool output and error texts of MCP calls are framed as untrusted content like text results. The deferred `trustHints` option is spelled `mcpServerSource({ risk })` today.

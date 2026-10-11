@@ -1,4 +1,4 @@
-/** `ask_user_question` (the library's `askUser()`): the round trip through the app's driveTurn and broker, print mode, subagents. */
+/** `ask_user_question` (the library's `ask()`): the round trip through the app's driveTurn and broker, print mode, subagents. */
 import { describe, expect, test } from 'bun:test'
 import type { HarnessSession } from 'eharness'
 import { scriptedModel } from 'eharness/testing'

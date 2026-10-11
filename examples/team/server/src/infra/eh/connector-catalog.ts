@@ -7,7 +7,7 @@
  * Everything that needs the agent factory (the subagents plugin) is late-bound through `hooks`.
  */
 import type { Database } from 'bun:sqlite'
-import { askUser } from 'eharness/ask'
+import { ask } from 'eharness/ask'
 import {
   type AnyConnectorDefinition,
   type BuiltinInput,
@@ -19,11 +19,12 @@ import {
   remoteMcpConnector,
 } from 'eharness/connectors'
 import { type FileToolName, filesystem } from 'eharness/filesystem'
-import { listRemoteMcpTools, mcpServer } from 'eharness/mcp'
+import { listRemoteMcpTools, mcpServerSource } from 'eharness/mcp'
 import { memory } from 'eharness/memory'
 import { ehMeta } from 'eharness/providers'
 import { todos } from 'eharness/todos'
 import { webFetch, webSearch } from 'eharness/web'
+import { nodeResolveHost } from 'eharness/web/node'
 import { z } from 'zod'
 import type { AgentDef } from '../../domain/agents.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
@@ -190,7 +191,7 @@ function customMcp(
         const modes = Object.entries(ctx.toolModes)
         const off = modes.filter(([, m]) => m === 'off').map(([t]) => t)
         const on = modes.filter(([, m]) => m !== 'off').map(([t]) => t)
-        return mcpServer({
+        return mcpServerSource({
           name: ctx.slug,
           transport: {
             type: 'sse',
@@ -202,6 +203,7 @@ function customMcp(
           ...(off.length > 0 || s.deny !== undefined ? { deny: [...off, ...(s.deny ?? [])] } : {}),
           defer: defer(),
           wrapUntrusted: true,
+          timeoutMs: 15_000,
         })
       }
       return {
@@ -380,7 +382,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
     },
     planning: { plugin: () => todos() },
     web: {
-      read: () => webFetch({}),
+      read: () => webFetch({ resolveHost: nodeResolveHost }),
       // offered only with a real backend: a tool that always fails makes models retry forever
       ...(options.search === undefined
         ? {}
@@ -389,7 +391,7 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
               webSearch({ search: options.search as NonNullable<typeof options.search> }),
           }),
     },
-    ask: { plugin: () => askUser() },
+    ask: { plugin: () => ask() },
     team: { plugin: (input, ctx) => options.hooks.team?.(defOf(ctx.agent.id), input) },
   })
   const listTools = options.listTools ?? listRemoteMcpTools

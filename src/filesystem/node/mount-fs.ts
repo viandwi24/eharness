@@ -1,8 +1,11 @@
+// plain-error-file: filesystem adapter I/O failures are plain exceptions by adapter contract; the tool maps them to `ERROR: …` (spec 08 §2, onAdapterError)
 /**
  * `mountFs`: a composite `FileSystem` that routes by longest virtual prefix to one `FileSystem`
  * per mount (spec 08 §9).
  */
+import { HarnessError } from '../../index.ts'
 import { compileGlob } from '../glob.ts'
+import { statelessPattern } from '../text.ts'
 import type { FileMeta, FileSystem, GrepHit, MoveResult } from '../types.ts'
 
 /** One mount of {@link mountFs}. */
@@ -18,6 +21,12 @@ export interface FsMount {
 const byPath = (a: { path: string }, b: { path: string }): number =>
   a.path < b.path ? -1 : a.path > b.path ? 1 : 0
 
+/** Options of {@link mountFs}. */
+export interface MountFsOptions {
+  /** Current mounts (read on every call); virtual prefixes end in `/`. */
+  mounts: () => FsMount[]
+}
+
 /**
  * Compose mounts into one file system. The mount list is read on every call, so mounts added at
  * runtime are visible immediately. A path outside every mount throws `path outside the
@@ -27,16 +36,20 @@ const byPath = (a: { path: string }, b: { path: string }): number =>
  * `move` inside one mount is that mount's `move`. A move **across mounts is not atomic**: it
  * creates `to` (only if absent), then deletes `from`; a crash in between leaves both.
  *
- * @param mounts Current mounts; virtual prefixes end in `/`.
+ * @param options `mounts`: returns the current mounts; virtual prefixes end in `/`.
  * @throws {TypeError} when a mount's `virtual` does not start and end with `/`.
  * @see docs/specs/08-filesystem-plugin.md#9-mounts
  */
-export function mountFs(mounts: () => FsMount[]): FileSystem {
+export function mountFs(options: MountFsOptions): FileSystem {
+  const { mounts } = options
   const current = (): FsMount[] => {
     const all = mounts()
     for (const mount of all) {
       if (!mount.virtual.startsWith('/') || !mount.virtual.endsWith('/')) {
-        throw new TypeError(`mountFs: virtual prefix must start and end with "/": ${mount.virtual}`)
+        throw new HarnessError(
+          'EH_CONFIG_INVALID',
+          `mountFs: virtual prefix must start and end with "/": ${mount.virtual}`,
+        )
       }
     }
     return all
@@ -196,7 +209,7 @@ async function statByList(fs: FileSystem, path: string): Promise<FileMeta | null
 }
 
 async function grepByRead(fs: FileSystem, pattern: RegExp, prefix: string): Promise<GrepHit[]> {
-  const re = new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ''))
+  const re = statelessPattern(pattern)
   const hits: GrepHit[] = []
   for (const meta of await fs.list(prefix)) {
     if (meta.binary) continue

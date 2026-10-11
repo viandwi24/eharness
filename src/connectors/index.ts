@@ -9,10 +9,12 @@
  * Imports core only through `src/index.ts` and the generic configuration machinery of
  * `eharness/providers` (ADR-0049). Fetches only through an injected `fetch`; no Node-only code.
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/24-connectors.md
  */
 
-export { plaintextVault, webCryptoVault } from '../providers/index.ts'
 export {
   type ActivateOptions,
   type AppRules,
@@ -24,7 +26,6 @@ export {
   mergeConnectorRules,
 } from './activate.ts'
 export {
-  BUILTIN_TOOLS,
   type BuiltinCapabilityLabel,
   type BuiltinConnectorsOptions,
   type BuiltinFactory,
@@ -41,15 +42,13 @@ export {
   type CredentialManager,
   type CredentialManagerOptions,
   createCredentialManager,
-  memoryRefreshLock,
+  inMemoryRefreshLock,
   type RefreshLock,
 } from './credentials.ts'
 export {
   type ConnectorDescription,
   capabilitiesOf,
-  connectorForm,
   connectorSchema,
-  defaultConnectionLabel,
   defineConnector,
   describeConnector,
   publicConnection,
@@ -65,45 +64,18 @@ export {
   advanceFlow,
   type CompleteOAuthResult,
   completeOAuth,
-  DEFAULT_FLOW_TTL_MS,
   defaultFlowSteps,
   flowCompletion,
-  flowStepsOf,
   type OAuthCallback,
   publicFlow,
-  resolveFlowDeps,
   type StartFlowParams,
   startFlow,
 } from './flow.ts'
 export {
   type AuthorizationServerMetadata,
-  type AuthorizationUrlParams,
-  assertSecureUrl,
-  buildAuthorizationUrl,
-  type DeviceAuthorization,
-  type DeviceCodeParams,
-  type DevicePollParams,
-  type DevicePollResult,
-  discoverAuthorizationServer,
   discoverMcpAuthorization,
-  discoverProtectedResource,
-  type ExchangeCodeParams,
-  exchangeCode,
-  generatePkce,
-  generateState,
   type McpAuthorization,
   type OAuthFetchOptions,
-  type Pkce,
-  type ProtectedResourceMetadata,
-  pkceChallenge,
-  pollDeviceToken,
-  type RefreshParams,
-  type RegisterClientParams,
-  refreshTokens,
-  registerClient,
-  requestDeviceCode,
-  resourceMetadataFromChallenge,
-  type TokenClientAuth,
 } from './oauth.ts'
 export {
   capabilitiesFromTools,
@@ -125,10 +97,11 @@ export {
   CREDENTIALS_KIND,
   connectionStoreFromProfiles,
   credentialStoreFromProfiles,
-  memoryConnectionStore,
-  memoryCredentialStore,
-  memoryEnablementStore,
-  memoryFlowStore,
+  type InMemoryConnectionStoreOptions,
+  inMemoryConnectionStore,
+  inMemoryCredentialStore,
+  inMemoryEnablementStore,
+  inMemoryFlowStore,
 } from './store.ts'
 export type {
   ActivatedConnectors,
@@ -191,7 +164,6 @@ export type {
   ResolvedCapability,
   ResolvedFlowDeps,
   ScopeDefaults,
-  SecretVault,
   StatusView,
   StepInput,
   StepOutcome,

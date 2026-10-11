@@ -38,3 +38,7 @@ conformance cases, `claim-owner.int.test.ts`).
 
 Costs: one extra `safeValidateUIMessages` per saved message (microseconds; messages are small), and
 a default that throws in `NODE_ENV=test|development` (set `debug: { invariants: false }` to opt out).
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): `debug.invariants` is explicit-only; it is no longer switched on by `NODE_ENV` `test` or `development`. The repository's own tests enable it through a Bun test preload (`scripts/test-preload.ts`), which also fails any test that raises `W_INVARIANT_VIOLATION` unless it opts out with `allowInvariantViolation(pattern)`. Applications put `debug: { invariants: true }` in their test setup.

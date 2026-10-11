@@ -11,6 +11,7 @@
  * I6  state numbers are sane (`rev`, usage, `inboxDelivered` unique and capped)
  */
 import type { SessionStateSnapshot } from '../agent/session-types.ts'
+import { errorText } from '../internal/util.ts'
 import { project } from '../messages/project.ts'
 import { createCoreMessageRegistry, type MessageRegistry } from '../messages/registry.ts'
 import { hasToolResult, isToolPart, type ToolPartLike } from '../messages/tool-parts.ts'
@@ -150,9 +151,7 @@ export async function checkSessionInvariants(
         if (!pendingCalls.has(id)) problems.push(`I3: tool call ${id} has no result in projection`)
       }
     } catch (error) {
-      problems.push(
-        `I3: projection failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      problems.push(`I3: projection failed: ${errorText(error)}`)
     }
   }
   return problems
@@ -166,5 +165,6 @@ export async function assertSessionInvariants(
 ): Promise<void> {
   const problems = await checkSessionInvariants(state, messages, options)
   if (problems.length > 0)
+    // plain-error: an assertion helper for tests and conformance runs, not a runtime path
     throw new Error(`session invariants violated:\n- ${problems.join('\n- ')}`)
 }

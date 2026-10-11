@@ -7,7 +7,7 @@
  *   bun examples/openapi-tools.ts
  */
 import { defineHarnessAgent } from 'eharness'
-import { openApiTools } from 'eharness/openapi'
+import { openApiSource } from 'eharness/openapi'
 import { exampleModel } from './shared/model.ts'
 
 const spec = {
@@ -51,11 +51,12 @@ const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
   return Response.json({ id: 'o-1', total: 42 })
 }) as typeof fetch
 
-const orders = openApiTools(spec, {
+const orders = openApiSource({
+  spec,
   name: 'orders',
   baseUrl: 'https://orders.example.com/v1',
   headers: (ctx) => ({ authorization: `Bearer ${String(ctx.runtime.token)}` }),
-  include: { tags: ['orders'] }, // curate: the admin export is not offered to the model
+  include: { tags: ['orders'] },
   fetch: fakeFetch,
 })
 

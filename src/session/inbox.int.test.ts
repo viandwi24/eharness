@@ -1,6 +1,6 @@
 /**
  * Durable inbox (spec 05 §12): two agent instances ("processes") share one message store, one
- * state store and one `memoryInbox()`; inputs, wake-ups and aborts enqueued in instance B are
+ * state store and one `inMemoryInbox()`; inputs, wake-ups and aborts enqueued in instance B are
  * applied by the instance that holds the session.
  */
 import { describe, expect, test } from 'bun:test'
@@ -11,7 +11,7 @@ import type { InboxAdapter, InboxItemInput, SessionEvent } from '../agent/sessio
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
 import { sleep, until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
@@ -19,7 +19,7 @@ import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 /** A memory inbox that records claims, acks and releases; `loseAcks` drops acks (a crash). */
-function spyInbox(inner: InboxAdapter = memoryInbox()) {
+function spyInbox(inner: InboxAdapter = inMemoryInbox()) {
   const log = {
     enqueued: [] as string[],
     claims: [] as Array<{ owner: string; ids: string[] }>,
@@ -281,7 +281,7 @@ describe('durable inbox across instances (spec 05 §12)', () => {
     await started
     const sessionB = b.agent.session('s1')
     const eventsB = record(sessionB.events())
-    expect(await sessionB.requestAbort('user stop')).toEqual({ target: 'remote' })
+    expect(await sessionB.abort('user stop')).toEqual({ target: 'remote' })
     expect(eventsB).toContainEqual(
       expect.objectContaining({ type: 'inbox-enqueued', kind: 'abort' }),
     )

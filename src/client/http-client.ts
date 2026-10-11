@@ -3,7 +3,7 @@
  * owns the base URL, the request headers and credentials, and turns every non-2xx answer into a
  * {@link HarnessHttpError}. Runtime imports: none (types come from `eharness/http`).
  *
- * @see docs/specs/27-client.md#1-http-client
+ * @see docs/specs/27-client.md#2-createharnessclient
  */
 import type { UIMessage } from 'ai'
 import type { ActivityPage } from '../activity/index.ts'
@@ -15,6 +15,7 @@ import type {
   ChatQueued,
   HealthResponse,
   HttpErrorBody,
+  HttpErrorCode,
   InterruptResult,
   MessagesPage,
   SessionListResponse,
@@ -42,10 +43,16 @@ export interface HarnessClientOptions {
 /** An error answer of the server (`{ error: { code, message, details? } }`) or any non-2xx answer. */
 export class HarnessHttpError extends Error {
   readonly status: number
-  readonly code: string
+  /** The `code` of the error body; a synthetic code when the answer was not one (a proxy). */
+  readonly code: HttpErrorCode
   readonly details: Record<string, unknown> | undefined
 
-  constructor(status: number, code: string, message: string, details?: Record<string, unknown>) {
+  constructor(
+    status: number,
+    code: HttpErrorCode,
+    message: string,
+    details?: Record<string, unknown>,
+  ) {
     super(message)
     this.name = 'HarnessHttpError'
     this.status = status
@@ -72,7 +79,10 @@ export class HarnessHttpError extends Error {
 }
 
 /** Is `error` a {@link HarnessHttpError} (of `code`, when given)? */
-export function isHarnessHttpError(error: unknown, code?: string): error is HarnessHttpError {
+export function isHarnessHttpError(
+  error: unknown,
+  code?: HttpErrorCode,
+): error is HarnessHttpError {
   return error instanceof HarnessHttpError && (code === undefined || error.code === code)
 }
 

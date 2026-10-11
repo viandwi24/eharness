@@ -5,7 +5,7 @@
  * @see docs/specs/06-compaction.md#6-guard-always-on-not-configurable-away
  */
 import type { ModelMessage, ToolResultPart } from 'ai'
-import { truncateMiddle } from './truncate.ts'
+import { truncateMiddle } from '../messages/truncate.ts'
 
 /** Tool outputs at or below this size are never truncated by the guard. */
 export const MIN_TRUNCATED_OUTPUT_CHARS = 1_000

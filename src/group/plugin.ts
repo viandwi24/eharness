@@ -1,5 +1,5 @@
 /**
- * The `groupChat()` plugin and `routeGroupMessage()` (spec 16): should-respond gating for a
+ * The `group()` plugin and `routeGroupMessage()` (spec 16): should-respond gating for a
  * multi-party chat, a pending history of gated-out messages, speaker metadata and a bot-to-bot
  * anti-loop derived from stored history.
  *
@@ -15,12 +15,15 @@ import {
   neutralizeTags as coreNeutralizeTags,
   defineMessageKind,
   definePlugin,
+  escapeRegExp,
+  HarnessError,
   type HarnessPlugin,
   type HarnessRun,
   type HarnessUIMessage,
   type InjectOptions,
   isKindMessage,
   type SendOptions,
+  statelessPattern,
   uuidv7,
 } from '../index.ts'
 import { GROUP_HISTORY_PREAMBLE, GROUP_SPEAKER_PREFIX } from './texts.ts'
@@ -53,8 +56,8 @@ export type GroupDecision = 'respond' | 'ignore' | 'default'
 /** Why a message did not get an answer. */
 export type GroupIgnoreReason = 'not-mentioned' | 'bot' | 'loop-limit' | 'ignored'
 
-/** Options of {@link groupChat}. */
-export interface GroupChatOptions {
+/** Options of {@link group}. */
+export interface GroupOptions {
   /** The bot's own author id in this chat; its own messages are never stored or answered. */
   botId: string
   /** Display name; `@name` (case-insensitive) is a default mention pattern. */
@@ -103,7 +106,7 @@ export interface GroupSession {
 }
 
 /** The plugin value, with its `route` method. */
-export type GroupChatPlugin = HarnessPlugin<'group'> & {
+export type GroupPlugin = HarnessPlugin<'group'> & {
   /** Route one incoming message: store it as context or answer it. */
   route(
     session: GroupSession,
@@ -154,10 +157,6 @@ function escapeAttribute(value: string): string {
     .replace(/\s+/g, ' ')
 }
 
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 function groupDataOf(message: HarnessUIMessage): GroupMessageData | undefined {
   if (!isKindMessage(message, 'group.message')) return undefined
   const part = message.parts[0] as { data?: GroupMessageData } | undefined
@@ -182,8 +181,35 @@ export function neutralizeSpeakerLines(text: string): string {
   return text.replace(/(^|\n)([ \t]*)\[group\] /g, '$1$2[ group] ')
 }
 
+/** Throw `EH_CONFIG_INVALID` unless `value` is undefined or a finite number in range. */
+function checkNumber(
+  name: string,
+  value: number | undefined,
+  min: number,
+  integer: boolean,
+  max?: number,
+): void {
+  if (value === undefined) return
+  const ok =
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    (!integer || Number.isInteger(value)) &&
+    value >= min &&
+    (max === undefined || value <= max)
+  if (!ok) {
+    throw new HarnessError(
+      'EH_CONFIG_INVALID',
+      `group: \`${name}\` must be ${integer ? 'an integer' : 'a number'} ≥ ${min}${max === undefined ? '' : ` and ≤ ${max}`}.`,
+      { details: { plugin: 'group', option: name } },
+    )
+  }
+}
+
 /** Create the group-chat plugin (spec 16). */
-export function groupChat(options: GroupChatOptions): GroupChatPlugin {
+export function group(options: GroupOptions): GroupPlugin {
+  checkNumber('historyLimit', options.historyLimit, 0, true)
+  checkNumber('maxBotTurns.count', options.maxBotTurns?.count, 0, true)
+  checkNumber('maxBotTurns.windowMs', options.maxBotTurns?.windowMs, 1, false)
   const requireMention = options.requireMention ?? true
   const replyCounts = options.replyCountsAsMention ?? true
   const historyLimit = Math.max(0, options.historyLimit ?? DEFAULT_HISTORY_LIMIT)
@@ -194,7 +220,7 @@ export function groupChat(options: GroupChatOptions): GroupChatPlugin {
     ...(options.botName === undefined
       ? []
       : [new RegExp(`(?<![\\w])@${escapeRegExp(options.botName)}(?![\\w])`, 'i')]),
-  ].map((p) => new RegExp(p.source, p.flags.replace(/[gy]/g, '')))
+  ].map(statelessPattern)
 
   const botAllowed = (author: GroupAuthor): boolean =>
     options.allowBots === true ||
@@ -373,9 +399,9 @@ export function groupChat(options: GroupChatOptions): GroupChatPlugin {
   return Object.freeze({ ...plugin, route })
 }
 
-/** Route one incoming message through a {@link groupChat} plugin (spec 16 §2). */
+/** Route one incoming message through a {@link group} plugin (spec 16 §2). */
 export function routeGroupMessage(
-  group: GroupChatPlugin,
+  group: GroupPlugin,
   session: GroupSession,
   message: GroupMessage,
   options?: SendOptions,

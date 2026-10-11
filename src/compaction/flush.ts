@@ -3,7 +3,7 @@
  * turn — one bounded, internal `generateText` call over the current wire with a whitelisted tool
  * set, recorded as a model-invisible `eh.flush` kind message.
  *
- * @see docs/specs/06-compaction.md#52a-flush-040
+ * @see docs/specs/06-compaction.md#52a-flush
  * @see docs/decisions/0020-pre-compaction-flush.md
  */
 import {
@@ -18,18 +18,22 @@ import {
   type ToolSet,
   type UIMessageChunk,
 } from 'ai'
+import { HarnessError } from '../errors.ts'
+import { hookFailed, hookTimeoutOf, runHook } from '../internal/hook-run.ts'
 import { describeModel } from '../internal/model.ts'
+import { errorText } from '../internal/util.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { project } from '../messages/project.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import { FLUSH_APPROVAL_DENIED } from '../messages/texts.ts'
 import type { FlushPayload, HarnessUIMessage } from '../messages/types.ts'
 import { costOf } from '../models/cost.ts'
+import { observeForSession } from '../models/model-calls.ts'
 import type { CompactionBeforeEvent, CompactionBeforePatch } from '../plugin/types.ts'
 import { toolTraits } from '../registry/risk.ts'
+import { withToolFields } from '../registry/tool-copy.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
-import { hookFailed, reportDecision } from '../registry/wrap.ts'
-import { observeForSession } from '../session/model-calls.ts'
+import { reportDecision } from '../registry/wrap.ts'
 import type { OpenSession, SessionRuntime } from '../session/runtime.ts'
 
 /** Default `flush.maxSteps`. */
@@ -117,14 +121,19 @@ export async function runBeforeHooks(
   for (const hook of hooks) {
     let flush: CompactionBeforePatch['flush'] | 'invalid' | undefined
     try {
-      const out = await hook.fn(rt.contextOf(hook.owner), {
-        messages: structuredClone(event.messages),
-        tokens: event.tokens,
-        trigger: event.trigger,
-      })
+      const out = await runHook(
+        () =>
+          hook.fn(rt.contextOf(hook.owner), {
+            messages: structuredClone(event.messages),
+            tokens: event.tokens,
+            trigger: event.trigger,
+          }),
+        { hook: 'compaction.before', owner: hook.owner, timeoutMs: hookTimeoutOf(rt.agent.config) },
+      )
       flush = validPatch(out)
       if (flush === 'invalid') {
-        throw new Error(
+        throw new HarnessError(
+          'EH_CONFIG_INVALID',
           'returned an invalid patch (flush.prompt must be a non-empty string, flush.tools an array of names, flush.maxSteps a positive integer)',
         )
       }
@@ -160,7 +169,7 @@ function flushTools(registry: TurnRegistry, names: readonly string[]): ToolSet {
     if (!allowed.has(name) || registry.clientTools.has(name)) continue
     const tool = registry.tools[name] as Tool | undefined
     if (tool === undefined || typeof tool.execute !== 'function') continue
-    out[name] = tool.deferLoading === true ? ({ ...tool, deferLoading: false } as Tool) : tool
+    out[name] = tool.deferLoading === true ? withToolFields(tool, { deferLoading: false }) : tool
   }
   return out
 }
@@ -242,10 +251,6 @@ function sumUsage(usages: readonly LanguageModelUsage[]): {
   return { inputTokens, outputTokens, totalTokens }
 }
 
-function errorText(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /**
  * The flush stage of one compaction (spec 06 §5.2a): hooks → checks → flush call → `eh.flush`
  * record. Never throws; a failing flush is `W_HOOK_FAILED` and compaction continues.
@@ -271,6 +276,7 @@ export async function runFlushStage(input: FlushStageInput): Promise<FlushOutcom
 
   let env: FlushEnv
   try {
+    // plain-error: internal invariant, caught by the surrounding try (reported as a skipped flush)
     if (input.env === undefined) throw new Error('no flush environment')
     env = await input.env()
   } catch (error) {
@@ -458,6 +464,7 @@ export async function manualFlushEnv(args: {
     toolOrder: config.toolOrder,
     deferTools: config.deferTools,
     toolErrorText: config.toolErrorText,
+    hookTimeoutMs: hookTimeoutOf(config),
     contextOf: rt.contextOf,
     warn: rt.warn,
     status: () => {},

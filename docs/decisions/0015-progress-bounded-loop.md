@@ -37,3 +37,7 @@ burn the whole budget.
 
 - Keep fixed counts, raise them (rejected: still wrong in both directions).
 - LLM judge for progress (deferred: a future goal plugin can add one on `turn.beforeEnd`).
+
+## Amendment note (2026-10-11)
+
+Bounded waits (0.8, P39): progress bounds the loop, and every `await` the core makes is bounded in time as well. Plugin hooks are raced against the turn abort signal and `hooks.timeoutMs` (default 30 000; `W_HOOK_TIMEOUT`; `input.submit` and `tool.approve` stay fail-closed), model streams get a default idle timeout (`settings.timeout` `firstChunkMs` / `chunkMs`, 120 000) and `maxRetries: 2`, tool sources are listed concurrently with `toolSources.timeoutMs` and a backoff (`toolSources.retryAfterMs`) for a failing source, and MCP and OAuth requests have default limits. Background children are bounded by default (`background.timeoutMs` one hour, `stopOnTimeout: true`).

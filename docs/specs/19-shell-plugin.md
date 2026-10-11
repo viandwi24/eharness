@@ -30,11 +30,14 @@ shell({
   risk?: ToolRisk               // default 'external'
 }): HarnessPlugin<'shell', ShellDataParts>
 
-localSandbox(root: string, opts?: {
-  os?: { enabled: boolean; network?: boolean; allowWrite?: string[] }   // default: off
-  env?: Record<string, string>   // added to process.env for every command
-  shell?: string                 // default /bin/bash, else /bin/sh
-}): LocalSandbox  // Sandbox & { state(): SandboxState; setOs(os): void }
+localSandbox(options: LocalSandboxOptions): LocalSandbox  // Sandbox & { state(): SandboxState; setOs(os): void }
+interface LocalSandboxOptions {
+  root: string                      // absolute project root: default cwd of every command
+  os?: OsSandboxOptions             // OS isolation, default off
+  env?: Record<string, string>      // added to the inherited allow-list (§6)
+  inheritEnv?: boolean              // default false
+  shell?: string                    // default /bin/bash, else /bin/sh
+}
 
 detectOsSandbox(): { kind: 'seatbelt' | 'bubblewrap' | 'none'; path?: string }
 killAllSandboxProcesses(signal = 'SIGTERM'): void
@@ -45,8 +48,9 @@ service `shellTasks`. It contributes **no instructions** (the tool descriptions 
 text) and does not touch the prompt-cache prefix: tool order is `bash`, then `bash_output`,
 `kill_shell` (only with `background`).
 
-Exports besides the above: `capOutput`, `seatbeltProfile`, `wrapCommand`, `SANDBOX_HINT`,
-`BASH_TOOL` (`'bash'`), `BASH_OUTPUT_TOOL`, `KILL_SHELL_TOOL`, `MAX_TASK_OUTPUT` and the types.
+Exports besides the above: `capOutput`, `SAFE_ENV_NAMES`, `BASH_TOOL` (`'bash'`),
+`BASH_OUTPUT_TOOL`, `KILL_SHELL_TOOL` and the types. The OS sandbox profile builders, the sandbox
+hint text and the task output cap constant (1 MB, §2) are internal.
 
 ## 2. Tools (model-visible; text changes are a minor change)
 
@@ -82,15 +86,16 @@ and network access are blocked.)` is appended before the footer.
 Background (`run_in_background: true`): the command starts and the result is
 `Started background task bash-N. Use bash_output to read its output.` at once; ids count per
 session (`bash-1`, `bash-2`, …). The process is **not** tied to the turn's abort signal (it lives
-until it exits, is killed, or the session closes). `notify_on` is a regex (invalid:
-`ERROR: notify_on is not a valid regular expression: …`, nothing starts). More than `maxTasks`
+until it exits, is killed, or the session closes). `notify_on` is a regex of the **safe subset** of the `grep` tool (spec 08 §3; invalid or unsafe:
+`ERROR: notify_on is not a valid regular expression: …`, nothing starts), tested against the first
+2 000 characters of each line. More than `maxTasks`
 running: `ERROR: <n> background tasks are already running. Stop one with kill_shell first.`
 
 ### `bash_output` (only with `background`, risk `read`)
 
 Input `{ id, filter? }`. Returns `[bash-N: <status>]` plus the output printed since the last read
 (`running`, `completed`, `failed, exit code <n>`, `stopped`), `(no new output)` when empty. `filter`
-is a regex: only matching lines are returned and the rest is skipped. Output is capped like
+is a regex of the same safe subset (an unsafe one is `ERROR: filter is not a valid regular expression: …`): only matching lines are returned and the rest is skipped. Output is capped like
 `bash`. Unknown id: `ERROR: no background task "<id>". Known: bash-1, …`. Per task the retained
 output is 1 MB (newest kept); a read that missed dropped output starts with
 `[… <n> characters of older output dropped]`.
@@ -184,21 +189,27 @@ Typical configurations:
 
 | Profile | Configuration |
 |---|---|
-| **Autonomous server** (no human, no approvals) | `localSandbox(workdir, { os: { enabled: true } })` (or a container driver); core approval configured so `risk: 'external'` runs unattended (spec 11); `timeoutMs`/`maxTimeoutMs`/`maxOutputChars` as limits; `background` usually off, or `notify: 'wake'` with an `onTaskEvent` that injects. The sandbox and the limits are the safety net. |
-| **Single-process CLI** | `localSandbox(cwd, { os })` with a UI toggle through `sandbox.setOs()`; `background: true`; render `data-shell.output` under the tool call and `shellTasks.subscribe` in a task list; `onTaskEvent` injects into the live session and the CLI drives the returned run; `killAllSandboxProcesses()` in exit handlers. Prompts via `tool.approve` on `risk`. |
+| **Autonomous server** (no human, no approvals) | `localSandbox({ root: workdir, os: { enabled: true } })` (or a container driver); core approval configured so `risk: 'external'` runs unattended (spec 11); `timeoutMs`/`maxTimeoutMs`/`maxOutputChars` as limits; `background` usually off, or `notify: 'wake'` with an `onTaskEvent` that injects. The sandbox and the limits are the safety net. |
+| **Single-process CLI** | `localSandbox({ root: cwd, os })` with a UI toggle through `sandbox.setOs()`; `background: true`; render `data-shell.output` under the tool call and `shellTasks.subscribe` in a task list; `onTaskEvent` injects into the live session and the CLI drives the returned run; `killAllSandboxProcesses()` in exit handlers. Prompts via `tool.approve` on `risk`. |
 | **Split web + server** | The shell runs on the server: sandbox factory per session (per-tenant root); `onTaskEvent` injects with `wake: true` so results are delivered through the session (durable), never only through a callback to a browser; the browser sees `data-shell.output` in the UI stream and approves through `respond()`. No UI-process state is needed to keep a task result. |
 
 ## 6. Local sandbox
 
-`localSandbox(root)` implements the AI SDK `SandboxSession`: `spawn`, `run`, `readFile`,
+`localSandbox({ root })` implements the AI SDK `SandboxSession`: `spawn`, `run`, `readFile`,
 `readTextFile` (line ranges), `readBinaryFile`, `writeFile`, `writeTextFile`, `writeBinaryFile`,
 and a `description` that states whether commands are sandboxed. Relative file paths resolve against
 `root`; file operations run in the calling process (they are **not** covered by the OS sandbox).
 
 - Each command runs in its own **process group** (`detached`); `kill()`, an abort or a timeout
   sends SIGTERM to the group and SIGKILL after 2 s. `wait()` rejects with the abort reason when the
-  abort signal fired; a signal exit is `128 + signal` (143 for SIGTERM).
-- stdin is closed (`ignore`). The environment is `process.env` + `opts.env` + per-call `env`.
+  abort signal fired; a signal exit is `128 + signal` (143 for SIGTERM). A process that escaped the
+  group (`setsid`, detached) and keeps stdout/stderr open cannot hang the tool: `wait()` resolves
+  from the `exit` event 2 s after it and the pipes are ended (readers see EOF).
+- stdin is closed (`ignore`). The environment is the **allow-list** of `process.env` (`SAFE_ENV_NAMES`: `PATH`, `HOME`, `USER`,
+  `LOGNAME`, `SHELL`, `LANG`, `LC_*`, `TERM`, `TMPDIR`, `TZ`, and on Windows `SYSTEMROOT`,
+  `SYSTEMDRIVE`, `WINDIR`, `COMSPEC`, `PATHEXT`, `TEMP`, `TMP`, `USERPROFILE`) + `opts.env` + per-call
+  `env`; with `inheritEnv: true` the whole `process.env` instead of the allow-list (so provider
+  keys and database URLs of the host do not reach commands the model writes by default).
 - `killAllSandboxProcesses(signal?)` terminates every live group of every local sandbox in the
   process (exit handlers). With `SIGKILL`, or when nothing runs, it returns at once; otherwise a
   SIGKILL follows after 2 s from an unref'd timer, which cannot run inside `process.exit`.
@@ -218,6 +229,7 @@ and temp locations; network off unless `network: true`.
   helpers, ssh-agent, DNS through mDNSResponder).
 - **Linux** bubblewrap (`bwrap`): `--ro-bind / /`, `--dev /dev`, `--proc /proc`, `--tmpfs /tmp`
   (before the binds, the root may live in `/tmp`), `--bind` for root and `allowWrite`,
+  `--unshare-pid --unshare-ipc --new-session` (no view of or signals to host processes),
   `--unshare-net` unless network, `--die-with-parent`, `--chdir <root>`.
 - Other platforms or a missing tool: `kind: 'none'`, the command runs unwrapped.
 

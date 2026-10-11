@@ -34,7 +34,7 @@ export interface SessionOptions {
    * depth > 8 with EH_CONFIG_INVALID when the session opens (ready() / run error). Child usage is
    * reported to the parent turn with ctx.turn.addUsage() by the plugin that runs the child.
    */
-  parent?: ParentInfo   // { sessionId: string; turnId: string; toolCallId?: string; depth: number }
+  parent?: ParentInfo   // { sessionId; turnId; toolCallId?; depth; agent?; name?; description? } (identity fields: §13)
 }
 ```
 
@@ -49,6 +49,11 @@ id in an agent: `agent.session(id)` called while the previous instance is still 
 running turn is aborted and saved, `session.close` hooks run, state is written) returns the new
 instance at once, but it opens — and so runs nothing — only after that close finished (no false
 crash recovery of the turn that was being closed).
+
+Numeric options named in this spec (`sessionIdleMs`, `recovery.*`, `inbox.*`, `streams.*`,
+`hooks.timeoutMs`, …) are bounds-checked when the agent is defined: a negative, non-finite or
+out-of-range value (durations above one day; `sessionIdleMs` above 30 days) throws
+`EH_CONFIG_INVALID`.
 
 ## 2. Session API
 
@@ -82,7 +87,7 @@ export interface HarnessSession<
   /** Answer again (spec 11 §5). */
   regenerate(options?: { messageId?: string } & SendOptions): HarnessRun<M>
   /** Replace a user message and answer it (spec 11 §5). */
-  edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
+  edit(options: { messageId: string; input: SendInput } & SendOptions): HarnessRun<M>
   // 0.4.0: each of the four has a first overload taking SendOptionsWithOutput<S> (§3.3) and
   // returning HarnessRun<M, InferSchema<S>>, e.g.
   //   send<S extends FlexibleSchema>(input: SendInput | undefined, options: SendOptionsWithOutput<S>)
@@ -102,18 +107,15 @@ export interface HarnessSession<
   /**
    * Abort the running turn. Partial output is saved with stop 'aborted'. Queued turns are dropped.
    * When no turn of this session runs in this process, it requests the abort of a turn running in
-   * another instance (§9.1): fire-and-forget `requestAbort()`, failures go to the logger.
-   */
-  abort(reason?: string): void
-  /**
-   * Awaitable form of abort() (0.4.0, §9.1): `'local'` (a turn of this process was aborted),
+   * another instance (§9.1). One awaitable method for both cases. Tells where the abort went:
+   * `'local'` (a turn of this process was aborted),
    * `'remote'` (an abort request for the turn running in another instance was written),
    * `'idle'` (no live turn anywhere; nothing written) or `'unsupported'` (no `StateAdapter.setIf`,
-   * or `recovery: false`; W_ABORT_UNSUPPORTED). Drops queued turns like abort(). Rejects with
+   * or `recovery: false`; W_ABORT_UNSUPPORTED). Rejects with
    * EH_STORAGE (state read/write failed), EH_SESSION_BUSY (every CAS retry conflicted) or
    * EH_SESSION_CLOSED.
    */
-  requestAbort(reason?: string): Promise<{ target: 'local' | 'remote' | 'idle' | 'unsupported' }>
+  abort(reason?: string): Promise<{ target: 'local' | 'remote' | 'idle' | 'unsupported' }>
 
   /**
    * Hand an input to whichever instance holds the session (0.4.0, §12): with `storage.inbox` it
@@ -135,6 +137,8 @@ export interface HarnessSession<
   clearGrants(): Promise<void>
   /** Create a new session from (a prefix of) this one (§14). */
   fork(options?: ForkOptions): Promise<HarnessSession<M, Kinds>>
+  /** Repair an interrupted turn now, without a new turn (§9.2). */
+  recover(): Promise<RecoverResult>
   /** Child sessions registered with this session as `parent`, from the stored state (§13). */
   children(): Promise<ChildSessionInfo[]>
   /** The stored `parent` of this session (§13). */
@@ -173,6 +177,11 @@ export interface HarnessSession<
   /** The tools the model sees in the next request, in request order (spec 02 §3.4). */
   tools(): Promise<SessionToolInfo[]>
 
+  /**
+   * Serializable session events. A reader that falls 1 000 events behind is closed with
+   * `EH_EVENTS_OVERFLOW` (counted as `events.overflow` by `config.observe`) instead of buffering
+   * without bound; read it promptly or re-open it.
+   */
   events(): ReadableStream<SessionEvent>
   /**
    * Resolves when no turn runs and nothing is queued (immediately after close()). A queue held
@@ -208,7 +217,7 @@ export interface SendOptions {
    * 'collect' (send() only, 0.4.0): the input joins the process's `collect` burst (§12 rule 6);
    * every collected send() returns a run of the same merged queued turn (same turnId).
    * ifBusy applies to a turn running in this process only: a turn running in another instance
-   * is a run error EH_SESSION_BUSY as in 0.3 (cross-process queuing is session.enqueue(), §12).
+   * is a run error EH_SESSION_BUSY (cross-process queuing is session.enqueue(), §12).
    */
   ifBusy?: 'reject' | 'queue' | 'steer' | 'wait' | 'collect'
   /** Debounce of ifBusy 'collect' (defaults: config.inbox.collect, then 1 500 / 10 000 / 20). */
@@ -248,6 +257,8 @@ export type SendOptionsWithOutput<S extends FlexibleSchema> = SendOptions & { ou
 export interface InjectOptions {
   deliver?: 'next-turn' | 'next-step'
   wake?: boolean
+  /** Idempotency key: a repeated key is a no-op (§9.2). */
+  key?: string
 }
 
 export interface EnqueueOptions {
@@ -270,7 +281,9 @@ run returned by `inject(…, { wake })`):
   run answering 409 (spec 11 §7).
 - A queued run that is dropped (`abort()`, `close()`) never starts: its stream is `start` (throwaway
   id) → `abort`, and `run.result` resolves with `stop: 'aborted'`; nothing is persisted.
-- Every other failure — lock not acquired, session open failure, invalid input, pending
+- Every other failure — lock not acquired (`EH_SESSION_BUSY`) or the lock service failing
+  (`EH_LOCK_UNAVAILABLE`, an infrastructure failure, the third case next to busy and closed, but
+  reported through the run like the rest), session open failure, invalid input, pending
   mismatch, storage error, provider error — is reported through the run: the stream is valid
   (`start` → `error` → `message-metadata { stop: 'error' }` → `finish`) and `run.result`
   **resolves** with `{ stop: 'error', error: { code, message } }`. `run.result` never rejects.
@@ -281,7 +294,7 @@ run returned by `inject(…, { wake })`):
   session stays usable: the next open attempt gets a fresh `ctx.signal` (unless the session was
   closed meanwhile).
 
-### 2.1 `onRun`: every run reaches the app (0.8)
+### 2.1 `onRun`: every run reaches the app
 
 `session.onRun(listener)` is the **in-process** channel for runs the caller of an operation never
 sees: a wake from `inject({ wake: true })` (also `ctx.session.inject`, background deliveries of
@@ -313,7 +326,7 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
 
 **Preparation (nothing is persisted):**
 
-1. Acquire `lock` if configured (reject → `EH_SESSION_BUSY` as a run error). Open the session if
+1. Acquire `lock` if configured (reject with `EH_SESSION_BUSY` → `EH_SESSION_BUSY` as a run error; any other rejection → `EH_LOCK_UNAVAILABLE` as a run error, logged, §8). Open the session if
    needed (state load, plugin phases).
 2. **Load context** (§5) if the session has no cache; otherwise validate the cache (§6): if the
    adapter has `lastId`, compare before writing anything and on mismatch reload **state and
@@ -357,7 +370,7 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
    - client `metadata.eharness` (including any `kind`) is discarded and rebuilt (`v`,
      `createdAt`, `turnId`); a client id is kept as `metadata.eharness.clientId`; other client
      metadata keys are dropped unless `acceptClientMetadata`.
-8. **`input.submit` hooks** (chainable, spec 01 §5). A rewrite is normalized again. `context`
+8. **`input.submit` hooks** (chainable, spec 01 §5). A hook that does not settle within `hooks.timeoutMs` counts as a throwing one (`W_HOOK_TIMEOUT`): the input is blocked. A rewrite is normalized again. `context`
    strings are appended as extra `text` parts and `metadata.eharness.augmented` is set to the
    number of parts added (spec 03 §3). A `block` ends the turn with `stop: 'blocked'` and no
    model call: without `persist` it ends here and nothing is persisted; with `persist: true` the
@@ -437,6 +450,12 @@ never re-executed. On abort: `stop: 'aborted'`, partial saved, no notice. **Time
 `aborted`) but with `stop: 'timeout'` and an `eh.notice` (level `warning`, code
 `EH_TURN_TIMEOUT`).
 
+Two more bounds keep a turn from hanging: an awaited plugin hook that does not settle within
+`hooks.timeoutMs` (default 30 000) is treated like a throwing hook (`W_HOOK_TIMEOUT`; spec 01 §5),
+and every model step has idle timeouts by default (`settings.timeout`: `firstChunkMs` and `chunkMs`
+120 000 each; a silent stream fails the step instead of holding the session; set `false` to turn the
+default off).
+
 **Dangling tool calls** (ADR-0014): whenever a turn ends with any stop other than
 `'tool-pending'`, every tool part of the assistant message that has no result
 (`input-streaming`, `input-available`, `approval-requested`, `approval-responded` not yet
@@ -490,7 +509,7 @@ Then, before actually stopping:
   absolute cap on top (`details.reason: 'max'`). `continue` and `extendSteps` both count.
 - **Wrap-up.** When the stop is still `'max-steps'` after `turn.beforeEnd` and `loop.wrapUp` is
   on (default), the loop runs **one** more step with `toolChoice: 'none'` (a `step.prepare`
-  `toolChoice` cannot change it) and the step reminder `MAX_STEPS_WRAP_UP` (spec 10 §5), so the
+  `toolChoice` cannot change it) and a built-in step reminder (wrap up: summarize, no more tool calls), so the
   model summarizes what it did and what is left instead of stopping mid-action. That step ends the
   turn with `'max-steps'` whatever it answers (`'error'` stays `'error'`); `turn.beforeEnd` does
   not run for it. The wrap-up step **takes no input**: steers and `next-step` injections waiting
@@ -520,8 +539,7 @@ last `progress.window` (20) steps that called tools are kept.
   its input or alternates with other tools, which neither rule above sees.
 
 When the rules of §3.1 would continue and the turn is stuck: while fewer than `progress.nudges`
-(1) reminders were given, the next step gets the step reminder `PROGRESS_NUDGE` (spec 10 §5,
-never stored), the window and streak are cleared, and `W_LOOP_STUCK` is raised with
+(1) reminders were given, the next step gets a built-in step reminder to change approach (never stored), the window and streak are cleared, and `W_LOOP_STUCK` is raised with
 `details: { kind: 'repeat' | 'errors' | 'tool-errors', toolName?, count, stepIndex }`. Otherwise the turn stops with `'stuck'`. A step
 that ends the turn anyway (§3.1 rules 1–7) is not affected. `loop.progress: false` disables the
 guard.
@@ -535,11 +553,11 @@ disabled.
 Stops decided outside a step: `'aborted'` (user/abort signal), `'timeout'`, `'blocked'`
 (`input.submit`), `'interrupted'` (set on a recovered message, §9). Full list: spec 10 §4.
 
-### 3.3 Structured output (normative, 0.4.0)
+### 3.3 Structured output
 
 `SendOptions.output` asks a turn for a typed final answer (ADR-0023). It applies to the turn it is
 passed to only; `send`, `respond`, `regenerate` and `edit` accept it (typed overloads,
-`HarnessRun<M, InferSchema<S>>`). Without it, a turn is byte-identical to 0.3 (wire and storage).
+`HarnessRun<M, InferSchema<S>>`). Without it, a turn's wire and storage are unchanged.
 
 1. **Validation** (step 6, after the registry is resolved): `asSchema(schema).jsonSchema` must
    resolve — both modes need a JSON Schema — else a run error `EH_INVALID_INPUT` with
@@ -548,9 +566,10 @@ passed to only; `send`, `respond`, `regenerate` and `edit` accept it (typed over
    collide with a tool of the turn → `'output-tool-name'`. An invalid `mode` or a `maxRetries`
    that is not a non-negative integer → `'output-spec'`. Nothing is persisted (early failure).
 2. **Tool mode** (default). For this turn only, the core appends the output tool (default
-   `final_answer`; input schema = `schema`; description `description` or
-   `FINAL_ANSWER_DESCRIPTION`; result `FINAL_ANSWER_RECORDED`) **at the end** of the tool order,
-   after `tool_search` (spec 02 §6 rule 1), and adds `OUTPUT_INSTRUCTION` to the turn reminder.
+   `final_answer`; input schema = `schema`; description `description` or a
+   built-in one; result `FINAL_ANSWER_RECORDED`) **at the end** of the tool order, after
+   `tool_search` (spec 02 §6 rule 1), and adds a built-in instruction (use that tool for the final
+   answer) to the turn reminder.
    The tool is core-owned: no `tool.*` hooks, no output limits, never asks for approval (the
    approval function answers `'not-applicable'` for it), always active (appended to a
    `turn.prepare` / `step.prepare` `activeTools` list). Cost: the tool list differs from turns
@@ -570,7 +589,7 @@ passed to only; `send`, `respond`, `regenerate` and `edit` accept it (typed over
    wins). On the final `'complete'` without a valid answer (tool mode: the output tool never
    succeeded in this turn; native mode: the last step's output failed), the core records a failed
    attempt and continues like a `turn.beforeEnd` continuation: `data-eh.input { source:
-   'plugin:eh.output', text: OUTPUT_RETRY }` with the error trimmed to 1 000 characters, and in
+   'plugin:eh.output', text: <built-in retry text> }` with the error trimmed to 1 000 characters, and in
    tool mode the retry step gets `toolChoice: { type: 'tool', toolName }`. The retry counts toward
    `loop.maxContinues` and `loop.maxIdleContinues` (a refusal raises `W_CONTINUE_LIMIT` with
    `details.owner: 'eh.output'` and ends the turn `'output-invalid'`); when the step budget is used
@@ -639,7 +658,11 @@ owns (the running assistant message, patches of a pending message, recovery patc
 deletes. Regenerate/edit hide messages with `eh.rewind` markers (spec 11 §5). Deleting data is the
 application's business (e.g. deleting a chat).
 
-The library ships `memoryMessages()` only. Everything else is application code (see §10, examples).
+The library ships memory adapters only (`inMemoryMessages()`, `inMemoryState()`, `inMemoryInbox()`,
+`inMemoryStreamLog()`, `inMemoryBudgetLedger()` from `eharness/storage/memory`). Everything else is
+application code (see §10, examples). The memory adapters are bounded: the inbox keeps at most
+`maxDeadLetters` (default 1 000) dead letters, the budget ledger deletes settled reservations and
+sweeps long-expired ones, and the stream log sweeps expired logs at most once per second.
 
 ## 5. Loading the model context (fixed algorithm)
 
@@ -802,16 +825,19 @@ export interface PluginState {
 
 ```ts
 export interface SessionLock {
-  /** Try to acquire for the duration of a turn. Resolve with a release function, or reject if
-   *  the session is locked elsewhere (→ run error EH_SESSION_BUSY). Must not block indefinitely. */
+  /** Try to acquire for the duration of a turn. Resolve with a release function. Reject with a
+   *  `HarnessError('EH_SESSION_BUSY')` if the session is locked elsewhere (contention → run error
+   *  EH_SESSION_BUSY); any OTHER rejection means the lock service failed and is reported as
+   *  `EH_LOCK_UNAVAILABLE` (run error, 503). Must not block indefinitely. */
   acquire(sessionId: string, opts: { signal: AbortSignal }): Promise<() => Promise<void>>
 }
 ```
 
 Postgres example: `SELECT pg_try_advisory_lock(hashtextextended($1, 0))` on a dedicated
-connection; reject when it returns `false`; release with `pg_advisory_unlock` in the returned
+connection; reject with `EH_SESSION_BUSY` when it returns `false` (a connection error is just
+rethrown: it becomes `EH_LOCK_UNAVAILABLE`); release with `pg_advisory_unlock` in the returned
 function. The library ships no lock implementation. `lockConformance` (`eharness/testing`) checks
-the contract: prompt rejection while held, release frees only its own acquire (idempotent, a stale
+the contract: prompt rejection with `EH_SESSION_BUSY` while held, release frees only its own acquire (idempotent, a stale
 release never frees a newer holder), one winner among parallel acquires, cross-handle exclusion
 and, for lease locks, takeover of an expired holder.
 
@@ -876,7 +902,8 @@ recovery?: {
   stale check (owner is this instance, a lock was acquired, or heartbeat older than `staleMs`), then
   the same repair as the commit point (dangling calls `INTERRUPTED_CRASH`, `streaming` text and
   reasoning parts closed, `stop: 'interrupted'`, `eh.notice`, `turn-end`), and a compare-and-set
-  state write clearing `activeTurn`. `{ recovered: false, reason }` for `idle`, `live`, `locked`,
+  state write clearing `activeTurn`. `{ recovered: false, reason }` for `idle`, `live`, `locked`
+  (lock contention), `lock-unavailable` (the lock service failed: logged, 0.8.0) and
   `disabled`. Throws `EH_SESSION_BUSY` only when a turn of this process runs.
 - A turn is also never recovered while **another handle of this process** runs it (a rebuilt agent
   object shares the instance id): the process keeps a registry of running turn ids, so "owned by
@@ -889,7 +916,7 @@ recovery?: {
 - `inject({ key })` (spec 11 §6.3) stores `metadata.eharness.key`; a repeated key is a no-op. Concurrent calls with the same `key` on one handle share one in-flight call (one message, the same id). The dedupe reads the newest 200 stored messages, so across instances (and beyond 200 newer messages) `key` is best-effort; use an id of your own in the payload when you need strict uniqueness.
 - A throwing `onWarning` handler or `logger` never breaks the runtime: failures are swallowed (reported once on `console.error`), and the end of a turn always releases the lock, resolves `run.result`, clears `running` and closes the stream, whatever throws on the way. A failed `regenerate()` / `edit()` whose rewind marker cannot be saved removes its `core.rewinds` entry again (no hidden history). The expiry timer of timed external waits backs off exponentially (250 ms to 30 s) while storage fails. `send({ ifBusy: 'wait' })` removes its `abortSignal` listener when the wait ends.
 
-### 9.1 Cross-process abort (0.4.0)
+### 9.1 Cross-process abort
 
 A Stop request that reaches any instance stops the turn running in another instance, ending it
 exactly like a local abort. It needs only a `StateAdapter` with `setIf` (ADR-0021); no lock, no
@@ -897,7 +924,7 @@ inbox. With `storage.inbox` (§12 rule 4) the request goes through the inbox ins
 item for the live foreign turn, lower latency with `subscribe`); this state path stays the
 fallback when there is no inbox or its enqueue fails.
 
-1. **Request.** `requestAbort(reason)`: if a turn of this session runs in this process → local
+1. **Request.** `abort(reason)`: if a turn of this session runs in this process → local
    abort, `'local'`. Otherwise read the state: no **live foreign** `activeTurn` (absent, owned by
    this instance, or stale per `recovery.staleMs`) → `'idle'`, nothing written. With one, and no
    `setIf` → `'unsupported'` + `W_ABORT_UNSUPPORTED`, nothing written (a blind `set` would
@@ -989,7 +1016,7 @@ Write amplification: `persistEachStep` rewrites the whole assistant message per 
 tool output limits (spec 09 §4) and plugin transforms (`tool.after` / `message.beforeSave`);
 adapters may store per-step rows internally without changing the contract.
 
-## 12. Inbox (0.4.0)
+## 12. Inbox
 
 An optional durable inbox lets a multi-instance deployment queue, steer, wake, collect (debounce)
 and abort **across processes** (ADR-0024). Without `storage.inbox` nothing changes: the queue is
@@ -1072,7 +1099,7 @@ inbox?: {
 }
 ```
 
-`eharness/storage/memory` ships `memoryInbox()`; `eharness/testing` ships
+`eharness/storage/memory` ships `inMemoryInbox()`; `eharness/testing` ships
 `inboxAdapterConformance(factory, { requireNotify?, requirePending?, requireRetry?,
 requireDeadLetter?, requireStats?, claimTtlMs? })` (durability, JSON round trip, FIFO per session,
 exactly one winner per item under concurrent claims, head of line, renewal by the holder, claim
@@ -1087,7 +1114,7 @@ advisory lock, `LISTEN`/`NOTIFY`) is `examples/postgres-inbox.ts`.
 
 Normative rules:
 
-1. **Without an inbox** behaviour and storage are those of 0.3. `session.enqueue()` then applies
+1. **Without an inbox** the queue is the in-memory one and storage is unchanged. `session.enqueue()` then applies
    the input in this process (`target: 'local'`, `inboxId` a generated id): `'queue'` → a turn
    now (idle) or a queued turn; `'steer'` → a steer of the running turn (else like `'queue'`);
    `'collect'` → the process's collect burst (rule 6). (`send(…, { ifBusy: 'steer' })` reports its
@@ -1097,7 +1124,7 @@ Normative rules:
    stores it (`EH_STORAGE` on failure), emits `inbox-enqueued`, then: if no turn of the session
    runs here, reads the state — a live foreign `activeTurn` (§9) → `target: 'remote'` and
    `notify()`; otherwise `target: 'local'` and this instance drains at once. `send()` keeps its
-   0.3 semantics (rule 2 of ADR-0024); `handleChatRequest` gets no new mode — a route that wants
+   semantics without an inbox (rule 2 of ADR-0024); `handleChatRequest` gets no new mode — a route that wants
    cross-process queuing calls `enqueue()` itself on the 409 busy run.
 3. **Drain.** Every live session with an inbox subscribes (when the adapter can) and polls every
    `pollMs`; it also drains when one of its turns (or `compact()`) ends, and once when it is
@@ -1123,7 +1150,7 @@ Normative rules:
    released; a unit that ends before its commit point for any other reason (input blocked
    without `persist`, invalid input, aborted by its caller) is acked (dropped). With
    `inbox.retry` releases are classified and failures may dead-letter instead (rules 11–13).
-4. **Abort** (U4, inbox path). `requestAbort()` / `abort()` with an inbox and no local turn read
+4. **Abort** (U4, inbox path). `abort()` with an inbox and no local turn read
    the state: no live foreign `activeTurn` → `'idle'`; otherwise an `abort` item for that
    `turnId` is enqueued and `notify()` called → `'remote'` (no state write). If the enqueue
    fails (`W_INBOX_FAILED`) the state request of §9.1 is the fallback. The holder applies a
@@ -1261,7 +1288,7 @@ without it releases carry only `owner` and rules 1–10 are the whole contract.
       A core without `enqueueOnce` on the adapter throws `EH_INVALID_INPUT`. Without an inbox the
       key is remembered for the life of that `Session` object.
     - **Dedupe horizon:** an adapter must remember the key of an acked item for at least 24 hours
-      after the ack (`memoryInbox({ dedupeWindowMs })`, default 24 h; a database adapter keeps the
+      after the ack (`inMemoryInbox({ dedupeWindowMs })`, default 24 h; a database adapter keeps the
       key row and deletes it by a TTL job). A repeat after the horizon is a new item, so ids must
       be unique per logical event (`sched:<id>:<scheduledAt>` is), not reused as slots. The horizon
       covers at-least-once producers (a retried tick, two instances firing the same schedule),
@@ -1304,7 +1331,7 @@ starts a wake unit while the stored pending state is set: the item waits in the 
 restarts) and runs in the instance that sees the pending items resolved. With `enqueueOnce` the
 item carries `dedupeKey: 'wake:<messageId>'`, so an app that repairs a stranded event enqueues the
 same key and never doubles a wake.
-### 2.2 Read-only handle: `agent.peek(id)` (0.8)
+### 2.2 Read-only handle: `agent.peek(id)`
 
 Opening a session (`agent.session(id)` + any operation except `messages()`/`children()`/`busy()`)
 runs `session.start` hooks, crash recovery and plugin reconciles, which may start model calls
@@ -1342,7 +1369,7 @@ index).
    recorded then, so the next open retries.
 2. **Parent side: `core.children`.** `{ sessionId, turnId, toolCallId?, createdAt, agent?, name?,
    description? }[]` (the identity fields come from `ParentInfo` when the opener set them: for
-   `subagents()` the catalog key of the child's agent, the `name` and the `description` of the
+   `subagent()` the catalog key of the child's agent, the `name` and the `description` of the
    `agent` call; entries without them, written before 0.8, read as before; `ParentInfo.agent` etc.
    are also on `ctx.session.parent` inside the child),
    append-only, capped at 500 (the oldest are dropped), deduplicated by `sessionId`. It is a
@@ -1431,9 +1458,9 @@ the fuzz test) and `assertStoredSessionInvariants` (`eharness/testing`, for adap
 **Policy for I1 (`debug.invariants`).** A message that fails validation at save time is a bug of the
 core or of a plugin hook (`message.beforeSave`), never of the caller:
 
-- `debug.invariants: true` (default when `NODE_ENV` is `test` or `development`): the save throws
+- `debug.invariants: true` (explicit only; the core never reads `NODE_ENV`, so test setups enable it themselves, e.g. through a preload): the save throws
   `EH_INVALID_MESSAGE` (details `messageId`, `reason`), nothing is stored, the turn ends as a run error.
-- `false` (production default): **repair, don't drop**. The known repairs (`output-denied` approval
+- `false` (default): **repair, don't drop**. The known repairs (`output-denied` approval
   normalisation, `rawInput`) always run before the check. Anything else is warned
   (`W_INVALID_MESSAGE`, `details.stage: 'save'`) and the message is **saved as it is**: dropping it
   would lose the message that may hold the pending state. On load, a message that fails validation

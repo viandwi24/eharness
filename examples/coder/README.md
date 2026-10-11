@@ -26,10 +26,10 @@ use**.
 | File tools, `glob`, images, tool-output eviction, skills | `eharness/filesystem` | the `.coder/skills` location |
 | Rewind of files and conversation | `filesystem({ checkpoints })` + `nodeCheckpointStore`, `rewindFiles`, `checkpointsSince`, `session.fork()` | which prompts `/rewind` lists, subagent edits in the rewind, session names |
 | `bash`, background shells, live output, OS sandbox | `eharness/shell`: `shell({ background })`, `localSandbox`, `shellTasks` | the `/tasks` page and footer (`app/tasks.ts`), settings toggle |
-| Rules, modes, shell analysis, plan mode | `eharness/permissions`: `createPermissionEngine`, `permissionsPlugin` | app tool kinds, `.coder` protected paths, `persist` writing project-scope rules to `settings.local.json`, `request_directory_access` as an `alwaysAsk` tool kind, the approval broker, `describeApproval` (diffs), audit log, settings files and project trust |
+| Rules, modes, shell analysis, plan mode | `eharness/permissions`: `createPermissionEngine`, `permissions` | app tool kinds, `.coder` protected paths, `persist` writing project-scope rules to `settings.local.json`, `request_directory_access` as an `alwaysAsk` tool kind, the approval broker, `describeApproval` (diffs), audit log, settings files and project trust |
 | `agent` tool, child sessions, background agents | `eharness/subagent` (`approvals: 'inline'`) | agent definitions from files (`agents/load.ts`), `answer` = the broker labelled with the agent name |
-| `ask_user_question` | `eharness/ask`: `askUser`, `pendingQuestions`, `answerOutput` | the question dialog, the answer timeout |
-| `web_fetch`, `web_search` | `eharness/web`: `webFetch`, `webSearch` | turndown, DNS lookup, the OpenRouter / AI Gateway search call |
+| `ask_user_question` | `eharness/ask`: `ask`, `pendingQuestions`, `answerOutput` | the question dialog, the answer timeout |
+| `web_fetch`, `web_search` | `eharness/web`: `webFetch`, `webSearch` | turndown, `nodeResolveHost` (DNS check against private addresses), the OpenRouter / AI Gateway search call |
 | Todos, MCP, compaction, hooks, usage, cost | `eharness/todos`, `eharness/mcp`, core | settings hooks, output styles, model switching |
 
 Lines of code: see the note at the end of
@@ -45,6 +45,34 @@ export OPENROUTER_API_KEY=...                 # OpenRouter (or AI_GATEWAY_API_KE
 bun examples/coder/src/main.tsx               # interactive
 bun --filter eharness-coder start             # same thing
 ```
+
+**Which `.env` is read.** Bun loads `.env` (then `.env.local`) from the **working directory** you start
+it in, not from the script's folder, and the process environment wins over the files:
+
+| Command | Reads |
+|---|---|
+| `bun examples/coder/src/main.tsx` from the repo root | `.env` in the repo root |
+| `bun --filter eharness-coder start` | `.env` in `examples/coder/` (the package directory) |
+| `cd your-project && bun /path/to/eharness/examples/coder/src/main.tsx` | `.env` in `your-project/` |
+
+Put the key in the file that matches how you start it, or `export` it as shown above. Every `.env*`
+file is also a protected path for the agent: reads of it ask first.
+
+**Without a terminal.** The interactive UI needs a TTY. In a pipe or CI use a one-shot run:
+`bun examples/coder/src/main.tsx -p "<prompt>"` (stdin that is not a TTY exits with code 2 and this hint).
+
+**Shell environment.** Commands run by the `bash` tool do not inherit your whole environment: the
+sandbox passes only its safe allow-list (`PATH`, `HOME`, locale, ...) plus the dev-tool variables
+`devToolEnv` (`app/controller.ts`) adds (`GIT_*`, `SSH_AUTH_SOCK`, `XDG_*`, proxy and `npm_config_*`
+variables, `CI`, `NO_COLOR`, ...). Provider API keys and other secrets are never passed to commands.
+
+**Bounded waits and logs.** The agent sets `hooks.timeoutMs`, `settings.timeout` (idle timeouts of a
+silent model stream) and `toolSources.timeoutMs` explicitly (`app/agent.ts`), so a stuck hook, stream
+or MCP server cannot hold a turn. `config.observe` feeds `<userDir>/observe.log` (`app/observe.ts`):
+spans over 10 s, every failed span and every counter (`hook.failed`, `hook.timeout`,
+`tool-source.backoff`, `warning`, ...). Library warnings go to `<userDir>/warnings.log` (deduplicated
+per minute). A failed turn shows its error code's hint: a rejected key (`EH_PROVIDER_AUTH`) says
+which variable to set, `EH_LOCK_UNAVAILABLE` says the session storage is unavailable.
 
 ## Providers, models, thinking
 
@@ -131,7 +159,7 @@ UI message chunk per line. Print mode never asks: anything that would need appro
 
 Signals: SIGINT and SIGTERM abort the running turn, kill the process group of every running shell
 command (SIGTERM, then SIGKILL) and exit (130 and 143). A last-resort `exit` handler also kills
-leftover groups.
+leftover groups, and the terminal (cursor, raw input mode) is restored on signals, crashes and unhandled rejections.
 
 Single binary (from `examples/coder`):
 
@@ -239,7 +267,7 @@ messages, free space, autocompact buffer) and lists tools, memory files, message
 Prompt features:
 
 - `!command` runs a shell command directly from the prompt, without the model. It is your own
-  command: no permission check applies.
+  command: no permission check applies. Its output is capped at 30 000 characters (head and tail).
 - `@path` completes file paths from the project (and mounted directories); Tab completes.
 - `--resume` without an id, and `/resume` without an id, open a session picker.
 - `/agents <n>` and `/transcript <n>` open the agent view of run `n` of this session's subagent runs
@@ -449,7 +477,7 @@ The `bash` tool takes two extra inputs, and `agent` takes one:
 Two more tools: **`bash_output { id, filter? }`** returns the output since the last read with status
 and exit code (`filter` is a regex over lines); **`kill_shell { id }`** stops a shell task. The library adds **`agent_output { id, offset?, limit? }`** (the full final report of an agent, paged; also for one-shot agents and after a restart) and **`agent_stop { id }`** (stops a running agent; it stays resumable). Background
 commands use the same sandbox and permission checks as `bash`. Output is capped at 1 MB per task.
-Background mode is the library's (`shell({ background: true })`, `subagents({ background: true })`) on
+Background mode is the library's (`shell({ background: true })`, `subagent({ background: true })`) on
 the **main agent only**: a subagent's own background shells or agents would die with its session.
 
 When a task finishes (or a `notify_on` line matches) the event is delivered to the agent at its next
@@ -607,7 +635,7 @@ as usual. `/context` marks deferred tools and shows the tokens they do not cost.
 `"deferTools": false` to send everything on every request. One MCP server can override the setting
 with `"defer": true | false` in its entry of `mcpServers`.
 
-This is the library's `deferTools` agent option (spec 02 §3.3) plus `mcpServer({ defer })`.
+This is the library's `deferTools` agent option (spec 02 §3.3) plus `mcpServerSource({ defer })`.
 
 ### LSP
 
@@ -869,7 +897,7 @@ rules at run time. `--project` writes to `settings.local.json`; `remove` also re
 that file.
 
 **Audit log.** Every approval decision is appended as a JSON line to
-`~/.coder/projects/<sha256(root)[0:16]>/audit.jsonl`.
+`~/.coder/projects/<sha256(root)[0:16]>/audit.jsonl` (the file is created private, mode 0600, in a 0700 directory).
 
 ## Subagents
 
@@ -922,7 +950,7 @@ Notes:
 - Depth limit: 2 levels of nesting below the main agent; at the limit a child has no `agent` tool.
 - Approvals: a subagent's tool calls go through the same permission engine. A question from a child
   is shown to you in the same prompt UI, labelled with the agent name, and the child waits in
-  process (`subagents({ approvals: 'inline', answer })`). This does not survive a restart; the
+  process (`subagent({ approvals: 'inline', answer })`). This does not survive a restart; the
   library's `'park'` strategy is for split web/server apps (ADR-0035).
 - Messaging: the main agent (and subagents) have `send_message`; start an agent with a `name`
   (`agent { name: "reviewer", … }`) and address it later by name, task id (`agent-2`) or `main`.
@@ -947,7 +975,7 @@ Notes:
   `/init` asks the agent to write an `AGENTS.md` (or update an existing `CLAUDE.md`).
 - **Skills.** If `<root>/.coder/skills/` exists and the project is trusted, it is loaded as a skill
   folder (`SKILL.md` per skill) through the filesystem plugin.
-- **MCP.** `mcpServers` in a settings file maps a server name to an `mcpServer()` transport config.
+- **MCP.** `mcpServers` in a settings file maps a server name to an `mcpServerSource()` transport config.
   A project's `mcpServers` need project trust. Servers are attached to the main agent only; a
   server that fails to configure is skipped with a warning. Requires the optional peer
   `@ai-sdk/mcp`. MCP tools ask in every mode except `bypassPermissions`, unless an allow rule names

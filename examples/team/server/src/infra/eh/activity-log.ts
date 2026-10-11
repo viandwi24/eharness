@@ -10,6 +10,7 @@
  */
 import {
   definePlugin,
+  errorText,
   type HarnessContext,
   type HarnessPlugin,
   type ModelCallEvent,
@@ -127,7 +128,7 @@ export function createActivityLog(options: ActivityLogOptions): ActivityLog {
       writes += 1
       if (writes % pruneEvery === 0 && at - lastPrune >= pruneMinMs) prune()
     } catch (error) {
-      warn(`write failed: ${error instanceof Error ? error.message : String(error)}`)
+      warn(`write failed: ${errorText(error)}`)
     }
   }
 

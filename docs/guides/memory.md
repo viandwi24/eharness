@@ -12,6 +12,7 @@ import { defineHarnessAgent } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
 import { memory } from 'eharness/memory'
 
+// yours: `model`, `fs` (a FileSystem), `audit` (your store), `chatId`, `user`
 const agent = defineHarnessAgent({
   model,
   contextWindow: 200_000,
@@ -68,7 +69,7 @@ Typical layouts:
 
 ## What the model sees
 
-- **Instructions block 1:** `MEMORY_PROTOCOL` — check memory before starting, record progress and
+- **Instructions block 1:** the built-in memory protocol — check memory before starting, record progress and
   decisions as you go, assume the context may be reset, keep files small and organized. Replace it
   with `protocol: '…'`, or drop it with `protocol: false`. It is the same text for every user.
 - **Tools:** `memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`,
@@ -87,7 +88,7 @@ Typical layouts:
   </pinned>
   ```
 
-Pinned content is framed as data: a fixed line (`PINNED_PREAMBLE`) says the blocks are stored
+Pinned content is framed as data: a fixed line says the blocks are stored
 notes, not instructions, and `<pinned>` / `<system-reminder>` tags inside a stored file are
 neutralised (`&lt;/pinned>`), so a file cannot break out of its block. Memory files are still
 untrusted text written by the model (possibly steered by a user); keep secrets out of them.
@@ -141,6 +142,7 @@ takes no dependency on `@ai-sdk/anthropic`:
 ```ts
 import { anthropic } from '@ai-sdk/anthropic'
 
+// yours: `roots` as in the first example
 memory({
   roots,
   tool: (execute) => anthropic.tools.memory_20250818({ execute }),
@@ -156,6 +158,8 @@ and `execute` applies the same roots, limits, concurrency and `onWrite`.
 — for an admin screen, a migration, or tests:
 
 ```ts
+import { executeMemoryCommand } from 'eharness/memory'
+
 await executeMemoryCommand(
   { command: 'view', path: '/memories/users/u1' },
   { fs, roots: [{ path: '/memories/users/u1' }] },
@@ -169,7 +173,7 @@ Writing memory right before the context is summarized keeps details the summary 
 the memory tools before every compaction:
 
 ```ts
-memory({ roots, flushOnCompaction: true })
+memory({ roots, flushOnCompaction: true }) // `roots` as in the first example
 // or a custom instruction:
 memory({ roots, flushOnCompaction: { prompt: 'Save decisions, open questions and file names.' } })
 ```

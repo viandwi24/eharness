@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent, definePlugin } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 function setup() {
-  const storage = { messages: memoryMessages(), state: memoryState() }
+  const storage = { messages: inMemoryMessages(), state: inMemoryState() }
   const starts: string[] = []
   const plugin = definePlugin({
     name: 'starts',

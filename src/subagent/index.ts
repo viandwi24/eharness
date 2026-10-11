@@ -1,6 +1,9 @@
 /**
- * `eharness/subagent`: the `subagents()` plugin (the `agent` tool, child sessions with three
+ * `eharness/subagent`: the `subagent()` plugin (the `agent` tool, child sessions with three
  * approval strategies: inline, park, policy) and `subagentChild()` for `'park'` children.
+ *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
  *
  * @see docs/specs/20-subagent-plugin.md
  */
@@ -11,17 +14,12 @@ export {
   reconcileBackgroundChildren,
 } from './background.ts'
 export {
-  AGENT_MESSAGE_INSTRUCTIONS,
-  AGENT_MESSAGE_MAX_CHARS,
-  AGENT_NAME_PATTERN,
   AGENT_STOP_TOOL,
   SEND_MESSAGE_TOOL,
   type SubagentMessageLimits,
 } from './messaging.ts'
 export {
-  AGENT_OUTPUT_PAGE_CHARS,
   AGENT_OUTPUT_TOOL,
-  AGENT_REPORT_MAX_CHARS,
   AGENT_TOOL,
   pendingSubagentApprovals,
   reconcileSubagentWaits,
@@ -33,12 +31,11 @@ export {
   type SubagentCatalog,
   type SubagentChildInfo,
   type SubagentDefinition,
+  type SubagentOptions,
   type SubagentProgress,
   type SubagentReconcileEntry,
   type SubagentRunData,
-  type SubagentsOptions,
+  subagent,
   subagentChild,
-  subagents,
-  subagentWaitId,
 } from './plugin.ts'
 export type { SubagentTask, SubagentTaskStatus, SubagentTasks } from './tasks.ts'

@@ -13,6 +13,7 @@ import type {
   PublicConfigProfile,
   SecretVault,
 } from '../providers/index.ts'
+import type { OAuthFetchOptions } from './oauth.ts'
 
 export type { SecretVault }
 
@@ -548,6 +549,8 @@ export interface FlowInput {
   action: FlowAction
   /** `form`: the values (secrets may be `{ keep: true }`); `choose`: `{ selected }`. */
   data?: Record<string, unknown>
+  /** The person acting; required when the flow was started with a `principal`. */
+  principal?: string
 }
 
 /** Lifecycle of a flow. */
@@ -572,6 +575,8 @@ export interface FlowState {
   expiresAt: number
   /** SHA-256 hex of the OAuth `state` while waiting for the callback. */
   stateHash?: string
+  /** SHA-256 hex of the principal the flow was started for (see `startFlow`). */
+  principalHash?: string
   /** The scratch space, sealed by the {@link SecretVault}. */
   sealed: string
 }
@@ -584,7 +589,7 @@ export type AdvanceResult =
   | { ok: true; state: FlowState }
   | {
       ok: false
-      error: 'stale-view' | 'expired' | 'finished' | 'invalid-action'
+      error: 'stale-view' | 'expired' | 'finished' | 'invalid-action' | 'principal-mismatch'
       message: string
       state: FlowState
     }
@@ -626,7 +631,15 @@ export interface FlowDeps {
   ) => Record<string, unknown> | undefined | Promise<Record<string, unknown> | undefined>
   /** Flow lifetime. Default 15 minutes. */
   ttlMs?: number
+  /** Network policy of the OAuth requests (private hosts, response size, timeout). */
+  oauth?: OAuthNetworkOptions
 }
+
+/** The parts of `OAuthFetchOptions` a flow or a credential manager forwards to every request. */
+export type OAuthNetworkOptions = Pick<
+  OAuthFetchOptions,
+  'allowPrivateNetwork' | 'isAllowedUrl' | 'allowInsecure' | 'maxResponseBytes' | 'timeoutMs'
+>
 
 /** Which flow asks for an OAuth client configuration (see {@link FlowDeps.clientConfig}). */
 export interface ClientConfigContext {
@@ -651,6 +664,7 @@ export interface ResolvedFlowDeps {
     flow: ClientConfigContext,
   ): Promise<Record<string, unknown> | undefined>
   ttlMs: number
+  oauth: OAuthNetworkOptions
 }
 
 /** What a finished flow produced (secrets included: save it, do not send it). */

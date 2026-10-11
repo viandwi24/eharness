@@ -13,6 +13,7 @@ import {
   definePlugin,
   type HarnessContext,
   type HarnessPlugin,
+  judgeCoordinator,
 } from '../index.ts'
 import type { DecideOptions, PermissionEngine } from './engine.ts'
 import type { ListingFormat, PermissionMode } from './types.ts'
@@ -22,8 +23,8 @@ export type ModeSource =
   | PermissionMode
   | ((ctx: HarnessContext) => PermissionMode | undefined | Promise<PermissionMode | undefined>)
 
-/** Options of {@link permissionsPlugin}. */
-export interface PermissionsPluginOptions {
+/** Options of {@link permissions}. */
+export interface PermissionsOptions {
   engine: PermissionEngine
   /**
    * Mode of this plugin instance instead of the engine's global mode (spec 18 §7):
@@ -96,7 +97,8 @@ const EXIT_PLAN_DESCRIPTION =
  * `turn.prepare` has no tool list in its event, so tool availability is applied in `step.prepare`
  * only (it runs before every model call, so a mode change takes effect at the next step).
  */
-export function permissionsPlugin(opts: PermissionsPluginOptions): HarnessPlugin<'permissions'> {
+export function permissions(options: PermissionsOptions): HarnessPlugin<'permissions'> {
+  const opts = options
   const { engine } = opts
   const modeOption = opts.mode
   const fixed = typeof modeOption === 'string'
@@ -131,6 +133,9 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): HarnessPlugin
           const own = await modeOf(ctx as HarnessContext)
           const turn = (ctx as HarnessContext).turn
           const options: DecideOptions = { toolCallId: e.toolCallId, transcript: e.transcript }
+          // the guard of this session (if any) may share the classifier's model call (spec 15 §7)
+          options.coordinator = judgeCoordinator(ctx.signal)
+          options.risk = e.risk ?? 'unknown'
           if (own !== undefined) options.mode = own
           if (turn?.abortSignal !== undefined) options.abortSignal = turn.abortSignal
           const decision = await engine.decideAsync(

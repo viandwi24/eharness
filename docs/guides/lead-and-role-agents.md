@@ -1,7 +1,7 @@
 # Lead and role agents
 
 A team of agents (a lead that plans and hands work to role agents such as a researcher or a
-writer) is a **convention** on top of `subagents()`, not a library role
+writer) is a **convention** on top of `subagent()`, not a library role
 ([P32](../plans/P32-team-example.md), decision D4). eharness already has the parts: named agents,
 the `agent` tool, park approvals, `send_message`, a roster, the parent/child index and the durable
 inbox. This guide shows how to put them together; the full app is
@@ -16,20 +16,22 @@ inbox. This guide shows how to put them together; the full app is
 ## 1. The roster comes from definitions
 
 Keep agent definitions as data (a row: slug, name, description, instructions, model, tool names)
-and build the `subagents` catalog from them. `agents` accepts a function, read once per session, so
+and build the `subagent` catalog from them. `agents` accepts a function, read once per session, so
 editing a definition changes who the lead can call.
 
 ```ts
 import { defineHarnessAgent, type HarnessAgent } from 'eharness'
-import { subagents } from 'eharness/subagent'
+import { subagent } from 'eharness/subagent'
 
+// yours: model, storage (one shared StorageConfig), definitions (your agent rows), agentFor(def)
+// (builds a HarnessAgent per definition), LEAD_PLAYBOOK (the lead's instructions)
 const holder: { lead?: HarnessAgent } = {}
 const lead = (holder.lead = defineHarnessAgent({
   model,
   storage, // one storage for every agent: children register in the parent's state
   instructions: [LEAD_PLAYBOOK, 'You are the lead.'],
   plugins: [
-    subagents({
+    subagent({
       agents: () =>
         Object.fromEntries(
           definitions.map((d) => [d.slug, { agent: agentFor(d), description: d.description, maxTurns: 30 }]),
@@ -76,10 +78,11 @@ completion resumes the lead by itself. `reconcileSubagentWaits` (run for you whe
 ```ts
 import { pendingSubagentApprovals } from 'eharness/subagent'
 
+// yours: lead (the lead agent), roleAgent (an agent that runs the children), parentId, approvalId
 // listing opens read handles (peek): it never resumes a parked child
 const waiting = await pendingSubagentApprovals(lead.peek(parentId), roleAgent)
 // each entry: { sessionId (the child), parentSessionId, pending, agent?, name? }
-await roleAgent.session(waiting[0].sessionId).respond({ approvals: [{ id, approved: true }] })
+await roleAgent.session(waiting[0].sessionId).respond({ approvals: [{ id: approvalId, approved: true }] })
 ```
 
 Read without waking anything: `agent.peek(sessionId)` gives messages, pending, usage and children
@@ -89,7 +92,7 @@ with no `session.start` hooks (a plain `session()` open can resume a parked lead
 **A lead that stays free to chat.** A foreground park (`run_in_background: false`) holds the lead's
 turn on an external wait, and a new user message cancels that wait (`onNewInput: 'deny'`, spec 11
 §4.1). For a lead that delegates and keeps talking, set `background: { default: true }` on its
-`subagents({ approvals: 'park', ... })` and tell it in the prompt that delegations run in the
+`subagent({ approvals: 'park', ... })` and tell it in the prompt that delegations run in the
 background and reports arrive later as events (it must not wait for them or poll). The child runs
 from its durable inbox in any instance, its approvals are answered on the child session, and its
 report wakes the lead through storage. The `agent` call stores a `data-subagent.run` marker with the
@@ -108,10 +111,11 @@ park mode too, over the inbox ([ADR-0041](../decisions/0041-park-mode-messaging.
 Needs shared storage with an inbox, `selfAgent` on the lead and a child side on every role agent:
 
 ```ts
+// yours: ROLE_NOTE (instructions), tools (the role's tools)
 const role = defineHarnessAgent({
   model, storage, instructions: ROLE_NOTE, tools,
   plugins: [
-    subagents({ agents: {}, approvals: 'park', parentAgent: () => holder.lead!, selfAgent: () => role }),
+    subagent({ agents: {}, approvals: 'park', parentAgent: () => holder.lead!, selfAgent: () => role }),
   ],
 })
 ```
@@ -136,11 +140,12 @@ Use the cross-session ledger so that **every** agent of a workspace, on every in
 against one limit; child cost is also added to the parent turn.
 
 ```ts
+// ledger: yours (inMemoryBudgetLedger() from eharness/storage/memory in tests)
 defineHarnessAgent({
   // ...
   budget: {
     ledger: {
-      adapter: ledger, // memoryBudgetLedger in tests, your database in production
+      adapter: ledger, // inMemoryBudgetLedger in tests, your database in production
       scopes: (ctx) => [`workspace:${ctx.runtime.workspaceId}`],
     },
   },

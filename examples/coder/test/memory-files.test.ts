@@ -18,7 +18,7 @@ describe('memory files', () => {
       'node_modules/x/AGENTS.md': 'ignored',
     })
     await writeFiles(userDir, { 'AGENTS.md': 'user rules' })
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     const list = await listMemoryFiles({ fs, root, userDir })
     expect(list.map((f) => [f.path, f.scope, f.exists])).toEqual([
       ['~/.coder/AGENTS.md', 'user', true],
@@ -40,14 +40,14 @@ describe('memory files', () => {
     const root = await tempDir()
     const userDir = await tempDir()
     await writeFiles(root, { 'AGENTS.md': 'agents' })
-    const list = await listMemoryFiles({ fs: diskFs(root), root, userDir })
+    const list = await listMemoryFiles({ fs: diskFs({ root }), root, userDir })
     expect(list[1]).toMatchObject({ path: 'AGENTS.md', exists: true })
   })
 
   test('missing files are listed as not existing', async () => {
     const root = await tempDir()
     const userDir = await tempDir()
-    const list = await listMemoryFiles({ fs: diskFs(root), root, userDir })
+    const list = await listMemoryFiles({ fs: diskFs({ root }), root, userDir })
     expect(list.map((f) => [f.path, f.exists])).toEqual([
       ['~/.coder/AGENTS.md', false],
       ['AGENTS.md', false],

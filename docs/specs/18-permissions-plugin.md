@@ -12,7 +12,7 @@ so the same engine serves all three deployment profiles (§9).
 ## 1. Usage
 
 ```ts
-import { createPermissionEngine, permissionsPlugin } from 'eharness/permissions'
+import { createPermissionEngine, permissions } from 'eharness/permissions'
 
 const engine = createPermissionEngine({
   roots: () => [{ virtual: '/', real: '/work/proj' }],   // what the file tools address
@@ -21,7 +21,7 @@ const engine = createPermissionEngine({
   rules: { allow: ['Bash(bun test *)', 'Edit(src/**)'], deny: ['Read(~/.ssh/**)'] },
   protectedPaths: ['.git', '.app/settings*.json'],
 })
-defineHarnessAgent({ model, plugins: [filesystem({ fs }), permissionsPlugin({ engine })] })
+defineHarnessAgent({ model, plugins: [filesystem({ fs }), permissions({ engine })] })
 ```
 
 ```ts
@@ -37,6 +37,7 @@ export interface PermissionEngineOptions {
   aliases?: Record<string, readonly string[]>           // merged over DEFAULT_ALIASES
   modeCycle?: readonly PermissionMode[]                 // default ['default','acceptEdits','plan'], see modeCycleFor
   classifier?: AutoClassifier                           // enables `auto` mode, §12
+  realpath?: (real: string) => Promise<string | undefined>   // symlink-aware matching in decideAsync, §5
   persist?: (rules: PermissionRules, change: RuleChange) => void | Promise<void>
 }
 
@@ -46,7 +47,7 @@ export interface PermissionEngine {
   decide(call: PermissionCall, mode?: PermissionMode): PermissionDecision
   decideAsync(call, options?: DecideOptions): Promise<PermissionDecision>   // decide + the auto classifier (§12)
   autoAvailable: boolean;  autoState(): AutoState;  noteApproval(toolCallId?);  resumeAuto();  subscribeAuto(listener): () => void
-  suggestRule(call): string | undefined
+  suggestRule(call): string | undefined;  grantScope(call): string | null | undefined   // §7
   allow(rule): Promise<void>;  addRule(kind, rule): Promise<void>;  removeRule(kind, rule): Promise<boolean>
   rules(): PermissionRules
   inactiveTools(mode?, toolNames?): string[]
@@ -55,18 +56,18 @@ export interface PermissionEngine {
   modeBeforePlan();  setPlanExitMode(mode);  planExitMode();  leavePlanMode()
 }
 
-export function permissionsPlugin(opts: PermissionsPluginOptions): HarnessPlugin<'permissions'>
-export function parseCommand(command: string): ParsedCommand
+export function permissions(opts: PermissionsOptions): HarnessPlugin<'permissions'>
 export function isReadOnlyCommand(command: string, filter?: ReadonlySet<string>): boolean
 export function matchRule(rule: string, call: PermissionCall, options: MatchRuleOptions): boolean
 ```
 
-Also exported: `parseRule`, `matchBashSpec`, `domainSpecifierMatches`, `isReadOnlySubcommand`,
-`readPathArguments`, `isGlobArg`, `READ_ONLY_COMMAND_NAMES`, `DEFAULT_TOOL_KINDS`,
-`DEFAULT_ALIASES`, `DEFAULT_BUILTIN_ASK`, `DEFAULT_PROTECTED_PATHS`, `DEFAULT_MODE_CYCLE`,
-`PERMISSION_MODES`, `DONT_ASK_REASON`, `PLAN_MODE_REASON`, `modeCycleFor`, `modelClassifier`,
-`AUTO_CLASSIFIER_INSTRUCTIONS`, `AUTO_PAUSED_REASON`, `AUTO_MAX_CONSECUTIVE_BLOCKS`,
-`AUTO_MAX_TOTAL_BLOCKS` and the types.
+Also exported: `parseRule`, `domainSpecifierMatches`, `DEFAULT_TOOL_KINDS`,
+`DEFAULT_PROTECTED_PATHS`, `DEFAULT_MODE_CYCLE`, `PERMISSION_MODES`, `DONT_ASK_REASON`,
+`PLAN_MODE_REASON`, `AUTO_PAUSED_REASON`, `modeCycleFor`, `modelClassifier`,
+`ClassifierUnavailableError` and the types. The command tokenizer (`parseCommand`), the rule
+matching helpers for shell specifiers, the read-only grammar tables, the default aliases,
+`DEFAULT_BUILTIN_ASK` (values in the options above), the auto-pause limits and the classifier
+instructions are internal.
 
 `decide` is **deterministic and free of side effects** (the core calls `tool.approve` again for
 approved calls, spec 11 §3). The engine holds three pieces of mutable state: the rules, the mode
@@ -94,7 +95,12 @@ A rule is `Tool` or `Tool(specifier)`. The tool part is an **alias** or a tool n
 (the root mounted at `/`); a pattern **without a slash** (`.env*`, `secrets`) matches at any
 depth in the project root **and inside every other root**. A trailing `/` matches directories
 only; `**` any number of directories; negations (`!`) never un-match. `*` and `?` do match a
-leading dot (they are gitignore patterns, not shell globs).
+leading dot (they are gitignore patterns, not shell globs). They are compiled by the shared core
+compiler (`compileGitignorePattern`, options `dot`, `gitignore`, `caseFold`) that also serves the
+`glob` tool, `diskFs` ignore files, OpenAPI path filters and provider model filters; consecutive
+`**` collapse and a pattern with more than 4 `**` segments or 8 `*` wildcards is not compiled
+(an uncompilable rule never matches; invalid initial rules throw as before). Trailing spaces of a
+case-insensitive pattern are dropped like in the case-sensitive one.
 
 **Aliases** (`DEFAULT_ALIASES`): `Read` = every tool of kind `read`; `Edit` and `Write` = kind
 `write`; `Bash` = kind `shell`; `WebFetch` = `fetch`; `WebSearch` = `search`; `Agent` = `agent`.
@@ -120,9 +126,7 @@ after `allow(rule, scope?)`, `addRule(kind, rule, scope?)` and `removeRule` chan
 rules; the returned promise is what those methods return. The library stores nothing. `scope`
 defaults to `'project'`. A rule added with scope `'session'` takes effect at once but is not
 stored: `persist` is not called and later copies leave it out (adding it again at `'project'`
-scope promotes it). `removeRule` of a session rule does not call `persist` either. The extra
-`change` argument is backwards compatible with `persist(rules)` callbacks; the changed `allow` and
-`addRule` signatures only add an optional parameter.
+scope promotes it). `removeRule` of a session rule does not call `persist` either. 
 
 ## 3. Tool map
 
@@ -144,7 +148,7 @@ interface ToolKindSpec {
 
 `DEFAULT_TOOL_KINDS` describes eharness's own tools: `read_file`, `list_files`, `grep`, `glob`
 (read), `edit_file` (including `edits[]`; only `path` matters), `write_file`, `delete_file`
-(write), `bash` (shell, `eharness/shell`), `bash_output`, `kill_shell`, `todo_write` (safe),
+(write), `bash` (shell, `eharness/shell`), `bash_output`, `kill_shell`, `todo_write`, `agent_output`, `agent_stop` (safe),
 `memory_view`, `memory_create`, `memory_str_replace`, `memory_insert`, `memory_delete`, `memory_rename` (safe: `eharness/memory` confines them to the agent's own memory roots, not the project, so they are approved in every mode including `plan`; use `toolKinds` to make them `write` or `alwaysAsk` when notes need approval),
 `web_fetch`, `web_search`, the core tools `tool_search`, `load_skill`, `read_skill_file`, `search_skills` (safe, so deferred tools stay discoverable in `plan` mode), `agent`, `send_message` (safe: it only reaches agents that already run under the same rules, ADR-0038), `ask_user_question`, `exit_plan_mode`. A tool the map does not
 know is `other`. Pass `toolKinds` to add or override (`{ run: { kind: 'shell', commandField: 'cmd' } }`).
@@ -195,9 +199,11 @@ servers (profile a) run in `dontAsk`, so such tools are denied there.
    path. Not in bypass. A directory read recursively (`grep -rn x src`) is **not** covered by the
    built-in ask (it would make every recursive grep prompt); a glob that could name env files
    (`cat .e*`) and explicit paths are. User `Read` rules cover subtrees (steps 5, 6).
-   **Known gap:** a recursive `grep`/`find` through `bash` can therefore read `.env` files without
-   asking. Add `Read(**/.env*)` deny/ask rules (they do cover subtrees) or use the OS sandbox
-   `denyRead` to prevent it.
+   **Recursive reads are lexical unless the engine gets `containsProtected`** (§5): without it a
+   recursive `grep`/`rg`/`find -exec` through `bash` can read `.env` files without asking. With it,
+   `decideAsync` looks into the directory: a `Read` deny rule match denies (checked with the deny
+   rules, step 1), a built-in ask or protected-path match asks here (an allow rule overrides it
+   like it does for an explicit read; not in bypass).
 9. **mode default** (§3).
 
 A per-call mode (`decide(call, 'plan')`) replaces the engine's mode; the engine's own `dontAsk`
@@ -221,7 +227,7 @@ settings) is the application's: it passes the result as `modeCycle`.
 The model — or a prompt injection steering it — chooses the command line. Everything below is
 **text analysis**; nothing here runs a command. When in doubt the analysis refuses (asks).
 
-**Parsing** (`parseCommand`, own tokenizer: no dependency). Words, single/double quotes, backslash
+**Parsing** (an own tokenizer: no dependency). Words, single/double quotes, backslash
 escapes, comments (to end of line), operators `&& || ; | |& & ( ) < > >> >& &> …` and newlines.
 Result: `subcommands` (wrappers stripped, whitespace normalised), `redirects` (`>`, `>>`, `2>`,
 `&>`, `tee` arguments), `inputs` (`<` targets), `xargs` and `complex`.
@@ -237,7 +243,7 @@ Result: `subcommands` (wrappers stripped, whitespace normalised), `redirects` (`
   3), so deny and ask rules see them.
 - A comment ends at the newline, so a command after it is still parsed.
 
-**Deny and ask normalisation (0.8, `restrictiveForms`).** Only deny and ask rules (and the
+**Deny and ask normalisation.** Only deny and ask rules (and the
 built-in asks) match a second, normalised view of each subcommand; allow rules never do, so this
 cannot widen an approval. The extra forms: a leading `!` and control keywords dropped; every
 `VAR=x` assignment dropped; an absolute or relative program path reduced to its name (`/bin/rm`,
@@ -248,7 +254,7 @@ cannot widen an approval. The extra forms: a leading `!` and control keywords dr
 the same way (nested to depth 4). A payload that cannot be parsed (empty, no command) makes the
 call ask when any deny or ask rule exists. So `deny: ['Bash(rm:*)', 'Bash(git push:*)']` denies `! rm x`,
 `/bin/rm x`, `sudo rm x`, `env A=1 rm x`, `sh -c "rm -rf /"`, `git -C . push`, `git --no-pager push`
-and `git -c x=y push`. Still best-effort: `busybox rm`, an aliased or renamed binary, `find -exec`,
+and `git -c x=y push`. `busybox <applet>` and the commands after `find … -exec|-execdir` (and `xargs`) are looked through too. Still best-effort: an aliased or renamed binary,
 a script that runs the program, or a variable-built command name are not seen.
 
 **Read-only commands** (`isReadOnlyCommand`). Auto-approved (default, plan, acceptEdits; bypass skips
@@ -271,8 +277,7 @@ positionals and what each is. A deny-list always loses to a flag nobody thought 
 | `echo tr which basename dirname whoami true false` | text arguments | any `$` expansion or backtick |
 | `node bun` | `--version` / `-v` | everything else |
 
-`readOnlyCommands: ['ls', 'git']` restricts the list to those names; `[]` disables auto-approval
-(`READ_ONLY_COMMAND_NAMES` lists them). `tree` is not on the list (`-o FILE` writes). Residual limit:
+`readOnlyCommands: ['ls', 'git']` restricts the list to those names; `[]` disables auto-approval. `tree` is not on the list (`-o FILE` writes). Residual limit:
 a repository's own git config (`diff.external`, textconv drivers, pager) can run programs for
 `git diff|log|show`.
 
@@ -283,8 +288,48 @@ and none is unresolvable: `$` expansion in any argument, `~user`, brace expansio
 Outside paths ask. `Read` deny/ask rules (and the built-in `.env` ask, for explicit paths and globs
 only) are matched against the paths: a deny match denies, an ask match asks. A **directory read recursively** (`grep -r KEY .`,
 `rg KEY`) or a **glob** (`cat .e*`) covers its subtree: if any user `Read` deny/ask rule *could* match
-something there, the command asks. Lexical resolution does not follow symlinks; a file system
-adapter that exposes symlinks must enforce its own path guard (spec 08).
+something there, the command asks. Matching is lexical unless the engine gets the **`realpath`
+option** (`nodeRealpath` from `eharness/filesystem/node`): then `decideAsync` also resolves the
+file tools' paths and the path words of a shell command through symlinks. Protected paths and
+`deny`/`ask`/built-in rules match the lexical **or** the resolved path (so a committed `g -> .git` or
+`x -> .env` keeps its protection); an `allow` rule must match both. `decide` (sync) and adapters
+without a resolver stay lexical; a file system adapter that exposes symlinks must still enforce its
+own path guard (spec 08).
+
+**Recursive reads and `containsProtected`.** The engine cannot list directories (core is
+runtime-neutral), so a directory read recursively is judged lexically: a user `Read` deny/ask rule
+that could match something below it asks, but the built-in `.env*` ask and the protected paths do
+not (they would make every `grep -r` prompt). The optional `containsProtected(realDir, patterns)`
+option closes this: `decideAsync` calls it for every directory a command reads recursively and acts
+on the answer. The directories are found per command: the read-only grammar's recursive commands
+(`grep -r/-R/--recursive`, `rg`; default `.`, an explicit file argument is not a directory read) and
+the commands outside it that recurse (`ag`, `ack`, `find` with `-exec`/`-execdir`/`-ok` unless
+`-maxdepth 0|1`, `cp -r|-a`, `rsync -r|-a` (sources), `tar`, `zip -r`). `patterns` are gitignore-style:
+the relative specifiers of the `Read` deny rules (one call), then the built-in ask specifiers plus
+`protectedPaths` (a second call); when the deny call matches, the deny rule is found by asking per
+rule. `true` means "something below `realDir` matches": a deny match makes the call `denied`, the
+other match makes it `user-approval`. A rejection counts as `true` (fail closed), a command with
+more than 8 such directories asks without looking, and `decide` (sync) never calls it. Implementations
+must fail closed when they give up: `nodeContainsProtected` (`eharness/filesystem/node`) walks the
+tree breadth first, never follows symlinks, honours no `.gitignore` (a `.env` in `node_modules` still
+matches) and answers `true` when it exceeds 32 levels, 50 000 entries or 2 s. A `.git` directory is
+a protected path, so with the default `protectedPaths` a recursive `grep -r` from a repository root
+asks; narrow it with `--exclude-dir=.git`-style commands, an allow rule (`Bash(grep *)`) or a
+smaller `protectedPaths`.
+
+**Deny rules are best effort.** The normalised view looks through `sudo`, `doas`, `env`, `exec`,
+`nohup`, `command`, `builtin`, `time`, `nice`, `timeout`, `xargs [flags]`, `find … -exec|-execdir|-ok
+… ;|+`, `busybox`, `setsid`, `flock <file>`, `sh|bash|… -c` and `eval`. It cannot see through an
+interpreter (`python -c`, `node -e`, `perl -e`, `ruby -e`, `php -r`) or a script: an allow rule with
+a wildcard (`Bash(python3 *)`) never approves a command that runs inline interpreter code, it asks
+(only an exact, wildcard-free rule approves it). The **OS sandbox (spec 19 §6) is the real
+boundary**; rules, protected paths and the read-only grammar are guard rails for the common cases.
+
+**Session grants and suggested rules** (`grantScope`, `suggestRule`) are scoped to `prog sub` but
+never cover a high-risk flag: `--force*`, `-f` of `git push`, `--hard`, `--privileged`, `--mount`,
+`--pid|net|network|ipc|userns=host`, `-v|--volume` of an absolute path, `rm` with `-r/-R/-f`. A
+command carrying one gets no grant (`grantScope` returns `null`, so it asks every time) and only an
+exact rule is suggested.
 
 **acceptEdits** additionally approves `mkdir`, `touch`, `mv`, `cp` whose paths are inside writable
 roots, outside protected paths, with no `-t`/`--target*`/`--`, no `$`, no redirect.
@@ -307,7 +352,7 @@ name (NFC), so `cp x .git./config` asks.
 
 ## 7. The plugin
 
-`permissionsPlugin({ engine, mode?, allowedTools?, disallowedTools?, planExitTool?, filterOutputs?, onDecision?, onPlanExit? })`
+`permissions({ engine, mode?, allowedTools?, disallowedTools?, planExitTool?, filterOutputs?, onDecision?, onPlanExit? })`
 (name `permissions`). Hooks and contributions:
 
 | Where | What |
@@ -359,15 +404,15 @@ approving a plan.
 any instance decides the same way after a restart. Approvals surface as `tool-pending`; the
 browser answers through `respond()` (spec 11 §4). The rules and the mode are application state:
 load them into the engine at request time (`createPermissionEngine({ rules: await loadRules(tenant), mode })`,
-engines are cheap) or pass `permissionsPlugin({ mode: (ctx) => modes.get(ctx.session.id) })`. Store
+engines are cheap) or pass `permissions({ mode: (ctx) => modes.get(ctx.session.id) })`. Store
 a remembered answer with `persist` or from `suggestRule`; store the continuing mode from
 `onPlanExit`. A user's session-level "always allow" is the core's `remember: 'session'` grant (spec
 11 §3.1), which this module does not duplicate.
 
 ## 12. Auto mode (Draft)
 
-> **Draft / experimental (0.7).** The `auto` mode, the `classifier` option, `modelClassifier()`, the
-> auto-pause counters and `AUTO_CLASSIFIER_INSTRUCTIONS` may change in a minor release
+> **Draft / experimental (0.7).** The `auto` mode, the `classifier` option, `modelClassifier()` and
+> the auto-pause counters may change in a minor release
 > ([API stability](../engineering/api-stability.md)).
 
 Modelled on Claude Code's auto mode: a classifier model reviews the actions no rule settles, so
@@ -377,7 +422,7 @@ things without a human. `auto` is a `PermissionMode` and needs `classifier` in t
 ```ts
 type AutoClassifier = (action: AutoAction, ctx: AutoClassifierContext) => Promise<AutoVerdict> | AutoVerdict
 interface AutoAction { toolName; input; kind: ToolKind; summary?: string /* command or URL */; agent?: string }
-interface AutoClassifierContext { transcript: readonly GuardTranscriptEntry[]; abortSignal?: AbortSignal }
+interface AutoClassifierContext { transcript: readonly GuardTranscriptEntry[]; abortSignal?: AbortSignal; coordinator?: JudgeCoordinator; toolCallId?: string; risk?: string }
 interface AutoVerdict { decision: 'allow' | 'block'; reason?: string }
 ```
 
@@ -404,6 +449,7 @@ runs it:
 - `allow` → `{ status: 'approved', auto: 'allowed' }`; resets the consecutive-block counter.
 - `block` → `{ status: 'denied', auto: 'blocked', reason }`. The reason ("Auto mode blocked this
   action: …") reaches the model as the tool result, so it can choose another way; the block is counted.
+- A classifier verdict `ask` (`AutoVerdict.decision`) is neither allow nor block: a person decides (no counter). `modelClassifier` returns it when the action summary exceeds 2000 characters or the input exceeds `maxCallChars` (default 8 000, the same option and default as `guard()`; `maxContext.maxChars` bounds the transcript only): the judge never sees a truncated action (fail closed).
 - A classifier that throws, or returns something unreadable → blocked with a reason
   (**fail closed**) and counted.
 - A classifier that **could not run** (it throws `ClassifierUnavailableError`: provider error, no
@@ -419,8 +465,18 @@ runs it:
   dropped and the new mode decides (usually an ask).
 - `dontAsk` (global) still turns what would be an ask into a denial; the classifier is not called.
 
+**With an approval guard (one call).** The permissions plugin passes `judgeCoordinator(ctx.signal)`,
+the `toolCallId` and the tool risk to `decideAsync` (`DecideOptions.coordinator`, `risk`) and on to
+the classifier (`AutoClassifierContext`). `modelClassifier()` uses them to judge a call together
+with the session's `guard()` in one model call when both use the same model and limits (spec 15
+§7). The engine only sees the auto half: `allow`/`block`/`ask` and the counters behave exactly as
+with a separate classifier; the guard's objection reaches the call through the guard's own
+`tool.approve` answer (most restrictive wins), so auto allow + guard deny is denied with the guard
+reason and auto allow + guard ask asks a person. The classifier cache is bypassed for combined
+calls. Paused auto mode, `bypassPermissions`, rule-settled calls and other models: no combining.
+
 **Fallback (repeated blocks).** 3 blocks in a row, or 20 in total, **pause** auto mode
-(`AUTO_MAX_CONSECUTIVE_BLOCKS`, `AUTO_MAX_TOTAL_BLOCKS`; fixed like in Claude Code). While paused,
+(fixed limits, like in Claude Code). While paused,
 calls that would be classified ask a person (`auto: 'paused'`, `AUTO_PAUSED_REASON`); rules and
 read-only checks work as before. A person's approval (`approval.decided` with `by: 'user'`;
 `noteApproval()` for apps that answer elsewhere) or `resumeAuto()` or entering `auto` again resumes;
@@ -432,19 +488,27 @@ and notices: `autoState(): { paused, consecutive, total }` and
 The counters live in the engine instance (one per session in a CLI); the library does not persist
 them.
 
-**`modelClassifier({ model, instructions?, environment?, maxContext?, timeoutMs?, maxRetries?, maxOutputTokens?, temperature? })`**
-is the ready classifier: one AI SDK `generateText` call with `Output.object` (`{ decision, reason }`).
-The default rules are the exported `AUTO_CLASSIFIER_INSTRUCTIONS` (extend it:
-`${AUTO_CLASSIFIER_INSTRUCTIONS}\n…`, or replace through `instructions`): block downloading and
+**`modelClassifier({ model, instructions?, environment?, maxContext?, timeoutMs?, maxRetries?, maxOutputTokens?, temperature?, cache?, onModelCall? })`**
+is the ready classifier: a thin wrapper over the **shared judge engine** (`createJudge` in core,
+role `decide`; [ADR-0060](../decisions/0060-shared-llm-judge-engine.md), guide
+[LLM judge: two modes](../guides/llm-judge.md)): one AI SDK `generateText` call with `Output.object`
+(`{ decision: 'allow' | 'block', reason }`). Role `decide` is the one that may approve; the same engine
+under `guard()` (spec 15) runs with role `tighten` and never approves. The engine's
+verdict cache is **off** here by default (`cache: { maxEntries?, ttlMs? }` turns it on, in the
+classifier's own memory): a cached allow would ignore a boundary the user states later. Its
+circuit breaker is off too: the engine's pause logic above is the breaker in this mode.
+The default rules are internal text (replace them through `instructions`): block downloading and
 running code, sending secrets out, production deploys, irreversible destruction, force pushes;
 allow routine work in the working directory; a boundary the user stated in the conversation blocks
 matching actions until lifted; an explicit approval naming the action and what makes it dangerous
-clears one block. `environment` describes trusted infrastructure. The prompt carries the restricted
-transcript (spec 11 §3.4: user messages and earlier tool calls, **never tool outputs**, so a prompt
-injection in a file or page cannot reach it), the call under review is left out of it, and the
-action's input is framed as data. The call sets `maxOutputTokens` (default `DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS` = 1024: a verdict
+clears one block. `environment` describes trusted infrastructure (framed as `<environment>`). The
+prompt carries the restricted transcript (spec 11 §3.4: user messages and earlier tool calls,
+**never tool outputs**, so a prompt injection in a file or page cannot reach it) as a JSON array in
+`<transcript>`, the call under review is left out of it, and the action (tool, kind, summary, input)
+is framed as data in `<action>`; frame tags inside untrusted text are neutralised (the renderer is
+shared with the guard). The call sets `maxOutputTokens` (default 1024: a verdict
 is one short sentence, and a provider default of the model maximum makes gateways reserve and bill
-for tens of thousands of tokens per permission decision) and `temperature` (default 0).
+for tens of thousands of tokens per permission decision) and `temperature` (default 0); `timeoutMs` defaults to 20 000, `maxRetries` to 1, `maxContext` to `{ maxEntries: 20, maxChars: 12_000 }` (transcript only), `maxCallChars` to 8 000 (the longest action input judged; longer asks a person); `onModelCall(record)` receives one model-call record per classification (activity logs, spec 12 §7).
 Use a cheap fast model; its usage is the application's to track
 (it is not charged to the turn).
 
@@ -462,16 +526,15 @@ review are not part of this module.
 - `bun test *` as a suggested prefix rule: `bun` is treated like every interpreter (exact command).
 - `describeApproval` (human-readable approval titles) and the approval broker: UI concerns.
 - Hard-coded tool names, `.coder` protected paths, the `/.coder/tool-outputs/` mount special case
-  (now `workingDir: false`).
-- Invalid initial rules were silently ignored; they now throw `EH_CONFIG_INVALID`.
+  (modelled with `workingDir: false`).
 - shell-quote and `ignore`: replaced by an in-module tokenizer and gitignore matcher. Behaviour
-  differences: a comment now ends at the newline; `$'…'` and `$"…"` are complex; a digit is a file
+  differences: a comment ends at the newline; `$'…'` and `$"…"` are complex; a digit is a file
   descriptor only when attached to the redirect (`echo 2 > f` keeps `2`).
 
 ## 11. Limits
 
 - Paths are POSIX strings; `real` is a namespace for rules and shell commands, not necessarily a
-  disk. There is no symlink resolution and no Windows path support.
+  disk. Symlinks are resolved only with the `realpath` option (§5); there is no Windows path support.
 - Glob arguments of auto-approved read-only commands must stay inside the working directories:
   a glob segment that can expand to `..` (`.[.]`, `.?`, `.*`, `[.][.]`, `.[!x]`, `..*`; a segment
   starting with `*` or `?` cannot, a shell never matches a leading dot with them) makes the path
@@ -489,7 +552,7 @@ review are not part of this module.
   command, a redirect, a command mentioning a protected path or one with `*` is never remembered
   (approved once, asks again). Grants of other tools stay per tool name: one approved edit makes
   every later edit of the session that would ask run unasked. A grant never overrides `denied`.
-  Old per-tool grants of a shell tool (stored before 0.8) are ignored: the call asks again.
+  Per-tool grants of a shell tool are ignored: the call asks again.
   Offer `remember` only where that is acceptable (`allowRemember: false` in `eharness/http`), or
   grant by rule (`persist`) instead.
 - The shell analysis is a gate, not a sandbox: run the shell tool in an OS sandbox (`eharness/shell`) when

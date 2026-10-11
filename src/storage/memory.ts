@@ -2,6 +2,8 @@
  * `eharness/storage/memory`: in-memory `MessageAdapter`, `StateAdapter`, `InboxAdapter`, `BudgetLedger` and `StreamLogAdapter`.
  *
  * Useful for tests, prototypes and single-process apps that do not need history after a restart.
+ * These adapters are for tests and single-process apps only: nothing is shared between processes and
+ * nothing survives a restart. Production needs a durable adapter (see `examples/`).
  * Every read and write deep-copies, so callers can never change stored data by mutating objects.
  *
  * Imports core only through `src/index.ts` (ADR-0008).
@@ -11,6 +13,7 @@
 import {
   type BudgetLedger,
   type DeadInboxItem,
+  HarnessError,
   type InboxAdapter,
   type InboxItem,
   type InboxItemInput,
@@ -32,12 +35,12 @@ type StoredMessage = Parameters<MessageAdapter['save']>[1][number]
  *
  * @example
  * ```ts
- * // import { memoryMessages, memoryState } from the eharness/storage/memory subpath
- * defineHarnessAgent({ model, storage: { messages: memoryMessages(), state: memoryState() } })
+ * // import { inMemoryMessages, inMemoryState } from the eharness/storage/memory subpath
+ * defineHarnessAgent({ model, storage: { messages: inMemoryMessages(), state: inMemoryState() } })
  * ```
  * @see docs/specs/05-session-and-storage.md#4-messageadapter-the-storage-contract
  */
-export function memoryMessages(): MessageAdapter {
+export function inMemoryMessages(): MessageAdapter {
   const sessions = new Map<string, Map<string, StoredMessage>>()
 
   const sorted = (sessionId: string): StoredMessage[] => {
@@ -49,7 +52,10 @@ export function memoryMessages(): MessageAdapter {
   return {
     async load(q) {
       if (q.fromId !== undefined && q.beforeId !== undefined) {
-        throw new TypeError('MessageAdapter.load: pass either fromId or beforeId, not both.')
+        throw new HarnessError(
+          'EH_INVALID_INPUT',
+          'MessageAdapter.load: pass either fromId or beforeId, not both.',
+        )
       }
       let result = sorted(q.sessionId)
       if (q.fromId !== undefined) {
@@ -83,12 +89,12 @@ export function memoryMessages(): MessageAdapter {
  *
  * @example
  * ```ts
- * const state = memoryState()
+ * const state = inMemoryState()
  * defineHarnessAgent({ model, storage: { state } })
  * ```
  * @see docs/specs/05-session-and-storage.md#7-state
  */
-export function memoryState(): StateAdapter {
+export function inMemoryState(): StateAdapter {
   const snapshots = new Map<string, SessionStateSnapshot>()
   return {
     async get(sessionId) {
@@ -108,8 +114,8 @@ export function memoryState(): StateAdapter {
   }
 }
 
-/** Options of {@link memoryInbox}. */
-export interface MemoryInboxOptions {
+/** Options of {@link inMemoryInbox}. */
+export interface InMemoryInboxOptions {
   /** Clock used for claim expiry, backoff delays and `availableAt` (tests). Default `Date.now`. */
   now?: () => number
   /** Claim expiry when `claim()` is called without `claimTtlMs`. Default 120 000. */
@@ -119,6 +125,11 @@ export interface MemoryInboxOptions {
    * Default 86 400 000 (24 hours, the minimum an adapter must keep).
    */
   dedupeWindowMs?: number
+  /**
+   * Most dead letters kept; once exceeded the oldest are dropped (a memory store must not grow
+   * without bound). Default 1000.
+   */
+  maxDeadLetters?: number
 }
 
 /**
@@ -130,12 +141,12 @@ export interface MemoryInboxOptions {
  *
  * @example
  * ```ts
- * const inbox = memoryInbox()
+ * const inbox = inMemoryInbox()
  * defineHarnessAgent({ model, storage: { messages, state, inbox } })
  * ```
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
-export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
+export function inMemoryInbox(options: InMemoryInboxOptions = {}): InboxAdapter {
   const now = options.now ?? (() => Date.now())
   type Entry = {
     sessionId: string
@@ -149,6 +160,9 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
   const byId = new Map<string, Entry>()
   const listeners = new Map<string, Set<() => void>>()
   const dedupeWindowMs = options.dedupeWindowMs ?? 86_400_000
+  const maxDead = Math.max(0, options.maxDeadLetters ?? 1000)
+  /** Ids of dead entries in the order they died (oldest first). */
+  const deadIds = new Set<string>()
   /** Caller ids per session; `until` is set once the item was acked (the dedupe horizon). */
   const keys = new Map<string, Map<string, { id: string; until?: number }>>()
   const live = (entry: Entry, at: number) => entry.claim !== undefined && entry.claim.until > at
@@ -194,6 +208,7 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
       if (known !== undefined) known.until = now() + dedupeWindowMs
     }
     byId.delete(entry.item.id)
+    deadIds.delete(entry.item.id)
     const items = sessions.get(entry.sessionId)
     items?.delete(entry.item.id)
     if (items?.size === 0) sessions.delete(entry.sessionId)
@@ -285,6 +300,13 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
         delete entry.delayedUntil
         if (info.lastError !== undefined) entry.item.lastError = info.lastError
         entry.dead = { deadAt: at, reason: info.reason }
+        deadIds.add(id)
+      }
+      for (const id of [...deadIds]) {
+        if (deadIds.size <= maxDead) break
+        const oldest = byId.get(id)
+        if (oldest === undefined) deadIds.delete(id)
+        else remove(oldest)
       }
     },
     async redrive(ids) {
@@ -292,6 +314,7 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
         const entry = byId.get(id)
         if (entry?.dead === undefined) continue
         delete entry.dead
+        deadIds.delete(id)
         delete entry.item.lastError
         entry.item.attempts = 0
       }
@@ -355,12 +378,17 @@ export function memoryInbox(options: MemoryInboxOptions = {}): InboxAdapter {
   }
 }
 
-/** Options of {@link memoryBudgetLedger}. */
-export interface MemoryBudgetLedgerOptions {
+/** Options of {@link inMemoryBudgetLedger}. */
+export interface InMemoryBudgetLedgerOptions {
   /** Static USD limits per scope; a scope without an entry has no limit. No periods. */
   limits?: Record<string, number>
   /** Clock used for reservation expiry (tests). Default `Date.now`. */
   now?: () => number
+  /**
+   * How long an expired, still open reservation is kept so a late `commit` still charges it
+   * (the spend happened). After that it is dropped. Default 3 600 000 (1 hour).
+   */
+  expiredRetentionMs?: number
 }
 
 /**
@@ -372,12 +400,12 @@ export interface MemoryBudgetLedgerOptions {
  *
  * @example
  * ```ts
- * const adapter = memoryBudgetLedger({ limits: { 'user:ada': 5 } })
+ * const adapter = inMemoryBudgetLedger({ limits: { 'user:ada': 5 } })
  * defineHarnessAgent({ model, models, budget: { ledger: { adapter, scopes: () => ['user:ada'] } } })
  * ```
  * @see docs/specs/12-models-and-cost.md#41-budget-ledger-normative
  */
-export function memoryBudgetLedger(options: MemoryBudgetLedgerOptions = {}): BudgetLedger {
+export function inMemoryBudgetLedger(options: InMemoryBudgetLedgerOptions = {}): BudgetLedger {
   const now = options.now ?? (() => Date.now())
   const limits = new Map(Object.entries(options.limits ?? {}))
   const spent = new Map<string, number>()
@@ -404,14 +432,26 @@ export function memoryBudgetLedger(options: MemoryBudgetLedgerOptions = {}): Bud
     for (const scope of new Set(scopes)) spent.set(scope, (spent.get(scope) ?? 0) + amountUsd)
   }
   const amount = (value: number) => (Number.isFinite(value) && value > 0 ? value : 0)
+  const expiredRetentionMs = options.expiredRetentionMs ?? 3_600_000
+  /** Settled reservations are deleted (a later commit / release is a no-op either way). */
   const close = (id: string, r: Reservation, state: 'committed' | 'released') => {
     r.state = state
     if (openByKey.get(r.key) === id) openByKey.delete(r.key)
+    reservations.delete(id)
+  }
+  /** Drop reservations that expired longer than the retention ago. */
+  const sweepReservations = (at: number): void => {
+    for (const [id, r] of reservations) {
+      if (r.until + expiredRetentionMs > at) continue
+      if (openByKey.get(r.key) === id) openByKey.delete(r.key)
+      reservations.delete(id)
+    }
   }
 
   return {
     async reserve(req) {
       const at = now()
+      sweepReservations(at)
       const existing = openByKey.get(req.key)
       const held = existing === undefined ? undefined : reservations.get(existing)
       if (existing !== undefined && held !== undefined && isOpen(held, at)) {
@@ -472,8 +512,8 @@ export function memoryBudgetLedger(options: MemoryBudgetLedgerOptions = {}): Bud
   }
 }
 
-/** Options of {@link memoryStreamLog}. */
-export interface MemoryStreamLogOptions {
+/** Options of {@link inMemoryStreamLog}. */
+export interface InMemoryStreamLogOptions {
   /**
    * How long a log is kept after `close` (and, unclosed, after its last append) unless
    * `expire(key, ttlMs)` sets another time. Default 600 000 (10 minutes).
@@ -492,12 +532,12 @@ export interface MemoryStreamLogOptions {
  *
  * @example
  * ```ts
- * const streams = memoryStreamLog()
+ * const streams = inMemoryStreamLog()
  * defineHarnessAgent({ model, storage: { messages, state, streams } })
  * ```
  * @see docs/specs/04-streaming.md#62-stream-log-port
  */
-export function memoryStreamLog(options: MemoryStreamLogOptions = {}): StreamLogAdapter {
+export function inMemoryStreamLog(options: InMemoryStreamLogOptions = {}): StreamLogAdapter {
   const now = options.now ?? (() => Date.now())
   const defaultRetention = options.retentionMs ?? 600_000
   type Log = {
@@ -523,7 +563,13 @@ export function memoryStreamLog(options: MemoryStreamLogOptions = {}): StreamLog
     }
     return log
   }
+  /** The full sweep is O(logs): run it at most once per second (reads expire lazily via `live`). */
+  const SWEEP_EVERY_MS = 1000
+  let lastSweep = Number.NEGATIVE_INFINITY
   const sweep = (): void => {
+    const at = now()
+    if (at - lastSweep < SWEEP_EVERY_MS) return
+    lastSweep = at
     for (const [id, log] of [...logs]) {
       if (log.until <= now()) {
         logs.delete(id)
@@ -550,7 +596,10 @@ export function memoryStreamLog(options: MemoryStreamLogOptions = {}): StreamLog
       let log = logs.get(id)
       // a gap on a missing log is rejected without creating an empty one (the writer restarts)
       if (log === undefined && opts?.at !== undefined && opts.at > 0) {
-        throw new Error(`append at ${opts.at} leaves a gap: the log does not exist`)
+        throw new HarnessError(
+          'EH_STORAGE',
+          `append at ${opts.at} leaves a gap: the log does not exist`,
+        )
       }
       if (log === undefined) {
         log = {
@@ -567,7 +616,10 @@ export function memoryStreamLog(options: MemoryStreamLogOptions = {}): StreamLog
       let fresh = chunks
       if (opts?.at !== undefined) {
         if (opts.at > log.chunks.length) {
-          throw new Error(`append at ${opts.at} leaves a gap: the log has ${log.chunks.length}`)
+          throw new HarnessError(
+            'EH_STORAGE',
+            `append at ${opts.at} leaves a gap: the log has ${log.chunks.length}`,
+          )
         }
         fresh = chunks.slice(log.chunks.length - opts.at)
       }

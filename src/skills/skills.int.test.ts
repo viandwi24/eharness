@@ -8,7 +8,7 @@ import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import { defineToolSource } from '../registry/tool-source.ts'
 import type { Skill, SkillMeta } from '../registry/types.ts'
-import { spyMessages, spyState } from '../session/int-kit.ts'
+import { spyMessages, spyState } from '../session/test-kit.ts'
 import {
   type ScriptedCallOptions,
   type ScriptedStepInput,

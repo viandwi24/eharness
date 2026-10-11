@@ -10,7 +10,7 @@
  */
 import { generateText, tool } from 'ai'
 import { defineHarnessAgent, definePlugin, modelsDevCatalog } from 'eharness'
-import { memoryBudgetLedger, memoryState } from 'eharness/storage/memory'
+import { inMemoryBudgetLedger, inMemoryState } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
@@ -71,7 +71,7 @@ const meter = definePlugin({
   }),
 })
 
-const state = memoryState()
+const state = inMemoryState()
 const agent = defineHarnessAgent({
   model,
   models, // also supplies the context window (200k) — no `contextWindow` needed
@@ -124,7 +124,7 @@ await agent.close()
 // Two agent instances (think: two servers) share one ledger. The user's limit spans every session:
 // each model call first reserves an estimate on `user:<id>`, then commits its actual cost.
 console.log('\nbudget ledger: user ada, $0.30 across sessions')
-const ledger = memoryBudgetLedger({ limits: { 'user:ada': 0.3 } }) // in production: a database
+const ledger = inMemoryBudgetLedger({ limits: { 'user:ada': 0.3 } }) // in production: a database
 const worker = () =>
   exampleModel(
     Array.from({ length: 5 }, (_, i) => ({

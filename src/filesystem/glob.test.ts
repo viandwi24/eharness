@@ -57,3 +57,19 @@ describe('compileGlob (spec 08 §3)', () => {
     expect(compileGlob(`${'{a,b}'.repeat(8)}`).ok).toBe(false)
   })
 })
+
+describe('compileGlob cost (ReDoS)', () => {
+  test('repeated ** against a deep path completes fast', () => {
+    const path = Array.from({ length: 30 }, (_, i) => `d${i}`).join('/')
+    const compiled = compileGlob(`${'**/'.repeat(10)}zzz`)
+    if (!compiled.ok) throw new Error(compiled.error)
+    const started = performance.now()
+    for (let i = 0; i < 1000; i++) expect(compiled.test(path)).toBe(false)
+    expect(performance.now() - started).toBeLessThan(50)
+  })
+
+  test('alternating ** and literals beyond the cap are refused', () => {
+    const result = compileGlob('a/**/a/**/a/**/a/**/a/**/zzz')
+    expect(result.ok).toBe(false)
+  })
+})

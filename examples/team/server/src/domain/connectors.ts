@@ -336,7 +336,13 @@ export type FlowActResult =
   | ({ ok: true } & FlowResult)
   | ({
       ok: false
-      error: 'stale-view' | 'expired' | 'finished' | 'invalid-action' | 'not-found'
+      error:
+        | 'stale-view'
+        | 'expired'
+        | 'finished'
+        | 'invalid-action'
+        | 'not-found'
+        | 'principal-mismatch'
       message: string
     } & Partial<FlowResult>)
 

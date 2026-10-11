@@ -5,10 +5,10 @@ import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import { type HarnessWarning, isHarnessError } from '../errors.ts'
 import { filesystem } from '../filesystem/index.ts'
-import { memoryFs } from '../filesystem/memory.ts'
+import { inMemoryFs } from '../filesystem/memory.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
-import { spyMessages, spyState } from '../session/int-kit.ts'
+import { spyMessages, spyState } from '../session/test-kit.ts'
 import {
   type ScriptedCallOptions,
   type ScriptedStepInput,
@@ -153,6 +153,7 @@ describe('tool sources: lifecycle and refresh', () => {
     })
     const { agent, model, warnings } = setup([{ text: 'a' }, { text: 'b' }, { text: 'c' }], {
       tools: [source],
+      toolSources: { retryAfterMs: 0 },
     })
     const session = agent.session('s1')
     expect((await session.send('one').result).stop).toBe('complete')
@@ -246,7 +247,7 @@ describe('deferred tools and tool_search', () => {
       { toolCalls: [{ toolName: 'a', input: {} }] },
       { toolCalls: [{ toolName: 'get_invoice', input: { text: '43' } }] },
       { text: 'done' },
-      { toolCalls: [{ toolName: 'get_invoice', input: { text: '44' } }] },
+      { toolCalls: [{ toolName: 'get_invoice', input: { text: '44' }, toolCallId: 'reload-1' }] },
       { text: 'again' },
     ]
     const { agent, model, messages, state } = setup(steps.slice(0, 5), {
@@ -544,7 +545,7 @@ describe('tool output limits (spec 09 §4)', () => {
         { text: 'ok' },
       ],
       {
-        plugins: [filesystem({ fs: memoryFs() })],
+        plugins: [filesystem({ fs: inMemoryFs() })],
         toolOutput: { maxChars: 500, strategy: 'evict' },
         tools: { dump: tool({ inputSchema: z.object({}), execute: async () => lines }) },
       },
@@ -568,7 +569,7 @@ describe('tool output limits (spec 09 §4)', () => {
         { toolCalls: [{ toolName: 'read_file', input: { path: '/big.txt', limit: 2000 } }] },
         { text: 'ok' },
       ],
-      { plugins: [filesystem({ fs: memoryFs({ '/big.txt': content }) })] },
+      { plugins: [filesystem({ fs: inMemoryFs({ seed: { '/big.txt': content } }) })] },
     )
     const result = await agent.session('s1').send('go').result
     const [[, output]] = toolOutputs(assistantOf(result)) as [[string, string]]

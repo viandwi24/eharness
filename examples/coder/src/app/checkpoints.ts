@@ -44,7 +44,7 @@ export interface Checkpoints {
 
 const rel = (path: string): string => path.replace(/^\/+/, '')
 
-/** Epoch ms from a UUIDv7 id (0 when it is not one). */
+/** Epoch ms from a UUIDv7 id (0 when it is not one). Local: the library exports no timestamp helper. */
 function uuidTime(id: string): number {
   const ms = Number.parseInt(id.replace(/-/g, '').slice(0, 12), 16)
   return Number.isFinite(ms) ? ms : 0

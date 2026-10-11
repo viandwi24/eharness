@@ -7,21 +7,22 @@
  * @see docs/specs/06-compaction.md#6-guard-always-on-not-configurable-away
  * @see docs/specs/06-compaction.md#7-overflow-recovery
  */
+
 import type { LanguageModel, LanguageModelUsage, ModelMessage, Tool, UIMessageChunk } from 'ai'
+import { hookFailed } from '../internal/hook-run.ts'
 import { project } from '../messages/project.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import type { ContextStats, HarnessUIMessage, PendingState } from '../messages/types.ts'
+import { toolSetTokens, wireTokens } from '../models/tokens.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import { instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
 import type { TurnRegistry } from '../registry/turn.ts'
-import { hookFailed } from '../registry/wrap.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 import type { BudgetOverrun, CompactOutcome, SessionCompaction } from './compact.ts'
 import type { FlushEnv } from './flush.ts'
 import { applyHardCap } from './guard.ts'
 import { isContextOverflow, reportedTokenCount } from './overflow.ts'
 import { type PruneStats, pruneTurns, resolvePrune } from './prune.ts'
-import { toolSetTokens, wireTokens } from './tokens.ts'
 import { groupTurns, isBoundaryMessage, partialOf, stepStarts, trimToPartial } from './turns.ts'
 
 /** Factor applied to `maxContextRatio` by the tighter guard of overflow recovery (spec 06 §7). */

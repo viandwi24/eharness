@@ -1,5 +1,6 @@
 import type { StreamLogAdapter, StreamLogKey } from '../index.ts'
 import { assertJsonEqual, assertTrue, uniqueSessionId } from './assert.ts'
+import { sleep } from './sleep.ts'
 import type { ConformanceCase } from './types.ts'
 
 /** Options of {@link streamLogConformance}. */
@@ -7,8 +8,6 @@ export interface StreamLogConformanceOptions {
   /** Retention used by the expiry case (ms). Default 50; skipped when the adapter has no `expire`. */
   expireMs?: number
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const chunk = (n: number) => ({
   type: 'text-delta',
@@ -25,7 +24,7 @@ const chunk = (n: number) => ({
  *
  * @example
  * ```ts
- * for (const c of streamLogConformance(() => memoryStreamLog())) test(c.name, c.run)
+ * for (const c of streamLogConformance(() => inMemoryStreamLog())) test(c.name, c.run)
  * ```
  * @see docs/specs/04-streaming.md#62-stream-log-port
  */

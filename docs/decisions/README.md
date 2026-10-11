@@ -49,9 +49,10 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0042](0042-peek-child-identity-spawn-cap.md) | Read-only `agent.peek`, child identity in the child index, `childSession` options and `maxChildren` |
 | [0043](0043-enqueue-source-metadata-fs-versions.md) | Caller id on the turn, `enqueue` app metadata, optional `FileSystem` versions |
 | [0044](0044-partial-resolution-of-pending-approvals.md) | Partial resolution of pending approvals: `respond()` records a subset, the last answer continues |
-| [0048](0048-providers-module.md) | `eharness/providers`: definitions, profiles, a manager and a cached catalog loader (module fetches via injected `fetch`) |
-| [0047](0047-model-call-observer.md) | Model call observer: the `model.call` hook, an AI SDK middleware, `observeModel` |
+| [0045](0045-resume-replay-of-continuations.md) | Resume replays the continued message of a `respond()` continuation (amends 0039) |
 | [0046](0046-durable-background-subagents-in-park-mode.md) | Durable background subagents in `park` mode: durable start through the child inbox, report events through storage, run marker for every park call |
+| [0047](0047-model-call-observer.md) | Model call observer: the `model.call` hook, an AI SDK middleware, `observeModel` |
+| [0048](0048-providers-module.md) | `eharness/providers`: definitions, profiles, a manager and a cached catalog loader (module fetches via injected `fetch`) |
 | [0049](0049-connectors-module.md) | `eharness/connectors`: definitions, connections, enablement, activation; reuses the providers' config layer |
 | [0050](0050-flow-view-vocabulary.md) | Setup flows are server-driven views from a closed vocabulary (stale-view guard, sealed scratch) |
 | [0051](0051-precedence-and-pinned-ask.md) | Mode precedence, most-restrictive combination and pinned asks under bypass |
@@ -59,7 +60,8 @@ Superseding an ADR: mark the old one `Superseded by ADR-xxxx`; never delete.
 | [0053](0053-providers-connectors-consolidation.md) | One sealing format, `toolPrefix`, per-flow `clientConfig`; providers and connectors share building blocks but stay separate areas |
 | [0054](0054-held-wakes-while-pending.md) | Wakes held while items wait for an answer are durable inbox `wake` items (survive restarts, run in whichever instance resolves the pending items) |
 | [0055](0055-approval-answer-wins-and-schema-valid-denials.md) | A person's approval is never overruled by the classifier on re-validation; stored `output-denied` parts are always schema-valid (repaired, not dropped, on load); classifier outages are not blocks |
-| [0057](0057-session-invariants-and-fuzz.md) | Session invariants enforced at save time (`debug.invariants`, repair-don't-drop), a seeded fuzz test and a multi-instance conformance suite |
 | [0056](0056-restart-recovery-and-background-reconcile.md) | Stable `recovery.instanceId`, `session.recover()`, `inject({ key })` and `reconcileBackgroundChildren`: restarts recover at once and background children never leave the parent silent |
-| [0059](0059-http-and-client-modules.md) | `eharness/http` (fetch-style routes behind one `authorize`) and `eharness/client` (browser/UI side over AI SDK `DefaultChatTransport`; lands in the same release) |
+| [0057](0057-session-invariants-and-fuzz.md) | Session invariants enforced at save time (`debug.invariants`, repair-don't-drop), a seeded fuzz test and a multi-instance conformance suite |
 | [0058](0058-activity-feed-and-attention-queue.md) | `eharness/activity`: session activity feed (plugin, `ActivityStore`, SSE) and the attention queue (`listAttention`, `answerAttention`); new `message.saved` hook |
+| [0059](0059-http-and-client-modules.md) | `eharness/http` (fetch-style routes behind one `authorize`) and `eharness/client` (browser/UI side over AI SDK `DefaultChatTransport`; lands in the same release) |
+| [0060](0060-shared-llm-judge-engine.md) | One shared LLM judge engine in core with two roles: `tighten` (approval guard, never approves) and `decide` (permissions auto mode, may approve); amends 0030 |

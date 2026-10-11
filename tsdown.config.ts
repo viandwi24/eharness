@@ -21,6 +21,7 @@ export default defineConfig({
     'shell/index': 'src/shell/index.ts',
     'subagent/index': 'src/subagent/index.ts',
     'web/index': 'src/web/index.ts',
+    'web/node': 'src/web/node.ts',
     'http/index': 'src/http/index.ts',
     'client/index': 'src/client/index.ts',
     'client/react': 'src/client/react.ts',
@@ -28,6 +29,9 @@ export default defineConfig({
   },
   format: 'esm',
   platform: 'neutral',
+  // The Node-only entries (ADR-0036: filesystem/node, shell, web/node) import `node:*` on purpose;
+  // runtime-neutral modules are kept clean by scripts/check-imports.ts.
+  deps: { neverBundle: [/^node:/] },
   dts: true,
   exports: true,
 })

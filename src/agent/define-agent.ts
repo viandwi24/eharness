@@ -5,6 +5,8 @@
  * @see docs/architecture.md#31-boot--defineharnessagentconfig-synchronous-no-io
  */
 import { createWarningEmitter, HarnessError, isHarnessError } from '../errors.ts'
+import { safeObserver } from '../internal/observe.ts'
+import { errorText } from '../internal/util.ts'
 import { createUuidV7Generator } from '../messages/ids.ts'
 import { createCoreMessageRegistry } from '../messages/registry.ts'
 import {
@@ -70,6 +72,15 @@ function validateConfig(config: HarnessAgentConfig): void {
       'defineHarnessAgent: `settings.timeout.totalMs` is not supported (one streamText call per step); use `loop.turnTimeoutMs`.',
     )
   }
+  if (config.observe !== undefined && typeof config.observe !== 'function') {
+    invalid('defineHarnessAgent: `observe` must be a function.', { option: 'observe' })
+  }
+  const invariants = config.debug?.invariants
+  if (invariants !== undefined && typeof invariants !== 'boolean') {
+    invalid('defineHarnessAgent: `debug.invariants` must be a boolean.', {
+      option: 'debug.invariants',
+    })
+  }
   const window = config.contextWindow
   if (
     window !== undefined &&
@@ -80,7 +91,9 @@ function validateConfig(config: HarnessAgentConfig): void {
   }
   if (config.mcp !== undefined) {
     if (!Array.isArray(config.mcp) || !config.mcp.every(isToolSource)) {
-      invalid('defineHarnessAgent: `mcp` must be an array of tool sources (e.g. mcpServer(...)).')
+      invalid(
+        'defineHarnessAgent: `mcp` must be an array of tool sources (e.g. mcpServerSource(...)).',
+      )
     }
   }
   validateNumbers(config)
@@ -140,7 +153,18 @@ const RULE_TEXT: Record<NumberRule, string> = {
   'ratio-half-open': 'a number in (0, 1]',
 }
 
-function checkNumber(path: string, value: unknown, rule: NumberRule): void {
+/** Optional bounds on top of a rule (inclusive). */
+interface NumberBounds {
+  min?: number
+  max?: number
+}
+
+function checkNumber(
+  path: string,
+  value: unknown,
+  rule: NumberRule,
+  bounds: NumberBounds = {},
+): void {
   if (value === undefined) return
   const n = value as number
   const ok =
@@ -164,7 +188,22 @@ function checkNumber(path: string, value: unknown, rule: NumberRule): void {
       option: path,
     })
   }
+  const { min, max } = bounds
+  if ((min !== undefined && n < min) || (max !== undefined && n > max)) {
+    const range =
+      min !== undefined && max !== undefined
+        ? `between ${min} and ${max}`
+        : min !== undefined
+          ? `at least ${min}`
+          : `at most ${max}`
+    invalid(`defineHarnessAgent: \`${path}\` must be ${range} (got ${String(value)}).`, {
+      option: path,
+    })
+  }
 }
+
+/** Upper bound of every duration option (one day): larger values are almost always unit mistakes. */
+const MAX_DURATION_MS = 86_400_000
 
 /** Numeric options that would silently misbehave (e.g. `maxSteps: 0`) are boot errors (spec 01 §7). */
 function validateNumbers(config: HarnessAgentConfig): void {
@@ -174,6 +213,43 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('loop.maxIdleContinues', loop?.maxIdleContinues, 'non-negative-int')
   checkNumber('loop.maxTurnOutputTokens', loop?.maxTurnOutputTokens, 'positive')
   checkNumber('loop.turnTimeoutMs', loop?.turnTimeoutMs, 'non-negative')
+  checkNumber('hooks.timeoutMs', config.hooks?.timeoutMs, 'positive', {
+    min: 1,
+    max: MAX_DURATION_MS,
+  })
+  checkNumber('toolSources.timeoutMs', config.toolSources?.timeoutMs, 'positive', {
+    max: MAX_DURATION_MS,
+  })
+  checkNumber('toolSources.retryAfterMs', config.toolSources?.retryAfterMs, 'non-negative', {
+    max: MAX_DURATION_MS,
+  })
+  const recovery = config.recovery === false ? undefined : config.recovery
+  // below ~1 s the heartbeat writes often; allowed (crash-simulating tests use it), documented
+  checkNumber('recovery.staleMs', recovery?.staleMs, 'positive', { max: MAX_DURATION_MS })
+  checkNumber('recovery.abortPollMs', recovery?.abortPollMs, 'non-negative', {
+    max: MAX_DURATION_MS,
+  })
+  const streams = config.streams
+  checkNumber('streams.flushMs', streams?.flushMs, 'positive', { max: 60_000 })
+  checkNumber('streams.batchSize', streams?.batchSize, 'positive-int', { max: 10_000 })
+  checkNumber('streams.retentionMs', streams?.retentionMs, 'non-negative', {
+    max: MAX_DURATION_MS * 30,
+  })
+  checkNumber('streams.pollMs', streams?.pollMs, 'positive', { max: MAX_DURATION_MS })
+  checkNumber('warnings.dedupeWindowMs', config.warnings?.dedupeWindowMs, 'non-negative', {
+    max: MAX_DURATION_MS,
+  })
+  const stepTimeout = config.settings?.timeout
+  if (typeof stepTimeout === 'number') {
+    checkNumber('settings.timeout', stepTimeout, 'positive', { max: MAX_DURATION_MS })
+  } else if (typeof stepTimeout === 'object' && stepTimeout !== null) {
+    for (const key of ['stepMs', 'firstChunkMs', 'chunkMs', 'toolMs'] as const) {
+      checkNumber(`settings.timeout.${key}`, stepTimeout[key], 'positive', { max: MAX_DURATION_MS })
+    }
+    for (const [name, value] of Object.entries(stepTimeout.tools ?? {})) {
+      checkNumber(`settings.timeout.tools.${name}`, value, 'positive', { max: MAX_DURATION_MS })
+    }
+  }
   const progress = loop?.progress === false ? undefined : loop?.progress
   checkNumber('loop.progress.repeats', progress?.repeats, 'positive-int')
   checkNumber('loop.progress.window', progress?.window, 'positive-int')
@@ -192,23 +268,37 @@ function validateNumbers(config: HarnessAgentConfig): void {
   checkNumber('compaction.thrash.withinSteps', thrash?.withinSteps, 'positive-int')
   checkNumber('guard.maxContextRatio', config.guard?.maxContextRatio, 'ratio-half-open')
   checkNumber('guard.reserveTokens', config.guard?.reserveTokens, 'non-negative')
-  checkNumber('sessionIdleMs', config.sessionIdleMs, 'non-negative')
+  checkNumber('sessionIdleMs', config.sessionIdleMs, 'non-negative', { max: MAX_DURATION_MS * 30 })
   checkNumber('budget.maxTurnUsd', config.budget?.maxTurnUsd, 'positive')
   checkNumber('budget.maxSessionUsd', config.budget?.maxSessionUsd, 'positive')
   checkNumber('budget.warnAt', config.budget?.warnAt, 'ratio-half-open')
   checkNumber('budget.ledger.reservationTtlMs', config.budget?.ledger?.reservationTtlMs, 'positive')
   checkNumber('inputFiles.maxBytes', config.inputFiles?.maxBytes, 'positive-int')
-  checkNumber('inbox.pollMs', config.inbox?.pollMs, 'non-negative')
-  checkNumber('inbox.claimTtlMs', config.inbox?.claimTtlMs, 'positive')
-  checkNumber('inbox.collect.quietMs', config.inbox?.collect?.quietMs, 'non-negative')
-  checkNumber('inbox.collect.maxWaitMs', config.inbox?.collect?.maxWaitMs, 'non-negative')
+  checkNumber('inbox.pollMs', config.inbox?.pollMs, 'non-negative', { max: MAX_DURATION_MS })
+  checkNumber('inbox.claimTtlMs', config.inbox?.claimTtlMs, 'positive', { max: MAX_DURATION_MS })
+  checkNumber('inbox.collect.quietMs', config.inbox?.collect?.quietMs, 'non-negative', {
+    max: MAX_DURATION_MS,
+  })
+  checkNumber('inbox.collect.maxWaitMs', config.inbox?.collect?.maxWaitMs, 'non-negative', {
+    max: MAX_DURATION_MS,
+  })
   checkNumber('inbox.collect.maxItems', config.inbox?.collect?.maxItems, 'positive-int')
-  checkNumber('inbox.retry.maxAttempts', config.inbox?.retry?.maxAttempts, 'positive-int')
-  checkNumber('inbox.retry.backoff.delayMs', config.inbox?.retry?.backoff?.delayMs, 'non-negative')
+  checkNumber('inbox.retry.maxAttempts', config.inbox?.retry?.maxAttempts, 'positive-int', {
+    max: 1_000,
+  })
+  checkNumber(
+    'inbox.retry.backoff.delayMs',
+    config.inbox?.retry?.backoff?.delayMs,
+    'non-negative',
+    {
+      max: MAX_DURATION_MS,
+    },
+  )
   checkNumber(
     'inbox.retry.backoff.maxDelayMs',
     config.inbox?.retry?.backoff?.maxDelayMs,
     'non-negative',
+    { max: MAX_DURATION_MS },
   )
   const protocols = config.inputFiles?.protocols
   if (
@@ -285,7 +375,7 @@ function rootContribution(config: HarnessAgentConfig): PluginContribution {
  *   model: 'anthropic/claude-sonnet-4.6',
  *   instructions: 'You write and review Pine Script v6 strategies.',
  *   tools: { get_price: tool({ … }) },
- *   plugins: [filesystem({ fs: memoryFs() })],
+ *   plugins: [filesystem({ fs: inMemoryFs() })],
  * })
  * ```
  * @throws {HarnessError} on every boot conflict of spec 01 §7: `EH_CONFIG_INVALID`,
@@ -373,7 +463,7 @@ export function defineHarnessAgent<
         if (isHarnessError(error)) throw error
         throw new HarnessError(
           'EH_CONFIG_INVALID',
-          `${describeOwner(plugin.name)}: setup() threw: ${error instanceof Error ? error.message : String(error)}`,
+          `${describeOwner(plugin.name)}: setup() threw: ${errorText(error)}`,
           { details: { owner: plugin.name }, cause: error },
         )
       }
@@ -410,7 +500,11 @@ export function defineHarnessAgent<
     emitWarning: createWarningEmitter({
       ...(config.onWarning === undefined ? {} : { onWarning: config.onWarning }),
       ...(config.strict === undefined ? {} : { strict: config.strict }),
+      ...(config.warnings?.dedupeWindowMs === undefined
+        ? {}
+        : { dedupeWindowMs: config.warnings.dedupeWindowMs }),
     }),
+    observe: safeObserver(config.observe),
     generateId: custom === undefined ? uuid : () => custom(),
   }
   // the session cache is created on first use (defineHarnessAgent does no I/O and no timers)

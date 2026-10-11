@@ -1,0 +1,5 @@
+---
+"eharness": minor
+---
+
+One shared LLM judge engine (ADR-0060, spec 15, spec 18 §12): new core `createJudge({ model, role, instructions, policy?, environment?, … })` (plus `JudgeUnavailableError` and the `Judge*` types; Draft) owns the structured-verdict model call, the restricted-transcript renderer, fail-closed truncation, the verdict cache (TTL and bound), the circuit breaker, retries, timeout and `observeModel`. `guard()` is now role `tighten` (never approves) and `modelClassifier()` role `decide` (may approve), both thin wrappers; behaviour is kept, with these changes: the judge call caps output at 1024 tokens and uses temperature 0 (the guard too), the prompt is framed as `<policy>` / `<environment>` / `<transcript>` / `<action>` blocks with a JSON transcript for both, `modelClassifier()` gains an opt-in `cache`. No public type of `eharness/guard` or `eharness/permissions` changes (the docs listed `canonicalJson`/`verdictKey` as guard exports; they were never in its index and are internal to the engine now). New guide "LLM judge: two modes".

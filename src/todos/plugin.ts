@@ -13,6 +13,7 @@ import { z } from 'zod/v4'
 import {
   type DataPartDef,
   definePlugin,
+  HarnessError,
   type HarnessPlugin,
   type SessionContribution,
 } from '../index.ts'
@@ -53,13 +54,13 @@ export interface TodosOptions {
 /** Name of the tool. */
 export const TODO_TOOL = 'todo_write'
 
-/** Static instruction of the plugin (model-visible; changing it is a minor change). */
+/** Static instruction of the plugin (model-visible; internal wording: may change in any release). */
 export const TODOS_INSTRUCTION: string = `Use the ${TODO_TOOL} tool to plan and track multi-step work: write the full list once you know the steps, keep exactly one item in_progress while you work on it, mark items completed as soon as they are done, and mark items cancelled (never silently drop them) when they are no longer needed. Skip it for simple one-step requests.`
 
 /** Step reminder with the open list (`{list}`). */
 export const TODOS_REMINDER: string = `Open todos (update them with ${TODO_TOOL} as you work):\n{list}`
 
-/** `turn.beforeEnd` continuation reason (`{list}`). */
+/** `turn.beforeEnd` continuation reason (`{list}`; internal wording). */
 export const TODOS_CONTINUE: string = `You stopped with open todos:\n{list}\nContinue with the next one. If an item is blocked or no longer needed, mark it cancelled with ${TODO_TOOL} and say why; if you need the user, ask.`
 
 const todoSchema = z.object({
@@ -177,6 +178,30 @@ function fromMessages(
   return undefined
 }
 
+/** Throw `EH_CONFIG_INVALID` unless `value` is undefined or a finite number in range. */
+function checkNumber(
+  name: string,
+  value: number | undefined,
+  min: number,
+  integer: boolean,
+  max?: number,
+): void {
+  if (value === undefined) return
+  const ok =
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    (!integer || Number.isInteger(value)) &&
+    value >= min &&
+    (max === undefined || value <= max)
+  if (!ok) {
+    throw new HarnessError(
+      'EH_CONFIG_INVALID',
+      `todos: \`${name}\` must be ${integer ? 'an integer' : 'a number'} ≥ ${min}${max === undefined ? '' : ` and ≤ ${max}`}.`,
+      { details: { plugin: 'todos', option: name } },
+    )
+  }
+}
+
 /**
  * The todos plugin.
  *
@@ -187,6 +212,9 @@ function fromMessages(
  * ```
  */
 export function todos(options: TodosOptions = {}): HarnessPlugin<'todos', TodosDataParts> {
+  checkNumber('maxNudges', options.maxNudges, 0, true)
+  checkNumber('remindEvery', options.remindEvery, 0, true)
+  checkNumber('maxItems', options.maxItems, 1, true)
   const maxNudges = Math.max(0, options.maxNudges ?? 3)
   const remindEvery = Math.max(0, options.remindEvery ?? 5)
   const maxItems = Math.max(1, options.maxItems ?? 50)

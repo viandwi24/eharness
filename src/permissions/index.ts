@@ -5,26 +5,18 @@
  * output filtering. One engine, three deployment profiles (autonomous server, single-process CLI,
  * split web/server).
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/18-permissions-plugin.md
  */
 export {
-  AUTO_CLASSIFIER_INSTRUCTIONS,
-  DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS,
   type ModelClassifierOptions,
   modelClassifier,
 } from './classifier.ts'
 export {
-  type ParsedCommand,
-  parseCommand,
-  type RestrictiveForms,
-  restrictiveForms,
-} from './command.ts'
-export {
-  AUTO_MAX_CONSECUTIVE_BLOCKS,
-  AUTO_MAX_TOTAL_BLOCKS,
   AUTO_PAUSED_REASON,
   createPermissionEngine,
-  DEFAULT_BUILTIN_ASK,
   DEFAULT_PROTECTED_PATHS,
   type DecideOptions,
   DONT_ASK_REASON,
@@ -32,25 +24,17 @@ export {
   type PermissionEngineOptions,
   PLAN_MODE_REASON,
 } from './engine.ts'
-export { type ModeSource, type PermissionsPluginOptions, permissionsPlugin } from './plugin.ts'
-export {
-  isGlobArg,
-  isReadOnlyCommand,
-  isReadOnlySubcommand,
-  READ_ONLY_COMMAND_NAMES,
-  type ReadPaths,
-  readPathArguments,
-} from './readonly.ts'
+export { type ModeSource, type PermissionsOptions, permissions } from './plugin.ts'
+export { isReadOnlyCommand } from './readonly.ts'
 export {
   domainSpecifierMatches,
   type MatchContext,
   type MatchRuleOptions,
-  matchBashSpec,
   matchRule,
   type ParsedRule,
   parseRule,
 } from './rules.ts'
-export { DEFAULT_ALIASES, DEFAULT_TOOL_KINDS } from './tools.ts'
+export { DEFAULT_TOOL_KINDS } from './tools.ts'
 export {
   type AutoAction,
   type AutoClassifier,

@@ -2,10 +2,12 @@
  * LSP manager: picks a language server per file extension, starts it lazily, keeps documents
  * open and in sync with the disk, and exposes position queries returning virtual paths.
  */
+
 import { existsSync } from 'node:fs'
 import { readFile, stat } from 'node:fs/promises'
 import { delimiter, extname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { errorText } from 'eharness'
 import type { CoderSettings } from '../contracts.ts'
 import { LspClient, type LspDiagnostic, type LspRange } from './client.ts'
 
@@ -183,7 +185,7 @@ interface Located {
 const SEVERITY = ['error', 'error', 'warning', 'info', 'hint'] as const
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 /** Create the manager. Nothing is spawned until the first query. */

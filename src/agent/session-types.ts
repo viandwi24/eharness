@@ -120,13 +120,14 @@ export interface SessionUsage {
 /**
  * Outcome of `session.recover()`: the interrupted turn that was repaired, or why nothing was
  * (`idle`: no stored active turn; `live`: a live turn of another instance; `locked`: the session
- * lock is held elsewhere; `disabled`: `recovery: false`).
+ * lock is held elsewhere (contention); `lock-unavailable`: the lock service failed, logged;
+ * `disabled`: `recovery: false`).
  *
- * @see docs/specs/05-session-and-storage.md#92-recover-now
+ * @see docs/specs/05-session-and-storage.md#92-recover-now-stable-instance-id-adr-0056
  */
 export type RecoverResult =
   | { recovered: true; turnId: string; messageId: string }
-  | { recovered: false; reason: 'idle' | 'live' | 'locked' | 'disabled' }
+  | { recovered: false; reason: 'idle' | 'live' | 'locked' | 'lock-unavailable' | 'disabled' }
 
 /**
  * A running turn as reported by `session.busy()`.
@@ -160,7 +161,7 @@ export interface AbortRequest {
 }
 
 /**
- * Where `session.requestAbort()` sent the abort: a turn of this process (`'local'`), a turn running
+ * Where `session.abort()` sent the abort: a turn of this process (`'local'`), a turn running
  * in another instance (`'remote'`), nowhere because no turn runs (`'idle'`), or nowhere because the
  * storage cannot carry the request (`'unsupported'`: no `StateAdapter.setIf`, or `recovery: false`).
  *
@@ -220,7 +221,7 @@ export interface ParentInfo {
   toolCallId?: string
   depth: number
   /**
-   * Identity of the child (not of the parent), set by whoever opens the child (the `subagents()`
+   * Identity of the child (not of the parent), set by whoever opens the child (the `subagent()`
    * plugin): `agent` is the catalog key of the agent definition that runs it, `name` the name its
    * launcher gave it, `description` the short task description. Copied into the parent's
    * {@link ChildSessionInfo}. Absent in sessions stored before 0.x (spec 05 §13).
@@ -314,7 +315,11 @@ export interface StateAdapter {
  * @see docs/specs/05-session-and-storage.md#8-concurrency-and-locking
  */
 export interface SessionLock {
-  /** Resolve with a release function, or reject if locked elsewhere. Must not block indefinitely. */
+  /**
+   * Resolve with a release function. Reject with `new HarnessError('EH_SESSION_BUSY', …)` when the
+   * session is locked elsewhere (contention); any other rejection is a failing lock service and
+   * becomes `EH_LOCK_UNAVAILABLE`. Must not block indefinitely.
+   */
   acquire(sessionId: string, opts: { signal: AbortSignal }): Promise<() => Promise<void>>
 }
 
@@ -439,7 +444,7 @@ export interface InboxStats {
 /**
  * Optional durable inbox of a multi-instance deployment: inputs, wake-ups and abort requests for a
  * session, drained by whichever instance holds the session (spec 05 §12). eharness ships only
- * `memoryInbox()` (`eharness/storage/memory`) and `inboxAdapterConformance` (`eharness/testing`).
+ * `inMemoryInbox()` (`eharness/storage/memory`) and `inboxAdapterConformance` (`eharness/testing`).
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
@@ -574,10 +579,12 @@ export interface StreamLogRead {
  * Short-lived, append-only log of the UI message chunks of one turn (spec 04 §6.2, ADR-0039): lets
  * a reader in another process replay and follow a turn it does not own. Cursor = 0-based chunk
  * index within the turn. Committed messages stay the truth; the log is only for live resume.
- * eharness ships `memoryStreamLog()` (`eharness/storage/memory`) and `streamLogConformance`
+ * eharness ships `inMemoryStreamLog()` (`eharness/storage/memory`) and `streamLogConformance`
  * (`eharness/testing`).
  *
  * @see docs/specs/04-streaming.md#62-stream-log-port
+ *
+ * @experimental Draft (stream log, spec 04 §6): may change in a minor release (docs/engineering/api-stability.md).
  */
 export interface StreamLogAdapter {
   /**
@@ -838,16 +845,21 @@ export interface HarnessRun<M extends UIMessage = HarnessUIMessage, O = never> {
    */
   readonly accepted: Promise<NonNullable<TurnResult['error']> | undefined>
   abort(reason?: string): void
-  /** `createUIMessageStreamResponse({ stream })`. */
-  toResponse(init?: ResponseInit): Response
   /**
-   * Like `toResponse()`, but waits for {@link HarnessRun.accepted} first: a turn that failed
+   * The safe HTTP answer: waits for {@link HarnessRun.accepted} first, so a turn that failed
    * before its commit point answers an HTTP status with a JSON body `{ error: { code, message } }`
    * (`EH_SESSION_BUSY` / `EH_SESSION_CLOSED` 409, `EH_INVALID_INPUT` / `EH_PENDING_RESPONSE` /
    * `EH_INVALID_MESSAGE` 400, `EH_STORAGE` 503, others 500); every other turn streams as
-   * `toResponse()` does, and failures after the stream started stay in the stream (spec 04 §7).
+   * {@link HarnessRun.toStreamResponse} does, and failures after the stream started stay in the
+   * stream (spec 04 §7).
    */
-  toHttpResponse(init?: ResponseInit): Promise<Response>
+  toResponse(init?: ResponseInit): Promise<Response>
+  /**
+   * `createUIMessageStreamResponse({ stream })` at once: always status 200, even when the turn
+   * fails before its commit point (the error is an in-stream `error` chunk). Prefer
+   * {@link HarnessRun.toResponse} for an HTTP handler.
+   */
+  toStreamResponse(init?: ResponseInit): Response
   /** `pipeUIMessageStreamToResponse` for Node's `ServerResponse`. */
   pipeTo(response: Parameters<typeof pipeUIMessageStreamToResponse>[0]['response']): Promise<void>
 }
@@ -905,11 +917,9 @@ export interface HarnessSession<
   regenerate(options?: { messageId?: string } & SendOptions): HarnessRun<M>
   /** Replace a user message and answer it. */
   edit<S extends FlexibleSchema>(
-    messageId: string,
-    input: SendInput,
-    options: SendOptionsWithOutput<S>,
+    options: { messageId: string; input: SendInput } & SendOptionsWithOutput<S>,
   ): HarnessRun<M, InferSchema<S>>
-  edit(messageId: string, input: SendInput, options?: SendOptions): HarnessRun<M>
+  edit(options: { messageId: string; input: SendInput } & SendOptions): HarnessRun<M>
   /** Replay + follow the running turn of this process. */
   attach(): HarnessRun<M> | undefined
   /**
@@ -918,6 +928,8 @@ export interface HarnessSession<
    * chunk index), then follows until the log closes; `signal` stops the reader (never the turn).
    * Resolves `undefined` when nothing is active, no log is configured or it expired: fall back to
    * the stored messages. A turn of this process is served from the turn buffer.
+   *
+   * @experimental Draft (stream log, spec 04 §6): may change in a minor release (docs/engineering/api-stability.md).
    */
   attachRemote(options?: {
     from?: number
@@ -942,20 +954,15 @@ export interface HarnessSession<
    */
   onRun(listener: (run: HarnessRun<M>) => void): () => void
   /**
-   * Abort the running turn. Queued turns are dropped. When no turn of this session runs in this
-   * process, it requests the abort of a turn running in another instance (fire-and-forget form of
-   * {@link HarnessSession.requestAbort}; failures are logged).
-   */
-  abort(reason?: string): void
-  /**
-   * Awaitable abort that tells where the abort went: a local turn, a turn running in another
-   * instance (stopped at its next step boundary or heartbeat, `stop: 'aborted'`), `'idle'` or
-   * `'unsupported'` (`W_ABORT_UNSUPPORTED`). Queued turns are dropped like `abort()`. Rejects with
-   * `EH_STORAGE` when the state cannot be read, `EH_SESSION_CLOSED` after `close()`.
+   * Abort the running turn and drop the queued ones. Tells where the abort went: a local turn, a
+   * turn running in another instance (stopped at its next step boundary or heartbeat,
+   * `stop: 'aborted'`), `'idle'` or `'unsupported'` (`W_ABORT_UNSUPPORTED`). Rejects with
+   * `EH_STORAGE` when the state cannot be read, `EH_SESSION_CLOSED` after `close()`. For the
+   * handle of one local run use {@link HarnessRun.abort}.
    *
    * @see docs/specs/05-session-and-storage.md#91-cross-process-abort
    */
-  requestAbort(reason?: string): Promise<AbortRequestResult>
+  abort(reason?: string): Promise<AbortRequestResult>
   /**
    * Hand an input to whichever instance holds the session: with `storage.inbox` it is stored
    * durably first and applied by the instance running (or next running) the session; without

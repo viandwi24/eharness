@@ -8,7 +8,7 @@
 import type { ModelMessage, ToolResultPart } from 'ai'
 import type { CompactionConfig, PruneConfig } from '../agent/types.ts'
 import { TOOL_OUTPUT_PRUNED } from '../messages/texts.ts'
-import { asMediaRef, FILE_TOKENS } from './tokens.ts'
+import { asMediaRef, FILE_TOKENS } from '../models/tokens.ts'
 
 /** Default `prune.keepTurns`. */
 export const DEFAULT_PRUNE_KEEP_TURNS = 2

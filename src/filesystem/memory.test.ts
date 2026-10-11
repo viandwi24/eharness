@@ -1,12 +1,13 @@
 import { describe, expect, test } from 'bun:test'
+import { HarnessError } from '../index.ts'
 import { fileSystemConformance } from '../testing/file-system.conformance.ts'
 import { compileGlob } from './glob.ts'
-import { memoryFs } from './memory.ts'
+import { inMemoryFs } from './memory.ts'
 import type { FileSystem } from './types.ts'
 import { contentVersion } from './version.ts'
 
-describe('memoryFs() conformance', () => {
-  for (const c of fileSystemConformance(() => memoryFs(), {
+describe('inMemoryFs() conformance', () => {
+  for (const c of fileSystemConformance(() => inMemoryFs(), {
     requireStat: true,
     requireGrep: true,
     requireMove: true,
@@ -20,7 +21,7 @@ describe('memoryFs() conformance', () => {
 
 describe('an adapter with the optional glob (conformance)', () => {
   const withGlob = (): FileSystem => {
-    const inner = memoryFs()
+    const inner = inMemoryFs()
     return {
       ...inner,
       async glob(pattern, { prefix, limit }) {
@@ -37,9 +38,9 @@ describe('an adapter with the optional glob (conformance)', () => {
   }
 })
 
-describe('memoryFs()', () => {
+describe('inMemoryFs()', () => {
   test('normalizes seed paths and versions seed content', async () => {
-    const fs = memoryFs({ 'src//a.md': 'a', '/b.md': 'ø' })
+    const fs = inMemoryFs({ seed: { 'src//a.md': 'a', '/b.md': 'ø' } })
     expect((await fs.list()).map((f) => [f.path, f.size])).toEqual([
       ['/b.md', 2],
       ['/src/a.md', 1],
@@ -49,20 +50,20 @@ describe('memoryFs()', () => {
   })
 
   test('rejects invalid seeds and non-string content', async () => {
-    expect(() => memoryFs({ '/../x': 'a' })).toThrow(TypeError)
-    expect(() => memoryFs({ '/a': 1 as unknown as string })).toThrow(TypeError)
-    await expect(memoryFs().write('/a', 1 as unknown as string)).rejects.toThrow(TypeError)
+    expect(() => inMemoryFs({ seed: { '/../x': 'a' } })).toThrow(HarnessError)
+    expect(() => inMemoryFs({ seed: { '/a': 1 as unknown as string } })).toThrow(HarnessError)
+    await expect(inMemoryFs().write('/a', 1 as unknown as string)).rejects.toThrow(HarnessError)
   })
 
   test('two instances never share files', async () => {
-    const a = memoryFs()
-    const b = memoryFs()
+    const a = inMemoryFs()
+    const b = inMemoryFs()
     await a.write('/x.md', 'x')
     expect(await b.read('/x.md')).toBeNull()
   })
 
   test('grep ignores the lastIndex of global and sticky patterns; maxHits 0 returns nothing', async () => {
-    const fs = memoryFs({ '/a.md': 'x\nx\nx' })
+    const fs = inMemoryFs({ seed: { '/a.md': 'x\nx\nx' } })
     const sticky = /x/gy
     expect((await fs.grep?.(sticky))?.length).toBe(3)
     expect(sticky.lastIndex).toBe(0)
@@ -71,9 +72,9 @@ describe('memoryFs()', () => {
   })
 })
 
-describe('memoryFs().move', () => {
+describe('inMemoryFs().move', () => {
   test('keeps the version, refreshes updatedAt and moving onto itself is "exists"', async () => {
-    const fs = memoryFs({ '/a.md': 'a' })
+    const fs = inMemoryFs({ seed: { '/a.md': 'a' } })
     expect(await fs.move?.('/a.md', '/a.md')).toEqual({ ok: false, reason: 'exists' })
     expect(await fs.move?.('/a.md', '/b.md', { ifVersion: await contentVersion('a') })).toEqual({
       ok: true,
@@ -98,7 +99,7 @@ describe('fileSystemConformance catches broken adapters', () => {
   test('counter versions, ignored ifVersion and unsorted lists fail', async () => {
     let counter = 0
     const counterVersions = (): FileSystem => {
-      const fs = memoryFs()
+      const fs = inMemoryFs()
       return {
         ...fs,
         read: async (path) => {
@@ -118,7 +119,7 @@ describe('fileSystemConformance catches broken adapters', () => {
     )
 
     const unsorted = (): FileSystem => {
-      const fs = memoryFs()
+      const fs = inMemoryFs()
       return { ...fs, list: async (prefix) => (await fs.list(prefix)).reverse() }
     }
     expect(await failing(unsorted)).toContain(
@@ -128,7 +129,7 @@ describe('fileSystemConformance catches broken adapters', () => {
 
   test('a non-atomic or overwriting move fails', async () => {
     const overwriting = (): FileSystem => {
-      const fs = memoryFs()
+      const fs = inMemoryFs()
       return {
         ...fs,
         move: async (from, to) => {
@@ -144,7 +145,7 @@ describe('fileSystemConformance catches broken adapters', () => {
       'move renames atomically and reports missing, exists and conflict',
     )
     const noMove = (): FileSystem => {
-      const { move: _move, ...fs } = memoryFs()
+      const { move: _move, ...fs } = inMemoryFs()
       return fs
     }
     expect(await failing(noMove)).not.toContain(
@@ -153,9 +154,9 @@ describe('fileSystemConformance catches broken adapters', () => {
   })
 })
 
-describe('memoryFs() version history', () => {
+describe('inMemoryFs() version history', () => {
   test('keeps authors, binary states, history through delete and move, and prunes', async () => {
-    const fs = memoryFs({}, { maxVersions: 3 })
+    const fs = inMemoryFs({ maxVersions: 3 })
     await fs.write('/a.md', 'one', { author: 'ana' })
     await fs.write('/a.md', 'two')
     const states = (await fs.versions?.('/a.md')) ?? []

@@ -19,3 +19,7 @@ Status: **Accepted** · Date: 2026-10-10 · Builds on: [ADR-0048](0048-providers
 + No second encryption or redaction path; rotation works through `reseal()`.
 − Whole-settings sealing hides the shape from the database (no queries on settings fields); use
   `schemaOf` when non-secret fields must stay queryable.
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): `withLegacyVault` and `LegacyOpener` moved from `eharness/providers` to `examples/team`; the library keeps one sealing format.

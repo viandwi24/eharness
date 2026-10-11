@@ -11,6 +11,8 @@ Runnable round trip: [`examples/next-route.demo.ts`](../../examples/next-route.d
 ```ts
 import { defineHarnessAgent } from 'eharness'
 
+const model = 'anthropic/claude-sonnet-4.5' // yours: any AI SDK LanguageModel or model id
+
 const agent = defineHarnessAgent({
   model,
   approval: {
@@ -48,6 +50,10 @@ Nothing runs until someone answers.
 `handleChatRequest` calls `respond()`.
 
 ```tsx
+import { useChat } from '@ai-sdk/react'
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithApprovalResponses } from 'ai'
+
+// ChatMessage: yours, your UIMessage type
 const { messages, addToolApprovalResponse } = useChat<ChatMessage>({
   transport: new DefaultChatTransport({ api: '/api/chat' }),
   sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
@@ -59,6 +65,7 @@ addToolApprovalResponse({ id: part.approval.id, approved: true })
 **Server-side** (a Slack button, a CLI prompt):
 
 ```ts
+// `session`: yours, from agent.session(id)
 const run = session.respond({
   approvals: [
     {
@@ -118,6 +125,7 @@ const deleteRecord = tool({
   execute: async ({ id }) => `Deleted ${id}`,
 })
 
+// model: yours
 defineHarnessAgent({
   model,
   tools: { readRecord, deleteRecord },
@@ -142,7 +150,7 @@ deny, but a stricter policy, hook or grant still wins, and a risk rule never loo
 Rules: app metadata wins (it is trusted, so it may be lower than the hints); hints only tighten;
 one risk per tool; eharness applies **no MCP spec defaults**, so an MCP tool without annotations is
 `unknown`. For servers you do not control, route `unknown` to a person. For a server you trust,
-set the risk yourself with `mcpServer({ risk })` (a constant or a function per tool, see
+set the risk yourself with `mcpServerSource({ risk })` (a constant or a function per tool, see
 [Tools and MCP](tools-and-mcp.md#mcp-servers-eharnessmcp)).
 
 `toolTraits(metadata)` returns what the core sees: `{ risk?, idempotent?, hints? }`.
@@ -201,6 +209,7 @@ const audit = definePlugin({
   setup: () => ({
     hooks: {
       'approval.decided': async (ctx, d) => {
+        // yours: `db` is your database client
         await db.approvals.insert({ session: ctx.session.id, ...d, at: new Date() })
       },
     },
@@ -227,6 +236,9 @@ A tool without `execute` runs on the client. The turn stops with `tool-pending` 
 arrives:
 
 ```tsx
+import { useChat } from '@ai-sdk/react'
+import { lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
+
 const { messages, addToolOutput } = useChat<ChatMessage>({
   sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
   onToolCall: ({ toolCall }) => {
@@ -253,7 +265,7 @@ denials followed by the new message. With `'reject'` the run fails with `EH_PEND
 
 ```ts
 session.regenerate() // answer the last user message again
-session.edit(userMessageId, 'Actually, use metric units') // replace a user message and answer it
+session.edit({ messageId: userMessageId, input: 'Actually, use metric units' }) // replace a user message and answer it
 ```
 
 `useChat`'s `regenerate()` and editing a message (`sendMessage({ text, messageId })`) reach the

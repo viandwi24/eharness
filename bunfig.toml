@@ -4,3 +4,7 @@
 # docs/plans/P30-coder-example.md §2.1
 [install]
 linker = "hoisted"
+
+# A session invariant violation (`W_INVARIANT_VIOLATION`) fails the test that caused it.
+[test]
+preload = ["./scripts/test-preload.ts"]

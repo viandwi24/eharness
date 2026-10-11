@@ -13,7 +13,7 @@
  * With `inbox.retry` every release is classified (rule 11): a deferral (the item was not tried)
  * undoes the claim's attempt (`uncount`), a failed attempt waits a backoff (`delayMs`) and records
  * `lastError`; an item past `maxAttempts` or failing with a non-retryable error is dead-lettered
- * and reported (rules 12–13). Without `inbox.retry` releases carry no options (0.4).
+ * and reported (rules 12–13). Without `inbox.retry` releases carry no options.
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  * @see docs/decisions/0024-durable-inbox-port.md
@@ -31,6 +31,7 @@ import type {
 } from '../../agent/session-types.ts'
 import type { InboxRetryOptions } from '../../agent/types.ts'
 import { HarnessError, type HarnessWarning } from '../../errors.ts'
+import { errorText, unref } from '../../internal/util.ts'
 import type { NormalizedInput } from '../input.ts'
 import { runsElsewhereHere } from '../local-turns.ts'
 import type { SessionRuntime } from '../runtime.ts'
@@ -60,7 +61,7 @@ export interface InboxUnit {
  * - `retry`: a failed attempt that is always retried (`EH_SESSION_BUSY` / `EH_STORAGE` before the
  *   commit point, a write after it) — released with backoff;
  * - `error`: failed before the commit point with another error — acked without `inbox.retry`
- *   (0.4); with it dead at once when non-retryable, else like `retry`;
+ *   (legacy); with it dead at once when non-retryable, else like `retry`;
  * - `drop`: an outcome, not a failure (input blocked, aborted by its caller) — acked.
  */
 export type InboxSettle =
@@ -132,10 +133,6 @@ export interface InboxDrain {
   close(): void
 }
 
-function unref(timer: unknown): void {
-  ;(timer as { unref?: () => void } | undefined)?.unref?.()
-}
-
 /** A live `activeTurn` of another instance in a stored snapshot. */
 export function liveForeignTurn(
   stored: SessionStateSnapshot | null,
@@ -147,7 +144,7 @@ export function liveForeignTurn(
   if (active === undefined) return undefined
   // same owner id: ours, unless another handle of this process runs it (stable instanceId)
   if (active.owner === owner)
-    return self !== undefined && runsElsewhereHere(active, self) ? active : undefined
+    return self !== undefined && runsElsewhereHere(self, active) ? active : undefined
   if (staleMs !== false && Date.now() - active.heartbeatAt > staleMs) return undefined
   return active
 }
@@ -213,7 +210,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   const warn = (what: string, error: unknown) => {
     const warning: HarnessWarning = {
       code: 'W_INBOX_FAILED',
-      message: `Inbox ${what} failed: ${error instanceof Error ? error.message : String(error)}`,
+      message: `Inbox ${what} failed: ${errorText(error)}`,
       details: { sessionId, operation: what },
     }
     rt.warn(warning, `inbox:${what}`)
@@ -396,7 +393,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
       rt.warn(
         {
           code: 'W_HOOK_FAILED',
-          message: `inbox.onDeadLetter threw: ${error instanceof Error ? error.message : String(error)}`,
+          message: `inbox.onDeadLetter threw: ${errorText(error)}`,
           details: { hook: 'inbox.onDeadLetter', owner: 'app', sessionId, inboxId: item.id },
         },
         `inbox:onDeadLetter:${item.id}`,

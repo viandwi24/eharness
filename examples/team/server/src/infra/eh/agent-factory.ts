@@ -13,7 +13,7 @@
  * Activation is asynchronous: `prepare` runs it, `agentFor` (synchronous) uses its result. Static instructions come first; the volatile parts (date, roster)
  * live in the turn reminder, never in `instructions` (spec 02 §5).
  *
- * Delegation (M4, ADR-0035 / ADR-0041): the lead gets `subagents({ approvals: 'park' })` with the
+ * Delegation (M4, ADR-0035 / ADR-0041): the lead gets `subagent({ approvals: 'park' })` with the
  * role agents of the DB roster; every other agent gets the child side of the same plugin
  * (`parentAgent` = the lead, `selfAgent` = itself) so it can `send_message` to `main` and reports
  * of resumed turns find their way back. All instances build the same plugin set, which waits
@@ -35,6 +35,7 @@ import {
   lookupModel,
   type ModelCatalog,
   type ModelInfo,
+  type ObserveEvent,
   type SessionLock,
   type SessionPeek,
 } from 'eharness'
@@ -49,7 +50,7 @@ import {
   modelClassifier,
   type PermissionEngine,
 } from 'eharness/permissions'
-import { AGENT_MESSAGE_INSTRUCTIONS, subagents } from 'eharness/subagent'
+import { subagent } from 'eharness/subagent'
 import type { EventAppender } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
@@ -90,7 +91,7 @@ import { taskIndex } from './task-index.ts'
 export interface TeamLimits {
   /** Children the lead starts at once (the spawn cap). Default 4; the settings row overrides it. */
   spawnCap?: number
-  /** Children one session may start over its lifetime (`subagents({ maxChildren })`). Default none. */
+  /** Children one session may start over its lifetime (`subagent({ maxChildren })`). Default none. */
   maxChildren?: number
   /** Steps a role agent may take per delegated run. Default 25. */
   childMaxTurns?: number
@@ -161,6 +162,10 @@ export interface AgentFactoryDeps {
   /** Called after a library file changed (event feed, M4). */
   onFileChange?: (change: LibraryChange) => void
   onWarning?: (warning: HarnessWarning) => void
+  /** `config.observe`: phase spans and failure counters (see `observe.ts`); absent = off. */
+  observe?: (event: ObserveEvent) => void
+  /** `debug.invariants` of every agent (explicit: the core never infers it from NODE_ENV). */
+  debug?: { invariants?: boolean }
   /** Lease of the turn lock (ms). */
   lockLeaseMs?: number
   /**
@@ -254,6 +259,22 @@ const EMPTY_ACTIVATION: ActivatedConnectors = {
 /** Common preamble; the definition's own instructions follow. Static text only. */
 /** Output cap of a model the catalog does not list, and the ceiling of any catalog value. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 16_384
+/** The classifier reads at most this much of one action (library default, set explicitly). */
+const CLASSIFIER_MAX_CALL_CHARS = 8_000
+
+/**
+ * Bounded waits, all explicit so nothing a turn awaits can hang it (spec 10): an awaited hook
+ * (the app's task index, activity and routine hooks are all local writes), a stalled model stream
+ * (idle between chunks, per step) and a tool source that does not list (the remote MCP servers).
+ * The values are the library defaults; a production app tunes them to its providers.
+ */
+const HOOK_TIMEOUT_MS = 30_000
+const MODEL_IDLE_TIMEOUT_MS = 120_000
+const TOOL_SOURCE_TIMEOUT_MS = 30_000
+/** A failed tool source (a down MCP server) is asked again after this long, doubling to 60 s. */
+const TOOL_SOURCE_RETRY_MS = 5_000
+/** The same warning is printed once per minute, with a count of the repeats. */
+const WARNING_DEDUPE_MS = 60_000
 const MAX_OUTPUT_TOKENS_CAP = 32_768
 
 const TEAM_PREAMBLE = [
@@ -339,6 +360,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           ...(deps.activityLog === undefined
             ? {}
             : { onModelCall: deps.activityLog.observer({ sessionId, agentId }) }),
+          // an action longer than this asks a person instead of being judged on a cut-off input
+          maxCallChars: CLASSIFIER_MAX_CALL_CHARS,
         }))
   /** Engines of the live sessions of this process, for the Auto state (`modes.autoState`). */
   const engines = new Map<string, PermissionEngine>()
@@ -381,7 +404,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return factoryAgentFor(lead)
   }
 
-  /** The agent object of each agent id (latest build): `subagents({ selfAgent })` of the team connector. */
+  /** The agent object of each agent id (latest build): `subagent({ selfAgent })` of the team connector. */
   const selves = new Map<string, HarnessAgent>()
 
   /** Stable ids of activations (they are part of the cache key of built agents). */
@@ -396,11 +419,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return id
   }
 
-  const toolOn = (out: ActivatedConnectors, name: string): boolean =>
-    name in out.toolNameMap && !out.rules.deny.includes(name)
-
   /**
-   * The Team connector: the lead gets `subagents({ approvals: 'park' })` with the role agents of
+   * The Team connector: the lead gets `subagent({ approvals: 'park' })` with the role agents of
    * the DB roster (delegate, output and stop tools follow the connector's tool modes); other agents
    * never get it (they have the child side below).
    */
@@ -410,7 +430,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     const limits = { ...fixed, spawnCap: settings.spawnCap }
     if (input.modes.delegate === undefined || input.modes.delegate === 'off') return undefined
     const has = (tool: string): boolean => input.tools.includes(tool)
-    return subagents({
+    return subagent({
       agents: () =>
         Object.fromEntries(
           (deps.roster?.() ?? [])
@@ -454,8 +474,6 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     out: ActivatedConnectors,
   ): HarnessAgent {
     const self = (): HarnessAgent => selves.get(def.id) as HarnessAgent
-    const delegates = def.role === 'lead' && toolOn(out, 'agent')
-    const messaging = def.role === 'lead' ? toolOn(out, 'send_message') : true
     const pluginNames = new Set(out.plugins.map((p) => p.name))
 
     // one engine per live session (Auto mode counters are per conversation); the mode is read
@@ -517,7 +535,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(def.role === 'lead'
         ? []
         : [
-            subagents({
+            subagent({
               agents: {},
               approvals: 'park',
               parentAgent: leadAgent,
@@ -592,11 +610,18 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       ...(catalog === undefined ? {} : { models: catalog }),
       // never leave the output cap to the provider: OpenRouter-style gateways then reserve (and
       // check credits for) the model maximum on every call
-      settings: { maxOutputTokens: outputCapOf(modelInfoOf(def, settings).maxOutputTokens) },
+      settings: {
+        maxOutputTokens: outputCapOf(modelInfoOf(def, settings).maxOutputTokens),
+        timeout: { firstChunkMs: MODEL_IDLE_TIMEOUT_MS, chunkMs: MODEL_IDLE_TIMEOUT_MS },
+      },
+      hooks: { timeoutMs: HOOK_TIMEOUT_MS },
+      toolSources: { timeoutMs: TOOL_SOURCE_TIMEOUT_MS, retryAfterMs: TOOL_SOURCE_RETRY_MS },
+      warnings: { dedupeWindowMs: WARNING_DEDUPE_MS },
+      ...(deps.observe === undefined ? {} : { observe: deps.observe }),
+      ...(deps.debug === undefined ? {} : { debug: deps.debug }),
       instructions: [
         TEAM_PREAMBLE,
         ...(def.role === 'lead' ? [LEAD_PLAYBOOK] : [ROLE_AGENT_NOTE]),
-        ...(delegates || messaging ? [AGENT_MESSAGE_INSTRUCTIONS] : []),
         def.instructions,
         ...out.instructions,
         reminder,

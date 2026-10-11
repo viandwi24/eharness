@@ -20,6 +20,7 @@ import { tool } from 'ai'
 import { defineDataPart, defineHarnessAgent } from 'eharness'
 import { z } from 'zod/v4'
 
+// yours: `model` is an AI SDK LanguageModel
 const agent = defineHarnessAgent({
   model,
   dataParts: {
@@ -101,7 +102,7 @@ Shipped plugins add their own parts (namespaced `data-<plugin>.<key>`, typed thr
 
 | Type | Stored | Content |
 |---|---|---|
-| `data-todos.list` | yes (id `list`) | `{ todos: Todo[] }` after every `todo_write` — [todos guide](todos.md), `latestTodos(messages)` |
+| `data-todos.list` | yes (id `list`) | `{ todos: Todo[] }` after every `todo_write` — [todos guide](todos.md), `latestTodos(messages)` from `eharness/todos` |
 | `data-filesystem.change` | yes (id = path) | `{ path, action: 'create' \| 'write' \| 'edit' \| 'delete', version, bytes? }`, latest change per file in a message (spec 08 §5) |
 
 A kind message is an ordinary `UIMessage` with exactly one part `data-<kind>`, so the same
@@ -111,7 +112,7 @@ component renders it live and from history:
 import { defineMessageKind } from 'eharness'
 import { z } from 'zod/v4'
 
-// defineHarnessAgent({ messageKinds: { deploy: … } }) → part type `data-deploy`
+// register it: defineHarnessAgent({ messageKinds: { deploy } }) → part type `data-deploy`
 const deploy = defineMessageKind({
   role: 'user',
   schema: z.object({ version: z.string() }),

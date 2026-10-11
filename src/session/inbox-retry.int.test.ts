@@ -1,6 +1,6 @@
 /**
  * Inbox retries and dead-letter (spec 05 §12 rules 11–15, ADR-0026): two agent instances share
- * one message store, one state store and one `memoryInbox()`; poison items go dead after
+ * one message store, one state store and one `inMemoryInbox()`; poison items go dead after
  * `retry.maxAttempts`, deferrals never consume attempts, non-retryable inputs go dead at once,
  * and without `inbox.retry` the 0.4 behaviour is kept.
  */
@@ -19,7 +19,7 @@ import type {
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { sleep, until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
@@ -28,7 +28,7 @@ const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 /** A memory inbox that records claims and release options; `legacy` drops the 0.5 members. */
 function spyInbox(options: { legacy?: boolean } = {}) {
-  const inner = memoryInbox()
+  const inner = inMemoryInbox()
   const log = {
     claims: [] as Array<{ owner: string; items: Array<[string, number]> }>,
     releases: [] as Array<{ ids: string[]; opts: InboxReleaseOptions | undefined }>,

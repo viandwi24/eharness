@@ -1,6 +1,8 @@
 /** `/doctor`: environment and configuration checks. Every dependency is injectable for tests. */
+
 import { access, constants, mkdir } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
+import { errorText } from 'eharness'
 import { detectOsSandbox } from 'eharness/shell'
 import type { CoderConfig, CoderSettings, DoctorCheck, ModelOption } from '../contracts.ts'
 import { readSettingsFile } from './config.ts'
@@ -74,7 +76,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
     try {
       await fn()
     } catch (error) {
-      add(name, 'error', error instanceof Error ? error.message : String(error))
+      add(name, 'error', errorText(error))
     }
   }
 
@@ -183,7 +185,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
       try {
         if ((await readSettingsFile(file)) !== undefined) found++
       } catch (error) {
-        problems.push(error instanceof Error ? error.message : String(error))
+        problems.push(errorText(error))
       }
     }
     if (problems.length > 0) add('Settings files', 'error', problems.join('; '))

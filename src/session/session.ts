@@ -4,178 +4,110 @@
  *
  * @see docs/specs/05-session-and-storage.md#2-session-api
  */
-import { asSchema, type Tool, type UIMessage } from 'ai'
-import type { AgentInternals } from '../agent/internals.ts'
+
+import type { UIMessage } from 'ai'
 import type {
-  AbortRequestResult,
-  ActiveTurn,
-  CollectOptions,
-  EnqueueResult,
   ForkOptions,
   HarnessRun,
-  HarnessSession,
-  InboxAdapter,
-  InboxItemInput,
-  MessageAdapter,
-  ParentInfo,
   PendingResponse,
   SendInput,
   SendOptions,
-  SessionOptions,
-  SessionStateSnapshot,
-  StateAdapter,
-  SteerDelivery,
-  StreamLogAdapter,
 } from '../agent/session-types.ts'
 import { createSessionCompaction } from '../compaction/compact.ts'
-import { manualFlushEnv } from '../compaction/flush.ts'
-import { toolTokens } from '../compaction/tokens.ts'
-import { currentTurnStartId } from '../compaction/turns.ts'
-import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
-import { recordOutsideTurn } from '../loop/ledger.ts'
-import { createKindMessage } from '../messages/kinds.ts'
-import { normalizeDeniedApprovals, normalizeRawInput } from '../messages/tool-parts.ts'
-import type { HarnessUIMessage, TurnResult } from '../messages/types.ts'
-import { checkMessageShape } from '../messages/validate.ts'
-import { costOf } from '../models/cost.ts'
-import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
-import { describeTools, instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
-import {
-  addContribution,
-  createStaticRegistry,
-  describeOwner,
-  type HookEntry,
-  type NormalizedInstruction,
-} from '../registry/static.ts'
-import { inspectRegistry, type RegistryInspection } from '../registry/turn.ts'
-import type { ToolInput, ToolSource } from '../registry/types.ts'
-import { hookFailed } from '../registry/wrap.ts'
-import { buildSessionSkills } from '../skills/registry.ts'
-import { createLogStream } from '../stream/log-reader.ts'
-import { resolveStreamLogOptions } from '../stream/log-writer.ts'
-import { createRun, failedRun } from '../stream/run.ts'
-import { createContext, defaultLogger, pendingServices, safeLogger } from './context.ts'
+import type { HarnessWarning } from '../errors.ts'
+import { observeCount } from '../internal/observe.ts'
+import type { HarnessUIMessage } from '../messages/types.ts'
+import type { HarnessContext } from '../plugin/types.ts'
+import { createContext, defaultLogger, safeLogger } from './context.ts'
 import { createEventHub } from './events.ts'
-import { copyMessages, registerChild } from './family.ts'
-import { createHookRunner } from './hooks.ts'
-import { collectDue, mergeInputs, resolveCollect } from './inbox/collect.ts'
 import {
-  createInboxDrain,
-  DEFAULT_INBOX_POLL_MS,
-  type InboxDrain,
-  type InboxUnit,
-  liveForeignTurn,
-} from './inbox/driver.ts'
-import { toSerialized } from './inbox/serialize.ts'
-import { type NormalizedInput, normalizeInput, validateEnqueueMetadata } from './input.ts'
-import { kindText } from './interaction/inbox.ts'
-import { pendingSignature, RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
-import { createDeferredRun, type DeferredRun, type QueuedTurn } from './interaction/queue.ts'
+  apiBusy,
+  apiChildren,
+  apiEvents,
+  apiExpireWaits,
+  apiIdle,
+  apiMessages,
+  apiParentInfo,
+  apiPendingWaits,
+  apiResolveWait,
+  apiStats,
+  apiTools,
+} from './handle/api-read.ts'
+import { apiClearGrants, apiCompact, apiFork, apiRecover } from './handle/api-session.ts'
+import {
+  apiAbort,
+  apiAttach,
+  apiAttachRemote,
+  apiEdit,
+  apiEnqueue,
+  apiInject,
+  apiOnRun,
+  apiReady,
+  apiRegenerate,
+  apiRespond,
+  apiSend,
+} from './handle/api-turns.ts'
+import type { SessionCtx, SessionHandle, SessionHandleArgs } from './handle/ctx.ts'
+import { holdWakeDurably, inboxWarning, notify } from './handle/inbox.ts'
+import { ensureContext, ensureOpen, persist, reportInvariants } from './handle/open.ts'
+import {
+  checkCollect,
+  checkIdle,
+  close,
+  dropQueue,
+  enqueue,
+  gateStep,
+  releaseHeldQueue,
+  startNext,
+  startUnit,
+  touch,
+} from './handle/queue.ts'
+import { createInboxDrain, DEFAULT_INBOX_POLL_MS } from './inbox/driver.ts'
 import { createWaitOps } from './interaction/resolve.ts'
-import { checkSessionInvariants } from './invariants.ts'
-import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
-import { runsElsewhereHere } from './local-turns.ts'
-import { recoverInterruptedTurn } from './recover.ts'
-import { DEFAULT_STALE_MS, requestRemoteAbort } from './remote-abort.ts'
-
-/** How long `attachRemote` waits for the owner's first flush after the turn's commit point. */
-const REMOTE_START_GRACE_MS = 3_000
-
-import type { OpenSession, ResolvedTool, SessionRuntime } from './runtime.ts'
+import { createRateLimitedWarn } from './rate-limit.ts'
+import { DEFAULT_STALE_MS } from './remote-abort.ts'
 import { createStateStore } from './state.ts'
-import { budgetOverrun, type RunningTurn, startTurn, type TurnHost } from './turn.ts'
-
-/** A live session plus the handles the agent needs. */
-export interface SessionHandle {
-  readonly session: HarnessSession<UIMessage, Record<string, unknown>>
-  readonly rt: SessionRuntime
-  close(): Promise<void>
-}
-
-function closedError(id: string): HarnessError {
-  return new HarnessError(
-    'EH_SESSION_CLOSED',
-    `Session '${id}' was closed or evicted; call agent.session(id) again.`,
-    { details: { sessionId: id } },
-  )
-}
-
-function busyError(id: string): HarnessError {
-  return new HarnessError('EH_SESSION_BUSY', `A turn of session '${id}' is running.`, {
-    details: { sessionId: id },
-  })
-}
-
-function asHarnessError(error: unknown): HarnessError {
-  if (isHarnessError(error)) return error
-  return new HarnessError(
-    'EH_INVALID_INPUT',
-    error instanceof Error ? error.message : String(error),
-    {
-      cause: error,
-    },
-  )
-}
-
-function unref(timer: unknown): void {
-  ;(timer as { unref?: () => void } | undefined)?.unref?.()
-}
-
-function storageError(what: string, cause: unknown): HarnessError {
-  if (isHarnessError(cause)) return cause
-  return new HarnessError('EH_STORAGE', `Message storage failed (${what}).`, { cause })
-}
 
 /** Create a live session. */
-export function createSessionHandle(args: {
-  internals: AgentInternals
-  owner: string
-  /** Owner string of inbox claims (unique per agent incarnation). */
-  claimOwner: string
-  id: string
-  options: SessionOptions
-  /** Open another session of the agent (`agent.session`), for `fork()`. */
-  openSession(
-    id: string,
-    options: SessionOptions,
-  ): HarnessSession<UIMessage, Record<string, unknown>>
-  /** A live handle of `id` is cached in the agent. */
-  isLive(id: string): boolean
-  messages: MessageAdapter
-  state: StateAdapter
-  /** Optional durable inbox (spec 05 §12). */
-  inbox?: InboxAdapter
-  /** Optional stream log (spec 04 §6.2). */
-  streams?: StreamLogAdapter
-  idleMs: number
-  onClosed(): void
-  /** The close of the previous live handle of this id: this handle opens only after it. */
-  after?: Promise<void>
-}): SessionHandle {
-  const { internals, id } = args
-  const config = internals.config
-  const log: HarnessLogger = safeLogger(config.logger ?? defaultLogger)
-  const closeController = new AbortController()
-  /** `ctx.signal`: aborts on close, and when an open fails (a retried open gets a fresh one). */
-  let sessionController = new AbortController()
-  const events = createEventHub()
-  const contexts = new Map<string, HarnessContext>()
-  let customIdWarned = false
-
-  const rt: SessionRuntime = {
-    id,
-    agent: internals,
-    options: args.options,
-    messages: args.messages,
-    state: createStateStore(args.state, id),
-    ...(args.streams === undefined ? {} : { streams: args.streams }),
-    owner: args.owner,
-    claimOwner: args.claimOwner,
-    log,
-    get signal() {
-      return sessionController.signal
+export function createSessionHandle(args: SessionHandleArgs): SessionHandle {
+  const s = { args } as SessionCtx
+  s.internals = args.internals
+  s.id = args.id
+  s.config = s.internals.config
+  s.log = safeLogger(s.config.logger ?? defaultLogger)
+  s.closeController = new AbortController()
+  s.sessionController = new AbortController()
+  s.warnLimited = createRateLimitedWarn((message, data) =>
+    s.log.warn(message, { sessionId: s.id, ...data }),
+  )
+  s.events = createEventHub({
+    onOverflow: (info) => {
+      observeCount(s.internals.observe, 'events.overflow', {
+        sessionId: s.id,
+        code: 'EH_EVENTS_OVERFLOW',
+      })
+      s.log.warn('eharness: a session events reader fell too far behind and was dropped', {
+        sessionId: s.id,
+        ...info,
+      })
     },
-    events,
+  })
+  s.contexts = new Map<string, HarnessContext>()
+  s.customIdWarned = false
+  s.rt = {
+    id: s.id,
+    agent: s.internals,
+    options: s.args.options,
+    messages: s.args.messages,
+    state: createStateStore(s.args.state, s.id, s.internals.observe),
+    ...(s.args.streams === undefined ? {} : { streams: s.args.streams }),
+    owner: s.args.owner,
+    claimOwner: s.args.claimOwner,
+    log: s.log,
+    get signal() {
+      return s.sessionController.signal
+    },
+    events: s.events,
     open: undefined,
     view: undefined,
     newestId: undefined,
@@ -184,45 +116,57 @@ export function createSessionHandle(args: {
     running: false,
     closed: false,
     warn(warning: HarnessWarning, key?: string) {
-      internals.emitWarning(warning, key)
+      const observe = s.internals.observe
+      if (observe !== undefined) {
+        const scope = { sessionId: s.id, code: warning.code }
+        observeCount(observe, 'warning', scope)
+        if (warning.code === 'W_HOOK_FAILED' || warning.code === 'W_HOOK_TIMEOUT') {
+          observeCount(observe, warning.code === 'W_HOOK_FAILED' ? 'hook.failed' : 'hook.timeout', {
+            sessionId: s.id,
+            ...(typeof warning.details?.hook === 'string' ? { hook: warning.details.hook } : {}),
+            ...(typeof warning.details?.owner === 'string' ? { owner: warning.details.owner } : {}),
+          })
+        }
+      }
+      s.internals.emitWarning(warning, key)
       const chunk = {
         type: 'data-eh.warning' as const,
         data: { code: warning.code, message: warning.message },
         transient: true,
       }
-      if (rt.turn?.active === true) rt.turn.write(chunk)
-      else events.emit({ type: 'data', chunk: chunk as never })
+      if (s.rt.turn?.active === true) s.rt.turn.write(chunk)
+      else s.events.emit({ type: 'data', chunk: chunk as never })
     },
     nextId() {
-      const floor = rt.newestId
-      const next = internals.generateId(floor)
+      const floor = s.rt.newestId
+      const next = s.internals.generateId(floor)
       if (
         floor !== undefined &&
         !(next > floor) &&
-        config.generateId !== undefined &&
-        !customIdWarned
+        s.config.generateId !== undefined &&
+        !s.customIdWarned
       ) {
-        customIdWarned = true
-        log.warn(
+        s.customIdWarned = true
+        s.log.warn(
           `eharness: config.generateId returned '${next}', which does not sort after the session's newest id '${floor}' (spec 03 §8).`,
         )
       }
-      if (floor === undefined || next > floor) rt.newestId = next
+      if (floor === undefined || next > floor) s.rt.newestId = next
       return next
     },
     contextOf(plugin: string) {
-      let ctx = contexts.get(plugin)
+      let ctx = s.contexts.get(plugin)
       if (ctx === undefined) {
-        ctx = createContext(rt, plugin)
-        contexts.set(plugin, ctx)
+        ctx = createContext(s.rt, plugin)
+        s.contexts.set(plugin, ctx)
       }
       return ctx
     },
     cacheMessage(message: HarnessUIMessage) {
-      if (rt.newestId === undefined || message.id > rt.newestId) rt.newestId = message.id
-      const view = rt.view
+      if (s.rt.newestId === undefined || message.id > s.rt.newestId) s.rt.newestId = message.id
+      const view = s.rt.view
       if (view === undefined) {
-        cachedWhileLoading?.push(structuredClone(message))
+        s.cachedWhileLoading?.push(structuredClone(message))
         return
       }
       const copy = structuredClone(message)
@@ -233,503 +177,49 @@ export function createSessionHandle(args: {
       else view.splice(index, 0, copy)
     },
   }
-
-  // ─── open (state load + plugin session phases) ────────────────────────────────────────────
-  let opening: Promise<OpenSession> | undefined
-  /** The state was just loaded by open(); the first context load must not reload it. */
-  let stateFresh = false
-
-  const pluginOrder = internals.plugins.map((p) => p.name)
-  const rank = (owner: string) => pluginOrder.indexOf(owner)
-
-  async function doOpen(): Promise<OpenSession> {
-    const parent = rt.options.parent
-    if (parent !== undefined && parent.depth > 8) {
-      throw new HarnessError(
-        'EH_CONFIG_INVALID',
-        'Child sessions deeper than 8 levels are not allowed.',
-        {
-          details: { depth: parent.depth },
-        },
-      )
-    }
-    await rt.state.load()
-    stateFresh = true
-    if (parent !== undefined) await linkParent(parent)
-    const services = new Map<string, unknown>()
-    pendingServices.set(rt, services)
-    const disposers: OpenSession['disposers'] = []
-    const session = createStaticRegistry()
-    try {
-      for (const plugin of internals.plugins) {
-        const def = plugin['~def']
-        const provides = def.provides ?? []
-        if (def.session === undefined) {
-          if (provides.length > 0) missingService(plugin.name, provides[0] as string)
-          continue
-        }
-        let contribution: Awaited<ReturnType<NonNullable<typeof def.session>>>
-        try {
-          contribution = await def.session.call(def, rt.contextOf(plugin.name) as never)
-        } catch (error) {
-          if (isHarnessError(error)) throw error
-          throw new HarnessError(
-            'EH_CONFIG_INVALID',
-            `${describeOwner(plugin.name)}: session() threw: ${error instanceof Error ? error.message : String(error)}`,
-            { details: { owner: plugin.name }, cause: error },
-          )
-        }
-        if (contribution === undefined || contribution === null) {
-          if (provides.length > 0) missingService(plugin.name, provides[0] as string)
-          continue
-        }
-        if (typeof contribution.dispose === 'function') {
-          const dispose = contribution.dispose.bind(contribution)
-          disposers.push({ owner: plugin.name, dispose })
-        }
-        const provided = (contribution.services ?? {}) as Record<string, unknown>
-        for (const name of provides) {
-          if (!(name in provided)) missingService(plugin.name, name)
-          services.set(name, provided[name])
-        }
-        for (const name of Object.keys(provided)) {
-          if (!provides.includes(name)) {
-            throw new HarnessError(
-              'EH_CONFIG_INVALID',
-              `Plugin '${plugin.name}' returned service '${name}' without declaring it in \`provides\`.`,
-              { details: { plugin: plugin.name, service: name } },
-            )
-          }
-        }
-        addContribution(session, plugin.name, contribution, 'session')
-      }
-
-      // session contributions must not collide with static ones (spec 02 §7)
-      for (const tool of session.tools) {
-        const existing = internals.statics.tools.find((t) => t.name === tool.name)
-        if (existing !== undefined) {
-          throw new HarnessError(
-            'EH_DUPLICATE_TOOL',
-            `Tool '${tool.name}' is declared twice: by ${describeOwner(existing.owner)} and by ${describeOwner(tool.owner)}.`,
-            { details: { tool: tool.name, owners: [existing.owner, tool.owner] } },
-          )
-        }
-      }
-      for (const skill of session.skills) {
-        const existing = internals.statics.skills.find((s) => s.skill.name === skill.skill.name)
-        if (existing !== undefined) {
-          throw new HarnessError(
-            'EH_DUPLICATE_SKILL',
-            `Skill '${skill.skill.name}' is declared twice: by ${describeOwner(existing.owner)} and by ${describeOwner(skill.owner)}.`,
-            { details: { skill: skill.skill.name, owners: [existing.owner, skill.owner] } },
-          )
-        }
-      }
-
-      const byPlugin = <T extends { owner: string }>(setup: T[], sessionItems: T[]): T[] =>
-        [
-          ...setup.map((item, i) => ({ item, key: rank(item.owner) * 2, i })),
-          ...sessionItems.map((item, i) => ({ item, key: rank(item.owner) * 2 + 1, i })),
-        ]
-          .sort((a, b) => a.key - b.key || a.i - b.i)
-          .map((x) => x.item)
-
-      const instructions: NormalizedInstruction[] = byPlugin(
-        internals.statics.instructions,
-        session.instructions,
-      )
-      const hookEntries: HookEntry[] = [...internals.statics.hooks, ...session.hooks]
-      const hooks = createHookRunner(hookEntries, pluginOrder)
-
-      // (ctx) => Tool inputs, resolved after every session phase ran (spec 02 §3.1)
-      const tools: ResolvedTool[] = []
-      for (const entry of byPlugin(internals.statics.tools, session.tools)) {
-        tools.push({
-          owner: entry.owner,
-          name: entry.name,
-          tool: resolveTool(entry.owner, entry.name, entry.tool),
-        })
-      }
-      const toolSources: Array<{ owner: string; source: ToolSource }> = byPlugin(
-        internals.statics.toolSources,
-        session.toolSources,
-      )
-      for (const { owner, source } of toolSources) {
-        if (typeof source.open === 'function') await source.open(rt.contextOf(owner))
-        if (typeof source.close === 'function') {
-          const close = source.close.bind(source)
-          disposers.push({ owner, dispose: close })
-        }
-      }
-      const open: OpenSession = {
-        skills: buildSessionSkills(
-          byPlugin(internals.statics.skills, session.skills),
-          byPlugin(internals.statics.skillSources, session.skillSources),
-          pluginOrder,
-          internals.config.skillsIndexLimit,
-        ),
-        services,
-        hooks,
-        tools,
-        toolSources,
-        instructions,
-        sessionBlock: undefined,
-        sourceCache: new Map(),
-        disposers,
-      }
-      rt.open = open
-      pendingServices.delete(rt)
-      for (const hook of hooks.list('session.start')) {
-        try {
-          await hook.fn(rt.contextOf(hook.owner))
-        } catch (error) {
-          hookFailed(rt, 'session.start', hook.owner, error)
-        }
-      }
-      // waits a crashed instance parked but never started (spec 11 §4.2 rule 1); not awaited: a
-      // `start` may call back into this session
-      queueMicrotask(() => void waits.redispatch())
-      return open
-    } catch (error) {
-      rt.open = undefined
-      pendingServices.delete(rt)
-      // what was opened for this attempt releases its per-session resources (spec 05 §2)
-      sessionController.abort('open failed')
-      if (!rt.closed) sessionController = new AbortController()
-      for (const { dispose } of [...disposers].reverse()) {
-        try {
-          await dispose()
-        } catch {}
-      }
-      throw error
-    }
-  }
-
-  /**
-   * A child session records its parent in its own state and registers in the parent's
-   * `core.children` (a foreign write through the state adapter, spec 05 §13). Best effort: a
-   * failure is logged and retried by the next open (the child's `core.parent` is only recorded
-   * after the registration went through).
-   */
-  async function linkParent(parent: ParentInfo): Promise<void> {
-    const core = rt.state.core()
-    const known = core.parent
-    if (
-      known !== undefined &&
-      known.sessionId === parent.sessionId &&
-      known.turnId === parent.turnId &&
-      known.toolCallId === parent.toolCallId
-    ) {
-      return
-    }
-    try {
-      await registerChild(args.state, parent.sessionId, {
-        sessionId: id,
-        turnId: parent.turnId,
-        ...(parent.toolCallId === undefined ? {} : { toolCallId: parent.toolCallId }),
-        ...(parent.agent === undefined ? {} : { agent: parent.agent }),
-        ...(parent.name === undefined ? {} : { name: parent.name }),
-        ...(parent.description === undefined ? {} : { description: parent.description }),
-        createdAt: Date.now(),
-      })
-      core.parent = { ...parent }
-      rt.state.markDirty()
-      await rt.state.writeIfDirty()
-    } catch (error) {
-      log.warn(`eharness: could not register session '${id}' as a child of '${parent.sessionId}'`, {
-        error,
-      })
-    }
-  }
-
-  function missingService(plugin: string, service: string): never {
-    throw new HarnessError(
-      'EH_SERVICE_MISSING',
-      `Plugin '${plugin}' declares service '${service}' in \`provides\` but its session() did not return it.`,
-      { details: { plugin, service } },
-    )
-  }
-
-  function resolveTool(owner: string, name: string, input: ToolInput): Tool {
-    if (typeof input !== 'function') return input
-    let tool: unknown
-    try {
-      tool = input(rt.contextOf(owner))
-    } catch (error) {
-      throw new HarnessError(
-        'EH_CONFIG_INVALID',
-        `${describeOwner(owner)}: tool '${name}' factory threw: ${error instanceof Error ? error.message : String(error)}`,
-        { details: { owner, tool: name }, cause: error },
-      )
-    }
-    if (typeof tool !== 'object' || tool === null) {
-      throw new HarnessError(
-        'EH_CONFIG_INVALID',
-        `${describeOwner(owner)}: tool '${name}' factory must return an AI SDK tool.`,
-        { details: { owner, tool: name } },
-      )
-    }
-    return tool as Tool
-  }
-
-  function ensureOpen(): Promise<OpenSession> {
-    if (rt.open !== undefined) return Promise.resolve(rt.open)
-    if (opening === undefined) {
-      const after = args.after
-      // one live handle per id: a handle created while the previous one closes opens after it
-      const start = after === undefined ? doOpen() : after.then(doOpen, doOpen)
-      opening = start.catch((error: unknown) => {
-        opening = undefined
-        throw error
-      })
-    }
-    return opening
-  }
-
-  // ─── context (cold load / hot cache validation) ───────────────────────────────────────────
-  /** The in-flight cold load: every caller awaits the same one (single flight). */
-  let loading: Promise<void> | undefined
-  /** Messages cached while a load is in flight (the load may have read storage before them). */
-  let cachedWhileLoading: HarnessUIMessage[] | undefined
-
-  async function ensureContext(validate = false): Promise<void> {
-    if (loading !== undefined) return loading
-    const adapter = rt.messages
-    if (validate && rt.view !== undefined && adapter.lastId !== undefined) {
-      let last: string | null
-      try {
-        last = await adapter.lastId(id)
-      } catch (error) {
-        throw storageError('lastId', error)
-      }
-      if (loading !== undefined) return loading
-      // another writer changed the session: reload state and messages (spec 05 §6)
-      if (last !== (rt.storedLastId ?? null)) rt.view = undefined
-    }
-    if (rt.view !== undefined) return
-    loading = loadView().finally(() => {
-      loading = undefined
-      cachedWhileLoading = undefined
-    })
-    return loading
-  }
-
-  async function loadView(): Promise<void> {
-    cachedWhileLoading = []
-    if (!stateFresh) await rt.state.load()
-    stateFresh = false
-    const loaded = await loadContext({
-      adapter: rt.messages,
-      sessionId: id,
-      registry: internals.messages,
-      policy: rt.options.onInvalidMessage ?? 'drop',
-      core: rt.state.core(),
-      markDirty: () => rt.state.markDirty(),
-    })
-    for (const warning of loaded.warnings) {
-      rt.warn(warning, String(warning.details?.type ?? warning.details?.messageId ?? ''))
-    }
-    const late = cachedWhileLoading ?? []
-    rt.view = loaded.view
-    rt.storedLastId = loaded.newestId
-    if (
-      loaded.newestId !== undefined &&
-      (rt.newestId === undefined || loaded.newestId > rt.newestId)
-    ) {
-      rt.newestId = loaded.newestId
-    }
-    // saved while the load was in flight: never lost from the hot cache
-    for (const message of late) {
-      rt.cacheMessage(message)
-      if (rt.storedLastId === undefined || message.id > rt.storedLastId)
-        rt.storedLastId = message.id
-    }
-  }
-
-  const debugInvariants =
-    config.debug?.invariants ??
-    ['test', 'development'].includes(
-      (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
-        ?.NODE_ENV ?? '',
-    )
-
-  /** `debug.invariants`: report an inconsistent session at the end of a turn (spec 05 §15). */
-  async function reportInvariants(): Promise<void> {
-    try {
-      if (rt.view === undefined || rt.closed) return
-      const problems = await checkSessionInvariants(rt.state.snapshot(), rt.view, {
-        registry: internals.messages,
-        skipSchema: true,
-      })
-      if (problems.length === 0) return
-      rt.warn(
-        {
-          code: 'W_INVARIANT_VIOLATION',
-          message: `Session ${id} violates invariants after a turn: ${problems.join('; ')}`,
-          details: { sessionId: id, problems },
-        },
-        problems.join('|'),
-      )
-    } catch {
-      // a failing check never affects the session
-    }
-  }
-
-  async function persist(messages: HarnessUIMessage[]): Promise<HarnessUIMessage[]> {
-    const out: HarnessUIMessage[] = []
-    for (const original of messages) {
-      let message = normalizeDeniedApprovals(normalizeRawInput(original))
-      for (const hook of rt.open?.hooks.list('message.beforeSave') ?? []) {
-        try {
-          const next = await hook.fn(rt.contextOf(hook.owner), structuredClone(message))
-          if (next === undefined || next === null) continue
-          if (next.id !== message.id || next.role !== message.role) {
-            throw new Error('message.beforeSave must keep the message id and role')
-          }
-          message = next
-        } catch (error) {
-          hookFailed(rt, 'message.beforeSave', hook.owner, error)
-        }
-      }
-      // cached token estimate of the projection (spec 06 §2)
-      out.push(await compaction.annotate(normalizeDeniedApprovals(message)))
-    }
-    for (const message of out) {
-      const problem = await checkMessageShape(message, internals.messages)
-      if (problem === undefined) continue
-      if (debugInvariants) {
-        throw new HarnessError(
-          'EH_INVALID_MESSAGE',
-          `The core is about to save an invalid message ${message.id}: ${problem}`,
-          { details: { messageId: message.id, reason: problem } },
-        )
-      }
-      // production: never drop a message (it may hold pending state); report and save it
-      rt.warn(
-        {
-          code: 'W_INVALID_MESSAGE',
-          message: `Message ${message.id} fails UIMessage validation and was saved as is: ${problem}`,
-          details: { messageId: message.id, reason: problem, stage: 'save' },
-        },
-        message.id,
-      )
-    }
-    try {
-      await rt.messages.save(id, out)
-    } catch (error) {
-      throw storageError('save', error)
-    }
-    for (const message of out) {
-      rt.cacheMessage(message)
-      if (rt.storedLastId === undefined || message.id > rt.storedLastId)
-        rt.storedLastId = message.id
-    }
-    // observe-only: the messages are stored now (spec 01 §5, `message.saved`)
-    for (const hook of rt.open?.hooks.list('message.saved') ?? []) {
-      try {
-        await hook.fn(rt.contextOf(hook.owner), structuredClone(out))
-      } catch (error) {
-        hookFailed(rt, 'message.saved', hook.owner, error)
-      }
-    }
-    return out
-  }
-
-  const compaction = createSessionCompaction({ rt, persist })
-
-  /**
-   * The next request as an idle session sees it: instructions (turn-refresh ones evaluated),
-   * skills, tools in request order (spec 02 §3.4). Resolves tool sources like a turn would.
-   */
-  async function inspect(open: OpenSession): Promise<RegistryInspection> {
-    return inspectRegistry({
-      open,
-      toolOrder: config.toolOrder,
-      deferTools: config.deferTools,
-      contextOf: rt.contextOf,
-      warn: rt.warn,
-    })
-  }
-
-  /** Uncalibrated tokens of the instructions and tools of the next request (and their split). */
-  async function staticTokens(open: OpenSession): Promise<{
-    instructions: number
-    tools: number
-    inspection: RegistryInspection
-  }> {
-    const inspection = await inspect(open)
-    const text = [inspection.block1, inspection.block2, inspection.turnReminder]
-      .filter((t): t is string => t !== undefined)
-      .join('\n\n')
-    let tools = 0
-    // deferred tools are not sent until discovered (spec 02 §3.3): they cost nothing here
-    for (const e of inspection.entries) {
-      if (e.tool.deferLoading === true) continue
-      tools += await toolTokens(e.name, e.tool, compaction.count)
-    }
-    return { instructions: text.length === 0 ? 0 : compaction.count(text), tools, inspection }
-  }
-
-  /** `state.core.rewinds` read straight from the adapter (cold reads, spec 05 §2). */
-  async function storedRewinds(): Promise<Array<{ afterId: string | null; rewindId: string }>> {
-    let snapshot: Awaited<ReturnType<StateAdapter['get']>>
-    try {
-      snapshot = await args.state.get(id)
-    } catch (error) {
-      throw storageError('state get', error)
-    }
-    const rewinds = snapshot?.core?.rewinds
-    return Array.isArray(rewinds) ? [...rewinds] : []
-  }
-
-  // ─── turns ────────────────────────────────────────────────────────────────────────────────
-  /** The drain of the durable inbox (`storage.inbox`), created at the end of this function. */
-  let drain: InboxDrain | undefined
-  /** Caller ids of `enqueue()` without an inbox: id to item id (this session object's life). */
-  const localEnqueueIds = new Map<string, string>()
-  let current: RunningTurn | undefined
-  /** Queued send turns (spec 11 §6.2): in memory, per live session, dropped on abort/close. */
-  const queue: QueuedTurn[] = []
-  /**
-   * Direct `send()`s of an idle session with a durable inbox, held until the inbox has nothing
-   * older to apply (spec 05 §12 rule 7: a direct send never overtakes a queued item).
-   */
-  const gated: QueuedTurn[] = []
-  let gating = false
-  /** External waits (spec 11 §4.2): resolve / expire, durable timer items, the live timer. */
-  const waits = createWaitOps({
-    rt,
-    ensureOpen,
-    ensureContext: () => ensureContext(true),
-    continueRun: (options) => session.respond({}, options),
-    inbox: args.inbox,
-    toolOutput: config.toolOutput,
+  s.stateFresh = false
+  s.pluginOrder = s.internals.plugins.map((p) => p.name)
+  s.debugInvariants = s.config.debug?.invariants ?? false
+  s.compaction = createSessionCompaction({ rt: s.rt, persist: (messages) => persist(s, messages) })
+  s.localEnqueueIds = new Map<string, string>()
+  s.queue = []
+  s.gated = []
+  s.gating = false
+  s.waits = createWaitOps({
+    rt: s.rt,
+    ensureOpen: () => ensureOpen(s),
+    ensureContext: () => ensureContext(s, true),
+    continueRun: (options) => s.session.respond({}, options),
+    inbox: s.args.inbox,
+    toolOutput: s.config.toolOutput,
     staleMs:
-      config.recovery === false ? DEFAULT_STALE_MS : (config.recovery?.staleMs ?? DEFAULT_STALE_MS),
-    warnInbox: (operation, error) => inboxWarning(operation, error),
-    notify: () => notify(),
+      s.config.recovery === false
+        ? DEFAULT_STALE_MS
+        : (s.config.recovery?.staleMs ?? DEFAULT_STALE_MS),
+    warnInbox: (operation, error) => inboxWarning(s, operation, error),
+    notify: () => notify(s),
   })
-  const host: TurnHost = {
-    rt,
-    ensureOpen,
-    ensureContext: () => ensureContext(true),
-    persist,
-    compaction,
+  s.host = {
+    rt: s.rt,
+    ensureOpen: () => ensureOpen(s),
+    ensureContext: () => ensureContext(s, true),
+    persist: (messages) => persist(s, messages),
+    compaction: s.compaction,
     onTurnEnd() {
-      current = undefined
-      if (debugInvariants) void reportInvariants()
-      waits.arm()
-      startNext()
-      checkCollect()
-      drain?.drain()
-      gateStep()
-      touch()
-      checkIdle()
+      s.current = undefined
+      if (s.debugInvariants) void reportInvariants(s)
+      s.waits.arm()
+      startNext(s)
+      checkCollect(s)
+      s.drain?.drain()
+      gateStep(s)
+      touch(s)
+      checkIdle(s)
     },
     enqueueSteer(submitted, inboxId) {
       // a durable steer goes back to the inbox: drained again in id order (spec 05 §12 rule 7)
-      if (inboxId !== undefined && drain !== undefined) return drain.release([inboxId])
-      enqueue({
+      if (inboxId !== undefined && s.drain !== undefined) return s.drain.release([inboxId])
+      enqueue(s, {
         input: submitted.input,
         submitted,
         options: {},
@@ -740,1696 +230,164 @@ export function createSessionHandle(args: {
       return undefined
     },
     get inboxDurable() {
-      return drain !== undefined
+      return s.drain !== undefined
     },
     inboxApplied(ids, turnId) {
-      if (drain !== undefined) void drain.ack(ids, turnId)
-      else events.emit({ type: 'inbox-drained', inboxIds: [...ids], turnId })
+      if (s.drain !== undefined) void s.drain.ack(ids, turnId)
+      else s.events.emit({ type: 'inbox-drained', inboxIds: [...ids], turnId })
     },
     inboxNotApplied(ids, outcome) {
-      if (drain === undefined) return
-      void drain.settle(ids, outcome)
+      if (s.drain === undefined) return
+      void s.drain.settle(ids, outcome)
     },
-    dropQueue: () => dropQueue(false),
-    waitsParked: (pending) => waits.parked(pending),
+    dropQueue: () => dropQueue(s, false),
+    waitsParked: (pending) => s.waits.parked(pending),
     async enqueueWake(messageIds, pending) {
       // approvals / client tool calls wait for an answer: the wake is durable when it can be
       // (it survives a restart and runs in whichever instance sees the answer, ADR-0054)
       if (pending && messageIds.length > 0) {
         let stored = 0
-        for (const messageId of messageIds) if (await holdWakeDurably(messageId)) stored++
+        for (const messageId of messageIds) if (await holdWakeDurably(s, messageId)) stored++
         if (stored === messageIds.length) return
       }
-      enqueue({ kind: 'wake', input: undefined, options: {} })
+      enqueue(s, { kind: 'wake', input: undefined, options: {} })
     },
   }
-
-  function enqueue(
-    item: Pick<QueuedTurn, 'input' | 'submitted' | 'options' | 'wait' | 'respond' | 'inbox'> & {
-      kind?: QueuedTurn['kind']
-    },
-  ): HarnessRun<UIMessage> {
-    const turnId = internals.generateId()
-    const kind = item.kind ?? 'send'
-    // a queued wake turn projects every undelivered event when it runs: a second wake is the
-    // same turn (one turn for N reports, never an extra no-input turn, ADR-0054)
-    const queuedWake = kind === 'wake' ? queue.find((e) => e.kind === 'wake') : undefined
-    if (queuedWake !== undefined) {
-      const extra = createDeferredRun({
-        turnId: queuedWake.turnId,
-        kind,
-        generateId: () => internals.generateId(),
-        onAbort: () => {},
-      })
-      queuedWake.extraHandles = [...(queuedWake.extraHandles ?? []), extra]
-      return extra.run
-    }
-    const remove = () => {
-      const index = queue.indexOf(entry)
-      if (index < 0) return false
-      queue.splice(index, 1)
-      entry.handle.drop()
-      checkIdle()
-      return true
-    }
-    const entry: QueuedTurn = {
-      ...item,
-      kind,
-      turnId,
-      handle: createDeferredRun({
-        turnId,
-        kind,
-        generateId: () => internals.generateId(),
-        onAbort: () => void remove(),
-      }),
-    }
-    queue.push(entry)
-    // a waiting operation is dropped by its own abortSignal while it waits (spec 05 §2)
-    const signal = item.wait === undefined ? undefined : item.options.abortSignal
-    if (signal?.aborted === true) remove()
-    else if (signal !== undefined) {
-      const onAbort = () => void remove()
-      signal.addEventListener('abort', onAbort, { once: true })
-      // the wait ends when the entry launches or settles: the listener must not outlive it
-      entry.detachAbort = () => signal.removeEventListener('abort', onAbort)
-      void entry.handle.run.result.then(entry.detachAbort, entry.detachAbort)
-    }
-    // the session may have gone idle meanwhile (e.g. a steer that arrived as its turn ended)
-    queueMicrotask(startNext)
-    return entry.handle.run
-  }
-
-  /** Hold a direct send behind the older items of the durable inbox (spec 05 §12 rule 7). */
-  function gateSend(
-    normalized: NormalizedInput | undefined,
-    options: SendOptions,
-  ): HarnessRun<UIMessage> {
-    const turnId = internals.generateId()
-    const entry: QueuedTurn = {
-      kind: 'send',
-      turnId,
-      input: normalized,
-      options,
-      handle: createDeferredRun({
-        turnId,
-        kind: 'send',
-        generateId: () => internals.generateId(),
-        onAbort: () => {
-          const index = gated.indexOf(entry)
-          if (index < 0) return
-          gated.splice(index, 1)
-          entry.handle.drop()
-          checkIdle()
-        },
-      }),
-    }
-    gated.push(entry)
-    touch()
-    gateStep()
-    return entry.handle.run
-  }
-
-  /**
-   * Let the inbox apply what is older than the gated sends, then release them into the queue (FIFO).
-   * Re-run when a turn ends: the drain may have started a unit meanwhile.
-   */
-  function gateStep(): void {
-    if (gating || gated.length === 0 || drain === undefined) return
-    if (rt.closed) return
-    if (rt.running) return // the turn end calls this again
-    gating = true
-    void (async () => {
-      try {
-        await drain?.flush()
-      } catch {}
-      gating = false
-      if (rt.closed || gated.length === 0) return
-      if (rt.running) return // the turn end calls gateStep again
-      if (queue.length > 0) {
-        // queued turns are older: the direct sends line up behind them (FIFO). The queue may be
-        // held by pending approvals; re-running this step would spin forever (fuzz seed 38).
-        queue.push(...gated.splice(0))
-        startNext()
-        return
-      }
-      // a direct send starts like an idle `send()` does: the turn reloads the state, so a stale
-      // in-memory `pending` (answered on another instance) does not hold it back
-      const [first, ...rest] = gated.splice(0)
-      queue.push(...rest)
-      if (first !== undefined) launch(first)
-    })()
-  }
-
-  /**
-   * Start the next queued turn when the session is idle. The queue is held while approvals or
-   * client tool calls wait for `respond()`: a queued turn never auto-denies them (spec 11 §6.2).
-   * While held, a waiting `respond()` may start (from any position: it resolves what holds the
-   * queue), and a waiting `send()` at the head whose call already saw that pending state (it then
-   * behaves as a new `send()`). Nothing else overtakes: the queue is FIFO.
-   */
-  function startNext(ignorePending = false): void {
-    if (rt.closed || rt.running || queue.length === 0) return
-    const pending = ignorePending ? undefined : rt.state.core().pending
-    // FIFO: only the head may start, except a waiting respond() (it resolves what holds the queue)
-    const head = queue[0] as QueuedTurn
-    const index =
-      pending === undefined ||
-      (head.kind === 'send' &&
-        head.wait !== undefined &&
-        head.wait.pendingAtCall === pending.messageId)
-        ? 0
-        : queue.findIndex((e) => e.kind === 'respond')
-    if (index < 0) return
-    const [next] = queue.splice(index, 1)
-    if (next === undefined) return
-    launch(next)
-  }
-
-  /**
-   * A queue held by pending approvals of this handle's cache: another instance may have answered
-   * them (its `respond()` / `resolveWait()` never reaches this process). Called after every inbox
-   * pass: when the stored pending state no longer is the one holding the queue, start it (the
-   * turn reloads state and messages at its commit point, like a gated send). Without this a
-   * queued or waiting send would wait for an operation of its own process forever (fuzz seed 51).
-   */
-  let revalidating = false
-  async function releaseHeldQueue(): Promise<void> {
-    if (revalidating || rt.closed || rt.running || queue.length === 0) return
-    const held = rt.state.core().pending
-    if (held === undefined) return startNext()
-    revalidating = true
-    try {
-      const stored = await rt.state.peek()
-      if (rt.closed || rt.running) return
-      const now = stored?.core?.pending
-      if (now === undefined) return startNext(true)
-      // still held, but by another wait (another instance continued the message or ran a later
-      // turn): refresh the cache so the next operation sees it
-      if (pendingSignature(now) !== pendingSignature(held) && !rt.state.dirty) {
-        await rt.state.load()
-        rt.view = undefined
-      }
-    } catch {
-      // storage trouble: try again after the next inbox pass
-    } finally {
-      revalidating = false
-    }
-  }
-
-  /** Start a queued turn now (the caller checked that the session is free). */
-  function launch(next: QueuedTurn): void {
-    next.detachAbort?.()
-    rt.running = true
-    touch()
-    current = startTurn(host, {
-      kind: next.kind,
-      input: undefined,
-      ...(next.input === undefined ? {} : { normalized: next.input }),
-      ...(next.submitted === undefined ? {} : { submitted: next.submitted }),
-      ...(next.respond === undefined ? {} : { respond: next.respond }),
-      ...(next.inbox === undefined ? {} : { inbox: next.inbox }),
-      options: next.options,
-      queued: true,
-      turnId: next.turnId,
-      via: 'queue',
-    })
-    announce(current)
-    next.handle.bind(current.run)
-    for (const extra of next.extraHandles ?? []) extra.bind(attachRun(current))
-  }
-
-  /** `session.onRun()` listeners (in-process, spec 05 §2). */
-  const runListeners = new Set<(run: HarnessRun<UIMessage>) => void>()
-  /** Hand every listener its own reader of a turn that just started (before anyone consumes it). */
-  function announce(running: RunningTurn): void {
-    for (const listener of [...runListeners]) {
-      try {
-        listener(attachRun(running))
-      } catch (error) {
-        log.warn('eharness: an onRun listener threw', { error })
-      }
-    }
-  }
-
-  /** A new reader of a running turn (replay + follow), like `attach()`. */
-  function attachRun(running: RunningTurn): HarnessRun<UIMessage> {
-    return createRun({
-      turnId: running.run.turnId,
-      kind: running.run.kind,
-      messageId: running.run.messageId,
-      stream: running.buffer.reader(),
-      result: running.run.result,
-      abort: running.abort,
-    })
-  }
-
+  s.revalidating = false
+  s.runListeners = new Set<(run: HarnessRun<UIMessage>) => void>()
   // ─── collect (in-process debounce, spec 05 §12 rule 6) ─────────────────────────────────────
-  type CollectEntry = {
-    input: NormalizedInput
-    inboxId?: string
-    key?: string
-    at: number
-    handle?: DeferredRun
-  }
-  /** The open burst of `collect` inputs of this process (no inbox, or `send(…, 'collect')`). */
-  let collecting:
-    | {
-        turnId: string
-        options: Required<CollectOptions>
-        entries: CollectEntry[]
-        timer?: ReturnType<typeof setTimeout>
-      }
-    | undefined
-
-  /** Add an input to the burst; returns the run of `send()` callers. */
-  function collectInput(
-    input: NormalizedInput,
-    options: CollectOptions | undefined,
-    inboxId: string | undefined,
-    withRun: boolean,
-    key?: string,
-  ): HarnessRun<UIMessage> | undefined {
-    if (collecting === undefined) {
-      collecting = {
-        turnId: internals.generateId(),
-        options: resolveCollect(config.inbox?.collect, options),
-        entries: [],
-      }
-    }
-    const group = collecting
-    const entry: CollectEntry = {
-      input,
-      at: Date.now(),
-      ...(inboxId === undefined ? {} : { inboxId }),
-      ...(key === undefined ? {} : { key }),
-    }
-    if (withRun) {
-      entry.handle = createDeferredRun({
-        turnId: group.turnId,
-        kind: 'send',
-        generateId: () => internals.generateId(),
-        onAbort: () => {
-          // before the flush the input leaves the burst; after it, only this reader is dropped
-          const index = group.entries.indexOf(entry)
-          if (collecting === group && index >= 0) group.entries.splice(index, 1)
-          entry.handle?.drop()
-          if (collecting === group && group.entries.length === 0) clearCollect()
-          checkIdle()
-        },
-      })
-    }
-    group.entries.push(entry)
-    checkCollect()
-    return entry.handle?.run
-  }
-
-  /** Flush the burst when it is due (into the queue: it runs after the current turn), else wait. */
-  function checkCollect(): void {
-    const group = collecting
-    if (group === undefined || rt.closed) return
-    if (group.timer !== undefined) clearTimeout(group.timer)
-    group.timer = undefined
-    const first = group.entries[0]
-    if (first === undefined) return
-    const due = collectDue(
-      {
-        firstAt: first.at,
-        lastAt: (group.entries.at(-1) as CollectEntry).at,
-        count: group.entries.length,
-      },
-      group.options,
-      Date.now(),
-    )
-    if (!due.due) {
-      group.timer = setTimeout(checkCollect, Math.max(0, due.at - Date.now()) + 1)
-      unref(group.timer)
-      return
-    }
-    collecting = undefined
-    const handles = group.entries.flatMap((e) => (e.handle === undefined ? [] : [e.handle]))
-    const collected = group.entries.map((e) => {
-      const out: { inboxId?: string; clientId?: string; inboxKey?: string } = {}
-      if (e.inboxId !== undefined) out.inboxId = e.inboxId
-      if (e.key !== undefined) out.inboxKey = e.key
-      if (e.input.clientId !== undefined) out.clientId = e.input.clientId
-      return out
-    })
-    const head =
-      handles[0] ??
-      createDeferredRun({
-        turnId: group.turnId,
-        kind: 'send',
-        generateId: () => internals.generateId(),
-        onAbort: () => {},
-      })
-    queue.push({
-      kind: 'send',
-      turnId: group.turnId,
-      input: mergeInputs(group.entries.map((e) => e.input)),
-      options: {},
-      handle: head,
-      extraHandles: handles.slice(1),
-      inbox: {
-        ids: group.entries.flatMap((e) => (e.inboxId === undefined ? [] : [e.inboxId])),
-        meta: { collected },
-        durable: false,
-      },
-    })
-    startNext()
-    checkIdle()
-  }
-
-  function clearCollect(): void {
-    const group = collecting
-    collecting = undefined
-    if (group?.timer !== undefined) clearTimeout(group.timer)
-    for (const entry of group?.entries ?? []) entry.handle?.drop()
-  }
-
   // ─── idle ─────────────────────────────────────────────────────────────────────────────────
-  const idleWaiters: Array<() => void> = []
-  function isIdle(): boolean {
-    return (
-      rt.closed ||
-      (!rt.running &&
-        queue.length === 0 &&
-        gated.length === 0 &&
-        collecting === undefined &&
-        drain?.busy !== true)
-    )
-  }
-  function checkIdle(): void {
-    if (!isIdle()) return
-    for (const resolve of idleWaiters.splice(0)) resolve()
-  }
-
-  /** The kind's projection for inline delivery; a throwing projection is not delivered inline. */
-  function inlineText(message: HarnessUIMessage, kind: string): string | undefined {
-    try {
-      return kindText(message, internals.messages, id)
-    } catch (error) {
-      rt.warn(
-        {
-          code: 'W_HOOK_FAILED',
-          message: `The model projection of kind '${kind}' threw; the message is not delivered into the running turn: ${error instanceof Error ? error.message : String(error)}`,
-          details: { kind },
-        },
-        `kind:${kind}`,
-      )
-      return undefined
-    }
-  }
-
-  /** Request the abort of a turn running in another instance (spec 05 §9.1, §12 rule 4). */
-  async function remoteAbort(reason: string | undefined): Promise<AbortRequestResult> {
-    const inbox = args.inbox
-    const staleMs =
-      config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
-    if (inbox !== undefined && staleMs !== false) {
-      let stored: Awaited<ReturnType<StateAdapter['get']>>
-      try {
-        stored = await args.state.get(id)
-      } catch (error) {
-        throw new HarnessError('EH_STORAGE', 'State storage failed (abort request).', {
-          cause: error,
-        })
-      }
-      const active = liveForeignTurn(stored, rt.owner, staleMs, rt)
-      if (active === undefined) return { target: 'idle' }
-      try {
-        const inboxId = await inbox.enqueue(id, {
-          kind: 'abort',
-          turnId: active.turnId,
-          at: Date.now(),
-          ...(reason === undefined ? {} : { reason }),
-        })
-        events.emit({ type: 'inbox-enqueued', inboxId, kind: 'abort' })
-        await notify()
-        return { target: 'remote' }
-      } catch (error) {
-        // the state path stays the fallback (ADR-0021)
-        inboxWarning('enqueue', error)
-      }
-    }
-    return stateAbort(reason)
-  }
-
-  function inboxWarning(operation: string, error: unknown): void {
-    rt.warn(
-      {
-        code: 'W_INBOX_FAILED',
-        message: `Inbox ${operation} failed: ${error instanceof Error ? error.message : String(error)}`,
-        details: { sessionId: id, operation },
-      },
-      `inbox:${operation}`,
-    )
-  }
-
-  /** Wake the instances subscribed to this session (best effort). */
-  async function notify(): Promise<void> {
-    try {
-      await args.inbox?.notify?.(id)
-    } catch (error) {
-      inboxWarning('notify', error)
-    }
-  }
-
-  /** Dedupe key of the `wake` item of a kind message (spec 05 §12 rule 17). */
-  const wakeKey = (messageId: string): string => `wake:${messageId}`
-
-  /** Store a `wake` item of an already saved kind message; false when the inbox failed. */
-  async function holdWakeDurably(messageId: string): Promise<boolean> {
-    if (args.inbox === undefined || drain === undefined) return false
-    try {
-      // one item per event, also when an app repairs a stranded one (`wake:<messageId>`, ADR-0054)
-      const item = { kind: 'wake' as const, messageId, at: Date.now() }
-      if (args.inbox.enqueueOnce !== undefined) {
-        const stored = await args.inbox.enqueueOnce(id, { ...item, dedupeKey: wakeKey(messageId) })
-        if (!stored.duplicate)
-          events.emit({ type: 'inbox-enqueued', inboxId: stored.id, kind: 'wake' })
-      } else {
-        const inboxId = await args.inbox.enqueue(id, item)
-        events.emit({ type: 'inbox-enqueued', inboxId, kind: 'wake' })
-      }
-      await notify()
-      return true
-    } catch (error) {
-      inboxWarning('enqueue', error)
-      return false
-    }
-  }
-
-  /** Approvals or client tool calls of this session wait for an answer (stored state). */
-  async function storedPending(): Promise<boolean> {
-    try {
-      return (await args.state.get(id))?.core?.pending !== undefined
-    } catch {
-      return rt.state.core().pending !== undefined
-    }
-  }
-
-  /** A turn of this session running in another instance, read from the stored state. */
-  async function foreignTurn(): Promise<string | undefined> {
-    const staleMs =
-      config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
-    if (staleMs === false) return undefined
-    let stored: Awaited<ReturnType<StateAdapter['get']>>
-    try {
-      stored = await args.state.get(id)
-    } catch {
-      return undefined // the drain decides (it releases what a busy session cannot take)
-    }
-    return liveForeignTurn(stored, rt.owner, staleMs, rt)?.turnId
-  }
-
-  function stateAbort(reason: string | undefined) {
-    return requestRemoteAbort(
-      {
-        sessionId: id,
-        adapter: args.state,
-        owner: rt.owner,
-        staleMs: config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS),
-        warn: rt.warn,
-        // the stored state changed behind this instance's cache: reload at the next operation
-        written: () => {
-          if (current === undefined && loading === undefined) rt.view = undefined
-        },
-      },
-      reason,
-    )
-  }
-
-  /**
-   * Drop queued turns; `abort()` keeps `ifBusy: 'wait'` callers (only `close()` drops them).
-   * Durable inbox items are never dropped: they go back to the inbox (spec 05 §12).
-   */
-  function dropQueue(all: boolean): void {
-    for (const entry of gated.splice(0)) entry.handle.drop()
-    for (const entry of [...queue]) {
-      if (!all && entry.wait !== undefined) continue
-      queue.splice(queue.indexOf(entry), 1)
-      entry.handle.drop()
-      for (const extra of entry.extraHandles ?? []) extra.drop()
-      if (entry.inbox?.durable === true) void drain?.release(entry.inbox.ids)
-    }
-    clearCollect()
-    checkIdle()
-  }
-
-  /** A turn operation that starts now (the caller checked the running flag). */
-  function begin(op: Parameters<typeof startTurn>[1]): HarnessRun<UIMessage> {
-    rt.running = true
-    touch()
-    current = startTurn(host, op)
-    announce(current)
-    return current.run
-  }
-
-  function assertOpen(): void {
-    if (rt.closed) throw closedError(id)
-  }
-
-  // ─── idle eviction ────────────────────────────────────────────────────────────────────────
-  let idleTimer: ReturnType<typeof setTimeout> | undefined
-  function touch(): void {
-    if (args.idleMs <= 0 || rt.closed) return
-    if (idleTimer !== undefined) clearTimeout(idleTimer)
-    idleTimer = setTimeout(() => {
-      idleTimer = undefined
-      // a queue held by pending approvals does not keep the session alive: idle close drops it
-      const queued =
-        (queue.length > 0 || collecting !== undefined || drain?.busy === true) &&
-        rt.state.core().pending === undefined
-      if (rt.running || queued || events.readers > 0) touch()
-      else void close()
-    }, args.idleMs)
-    unref(idleTimer)
-  }
-
-  // ─── close ────────────────────────────────────────────────────────────────────────────────
-  let closing: Promise<void> | undefined
-  function close(): Promise<void> {
-    if (closing !== undefined) return closing
-    rt.closed = true
-    if (idleTimer !== undefined) clearTimeout(idleTimer)
-    waits.dispose()
-    runListeners.clear()
-    drain?.close()
-    dropQueue(true)
-    closing = (async () => {
-      const running = current
-      if (running !== undefined) {
-        running.abort('closed')
-        await running.run.result
-      }
-      closeController.abort('closed')
-      sessionController.abort('closed')
-      const open = rt.open
-      if (open === undefined && opening !== undefined) {
-        try {
-          await opening
-        } catch {}
-      }
-      if (rt.open !== undefined) {
-        for (const hook of rt.open.hooks.list('session.close')) {
-          try {
-            await hook.fn(rt.contextOf(hook.owner))
-          } catch (error) {
-            hookFailed(rt, 'session.close', hook.owner, error)
-          }
-        }
-        for (const { owner, dispose } of [...rt.open.disposers].reverse()) {
-          try {
-            await dispose()
-          } catch (error) {
-            log.warn(`eharness: dispose of ${describeOwner(owner)} failed`, { error })
-          }
-        }
-        try {
-          await rt.state.writeIfDirty()
-        } catch (error) {
-          log.warn('eharness: state write on close failed', { error })
-        }
-      }
-      events.close()
-      checkIdle()
-      args.onClosed()
-    })()
-    return closing
-  }
-
-  const injectFlights = new Map<string, Promise<{ message: unknown; run?: unknown }>>()
-
-  async function injectOnce(
-    kind: string,
-    data: unknown,
-    options: { key?: string; wake?: boolean; deliver?: 'next-step' | 'end-of-turn' | string },
-  ): Promise<{ message: unknown; run?: unknown }> {
-    assertOpen()
-    const registered = internals.messages.kind(kind)
-    if (registered === undefined) {
-      throw new HarnessError('EH_INVALID_INPUT', `Unknown message kind '${kind}'.`, {
-        details: { kind },
-      })
-    }
-    const validate = asSchema(registered.def.schema).validate
-    let value: unknown = data
-    if (validate !== undefined) {
-      const result = await validate(data)
-      if (!result.success) {
-        throw new HarnessError(
-          'EH_INVALID_INPUT',
-          `Invalid payload for kind '${kind}': ${result.error.message}`,
-          { details: { kind }, cause: result.error },
-        )
-      }
-      value = result.value
-    }
-    const key = options.key
-    if (key !== undefined && (typeof key !== 'string' || key === '' || key.length > 200)) {
-      throw new HarnessError(
-        'EH_INVALID_INPUT',
-        'inject({ key }) must be a non-empty string of at most 200 characters.',
-      )
-    }
-    touch()
-    await ensureOpen()
-    if (key !== undefined) {
-      // stored messages, not the hot cache: another instance may have saved it
-      let recent: HarnessUIMessage[] = []
-      try {
-        recent = (await rt.messages.load({ sessionId: id, limit: 200 })) as HarnessUIMessage[]
-      } catch (error) {
-        throw storageError('load', error)
-      }
-      const existing = recent.find((m) => m.metadata?.eharness?.key === key)
-      if (existing !== undefined) return { message: structuredClone(existing) as never }
-    }
-    if (rt.view === undefined) await ensureContext()
-    const message = createKindMessage(kind, value, {
-      id: rt.nextId(),
-      role: registered.def.role,
-      createdAt: Date.now(),
-      parentId: rt.view?.at(-1)?.id ?? null,
-      ...(rt.turn === undefined ? {} : { turnId: rt.turn.info.id }),
-      ...(key === undefined ? {} : { key }),
-    })
-    const [saved] = await persist([message])
-    const out = saved ?? message
-    events.emit({ type: 'message', message: out as never })
-    const result = { message: structuredClone(out) as never }
-    const wake = options.wake === true
-    // next-step delivery (wake while running implies it, spec 11 §6.3)
-    if ((options.deliver === 'next-step' || wake) && current !== undefined) {
-      const text = inlineText(out, kind)
-      if (text !== undefined && current.deliverEvent(out, text, wake)) return result
-    }
-    if (!wake || rt.closed) return result
-    // a turn of this session runs in another instance, or approvals / client tool calls wait for
-    // an answer (stored, so also those another instance parked): hand the wake to the durable
-    // inbox. Whoever holds the session runs it once it is free (spec 05 §12, ADR-0054)
-    if (current === undefined && !rt.running && args.inbox !== undefined && drain !== undefined) {
-      const foreign = await foreignTurn()
-      const parked = foreign === undefined && (await storedPending())
-      if (foreign !== undefined || parked) {
-        if (await holdWakeDurably(out.id)) {
-          if (foreign !== undefined) drain.foreign(foreign)
-          return result
-        }
-      }
-    }
-    if (rt.closed) return result
-    // wake an idle session now; otherwise (a turn is ending, compact() runs, or approvals wait
-    // for an answer) a no-input wake turn is queued and runs when the session is free
-    if (!rt.running && rt.state.core().pending === undefined) {
-      return {
-        ...result,
-        run: begin({ kind: 'wake', input: undefined, options: {}, queued: false }) as never,
-      }
-    }
-    return { ...result, run: enqueue({ kind: 'wake', input: undefined, options: {} }) as never }
-  }
-
-  const session: HarnessSession<UIMessage, Record<string, unknown>> = {
-    id,
+  s.idleWaiters = []
+  s.injectFlights = new Map<string, Promise<{ message: unknown; run?: unknown }>>()
+  s.session = {
+    id: s.id,
     get running() {
-      return rt.running
+      return s.rt.running
     },
-    async ready() {
-      assertOpen()
-      touch()
-      await ensureOpen()
+    ready() {
+      return apiReady(s)
     },
-    send(input?: SendInput, options: SendOptions = {}) {
-      assertOpen()
-      // a steer or a collected input joins another turn: it cannot ask for its own typed answer
-      // (spec 05 §3.3 rule 9); a run error, whether the session is busy or not
-      if (
-        options.output !== undefined &&
-        (options.ifBusy === 'steer' || options.ifBusy === 'collect')
-      ) {
-        return failedRun(
-          'send',
-          () => internals.generateId(),
-          new HarnessError(
-            'EH_INVALID_INPUT',
-            `send(…, { output }) cannot be combined with ifBusy '${options.ifBusy}'.`,
-            { details: { reason: 'output-with-steer-or-collect', ifBusy: options.ifBusy } },
-          ),
-        )
-      }
-      // request-scoped tools and page context belong to one turn the same way (spec 11 §7.1)
-      if (
-        (options.clientTools !== undefined || options.pageContext !== undefined) &&
-        (options.ifBusy === 'steer' || options.ifBusy === 'collect')
-      ) {
-        return failedRun(
-          'send',
-          () => internals.generateId(),
-          new HarnessError(
-            'EH_INVALID_INPUT',
-            `send(…, { clientTools / pageContext }) cannot be combined with ifBusy '${options.ifBusy}'.`,
-            {
-              details: { reason: 'request-context-with-steer-or-collect', ifBusy: options.ifBusy },
-            },
-          ),
-        )
-      }
-      if (rt.running) {
-        const ifBusy = options.ifBusy ?? 'reject'
-        if (ifBusy === 'reject') throw busyError(id)
-        touch()
-        let normalized: NormalizedInput | undefined
-        try {
-          normalized =
-            input === undefined
-              ? undefined
-              : normalizeInput(input, {
-                  acceptClientMetadata: rt.options.acceptClientMetadata === true,
-                  files: config.inputFiles,
-                })
-        } catch (error) {
-          return failedRun('send', () => internals.generateId(), asHarnessError(error))
-        }
-        if (ifBusy === 'wait') {
-          return enqueue({
-            input: normalized,
-            options,
-            wait: { pendingAtCall: rt.state.core().pending?.messageId },
-          })
-        }
-        if (ifBusy === 'collect' && normalized !== undefined) {
-          return collectInput(normalized, options.collect, undefined, true) as HarnessRun<UIMessage>
-        }
-        if (ifBusy === 'steer') {
-          // where the input went (spec 05 §2): a step of the running turn, a turn of its own, or nowhere
-          let settle!: (outcome: SteerDelivery) => void
-          const delivery = new Promise<SteerDelivery>((resolve) => {
-            settle = resolve
-          })
-          if (current !== undefined && normalized !== undefined) {
-            if (current.steer(normalized, undefined, settle)) {
-              return { ...(session.attach() as HarnessRun<UIMessage>), delivery }
-            }
-          }
-          // a turn that stopped taking input (or none to take it): a queued turn of its own,
-          // and the caller gets that turn's run (spec 11 §6.1)
-          settle('turn')
-          return { ...enqueue({ input: normalized, options }), delivery }
-        }
-        return enqueue({ input: normalized, options })
-      }
-      if (drain !== undefined && options.ifBusy !== 'steer') {
-        let normalized: NormalizedInput | undefined
-        try {
-          normalized =
-            input === undefined
-              ? undefined
-              : normalizeInput(input, {
-                  acceptClientMetadata: rt.options.acceptClientMetadata === true,
-                  files: config.inputFiles,
-                })
-        } catch (error) {
-          return failedRun('send', () => internals.generateId(), asHarnessError(error))
-        }
-        return gateSend(normalized, options)
-      }
-      const started = begin({ kind: 'send', input, options, queued: false })
-      // a steer with nothing running starts a turn of its own
-      return options.ifBusy === 'steer'
-        ? { ...started, delivery: Promise.resolve<SteerDelivery>('turn') }
-        : started
+    send(input?: SendInput, options?: SendOptions) {
+      return apiSend(s, input, options)
     },
-    respond(response: PendingResponse, options: SendOptions = {}) {
-      assertOpen()
-      const ignoreUnknown =
-        (options as SendOptions & { [RESPOND_IGNORE_UNKNOWN]?: boolean })[
-          RESPOND_IGNORE_UNKNOWN
-        ] === true
-      if (rt.running) {
-        if (options.ifBusy !== 'wait') throw busyError(id)
-        touch()
-        return enqueue({
-          kind: 'respond',
-          input: undefined,
-          options,
-          wait: { pendingAtCall: undefined },
-          respond: { response, ignoreUnknown },
-        })
-      }
-      return begin({
-        kind: 'respond',
-        input: undefined,
-        options,
-        queued: false,
-        respond: { response, ignoreUnknown },
-      })
+    respond(response: PendingResponse, options?: SendOptions) {
+      return apiRespond(s, response, options)
     },
-    regenerate(options: { messageId?: string } & SendOptions = {}) {
-      assertOpen()
-      if (rt.running) throw busyError(id)
-      const { messageId, ...rest } = options
-      return begin({
-        kind: 'regenerate',
-        input: undefined,
-        options: rest,
-        queued: false,
-        ...(messageId === undefined ? {} : { target: messageId }),
-      })
+    regenerate(options?: { messageId?: string } & SendOptions) {
+      return apiRegenerate(s, options)
     },
-    edit(messageId: string, input: SendInput, options: SendOptions = {}) {
-      assertOpen()
-      if (rt.running) throw busyError(id)
-      return begin({ kind: 'edit', input, options, queued: false, target: messageId })
+    edit(arg0: { messageId: string; input: SendInput } & SendOptions) {
+      return apiEdit(s, arg0)
     },
     onRun(listener) {
-      assertOpen()
-      runListeners.add(listener)
-      return () => {
-        runListeners.delete(listener)
-      }
+      return apiOnRun(s, listener)
     },
     attach() {
-      assertOpen()
-      const running = current
-      if (running === undefined) return undefined
-      return createRun({
-        turnId: running.run.turnId,
-        kind: running.run.kind,
-        messageId: running.run.messageId,
-        stream: running.buffer.replayReader(),
-        result: running.run.result,
-        abort: running.abort,
-      })
+      return apiAttach(s)
     },
-    async attachRemote(options = {}) {
-      assertOpen()
-      const from = Math.max(0, Math.floor(options.from ?? 0))
-      // a turn of this process: the turn buffer, no extra latency
-      const running = current
-      if (running !== undefined) {
-        return createRun({
-          turnId: running.run.turnId,
-          kind: running.run.kind,
-          messageId: running.run.messageId,
-          stream: running.buffer.replayReader(from),
-          result: running.run.result,
-          abort: running.abort,
-        })
-      }
-      const adapter = args.streams
-      if (adapter === undefined) return undefined
-      const streamOptions = resolveStreamLogOptions(config.streams)
-      const staleMs =
-        config.recovery === false ? undefined : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
-      const readActive = async (): Promise<ActiveTurn | undefined> => {
-        const stored = await args.state.get(id)
-        const active = stored?.core?.activeTurn
-        if (active === undefined) return undefined
-        // a turn this instance id owns but does not run: left by a previous process (stable
-        // `recovery.instanceId`), nothing will ever write to its log (spec 05 §9.2)
-        if (active.owner === rt.owner && !runsElsewhereHere(active, rt)) return undefined
-        if (staleMs !== undefined && Date.now() - active.heartbeatAt > staleMs) return undefined
-        return active
-      }
-      let active: ActiveTurn | undefined
-      try {
-        active = await readActive()
-      } catch (error) {
-        log.warn('eharness: attachRemote could not read the session state', { error })
-        return undefined
-      }
-      if (active === undefined) return undefined
-      const key = { sessionId: id, turnId: active.turnId }
-      // the owner flushes in batches: right after the commit point the log may not exist yet
-      const deadline = Math.max(active.startedAt, Date.now() - 1) + REMOTE_START_GRACE_MS
-      for (;;) {
-        let probe: Awaited<ReturnType<StreamLogAdapter['read']>>
-        try {
-          probe = await adapter.read(key, from, { limit: 1 })
-        } catch (error) {
-          log.warn('eharness: attachRemote could not read the stream log', { error })
-          return undefined
-        }
-        if (probe.status !== 'missing') break
-        if (options.signal?.aborted || Date.now() >= deadline) return undefined
-        await new Promise((resolve) => setTimeout(resolve, Math.min(streamOptions.pollMs, 100)))
-      }
-      if (options.signal?.aborted) return undefined
-      const { stream, ended } = createLogStream({
-        adapter,
-        key,
-        from,
-        pollMs: streamOptions.pollMs,
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-        isActive: async () => {
-          try {
-            return (await readActive())?.turnId === active.turnId
-          } catch {
-            return true
-          }
-        },
-      })
-      const startedAt = active.startedAt
-      const result = ended.then((end): TurnResult<UIMessage> => {
-        const stop = (end.stop ??
-          (end.status === 'aborted' ? 'aborted' : 'error')) as TurnResult<UIMessage>['stop']
-        return {
-          turnId: active.turnId,
-          kind: active.kind,
-          stop,
-          messages: [],
-          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
-          steps: 0,
-          durationMs: Math.max(0, Date.now() - startedAt),
-        }
-      })
-      return createRun({
-        turnId: active.turnId,
-        kind: active.kind,
-        messageId: Promise.resolve(active.messageId),
-        stream,
-        result,
-        abort: (reason) => {
-          session
-            .requestAbort(reason)
-            .catch((error: unknown) =>
-              log.warn('eharness: cross-process abort request failed', { error }),
-            )
-        },
-      })
+    attachRemote(options) {
+      return apiAttachRemote(s, options)
     },
     abort(reason) {
-      assertOpen()
-      dropQueue(false)
-      if (current !== undefined) return current.abort(reason)
-      // no turn here: maybe one runs in another instance (spec 05 §9.1)
-      remoteAbort(reason).catch((error: unknown) =>
-        log.warn('eharness: cross-process abort request failed', { error }),
-      )
+      return apiAbort(s, reason)
     },
-    async requestAbort(reason) {
-      assertOpen()
-      dropQueue(false)
-      if (current !== undefined) {
-        current.abort(reason)
-        return { target: 'local' }
-      }
-      return remoteAbort(reason)
+    inject(kind, data, options) {
+      return apiInject(s, kind, data, options)
     },
-    async inject(kind, data, options = {}) {
-      const flightKey = options.key
-      if (typeof flightKey === 'string' && flightKey !== '') {
-        // concurrent calls with the same key share one in-flight call: exactly one message
-        const running = injectFlights.get(flightKey)
-        if (running !== undefined) {
-          const first = await running
-          return { message: structuredClone(first.message) } as never
-        }
-        const flight = injectOnce(kind, data, options)
-        injectFlights.set(flightKey, flight)
-        try {
-          return (await flight) as never
-        } finally {
-          if (injectFlights.get(flightKey) === flight) injectFlights.delete(flightKey)
-        }
-      }
-      return injectOnce(kind, data, options) as never
+    compact(options) {
+      return apiCompact(s, options)
     },
-    async compact(options) {
-      assertOpen()
-      const keepLast = options?.keepLast
-      if (keepLast !== undefined && !(Number.isInteger(keepLast) && keepLast >= 0)) {
-        throw new HarnessError(
-          'EH_INVALID_INPUT',
-          'compact({ keepLast }) must be a non-negative integer.',
-          { details: { keepLast } },
-        )
-      }
-      const instructions = options?.instructions
-      if (instructions !== undefined && typeof instructions !== 'string') {
-        throw new HarnessError('EH_INVALID_INPUT', 'compact({ instructions }) must be a string.')
-      }
-      if (rt.running) throw busyError(id)
-      // exclusive like a turn (spec 05 §8): send() throws EH_SESSION_BUSY meanwhile
-      rt.running = true
-      touch()
-      let release: (() => Promise<void>) | undefined
-      try {
-        const open = await ensureOpen()
-        const lock = rt.options.lock
-        if (lock !== undefined) {
-          try {
-            release = await lock.acquire(id, { signal: closeController.signal })
-          } catch (error) {
-            throw new HarnessError(
-              'EH_SESSION_BUSY',
-              'The session is locked by another instance.',
-              { cause: error },
-            )
-          }
-        }
-        await ensureContext(true)
-        const core = rt.state.core()
-        const active = core.activeTurn
-        const staleMs =
-          (config.recovery === false ? undefined : config.recovery?.staleMs) ?? 120_000
-        if (
-          config.recovery !== false &&
-          active !== undefined &&
-          release === undefined &&
-          active.owner !== rt.owner &&
-          Date.now() - active.heartbeatAt <= staleMs
-        ) {
-          throw new HarnessError(
-            'EH_SESSION_BUSY',
-            'A turn of this session is running in another instance.',
-            { details: { turnId: active.turnId, owner: active.owner } },
-          )
-        }
-        const view = rt.view ?? []
-        const pending = core.pending
-        const fixed = await staticTokens(open)
-        const fixedTokens = fixed.instructions + fixed.tools
-        /** Priced summarizer / flush calls, recorded on `budget.ledger` afterwards (spec 12 §4.1). */
-        const ledgerCosts: number[] = []
-        const outcome = await compaction.compact({
-          mode: 'manual',
-          trigger: 'manual',
-          keepLast,
-          instructions,
-          // the pending message's turn is kept like a current turn (spec 06 §5.1)
-          currentStartId:
-            pending === undefined
-              ? undefined
-              : currentTurnStartId(
-                  view,
-                  { kind: 'respond', messageId: pending.messageId },
-                  internals.messages,
-                ),
-          model: config.model,
-          fixedTokens,
-          beforeTokens: compaction.calibration.apply(
-            fixedTokens + (await compaction.viewTokens(view)),
-          ),
-          // manual compaction belongs to no turn: its usage goes to the session (spec 06 §5.3)
-          onUsage: (usage, model) => {
-            const current = rt.state.core()
-            const previous = current.usage ?? { inputTokens: 0, outputTokens: 0, turns: 0 }
-            const cost = costOf(config.models, model, usage)
-            current.usage = {
-              ...previous,
-              inputTokens: previous.inputTokens + (usage.inputTokens ?? 0),
-              outputTokens: previous.outputTokens + (usage.outputTokens ?? 0),
-            }
-            if (cost !== undefined) current.usage.costUsd = (previous.costUsd ?? 0) + cost
-            if (cost !== undefined) ledgerCosts.push(cost)
-            rt.state.markDirty()
-          },
-          flushEnv: () => manualFlushEnv({ rt, open }),
-          overBudget: () =>
-            budgetOverrun(
-              config.budget === undefined ? undefined : { ...config.budget, maxTurnUsd: undefined },
-              0,
-              rt.state.core().usage?.costUsd ?? 0,
-            ),
-        })
-        try {
-          await rt.state.writeIfDirty()
-        } catch (error) {
-          log.warn('eharness: state write after compaction failed', { error })
-        }
-        const ledger = config.budget?.ledger
-        if (ledger !== undefined && ledgerCosts.length > 0) {
-          const compactId = internals.generateId()
-          for (const [i, amountUsd] of ledgerCosts.entries()) {
-            await recordOutsideTurn({
-              config: ledger,
-              ctx: rt.contextOf('app'),
-              key: `${rt.id}:compact:${compactId}:${i}`,
-              amountUsd,
-              warn: (warning, key) => rt.warn(warning, key),
-            })
-          }
-        }
-        if (outcome.status === 'failed') throw outcome.error
-        return outcome.status === 'compacted' ? (structuredClone(outcome.marker) as never) : null
-      } finally {
-        if (release !== undefined) {
-          try {
-            await release()
-          } catch (error) {
-            log.warn('eharness: releasing the session lock failed', { error })
-          }
-        }
-        rt.running = false
-        startNext()
-        checkCollect()
-        drain?.drain()
-        touch()
-        checkIdle()
-      }
+    recover() {
+      return apiRecover(s)
     },
-    async recover() {
-      assertOpen()
-      if (config.recovery === false) return { recovered: false, reason: 'disabled' }
-      if (rt.running) throw busyError(id)
-      // exclusive like a turn (spec 05 §8)
-      rt.running = true
-      touch()
-      let release: (() => Promise<void>) | undefined
-      try {
-        await ensureOpen()
-        const lock = rt.options.lock
-        if (lock !== undefined) {
-          try {
-            release = await lock.acquire(id, { signal: closeController.signal })
-          } catch {
-            return { recovered: false, reason: 'locked' }
-          }
-        }
-        await ensureContext(true)
-        await rt.state.load()
-        const active = rt.state.core().activeTurn
-        if (active === undefined) return { recovered: false, reason: 'idle' }
-        const staleMs = config.recovery?.staleMs ?? DEFAULT_STALE_MS
-        const stale =
-          (active.owner === rt.owner && !runsElsewhereHere(active, rt)) ||
-          release !== undefined ||
-          Date.now() - active.heartbeatAt > staleMs
-        if (!stale) return { recovered: false, reason: 'live' }
-        await recoverInterruptedTurn(rt, persist, active, { startedAt: Date.now() })
-        const core = rt.state.core()
-        delete core.activeTurn
-        delete core.abortRequest
-        rt.state.markDirty()
-        const ok = await rt.state.write({ cas: true })
-        if (!ok) {
-          rt.view = undefined
-          throw new HarnessError(
-            'EH_SESSION_BUSY',
-            'The session state was changed by another instance.',
-          )
-        }
-        return { recovered: true, turnId: active.turnId, messageId: active.messageId }
-      } finally {
-        if (release !== undefined) {
-          try {
-            await release()
-          } catch (error) {
-            log.warn('eharness: releasing the session lock failed', { error })
-          }
-        }
-        rt.running = false
-        startNext()
-        checkCollect()
-        drain?.drain()
-        touch()
-        checkIdle()
-      }
+    enqueue(input, options) {
+      return apiEnqueue(s, input, options)
     },
-    async enqueue(input, options = {}) {
-      assertOpen()
-      const mode = options.mode ?? 'queue'
-      if (mode !== 'queue' && mode !== 'steer' && mode !== 'collect') {
-        throw new HarnessError('EH_INVALID_INPUT', `Unknown enqueue mode '${String(mode)}'.`, {
-          details: { mode },
-        })
-      }
-      const callerId = options.id
-      if (
-        callerId !== undefined &&
-        (typeof callerId !== 'string' || callerId.length === 0 || callerId.length > 256)
-      ) {
-        throw new HarnessError(
-          'EH_INVALID_INPUT',
-          'enqueue id must be a string of 1-256 characters.',
-        )
-      }
-      const availableAt = options.availableAt
-      if (availableAt !== undefined) {
-        if (typeof availableAt !== 'number' || !Number.isFinite(availableAt)) {
-          throw new HarnessError(
-            'EH_INVALID_INPUT',
-            'enqueue availableAt must be epoch milliseconds.',
-          )
-        }
-        if (mode === 'collect') {
-          throw new HarnessError(
-            'EH_INVALID_INPUT',
-            "enqueue availableAt is not supported with mode 'collect'.",
-          )
-        }
-      }
-      touch()
-      const normalized = normalizeInput(input, {
-        acceptClientMetadata: rt.options.acceptClientMetadata === true,
-        files: config.inputFiles,
-      })
-      if (options.metadata !== undefined) {
-        normalized.app = validateEnqueueMetadata(options.metadata)
-      }
-      const inbox = args.inbox
-      if (inbox === undefined || drain === undefined) {
-        if (availableAt !== undefined && availableAt > Date.now()) {
-          throw new HarnessError(
-            'EH_INVALID_INPUT',
-            'enqueue availableAt needs storage.inbox (a durable timer).',
-          )
-        }
-        if (callerId !== undefined) {
-          const known = localEnqueueIds.get(callerId)
-          if (known !== undefined) return { inboxId: known, target: 'local', duplicate: true }
-        }
-        const inboxId = internals.generateId()
-        if (callerId !== undefined) localEnqueueIds.set(callerId, inboxId)
-        events.emit({ type: 'inbox-enqueued', inboxId, kind: 'send', mode })
-        enqueueLocal(normalized, mode, inboxId, options.collect, callerId)
-        return { inboxId, target: 'local' }
-      }
-      const item: InboxItemInput = {
-        kind: 'send',
-        mode,
-        input: toSerialized(normalized),
-        at: Date.now(),
-        ...(options.collect === undefined ? {} : { collect: { ...options.collect } }),
-        ...(availableAt === undefined ? {} : { availableAt }),
-      }
-      let inboxId: string
-      try {
-        if (callerId === undefined) {
-          inboxId = await inbox.enqueue(id, item)
-        } else {
-          if (inbox.enqueueOnce === undefined) {
-            throw new HarnessError(
-              'EH_INVALID_INPUT',
-              'enqueue id needs an inbox adapter that implements enqueueOnce.',
-            )
-          }
-          const stored = await inbox.enqueueOnce(id, { ...item, dedupeKey: callerId })
-          if (stored.duplicate) return { inboxId: stored.id, target: 'local', duplicate: true }
-          inboxId = stored.id
-        }
-      } catch (error) {
-        if (error instanceof HarnessError && error.code === 'EH_INVALID_INPUT') throw error
-        throw new HarnessError('EH_STORAGE', 'Inbox storage failed (enqueue).', { cause: error })
-      }
-      events.emit({ type: 'inbox-enqueued', inboxId, kind: 'send', mode })
-      let target: EnqueueResult['target'] = 'local'
-      if (current === undefined && !rt.running) {
-        const foreign = await foreignTurn()
-        if (foreign !== undefined) {
-          target = 'remote'
-          drain.foreign(foreign)
-        }
-      }
-      if (target === 'remote') await notify()
-      else drain.drain()
-      if (availableAt !== undefined && availableAt > Date.now()) drain.wakeAt(availableAt)
-      return { inboxId, target }
+    resolveWait(waitId, result, options) {
+      return apiResolveWait(s, waitId, result, options)
     },
-    async resolveWait(waitId, result, options) {
-      assertOpen()
-      touch()
-      return (await waits.resolveWait(waitId, result, options)) as never
+    expireWaits(now) {
+      return apiExpireWaits(s, now)
     },
-    async expireWaits(now) {
-      assertOpen()
-      touch()
-      return (await waits.expireWaits(now)) as never
+    pendingWaits() {
+      return apiPendingWaits(s)
     },
-    async pendingWaits() {
-      assertOpen()
-      touch()
-      return waits.pendingWaits()
+    fork(options?: ForkOptions) {
+      return apiFork(s, options)
     },
-    async fork(options: ForkOptions = {}) {
-      assertOpen()
-      touch()
-      const { beforeMessageId, copyState = 'all' } = options
-      const invalid = (message: string, reason: string): HarnessError =>
-        new HarnessError('EH_INVALID_INPUT', message, { details: { reason, sessionId: id } })
-      if (options.id !== undefined && (typeof options.id !== 'string' || options.id === '')) {
-        throw invalid('fork({ id }) must be a non-empty string.', 'id')
-      }
-      if (beforeMessageId !== undefined && beforeMessageId === '') {
-        throw invalid('fork({ beforeMessageId }) must be a non-empty string.', 'before-message-id')
-      }
-      if (copyState !== 'all' && copyState !== 'none') {
-        throw invalid("fork({ copyState }) must be 'all' or 'none'.", 'copy-state')
-      }
-      const newId = options.id ?? internals.generateId()
-      if (newId === id) throw invalid('A session cannot fork into itself.', 'same-id')
-      if (rt.running) throw busyError(id)
-      // a turn of this session may not be mid-flight: flush our state, then read the stored one
-      if (rt.state.loaded) await rt.state.writeIfDirty()
-      const stored = await rt.state.peek()
-      if (rt.running) throw busyError(id)
-      if (liveForeignTurn(stored, rt.owner, staleForDrain, rt) !== undefined) throw busyError(id)
-      const included = (messageId: string): boolean =>
-        beforeMessageId === undefined || messageId < beforeMessageId
-      const unfinished = stored?.core.activeTurn
-      if (unfinished !== undefined && included(unfinished.messageId)) {
-        throw invalid(
-          'The history to copy ends with a turn that did not finish; recover the session (send a message) first.',
-          'active-turn',
-        )
-      }
-      const pending = stored?.core.pending
-      if (pending !== undefined && pending !== null && included(pending.messageId)) {
-        throw invalid(
-          'The history to copy includes a message that waits for answers (pending approvals); respond first or fork before it.',
-          'pending',
-        )
-      }
-      if (args.isLive(newId)) throw invalid(`Session '${newId}' is already open.`, 'exists')
-      try {
-        const taken =
-          (await args.state.get(newId)) !== null ||
-          (await args.messages.load({ sessionId: newId, limit: 1 })).length > 0
-        if (taken) throw invalid(`Session '${newId}' already exists.`, 'exists')
-      } catch (error) {
-        throw storageError('fork', error)
-      }
-      const copied = await copyMessages({
-        adapter: args.messages,
-        from: id,
-        to: newId,
-        ...(beforeMessageId === undefined ? {} : { beforeId: beforeMessageId }),
-        registry: internals.messages,
-      })
-      const all = copyState === 'all'
-      const core = stored?.core
-      const snapshot: SessionStateSnapshot = {
-        v: 1,
-        rev: 1,
-        core: {
-          ...(all && copied.compaction !== undefined ? { compaction: copied.compaction } : {}),
-          ...(all && core?.usage !== undefined ? { usage: { ...core.usage } } : {}),
-          ...(all && core?.grants !== undefined ? { grants: { ...core.grants } } : {}),
-          ...(all && copied.rewinds.length > 0 ? { rewinds: copied.rewinds } : {}),
-          forkedFrom: {
-            sessionId: id,
-            ...(beforeMessageId === undefined ? {} : { beforeMessageId }),
-            at: Date.now(),
-          },
-        },
-        plugins: all ? structuredClone(stored?.plugins ?? {}) : {},
-      }
-      try {
-        if (args.state.setIf !== undefined) {
-          if (!(await args.state.setIf(newId, snapshot, null))) {
-            throw invalid(`Session '${newId}' already exists.`, 'exists')
-          }
-        } else {
-          await args.state.set(newId, snapshot)
-        }
-      } catch (error) {
-        throw storageError('fork', error)
-      }
-      const { parent: _parent, runtime, ...inherited } = rt.options
-      const forked = args.openSession(newId, {
-        ...inherited,
-        storage: {
-          messages: args.messages,
-          state: args.state,
-          ...(args.inbox === undefined ? {} : { inbox: args.inbox }),
-          ...(args.streams === undefined ? {} : { streams: args.streams }),
-        },
-        ...((options.runtime ?? runtime) === undefined
-          ? {}
-          : { runtime: (options.runtime ?? runtime) as Record<string, unknown> }),
-      })
-      await forked.ready()
-      // plugins copy what lives outside the session storage (spec 01 §5 `session.fork`)
-      try {
-        const open = await ensureOpen()
-        const event = {
-          sourceSessionId: id,
-          targetSessionId: newId,
-          ...(beforeMessageId === undefined ? {} : { beforeMessageId }),
-          keptMessageIds: [...copied.ids].sort(),
-        }
-        for (const hook of open.hooks.list('session.fork')) {
-          try {
-            await hook.fn(rt.contextOf(hook.owner), structuredClone(event))
-          } catch (error) {
-            hookFailed(rt, 'session.fork', hook.owner, error)
-          }
-        }
-      } catch (error) {
-        log.warn('eharness: session.fork hooks could not run', { error })
-      }
-      return forked as never
+    children() {
+      return apiChildren(s)
     },
-    async children() {
-      assertOpen()
-      touch()
-      const stored = await rt.state.peek()
-      return structuredClone(stored?.core?.children ?? [])
+    parentInfo() {
+      return apiParentInfo(s)
     },
-    async parentInfo() {
-      assertOpen()
-      touch()
-      const stored = await rt.state.peek()
-      const parent = stored?.core?.parent ?? rt.options.parent
-      return parent === undefined ? undefined : { ...parent }
+    clearGrants() {
+      return apiClearGrants(s)
     },
-    async clearGrants() {
-      assertOpen()
-      await ensureOpen()
-      const core = rt.state.core()
-      if (core.grants === undefined) return
-      delete core.grants
-      rt.state.markDirty()
-      await rt.state.writeIfDirty()
+    messages(q) {
+      return apiMessages(s, q)
     },
-    async messages(q = {}) {
-      assertOpen()
-      touch()
-      const limit = q.limit ?? 50
-      const load = async (beforeId: string | undefined): Promise<HarnessUIMessage[]> => {
-        try {
-          return (await rt.messages.load({
-            sessionId: id,
-            limit,
-            ...(beforeId === undefined ? {} : { beforeId }),
-          })) as HarnessUIMessage[]
-        } catch (error) {
-          throw storageError('load', error)
-        }
-      }
-      if (q.includeHidden === true) return (await load(q.beforeId)) as never
-      // rewinds of the state (a read never touches the live state store: no reload, no recovery)
-      const rewinds = rt.state.loaded ? [...(rt.state.core().rewinds ?? [])] : await storedRewinds()
-      // page until `limit` visible messages or the history is exhausted (spec 05 §2)
-      let out: HarnessUIMessage[] = []
-      let beforeId = q.beforeId
-      for (;;) {
-        const requested = beforeId
-        const raw = await load(requested)
-        // progress guard: never trust an adapter to honour beforeId (no duplicates, no endless loop)
-        const page = requested === undefined ? raw : raw.filter((m) => m.id < requested)
-        // a rewind hides only older messages: pages are read newest first
-        rewinds.push(...rewindsIn(page))
-        const visible =
-          rewinds.length === 0
-            ? page
-            : page.filter((m) => !hiddenByRewind(m, rewinds, internals.messages))
-        out = [...visible, ...out]
-        const oldest = page[0]
-        if (out.length >= limit || raw.length < limit || oldest === undefined) break
-        if (page.length < raw.length) break // the adapter ignored beforeId: stop here
-        beforeId = oldest.id
-      }
-      return out.slice(Math.max(0, out.length - limit)) as never
+    stats() {
+      return apiStats(s)
     },
-    async stats() {
-      assertOpen()
-      touch()
-      const open = await ensureOpen()
-      if (rt.view === undefined) await ensureContext()
-      const { inspection, ...fixed } = await staticTokens(open)
-      // an idle, clean handle may be stale: another instance can have answered, started or
-      // finished a turn since it loaded (spec 05 §2.1); a running turn is authoritative here
-      let core = rt.state.core()
-      if (!rt.running && !rt.state.dirty) {
-        const stored = (await rt.state.peek())?.core
-        if (stored !== undefined && !rt.running && !rt.state.dirty) {
-          core = {
-            ...core,
-            pending: stored.pending,
-            activeTurn: stored.activeTurn,
-            usage: stored.usage,
-          }
-        }
-      }
-      const measured = await compaction.measureView(rt.view ?? [])
-      return {
-        ...compaction.stats(
-          config.model,
-          { ...fixed, messages: measured.tokens },
-          {
-            pruned: measured.pruned,
-            split: {
-              instructionBlocks: instructionBlockStats(
-                inspection.instructionBlocks,
-                compaction.count,
-                compaction.calibration.apply,
-              ),
-              toolSources: await toolSourceStats(
-                inspection.entries,
-                compaction.count,
-                compaction.calibration.apply,
-              ),
-            },
-          },
-        ),
-        pending: core.pending ?? null,
-        activeTurn: core.activeTurn ?? null,
-        usage:
-          core.usage === undefined
-            ? { inputTokens: 0, outputTokens: 0, turns: 0 }
-            : { ...core.usage },
-      }
+    busy() {
+      return apiBusy(s)
     },
-    async busy() {
-      assertOpen()
-      touch()
-      if (current !== undefined) return { scope: 'local', turnId: current.run.turnId }
-      const staleMs =
-        config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
-      let stored: Awaited<ReturnType<StateAdapter['get']>>
-      try {
-        stored = await args.state.get(id)
-      } catch (error) {
-        throw new HarnessError('EH_STORAGE', 'State storage failed (busy).', { cause: error })
-      }
-      const active = liveForeignTurn(stored, rt.owner, staleMs, rt)
-      if (active === undefined) return null
-      return {
-        scope: 'remote',
-        turnId: active.turnId,
-        owner: active.owner,
-        heartbeatAt: active.heartbeatAt,
-      }
-    },
-    async tools() {
-      assertOpen()
-      touch()
-      const open = await ensureOpen()
-      const inspection = await inspect(open)
-      return describeTools(inspection.entries, compaction.count, compaction.calibration.apply)
+    tools() {
+      return apiTools(s)
     },
     events() {
-      assertOpen()
-      touch()
-      return events.stream() as never
+      return apiEvents(s)
     },
     idle() {
-      if (isIdle()) return Promise.resolve()
-      return new Promise<void>((resolve) => {
-        idleWaiters.push(resolve)
-      })
+      return apiIdle(s)
     },
-    close,
+    close: () => close(s),
   }
-  // ─── durable inbox (spec 05 §12) ──────────────────────────────────────────────────────────
-  function enqueueLocal(
-    normalized: NormalizedInput,
-    mode: 'queue' | 'steer' | 'collect',
-    inboxId: string,
-    collect: CollectOptions | undefined,
-    key?: string,
-  ): void {
-    if (mode === 'collect') {
-      collectInput(normalized, collect, inboxId, false, key)
-      return
-    }
-    const inbox = {
-      ids: [inboxId],
-      meta: key === undefined ? { inboxId } : { inboxId, key },
-      durable: false,
-    }
-    if (mode === 'steer' && current !== undefined && current.steer(normalized, inboxId)) return
-    if (!rt.running && queue.length === 0) {
-      begin({ kind: 'send', input: undefined, normalized, options: {}, queued: false, inbox })
-      return
-    }
-    enqueue({ input: normalized, options: {}, inbox })
-  }
-
-  /** Start a unit of inbox items now (the drain checked that the session is free). */
-  function startUnit(unit: InboxUnit): boolean {
-    if (rt.closed || rt.running || queue.length > 0) return false
-    const turnId = internals.generateId()
-    const entry: QueuedTurn = {
-      kind: unit.kind,
-      turnId,
-      input: unit.input,
-      options: {},
-      handle: createDeferredRun({
-        turnId,
-        kind: unit.kind,
-        generateId: () => internals.generateId(),
-        onAbort: () => {},
-      }),
-      inbox: { ids: unit.ids, meta: unit.meta, durable: true },
-    }
-    queue.push(entry)
-    startNext()
-    const index = queue.indexOf(entry)
-    if (index < 0) return true
-    // held (pending approvals): back to the inbox
-    queue.splice(index, 1)
-    entry.handle.drop()
-    return false
-  }
-
-  const staleForDrain =
-    config.recovery === false ? false : (config.recovery?.staleMs ?? DEFAULT_STALE_MS)
-  drain =
-    args.inbox === undefined
+  s.staleForDrain =
+    s.config.recovery === false ? false : (s.config.recovery?.staleMs ?? DEFAULT_STALE_MS)
+  s.drain =
+    s.args.inbox === undefined
       ? undefined
       : createInboxDrain({
-          rt,
-          adapter: args.inbox,
-          staleMs: staleForDrain,
+          rt: s.rt,
+          adapter: s.args.inbox,
+          staleMs: s.staleForDrain,
           claimTtlMs:
-            config.inbox?.claimTtlMs ??
-            (staleForDrain === false ? DEFAULT_STALE_MS : staleForDrain),
-          pollMs: config.inbox?.pollMs ?? DEFAULT_INBOX_POLL_MS,
-          collect: config.inbox?.collect,
-          retry: config.inbox?.retry,
-          onDeadLetter: config.inbox?.onDeadLetter,
+            s.config.inbox?.claimTtlMs ??
+            (s.staleForDrain === false ? DEFAULT_STALE_MS : s.staleForDrain),
+          pollMs: s.config.inbox?.pollMs ?? DEFAULT_INBOX_POLL_MS,
+          collect: s.config.inbox?.collect,
+          retry: s.config.inbox?.retry,
+          onDeadLetter: s.config.inbox?.onDeadLetter,
           current: () => {
-            const running = current
+            const running = s.current
             if (running === undefined) return undefined
             return {
               turnId: running.run.turnId,
               steer: (input, inboxId) => running.steer(input, inboxId),
             }
           },
-          free: () => !rt.closed && !rt.running && queue.length === 0,
+          free: () => !s.rt.closed && !s.rt.running && s.queue.length === 0,
           prepare: async () => {
-            await ensureOpen()
-            await ensureContext(true)
+            await ensureOpen(s)
+            await ensureContext(s, true)
           },
           invalidate: () => {
-            if (current === undefined && loading === undefined) rt.view = undefined
+            if (s.current === undefined && s.loading === undefined) s.rt.view = undefined
           },
-          start: startUnit,
-          expireWait: (waitId) => waits.expireOne(waitId),
+          start: (unit) => startUnit(s, unit),
+          expireWait: (waitId) => s.waits.expireOne(waitId),
           abort: (reason) => {
-            dropQueue(false)
-            current?.abort(reason ?? 'aborted')
+            dropQueue(s, false)
+            s.current?.abort(reason ?? 'aborted')
           },
           settled: () => {
-            checkIdle()
-            void releaseHeldQueue()
+            checkIdle(s)
+            void releaseHeldQueue(s)
           },
         })
-  rt.inject = (kind, data, options) => session.inject(kind as never, data as never, options)
-  touch()
-  return { session, rt, close }
+  s.rt.inject = (kind, data, options) => s.session.inject(kind as never, data as never, options)
+  touch(s)
+  return { session: s.session, rt: s.rt, close: () => close(s) }
 }

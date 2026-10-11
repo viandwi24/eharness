@@ -9,8 +9,8 @@ Each scenario prints `PASS` / `FAIL` / `SKIP` with a reason; the exit code is no
 
 | Script | What it does |
 |---|---|
-| `two-instances.ts` | Instances A (:4101) and B (:4102). Scenarios: resume A's running stream from B (chunk sequences must be identical); abort A's turn from B; a message sent to B during a turn on A is steered (202) and shows up in the turn; the Lead parks on A, the role agent's approval is listed and answered on B, the task completes, the Lead's reply is stored, and B's `/events/stream` carried the events; A and B agree on `/approvals` afterwards. |
-| `kill-restart.ts` | `SIGKILL` (no graceful close) of A, then B on the same file: a parked delegation is listed on B, answered, and completes; a kill during a streaming turn is recovered (`EH_TURN_INTERRUPTED` notice, no tool re-run) and the session is usable again; routines (skipped with a message until `/routines` is in `shared/openapi.json`); with a stable `TEAM_INSTANCE_ID`: a kill mid-turn is recovered by the restarted instance at boot (no SQL ageing), Continue and Retry work at once; a kill while a background child works gives the lead one `interrupted` report and an `interrupted` task. |
+| `two-instances.ts` | Instances A and B on free ports the OS picks (never a fixed port). Scenarios: resume A's running stream from B (chunk sequences must be identical); abort A's turn from B; a message sent to B during a turn on A is steered (202) and shows up in the turn; the Lead parks on A, the role agent's approval is listed and answered on B, the task completes, the Lead's reply is stored, and B's `/events/stream` carried the events; A and B agree on `/approvals` afterwards. |
+| `kill-restart.ts` | `SIGKILL` (no graceful close) of A, then B on the same file: a parked delegation is listed on B, answered, and completes; a kill during a streaming turn is recovered (`EH_TURN_INTERRUPTED` notice, no tool re-run) and the session is usable again; with a stable `TEAM_INSTANCE_ID`: a kill mid-turn is recovered by the restarted instance at boot (no SQL ageing), Continue and Retry work at once; a kill while a background child works gives the lead one `interrupted` report and an `interrupted` task. Routine catch-up after downtime is covered in-process by `server/test/routines.test.ts`. |
 | `smoke-real.ts` | Optional, **costs money**: one real OpenRouter turn where the Lead delegates a tiny research task, auto-approves what the role agent asks, prints the transcript, tasks and cost. Reads `OPENROUTER_API_KEY` from the environment or the repo root `.env`, never prints it. |
 
 ```bash
@@ -20,7 +20,10 @@ bun examples/team/scripts/kill-restart.ts --wait-stale # really waits ~2 min (st
 bun examples/team/scripts/smoke-real.ts                # real model, costs money
 ```
 
-`KEEP_DIR=1` keeps the temp directory (database, scripts) after a run. `lib.ts` holds the shared
+Hermetic: the servers start with `bun --no-env-file` and without any `TEAM_*` variable or `PORT` from
+your environment, so an `examples/team/.env` (a `TEAM_TOKEN`, a model) cannot change a run. Every
+script has an overall time limit (`SCRIPT_TIMEOUT_MS`, default 240 s, 600 s with `--wait-stale`) that also kills the
+servers; `smoke-real.ts` waits at most `SMOKE_MS` (default 240 s). `KEEP_DIR=1` keeps the temp directory (database, scripts) after a run. `lib.ts` holds the shared
 spawn/HTTP/SSE helpers. A killed streaming turn is only recovered after its heartbeat is older than
 `recovery.staleMs` (120 s) and the session lock lease (30 s) expired, so the default mode shortens
 both with SQL; `--wait-stale` is the honest variant.

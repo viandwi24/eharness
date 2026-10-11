@@ -426,6 +426,34 @@ export interface RestrictiveForms {
   subcommands: string[]
   /** A `sh -c` / `eval` payload that could not be parsed: the command must ask. */
   unparseable: boolean
+  /**
+   * A command runs inline interpreter code (`python -c`, `node -e`, `perl -e`, `ruby -e`,
+   * `php -r`): a broad allow rule must not approve it silently (spec 18 §7).
+   */
+  inlineCode: boolean
+}
+
+/** `xargs` options that take a separate value. */
+const XARGS_VALUE_FLAGS = new Set(['-a', '-d', '-E', '-I', '-J', '-L', '-n', '-P', '-s'])
+/** `flock` options that take a value. */
+const FLOCK_VALUE_FLAGS = new Set(['-w', '-E', '-c'])
+/** Interpreter programs and the flags that take inline code. */
+const INLINE_FLAGS: Record<string, RegExp> = {
+  python: /^-[a-zA-Z]*c[a-zA-Z]*$/,
+  node: /^(-[ep]|--eval|--print)$/,
+  nodejs: /^(-[ep]|--eval|--print)$/,
+  bun: /^(-e|--eval|-p|--print)$/,
+  deno: /^eval$/,
+  perl: /^-[a-zA-Z]*[eE][a-zA-Z]*$/,
+  ruby: /^-[a-zA-Z]*e[a-zA-Z]*$/,
+  php: /^-r$/,
+}
+
+/** True when the tokens run an interpreter with inline code. */
+function runsInlineCode(t: string[]): boolean {
+  const program = (t[0] ?? '').replace(/[\d.]+$/, '')
+  const flag = INLINE_FLAGS[program]
+  return flag !== undefined && t.slice(1).some((w) => flag.test(w))
 }
 
 const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh'])
@@ -508,8 +536,36 @@ function peel(tokens: string[], depth: number, out: RestrictiveForms): void {
         rest = t.slice(DURATION.test(t[i] ?? '') ? i + 1 : i)
         break
       }
+      case 'xargs':
+        rest = t.slice(skipFlags(t, 1, XARGS_VALUE_FLAGS))
+        break
+      case 'busybox':
+      case 'setsid':
+        rest = t.slice(skipFlags(t, 1, new Set()))
+        break
+      case 'flock': {
+        const i = skipFlags(t, 1, FLOCK_VALUE_FLAGS)
+        rest = t.slice(i + 1) // skip the lock file
+        break
+      }
+      case 'find': {
+        // `find … -exec|-execdir|-ok|-okdir <cmd…> ;|+`: the command is what runs
+        const at = t.findIndex((w) => /^-(exec|execdir|ok|okdir)$/.test(w))
+        if (at < 0) break
+        let end = t.findIndex((w, i) => i > at && (w === '+' || w === ';' || w === '\\;'))
+        if (end < 0) end = t.length
+        const run = t.slice(at + 1, end)
+        // the part after the terminator may hold another -exec: peel it as its own find
+        if (end + 1 < t.length) peel(['find', ...t.slice(end + 1)], depth + 1, out)
+        rest = run
+        break
+      }
       default:
         break
+    }
+    if (rest !== undefined && rest.length === 0) {
+      out.subcommands.push(t.join(' '))
+      return
     }
     if (rest !== undefined) {
       out.subcommands.push(rest.join(' '))
@@ -537,6 +593,7 @@ function peel(tokens: string[], depth: number, out: RestrictiveForms): void {
       }
     }
     if (base === 'git') t = skipGitOptions(t)
+    if (runsInlineCode(t)) out.inlineCode = true
     out.subcommands.push(t.join(' '))
     return
   }
@@ -546,7 +603,7 @@ function peel(tokens: string[], depth: number, out: RestrictiveForms): void {
  * The subcommands of a command line as deny and ask rules should see them. Besides the parsed
  * subcommands, each one also appears with the usual evasions undone: a leading `!`, an absolute
  * or relative program path reduced to its name (`/bin/rm` → `rm`), git global options removed
- * (`git -C . -c x=y --no-pager push` → `git push`), wrappers looked through (`sudo`, `doas`,
+ * (`git -C . -c x=y --no-pager push` → `git push`), wrappers looked through (`xargs [flags]`, `find … -exec|-execdir … ;|+`, `busybox`, `setsid`, `flock <file>`, `sudo`, `doas`,
  * `env [VAR=x…]`, `exec`, `nice`, `timeout <n>`, `nohup`, `command`, `builtin`, `time`) and the
  * payload of `sh|bash|zsh|dash|ksh -c '…'` and `eval '…'` parsed with the same parser. A payload
  * that cannot be parsed sets `unparseable`. Only for restricting rules: allow rules keep using
@@ -556,7 +613,11 @@ function peel(tokens: string[], depth: number, out: RestrictiveForms): void {
  */
 export function restrictiveForms(command: string): RestrictiveForms {
   const parsed = parseCommand(command)
-  const out: RestrictiveForms = { subcommands: [...parsed.subcommands], unparseable: false }
+  const out: RestrictiveForms = {
+    subcommands: [...parsed.subcommands],
+    unparseable: false,
+    inlineCode: false,
+  }
   for (const sub of parsed.subcommands) peel(sub.split(' '), 0, out)
   out.subcommands = [...new Set(out.subcommands.filter((s) => s !== ''))]
   return out

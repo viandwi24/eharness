@@ -4,7 +4,7 @@ import { ehMeta, webCryptoVault } from '../providers/index.ts'
 import { defineConnector } from './definition.ts'
 import { advanceFlow, completeOAuth, flowCompletion, publicFlow, startFlow } from './flow.ts'
 import { remoteMcpConnector } from './remote-mcp.ts'
-import { memoryFlowStore } from './store.ts'
+import { inMemoryFlowStore } from './store.ts'
 import { fakeAuthServer } from './test-kit.ts'
 import type { FlowDeps, FlowState, FlowView } from './types.ts'
 
@@ -231,7 +231,7 @@ describe('OAuth flow with MCP discovery and dynamic registration', () => {
         { name: 'delete', annotations: { destructiveHint: true } },
       ],
     })
-    const store = memoryFlowStore()
+    const store = inMemoryFlowStore()
     const d = deps({ definitions: [connector], fetch: server.fetch })
     const s0 = await startFlow({ definition: connector, scope: 'workspace', label: 'Docs' }, d)
     expect(s0.view.type).toBe('form')
@@ -306,7 +306,7 @@ describe('OAuth flow with MCP discovery and dynamic registration', () => {
   test('an authorization error from the server shows a retryable error view', async () => {
     const server = fakeAuthServer()
     const connector = remoteMcpConnector()
-    const store = memoryFlowStore()
+    const store = inMemoryFlowStore()
     const d = deps({ definitions: [connector], fetch: server.fetch })
     const s0 = await startFlow({ definition: connector, scope: 'workspace' }, d)
     const s1 = must(

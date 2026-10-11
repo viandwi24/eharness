@@ -3,10 +3,12 @@
  * application-chosen roots, pinned files in the turn reminder and an executor for app-supplied
  * (e.g. provider-defined) memory tools.
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/14-memory-plugin.md
  */
 export {
-  DEFAULT_MAX_FILE_CHARS,
   executeMemoryCommand,
   type MemoryCommand,
   type MemoryExecuteOptions,
@@ -15,11 +17,8 @@ export {
   type MemoryWriteEvent,
 } from './execute.ts'
 export {
-  DEFAULT_MAX_PINNED_CHARS,
   MEMORY_FLUSH_TOOLS,
   type MemoryOptions,
   memory,
-  PINNED_PREAMBLE,
 } from './plugin.ts'
-export { MEMORY_FLUSH_PROMPT, MEMORY_PROTOCOL } from './texts.ts'
 export { MEMORY_TOOLS, type MemoryExecutor, type MemoryToolName } from './tools.ts'

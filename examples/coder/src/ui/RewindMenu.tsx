@@ -1,4 +1,5 @@
 /** `/rewind` and double Esc: pick a past prompt, then choose what to restore. */
+import { errorText } from 'eharness'
 import { Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useState } from 'react'
 import type { CoderController, RewindPoint, RewindResult } from '../contracts.ts'
@@ -50,7 +51,7 @@ export function RewindMenu({ controller, onDone, onCancel }: RewindMenuProps): R
         else setPoints([...list].sort((a, b) => b.at - a.at))
       })
       .catch((error: unknown) => {
-        if (!cancelled) onCancel(`Cannot rewind: ${error instanceof Error ? error.message : error}`)
+        if (!cancelled) onCancel(`Cannot rewind: ${errorText(error)}`)
       })
     return () => {
       cancelled = true
@@ -80,8 +81,7 @@ export function RewindMenu({ controller, onDone, onCancel }: RewindMenuProps): R
       setBusy(true)
       controller.rewind(chosen.messageId, picked.what).then(
         (result) => onDone(result),
-        (error: unknown) =>
-          onCancel(`Rewind failed: ${error instanceof Error ? error.message : error}`),
+        (error: unknown) => onCancel(`Rewind failed: ${errorText(error)}`),
       )
       return
     }

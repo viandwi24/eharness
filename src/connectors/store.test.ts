@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  memoryProfileStore,
+  inMemoryProfileStore,
   plaintextVault,
   sealedProfileStore,
   webCryptoVault,
@@ -11,36 +11,38 @@ import {
   enablementStoreConformance,
   flowStoreConformance,
 } from '../testing/connectors.conformance.ts'
-import { createCredentialManager, memoryRefreshLock } from './credentials.ts'
+import { createCredentialManager, inMemoryRefreshLock } from './credentials.ts'
 import {
   CONNECTION_KIND,
   CREDENTIALS_KIND,
   connectionStoreFromProfiles,
   credentialStoreFromProfiles,
-  memoryConnectionStore,
-  memoryCredentialStore,
-  memoryEnablementStore,
-  memoryFlowStore,
+  inMemoryConnectionStore,
+  inMemoryCredentialStore,
+  inMemoryEnablementStore,
+  inMemoryFlowStore,
 } from './store.ts'
 import { asFetch, fakeAuthServer } from './test-kit.ts'
 import type { ConnectionRecord } from './types.ts'
 
 describe('memory stores conformance', () => {
-  for (const c of connectionStoreConformance(() => memoryConnectionStore()))
+  for (const c of connectionStoreConformance(() => inMemoryConnectionStore()))
     test(`connection: ${c.name}`, c.run)
-  for (const c of credentialStoreConformance(() => memoryCredentialStore()))
+  for (const c of credentialStoreConformance(() => inMemoryCredentialStore()))
     test(`credentials: ${c.name}`, c.run)
   for (const c of credentialStoreConformance(() =>
-    memoryCredentialStore({ vault: plaintextVault() }),
+    inMemoryCredentialStore({ vault: plaintextVault() }),
   ))
     test(`sealed credentials: ${c.name}`, c.run)
-  for (const c of enablementStoreConformance(() => memoryEnablementStore()))
+  for (const c of enablementStoreConformance(() => inMemoryEnablementStore()))
     test(`enablement: ${c.name}`, c.run)
-  for (const c of flowStoreConformance(() => memoryFlowStore())) test(`flow: ${c.name}`, c.run)
+  for (const c of flowStoreConformance(() => inMemoryFlowStore())) test(`flow: ${c.name}`, c.run)
   // composition over a sealed profile store with AES-GCM
   for (const c of connectionStoreConformance(() =>
     connectionStoreFromProfiles(
-      sealedProfileStore(memoryProfileStore(), webCryptoVault(new Uint8Array(32)), {
+      sealedProfileStore({
+        inner: inMemoryProfileStore(),
+        vault: webCryptoVault(new Uint8Array(32)),
         kinds: [CONNECTION_KIND],
       }),
     ),
@@ -50,9 +52,11 @@ describe('memory stores conformance', () => {
 
 describe('one profile store holds providers, connections and credentials', () => {
   test('kinds are isolated, secrets are ciphertext in the inner store, subscribe is shared', async () => {
-    const inner = memoryProfileStore()
+    const inner = inMemoryProfileStore()
     const vault = webCryptoVault(new Uint8Array(32).fill(1))
-    const profiles = sealedProfileStore(inner, vault, {
+    const profiles = sealedProfileStore({
+      inner,
+      vault,
       kinds: [CONNECTION_KIND, CREDENTIALS_KIND],
     })
     const connections = connectionStoreFromProfiles(profiles)
@@ -94,8 +98,11 @@ describe('one profile store holds providers, connections and credentials', () =>
   })
 
   test('a blob is bound to its row: moving it fails to open', async () => {
-    const inner = memoryProfileStore()
-    const profiles = sealedProfileStore(inner, webCryptoVault(new Uint8Array(32).fill(2)))
+    const inner = inMemoryProfileStore()
+    const profiles = sealedProfileStore({
+      inner,
+      vault: webCryptoVault(new Uint8Array(32).fill(2)),
+    })
     await profiles.put({
       id: 'a',
       kind: 'k',
@@ -116,11 +123,11 @@ describe('one profile store holds providers, connections and credentials', () =>
     const { z } = await import('zod/v4')
     const { ehMeta } = await import('../providers/index.ts')
     const schema = z.object({ apiKey: z.string().meta(ehMeta({ secret: true })), url: z.string() })
-    const inner = memoryProfileStore()
+    const inner = inMemoryProfileStore()
     const oldKey = new Uint8Array(32).fill(3)
     const newKey = new Uint8Array(32).fill(4)
     const v1 = webCryptoVault({ keys: { k1: oldKey }, current: 'k1' })
-    const s1 = sealedProfileStore(inner, v1, { schemaOf: () => schema })
+    const s1 = sealedProfileStore({ inner, vault: v1, schemaOf: () => schema })
     await s1.put({
       id: 'a',
       kind: 'provider',
@@ -134,24 +141,24 @@ describe('one profile store holds providers, connections and credentials', () =>
     expect(raw.url).toBe('https://x')
     expect(JSON.stringify(raw.apiKey)).not.toContain('sk-1')
     const v2 = webCryptoVault({ keys: { k1: oldKey, k2: newKey }, current: 'k2' })
-    const s2 = sealedProfileStore(inner, v2, { schemaOf: () => schema })
+    const s2 = sealedProfileStore({ inner, vault: v2, schemaOf: () => schema })
     expect((await s2.get('provider', 'a'))?.settings.apiKey).toBe('sk-1')
     expect(await s2.reseal()).toBe(1)
     expect(await s2.reseal()).toBe(0)
     expect(JSON.stringify(await inner.get('provider', 'a'))).toContain('v2.k2.')
-    const onlyNew = sealedProfileStore(
+    const onlyNew = sealedProfileStore({
       inner,
-      webCryptoVault({ keys: { k2: newKey }, current: 'k2' }),
-      { schemaOf: () => schema },
-    )
+      vault: webCryptoVault({ keys: { k2: newKey }, current: 'k2' }),
+      schemaOf: () => schema,
+    })
     expect((await onlyNew.get('provider', 'a'))?.settings.apiKey).toBe('sk-1')
   })
 })
 
 describe('credential manager', () => {
   const seed = async (expiresAt: number | undefined) => {
-    const credentials = memoryCredentialStore()
-    const connections = memoryConnectionStore()
+    const credentials = inMemoryCredentialStore()
+    const connections = inMemoryConnectionStore()
     await credentials.put('c1', {
       tokens: {
         accessToken: 'old',
@@ -242,7 +249,7 @@ describe('credential manager', () => {
   })
 
   test('the memory lock serializes work per key', async () => {
-    const lock = memoryRefreshLock()
+    const lock = inMemoryRefreshLock()
     const order: string[] = []
     await Promise.all([
       lock('k', async () => {

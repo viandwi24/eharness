@@ -157,3 +157,26 @@ describe('system routes', () => {
     expect((await app.request('/openapi.json')).status).toBe(200)
   })
 })
+
+describe('CSRF guard', () => {
+  test('a state-changing request from a foreign Origin is refused, the web origin and no Origin pass', async () => {
+    const { app } = boot()
+    const post = (origin?: string): Promise<Response> =>
+      Promise.resolve(
+        app.request('/agents', {
+          ...json({}),
+          headers: {
+            'content-type': 'application/json',
+            ...(origin === undefined ? {} : { origin }),
+          },
+        }),
+      )
+    const evil = await post('https://evil.example')
+    expect(evil.status).toBe(403)
+    expect(((await evil.json()) as { error: { code: string } }).error.code).toBe('FORBIDDEN_ORIGIN')
+    expect((await post('http://localhost:5173')).status).not.toBe(403)
+    expect((await post()).status).not.toBe(403)
+    const get = await app.request('/agents', { headers: { origin: 'https://evil.example' } })
+    expect(get.status).toBe(200)
+  })
+})

@@ -13,11 +13,11 @@
 import { setTimeout as sleep } from 'node:timers/promises'
 import { tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
-import { memoryInbox, memoryMessages, memoryState } from 'eharness/storage/memory'
+import { inMemoryInbox, inMemoryMessages, inMemoryState } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
-const storage = { messages: memoryMessages(), state: memoryState(), inbox: memoryInbox() }
+const storage = { messages: inMemoryMessages(), state: inMemoryState(), inbox: inMemoryInbox() }
 
 function deferred() {
   let resolve!: () => void
@@ -105,8 +105,8 @@ started = deferred()
 gate = deferred()
 const third = sessionA.send('Tell me the history.')
 await started.promise
-const { target } = await sessionB.requestAbort('user pressed stop')
-console.log(`B: requestAbort → ${target}`)
+const { target } = await sessionB.abort('user pressed stop')
+console.log(`B: abort → ${target}`)
 console.log(`A: turn 3 → ${(await third.result).stop}`)
 
 // 4. a poison item: a stored input that no longer validates goes dead instead of blocking

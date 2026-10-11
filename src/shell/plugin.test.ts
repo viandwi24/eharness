@@ -91,20 +91,20 @@ async function exec(opts: ShellOptions, input: Record<string, unknown>): Promise
 
 describe('bash tool', () => {
   test('success footer and output; only a footer without output', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     expect(await exec({ sandbox }, { command: 'echo hi' })).toMatch(/^hi\nExit code 0 · \d+\.\ds$/)
     expect(await exec({ sandbox }, { command: 'true' })).toMatch(/^Exit code 0 · \d+\.\ds$/)
   })
 
   test('non-zero exit is a string, stderr is included', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     expect(await exec({ sandbox }, { command: 'echo bad 1>&2; exit 7' })).toMatch(
       /^bad\nExit code 7 · /,
     )
   })
 
   test('timeout kills the command and reports it', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     const started = Date.now()
     const out = await exec({ sandbox }, { command: 'echo start; sleep 30', timeoutMs: 300 })
     expect(Date.now() - started).toBeLessThan(5000)
@@ -113,7 +113,7 @@ describe('bash tool', () => {
   })
 
   test('the model timeout is capped by maxTimeoutMs', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     const out = await exec(
       { sandbox, maxTimeoutMs: 200, timeoutMs: 100 },
       { command: 'sleep 30', timeoutMs: 600_000 },
@@ -122,7 +122,7 @@ describe('bash tool', () => {
   })
 
   test('long output is capped to head and tail with a marker', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     const out = await exec(
       { sandbox, maxOutputChars: 3000 },
       { command: 'head -c 20000 /dev/zero | tr "\\0" "a"; printf END' },
@@ -151,7 +151,7 @@ describe('bash tool', () => {
       {
         sandbox: (ctx) => {
           seen.push(ctx.session.id)
-          return localSandbox(root)
+          return localSandbox({ root })
         },
       },
       { command: 'pwd' },
@@ -161,7 +161,7 @@ describe('bash tool', () => {
   })
 
   test('toolName and risk are configurable; the default risk is external', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     const external = agentWith([{ text: 'x' }], { sandbox })
     const tools = await external.agent.session('a').tools()
     expect(tools.map((t) => t.name)).toEqual(['bash', 'wait'])
@@ -198,7 +198,10 @@ describe('bash tool', () => {
       const agent = defineHarnessAgent({
         model,
         logger: silent,
-        plugins: [shell({ sandbox: localSandbox(await temp()), background: true, risk }), spy],
+        plugins: [
+          shell({ sandbox: localSandbox({ root: await temp() }), background: true, risk }),
+          spy,
+        ],
       })
       const session = agent.session('s')
       await session.send('go').result
@@ -212,7 +215,7 @@ describe('bash tool', () => {
   })
 
   test('foreground-only: the schema has no background fields', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     const { agent } = agentWith([{ text: 'x' }], { sandbox })
     const info = (await agent.session('a').tools()).find((t) => t.name === 'bash')
     expect(JSON.stringify(info?.inputSchema)).not.toContain('run_in_background')
@@ -225,21 +228,21 @@ describe('bash tool', () => {
       const { agent } = agentWith([{ text: 'x' }], { sandbox })
       return (await agent.session('a').tools()).find((t) => t.name === 'bash')?.description ?? ''
     }
-    expect(await desc(localSandbox(root))).toContain(
+    expect(await desc(localSandbox({ root }))).toContain(
       "Commands run without an OS sandbox, with your user's privileges.",
     )
     if (detectOsSandbox().kind !== 'none') {
-      expect(await desc(localSandbox(root, { os: { enabled: true } }))).toContain(
+      expect(await desc(localSandbox({ root, os: { enabled: true } }))).toContain(
         `Commands run in an OS sandbox: writes only inside ${root} (and temp dirs), network off.`,
       )
     }
-    const plain = { ...localSandbox(root) } as Record<string, unknown>
+    const plain = { ...localSandbox({ root }) } as Record<string, unknown>
     delete plain.state
     expect(await desc(plain as unknown as Sandbox)).not.toContain('OS sandbox')
   })
 
   test('streams transient data-shell.output chunks', async () => {
-    const sandbox = localSandbox(await temp())
+    const sandbox = localSandbox({ root: await temp() })
     const { agent } = agentWith(
       [
         {
@@ -293,7 +296,7 @@ describe('capOutput', () => {
 
 describe.skipIf(detectOsSandbox().kind === 'none')('OS sandbox through the tool', () => {
   test('a denied write gets the sandbox hint, a fine command does not', async () => {
-    const sandbox: LocalSandbox = localSandbox(await temp(), { os: { enabled: true } })
+    const sandbox: LocalSandbox = localSandbox({ root: await temp(), os: { enabled: true } })
     const denied = await exec(
       { sandbox },
       { command: `echo x > '${join(homedir(), 'eh-sandbox-hint.txt')}'` },
@@ -305,7 +308,7 @@ describe.skipIf(detectOsSandbox().kind === 'none')('OS sandbox through the tool'
 
 describe('background tasks', () => {
   const bgOpts = async (extra: Partial<ShellOptions> = {}): Promise<ShellOptions> => ({
-    sandbox: localSandbox(await temp()),
+    sandbox: localSandbox({ root: await temp() }),
     background: { monitorIntervalMs: 300 },
     ...extra,
   })
@@ -401,6 +404,27 @@ describe('background tasks', () => {
     expect(reads[0]).not.toContain('b2')
     expect(reads[1]).toContain('ERROR: no background task "bash-9". Known: bash-1')
     expect(reads[2]).toContain('not a valid regular expression')
+    expect((await outputs(session, 'bash'))[1]).toContain('ERROR: notify_on')
+    await session.close()
+  })
+
+  test('catastrophic-backtracking patterns are refused (ReDoS)', async () => {
+    const opts = await bgOpts()
+    const { agent } = agentWith(
+      [
+        call('bash', { command: 'printf "aaaa\\n"', run_in_background: true }),
+        call('wait', { ms: 200 }),
+        call('bash_output', { id: 'bash-1', filter: '(a+)+$' }),
+        call('bash', { command: 'echo x', run_in_background: true, notify_on: '(a|aa)+$' }),
+        { text: 'done' },
+      ],
+      opts,
+    )
+    const session = agent.session('s')
+    await session.send('go').result
+    const reads = await outputs(session, 'bash_output')
+    expect(reads[0]).toContain('ERROR: filter is not a valid regular expression')
+    expect(reads[0]).toContain('quantified group')
     expect((await outputs(session, 'bash'))[1]).toContain('ERROR: notify_on')
     await session.close()
   })
@@ -518,7 +542,7 @@ describe('background tasks', () => {
       logger: silent,
       plugins: [
         shell({
-          sandbox: localSandbox(root),
+          sandbox: localSandbox({ root }),
           background: true,
           onTaskEvent: async (e) => {
             const out = await (
@@ -571,7 +595,7 @@ describe('moving a running foreground command to the background', () => {
       logger: silent,
       plugins: [
         shell({
-          sandbox: localSandbox(await temp()),
+          sandbox: localSandbox({ root: await temp() }),
           timeoutMs: 400,
           background: true,
           onTaskEvent: (e) => void events.push(e),
@@ -624,7 +648,7 @@ describe('moving a running foreground command to the background', () => {
       model,
       contextWindow: 100_000,
       logger: silent,
-      plugins: [shell({ sandbox: localSandbox(await temp()) }), probe],
+      plugins: [shell({ sandbox: localSandbox({ root: await temp() }) }), probe],
     })
     const session = agent.session('s')
     const run = session.send('go')
@@ -634,5 +658,19 @@ describe('moving a running foreground command to the background', () => {
     await run.result
     expect((await outputs(session, 'bash'))[0]).toContain('Exit code 0')
     await session.close()
+  })
+})
+
+describe('shell option validation', () => {
+  test('invalid numeric options throw EH_CONFIG_INVALID', () => {
+    const sandbox = {} as never
+    for (const options of [
+      { timeoutMs: 0 },
+      { maxTimeoutMs: -1 },
+      { maxOutputChars: 1.5 },
+      { background: { maxTasks: 0 } },
+    ]) {
+      expect(() => shell({ sandbox, ...options } as never)).toThrow('shell:')
+    }
   })
 })

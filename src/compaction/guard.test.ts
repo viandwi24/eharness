@@ -1,9 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { APICallError, type ModelMessage, RetryError, StreamProviderError } from 'ai'
+import { truncateMiddle } from '../messages/truncate.ts'
+import { defaultCountTokens, wireTokens } from '../models/tokens.ts'
 import { applyHardCap, MIN_TRUNCATED_OUTPUT_CHARS } from './guard.ts'
 import { isContextOverflow, reportedTokenCount } from './overflow.ts'
-import { defaultCountTokens, wireTokens } from './tokens.ts'
-import { truncateMiddle } from './truncate.ts'
 
 describe('truncateMiddle', () => {
   test('keeps 70% head and 30% tail around the TOOL_OUTPUT_TRUNCATED marker', () => {

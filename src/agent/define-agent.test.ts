@@ -182,6 +182,18 @@ describe('defineHarnessAgent: boot errors (spec 01 §7)', () => {
     expectBootError(agent({ plugins: [p] }), 'EH_DUPLICATE_TOOL', ["plugin 'sk'"])
   })
 
+  test('EH_DUPLICATE_SKILL names the indexes when both skills are in the app config', () => {
+    let thrown: unknown
+    try {
+      agent({ skills: [skill('pine'), skill('oak'), skill('pine')] })()
+    } catch (error) {
+      thrown = error
+    }
+    expect(isHarnessError(thrown, 'EH_DUPLICATE_SKILL')).toBe(true)
+    expect((thrown as Error).message).toContain('skills[0] and skills[2]')
+    expect((thrown as { details?: unknown }).details).toMatchObject({ indexes: [0, 2] })
+  })
+
   test('EH_DUPLICATE_SKILL: two static skills with the same name', () => {
     const p = definePlugin({ name: 'fs', setup: () => ({ skills: [skill('pine')] }) })
     expectBootError(agent({ skills: [skill('pine')], plugins: [p] }), 'EH_DUPLICATE_SKILL', [
@@ -342,5 +354,46 @@ describe('defineHarnessAgent: boot errors (spec 01 §7)', () => {
       },
     })
     expectBootError(agent({ plugins: [throwing] }), 'EH_CONFIG_INVALID', ["plugin 'boom'", 'kaput'])
+  })
+})
+
+describe('defineHarnessAgent: numeric option bounds (spec 01 §7)', () => {
+  const bad: Array<[string, Omit<HarnessAgentConfig, 'model'>]> = [
+    ['recovery.staleMs', { recovery: { staleMs: 0 } }],
+    ['recovery.abortPollMs', { recovery: { abortPollMs: -1 } }],
+    ['sessionIdleMs', { sessionIdleMs: Number.NaN }],
+    ['streams.flushMs', { streams: { flushMs: 0 } }],
+    ['streams.batchSize', { streams: { batchSize: 1.5 } }],
+    ['streams.retentionMs', { streams: { retentionMs: -5 } }],
+    ['streams.pollMs', { streams: { pollMs: 0 } }],
+    ['hooks.timeoutMs', { hooks: { timeoutMs: 1e12 } }],
+    ['toolSources.timeoutMs', { toolSources: { timeoutMs: 0 } }],
+    ['inbox.claimTtlMs', { inbox: { claimTtlMs: -1 } }],
+    ['settings.timeout.chunkMs', { settings: { timeout: { chunkMs: 0 } } }],
+    ['settings.timeout', { settings: { timeout: -3 } }],
+    ['warnings.dedupeWindowMs', { warnings: { dedupeWindowMs: -1 } }],
+  ]
+  for (const [option, config] of bad) {
+    test(`${option} is validated`, () => {
+      expectBootError(agent(config), 'EH_CONFIG_INVALID', [option])
+    })
+  }
+
+  test('valid values boot; a short staleMs is allowed', () => {
+    expect(
+      agent({
+        recovery: { staleMs: 1_000, abortPollMs: 0 },
+        warnings: { dedupeWindowMs: 0 },
+        streams: { flushMs: 50, batchSize: 10 },
+      }),
+    ).not.toThrow()
+    expect(agent({ recovery: { staleMs: 10 } })).not.toThrow()
+  })
+
+  test('debug.invariants and observe must have the right type', () => {
+    expectBootError(agent({ debug: { invariants: 'yes' as never } }), 'EH_CONFIG_INVALID', [
+      'debug.invariants',
+    ])
+    expectBootError(agent({ observe: 1 as never }), 'EH_CONFIG_INVALID', ['observe'])
   })
 })

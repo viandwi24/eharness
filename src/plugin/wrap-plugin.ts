@@ -1,3 +1,4 @@
+import { configError } from '../errors.ts'
 import { definePlugin } from './define-plugin.ts'
 import type {
   AgentSetupContext,
@@ -112,7 +113,7 @@ function wrapHooks(
  * Wrap a plugin: a new plugin with the same name (or `overrides.name`), data parts, kinds,
  * services (`provides` / `requires`), version and contributions, whose setup phase, session phase
  * and hooks you can intercept. The way to add per-request configuration to a shipped plugin
- * (`approvalGuard`, `memory`, `todos`, `filesystem`) without reading its internals.
+ * (`guard`, `memory`, `todos`, `filesystem`) without reading its internals.
  *
  * Without overrides the wrapper delegates everything. Wrapping works on any plugin, including an
  * already wrapped one, and the result goes through the same boot validation as any plugin (names,
@@ -123,14 +124,14 @@ function wrapHooks(
  * @example
  * ```ts
  * import { wrapPlugin } from 'eharness'
- * import { approvalGuard } from 'eharness/guard'
+ * import { guard } from 'eharness/guard'
  *
  * // the judge model comes from the request (`send(..., { runtime: { judge } })`)
- * const guard = wrapPlugin(approvalGuard({ model: defaultJudge }), {
+ * const guard = wrapPlugin(guard({ model: defaultJudge }), {
  *   session: (ctx, next) =>
  *     ctx.runtime.judge === undefined
  *       ? next()
- *       : next.using(approvalGuard({ model: ctx.runtime.judge as LanguageModel })),
+ *       : next.using(guard({ model: ctx.runtime.judge as LanguageModel })),
  *   hooks: {
  *     // skip review entirely for trusted requests
  *     'tool.approve': (ctx, e, next) => (ctx.runtime.trusted === true ? undefined : next()),
@@ -154,7 +155,7 @@ export function wrapPlugin<
   const hookOverrides = (overrides.hooks ?? {}) as Record<string, AnyFn>
   for (const [hook, fn] of Object.entries(hookOverrides)) {
     if (typeof fn !== 'function') {
-      throw new TypeError(`wrapPlugin: hook override '${hook}' must be a function.`)
+      throw configError(`wrapPlugin: hook override '${hook}' must be a function.`, { hook })
     }
   }
   // hooks the setup phase registered (the session phase adds only the missing ones)

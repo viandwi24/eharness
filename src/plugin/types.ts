@@ -451,7 +451,12 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
     ctx: HarnessContext<DP>,
     e: { toolName: string; input: unknown },
   ): Awaitable<string | null | void>
-  /** Chainable. Rewrite tool input before approval and execution. Must be deterministic (spec 11 §3). */
+  /**
+   * Chainable. Rewrite tool input before approval and execution. Must be deterministic (spec 11 §3).
+   *
+   * @experimental Relies on the AI SDK option `experimental_refineToolInput`; an upstream rename or
+   * removal changes this hook (docs/engineering/api-stability.md).
+   */
   'tool.before'?(
     ctx: HarnessContext<DP>,
     e: { toolName: string; input: unknown },

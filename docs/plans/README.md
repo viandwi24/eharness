@@ -2,7 +2,7 @@
 
 Goal of this board: ship **eharness 0.1.0** — the skeleton described in `docs/specs/*` — and the
 releases after it (P9–P12: 0.3.0; P13–P20: 0.4.0; P21–P29: 0.5.0; P30–P31: 0.6.0 and 0.7.0;
-P33–P38: 0.8.0).
+P33–P39: 0.8.0).
 
 Status legend: `todo` · `in progress` · `blocked` · `review` · `done`.
 Update this table in the same commit that changes a phase's status.
@@ -48,6 +48,7 @@ Update this table in the same commit that changes a phase's status.
 | P36 | `eharness/connectors`: definitions, connections, setup flows, OAuth, activation, consolidation with providers (ADR-0049–0053; spec 24; no phase file) | done | P35 | — |
 | P37 | `eharness/activity`, `eharness/http`, `eharness/client`: activity feed, attention queue, fetch-style routes, browser client (ADR-0058, 0059; specs 25–27; no phase file) | done | P34 | — |
 | P38 | 0.8 readiness: security hardening review, upgrade guide, walkthroughs, production checklist (no phase file) | done | P35–P37 | — |
+| P39 | 0.8 hardening (internal multi-perspective review): one naming convention and single options objects, trimmed public surface with a committed exports snapshot, bounded waits and timeouts, fail-closed network and permission defaults, shared LLM judge engine, `config.observe`, one error taxonomy, one glob compiler, core and subagent restructuring without import cycles, test preload that fails on `W_INVARIANT_VIOLATION`, doc and example pass (ADR-0060; specs 01, 10, 15, 18; no phase file) | done | P38 | — |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next
@@ -67,6 +68,15 @@ P26 and P28 after P21 (risk traits). ADR numbers are reserved per phase: 0025 (P
 15 (guard, P26), 16 (group, P27), 17 (openapi, P28). Source: the 0.5 prior-art analysis
 (internal notes) — items #1–#8 are mapped in each phase file; results go to
 the 0.5.0 results notes (P29, internal).
+
+**P39 is the last phase before 0.8.0.** One internal review looked at the codebase from several
+perspectives (API design, security, correctness under concurrency and restarts, operations and
+documentation) and produced a list of findings; all accepted ones landed as direct commits on
+`main` with one changeset per concern (`.changeset/`). Breaking changes are allowed in 0.x
+(minor bump) and are listed in the changesets and in `docs/guides/upgrading.md`. **Next step:** run
+`bun run release:version` (version PR for 0.8.0), review the generated `CHANGELOG.md`, merge, and
+publish through the release workflow (`docs/engineering/release.md`). After that the open items in
+[roadmap.md](roadmap.md) are unscheduled.
 
 After 0.1.0: [roadmap.md](roadmap.md).
 

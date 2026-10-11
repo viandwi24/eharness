@@ -16,12 +16,8 @@
 import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import {
-  type LegacyOpener,
-  type SecretVault,
-  webCryptoVault,
-  withLegacyVault,
-} from 'eharness/providers'
+import { type SecretVault, webCryptoVault } from 'eharness/providers'
+import { type LegacyOpener, withLegacyVault } from './legacy-vault.ts'
 
 const LEGACY_PREFIX = 'v1:'
 

@@ -48,7 +48,8 @@ export function checklist() {
 }
 ```
 
-Register it with `defineHarnessAgent({ model, plugins: [checklist()] })`. Plugins run in array order
+Register it with `defineHarnessAgent({ model, plugins: [checklist()] })` (`model` is yours: any
+`LanguageModel`). Plugins run in array order
 (after the implicit root plugin `app` that holds the top-level config); that order is the order
 of instructions and hooks.
 
@@ -106,7 +107,10 @@ const report = definePlugin({
 | `message.beforeSave`, `compaction.before`, `compaction.prompt`, `compaction.after`, `skill.load` | storage, compaction (incl. the pre-compaction flush) and skill integration |
 
 Chainable hooks see the previous hook's result. A throwing hook is skipped with `W_HOOK_FAILED`,
-except `tool.approve` and `input.submit`, which fail closed (denied / blocked).
+except `tool.approve` and `input.submit`, which fail closed (denied / blocked). Every hook the core
+awaits is also bounded by the turn abort signal and `hooks.timeoutMs` (default 30 000): a hook that
+does not settle is treated like a throwing one (`W_HOOK_TIMEOUT`), so do slow work (network, model
+calls) with its own timeout or outside hooks.
 
 ## Wrapping a plugin
 
@@ -116,15 +120,18 @@ reaching into its internals: the result is a normal plugin with the same name, d
 and services, and you intercept the session phase and hooks with `next` calling the inner plugin.
 
 ```ts
+import type { LanguageModel } from 'ai'
 import { wrapPlugin } from 'eharness'
-import { approvalGuard } from 'eharness/guard'
+import { guard } from 'eharness/guard'
 
-const guard = wrapPlugin(approvalGuard({ model: defaultJudge }), {
+declare const defaultJudge: LanguageModel // yours: the default judge model
+
+const perRequestGuard = wrapPlugin(guard({ model: defaultJudge }), {
   // per-request options: build the plugin from ctx.runtime and delegate to its session phase
   session: (ctx, next) =>
     ctx.runtime.judge === undefined
       ? next()
-      : next.using(approvalGuard({ model: ctx.runtime.judge as LanguageModel })),
+      : next.using(guard({ model: ctx.runtime.judge as LanguageModel })),
   hooks: {
     // combine with the inner answer yourself; never return 'approved' to stay tighten-only
     'tool.approve': async (ctx, e, next) => {
@@ -133,6 +140,7 @@ const guard = wrapPlugin(approvalGuard({ model: defaultJudge }), {
     },
   },
 })
+// register perRequestGuard in `plugins`; pass the judge per request:
 // session.send('...', { runtime: { judge } })
 ```
 
@@ -142,6 +150,28 @@ const guard = wrapPlugin(approvalGuard({ model: defaultJudge }), {
   change: the override wraps the inner hook where it was registered.
 - Wrapping twice works; boot validation (duplicate names, services, ordering) applies to the
   result. Keep the default `name` for plugins that already have stored sessions.
+
+### Wrapping a tool
+
+To change what a tool does (for example catch errors from its `execute`), return a copy with
+`withToolExecute`; to flip `deferLoading`, set `metadata` or replace `toModelOutput`, use
+`withToolFields`. Both keep every other field and never mutate the original.
+
+```ts
+import { withToolExecute } from 'eharness'
+
+const safe = withToolExecute(base, async (input, options) => {
+  try {
+    return await base.execute!(input, options)
+  } catch (error) {
+    return `Failed: ${errorText(error)}`
+  }
+})
+```
+
+`withToolExecute` throws `EH_CONFIG_INVALID` if the tool has no `execute` (client and
+provider-executed tools); check `typeof tool.execute === 'function'` first. Both helpers are
+`@experimental`.
 
 ## Rules that keep a plugin well-behaved
 
@@ -165,6 +195,7 @@ const model = scriptedModel([
   { toolCalls: [{ toolName: 'checklist_write', input: { items: ['outline'] } }] },
   { text: 'Planned.' },
 ])
+// checklist() is the plugin from "Anatomy"
 const agent = defineHarnessAgent({ model, plugins: [checklist()] })
 const result = await agent.session('t').send('Plan an article').result
 // result.stop === 'complete'; model.prompts[1] is the wire of step 1 (incl. the reminder)

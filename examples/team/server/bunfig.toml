@@ -1,0 +1,4 @@
+# The example's own tests run with the session invariants on (`debug.invariants` is explicit-only
+# in eharness; `compose` reads TEAM_DEBUG_INVARIANTS). A broken invariant fails the test at once.
+[test]
+preload = ["./test/preload.ts"]

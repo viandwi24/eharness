@@ -20,14 +20,14 @@ import type {
   StateAdapter,
 } from '../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
-import { isHarnessError } from '../errors.ts'
+import { HarnessError, isHarnessError } from '../errors.ts'
 import type { HarnessUIMessage, PendingState } from '../messages/types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { type ScriptedStepInput, scriptedModel } from '../testing/scripted-model.ts'
 import { prng, sleep } from '../testing/test-utils.ts'
-import { spyMessages } from './int-kit.ts'
 import { checkSessionInvariants } from './invariants.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
+import { spyMessages } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const SID = 's1'
@@ -109,7 +109,7 @@ function memoryLock() {
       return {
         async acquire(sessionId) {
           if (gate.dead) return new Promise(() => {})
-          if (held.has(sessionId)) throw new Error('locked')
+          if (held.has(sessionId)) throw new HarnessError('EH_SESSION_BUSY', 'locked')
           held.set(sessionId, owner)
           return async () => {
             if (held.get(sessionId) === owner) held.delete(sessionId)
@@ -231,7 +231,7 @@ async function runSeed(seed: number, verbose: boolean): Promise<void> {
     },
     messages: spyMessages(defaultMemoryMessages()),
     state: defaultMemoryState(),
-    inbox: spyInbox(memoryInbox(), (m) => note(`  inbox ${m}`)),
+    inbox: spyInbox(inMemoryInbox(), (m) => note(`  inbox ${m}`)),
     lock: memoryLock(),
     warnings: [],
   }
@@ -420,8 +420,8 @@ async function runSeed(seed: number, verbose: boolean): Promise<void> {
       note(`${i}: slot${slot.index}.abort()`)
       slot.session.abort('fuzz')
     } else if (r < 0.7) {
-      note(`${i}: slot${slot.index}.requestAbort()`)
-      asyncOp(slot, `requestAbort#${i}`, () => slot.session.requestAbort('fuzz'))
+      note(`${i}: slot${slot.index}.abort()`)
+      asyncOp(slot, `abort#${i}`, () => slot.session.abort('fuzz'))
     } else if (r < 0.75) {
       note(`${i}: slot${slot.index}.compact()`)
       asyncOp(slot, `compact#${i}`, () => slot.session.compact({ keepLast: 1 }))
@@ -435,7 +435,9 @@ async function runSeed(seed: number, verbose: boolean): Promise<void> {
       const target = users.length === 0 ? undefined : pick(users)
       if (target !== undefined) {
         note(`${i}: slot${slot.index}.edit(${target.id})`)
-        turnOp(slot, `edit#${i}`, () => slot.session.edit(target.id, `edited ${i}`))
+        turnOp(slot, `edit#${i}`, () =>
+          slot.session.edit({ messageId: target.id, input: `edited ${i}` }),
+        )
       }
     } else if (r < 0.9) {
       note(`${i}: slot${slot.index}.recover()`)

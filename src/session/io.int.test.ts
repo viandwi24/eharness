@@ -10,7 +10,7 @@ import { createUuidV7Generator } from '../messages/ids.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { collect, spyMessages, spyState } from './int-kit.ts'
+import { collect, spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 

@@ -19,7 +19,7 @@ async function env(files: Record<string, string>, steps: ScriptedStepInput[]) {
   const { root, config } = await setup(files)
   const workspace = await createWorkspace(config)
   const storage = createStorage(config)
-  const store = nodeCheckpointStore(join(config.projectDataDir, 'checkpoints'))
+  const store = nodeCheckpointStore({ dir: join(config.projectDataDir, 'checkpoints') })
   let sessionId = newSessionId()
   const agent = defineHarnessAgent({
     id: 'cp',

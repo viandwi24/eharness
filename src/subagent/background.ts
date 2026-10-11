@@ -3,12 +3,11 @@
  * that ended, never started, timed out or waits for a person too long, from any instance, also
  * after a hard crash. Idempotent through the report keys (`session.inject({ key })`).
  */
-import { type ChildSessionInfo, type HarnessSession, isHarnessError } from '../index.ts'
+import { type ChildSessionInfo, errorText, type HarnessSession, isHarnessError } from '../index.ts'
 import { parseAgentFrame } from './messaging.ts'
 import {
   type BackgroundStatus,
   deliverReport,
-  errText,
   type MessageLike,
   reportKey,
   reportOf,
@@ -220,7 +219,7 @@ export async function reconcileBackgroundChildren(
               ),
               true,
             )
-            if (options.stopOnTimeout === true) await child.requestAbort('timed out')
+            if (options.stopOnTimeout === true) await child.abort('timed out')
             out.push({ sessionId: id, outcome: 'reported', status: 'timed_out' })
           } else out.push({ sessionId: id, outcome: 'running' })
           continue
@@ -360,7 +359,7 @@ export async function reconcileBackgroundChildren(
     } catch (error) {
       log.warn('subagent: reconciling a background child failed', {
         sessionId: id,
-        error: errText(error),
+        error: errorText(error),
       })
       out.push({ sessionId: id, outcome: 'skipped' })
     }

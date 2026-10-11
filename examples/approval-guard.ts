@@ -9,7 +9,7 @@
  */
 import { tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
-import { approvalGuard } from 'eharness/guard'
+import { guard } from 'eharness/guard'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
@@ -61,7 +61,7 @@ const agent = defineHarnessAgent({
   // permissive base: the guard decides what needs a person (it can only tighten)
   approval: { risk: { read: 'approved', write: 'approved', external: 'approved' } },
   plugins: [
-    approvalGuard({
+    guard({
       model: judge,
       policy: 'Internal figures may be emailed to @acme.com addresses the user asked for.',
     }),

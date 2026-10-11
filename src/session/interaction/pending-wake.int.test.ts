@@ -11,7 +11,7 @@ import { defineHarnessAgent } from '../../agent/define-agent.ts'
 import type { SessionEvent } from '../../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../../agent/types.ts'
 import type { HarnessUIMessage } from '../../messages/types.ts'
-import { memoryInbox } from '../../storage/memory.ts'
+import { inMemoryInbox } from '../../storage/memory.ts'
 import { scriptedModel } from '../../testing/scripted-model.ts'
 import { sleep, until } from '../../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from '../memory-storage.ts'
@@ -21,7 +21,7 @@ const client = tool({ description: 'asks the user', inputSchema: z.object({}) })
 const askCall = { toolCalls: [{ toolName: 'client', input: {} }] }
 
 function shared() {
-  return { messages: defaultMemoryMessages(), state: defaultMemoryState(), inbox: memoryInbox() }
+  return { messages: defaultMemoryMessages(), state: defaultMemoryState(), inbox: inMemoryInbox() }
 }
 function instance(
   storage: ReturnType<typeof shared>,

@@ -7,7 +7,13 @@
  */
 import type { JSONValue, UIMessage } from 'ai'
 import type { AttentionItem, AttentionKind } from '../activity/index.ts'
-import type { ActiveTurn, SessionBusy, SessionUsage } from '../index.ts'
+import type {
+  ActiveTurn,
+  HarnessErrorCode,
+  HarnessNoticeCode,
+  SessionBusy,
+  SessionUsage,
+} from '../index.ts'
 
 /** Codes of the HTTP layer itself (spec 26 §3). */
 export type HttpLayerErrorCode =
@@ -22,8 +28,16 @@ export type HttpLayerErrorCode =
   | 'EH_HTTP_PAYLOAD_TOO_LARGE'
   | 'EH_HTTP_UNSUPPORTED_MEDIA_TYPE'
 
-/** Every code an error body of this module can carry (core `EH_*` codes pass through). */
-export type HttpErrorCode = HttpLayerErrorCode | 'EH_INTERNAL' | (string & {})
+/**
+ * Every code an error body of this module can carry: its own codes, core codes passed through,
+ * `EH_INTERNAL`, and codes the app returns from `authorize` (`{ deny, code }`).
+ */
+export type HttpErrorCode =
+  | HttpLayerErrorCode
+  | HarnessErrorCode
+  | HarnessNoticeCode
+  | 'EH_INTERNAL'
+  | (string & {})
 
 /** The body of every non-2xx answer of the routes. */
 export interface HttpErrorBody {

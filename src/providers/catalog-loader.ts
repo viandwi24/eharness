@@ -4,7 +4,8 @@
  *
  * @see docs/specs/23-providers.md#5-catalog-loader
  */
-import { type ModelInfo, modelsDevCatalog, openRouterCatalog } from '../index.ts'
+import { z } from 'zod/v4'
+import { errorText, type ModelInfo, modelsDevCatalog, openRouterCatalog } from '../index.ts'
 import type { ListedModel } from './types.ts'
 
 /** Source of the models.dev database. */
@@ -15,6 +16,29 @@ export const OPENROUTER_MODELS_URL: string = 'https://openrouter.ai/api/v1/model
 export const DEFAULT_CATALOG_TTL_MS: number = 24 * 60 * 60 * 1000
 /** Default longest a download may take. */
 export const DEFAULT_CATALOG_TIMEOUT_MS: number = 3000
+
+/** Default largest catalog body read (16 MiB). */
+export const DEFAULT_CATALOG_MAX_BYTES: number = 16 * 1024 * 1024
+
+const modelsDevSchema = z
+  .record(z.string(), z.looseObject({ models: z.record(z.string(), z.unknown()).optional() }))
+  .refine((v) => Object.keys(v).length > 0, 'empty catalog')
+
+// One malformed entry must not discard the list: the parser skips entries without an id.
+const openRouterSchema = z.looseObject({
+  data: z
+    .array(z.unknown())
+    .refine(
+      (entries) =>
+        entries.some((e) => z.looseObject({ id: z.string().min(1) }).safeParse(e).success),
+      'no model with an id',
+    ),
+})
+
+/** Shape check of a models.dev document (a non-empty map of providers). */
+const isModelsDevData = (data: unknown): boolean => modelsDevSchema.safeParse(data).success
+/** Shape check of an OpenRouter `GET /models` document (a `data` array with at least one `{ id }`). */
+const isOpenRouterData = (data: unknown): boolean => openRouterSchema.safeParse(data).success
 
 /** A cached raw JSON document and when it was fetched. */
 export interface CatalogCacheEntry {
@@ -30,7 +54,7 @@ export interface CatalogCache {
 }
 
 /** In-memory {@link CatalogCache}. */
-export function memoryCatalogCache(): CatalogCache {
+export function inMemoryCatalogCache(): CatalogCache {
   const map = new Map<string, CatalogCacheEntry>()
   return {
     get: async (key) => {
@@ -60,6 +84,16 @@ export interface LoadCachedJsonOptions {
   /** Fetch now even when the cache is fresh. */
   force?: boolean
   signal?: AbortSignal
+  /**
+   * Shape check of a downloaded (and of a cached) document. A document that fails it is never
+   * cached, never replaces a valid cache entry, and is reported through `onWarning`. Default:
+   * any JSON object.
+   */
+  validate?: (data: unknown) => boolean
+  /** Largest body read from the network. Default {@link DEFAULT_CATALOG_MAX_BYTES}. */
+  maxBytes?: number
+  /** Called with a message when a download fails or returns an invalid / oversized document. */
+  onWarning?: (message: string) => void
 }
 
 /** Result of {@link loadCachedJson}. */
@@ -74,6 +108,34 @@ export interface LoadedJson {
   refresh?: Promise<unknown | undefined>
 }
 
+async function readJsonCapped(response: Response, max: number): Promise<unknown> {
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > max) {
+    await response.body?.cancel().catch(() => {})
+    // plain-error: internal, caught by the loader (reported through onWarning)
+    throw new Error(`the body is larger than ${max} bytes`)
+  }
+  // plain-error: internal, caught by the loader (reported through onWarning)
+  if (response.body === null) throw new Error('empty body')
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let size = 0
+  let text = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    size += value.byteLength
+    if (size > max) {
+      await reader.cancel().catch(() => {})
+      // plain-error: internal, caught by the loader (reported through onWarning)
+      throw new Error(`the body is larger than ${max} bytes`)
+    }
+    text += decoder.decode(value, { stream: true })
+  }
+  text += decoder.decode()
+  return JSON.parse(text) as unknown
+}
+
 async function download(
   options: LoadCachedJsonOptions,
   cache: CatalogCache | undefined,
@@ -84,9 +146,17 @@ async function download(
     const signal =
       options.signal === undefined ? timeout : AbortSignal.any([timeout, options.signal])
     const response = await options.fetch(options.url, { signal })
-    if (!response.ok) return undefined
-    const data = (await response.json()) as unknown
-    if (data === null || typeof data !== 'object') return undefined
+    if (!response.ok) {
+      options.onWarning?.(`catalog ${options.key}: ${options.url} returned HTTP ${response.status}`)
+      return undefined
+    }
+    const data = await readJsonCapped(response, options.maxBytes ?? DEFAULT_CATALOG_MAX_BYTES)
+    if (data === null || typeof data !== 'object' || !(options.validate?.(data) ?? true)) {
+      options.onWarning?.(
+        `catalog ${options.key}: the document from ${options.url} has an unexpected shape; ignored`,
+      )
+      return undefined
+    }
     const entry = { data, fetchedAt: now() }
     try {
       await cache?.set(options.key, entry)
@@ -94,7 +164,8 @@ async function download(
       // a failing cache must not lose the data
     }
     return entry
-  } catch {
+  } catch (error) {
+    options.onWarning?.(`catalog ${options.key}: download failed (${errorText(error)})`)
     return undefined
   }
 }
@@ -112,6 +183,10 @@ export async function loadCachedJson(options: LoadCachedJsonOptions): Promise<Lo
   try {
     cached = await options.cache?.get(options.key)
   } catch {
+    cached = undefined
+  }
+  if (cached !== undefined && options.validate?.(cached.data) === false) {
+    options.onWarning?.(`catalog ${options.key}: the cached document is invalid; ignored`)
     cached = undefined
   }
   const stale = cached !== undefined && now() - cached.fetchedAt > ttl
@@ -203,6 +278,7 @@ export async function loadModelsDev(
   options: LoadCatalogOptions,
 ): Promise<LoadedJson & { catalog: Record<string, ModelInfo> }> {
   const loaded = await loadCachedJson({
+    validate: isModelsDevData,
     ...options,
     key: 'models.dev',
     url: options.url ?? MODELS_DEV_URL,
@@ -215,6 +291,7 @@ export async function loadOpenRouterModels(
   options: LoadCatalogOptions,
 ): Promise<LoadedJson & { catalog: Record<string, ModelInfo>; models: ListedModel[] }> {
   const loaded = await loadCachedJson({
+    validate: isOpenRouterData,
     ...options,
     key: 'openrouter',
     url: options.url ?? OPENROUTER_MODELS_URL,

@@ -8,15 +8,15 @@ import {
   type HarnessUIMessage,
   type StateAdapter,
 } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { until } from '../testing/test-utils.ts'
-import { type SubagentsOptions, type SubagentTasks, subagents } from './index.ts'
+import { type SubagentOptions, type SubagentTasks, subagent } from './index.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
-type Storage = { messages: ReturnType<typeof memoryMessages>; state: StateAdapter }
-const shared = (): Storage => ({ messages: memoryMessages(), state: memoryState() })
+type Storage = { messages: ReturnType<typeof inMemoryMessages>; state: StateAdapter }
+const shared = (): Storage => ({ messages: inMemoryMessages(), state: inMemoryState() })
 // biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
 type Agent = HarnessAgent<any>
 type Steps = Parameters<typeof scriptedModel>[0]
@@ -53,8 +53,8 @@ function worker(storage: Storage, steps: Steps, extra: Record<string, unknown> =
 }
 
 /** A child agent that can itself use `send_message` (the plugin with an empty catalog). */
-const messenger = (opts: Partial<SubagentsOptions> = {}) =>
-  subagents({ agents: {}, approvals: 'policy', ...opts })
+const messenger = (opts: Partial<SubagentOptions> = {}) =>
+  subagent({ agents: {}, approvals: 'policy', ...opts })
 
 const spawnCall = (toolCallId: string, extra: Record<string, unknown> = {}, prompt = 'do it') => ({
   toolName: 'agent',
@@ -77,7 +77,7 @@ function main(
   storage: Storage,
   child: Agent,
   steps: Steps,
-  options: Partial<SubagentsOptions> = {},
+  options: Partial<SubagentOptions> = {},
   def: { resumable?: boolean } = {},
   extraPlugins: unknown[] = [],
 ): Agent {
@@ -88,7 +88,7 @@ function main(
     logger: silent,
     plugins: [
       ...extraPlugins,
-      subagents({
+      subagent({
         agents: { worker: { agent: child, description: 'does work', ...def } },
         approvals: 'policy',
         background: true,
@@ -285,7 +285,7 @@ describe('send_message', () => {
       storage,
       logger: silent,
       plugins: [
-        subagents({
+        subagent({
           agents: {
             sib: { agent: sibling.agent, description: 'a' },
             snd: { agent: sender.agent, description: 'b' },
@@ -630,7 +630,7 @@ describe('send_message', () => {
       storage,
       logger: silent,
       plugins: [
-        subagents({
+        subagent({
           agents: { worker: { agent: w.agent, description: 'does work' } },
           approvals: 'policy',
           background: true,
@@ -759,7 +759,7 @@ describe('agent_output and the report cap', () => {
       storage: shared(),
       logger: silent,
       plugins: [
-        subagents({
+        subagent({
           agents: { worker: { agent: w.agent, description: 'd' } },
           approvals: 'policy',
           messageTool: false,
@@ -835,7 +835,7 @@ describe('tool options', () => {
   test('messageTool / outputTool / stopTool take { name } and false removes them', async () => {
     const storage = shared()
     const w = worker(storage, [{ text: 'x' }])
-    const names = async (options: Partial<SubagentsOptions>): Promise<string[]> => {
+    const names = async (options: Partial<SubagentOptions>): Promise<string[]> => {
       const m = main(storage, w.agent, [{ text: 'hi' }], options)
       const out = (await m.session(`names-${Math.random()}`).tools()).map((t) => t.name)
       await m.close()
@@ -856,7 +856,7 @@ describe('tool options', () => {
 
   test('background can be combined with approvals: park (ADR-0043)', () => {
     expect(() =>
-      subagents({ agents: {}, approvals: 'park', background: { default: true } }),
+      subagent({ agents: {}, approvals: 'park', background: { default: true } }),
     ).not.toThrow()
   })
 })

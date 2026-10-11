@@ -9,13 +9,16 @@
  */
 import type { ActivityPage, ActivityRecord } from '../activity/index.ts'
 import { type Clock, sleepOf, systemClock } from './clock.ts'
-import type { HarnessClient } from './http-client.ts'
+import { type HarnessClient, isHarnessHttpError } from './http-client.ts'
 import { BACKOFF_MS, backoffDelay, createLiveness, GRACE_MS, KEEP_ALIVE_MS } from './liveness.ts'
 import { createSseParser } from './sse.ts'
 import { createStore, type Store } from './store.ts'
 
-/** Connection status of the feed. */
-export type FeedStatus = 'idle' | 'connecting' | 'live' | 'polling' | 'stopped'
+/**
+ * Connection status of the feed. `unauthorized` is terminal: the server answered `401` / `403`, so
+ * retrying cannot help until the credentials change (`start()` again then).
+ */
+export type FeedStatus = 'idle' | 'connecting' | 'live' | 'polling' | 'stopped' | 'unauthorized'
 
 /** Why state should be refetched. */
 export type ResyncReason = 'connect' | 'resync-event' | 'boot-changed' | 'poll-gap'
@@ -70,6 +73,19 @@ export interface ActivityFeed extends Store<ActivityFeedState> {
 }
 
 const POLL_LIMIT = 200
+
+/** A stream that failed as a connection does: ended with no data at all, or an `error` frame. */
+class StreamFailure extends Error {
+  readonly status: number | undefined
+  constructor(message: string, status?: number) {
+    super(message)
+    this.name = 'StreamFailure'
+    this.status = status
+  }
+}
+
+/** `401` / `403`: the credentials are refused, no retry will change that. */
+const isRefused = (status: number | undefined): boolean => status === 401 || status === 403
 
 /** Parse the `data` of an activity frame. */
 export function parseActivityEvent(data: string): ActivityRecord | undefined {
@@ -182,14 +198,29 @@ export function createActivityFeed(options: ActivityFeedOptions): ActivityFeed {
       headers,
       signal,
     })
-    if (!response.ok || !response.body) throw new Error(`activity stream ${response.status}`)
+    if (!response.ok || !response.body) {
+      throw new StreamFailure(`activity stream ${response.status}`, response.status)
+    }
     arm()
     liveness.opened(clock.now())
     setStatus('live')
     const reason = nextReason
     nextReason = 'connect'
     resync(reason)
+    let frames = 0
+    let serverError: string | undefined
     const parser = createSseParser((m) => {
+      frames++
+      if (m.event === 'error') {
+        // the server's store failed: the stream ends right after this frame
+        try {
+          const message = (JSON.parse(m.data) as { message?: unknown }).message
+          serverError = typeof message === 'string' ? message : 'the activity store failed'
+        } catch {
+          serverError = 'the activity store failed'
+        }
+        return
+      }
       if (m.event === 'boot') {
         try {
           const id = (JSON.parse(m.data) as { boot?: unknown }).boot
@@ -229,6 +260,10 @@ export function createActivityFeed(options: ActivityFeedOptions): ActivityFeed {
     } finally {
       reader.releaseLock?.()
     }
+    // a stream that ended without a single frame (not even `boot`), or with an `error` frame, is
+    // a failure: counting it as a clean close would reconnect at the base interval forever
+    if (serverError !== undefined) throw new StreamFailure(`activity stream failed: ${serverError}`)
+    if (frames === 0) throw new StreamFailure('activity stream ended without data')
   }
 
   async function stream(signal: AbortSignal): Promise<void> {
@@ -281,6 +316,21 @@ export function createActivityFeed(options: ActivityFeedOptions): ActivityFeed {
     }
   }
 
+  const statusOfFailure = (error: unknown): number | undefined =>
+    error instanceof StreamFailure
+      ? error.status
+      : isHarnessHttpError(error)
+        ? error.status
+        : undefined
+
+  /** Terminal: stop the loop and the health tick; `start()` begins again. */
+  function refused(): void {
+    if (tick !== undefined) clock.clearInterval(tick)
+    tick = undefined
+    ctrl?.abort()
+    setStatus('unauthorized')
+  }
+
   async function run(signal: AbortSignal): Promise<void> {
     let failures = 0
     const pause = (ms: number): Promise<void> => {
@@ -295,14 +345,14 @@ export function createActivityFeed(options: ActivityFeedOptions): ActivityFeed {
       setStatus(failures === 0 ? 'connecting' : store.get().status)
       try {
         await stream(signal)
-        failures = 0 // clean close: reconnect right away (after a short pause)
+        failures = 0 // a close after data: reconnect right away (after a short pause)
         if (kicked) {
           kicked = false
           continue
         }
         await pause(backoffDelay(1, steps, clock.random))
         continue
-      } catch {
+      } catch (error) {
         if (signal.aborted) break
         if (kicked) {
           // dropped on purpose (new boot, failed ping, stale): reconnect without waiting
@@ -310,12 +360,15 @@ export function createActivityFeed(options: ActivityFeedOptions): ActivityFeed {
           failures = 0
           continue
         }
+        if (isRefused(statusOfFailure(error))) return refused()
       }
       failures++
       setStatus('polling')
       try {
         await poll(signal)
-      } catch {
+      } catch (error) {
+        if (signal.aborted) break
+        if (isRefused(statusOfFailure(error))) return refused()
         // still down; keep going
       }
       await pause(backoffDelay(failures, steps, clock.random))

@@ -17,6 +17,7 @@
 import { parseCommand, restrictiveForms } from './command.ts'
 import {
   cachedPattern,
+  escapeRegExp,
   foldSegment,
   isAbsolute,
   join,
@@ -52,6 +53,12 @@ export interface MatchContext {
   home?: string
   roots: Roots
   tools: ToolTable
+  /**
+   * The symlink-resolved form of a real path, when the engine resolved it (`realpath` option);
+   * `undefined` when unknown or identical. Deny/ask rules and protected paths match the lexical
+   * path or the resolved one; an allow rule must match both.
+   */
+  canon?: (real: string) => string | undefined
 }
 
 /** Whether a rule is matched as an allow rule or as a deny/ask rule. */
@@ -92,11 +99,6 @@ export function parseRule(raw: string): ParsedRule | undefined {
   const rule: ParsedRule = { raw: text, tool: match[1] as string }
   if (match[2] !== undefined && match[2] !== '') rule.specifier = match[2]
   return rule
-}
-
-/** Escape a string for use inside a RegExp. */
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /** Wildcard match where `*` matches any text (including nothing); other characters are literal. */
@@ -194,6 +196,21 @@ export function pathMatchesSpecifier(
   realPath: string,
   ctx: MatchContext,
   insensitive = false,
+): boolean {
+  const alt = ctx.canon?.(realPath)
+  if (alt === undefined || alt === realPath)
+    return matchLexical(specifier, realPath, ctx, insensitive)
+  // a symlink: a restricting rule (insensitive) matches either form, an allow rule needs both
+  return insensitive
+    ? matchLexical(specifier, realPath, ctx, true) || matchLexical(specifier, alt, ctx, true)
+    : matchLexical(specifier, realPath, ctx, false) && matchLexical(specifier, alt, ctx, false)
+}
+
+function matchLexical(
+  specifier: string,
+  realPath: string,
+  ctx: MatchContext,
+  insensitive: boolean,
 ): boolean {
   const resolved = resolveSpecifier(specifier, ctx)
   if (resolved === undefined) return false

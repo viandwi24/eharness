@@ -5,6 +5,7 @@
  * @see docs/specs/06-compaction.md#53-summarize
  */
 
+import { runHook } from '../internal/hook-run.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
@@ -56,6 +57,10 @@ export async function resolveSummarizerPrompt(args: {
   messages: readonly HarnessUIMessage[]
   /** Focus text of a manual `compact({ instructions })`. */
   instructions?: string | undefined
+  /** `config.hooks.timeoutMs`. */
+  hookTimeoutMs?: number | undefined
+  /** Cuts a running hook short. */
+  signal?: AbortSignal | undefined
 }): Promise<{ prompt: string; context: string[] }> {
   const instructions = args.instructions?.trim()
   const out: {
@@ -71,7 +76,12 @@ export async function resolveSummarizerPrompt(args: {
   if (args.configured !== undefined) out.prompt = args.configured
   for (const hook of args.hooks?.list('compaction.prompt') ?? []) {
     try {
-      await hook.fn(args.contextOf(hook.owner), out)
+      await runHook(() => hook.fn(args.contextOf(hook.owner), out), {
+        hook: 'compaction.prompt',
+        owner: hook.owner,
+        timeoutMs: args.hookTimeoutMs,
+        signal: args.signal,
+      })
     } catch (error) {
       args.onError(hook.owner, error)
     }

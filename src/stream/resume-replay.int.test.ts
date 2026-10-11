@@ -19,7 +19,7 @@ import type { HarnessSession } from '../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import { messageToChunks } from '../messages/replay.ts'
 import { defaultMemoryMessages, defaultMemoryState } from '../session/memory-storage.ts'
-import { memoryStreamLog } from '../storage/memory.ts'
+import { inMemoryStreamLog } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { handleChatRequest, handleResumeRequest } from './chat-request.ts'
 
@@ -54,7 +54,7 @@ class TestChat extends AbstractChat<UIMessage> {
 function world() {
   const messages = defaultMemoryMessages()
   const state = defaultMemoryState()
-  const streams = memoryStreamLog()
+  const streams = inMemoryStreamLog()
   const make = (config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>) =>
     defineHarnessAgent({
       contextWindow: 100_000,

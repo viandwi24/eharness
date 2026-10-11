@@ -1,8 +1,8 @@
 // Node smoke test for the packed tarball (CI job `node-compat`, docs/engineering/release.md §6).
 // Run from a clean project that has `eharness` installed: `node smoke.mjs [--no-mcp]`.
-// Grows with each phase: add the exports every entry point must provide.
+// The expected exports come from scripts/exports.snapshot.json, never from a list in this file.
 import assert from 'node:assert/strict'
-import { rm, writeFile } from 'node:fs/promises'
+import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -16,110 +16,14 @@ await writeFile(shim, 'export default (specifier) => import(specifier)\n')
 /** @type {(specifier: string) => Promise<Record<string, unknown>>} */
 const load = (await import(pathToFileURL(shim).href)).default
 
-/** Expected runtime exports per entry point. */
-const entries = {
-  eharness: [
-    'DENIED_NEW_INPUT',
-    'FINAL_ANSWER_DESCRIPTION',
-    'FINAL_ANSWER_RECORDED',
-    'FLUSH_APPROVAL_DENIED',
-    'HarnessError',
-    'HarnessToolError',
-    'INTERRUPTED_CRASH',
-    'INTERRUPTED_TURN',
-    'INTERRUPTED_UNKNOWN',
-    'MAX_STEPS_WRAP_UP',
-    'NOT_EXECUTED_NEW_INPUT',
-    'OUTPUT_INSTRUCTION',
-    'OUTPUT_RETRY',
-    'PROGRESS_NUDGE',
-    'TOOL_OUTPUT_TRUNCATED',
-    'computeCost',
-    'createKindMessage',
-    'defineDataPart',
-    'defineHarnessAgent',
-    'defineMessageKind',
-    'definePlugin',
-    'defineSkill',
-    'defineSkillSource',
-    'defineToolSource',
-    'estimateStepCostUsd',
-    'handleChatRequest',
-    'isHarnessError',
-    'isKindMessage',
-    'isUuidV7',
-    'lookupModel',
-    'modelsDevCatalog',
-    'parseSkillMarkdown',
-    'uuidv7',
-    'validateSkillPath',
-    'version',
-  ],
-  'eharness/filesystem': [
-    'DEFAULT_MAX_READ_CHARS',
-    'DEFAULT_TOOL_OUTPUTS_DIR',
-    'classifyToolResult',
-    'contentVersion',
-    'filesystem',
-    'fsSkillSource',
-    'normalizePath',
-  ],
-  'eharness/filesystem/memory': ['memoryFs'],
-  'eharness/storage/memory': ['memoryBudgetLedger', 'memoryInbox', 'memoryMessages', 'memoryState'],
-  'eharness/mcp': ['MCP_AUTO_DEFER_THRESHOLD', 'clearMcpPins', 'mcpServer'],
-  'eharness/todos': [
-    'TODOS_CONTINUE',
-    'TODOS_INSTRUCTION',
-    'TODOS_REMINDER',
-    'TODO_TOOL',
-    'latestTodos',
-    'openTodos',
-    'renderTodos',
-    'todos',
-  ],
-  'eharness/memory': [
-    'DEFAULT_MAX_FILE_CHARS',
-    'DEFAULT_MAX_PINNED_CHARS',
-    'MEMORY_FLUSH_PROMPT',
-    'MEMORY_FLUSH_TOOLS',
-    'MEMORY_PROTOCOL',
-    'MEMORY_TOOLS',
-    'PINNED_PREAMBLE',
-    'executeMemoryCommand',
-    'memory',
-  ],
-  'eharness/guard': [
-    'GUARD_ASK',
-    'GUARD_BREAKER',
-    'GUARD_DEFAULT_POLICY',
-    'GUARD_DENIED',
-    'GUARD_INSTRUCTIONS',
-    'GUARD_PROMPT',
-    'GUARD_TRUNCATED',
-    'GUARD_UNAVAILABLE',
-    'approvalGuard',
-    'canonicalJson',
-    'verdictKey',
-  ],
-  'eharness/openapi': ['OPENAPI_AUTO_DEFER_THRESHOLD', 'openApiTools', 'riskFromMethod'],
-  'eharness/group': [
-    'GROUP_HISTORY_PREAMBLE',
-    'GROUP_SPEAKER_PREFIX',
-    'groupChat',
-    'routeGroupMessage',
-  ],
-  'eharness/testing': [
-    'SKILL_SOURCE_FIXTURE',
-    'budgetLedgerConformance',
-    'fileSystemConformance',
-    'idGeneratorConformance',
-    'inboxAdapterConformance',
-    'messageAdapterConformance',
-    'scriptedModel',
-    'skillSourceConformance',
-    'stateAdapterConformance',
-  ],
-}
+/**
+ * Expected runtime exports per entry point: the committed export snapshot
+ * (`scripts/exports.snapshot.json`, derived from `package.json#exports`; update it with
+ * `bun scripts/exports-snapshot.ts --write`). The packed tarball must provide exactly these.
+ */
+const entries = JSON.parse(
+  await readFile(new URL('./exports.snapshot.json', import.meta.url), 'utf8'),
+)
 
 if (noMcp) {
   await assert.rejects(load('@ai-sdk/mcp'), 'expected @ai-sdk/mcp to be absent with --no-mcp')
@@ -127,9 +31,11 @@ if (noMcp) {
 
 for (const [specifier, names] of Object.entries(entries)) {
   const mod = await load(specifier)
-  for (const name of names) {
-    assert.ok(name in mod, `${specifier} is missing export '${name}'`)
-  }
+  assert.deepEqual(
+    Object.keys(mod).sort(),
+    names,
+    `${specifier}: exports differ from scripts/exports.snapshot.json`,
+  )
 }
 
 const core = await load('eharness')
@@ -148,13 +54,13 @@ assert.throws(
 const a = core.uuidv7()
 assert.ok(core.isUuidV7(a) && core.uuidv7() > a)
 
-// one scripted two-step turn (tool call → answer) against memoryMessages() under Node
-const { memoryMessages, memoryState } = await load('eharness/storage/memory')
+// one scripted two-step turn (tool call → answer) against inMemoryMessages() under Node
+const { inMemoryMessages, inMemoryState } = await load('eharness/storage/memory')
 const { scriptedModel, messageAdapterConformance } = await load('eharness/testing')
 const { tool } = await load('ai')
 const { z } = await load('zod/v4')
-for (const c of messageAdapterConformance(() => memoryMessages())) await c.run()
-const messages = memoryMessages()
+for (const c of messageAdapterConformance(() => inMemoryMessages())) await c.run()
+const messages = inMemoryMessages()
 const model = scriptedModel([
   { toolCalls: [{ toolName: 'weather', input: { city: 'Oslo' } }] },
   { text: 'It is 20 degrees.' },
@@ -162,7 +68,7 @@ const model = scriptedModel([
 const turnAgent = core.defineHarnessAgent({
   model,
   contextWindow: 100_000,
-  storage: { messages, state: memoryState() },
+  storage: { messages, state: inMemoryState() },
   tools: {
     weather: tool({
       inputSchema: z.object({ city: z.string() }),
@@ -186,12 +92,12 @@ assert.deepEqual(
 assert.equal(stored[1].metadata.eharness.stop, 'complete')
 await turnAgent.close()
 
-// filesystem plugin under Node: conformance of memoryFs, then read → edit in one scripted turn
+// filesystem plugin under Node: conformance of inMemoryFs, then read → edit in one scripted turn
 const { filesystem, classifyToolResult } = await load('eharness/filesystem')
-const { memoryFs } = await load('eharness/filesystem/memory')
+const { inMemoryFs } = await load('eharness/filesystem/memory')
 const { fileSystemConformance } = await load('eharness/testing')
-for (const c of fileSystemConformance(() => memoryFs())) await c.run()
-const fs = memoryFs({ '/notes.md': 'hello world\n' })
+for (const c of fileSystemConformance(() => inMemoryFs())) await c.run()
+const fs = inMemoryFs({ seed: { '/notes.md': 'hello world\n' } })
 const fsAgent = core.defineHarnessAgent({
   model: scriptedModel([
     { toolCalls: [{ toolName: 'read_file', input: { path: '/notes.md' } }] },
@@ -216,7 +122,7 @@ await fsAgent.close()
 
 // eharness/memory under Node: one scripted turn creates a memory file inside the user's root
 const { memory, executeMemoryCommand } = await load('eharness/memory')
-const memFs = memoryFs({ '/memories/org/policy.md': 'Be kind.\n' })
+const memFs = inMemoryFs({ seed: { '/memories/org/policy.md': 'Be kind.\n' } })
 const memAgent = core.defineHarnessAgent({
   model: scriptedModel([
     {
@@ -255,7 +161,7 @@ assert.equal(
 await memAgent.close()
 
 // eharness/mcp: an in-process MCP server behind a custom transport (no network)
-const { mcpServer } = await load('eharness/mcp')
+const { mcpServerSource } = await load('eharness/mcp')
 /** A minimal MCP server speaking JSON-RPC over an in-memory `MCPTransport`. */
 const fakeTransport = () => {
   const transport = {
@@ -300,7 +206,7 @@ const mcpAgent = core.defineHarnessAgent({
   onWarning: (w) => mcpWarnings.push(w),
   // without @ai-sdk/mcp the scripted call hits an unavailable tool (logged as an error)
   ...(noMcp ? { logger: { debug() {}, info() {}, warn() {}, error() {} } } : {}),
-  mcp: [mcpServer({ name: 'smoke', transport: () => fakeTransport() })],
+  mcp: [mcpServerSource({ name: 'smoke', transport: () => fakeTransport() })],
 })
 const mcpResult = await mcpAgent.session('smoke-mcp').send('Ping').result
 assert.equal(mcpResult.stop, 'complete')
@@ -313,7 +219,7 @@ if (noMcp) {
     model: scriptedModel([]),
     contextWindow: 100_000,
     onWarning: () => {},
-    mcp: [mcpServer({ name: 'smoke', connect: 'eager', transport: () => fakeTransport() })],
+    mcp: [mcpServerSource({ name: 'smoke', connect: 'eager', transport: () => fakeTransport() })],
   })
   await assert.rejects(eagerAgent.session('eager').ready(), (e) =>
     core.isHarnessError(e, 'EH_CONFIG_INVALID'),
@@ -367,7 +273,7 @@ assert.deepEqual(paid, [5])
 await approvalAgent.close()
 
 // eharness/guard under Node: the judge denies a call, the model reads the reason
-const { approvalGuard } = await load('eharness/guard')
+const { guard } = await load('eharness/guard')
 const sent = []
 const guardAgent = core.defineHarnessAgent({
   model: scriptedModel([
@@ -377,7 +283,7 @@ const guardAgent = core.defineHarnessAgent({
   contextWindow: 100_000,
   approval: { risk: { external: 'approved' } },
   plugins: [
-    approvalGuard({
+    guard({
       model: scriptedModel([
         { text: JSON.stringify({ decision: 'deny', reason: 'unknown recipient.' }) },
       ]),

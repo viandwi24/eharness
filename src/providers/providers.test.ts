@@ -4,6 +4,7 @@ import { defineHarnessAgent, isHarnessError, lookupModel } from '../index.ts'
 import { profileStoreConformance } from '../testing/profile-store.conformance.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { scriptedProvider } from '../testing/scripted-provider.ts'
+import { until } from '../testing/test-utils.ts'
 import {
   anthropicProvider,
   defineProvider,
@@ -13,10 +14,10 @@ import {
   openRouterProvider,
 } from './builtin.ts'
 import {
+  inMemoryCatalogCache,
   loadCachedJson,
   loadModelsDev,
   loadOpenRouterModels,
-  memoryCatalogCache,
   parseOpenRouterModels,
 } from './catalog-loader.ts'
 import { fromEnv } from './env.ts'
@@ -25,12 +26,11 @@ import {
   endpointChanged,
   formSpec,
   mergeSecretPatch,
-  providerFormSpec,
   redactProfile,
   validateSettings,
 } from './form.ts'
 import { createProviderManager, formatModelRef, parseModelRef } from './manager.ts'
-import { memoryProfileStore } from './store.ts'
+import { inMemoryProfileStore } from './store.ts'
 import type { ConfigProfile, ProviderDefinition, ProviderProfile } from './types.ts'
 
 const schema = z.object({
@@ -119,9 +119,6 @@ describe('form spec', () => {
     expect(byPath.retries?.kind).toBe('integer')
     expect(byPath['nested.flag']).toMatchObject({ kind: 'boolean', default: false })
     expect(spec.jsonSchema.type).toBe('object')
-  })
-  test('providerFormSpec wraps a definition', () => {
-    expect(providerFormSpec({ settings: schema }).fields).toHaveLength(6)
   })
 })
 
@@ -248,8 +245,10 @@ describe('fromEnv', () => {
   })
 })
 
-describe('memoryProfileStore conformance', () => {
-  for (const c of profileStoreConformance(() => memoryProfileStore(), { requireSubscribe: true })) {
+describe('inMemoryProfileStore conformance', () => {
+  for (const c of profileStoreConformance(() => inMemoryProfileStore(), {
+    requireSubscribe: true,
+  })) {
     test(c.name, c.run)
   }
 })
@@ -294,7 +293,7 @@ describe('catalog loader', () => {
   const url = 'https://c.example/list.json'
   test('fetches a missing cache, serves fresh cache, refreshes stale in the background', async () => {
     let t = 0
-    const cache = memoryCatalogCache()
+    const cache = inMemoryCatalogCache()
     const f = fakeFetch({ [url]: { a: 1 } })
     const base = { key: 'k', url, fetch: f, cache, now: () => t, ttlMs: 100 }
     const first = await loadCachedJson(base)
@@ -310,7 +309,7 @@ describe('catalog loader', () => {
     expect((await cache.get('k'))?.fetchedAt).toBe(500)
   })
   test('keeps stale data when the refresh fails; offline never fetches', async () => {
-    const cache = memoryCatalogCache()
+    const cache = inMemoryCatalogCache()
     await cache.set('k', { data: { old: true }, fetchedAt: 0 })
     const f = fakeFetch({})
     const forced = await loadCachedJson({
@@ -336,6 +335,43 @@ describe('catalog loader', () => {
       throw new Error('boom')
     }) as unknown as typeof fetch
     expect((await loadCachedJson({ key: 'k', url, fetch: f })).source).toBe('none')
+  })
+  test('an invalid or empty download never overwrites a valid cache and is reported', async () => {
+    const cache = inMemoryCatalogCache()
+    const good = { anthropic: { models: { m: { name: 'M' } } } }
+    await cache.set('models.dev', { data: good, fetchedAt: 0 })
+    const warnings: string[] = []
+    for (const bad of [{}, { anthropic: 'nope' }, { data: 1 }]) {
+      const loaded = await loadModelsDev({
+        fetch: fakeFetch({ 'https://models.dev/api.json': bad }),
+        cache,
+        now: () => 10,
+        force: true,
+        onWarning: (m) => warnings.push(m),
+      })
+      expect(loaded.data).toEqual(good)
+    }
+    expect((await cache.get('models.dev'))?.data).toEqual(good)
+    expect(warnings.length).toBeGreaterThanOrEqual(2)
+    const empty = await loadOpenRouterModels({
+      fetch: fakeFetch({ 'https://openrouter.ai/api/v1/models': { data: [] } }),
+      onWarning: (m) => warnings.push(m),
+    })
+    expect(empty.source).toBe('none')
+  })
+  test('a body over maxBytes is refused', async () => {
+    const warnings: string[] = []
+    const big = JSON.stringify({ a: 'x'.repeat(1000) })
+    const f = (async () => new Response(big)) as unknown as typeof fetch
+    const r = await loadCachedJson({
+      key: 'k',
+      url,
+      fetch: f,
+      maxBytes: 100,
+      onWarning: (m) => warnings.push(m),
+    })
+    expect(r.source).toBe('none')
+    expect(warnings[0]).toContain('larger than 100')
   })
   test('helpers build catalogs', async () => {
     const f = fakeFetch({
@@ -387,9 +423,10 @@ describe('manager', () => {
   })
 
   test('an older overlapping reload never replaces a newer snapshot', async () => {
-    const inner = memoryProfileStore()
+    const inner = inMemoryProfileStore()
     const listeners = new Set<() => void>()
     let slowFirstList = true
+    let slowListDone = false
     const store: typeof inner = {
       ...inner,
       // the first list after a change is slow, so it finishes after the second change was written
@@ -398,6 +435,7 @@ describe('manager', () => {
         if (slowFirstList && rows.length === 1) {
           slowFirstList = false
           await new Promise((r) => setTimeout(r, 40))
+          slowListDone = true
         }
         return rows
       },
@@ -420,7 +458,10 @@ describe('manager', () => {
     await manager.ready()
     await manager.putProfile({ providerId: 'p', settings: { apiKey: 'k1-aaaaaaaaaaaa' } })
     await manager.putProfile({ providerId: 'p', settings: { apiKey: 'k2-aaaaaaaaaaaa' } })
-    await new Promise((r) => setTimeout(r, 120))
+    // the slow (older) reload has finished and must not have replaced the newer snapshot
+    await until('the slow reload finished', () => slowListDone)
+    await until('reloads settled', async () => (await manager.listProfiles()).length === 2)
+    await Promise.resolve()
     expect((await manager.listProfiles()).map((p) => p.id)).toEqual(['p', 'p-2'])
     manager.dispose()
   })
@@ -453,7 +494,7 @@ describe('manager', () => {
         },
       }),
     })
-    const store = memoryProfileStore([{ ...profile('a'), definitionId: 'p' }])
+    const store = inMemoryProfileStore({ initial: [{ ...profile('a'), definitionId: 'p' }] })
     const m = createProviderManager({ definitions: [def], store })
     expect(() => m.resolve('a:x')).toThrow(/ready/)
     await m.ready()
@@ -465,7 +506,14 @@ describe('manager', () => {
     expect(created.at(-1)).toBe('other-key:x:y/z')
     // external change through the store's feed
     await store.put({ ...profile('a'), definitionId: 'p', settings: { apiKey: 'third' } })
-    await new Promise((r) => setTimeout(r, 5))
+    await until('external change applied', () => {
+      try {
+        m.resolve('a:q')
+        return created.at(-1) === 'third:q'
+      } catch {
+        return false
+      }
+    })
     expect(m.resolve('a:q')).toBeDefined()
     expect(created.at(-1)).toBe('third:q')
     for (const [ref, reason] of [['zzz:x', 'profile-not-found']] as const) {
@@ -528,7 +576,7 @@ describe('manager', () => {
   })
 
   test('seed persists once into an empty store', async () => {
-    const store = memoryProfileStore()
+    const store = inMemoryProfileStore()
     const def = orDef()
     const m = createProviderManager({ definitions: [def], store, seed: [profile('seeded')] })
     await m.ready()
@@ -550,19 +598,21 @@ describe('manager', () => {
       ],
     })
     const f = fakeFetch({ 'https://openrouter.ai/api/v1/models': orList })
-    const store = memoryProfileStore([
-      profile('l', {
-        definitionId: 'live',
-        settings: {},
-        models: {
-          deny: ['hidden-*'],
-          extra: [
-            { id: 'anthropic/claude-sonnet-4.6', pricing: { input: 9, output: 9 } },
-            { id: 'custom', name: 'Custom', contextWindow: 5 },
-          ],
-        },
-      }),
-    ])
+    const store = inMemoryProfileStore({
+      initial: [
+        profile('l', {
+          definitionId: 'live',
+          settings: {},
+          models: {
+            deny: ['hidden-*'],
+            extra: [
+              { id: 'anthropic/claude-sonnet-4.6', pricing: { input: 9, output: 9 } },
+              { id: 'custom', name: 'Custom', contextWindow: 5 },
+            ],
+          },
+        }),
+      ],
+    })
     const m = createProviderManager({ definitions: [def], store, fetch: f })
     const list = await m.models('l')
     expect(list.map((e) => e.id)).toEqual(['anthropic/claude-sonnet-4.6', 'custom', 'only-live'])
@@ -582,9 +632,11 @@ describe('manager', () => {
       create: () => ({ languageModel: (id) => id }),
       listModels: async () => [{ id: 'a' }, { id: 'b' }, { id: 'c' }],
     })
-    const store = memoryProfileStore([
-      profile('l', { definitionId: 'live', settings: {}, models: { allow: ['a', 'c'] } }),
-    ])
+    const store = inMemoryProfileStore({
+      initial: [
+        profile('l', { definitionId: 'live', settings: {}, models: { allow: ['a', 'c'] } }),
+      ],
+    })
     const m = createProviderManager({ definitions: [def], store })
     expect((await m.models('l')).map((e) => e.id)).toEqual(['a', 'c'])
     const all = await m.models('l', { includeDisabled: true })
@@ -632,7 +684,7 @@ describe('manager', () => {
     })
     const m = createProviderManager({
       definitions: [def],
-      store: memoryProfileStore([{ ...profile('l'), definitionId: 'live' }]),
+      store: inMemoryProfileStore({ initial: [{ ...profile('l'), definitionId: 'live' }] }),
       fetch: f,
       onWarning: (w) => warnings.push(w),
     })
@@ -650,7 +702,9 @@ describe('manager', () => {
       models: { 'm:1': [{ text: 'hi', usage: { inputTokens: 1000, outputTokens: 500 } }] },
     })
     const f = fakeFetch({})
-    const store = memoryProfileStore([{ ...profile('s'), definitionId: 'scripted', settings: {} }])
+    const store = inMemoryProfileStore({
+      initial: [{ ...profile('s'), definitionId: 'scripted', settings: {} }],
+    })
     const m = createProviderManager({
       definitions: [scripted],
       store,
@@ -730,7 +784,7 @@ describe('built-in definitions', () => {
       anthropicProvider({ createAnthropic: noop }),
     ]
     for (const d of defs) {
-      const spec = providerFormSpec(d)
+      const spec = formSpec(d.settings)
       expect(spec.fields.find((f) => f.path === 'apiKey')?.secret).toBe(true)
       expect(spec.fields.find((f) => f.path === 'headers')?.secretValues).toBe(true)
     }
@@ -744,7 +798,7 @@ describe('built-in definitions', () => {
       'anthropic',
     ])
     expect(
-      providerFormSpec(defs[2] as ProviderDefinition).fields.find((f) => f.path === 'apiKey')
+      formSpec((defs[2] as ProviderDefinition).settings).fields.find((f) => f.path === 'apiKey')
         ?.required,
     ).toBe(false)
   })
@@ -762,17 +816,19 @@ describe('built-in definitions', () => {
     const m = createProviderManager({
       definitions: [def],
       fetch: f,
-      store: memoryProfileStore([
-        {
-          id: 'local',
-          kind: 'provider',
-          definitionId: 'openai-compatible',
-          label: 'L',
-          enabled: true,
-          updatedAt: 1,
-          settings: { baseURL: 'http://h/v1/', apiKey: KEY },
-        },
-      ]),
+      store: inMemoryProfileStore({
+        initial: [
+          {
+            id: 'local',
+            kind: 'provider',
+            definitionId: 'openai-compatible',
+            label: 'L',
+            enabled: true,
+            updatedAt: 1,
+            settings: { baseURL: 'http://h/v1/', apiKey: KEY },
+          },
+        ],
+      }),
     })
     expect((await m.models('local')).map((e) => e.id)).toEqual(['llama3', 'qwen'])
     expect(seen[0]?.url).toBe('http://h/v1/models')

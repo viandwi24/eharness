@@ -5,7 +5,7 @@
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { sleep, until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
@@ -16,7 +16,7 @@ function setup(pollMs = 0) {
   const storage = {
     messages: defaultMemoryMessages(),
     state: defaultMemoryState(),
-    inbox: memoryInbox(),
+    inbox: inMemoryInbox(),
   }
   const model = scriptedModel([{ text: 'one' }, { text: 'two' }, { text: 'three' }])
   const make = (poll = pollMs) =>
@@ -133,7 +133,7 @@ describe('enqueue id (idempotency)', () => {
   })
 
   test('an adapter without enqueueOnce refuses an id', async () => {
-    const inner = memoryInbox()
+    const inner = inMemoryInbox()
     const storage = {
       messages: defaultMemoryMessages(),
       state: defaultMemoryState(),

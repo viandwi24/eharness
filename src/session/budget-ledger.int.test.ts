@@ -10,9 +10,9 @@ import type { BudgetLedger, HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
-import { memoryBudgetLedger } from '../storage/memory.ts'
+import { inMemoryBudgetLedger } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { collect, normalizeVolatile, spyMessages, spyState } from './int-kit.ts'
+import { collect, normalizeVolatile, spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -31,7 +31,7 @@ const looping = (n: number, delayMs?: number) =>
 type Call = { op: string; args: unknown[] }
 
 /** A ledger that records every call and can be told to fail. */
-function spyLedger(inner: BudgetLedger = memoryBudgetLedger()) {
+function spyLedger(inner: BudgetLedger = inMemoryBudgetLedger()) {
   const calls: Call[] = []
   const fail: Partial<Record<keyof BudgetLedger, (args: unknown[]) => 'before' | 'after' | false>> =
     {}
@@ -147,7 +147,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
   })
 
   test('a refused first reservation stops with cost-cap before any model call (W_BUDGET ledger)', async () => {
-    const ledger = memoryBudgetLedger({ limits: { 'user:ada': 0.001 } })
+    const ledger = inMemoryBudgetLedger({ limits: { 'user:ada': 0.001 } })
     const model = looping(3)
     const { agent, warnings, messages } = setup({ model }, ledger)
     const result = await agent.session('s1').send('go').result
@@ -194,7 +194,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
   })
 
   test('a refusal after some steps stops with cost-cap before the next call', async () => {
-    const ledger = memoryBudgetLedger({ limits: { 'user:ada': 0.012 } })
+    const ledger = inMemoryBudgetLedger({ limits: { 'user:ada': 0.012 } })
     const model = looping(10)
     const { agent } = setup({ model }, ledger)
     const result = await agent.session('s1').send('go').result
@@ -207,7 +207,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
   })
 
   test('two agent instances sharing one ledger scope stop at the limit', async () => {
-    const ledger = memoryBudgetLedger({ limits: { 'tenant:t1': 0.02 } })
+    const ledger = inMemoryBudgetLedger({ limits: { 'tenant:t1': 0.02 } })
     const scopes = () => ['tenant:t1']
     const a = setup({ model: looping(10, 1) }, ledger, { scopes })
     const b = setup({ model: looping(10, 1) }, ledger, { scopes })
@@ -224,7 +224,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
     expect(s?.reservedUsd).toBe(0)
 
     // estimates below the actual cost: overshoot of at most one estimate error per session
-    const low = memoryBudgetLedger({ limits: { 'tenant:t2': 0.02 } })
+    const low = inMemoryBudgetLedger({ limits: { 'tenant:t2': 0.02 } })
     const scopes2 = () => ['tenant:t2']
     const c = setup({ model: looping(10, 1) }, low, { scopes: scopes2, estimate: () => 0.001 })
     const d = setup({ model: looping(10, 1) }, low, { scopes: scopes2, estimate: () => 0.001 })
@@ -460,7 +460,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
   })
 
   test('the 0.4 budgets still apply next to the ledger (first cap wins)', async () => {
-    const ledger = memoryBudgetLedger()
+    const ledger = inMemoryBudgetLedger()
     const { agent } = setup({ model: looping(10), budget: { maxTurnUsd: 0.012 } }, ledger)
     const result = await agent.session('s1').send('go').result
     expect(result.stop).toBe('cost-cap')
@@ -504,7 +504,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
         withLedger
           ? {
               ...config,
-              budget: { ledger: { adapter: memoryBudgetLedger(), scopes: () => ['u'] } },
+              budget: { ledger: { adapter: inMemoryBudgetLedger(), scopes: () => ['u'] } },
             }
           : config,
       )
@@ -525,7 +525,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
       defineHarnessAgent({
         model: scriptedModel([]),
         budget: {
-          ledger: { adapter: memoryBudgetLedger(), scopes: () => [], reservationTtlMs: 0 },
+          ledger: { adapter: inMemoryBudgetLedger(), scopes: () => [], reservationTtlMs: 0 },
         },
       }),
     ).toThrow(/reservationTtlMs/)
@@ -533,7 +533,7 @@ describe('budget ledger (spec 12 §4.1)', () => {
       defineHarnessAgent({
         model: scriptedModel([]),
         budget: {
-          ledger: { adapter: memoryBudgetLedger(), scopes: () => [], onError: 'open' as never },
+          ledger: { adapter: inMemoryBudgetLedger(), scopes: () => [], onError: 'open' as never },
         },
       }),
     ).toThrow(/onError/)

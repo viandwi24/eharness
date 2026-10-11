@@ -5,6 +5,7 @@
  * Independent of conversation rewind: the store is keyed by session id and turn key, and
  * {@link rewindFiles} only touches files.
  */
+import { errorText } from '../index.ts'
 import type { FileSystem } from './types.ts'
 
 /** What a file held before the first change of a turn. */
@@ -33,7 +34,7 @@ export interface CheckpointRecord {
 
 /**
  * Durable storage of file checkpoints. Implement it over any backend (the same database as your
- * `StorageAdapter`, S3, …); `memoryCheckpointStore()` and `nodeCheckpointStore(dir)` are the
+ * `StorageAdapter`, S3, …); `inMemoryCheckpointStore()` and `nodeCheckpointStore(dir)` are the
  * shipped ones.
  */
 export interface CheckpointStore {
@@ -82,8 +83,8 @@ export async function copyCheckpoints(args: {
     await store.save({ sessionId: to, turnKey: r.turnKey, path: r.path }, r.before)
 }
 
-/** Options of {@link memoryCheckpointStore}. */
-export interface MemoryCheckpointStoreOptions {
+/** Options of {@link inMemoryCheckpointStore}. */
+export interface InMemoryCheckpointStoreOptions {
   /** Turns kept per session (the oldest are dropped). Default 50. */
   keepTurns?: number
 }
@@ -98,8 +99,10 @@ const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
  *
  * @see docs/specs/08-filesystem-plugin.md#11-checkpoints
  */
-export function memoryCheckpointStore(opts: MemoryCheckpointStoreOptions = {}): CheckpointStore {
-  const keep = opts.keepTurns ?? DEFAULT_CHECKPOINT_KEEP_TURNS
+export function inMemoryCheckpointStore(
+  options: InMemoryCheckpointStoreOptions = {},
+): CheckpointStore {
+  const keep = options.keepTurns ?? DEFAULT_CHECKPOINT_KEEP_TURNS
   const sessions = new Map<string, Map<string, Map<string, { before: FileSnapshot; at: number }>>>()
   return {
     async save(key, before) {
@@ -282,7 +285,7 @@ export async function rewindFiles(args: {
     } catch (error) {
       result.failed.push({
         path: point.path,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       })
     }
   }

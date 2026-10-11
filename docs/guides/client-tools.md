@@ -10,7 +10,7 @@ the application opts in, the core validates and size-caps what arrives, a declar
 shadow a server tool, a call gets no permission a server tool would not get, and an unanswered
 call times out.
 
-Contract: [spec 11 §7.1](../specs/11-interaction.md#71-request-scoped-client-tools-and-page-context-050) ·
+Contract: [spec 11 §7.1](../specs/11-interaction.md#71-request-scoped-client-tools-and-page-context) ·
 decision: [ADR-0028](../decisions/0028-request-scoped-client-tools-and-page-context.md) ·
 runnable: [`examples/client-tools.ts`](../../examples/client-tools.ts),
 [`examples/next-route.ts`](../../examples/next-route.ts).
@@ -18,9 +18,12 @@ runnable: [`examples/client-tools.ts`](../../examples/client-tools.ts),
 ## 1. Enable it on the route
 
 Off by default: without the options, `body.clientTools` / `body.pageContext` are ignored (not an
-error), exactly like before 0.5.
+error).
 
 ```ts
+import { handleChatRequest } from 'eharness'
+
+// agent: yours, from defineHarnessAgent(...)
 export async function POST(req: Request) {
   const body = await req.json()
   const session = agent.session(body.id)
@@ -32,7 +35,7 @@ export async function POST(req: Request) {
       timeoutMs: 120_000,                     // a call the browser never answers expires
     },
     pageContext: { maxChars: 4_000 },         // default 4 000, all entries together
-  }).toHttpResponse() // not toResponse(): pre-commit failures keep their HTTP status
+  }).toResponse() // not toStreamResponse(): pre-commit failures keep their HTTP status
 }
 ```
 
@@ -47,6 +50,10 @@ With `useChat`, put the declarations and context in the transport body. Keep the
 carries a tool output: the continuation needs them.
 
 ```tsx
+import { useChat } from '@ai-sdk/react'
+import { DefaultChatTransport, lastAssistantMessageIsCompleteWithToolCalls } from 'ai'
+
+// ChatMessage and readLocation: yours
 const { messages, addToolOutput } = useChat<ChatMessage>({
   transport: new DefaultChatTransport({
     api: '/api/chat',

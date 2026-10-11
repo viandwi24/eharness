@@ -82,7 +82,7 @@ stops with `stop: 'context-thrash'`
 (warning `W_CONTEXT_THRASH`, and an `eh.notice` with code `EH_CONTEXT_THRASH` is saved so the UI
 can show why). Typical fixes: limit tool outputs (`toolOutput.maxChars`), page large reads, or a
 model with a larger window. `compaction: { thrash: { withinSteps: 3 } }` widens the window;
-`thrash: false` restores 0.3 behaviour (keep going). A compaction at the start of a turn does not
+`thrash: false` turns the check off (keep going). A compaction at the start of a turn does not
 count: one large tool output after it compacts normally.
 
 ## What is stored
@@ -104,7 +104,7 @@ short, internal turn — a **flush** — to write down what must survive, typica
 files. The memory plugin does it for you:
 
 ```ts
-memory({ roots, flushOnCompaction: true }) // or { prompt: 'Save open decisions and file names.' }
+memory({ roots, flushOnCompaction: true }) // roots: yours; or flushOnCompaction: { prompt: 'Save open decisions and file names.' }
 ```
 
 It offers `memory_view`, `memory_create`, `memory_str_replace` and `memory_insert` (never delete or
@@ -112,6 +112,11 @@ rename) and skips the flush when no root is writable. Any plugin can do the same
 tools:
 
 ```ts
+import { tool } from 'ai'
+import { definePlugin } from 'eharness'
+import { z } from 'zod/v4'
+
+// saveFact: yours, persists a fact
 definePlugin({
   name: 'facts',
   setup: () => ({

@@ -1,18 +1,15 @@
 /**
  * The attention routes: `GET /attention` and `POST /attention/:id/answer`.
  *
- * @see docs/specs/26-http.md#9-attention-routes
+ * @see docs/specs/26-http.md#7-attention-routes
  */
 import { type AttentionAnswer, answerAttention, listAttention } from '../activity/index.ts'
-import { HarnessError } from '../index.ts'
+import { HarnessError, isRecord } from '../index.ts'
 import { denialOf } from './authorize.ts'
 import { readJsonBody } from './body.ts'
 import { httpError, jsonResponse } from './errors.ts'
 import type { AttentionTarget, HttpAttentionOptions, HttpCall, HttpEnv } from './types.ts'
 import type { AnswerResponse, AttentionItemWire, AttentionListResponse } from './wire.ts'
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const invalid = (
   message: string,

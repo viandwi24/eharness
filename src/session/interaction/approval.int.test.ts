@@ -16,7 +16,14 @@ import {
 import type { HarnessUIMessage } from '../../messages/types.ts'
 import { definePlugin } from '../../plugin/define-plugin.ts'
 import { type ScriptedPrompt, scriptedModel } from '../../testing/scripted-model.ts'
-import { chunkTypes, collect, normalizeVolatile, spyMessages, spyState } from '../int-kit.ts'
+import {
+  allowInvariantViolation,
+  chunkTypes,
+  collect,
+  normalizeVolatile,
+  spyMessages,
+  spyState,
+} from '../test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -457,6 +464,7 @@ describe('scenario 18: respond() safety', () => {
   })
 
   test('stale: a newer chat message (another writer) rejects the answers', async () => {
+    allowInvariantViolation(/I5/) // the other writer's message deliberately follows the pending one
     const { session, first, log, messages } = await pendingSession()
     const approvalId = first.pending?.approvals[0]?.approvalId as string
     const newest = (await messages.load({ sessionId: 's1' })).at(-1)?.id
@@ -757,8 +765,9 @@ describe('scenario 20: approval combination and grants', () => {
 
     // reload: a fresh agent on the same storage still has the grant
     const model2 = scriptedModel([
-      { toolCalls: [{ toolName: 'pay', input: { amount: 3 } }] }, // granted: runs without asking
-      { toolCalls: [{ toolName: 'pay', input: { amount: 1000 } }] }, // denied by the hook
+      // explicit ids: a new scripted model would repeat the first model's default ids
+      { toolCalls: [{ toolName: 'pay', input: { amount: 3 }, toolCallId: 'r2-a' }] }, // granted: runs without asking
+      { toolCalls: [{ toolName: 'pay', input: { amount: 1000 }, toolCallId: 'r2-b' }] }, // denied by the hook
       { text: 'done' },
     ])
     const env2 = setup({ model: model2, ...config }, { messages, state })

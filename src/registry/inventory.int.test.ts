@@ -6,7 +6,7 @@ import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
-import { spyMessages, spyState } from '../session/int-kit.ts'
+import { spyMessages, spyState } from '../session/test-kit.ts'
 import { type ScriptedStepInput, scriptedModel } from '../testing/scripted-model.ts'
 import { defineToolSource } from './tool-source.ts'
 

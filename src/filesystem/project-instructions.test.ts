@@ -1,30 +1,30 @@
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent, definePlugin } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { filesystem, loadProjectInstructions, projectInstructions } from './index.ts'
-import { memoryFs } from './memory.ts'
+import { inMemoryFs } from './memory.ts'
 import type { ProjectInstructionsInfo } from './project-instructions.ts'
 
 describe('loadProjectInstructions', () => {
   test('none', async () => {
-    const info = await loadProjectInstructions(memoryFs({ '/a.txt': 'x' }))
+    const info = await loadProjectInstructions(inMemoryFs({ seed: { '/a.txt': 'x' } }))
     expect(info).toEqual({ nested: [], nestedOmitted: 0 })
   })
 
   test('only AGENTS.md', async () => {
-    const info = await loadProjectInstructions(memoryFs({ '/AGENTS.md': 'agents' }))
+    const info = await loadProjectInstructions(inMemoryFs({ seed: { '/AGENTS.md': 'agents' } }))
     expect(info.root).toMatchObject({ name: 'AGENTS.md', content: 'agents', ignored: [] })
   })
 
   test('only CLAUDE.md', async () => {
-    const info = await loadProjectInstructions(memoryFs({ '/CLAUDE.md': 'claude' }))
+    const info = await loadProjectInstructions(inMemoryFs({ seed: { '/CLAUDE.md': 'claude' } }))
     expect(info.root?.name).toBe('CLAUDE.md')
   })
 
   test('both: CLAUDE.md wins and AGENTS.md is reported as ignored', async () => {
     const info = await loadProjectInstructions(
-      memoryFs({ '/CLAUDE.md': 'claude', '/AGENTS.md': 'agents' }),
+      inMemoryFs({ seed: { '/CLAUDE.md': 'claude', '/AGENTS.md': 'agents' } }),
     )
     expect(info.root).toMatchObject({
       name: 'CLAUDE.md',
@@ -35,20 +35,22 @@ describe('loadProjectInstructions', () => {
 
   test('custom order', async () => {
     const info = await loadProjectInstructions(
-      memoryFs({ '/CLAUDE.md': 'claude', '/AGENTS.md': 'agents' }),
+      inMemoryFs({ seed: { '/CLAUDE.md': 'claude', '/AGENTS.md': 'agents' } }),
       { files: ['AGENTS.md', 'CLAUDE.md'] },
     )
     expect(info.root?.name).toBe('AGENTS.md')
   })
 
   test('nested: per-directory preference, sorted, skips node_modules/.git, capped', async () => {
-    const fs = memoryFs({
-      '/CLAUDE.md': 'root',
-      '/packages/b/AGENTS.md': 'b',
-      '/packages/a/AGENTS.md': 'a',
-      '/packages/a/CLAUDE.md': 'a2',
-      '/node_modules/x/AGENTS.md': 'no',
-      '/.git/AGENTS.md': 'no',
+    const fs = inMemoryFs({
+      seed: {
+        '/CLAUDE.md': 'root',
+        '/packages/b/AGENTS.md': 'b',
+        '/packages/a/AGENTS.md': 'a',
+        '/packages/a/CLAUDE.md': 'a2',
+        '/node_modules/x/AGENTS.md': 'no',
+        '/.git/AGENTS.md': 'no',
+      },
     })
     const info = await loadProjectInstructions(fs)
     expect(info.nested).toEqual([
@@ -65,9 +67,12 @@ describe('loadProjectInstructions', () => {
   })
 
   test('truncation adds a notice', async () => {
-    const info = await loadProjectInstructions(memoryFs({ '/AGENTS.md': 'a'.repeat(500) }), {
-      maxChars: 100,
-    })
+    const info = await loadProjectInstructions(
+      inMemoryFs({ seed: { '/AGENTS.md': 'a'.repeat(500) } }),
+      {
+        maxChars: 100,
+      },
+    )
     expect(info.root?.truncated).toBe(true)
     expect(info.root?.chars).toBe(500)
     expect(info.root?.content).toContain('[truncated: AGENTS.md is longer than 100 characters]')
@@ -86,10 +91,12 @@ describe('projectInstructions plugin', () => {
     const agent = defineHarnessAgent({
       model,
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       plugins: [
         filesystem({
-          fs: memoryFs({ '/CLAUDE.md': 'USE-TABS', '/AGENTS.md': 'NOPE', '/x/AGENTS.md': 'n' }),
+          fs: inMemoryFs({
+            seed: { '/CLAUDE.md': 'USE-TABS', '/AGENTS.md': 'NOPE', '/x/AGENTS.md': 'n' },
+          }),
         }),
         projectInstructions(),
         definePlugin({
@@ -115,9 +122,9 @@ describe('projectInstructions plugin', () => {
     const agent = defineHarnessAgent({
       model,
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       plugins: [
-        filesystem({ fs: memoryFs({ '/AGENTS.md': 'rules' }) }),
+        filesystem({ fs: inMemoryFs({ seed: { '/AGENTS.md': 'rules' } }) }),
         projectInstructions({ frame: (f) => `FRAMED ${f.name}: ${f.content}` }),
       ],
     })

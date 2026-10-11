@@ -7,8 +7,15 @@ import type { ConfigProfile, ProfileStore } from './types.ts'
 
 const key = (kind: string, id: string): string => `${kind}\u0000${id}`
 
+/** Options of {@link inMemoryProfileStore}. */
+export interface InMemoryProfileStoreOptions {
+  /** Profiles the store starts with (copied). */
+  initial?: ConfigProfile[]
+}
+
 /** A {@link ProfileStore} in memory (tests, single-process apps). Stores copies. */
-export function memoryProfileStore(initial: ConfigProfile[] = []): ProfileStore {
+export function inMemoryProfileStore(options: InMemoryProfileStoreOptions = {}): ProfileStore {
+  const initial = options.initial ?? []
   const map = new Map<string, ConfigProfile>()
   const listeners = new Set<() => void>()
   for (const profile of initial) map.set(key(profile.kind, profile.id), structuredClone(profile))

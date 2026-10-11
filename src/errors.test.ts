@@ -1,10 +1,19 @@
 import { describe, expect, spyOn, test } from 'bun:test'
+import { readdirSync, readFileSync } from 'node:fs'
+import { HARNESS_ERROR_CODES, HARNESS_NOTICE_CODES, WARNING_CODES } from './codes.ts'
 import {
+  asInvalidInputError,
+  configError,
   createWarningEmitter,
   HarnessError,
   HarnessToolError,
   type HarnessWarning,
+  invalidInputError,
   isHarnessError,
+  lockFailure,
+  sessionBusyError,
+  sessionClosedError,
+  storageError,
 } from './errors.ts'
 
 describe('HarnessError', () => {
@@ -95,6 +104,41 @@ describe('createWarningEmitter', () => {
     }
   })
 
+  test('default handler repeats a key after the window and counts the suppressed repeats', () => {
+    const spy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      let t = 0
+      const emit = createWarningEmitter({ dedupeWindowMs: 1_000, now: () => t })
+      emit(warning, 'x')
+      t = 500
+      emit(warning, 'x')
+      emit(warning, 'x')
+      expect(spy).toHaveBeenCalledTimes(1)
+      t = 1_000
+      emit(warning, 'x')
+      expect(spy).toHaveBeenCalledTimes(2)
+      expect(String(spy.mock.calls[1]?.[0])).toContain('2 similar suppressed')
+      // the window restarted: no stale count on the next report
+      t = 2_500
+      emit(warning, 'x')
+      expect(String(spy.mock.calls[2]?.[0])).not.toContain('suppressed')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('dedupeWindowMs 0 prints every occurrence', () => {
+    const spy = spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const emit = createWarningEmitter({ dedupeWindowMs: 0 })
+      emit(warning, 'x')
+      emit(warning, 'x')
+      expect(spy).toHaveBeenCalledTimes(2)
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
   test('the dedupe set is bounded (10 000 per-turn keys keep at most 1 000)', () => {
     const spy = spyOn(console, 'warn').mockImplementation(() => {})
     try {
@@ -121,5 +165,87 @@ describe('createWarningEmitter', () => {
     }
     // non-misuse warnings are never escalated
     expect(() => emit({ code: 'W_UNKNOWN_STORED_PART', message: 'old' })).not.toThrow()
+  })
+})
+
+describe('error factories (K-10)', () => {
+  test('one construction point per code, with the same message and details everywhere', () => {
+    expect(sessionClosedError('s1')).toMatchObject({
+      code: 'EH_SESSION_CLOSED',
+      details: { sessionId: 's1' },
+    })
+    expect(sessionBusyError('s1')).toMatchObject({ code: 'EH_SESSION_BUSY' })
+    expect(sessionBusyError('s1').message).toContain("'s1'")
+    expect(configError('bad', { key: 1 })).toMatchObject({
+      code: 'EH_CONFIG_INVALID',
+      details: { key: 1 },
+    })
+    expect(invalidInputError('nope').code).toBe('EH_INVALID_INPUT')
+  })
+
+  test('storageError wraps a foreign error once and passes a HarnessError through', () => {
+    const cause = new Error('db down')
+    const wrapped = storageError('State', 'get', cause)
+    expect(wrapped).toMatchObject({ code: 'EH_STORAGE', cause })
+    expect(wrapped.message).toBe('State storage failed (get).')
+    const own = new HarnessError('EH_INVALID_INPUT', 'x')
+    expect(storageError('Message', 'save', own)).toBe(own)
+  })
+
+  test('lockFailure: contention is EH_SESSION_BUSY, anything else EH_LOCK_UNAVAILABLE', () => {
+    const busy = lockFailure('s1', new HarnessError('EH_SESSION_BUSY', 'held'))
+    expect(busy.code).toBe('EH_SESSION_BUSY')
+    const down = lockFailure('s1', new Error('ECONNREFUSED'))
+    expect(down.code).toBe('EH_LOCK_UNAVAILABLE')
+    expect(down.message).toContain('ECONNREFUSED')
+    expect(lockFailure('s1', 'timeout').code).toBe('EH_LOCK_UNAVAILABLE')
+  })
+
+  test('asInvalidInputError keeps a HarnessError and wraps the rest', () => {
+    const own = new HarnessError('EH_STORAGE', 'x')
+    expect(asInvalidInputError(own)).toBe(own)
+    expect(asInvalidInputError(new Error('bad')).code).toBe('EH_INVALID_INPUT')
+    expect(asInvalidInputError('text').message).toBe('text')
+  })
+})
+
+describe('code lists (one source of truth, documented in spec 10)', () => {
+  const spec = readFileSync(
+    new URL('../docs/specs/10-errors-and-stop-reasons.md', import.meta.url),
+    'utf8',
+  )
+  const all = [...HARNESS_ERROR_CODES, ...HARNESS_NOTICE_CODES, ...WARNING_CODES]
+
+  test('no code is listed twice', () => {
+    expect(new Set(all).size).toBe(all.length)
+  })
+
+  test('every code is documented in spec 10', () => {
+    const missing = all.filter((code) => !spec.includes(`\`${code}\``))
+    expect(missing).toEqual([])
+  })
+
+  test('every code used in src (non-test) is declared', () => {
+    const declared = new Set<string>(all)
+    // `EH_HTTP_*` are wire codes of eharness/http, `EH_INTERNAL` is the HTTP fallback
+    const wire = /^EH_(HTTP_|INTERNAL$)/
+    const unknown: string[] = []
+    const walk = (dir: URL): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const url = new URL(entry.name + (entry.isDirectory() ? '/' : ''), dir)
+        if (entry.isDirectory()) walk(url)
+        else if (
+          /\.ts$/.test(entry.name) &&
+          !/(\.test|\.test-d|\.conformance)\.ts$|test-kit/.test(entry.name)
+        ) {
+          for (const m of readFileSync(url, 'utf8').matchAll(/'((?:EH|W)_[A-Z_]+)'/g)) {
+            const code = m[1] as string
+            if (!declared.has(code) && !wire.test(code)) unknown.push(`${entry.name}: ${code}`)
+          }
+        }
+      }
+    }
+    walk(new URL('./', import.meta.url))
+    expect(unknown).toEqual([])
   })
 })

@@ -1,5 +1,5 @@
 /**
- * The app's half of the `agent` tool. The tool itself is the library's `subagents()` plugin with
+ * The app's half of the `agent` tool. The tool itself is the library's `subagent()` plugin with
  * `approvals: 'inline'`: it runs the child session, streams its progress and carries the child's
  * usage to the parent turn. When the child needs a person (an approval, a client tool) the
  * plugin calls `answer`; this one asks the same broker the main agent uses, labelled with the
@@ -21,7 +21,7 @@ export interface SubagentAnswerDeps {
   describe(call: ToolCallInfo): Promise<{ title: string; detail?: string; suggestedRule?: string }>
 }
 
-/** The `answer` callback of `subagents({ approvals: 'inline' })`. */
+/** The `answer` callback of `subagent({ approvals: 'inline' })`. */
 export function subagentAnswer(
   deps: SubagentAnswerDeps,
 ): (request: SubagentApprovalRequest, signal: AbortSignal) => Promise<SubagentApprovalAnswer> {

@@ -21,7 +21,7 @@ export type CreateAgentChatOptions = {
 	pageSize?: number;
 };
 
-const INITIAL: ChatSessionState = { loaded: false, hasOlder: false, loadingOlder: false, following: false, notice: null, problem: null, activity: null, busy: false };
+const INITIAL: ChatSessionState = { loaded: false, hasOlder: false, loadingOlder: false, following: false, notice: null, problem: null, activity: null, busy: false, stopping: false };
 
 export class AgentChat {
 	readonly chat: Chat<UIMessage>;
@@ -76,6 +76,13 @@ export class AgentChat {
 	/** The reply this chat ended on was cut short by a dead process: Continue / Retry are offered. */
 	get interrupted(): boolean {
 		return interruptedTurn(this.chat.messages) !== undefined;
+	}
+	/**
+	 * `stop()` has not been confirmed by the server yet (it may still be reachable only later): the
+	 * stop button is disabled and "Stopping…" shows until it is.
+	 */
+	get stopping(): boolean {
+		return this.#s.stopping;
 	}
 	/** A turn is running or being followed in this chat. */
 	get busy(): boolean {

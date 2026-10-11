@@ -10,6 +10,7 @@ spec 07.
 ```ts
 import { defineHarnessAgent, defineSkill } from 'eharness'
 
+// yours: `model` is an AI SDK LanguageModel
 const agent = defineHarnessAgent({
   model,
   skills: [
@@ -26,7 +27,7 @@ const agent = defineHarnessAgent({
 What the model gets:
 
 - an index in the system prompt: `- release-notes: How we write release notes. …` (sorted by name;
-  above `skillsIndexLimit` = 50 skills it switches to a `search_skills(query)` tool);
+  above `skillsIndexLimit` (default 50) skills it switches to a `search_skills(query)` tool);
 - `load_skill(name)` → the body plus a `Files:` list;
 - `read_skill_file(name, path)` → one file. Paths are relative to the skill (`template.md`), never
   filesystem paths, so a skill works unchanged from any source.
@@ -43,13 +44,13 @@ as a number is quoted, `version: "1.0"`), and `skill.load` hooks
 receive it as `e.version`, so you can audit which version a turn used:
 
 ```ts
+// yours: `audit`; this goes in a plugin's `hooks`
 hooks: {
   'skill.load': (ctx, e) => void audit.log({ turn: ctx.turn?.id, skill: e.skill.name, version: e.version }),
 }
 ```
 
-The skills index never shows versions, so bumping one does not break the prompt cache. Skills
-without a version look exactly as before.
+The skills index never shows versions, so bumping one does not break the prompt cache.
 
 ## Skills from a file system
 
@@ -71,17 +72,17 @@ Group changes by user impact. Read template.md first.
 
 ```ts
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 
 const plugin = filesystem({
-  fs: memoryFs(), // or your own FileSystem adapter
+  fs: inMemoryFs(), // or your own FileSystem adapter; put the SKILL.md files in it
   skills: { root: '/skills', refresh: 'turn' }, // 'turn': new SKILL.md files appear next turn
 })
 ```
 
 The skills root is hidden from the file tools by default (`hideSkillsRoot: true`): the model reads
 skills only through the skill tools and cannot edit them. Without the plugin, use
-`fsSkillSource(fs, { root: '/skills' })` from `eharness/filesystem` directly in `skills`.
+`fsSkillSource({ fs, root: '/skills' })` from `eharness/filesystem` directly in `skills`.
 
 ## Your own source (database, API, per tenant)
 
@@ -108,7 +109,7 @@ const tenantSkills = defineSkillSource({
     return null
   },
 })
-// defineHarnessAgent({ model, skills: [tenantSkills] })
+// pass it to the agent: defineHarnessAgent({ model, skills: [tenantSkills] })
 ```
 
 Rules: a static skill always wins a name collision with a dynamic source (`W_SHADOWED`); between

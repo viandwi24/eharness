@@ -1,8 +1,11 @@
 import { describe, expect, test } from 'bun:test'
+import { HarnessError } from '../index.ts'
 import {
   dirPrefix,
   isUnder,
   isUnderAny,
+  isUnderAnyFolded,
+  isUnderFolded,
   joinPath,
   normalizePath,
   normalizePrefixes,
@@ -62,6 +65,17 @@ describe('prefix helpers', () => {
   test('normalizePrefixes dedupes and throws on invalid prefixes', () => {
     expect(normalizePrefixes(['skills/', '/skills', '/b//c'], 'x')).toEqual(['/skills', '/b/c'])
     expect(normalizePrefixes(undefined, 'x')).toEqual([])
-    expect(() => normalizePrefixes(['/../x'], 'hiddenPrefixes')).toThrow(TypeError)
+    expect(() => normalizePrefixes(['/../x'], 'hiddenPrefixes')).toThrow(HarnessError)
+  })
+})
+
+describe('isUnderFolded (hidden / read-only prefixes)', () => {
+  test('ignores case, Unicode form and trailing dots and spaces', () => {
+    expect(isUnderFolded('/Secrets/a.txt', '/secrets')).toBe(true)
+    expect(isUnderFolded('/secrets./a.txt', '/secrets')).toBe(true)
+    expect(isUnderFolded('/caf\u0065\u0301/a', '/caf\u00e9')).toBe(true)
+    expect(isUnderFolded('/secretsx/a', '/secrets')).toBe(false)
+    expect(isUnderFolded('/anything', '/')).toBe(true)
+    expect(isUnderAnyFolded('/X/y', ['/a', '/x'])).toBe(true)
   })
 })

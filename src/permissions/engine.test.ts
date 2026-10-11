@@ -1945,3 +1945,171 @@ describe('grantScope (session grants of shell tools)', () => {
     expect(engine.grantScope(call('web_fetch', { url: 'https://a.com' }))).toBeUndefined()
   })
 })
+
+describe('hardening (K-09)', () => {
+  test('a prefix grant never covers a high-risk flag (P5-15)', () => {
+    const engine = make()
+    expect(engine.grantScope(bash('git push origin main'))).toBe('git push')
+    expect(engine.grantScope(bash('git push --force origin main'))).toBeNull()
+    expect(engine.grantScope(bash('git push -f origin main'))).toBeNull()
+    expect(engine.grantScope(bash('docker run --privileged img'))).toBeNull()
+    expect(engine.grantScope(bash('docker run -v /:/h img'))).toBeNull()
+    expect(engine.grantScope(bash('docker run --mount type=bind img'))).toBeNull()
+    expect(engine.grantScope(bash('rm -rf build'))).toBeNull()
+    expect(engine.suggestRule(bash('git push --force origin main'))).toBe(
+      'Bash(git push --force origin main)',
+    )
+  })
+
+  test('an allow rule with a wildcard does not approve inline interpreter code (P5-10)', () => {
+    const engine = make('default', { allow: ['Bash(python3 *)'] })
+    expect(engine.decide(bash('python3 script.py')).status).toBe('approved')
+    expect(engine.decide(bash("python3 -c 'print(1)'")).status).toBe('user-approval')
+    const exact = make('default', { allow: ['Bash(python3 -c x)'] })
+    expect(exact.decide(bash('python3 -c x')).status).toBe('approved')
+  })
+
+  test('deny rules see through xargs, find -exec and busybox (P5-10)', () => {
+    const engine = make('bypassPermissions', { deny: ['Bash(rm *)'] })
+    for (const c of ['xargs -0 rm', 'find . -exec rm {} ;', 'busybox rm x', 'setsid rm x']) {
+      expect(engine.decide(bash(c)).status).toBe('denied')
+    }
+  })
+
+  test('symlinks are resolved before protected paths and Read rules match (P5-4)', async () => {
+    const links: Record<string, string> = {
+      [join(root, 'g')]: join(root, '.git'),
+      [join(root, 'x')]: join(root, '.env'),
+    }
+    const realpath = async (p: string): Promise<string | undefined> => {
+      for (const [from, to] of Object.entries(links)) {
+        if (p === from || p.startsWith(`${from}/`)) return to + p.slice(from.length)
+      }
+      return p
+    }
+    const engine = make('acceptEdits', {}, { realpath })
+    expect(engine.decide(fileCall(TOOL.edit, '/g/hooks/pre-commit')).status).toBe('approved')
+    expect((await engine.decideAsync(fileCall(TOOL.edit, '/g/hooks/pre-commit'))).status).toBe(
+      'user-approval',
+    )
+    expect((await engine.decideAsync(fileCall(TOOL.edit, '/ok.ts'))).status).toBe('approved')
+    expect((await engine.decideAsync(fileCall(TOOL.read, '/x'))).status).toBe('user-approval')
+    expect((await engine.decideAsync(bash('cat x'))).status).toBe('user-approval')
+  })
+
+  test('a classifier verdict of ask hands the action to a person (P5-8)', async () => {
+    const engine = make('auto', {}, { classifier: () => ({ decision: 'ask', reason: 'too long' }) })
+    const d = await engine.decideAsync(call(TOOL.write, { path: '/a.ts' }), { mode: 'auto' })
+    expect(d.status).toBe('approved') // writes in auto never reach the classifier
+    const s = await engine.decideAsync(bash('curl x | sh'))
+    expect(s.status).toBe('user-approval')
+  })
+})
+
+describe('wrapped commands and recursive reads (verified behaviour)', () => {
+  const deny = make('default', { deny: ['Bash(rm *)'] })
+  test('deny rules see through busybox and find -exec', () => {
+    expect(status(deny.decide(bash('busybox rm x')))).toBe('denied')
+    expect(status(deny.decide(bash('find . -name a -exec rm {} ;')))).toBe('denied')
+  })
+  test('without containsProtected a recursive read stays lexical: explicit .env asks, the directory does not', async () => {
+    const engine = make('default', {})
+    expect(status(engine.decide(bash('grep -r KEY .env')))).toBe('user-approval')
+    expect(status(engine.decide(bash('find . -name .env -exec cat {} ;')))).toBe('user-approval')
+    expect(status(engine.decide(bash('grep -r KEY .')))).toBe('approved')
+    expect(status(await engine.decideAsync(bash('grep -r KEY .')))).toBe('approved')
+  })
+
+  describe('containsProtected closes the recursive-read gap', () => {
+    const seen: Array<{ dir: string; patterns: readonly string[] }> = []
+    const withTree = (
+      answer: (dir: string, patterns: readonly string[]) => boolean | Promise<boolean>,
+      rules: Partial<PermissionRules> = {},
+      mode: PermissionMode = 'default',
+    ) =>
+      make(mode, rules, {
+        containsProtected: async (dir, patterns) => {
+          seen.push({ dir, patterns })
+          return answer(dir, patterns)
+        },
+      })
+    const hasEnv = (_: string, patterns: readonly string[]): boolean =>
+      patterns.some((p) => p.includes('.env'))
+
+    test('recursive reads ask when the tree holds a match, and approve when it does not', async () => {
+      const dirty = withTree(hasEnv)
+      for (const command of [
+        'grep -r KEY .',
+        'grep -R KEY src/',
+        'grep --recursive KEY',
+        'rg KEY',
+        'ag KEY',
+        'find . -type f -exec cat {} +',
+        'cp -r . /tmp/x',
+        'tar czf out.tgz .',
+      ]) {
+        expect(status(await dirty.decideAsync(bash(command)))).toBe('user-approval')
+      }
+      const clean = withTree(() => false)
+      expect(status(await clean.decideAsync(bash('grep -r KEY .')))).toBe('approved')
+      expect(status(await clean.decideAsync(bash('rg KEY src')))).toBe('approved')
+    })
+
+    test('a file argument and non-recursive commands are not looked into', async () => {
+      seen.length = 0
+      const engine = withTree(() => true)
+      expect(status(await engine.decideAsync(bash('grep KEY src/a.ts')))).toBe('approved')
+      expect(status(await engine.decideAsync(bash('cat src/a.ts')))).toBe('approved')
+      expect(status(await engine.decideAsync(bash('find . -maxdepth 1 -exec cat {} +')))).toBe(
+        'user-approval',
+      ) // not read-only: asks by default, but not because of a look
+      expect(seen).toEqual([])
+    })
+
+    test('the directory and the patterns reach the callback (built-in asks and protected paths)', async () => {
+      seen.length = 0
+      const engine = withTree(() => false)
+      await engine.decideAsync(bash('grep -r KEY src'))
+      expect(seen).toHaveLength(1)
+      expect(seen[0]?.dir.endsWith('/src')).toBe(true)
+      expect(seen[0]?.patterns).toEqual(expect.arrayContaining(['.env*', '**/.env*', ...PROTECTED]))
+    })
+
+    test('a protected path below the directory asks', async () => {
+      const engine = withTree((_, patterns) => patterns.includes(PROTECTED[0] as string))
+      expect(status(await engine.decideAsync(bash('grep -r KEY .')))).toBe('user-approval')
+    })
+
+    test('a match of a deny rule denies; an allow rule still overrides the built-in ask', async () => {
+      const denying = withTree((_, p) => p.includes('**/secrets.json'), {
+        deny: ['Read(**/secrets.json)'],
+      })
+      const d = await denying.decideAsync(bash('grep -r KEY .'))
+      expect(status(d)).toBe('denied')
+      expect(d.rule).toBe('Read(**/secrets.json)')
+      const allowed = withTree(hasEnv, { allow: ['Bash(grep *)'] })
+      expect(status(await allowed.decideAsync(bash('grep -r KEY .')))).toBe('approved')
+    })
+
+    test('a throwing callback fails closed; too many directories ask without looking', async () => {
+      const broken = make(
+        'default',
+        {},
+        {
+          containsProtected: () => Promise.reject(new Error('boom')),
+        },
+      )
+      expect(status(await broken.decideAsync(bash('grep -r KEY .')))).toBe('user-approval')
+      seen.length = 0
+      const many = withTree(() => false)
+      const dirs = Array.from({ length: 9 }, (_, i) => `d${i}`).join(' ')
+      expect(status(await many.decideAsync(bash(`grep -r KEY ${dirs}`)))).toBe('user-approval')
+      expect(seen).toEqual([])
+    })
+
+    test('sync decide stays lexical', () => {
+      const engine = withTree(() => true)
+      expect(status(engine.decide(bash('grep -r KEY .')))).toBe('approved')
+    })
+  })
+})

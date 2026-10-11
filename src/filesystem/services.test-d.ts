@@ -10,7 +10,7 @@ import {
 } from '../index.ts'
 import type { FileChangeData, FileSystem, ToolOutputStore } from './index.ts'
 import { filesystem } from './index.ts'
-import { memoryFs } from './memory.ts'
+import { inMemoryFs } from './memory.ts'
 
 type Equal<A, B> =
   (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false
@@ -32,7 +32,7 @@ definePlugin({
 
 const agent = defineHarnessAgent({
   model: 'openai/gpt-5',
-  plugins: [filesystem({ fs: memoryFs() })],
+  plugins: [filesystem({ fs: inMemoryFs() })],
 })
 type AgentMessage = InferHarnessUIMessage<typeof agent>
 type DataOf<M, T> = M extends { parts: Array<infer P> }
@@ -43,6 +43,6 @@ type DataOf<M, T> = M extends { parts: Array<infer P> }
 type _change = Expect<Equal<DataOf<AgentMessage, 'data-filesystem.change'>, FileChangeData>>
 
 // the resolver form receives the session context
-filesystem({ fs: (ctx: HarnessContext) => (ctx.session.id === 'a' ? memoryFs() : memoryFs()) })
+filesystem({ fs: (ctx: HarnessContext) => (ctx.session.id === 'a' ? inMemoryFs() : inMemoryFs()) })
 // @ts-expect-error unknown tool name
-filesystem({ fs: memoryFs(), tools: ['rm'] })
+filesystem({ fs: inMemoryFs(), tools: ['rm'] })

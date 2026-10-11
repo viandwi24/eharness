@@ -12,8 +12,8 @@ import type {
   ActivityStore,
 } from './types.ts'
 
-/** Options of {@link memoryActivityStore}. */
-export interface MemoryActivityStoreOptions {
+/** Options of {@link inMemoryActivityStore}. */
+export interface InMemoryActivityStoreOptions {
   /** Clock in epoch ms. Default `Date.now`. */
   now?: () => number
 }
@@ -45,7 +45,7 @@ export function pruneBoundary(
  * Create an in-memory store. Two stores are two independent logs; to model two instances over one
  * log, share one store object.
  */
-export function memoryActivityStore(options: MemoryActivityStoreOptions = {}): ActivityStore {
+export function inMemoryActivityStore(options: InMemoryActivityStoreOptions = {}): ActivityStore {
   const now = options.now ?? ((): number => Date.now())
   let records: ActivityRecord[] = []
   let seq = 0

@@ -1,5 +1,6 @@
 import type { DeadInboxItem, InboxAdapter, InboxItem, InboxItemInput } from '../index.ts'
 import { assertJsonEqual, assertTrue, uniqueSessionId } from './assert.ts'
+import { sleep } from './sleep.ts'
 import type { ConformanceCase } from './types.ts'
 
 /** Options of {@link inboxAdapterConformance}. */
@@ -32,8 +33,6 @@ export interface InboxAdapterConformanceOptions {
    */
   claimTtlMs?: number
 }
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 function send(text: string, extra: Partial<Extract<InboxItemInput, { kind: 'send' }>> = {}) {
   return {

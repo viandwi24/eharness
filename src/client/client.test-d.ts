@@ -5,6 +5,7 @@
  */
 import type { ChatTransport, UIMessage } from 'ai'
 import type { AttentionItemWire } from '../http/index.ts'
+import type { parseActivityEvent } from './activity-feed.ts'
 import {
   type ActivityRecord,
   type AttentionList,
@@ -15,7 +16,6 @@ import {
   createChatSession,
   createHarnessClient,
   createHarnessTransport,
-  type parseActivityEvent,
 } from './index.ts'
 
 type Equal<A, B> =

@@ -11,13 +11,15 @@
 import { getToolName, isToolUIPart } from 'ai'
 import { defineHarnessAgent, handleChatRequest, type InferHarnessUIMessage } from 'eharness'
 import { classifyToolResult, filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { exampleModel } from './shared/model.ts'
 
 /** One file system for the whole demo app; real apps resolve one per user/project (`fs: (ctx) => …`). */
-export const fs = memoryFs({
-  '/drafts/old.md': 'An outdated draft.\n',
-  '/drafts/plan.md': '# Plan\n\n- ship 0.1.0\n',
+export const fs = inMemoryFs({
+  seed: {
+    '/drafts/old.md': 'An outdated draft.\n',
+    '/drafts/plan.md': '# Plan\n\n- ship 0.1.0\n',
+  },
 })
 
 export const agent = defineHarnessAgent({
@@ -45,11 +47,15 @@ export type ChatMessage = InferHarnessUIMessage<typeof agent>
  */
 export async function POST(req: Request): Promise<Response> {
   const body = await req.json()
-  // Authenticate here and check that the user owns chat `body.id`: eharness knows only the id.
+  // eharness knows only the session id: WHO may use chat `body.id` is yours to enforce. The two
+  // helpers below are PLACEHOLDERS (demo rules): replace them with your auth and ownership lookup.
+  const user = await requireUser(req)
+  if (user === undefined) return new Response('Unauthorized', { status: 401 })
+  if (!(await assertOwns(user, body.id))) return new Response('Not found', { status: 404 })
   // Per-request identity goes into the turn's `runtime` (the cached session is shared by requests).
   const session = agent.session(body.id)
-  const runtime = { userId: 'demo-user' }
-  return handleChatRequest(session, body, {
+  const runtime = { userId: user.id }
+  return await handleChatRequest(session, body, {
     ifBusy: 'steer',
     runtime,
     // The browser may declare tools for this request (`body.clientTools`) and describe the page
@@ -57,18 +63,34 @@ export async function POST(req: Request): Promise<Response> {
     // to shadow a server tool, and still subject to `approval` (spec 11 §7.1). A closed tab times out.
     clientTools: { allow: ['get_location', 'open_dialog'], timeoutMs: 120_000 },
     pageContext: { maxChars: 4_000 },
-  }).toResponse()
+  }).toResponse() // waits until the turn is accepted, so a failure gets its HTTP status
+}
+
+/** PLACEHOLDER: the signed-in user of the request (cookie, session, JWT), `undefined` when anonymous. */
+export async function requireUser(req: Request): Promise<{ id: string } | undefined> {
+  // Demo rule only: the offline demo (`next-route.demo.ts`) has no login, so it sends a header.
+  const id = req.headers.get('x-demo-user')
+  return id === null || id === '' ? undefined : { id }
+}
+
+/** PLACEHOLDER: does `user` own chat `chatId`? Look it up in your database. */
+export async function assertOwns(user: { id: string }, chatId: string): Promise<boolean> {
+  // Demo rule only. Session ids are time-sortable UUIDs: knowing one is never proof of ownership.
+  return chatId.startsWith(`${user.id}:`)
 }
 
 /** GET /api/chat/[id]/stream — resume a running turn after a reload (`useChat({ resume: true })`). */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const { id } = await params
-  // Same ownership check as POST: the replay contains the whole running turn.
+  // Same checks as POST: the replay contains the whole running turn.
+  const user = await requireUser(req)
+  if (user === undefined) return new Response('Unauthorized', { status: 401 })
+  if (!(await assertOwns(user, id))) return new Response('Not found', { status: 404 })
   const run = agent.session(id).attach()
-  return run ? run.toResponse() : new Response(null, { status: 204 })
+  return run ? run.toStreamResponse() : new Response(null, { status: 204 })
 }
 
 /**

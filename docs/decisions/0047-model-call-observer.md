@@ -46,3 +46,7 @@ shipped plugins are model calls no hook sees at all.
   AI Gateway); a string that cannot be resolved is not observed.
 − `request.body` exists only when the provider reports it; a provider that omits it leaves it unset.
 − The hook may complete after the step's `step.end`; do not rely on ordering between them.
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): `config.observe(event)` is the lightweight companion to this observer: phase durations (`span`) and counters (`count`) for metrics and tracing, with no payloads (`docs/guides/observability.md`). `observeModel` and the `model.call` hook stay the way to capture raw requests and responses; both are Draft (`@experimental`).

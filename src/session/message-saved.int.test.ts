@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { spyMessages } from './int-kit.ts'
+import { spyMessages } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 

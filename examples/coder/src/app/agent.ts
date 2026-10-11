@@ -14,32 +14,36 @@
  * Walkthrough: docs/guides/walkthrough-cli.md explains each plugin below, why only the main agent
  * has some of them, and what breaks without them (sections 1, 4-12).
  */
+
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { LanguageModel } from 'ai'
 import {
   defineHarnessAgent,
   type definePlugin,
+  errorText,
   type HarnessAgent,
   type HarnessWarning,
   lookupModel,
   type MessageAdapter,
   type ModelCatalog,
+  type ObserveEvent,
   type StateAdapter,
 } from 'eharness'
-import { askUser } from 'eharness/ask'
+import { ask } from 'eharness/ask'
 import {
   type CheckpointStore,
   filesystem,
   loadProjectInstructions,
   projectInstructions,
 } from 'eharness/filesystem'
-import { mcpServer } from 'eharness/mcp'
-import { domainSpecifierMatches, parseRule, permissionsPlugin } from 'eharness/permissions'
+import { mcpServerSource } from 'eharness/mcp'
+import { domainSpecifierMatches, parseRule, permissions } from 'eharness/permissions'
 import { type LocalSandbox, shell } from 'eharness/shell'
-import { type SubagentDefinition, subagents } from 'eharness/subagent'
+import { type SubagentDefinition, subagent } from 'eharness/subagent'
 import { todos } from 'eharness/todos'
 import { webFetch, webSearch } from 'eharness/web'
+import { nodeResolveHost } from 'eharness/web/node'
 import { subagentAnswer } from '../agents/index.ts'
 import {
   type AgentDefinition,
@@ -58,7 +62,7 @@ import { PROJECT_INSTRUCTIONS_OPTIONS } from './memory-files.ts'
 import { type ModelState, modelSwitchPlugin } from './model-switch.ts'
 import { STATIC_INSTRUCTIONS, subagentInstructions, turnReminder } from './prompt.ts'
 import type { TaskHub } from './tasks.ts'
-import { htmlToMarkdown, resolveHost, type SearchFn } from './web-search.ts'
+import { htmlToMarkdown, type SearchFn } from './web-search.ts'
 
 /** Dependencies of {@link createAgents}. */
 export interface CreateAgentsDeps {
@@ -122,6 +126,10 @@ export interface CreateAgentsDeps {
   /** `lsp` tool for every agent when the manager has a server. */
   lsp?: LspManager
   onWarning?: (warning: HarnessWarning) => void
+  /** Phase durations and failure counters (`app/observe.ts`). */
+  observe?: (event: ObserveEvent) => void
+  /** Turn on the session invariants (`debug.invariants`); default `CODER_DEBUG_INVARIANTS=1` (tests). */
+  invariants?: boolean
 }
 
 /** The agents of one app instance. */
@@ -195,14 +203,14 @@ function hostAllowedBy(permissions: CoderPermissionEngine, host: string): boolea
  * `exit_plan_mode` (plan approval is the main agent's job) nor `request_directory_access`.
  */
 export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
-  const { config, workspace, permissions } = deps
+  const { config, workspace, permissions: engine } = deps
   // project skills are repo content: only loaded once the project is trusted
   const hasSkills = config.trusted && existsSync(join(config.root, '.coder', 'skills'))
   const auditFile = join(config.projectDataDir, 'audit.jsonl')
   const reminder = {
     text: turnReminder({
       root: config.root,
-      mode: () => permissions.mode,
+      mode: () => engine.mode,
       extraDirs: () =>
         workspace
           .mounts()
@@ -268,7 +276,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
     const withToolSearch = (tools: string[]): string[] =>
       config.deferTools &&
       tools.some((t) =>
-        [...permissions.expandRuleTool(t)].some((name) => DEFERRED_BUILTIN_TOOLS.includes(name)),
+        [...engine.expandRuleTool(t)].some((name) => DEFERRED_BUILTIN_TOOLS.includes(name)),
       )
         ? [...tools, 'tool_search']
         : tools
@@ -282,7 +290,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
                 ? (transport as { defer?: unknown })
                 : { defer: undefined }
             return [
-              mcpServer({
+              mcpServerSource({
                 name,
                 transport: (typeof transport === 'object' && transport !== null
                   ? rest
@@ -291,9 +299,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
               }),
             ]
           } catch (error) {
-            warnMcp(
-              `Skipping MCP server "${name}": ${error instanceof Error ? error.message : String(error)}`,
-            )
+            warnMcp(`Skipping MCP server "${name}": ${errorText(error)}`)
             return []
           }
         })
@@ -319,12 +325,12 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       }),
       // always installed: at `maxDepth` the plugin drops the `agent` tool and keeps `send_message`,
       // so even a leaf agent can report to `main` (ADR-0038)
-      subagents({
+      subagent({
         agents: () => subagentCatalog(depth),
         approvals: 'inline',
         answer: subagentAnswer({
           broker: deps.broker,
-          permissions,
+          permissions: engine,
           describe: deps.describe,
         }),
         maxDepth: config.maxAgentDepth,
@@ -336,7 +342,7 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         // rebuilds agent names and finished agents when a stored session is reopened
         selfAgent: () => self.agent as HarnessAgent,
       }),
-      // after `shell()` and `subagents()`: it reads their task services
+      // after `shell()` and `subagent()`: it reads their task services
       ...(isMain && deps.taskHub ? [deps.taskHub.plugin] : []),
       filesystem({
         fs: workspace.fs,
@@ -349,15 +355,16 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
         : [projectInstructions(PROJECT_INSTRUCTIONS_OPTIONS)]),
       todos(),
       webFetch({
-        allow: (host) => hostAllowedBy(permissions, host),
+        allow: (host) => hostAllowedBy(engine, host),
         toMarkdown: htmlToMarkdown,
-        resolveHost,
+        // a public name that resolves to a private address is refused too (DNS rebinding)
+        resolveHost: nodeResolveHost,
         ...deps.webFetch,
       }),
       webSearch({ search }),
-      ...(isMain ? [askUser()] : []),
-      permissionsPlugin({
-        engine: permissions,
+      ...(isMain ? [ask()] : []),
+      permissions({
+        engine,
         ...(def?.permissionMode === 'plan' ? { mode: 'plan' as const } : {}),
         ...(def?.tools ? { allowedTools: withToolSearch(def.tools) } : {}),
         ...(disallowed.length > 0 ? { disallowedTools: disallowed } : {}),
@@ -392,6 +399,17 @@ export async function createAgents(deps: CreateAgentsDeps): Promise<Agents> {
       compaction: { summarizeAt: 0.8, prune: {} },
       toolOutput: { maxChars: 30_000, strategy: 'evict' },
       ...(deps.onWarning ? { onWarning: deps.onWarning } : {}),
+      ...(deps.observe ? { observe: deps.observe } : {}),
+      // explicit bounds: an awaited hook, a silent model stream and a hung tool source never hold a
+      // turn (the library defaults, spelled out here because a CLI user is waiting)
+      hooks: { timeoutMs: 30_000 },
+      settings: { timeout: { firstChunkMs: 180_000, chunkMs: 120_000 } },
+      toolSources: { timeoutMs: 30_000, retryAfterMs: 5_000 },
+      // the same warning once a minute, not on every step
+      warnings: { dedupeWindowMs: 60_000 },
+      ...((deps.invariants ?? process.env.CODER_DEBUG_INVARIANTS === '1')
+        ? { debug: { invariants: true } }
+        : {}),
     }) as unknown as HarnessAgent
     self.agent = agent
     built.push(agent)

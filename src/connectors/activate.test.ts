@@ -6,7 +6,7 @@ import { activateConnectors, compileConnectorRules, mergeConnectorRules } from '
 import { type BuiltinMemoryRoot, builtinConnectors, ensureBuiltinConnections } from './builtin.ts'
 import { defineConnector } from './definition.ts'
 import { mostRestrictive, resolveModes } from './enablement.ts'
-import { memoryConnectionStore } from './store.ts'
+import { inMemoryConnectionStore } from './store.ts'
 import type { ConnectionRecord, ConnectorDefinition, McpSourceSpec } from './types.ts'
 
 const conn = (
@@ -428,7 +428,7 @@ describe('built-in connectors', () => {
         },
       },
     })
-    const store = memoryConnectionStore()
+    const store = inMemoryConnectionStore()
     await ensureBuiltinConnections({ store, definitions: defs })
     expect((await store.list()).map((c) => c.id)).toEqual(['builtin:files'])
     await ensureBuiltinConnections({ store, definitions: defs }) // idempotent
@@ -467,7 +467,7 @@ describe('built-in connectors', () => {
       },
       labels: { memory: { scopeLabels: { workspace: 'Team memory' } } },
     })
-    const store = memoryConnectionStore()
+    const store = inMemoryConnectionStore()
     await ensureBuiltinConnections({ store, definitions: defs, agentId: 'a1' })
     await ensureBuiltinConnections({ store, definitions: defs, agentId: 'a2' })
     const all = await store.list()
@@ -507,7 +507,7 @@ describe('built-in connectors', () => {
       team: { plugin: () => plugin('team-p') },
     })
     expect(defs.find((d) => d.id === 'web')?.capabilities.map((c) => c.id)).toEqual(['search'])
-    const store = memoryConnectionStore()
+    const store = inMemoryConnectionStore()
     await ensureBuiltinConnections({ store, definitions: defs })
     const out = await activateConnectors({
       definitions: defs,

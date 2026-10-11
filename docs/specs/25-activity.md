@@ -9,7 +9,7 @@ and its children, and a safe way to answer it).
 
 ```ts
 import {
-  activity, memoryActivityStore, handleActivityStream, activityStream, readActivityPage,
+  activity, inMemoryActivityStore, handleActivityStream, activityStream, readActivityPage,
   listAttention, answerAttention,
 } from 'eharness/activity'
 ```
@@ -86,15 +86,16 @@ Contract, checked by `activityStoreConformance` (`eharness/testing`):
    down**. A prune that removes nothing leaves it alone.
 4. Multi-instance: each instance appends; readers tail by `seq`; both see one log.
 
-`memoryActivityStore({ now? })` is the shipped adapter; `pruneBoundary(records, options)` is the
-retention rule for adapters that keep records themselves. Database adapters are examples (rule 5).
+`inMemoryActivityStore({ now? })` is the shipped adapter; the retention rule it uses is internal,
+so a database adapter implements rule 3 itself and is checked with the conformance suite.
+Database adapters are examples (CLAUDE.md rule 5).
 
 ## 4. SSE
 
 Web APIs only (`ReadableStream`, `Request`, `Response`).
 
 - `activityCursor(request)` reads the cursor of a request (`?after=` wins over `Last-Event-ID`): a number, `undefined` when none, `null` when invalid. Shared with `eharness/http`; use it in a custom SSE route.
-- `encodeActivityEvent(record)`: `id: <seq>\nevent: <type>\ndata: <record JSON>\n\n`.
+- Each record is framed as `id: <seq>\nevent: <type>\ndata: <record JSON>\n\n` (internal encoder).
 - `activityStream({ store, after?, filter?, bootId?, pollMs = 500, keepAliveMs = 8000, retryMs = 3000, batch = 200, signal?, onError? })`
   → `ReadableStream<Uint8Array>`. Frames:
   1. At once, before the first store read: `retry: <ms>`, a `: connected` comment and, with
@@ -107,7 +108,9 @@ Web APIs only (`ReadableStream`, `Request`, `Response`).
      `Bun.serve` and of common proxies, which close a quiet connection.
   The tail honours backpressure: while the client's queue (512 frames) is full the store is not read; a client that stops reading holds nothing in memory beyond that.
   Without `after` the stream starts at the current head (new events only). It ends on `signal` abort,
-  on `cancel()` and on a store error (`onError`).
+  on `cancel()` and on a store error: the last frame is then `event: error` with
+  `{"code":"EH_STORAGE","message":"The activity store failed."}` (no store details), `onError`
+  is called, and the body closes. A client counts that as a failure (backoff), not as a clean end.
 - `handleActivityStream(request, options)`: `Response` (`text/event-stream`, `no-cache, no-transform`,
   `x-accel-buffering: no`). The cursor is `?after=` or else the `Last-Event-ID` header; an invalid one
   is `400`. The stream ends when the request aborts. Authenticate before calling it.

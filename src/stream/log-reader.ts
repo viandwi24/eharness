@@ -5,10 +5,18 @@
  */
 import type { UIMessageChunk } from 'ai'
 import type { StreamLogAdapter, StreamLogKey } from '../agent/session-types.ts'
+import { HarnessError } from '../errors.ts'
 
 const PAGE = 256
 /** How long a log of a turn the state no longer calls active may stay open before readers end. */
 export const ORPHAN_GRACE_MS = 5_000
+
+/**
+ * Consecutive failed `isActive` probes after which a reader gives up: the state store is down, so
+ * "is the turn still running" cannot be answered and following forever would only add load to a
+ * recovering store (spec 04 §6.2).
+ */
+export const PROBE_FAILURE_LIMIT = 5
 
 /** Result of {@link createLogStream}: the stream and how it ended. */
 export interface LogStream {
@@ -30,6 +38,8 @@ export function createLogStream(args: {
   pollMs: number
   signal?: AbortSignal
   isActive: () => Promise<boolean>
+  /** Receives infrastructure problems (a failing probe); the caller rate-limits and logs. */
+  warn?: (message: string, data: Record<string, unknown>) => void
 }): LogStream {
   const { adapter, key, pollMs, signal } = args
   let cursor = Math.max(0, Math.floor(args.from))
@@ -38,6 +48,7 @@ export function createLogStream(args: {
   let unsubscribe: (() => void) | undefined
   let timer: ReturnType<typeof setTimeout> | undefined
   let inactiveSince: number | undefined
+  let probeFailures = 0
   let finish: (value: Awaited<LogStream['ended']>) => void = () => {}
   const ended = new Promise<Awaited<LogStream['ended']>>((resolve) => {
     finish = resolve
@@ -98,7 +109,33 @@ export function createLogStream(args: {
           return
         }
         if (result.status === 'streaming') {
-          if (!(await args.isActive().catch(() => true))) {
+          let active = true
+          try {
+            active = await args.isActive()
+            probeFailures = 0
+          } catch (probeError) {
+            probeFailures++
+            if (probeFailures === 1 || probeFailures === PROBE_FAILURE_LIMIT) {
+              args.warn?.('eharness: the stream log follower could not check the turn state', {
+                error: probeError,
+                consecutiveFailures: probeFailures,
+              })
+            }
+            if (probeFailures >= PROBE_FAILURE_LIMIT) {
+              // the store cannot say whether the turn runs: end with an error, not a clean EOF
+              finish({ status: 'error', ...(stop === undefined ? {} : { stop }) })
+              cleanup()
+              controller.error(
+                new HarnessError(
+                  'EH_STORAGE',
+                  `State storage failed (${probeFailures} consecutive checks of the running turn).`,
+                  { cause: probeError },
+                ),
+              )
+              return
+            }
+          }
+          if (!active) {
             inactiveSince ??= Date.now()
             if (Date.now() - inactiveSince > ORPHAN_GRACE_MS) {
               finish({ status: 'orphaned', ...(stop === undefined ? {} : { stop }) })

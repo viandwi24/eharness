@@ -3,8 +3,11 @@
  * UI message stream with `readUIMessageStream` and picks the transient `data-shell.output` chunks
  * out of the same raw chunk stream (transient parts never appear in messages).
  */
+
 import { type FileUIPart, readUIMessageStream } from 'ai'
 import type { HarnessRun, TurnResult } from 'eharness'
+import { errorText } from 'eharness'
+import { turnErrorText } from '../app/turn-error.ts'
 import type { BashOutputData, CoderController, CoderMessage, RunHooks } from './../contracts.ts'
 import { type ViewAction, wakeEvents } from './state.ts'
 
@@ -167,7 +170,7 @@ async function drive(
       batcher.flush()
       let note: { text: string; tone: 'info' | 'error' } | undefined
       if (result?.stop === 'error') {
-        note = { text: result.error?.message ?? 'The turn failed.', tone: 'error' }
+        note = { text: turnErrorText(result.error), tone: 'error' }
       } else if (result?.stop === 'aborted') note = { text: 'Interrupted.', tone: 'info' }
       dispatch({ type: 'turn-finished', note })
     })()
@@ -185,7 +188,7 @@ async function drive(
     await Promise.all(consumers)
     if (result) {
       if (result.stop === 'error') {
-        note = { text: result.error?.message ?? 'The turn failed.', tone: 'error' }
+        note = { text: turnErrorText(result.error), tone: 'error' }
       } else if (result.stop === 'aborted') {
         note = { text: 'Interrupted.', tone: 'info' }
       } else if (result.stop !== 'complete' && result.stop !== 'tool-pending') {
@@ -195,7 +198,7 @@ async function drive(
   } catch (error) {
     await Promise.allSettled(consumers)
     begin()
-    note = { text: error instanceof Error ? error.message : String(error), tone: 'error' }
+    note = { text: errorText(error), tone: 'error' }
   }
   over = true
   if (!started) return false
@@ -272,7 +275,7 @@ export async function steerTurn(
   } catch (error) {
     dispatch({
       type: 'system',
-      text: `Could not send the queued message: ${error instanceof Error ? error.message : String(error)}`,
+      text: `Could not send the queued message: ${errorText(error)}`,
       tone: 'error',
     })
     return 'step'

@@ -1,6 +1,6 @@
 /** Permission rules, modes, descriptions and agent availability of web_fetch and web_search. */
 import { describe, expect, test } from 'bun:test'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { domainSpecifierMatches } from 'eharness/permissions'
 import { BUILTIN_AGENTS } from '../src/agents/builtin.ts'
 import {
@@ -107,7 +107,7 @@ describe('web tool permissions', () => {
   })
 
   test('describeApproval', async () => {
-    const fs = memoryFs({})
+    const fs = inMemoryFs()
     const e = make()
     const f = await describeApproval(
       { toolName: TOOL.webFetch, input: { url: 'https://docs.example.com/a', prompt: 'the API' } },

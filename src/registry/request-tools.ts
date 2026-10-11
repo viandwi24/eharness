@@ -8,6 +8,7 @@
  */
 import { type JSONSchema7, type JSONValue, jsonSchema, type Tool, tool } from 'ai'
 import { HarnessError, type HarnessWarning } from '../errors.ts'
+import { isRecord } from '../internal/util.ts'
 import { neutralizeTags } from '../messages/framing.ts'
 import { CLIENT_TOOL_TIMED_OUT, PAGE_CONTEXT_PREAMBLE } from '../messages/texts.ts'
 import type { WaitTimeoutResult } from '../messages/types.ts'
@@ -82,10 +83,6 @@ function invalid(
   extra: Record<string, unknown> = {},
 ): HarnessError {
   return new HarnessError('EH_INVALID_INPUT', message, { details: { reason, ...extra } })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 /** Keywords whose value maps names to schemas. */

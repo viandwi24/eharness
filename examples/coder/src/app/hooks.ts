@@ -23,9 +23,10 @@
  * the same answer without running the command again). Hooks are the user's own configuration;
  * project hooks only load when the project is trusted (`app/config.ts`).
  */
+
 import { spawn } from 'node:child_process'
 import type { ToolApprovalStatus } from 'ai'
-import { definePlugin, type HarnessUIMessage } from 'eharness'
+import { definePlugin, errorText, type HarnessUIMessage } from 'eharness'
 import type { CoderSettings, HookEvent } from '../contracts.ts'
 
 /** `CoderSettings['hooks']`. */
@@ -94,7 +95,7 @@ export function runHookCommand(
         stdout,
         stderr,
         timedOut,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorText(error),
       })
       return
     }

@@ -11,7 +11,7 @@ import { defineMessageKind, isKindMessage } from '../../messages/kinds.ts'
 import type { HarnessUIMessage } from '../../messages/types.ts'
 import { definePlugin } from '../../plugin/define-plugin.ts'
 import { type ScriptedPrompt, scriptedModel } from '../../testing/scripted-model.ts'
-import { collect, normalizeVolatile, spyMessages, spyState } from '../int-kit.ts'
+import { collect, normalizeVolatile, spyMessages, spyState } from '../test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -121,11 +121,14 @@ describe('scenario 23: regenerate / edit / rewind', () => {
     await session.send({ id: 'client-1', role: 'user', parts: [{ type: 'text', text: 'Q1' }] })
       .result
     await session.send('Q2').result
-    const run = session.edit('client-1', {
-      id: 'client-1',
-      role: 'user',
-      parts: [{ type: 'text', text: 'Q1 edited' }],
-    } as UIMessage)
+    const run = session.edit({
+      messageId: 'client-1',
+      input: {
+        id: 'client-1',
+        role: 'user',
+        parts: [{ type: 'text', text: 'Q1 edited' }],
+      } as UIMessage,
+    })
     expect(run.kind).toBe('edit')
     const result = await run.result
     expect(result.stop).toBe('complete')
@@ -159,8 +162,10 @@ describe('scenario 23: regenerate / edit / rewind', () => {
       result: Promise<{ error?: { details?: { reason?: unknown } } }>
     }) => (await run.result).error?.details?.reason
     expect(await reason(session.regenerate({ messageId: 'nope' }))).toBe('not-found')
-    expect(await reason(session.edit(first.messageId as string, 'x'))).toBe('not-found')
-    await session.edit(q2.id, 'Q2 edited').result
+    expect(await reason(session.edit({ messageId: first.messageId as string, input: 'x' }))).toBe(
+      'not-found',
+    )
+    await session.edit({ messageId: q2.id, input: 'Q2 edited' }).result
     expect(texts(model.prompts[2])).toEqual(['user: Q1', 'assistant: A1', 'user: Q2 edited'])
     // the old answer is hidden now: regenerating it is not-found
     expect(await reason(session.regenerate({ messageId: second.messageId as string }))).toBe(
@@ -192,7 +197,7 @@ describe('scenario 23: regenerate / edit / rewind', () => {
     expect(marker).not.toBeNull()
     expect(summarizerPromptText(summarizer.calls[0] as never)).not.toContain('HIDDEN')
     const q3 = third.messages[0] as HarnessUIMessage
-    const edit = await session.edit(q3.id, 'Q3 edited').result
+    const edit = await session.edit({ messageId: q3.id, input: 'Q3 edited' }).result
     expect(edit.error?.details?.reason).toBe('beyond-compaction')
     // regenerating A3 rewinds to Q3, which is inside the view
     const regen = await session.regenerate().result
@@ -740,7 +745,8 @@ describe('more interaction edges', () => {
       let session = env.agent.session('s1')
       await session.send('Q1').result
       const second = await session.send('Q2').result
-      await session.edit((second.messages[0] as HarnessUIMessage).id, 'Q2b').result
+      await session.edit({ messageId: (second.messages[0] as HarnessUIMessage).id, input: 'Q2b' })
+        .result
       if (reload) {
         await env.agent.close()
         session = setup({ model }, { messages, state }).agent.session('s1')

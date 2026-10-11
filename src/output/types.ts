@@ -1,7 +1,7 @@
 /**
  * Structured final output of a turn (0.4.0): `SendOptions.output`.
  *
- * @see docs/specs/05-session-and-storage.md#33-structured-output-normative-040
+ * @see docs/specs/05-session-and-storage.md#33-structured-output
  */
 import type { FlexibleSchema } from 'ai'
 
@@ -20,7 +20,7 @@ import type { FlexibleSchema } from 'ai'
  * })
  * const { stop, output } = await run.result // output typed from the schema, or undefined
  * ```
- * @see docs/specs/05-session-and-storage.md#33-structured-output-normative-040
+ * @see docs/specs/05-session-and-storage.md#33-structured-output
  */
 export interface OutputSpec<S extends FlexibleSchema = FlexibleSchema> {
   /** Schema of the final answer. */

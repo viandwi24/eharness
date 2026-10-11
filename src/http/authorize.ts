@@ -22,22 +22,33 @@ export interface AuthorizeCall {
 export type HttpDeny = Response | { deny: 401 | 403 | 404; code?: string; message?: string }
 
 /**
- * Authenticates and authorizes one request. Return the principal (any value, handed to the other
+ * Authenticates and authorizes one request. Return the principal (an object, handed to the other
  * hooks) or a denial. A denial is a return value: do not throw for it. A principal object must not
  * have a numeric `deny` key.
+ *
+ * Fail closed: any result that is neither a `Response`, a `{ deny }` nor an object (`undefined`,
+ * `null`, a string, an array) is answered with 401. `authorize: ({ request }) => userOf(request)`
+ * therefore denies anonymous callers instead of letting them through; add `?? { deny: 401 }` to
+ * choose the message yourself.
  */
 export type Authorize<P> = (call: AuthorizeCall) => MaybePromise<P | HttpDeny>
 
 /**
- * Allows everything with no principal. For local development and tests only: it puts every
- * session, answer and event of the process in front of anyone who can reach the server.
+ * Allows everything with an empty principal (`{}`). For local development and tests only: it puts
+ * every session, answer and event of the process in front of anyone who can reach the server.
  */
-export const openAccess: Authorize<undefined> = () => undefined
+export const openAccess: Authorize<object> = () => ({})
 
-/** The denial a result stands for, as a `Response`; `undefined` when the result is a principal. */
+/**
+ * The denial a result stands for, as a `Response`; `undefined` when the result is a principal.
+ * A result that is not an object (`undefined`, `null`, a primitive, an array) is a 401: the hook
+ * forgot to return a principal, and the route must not open (fail closed).
+ */
 export function denialOf(result: unknown): Response | undefined {
   if (result instanceof Response) return result
-  if (typeof result !== 'object' || result === null) return undefined
+  if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+    return httpError('EH_HTTP_UNAUTHORIZED', 'Authentication is required.', undefined, 401)
+  }
   const deny = (result as { deny?: unknown }).deny
   if (deny !== 401 && deny !== 403 && deny !== 404) return undefined
   const { code, message } = result as { code?: unknown; message?: unknown }

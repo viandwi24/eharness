@@ -2,6 +2,8 @@
 
 Status: **Accepted** · Date: 2026-10-06 · Builds on: [ADR-0017](0017-tool-risk-and-approval-decisions.md), [ADR-0025](0025-external-risk-and-mcp-annotations.md)
 
+> **Amendment (0.8, [ADR-0060](0060-shared-llm-judge-engine.md)):** the judge machinery (model call, transcript renderer, verdict cache, circuit breaker, retries, truncation rule) moved into one shared core engine used by this guard (role `tighten`) and by the permissions auto-mode classifier (role `decide`). The plugin, its tighten-only rule and the restricted transcript stay as decided here; `canonicalJson`/`verdictKey` and `GUARD_PROMPT`/`GUARD_TRUNCATED` are no longer part of `eharness/guard`.
+
 ## Context
 
 Deterministic approval rules (`approval.policy`, `approval.risk`, grants) decide by tool and risk;

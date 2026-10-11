@@ -2,10 +2,10 @@
  * The chat request body whitelist (spec 26 §5.2): everything the server reads of a `useChat`
  * request, and nothing else. Errors are values.
  *
- * @see docs/specs/26-http.md#52-body-whitelist
+ * @see docs/specs/26-http.md#52-body-whitelist-internal-sanitizechatbody
  */
 import type { UIMessage } from 'ai'
-import type { ChatRequestBody } from '../index.ts'
+import { type ChatRequestBody, isRecord } from '../index.ts'
 
 /** Limits and switches of {@link sanitizeChatBody}. */
 export interface SanitizeCaps {
@@ -15,6 +15,8 @@ export interface SanitizeCaps {
   maxParts?: number
   /** UTF-8 bytes of one text part. Default 64 KiB. */
   maxTextBytes?: number
+  /** Non-`data:` file part URLs: `true` accepts http(s), a predicate decides. Default: `data:` only. */
+  allowFileUrls?: boolean | ((url: URL) => boolean)
   /** Read `clientTools` from the body. Default `false`. */
   clientTools?: boolean
   /** Read `pageContext` from the body. Default `false`. */
@@ -45,9 +47,6 @@ export type ChatKind = 'send' | 'respond' | 'regenerate' | 'edit'
 const DEFAULT_MAX_PARTS = 32
 const DEFAULT_MAX_TEXT_BYTES = 64 * 1024
 const encoder = new TextEncoder()
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 const bad = (message: string, details?: Record<string, unknown>): SanitizeResult => ({
   ok: false,
@@ -96,6 +95,19 @@ function decisionPart(raw: unknown): Record<string, unknown> | undefined {
     return { ...base, state: 'output-error', toolCallId: raw.toolCallId, errorText: raw.errorText }
   }
   return undefined
+}
+
+function fileUrlAllowed(raw: string, allow: SanitizeCaps['allowFileUrls']): boolean {
+  if (/^data:/i.test(raw)) return true
+  if (allow === undefined || allow === false) return false
+  let url: URL
+  try {
+    url = new URL(raw)
+  } catch {
+    return false
+  }
+  if (typeof allow === 'function') return allow(url) === true
+  return url.protocol === 'http:' || url.protocol === 'https:'
 }
 
 /**
@@ -180,6 +192,9 @@ export function sanitizeChatBody(raw: unknown, caps: SanitizeCaps = {}): Sanitiz
     } else if (part.type === 'file') {
       if (typeof part.url !== 'string' || typeof part.mediaType !== 'string') {
         return invalid('A file part needs url and mediaType.', { reason: 'part' })
+      }
+      if (!fileUrlAllowed(part.url, caps.allowFileUrls)) {
+        return invalid('Only data: URLs are accepted for file parts.', { reason: 'file-url' })
       }
       out.push({
         type: 'file',

@@ -235,7 +235,7 @@ const NON_MCP = new Set([
 
 /**
  * Split an MCP tool name into server and tool: `mcp__server__tool`, or `server_tool` for any tool
- * outside the built-in set (the default tool prefix of `mcpServer()` is `<name>_`).
+ * outside the built-in set (the default tool prefix of `mcpServerSource()` is `<name>_`).
  */
 export function splitMcpName(name: string): { server: string; tool: string } | undefined {
   const long = /^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/.exec(name)

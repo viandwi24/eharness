@@ -1,6 +1,8 @@
 /** Slash commands of the interactive UI: registry, parsing and the commands themselves. */
+
 import { mkdir, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { errorText } from 'eharness'
 import type { Todo } from 'eharness/todos'
 import type {
   CoderController,
@@ -137,7 +139,7 @@ async function runPermissions(ctx: SlashContext): Promise<void> {
       ctx.print(PERMISSIONS_USAGE, 'error')
     }
   } catch (error) {
-    ctx.print(`Permissions: ${error instanceof Error ? error.message : error}`, 'error')
+    ctx.print(`Permissions: ${errorText(error)}`, 'error')
   }
 }
 
@@ -204,7 +206,7 @@ export const slashCommands: SlashCommand[] = [
         ctx.print(compactedLine(result))
       } catch (error) {
         ctx.activity?.(null)
-        ctx.print(`Compaction failed: ${error instanceof Error ? error.message : error}`, 'error')
+        ctx.print(`Compaction failed: ${errorText(error)}`, 'error')
       }
       ctx.refreshStats()
     },
@@ -287,7 +289,7 @@ export const slashCommands: SlashCommand[] = [
         ctx.print(`Resumed session ${id}.`)
         ctx.refreshStats()
       } catch (error) {
-        ctx.print(`Cannot resume ${id}: ${error instanceof Error ? error.message : error}`, 'error')
+        ctx.print(`Cannot resume ${id}: ${errorText(error)}`, 'error')
       }
     },
   },
@@ -576,7 +578,7 @@ export async function runSlash(text: string, ctx: Omit<SlashContext, 'args'>): P
   try {
     await command.run({ ...ctx, args: parsed.args })
   } catch (error) {
-    ctx.print(`/${command.name} failed: ${error instanceof Error ? error.message : error}`, 'error')
+    ctx.print(`/${command.name} failed: ${errorText(error)}`, 'error')
   }
   return true
 }

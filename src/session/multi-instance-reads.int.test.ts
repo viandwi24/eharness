@@ -7,7 +7,7 @@ import { expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
@@ -49,7 +49,7 @@ test('a direct send() does not overtake older queued inbox items of the session'
   const storage = {
     messages: defaultMemoryMessages(),
     state: defaultMemoryState(),
-    inbox: memoryInbox(),
+    inbox: inMemoryInbox(),
   }
   const model = scriptedModel([{ text: 'r1' }, { text: 'r2' }])
   const base = { contextWindow: 100_000, storage, logger: silent, onWarning() {}, model }

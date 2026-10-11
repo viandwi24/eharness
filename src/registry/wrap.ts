@@ -18,10 +18,14 @@ import type {
 } from 'ai'
 import type { ApprovalConfig, ToolErrorTextFn } from '../agent/types.ts'
 import { HarnessToolError, type HarnessWarning } from '../errors.ts'
+import { hookFailed, runHook } from '../internal/hook-run.ts'
+import type { Observer } from '../internal/observe.ts'
+import { errorText } from '../internal/util.ts'
 import type { ApprovalDecision, HarnessContext } from '../plugin/types.ts'
 import type { HookRunner } from '../session/hooks.ts'
 import { isLimitedOutput, limitToolOutput, type OutputLimitDeps } from './output-limits.ts'
 import { toolTraits } from './risk.ts'
+import { withToolExecute, withToolFields } from './tool-copy.ts'
 import { buildTranscript, type GuardTranscriptEntry } from './transcript.ts'
 
 /** The text of a thrown tool error when `toolErrorText` throws or returns a non-string. */
@@ -38,23 +42,24 @@ export interface ToolWrapDeps {
   limits?: Omit<OutputLimitDeps, 'warn'>
   /** `config.toolErrorText`: the text a thrown error becomes (spec 10 §1.1). */
   toolErrorText?: ToolErrorTextFn
+  /** `config.hooks.timeoutMs` (default 30 000): a hook that does not settle counts as throwing. */
+  hookTimeoutMs?: number
+  /** Turn signal: aborting the turn cuts a running hook short. */
+  signal?: AbortSignal
+  /** `config.observe`: every tool execution is a `tool.execute` span (spec 10 §8). */
+  observe?: Observer | undefined
+  sessionId?: string | undefined
+  turnId?: string | undefined
 }
 
-/** Report a failing hook (`W_HOOK_FAILED`). */
-export function hookFailed(
-  deps: Pick<ToolWrapDeps, 'warn'>,
+/** Run one hook bounded by the hook timeout and the turn signal (see {@link runHook}). */
+export function callHook<T>(
+  deps: Pick<ToolWrapDeps, 'hookTimeoutMs' | 'signal'>,
   hook: string,
   owner: string,
-  error: unknown,
-): void {
-  deps.warn(
-    {
-      code: 'W_HOOK_FAILED',
-      message: `Hook '${hook}' of ${owner === 'app' ? 'the app' : `plugin '${owner}'`} threw and was skipped: ${error instanceof Error ? error.message : String(error)}`,
-      details: { hook, owner },
-    },
-    `${owner}:${hook}`,
-  )
+  call: () => T | Promise<T>,
+): Promise<T> {
+  return runHook(call, { hook, owner, timeoutMs: deps.hookTimeoutMs, signal: deps.signal })
 }
 
 function isAsyncIterable(value: unknown): value is AsyncIterable<unknown> {
@@ -86,7 +91,7 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
     const convert = limitAware(tool)
     const isClient = typeof tool.execute !== 'function' && tool.type !== 'provider'
     return isClient && deps.limits !== undefined && convert !== undefined
-      ? ({ ...tool, toModelOutput: convert } as Tool)
+      ? withToolFields(tool, { toModelOutput: convert })
       : tool
   }
   const execute = tool.execute as (
@@ -114,6 +119,49 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
 
   const wrapped = (input: unknown, options: ToolExecutionOptions<unknown>): unknown => {
     deps.status(name)
+    if (deps.observe === undefined) return run(input, options)
+    const observe = deps.observe
+    const started = performance.now()
+    const scope = { sessionId: deps.sessionId, turnId: deps.turnId, tool: name }
+    const done = (ok: boolean): void =>
+      observe({
+        type: 'span',
+        name: 'tool.execute',
+        durationMs: performance.now() - started,
+        ok,
+        ...scope,
+      })
+    let out: unknown
+    try {
+      out = run(input, options)
+    } catch (error) {
+      done(false)
+      throw error
+    }
+    if (isAsyncIterable(out)) {
+      const source = out
+      return (async function* () {
+        try {
+          yield* source
+        } catch (error) {
+          done(false)
+          throw error
+        }
+        done(true)
+      })()
+    }
+    return Promise.resolve(out).then(
+      (value) => {
+        done(true)
+        return value
+      },
+      (error: unknown) => {
+        done(false)
+        throw error
+      },
+    )
+  }
+  const run = (input: unknown, options: ToolExecutionOptions<unknown>): unknown => {
     let result: unknown
     try {
       result = execute(input, options)
@@ -148,8 +196,8 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
     )
   }
   const convert = limitAware(tool)
-  if (limits === undefined || convert === undefined) return { ...tool, execute: wrapped } as Tool
-  return { ...tool, execute: wrapped, toModelOutput: convert } as Tool
+  if (limits === undefined || convert === undefined) return withToolExecute(tool, wrapped)
+  return withToolFields(withToolExecute(tool, wrapped), { toModelOutput: convert })
 }
 
 /**
@@ -181,12 +229,14 @@ export async function finishToolOutput(
   let current = output
   for (const hook of deps.hooks.list('tool.after')) {
     try {
-      const result = await hook.fn(deps.contextOf(hook.owner), {
-        toolName: name,
-        toolCallId,
-        input,
-        output: current,
-      })
+      const result = await callHook(deps, 'tool.after', hook.owner, () =>
+        hook.fn(deps.contextOf(hook.owner), {
+          toolName: name,
+          toolCallId,
+          input,
+          output: current,
+        }),
+      )
       if (result !== undefined && result !== null && 'output' in result) current = result.output
     } catch (error) {
       hookFailed(deps, 'tool.after', hook.owner, error)
@@ -216,7 +266,7 @@ function cloneableOutput(name: string, output: unknown): unknown {
     const json = JSON.stringify(output)
     return json === undefined ? undefined : JSON.parse(json)
   } catch (error) {
-    return `Error: the output of tool '${name}' could not be serialized (${error instanceof Error ? error.message : String(error)}). The tool did run.`
+    return `Error: the output of tool '${name}' could not be serialized (${errorText(error)}). The tool did run.`
   }
 }
 
@@ -232,7 +282,9 @@ export function buildRefinement(
       let current = input
       for (const hook of deps.hooks.list('tool.before')) {
         try {
-          const result = await hook.fn(deps.contextOf(hook.owner), { toolName, input: current })
+          const result = await callHook(deps, 'tool.before', hook.owner, () =>
+            hook.fn(deps.contextOf(hook.owner), { toolName, input: current }),
+          )
           if (result !== undefined && result !== null && 'input' in result) current = result.input
         } catch (error) {
           hookFailed(deps, 'tool.before', hook.owner, error)
@@ -277,16 +329,18 @@ export const GRANT_SCOPE_SEPARATOR = '\u0000'
  * says the call cannot be remembered (or throws: fail closed). First non-void hook result wins.
  */
 export async function grantKeyOf(
-  deps: Pick<ToolWrapDeps, 'hooks' | 'contextOf' | 'warn'>,
+  deps: Pick<ToolWrapDeps, 'hooks' | 'contextOf' | 'warn' | 'hookTimeoutMs' | 'signal'>,
   toolName: string,
   input: unknown,
 ): Promise<string | null> {
   for (const hook of deps.hooks.list('tool.grantScope')) {
     try {
-      const scope = await hook.fn(deps.contextOf(hook.owner), {
-        toolName,
-        input: structuredClone(input),
-      })
+      const scope = await callHook(deps, 'tool.grantScope', hook.owner, () =>
+        hook.fn(deps.contextOf(hook.owner), {
+          toolName,
+          input: structuredClone(input),
+        }),
+      )
       if (scope === null) return null
       if (typeof scope === 'string') {
         return scope === '' ? null : `${toolName}${GRANT_SCOPE_SEPARATOR}${scope}`
@@ -329,7 +383,7 @@ export function buildApproval(
   const reported = new Set<string>()
   const failed = (error: unknown): Normalized => ({
     type: 'denied',
-    reason: error instanceof Error ? error.message : String(error),
+    reason: errorText(error),
   })
   return async (options) => {
     const { toolCall } = options
@@ -377,16 +431,18 @@ export function buildApproval(
     }
     for (const hook of hooks) {
       try {
-        const status = await hook.fn(deps.contextOf(hook.owner), {
-          toolName: toolCall.toolName,
-          toolCallId: toolCall.toolCallId,
-          input: toolCall.input,
-          ...(toolMetadata === undefined ? {} : { toolMetadata }),
-          ...(risk === undefined ? {} : { risk }),
-          ...(idempotent === undefined ? {} : { idempotent }),
-          ...(hints === undefined ? {} : { hints: structuredClone(hints) }),
-          transcript,
-        })
+        const status = await callHook(deps, 'tool.approve', hook.owner, () =>
+          hook.fn(deps.contextOf(hook.owner), {
+            toolName: toolCall.toolName,
+            toolCallId: toolCall.toolCallId,
+            input: toolCall.input,
+            ...(toolMetadata === undefined ? {} : { toolMetadata }),
+            ...(risk === undefined ? {} : { risk }),
+            ...(idempotent === undefined ? {} : { idempotent }),
+            ...(hints === undefined ? {} : { hints: structuredClone(hints) }),
+            transcript,
+          }),
+        )
         statuses.push({ status: normalizeStatus(status ?? undefined), by: `plugin:${hook.owner}` })
       } catch (error) {
         statuses.push({ status: failed(error), by: `plugin:${hook.owner}` })
@@ -454,12 +510,14 @@ export function buildApproval(
 
 /** Run the `approval.decided` hooks (failures are `W_HOOK_FAILED`). */
 export async function reportDecision(
-  deps: Pick<ToolWrapDeps, 'hooks' | 'contextOf' | 'warn'>,
+  deps: Pick<ToolWrapDeps, 'hooks' | 'contextOf' | 'warn' | 'hookTimeoutMs' | 'signal'>,
   decision: ApprovalDecision,
 ): Promise<void> {
   for (const hook of deps.hooks.list('approval.decided')) {
     try {
-      await hook.fn(deps.contextOf(hook.owner), structuredClone(decision))
+      await callHook(deps, 'approval.decided', hook.owner, () =>
+        hook.fn(deps.contextOf(hook.owner), structuredClone(decision)),
+      )
     } catch (error) {
       hookFailed(deps, 'approval.decided', hook.owner, error)
     }

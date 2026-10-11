@@ -15,7 +15,7 @@ import type {
   CompactionBeforeEvent,
   CompactionBeforePatch,
 } from '../plugin/types.ts'
-import { collect, normalizeVolatile, spyMessages } from '../session/int-kit.ts'
+import { collect, normalizeVolatile, spyMessages } from '../session/test-kit.ts'
 import {
   type ScriptedCallOptions,
   type ScriptedStep,

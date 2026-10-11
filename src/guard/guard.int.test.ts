@@ -1,5 +1,5 @@
 /**
- * `approvalGuard()` (spec 15) with a scripted judge: deny / ask / allow, tighten-only, restricted
+ * `guard()` (spec 15) with a scripted judge: deny / ask / allow, tighten-only, restricted
  * view, fast path, cache (incl. a cold reload and respond() re-validation), circuit breaker,
  * fail closed, usage charged to the turn and the budget ledger.
  */
@@ -14,9 +14,9 @@ import {
   type HarnessAgentConfig,
   type HarnessWarning,
 } from '../index.ts'
-import { memoryBudgetLedger, memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryBudgetLedger, inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { type ScriptedModel, type ScriptedStep, scriptedModel } from '../testing/scripted-model.ts'
-import { type ApprovalGuardOptions, approvalGuard } from './index.ts'
+import { type GuardOptions, guard } from './index.ts'
 import { GUARD_INSTRUCTIONS } from './texts.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
@@ -34,7 +34,7 @@ const judgeText = (judge: ScriptedModel, index: number): string =>
 function setup(options: {
   script: ScriptedStep[]
   judge: ScriptedModel
-  guard?: Partial<ApprovalGuardOptions>
+  guard?: Partial<GuardOptions>
   config?: Partial<HarnessAgentConfig>
   storage?: NonNullable<HarnessAgentConfig['storage']>
 }) {
@@ -50,7 +50,7 @@ function setup(options: {
     model,
     contextWindow: 100_000,
     instructions: 'SYSTEM-SECRET: you are a mail assistant.',
-    storage: options.storage ?? { messages: memoryMessages(), state: memoryState() },
+    storage: options.storage ?? { messages: inMemoryMessages(), state: inMemoryState() },
     logger: silent,
     onWarning: (w) => warnings.push(w),
     approval: { risk: { read: 'approved', external: 'approved' } },
@@ -74,7 +74,7 @@ function setup(options: {
     ...options.config,
     plugins: [
       audit,
-      approvalGuard({ model: options.judge, ...options.guard }),
+      guard({ model: options.judge, ...options.guard }),
       ...(options.config?.plugins ?? []),
     ],
   })
@@ -87,8 +87,25 @@ const send = (to: string, toolCallId?: string): ScriptedStep => ({
   ],
 })
 
-describe('approvalGuard', () => {
+describe('guard', () => {
+  test('an input the judge cannot see in full is never judged: a person decides (P5-8)', async () => {
+    const judge = scriptedModel([verdict('allow')])
+    const { agent, sent } = setup({
+      judge,
+      guard: { maxCallChars: 300 },
+      script: [send(`${'a'.repeat(1000)}@evil.com`), { text: 'done' }],
+    })
+    const result = await agent.session('s').send('mail someone').result
+    expect(judge.calls).toHaveLength(0)
+    expect(sent).toEqual([])
+    expect(result.stop).not.toBe('error')
+    await agent.close()
+  })
+
   test('a reused toolCallId with a different call is judged again', async () => {
+    ;(globalThis as { allowInvariantViolation?: (p: RegExp) => void }).allowInvariantViolation?.(
+      /I3/,
+    ) // the reuse is the point of this test
     const judge = scriptedModel([verdict('allow'), verdict('deny', 'not this recipient.')])
     const { agent, sent } = setup({
       judge,
@@ -183,12 +200,16 @@ describe('approvalGuard', () => {
   })
 
   test('the verdict cache survives a cold reload (same session, new agent)', async () => {
-    const storage = { messages: memoryMessages(), state: memoryState() }
+    const storage = { messages: inMemoryMessages(), state: inMemoryState() }
     const judge = scriptedModel([verdict('allow')])
     const first = setup({ judge, storage, script: [send('team@acme.com'), { text: 'Sent.' }] })
     expect((await first.agent.session('s').send('send it').result).stop).toBe('complete')
     await first.agent.close()
-    const second = setup({ judge, storage, script: [send('team@acme.com'), { text: 'Again.' }] })
+    const second = setup({
+      judge,
+      storage,
+      script: [send('team@acme.com', 'again-1'), { text: 'Again.' }],
+    })
     const result = await second.agent.session('s').send('send it again').result
     expect(result.stop).toBe('complete')
     expect(second.sent).toEqual(['team@acme.com'])
@@ -287,7 +308,7 @@ describe('approvalGuard', () => {
   })
 
   test('judge usage is charged to the turn and recorded in the budget ledger', async () => {
-    const inner = memoryBudgetLedger()
+    const inner = inMemoryBudgetLedger()
     const records: Array<{ amountUsd: number; key: string }> = []
     const ledger: BudgetLedger = {
       reserve: (r) => inner.reserve(r),
@@ -354,8 +375,8 @@ describe('approvalGuard', () => {
 
   test('invalid options throw EH_CONFIG_INVALID', () => {
     const judge = scriptedModel([])
-    expect(() => approvalGuard({ model: judge, timeoutMs: 0 })).toThrow(/timeoutMs/)
-    expect(() => approvalGuard({ model: judge, policy: ' ' })).toThrow(/policy/)
-    expect(() => approvalGuard({} as ApprovalGuardOptions)).toThrow(/model/)
+    expect(() => guard({ model: judge, timeoutMs: 0 })).toThrow(/timeoutMs/)
+    expect(() => guard({ model: judge, policy: ' ' })).toThrow(/policy/)
+    expect(() => guard({} as GuardOptions)).toThrow(/model/)
   })
 })

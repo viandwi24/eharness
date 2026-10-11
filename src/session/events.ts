@@ -4,9 +4,13 @@
  * @see docs/specs/04-streaming.md#6-turn-buffer-attach-and-session-events
  */
 import type { SessionEvent } from '../agent/session-types.ts'
+import { HarnessError } from '../errors.ts'
 import type { EventSink } from './runtime.ts'
 
-/** Events queued per reader; a reader that falls further behind is closed (its stream ends). */
+/**
+ * Events queued per reader; a reader that falls further behind is errored with
+ * `EH_EVENTS_OVERFLOW` (never closed as a normal end: it would look like "no more events").
+ */
 const EVENT_QUEUE_LIMIT = 1_000
 
 /** Event hub with any number of readers. */
@@ -17,20 +21,39 @@ export interface EventHub extends EventSink {
   close(): void
 }
 
+/** Options of {@link createEventHub}. */
+export interface EventHubOptions {
+  /** Called once for every reader that was dropped because it fell too far behind. */
+  onOverflow?(info: { limit: number; readers: number }): void
+}
+
 /** Create an event hub. */
-export function createEventHub(): EventHub {
+export function createEventHub(options: EventHubOptions = {}): EventHub {
   const controllers = new Set<ReadableStreamDefaultController<SessionEvent>>()
   return {
     emit(event) {
+      if (controllers.size === 0) return
+      // one copy per emit: decoupled from the runtime's own object; readers share it read-only
+      const copy = structuredClone(event)
       for (const controller of controllers) {
         try {
-          // an abandoned or too slow reader is closed instead of growing without bound
+          // an abandoned or too slow reader is errored instead of growing without bound; the
+          // error tells it events were lost (spec 04 §6.3)
           if (controller.desiredSize !== null && controller.desiredSize <= 0) {
             controllers.delete(controller)
-            controller.close()
+            controller.error(
+              new HarnessError(
+                'EH_EVENTS_OVERFLOW',
+                `A session events reader fell more than ${EVENT_QUEUE_LIMIT} events behind and was dropped; subscribe again and reload the state.`,
+                { details: { limit: EVENT_QUEUE_LIMIT } },
+              ),
+            )
+            try {
+              options.onOverflow?.({ limit: EVENT_QUEUE_LIMIT, readers: controllers.size })
+            } catch {}
             continue
           }
-          controller.enqueue(structuredClone(event))
+          controller.enqueue(copy)
         } catch {
           controllers.delete(controller)
         }

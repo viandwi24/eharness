@@ -10,8 +10,8 @@ import type { HarnessContext } from '../plugin/types.ts'
 import { handleChatRequest } from '../stream/chat-request.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
 import { prng, sleep } from '../testing/test-utils.ts'
-import { collect, spyMessages } from './int-kit.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
+import { collect, spyMessages } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -201,7 +201,7 @@ describe('item 3: the stream ends only after the turn finalized', () => {
     const result = await run.result
     expect(result.stop).toBe('error')
     expect(result.error?.code).toBe('EH_SESSION_BUSY')
-    const response = run.toResponse()
+    const response = run.toStreamResponse()
     expect(response.status).toBe(409)
     expect(await response.json()).toEqual({
       error: { code: 'EH_SESSION_BUSY', message: expect.any(String) },
@@ -383,7 +383,7 @@ describe('item 5: messages() paging skips hidden messages', () => {
     await session.send('Q2').result
     const stored = (await messages.load({ sessionId: 's1' })) as Array<{ id: string }>
     const q2 = stored[2]?.id as string
-    const edited = await session.edit(q2, 'Q2b').result
+    const edited = await session.edit({ messageId: q2, input: 'Q2b' }).result
     const rewindId = edited.messages[0]?.id as string
     // ids: Q1 A1 Q2 A2 R Q2b A2b — the two messages right before R are hidden
     const hot = await session.messages({ beforeId: rewindId, limit: 2 })
@@ -455,7 +455,7 @@ describe('item 5: messages() paging progress guard', () => {
     await session.send('Q1').result
     await session.send('Q2').result
     const stored = (await inner.load({ sessionId: 's1' })) as Array<{ id: string }>
-    await session.edit(stored[2]?.id as string, 'Q2b').result
+    await session.edit({ messageId: stored[2]?.id as string, input: 'Q2b' }).result
     loads = 0
     // the newest page is mostly hidden: the loop asks for older pages, which never come
     const page = await session.messages({ limit: 6 })

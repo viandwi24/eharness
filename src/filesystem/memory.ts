@@ -3,8 +3,10 @@
  *
  * Imports core only through `src/index.ts` (ADR-0008); pure (no Node built-ins).
  *
- * @see docs/specs/08-filesystem-plugin.md#6-memoryfs
+ * @see docs/specs/08-filesystem-plugin.md#6-inmemoryfs
  */
+
+import { HarnessError } from '../index.ts'
 import { detectMediaType, looksBinary } from './media.ts'
 import { normalizePath } from './paths.ts'
 import { GREP_SCAN_CHARS, splitLines, statelessPattern } from './text.ts'
@@ -39,8 +41,10 @@ interface HistoryEntry {
   author?: string
 }
 
-/** Options of {@link memoryFs}. */
-export interface MemoryFsOptions {
+/** Options of {@link inMemoryFs}. */
+export interface InMemoryFsOptions {
+  /** Initial files by path (`'src/a.md'` → `'/src/a.md'`); a `Uint8Array` that is not UTF-8 text is a binary file. */
+  seed?: Record<string, string | Uint8Array>
   /** How many states per path `versions` keeps (oldest dropped first). Default 100. */
   maxVersions?: number
 }
@@ -63,18 +67,16 @@ const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
  *
  * @example
  * ```ts
- * // memoryFs comes from the eharness/filesystem/memory subpath
+ * // inMemoryFs comes from the eharness/filesystem/memory subpath
  *
- * const fs = memoryFs({ '/README.md': '# Hello\n', '/skills/pine/SKILL.md': skillText })
+ * const fs = inMemoryFs({ seed: { '/README.md': '# Hello\n', '/skills/pine/SKILL.md': skillText } })
  * defineHarnessAgent({ model, plugins: [filesystem({ fs })] })
  * ```
  * @throws {TypeError} for an invalid seed path or a seed value that is neither a string nor a `Uint8Array`.
- * @see docs/specs/08-filesystem-plugin.md#6-memoryfs
+ * @see docs/specs/08-filesystem-plugin.md#6-inmemoryfs
  */
-export function memoryFs(
-  seed: Record<string, string | Uint8Array> = {},
-  options: MemoryFsOptions = {},
-): FileSystem {
+export function inMemoryFs(options: InMemoryFsOptions = {}): FileSystem {
+  const seed = options.seed ?? {}
   const maxVersions = Math.max(1, options.maxVersions ?? 100)
   const files = new Map<string, StoredFile>()
   /** Kept states per path, oldest first; survives a delete, follows a move. */
@@ -93,11 +95,15 @@ export function memoryFs(
   for (const [key, content] of Object.entries(seed)) {
     const normalized = normalizePath(key)
     if (!normalized.ok) {
-      throw new TypeError(`memoryFs: invalid seed path ${JSON.stringify(key)}: ${normalized.error}`)
+      throw new HarnessError(
+        'EH_CONFIG_INVALID',
+        `inMemoryFs: invalid seed path ${JSON.stringify(key)}: ${normalized.error}`,
+      )
     }
     if (typeof content !== 'string' && !(content instanceof Uint8Array)) {
-      throw new TypeError(
-        `memoryFs: seed content of ${normalized.path} must be a string or a Uint8Array`,
+      throw new HarnessError(
+        'EH_CONFIG_INVALID',
+        `inMemoryFs: seed content of ${normalized.path} must be a string or a Uint8Array`,
       )
     }
     initial.push([normalized.path, content])
@@ -145,6 +151,7 @@ export function memoryFs(
       await ready
       const file = files.get(path)
       if (file === undefined) return null
+      // plain-error: adapter I/O failure mapped to `ERROR: …` by the filesystem tools (spec 08)
       if (file.bytes !== undefined) throw new Error(`binary file: ${path} (use readBytes)`)
       return { ...meta(path, file), content: file.content }
     },
@@ -160,7 +167,10 @@ export function memoryFs(
 
     async writeBytes(path, bytes, opts = {}): Promise<WriteResult> {
       if (!(bytes instanceof Uint8Array)) {
-        throw new TypeError('memoryFs.writeBytes: bytes must be a Uint8Array')
+        throw new HarnessError(
+          'EH_INVALID_INPUT',
+          'inMemoryFs.writeBytes: bytes must be a Uint8Array',
+        )
       }
       await ready
       const next = await stored(bytes)
@@ -189,7 +199,7 @@ export function memoryFs(
 
     async write(path, content, opts = {}): Promise<WriteResult> {
       if (typeof content !== 'string')
-        throw new TypeError('memoryFs.write: content must be a string')
+        throw new HarnessError('EH_INVALID_INPUT', 'inMemoryFs.write: content must be a string')
       await ready
       const version = await contentVersion(content)
       // compare-and-set without awaiting in between: atomic for concurrent callers

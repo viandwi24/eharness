@@ -8,8 +8,8 @@
  *  - `finishRun`: the outcome of a run and the routine's failure counter / auto-pause, atomically.
  */
 import type { Database } from 'bun:sqlite'
+import { uuidv7 } from 'eharness'
 import type { NewRoutine, RoutinePatch, RoutineStore } from '../../app/ports.ts'
-import { newId } from '../../domain/ids.ts'
 import type {
   PausedReason,
   Routine,
@@ -289,7 +289,7 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
             c.expectedNext,
           ).changes
         if (changed !== 1) return undefined
-        const id = newId(c.now)
+        const id = uuidv7()
         const inserted = sqlite
           .query(
             `INSERT OR IGNORE INTO routine_runs
@@ -329,7 +329,7 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
 
     insertManualRun(routineId, sessionId, scheduledAt, now) {
       return immediate(() => {
-        const id = newId(now)
+        const id = uuidv7()
         const inserted = sqlite
           .query(
             `INSERT OR IGNORE INTO routine_runs

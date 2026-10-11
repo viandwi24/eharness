@@ -10,7 +10,7 @@ import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import type { HarnessContext, StepEndEvent } from '../plugin/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { collect, spyMessages, spyState } from './int-kit.ts'
+import { collect, spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -612,7 +612,7 @@ describe('cost and budgets (spec 12)', () => {
   })
 
   test('the models catalog supplies the context window when contextWindow is not set', async () => {
-    const { resolveWindow } = await import('../compaction/tokens.ts')
+    const { resolveWindow } = await import('../models/tokens.ts')
     expect(resolveWindow({ models: { 'a/b': { contextWindow: 42_000 } } }, 'a/b')).toBe(42_000)
     expect(
       resolveWindow({ contextWindow: 7, models: { 'a/b': { contextWindow: 42_000 } } }, 'a/b'),

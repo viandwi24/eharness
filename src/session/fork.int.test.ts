@@ -8,7 +8,7 @@ import { createUuidV7Generator, uuidv7 } from '../messages/ids.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 
 /** Sorts after every generated id. */
@@ -16,8 +16,8 @@ const LAST_ID = 'ffffffff-ffff-7fff-bfff-ffffffffffff'
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 function setup(steps: Array<{ text: string } | { toolCalls: never }> = []) {
-  const messages = memoryMessages()
-  const state = memoryState()
+  const messages = inMemoryMessages()
+  const state = inMemoryState()
   const model = scriptedModel([
     ...(steps as never[]),
     ...Array.from({ length: 12 }, (_, i) => ({ text: `answer ${i}` })),
@@ -130,7 +130,7 @@ describe('session.fork()', () => {
   })
 
   test('copies large histories in batches', async () => {
-    const messages = memoryMessages()
+    const messages = inMemoryMessages()
     const all: HarnessUIMessage[] = []
     for (let i = 0; i < 450; i++) {
       all.push({
@@ -152,7 +152,7 @@ describe('session.fork()', () => {
     const spied = defineHarnessAgent({
       model: scriptedModel([]),
       contextWindow: 100_000,
-      storage: { messages: spy, state: memoryState() },
+      storage: { messages: spy, state: inMemoryState() },
       logger: silent,
     })
     await spied.session('big').fork({ id: 'big-fork' })
@@ -310,8 +310,8 @@ describe('session.fork()', () => {
         return 'ok'
       },
     })
-    const messages = memoryMessages()
-    const state = memoryState()
+    const messages = inMemoryMessages()
+    const state = inMemoryState()
     const make = () =>
       defineHarnessAgent({
         model: scriptedModel([{ toolCalls: [{ toolName: 'slow', input: {} }] }, { text: 'done' }]),
@@ -347,8 +347,8 @@ describe('session.fork()', () => {
   })
 
   test('forks work from another instance sharing the storage (restart)', async () => {
-    const messages = memoryMessages()
-    const state = memoryState()
+    const messages = inMemoryMessages()
+    const state = inMemoryState()
     const make = () =>
       defineHarnessAgent({
         model: scriptedModel([{ text: 'hi' }]),
@@ -369,7 +369,7 @@ describe('session.fork hook', () => {
     const agent = defineHarnessAgent({
       model: scriptedModel([{ text: 'a' }, { text: 'b' }]),
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: silent,
       onWarning: (w) => warnings.push(w.code),
       plugins: [

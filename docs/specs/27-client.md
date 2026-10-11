@@ -7,7 +7,7 @@ ADR-0059. Browser counterpart of `eharness/http` (spec 26); lifted from the team
 ```ts
 import {
   createHarnessClient, createHarnessTransport, createChatSession, createActivityFeed,
-  createAttentionList, createStore, HarnessHttpError, isHarnessHttpError, isNetworkError,
+  createAttentionList, HarnessHttpError, isHarnessHttpError, isNetworkError,
 } from 'eharness/client'
 import { createReactBindings, chatBridgeOf } from 'eharness/client/react'
 ```
@@ -34,7 +34,8 @@ import { createReactBindings, chatBridgeOf } from 'eharness/client/react'
 ```ts
 interface Store<T> { subscribe(run: (value: T) => void): () => void; get(): T }
 interface WritableStore<T> extends Store<T> { set(value: T): void; update(fn: (v: T) => T): void }
-createStore<T>(initial: T, lifecycle?: { onActive?; onIdle?; graceMs?; timers? }): WritableStore<T>
+// the module's stores are built with an internal `createStore(initial, lifecycle?: { onActive?; onIdle?; graceMs?; timers? })`;
+// the types Store, WritableStore, StoreLifecycle and StoreTimers are exported
 ```
 
 - `subscribe` calls `run` **synchronously** with the current value, then on every change; it
@@ -110,7 +111,7 @@ A `DefaultChatTransport` with these changes:
 
 ```ts
 createActivityFeed({ client, onEvent?, onResync?(reason), onBoot?(id, restarted), onError?, initialAfter?, isBusy?, backoff?, idleMs?, tickMs?, clock? }): ActivityFeed
-interface ActivityFeed extends Store<{ status: 'idle'|'connecting'|'live'|'polling'|'stopped'; lastSeq: number | null; boot: string | null }> {
+interface ActivityFeed extends Store<{ status: 'idle'|'connecting'|'live'|'polling'|'stopped'|'unauthorized'; lastSeq: number | null; boot: string | null }> {
   start(); stop(); check(): Promise<void>
   subscribeEvents(fn): () => void; subscribeResync(fn): () => void
 }
@@ -118,7 +119,8 @@ type ResyncReason = 'connect' | 'resync-event' | 'boot-changed' | 'poll-gap'
 ```
 
 - **Transport**: one `fetch` reader of `GET /activity/stream` (not `EventSource`: it cannot send
-  headers). Frames are parsed by `createSseParser` (CRLF, split chunks, multi-line data).
+  headers). Frames are parsed by an internal SSE parser (CRLF, split chunks, multi-line data; a line over 1 MiB and an
+  event over 4 MiB of data are dropped).
   Reconnects send `?after=<lastSeq>` and `Last-Event-ID`.
 - **Dedupe**: a record with `seq <= lastSeq` is dropped (replay overlap). A `resync` frame sets
   `lastSeq` to the server's mark (also when it is lower: the log was reset) and reports
@@ -136,12 +138,17 @@ type ResyncReason = 'connect' | 'resync-event' | 'boot-changed' | 'poll-gap'
 - **Polling fallback**: while the stream is down the feed polls `GET /activity?after=&limit=200`
   between backoff pauses (default 250 ms growing to 5 s, jittered down by at most half). The first
   poll without a cursor pages to the head **without delivering** (history is not news).
+- **Failures** (0.8.0): a stream that ends without a single frame (not even `boot`), or that
+  delivers an `event: error` frame, is a failure like a refused connection: the feed polls and the
+  pause grows with the backoff; only a close after real data resets it. A `401` / `403` on the
+  stream or on a poll is **terminal**: status `unauthorized`, no more requests (`start()` again
+  after the credentials changed).
 - **Lifecycle**: starts with the first subscriber, stops one second after the last, or use
   `start()` / `stop()` (an explicit `start()` is not stopped by the subscribers leaving).
   A listener that throws is isolated (`onError`); it never drops the connection.
 - `clock` (`now`, `random`, timers, `sleep`; the `Clock` type is exported, pass a `Partial<Clock>`) is injectable for tests.
 
-Pure helpers (public): `createSseParser` and `parseActivityEvent`, for a custom reader of the feed. The liveness state machine and the backoff are internal.
+The SSE parser, the record parser, the liveness state machine and the backoff are internal.
 
 ## 5. Chat session
 
@@ -153,7 +160,7 @@ interface ChatSession<UI> extends Store<ChatSessionState> {
   init(); follow(); followServerTurn(); storedElsewhere(); checkStalled(); loadOlder(); refetch()
   send(text, files?); stop(); continueTurn(); retryTurn(); retry(); dismissProblem(); interrupted(); refreshBusy()
 }
-interface ChatSessionState { loaded; hasOlder; loadingOlder; following; notice; problem; activity; busy }
+interface ChatSessionState { loaded; hasOlder; loadingOlder; following; notice; problem; activity; busy; stopping }
 interface ChatBridge<UI> { messages: UI[]; readonly status: ChatStatus; sendMessage({ text, files? }); regenerate({ messageId? }); resumeStream(); stop(); clearError() }
 ```
 
@@ -186,10 +193,15 @@ reads and writes `chat.messages`.
   message. **`onData`** tracks `data-eh.status` into `activity`.
 - **Paging**: `loadOlder()` merges an older page (ids already present are dropped);
   `refetch()` replaces only the newest page (ids sort by creation time).
-- **`stop()`**: `sessions.interrupt` then `chat.stop()`. **Interrupted turns**: `interrupted()` is
+- **`stop()`** (0.8.0): sets `stopping`, calls `sessions.interrupt` (up to three attempts, 300 ms ×
+  attempt apart; a `401` / `403` is not retried, a `404` counts as stopped), then `chat.stop()`
+  (reading stops regardless). When the server never confirmed, `notify('error', 'Could not stop
+  the run on the server; it may still be running.')` and `stopping` (with `busy`) stays `true`:
+  `checkStalled()` then asks the server until it reports no running turn (re-sending the interrupt
+  while it still runs) and clears `stopping`. It never swallows the failure. **Interrupted turns**: `interrupted()` is
   true when the conversation ends with an assistant message of stop `interrupted` (kind messages
   do not count); `continueTurn()` sends `CONTINUE_TEXT`, `retryTurn()` regenerates that reply.
-- `busy` = following, or a send in flight, or a running chat status; call `refreshBusy()` when the
+- `busy` = following, or a send in flight, or a running chat status, or `stopping`; call `refreshBusy()` when the
   chat status changed outside the session.
 - `transportOptions` (`ifBusy`, `body`) configure the default transport; with an own `transport`
   a `202` is not noticed.

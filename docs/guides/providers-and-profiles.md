@@ -12,18 +12,19 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider'
 import { createGateway } from 'ai'
 import { defineHarnessAgent } from 'eharness'
 import {
-  createProviderManager, gatewayProvider, memoryProfileStore, openRouterProvider,
+  createProviderManager, gatewayProvider, inMemoryProfileStore, openRouterProvider,
 } from 'eharness/providers'
 
 const providers = createProviderManager({
   definitions: [openRouterProvider({ createOpenRouter }), gatewayProvider({ createGateway })],
-  store: memoryProfileStore(),          // or your encrypted adapter
+  store: inMemoryProfileStore(),          // or your encrypted adapter
   env: process.env,                     // OPENROUTER_API_KEY / AI_GATEWAY_API_KEY -> read-only profiles
   catalogs: { offline: process.env.APP_OFFLINE === '1' },
-  fetch,                                // the only network access
+  fetch,                                // the only network access (default: globalThis.fetch)
+  onWarning: (message) => console.warn(message), // failed live listing / catalog refresh; no secrets
 })
 await providers.ready()
-await providers.loadCatalogs()          // models.dev / OpenRouter (cached 24 h)
+await providers.loadCatalogs()          // models.dev / OpenRouter (ttlMs default 24 h, timeoutMs 3 s)
 
 const agent = defineHarnessAgent({
   model: providers.resolve('openrouter:anthropic/claude-sonnet-4.6'),
@@ -43,6 +44,7 @@ profiles (id = provider id); everything else is stored. Create or edit with `put
 validates and returns a redacted profile:
 
 ```ts
+// yours: `apiKey` is the secret the user typed
 await providers.putProfile({ providerId: 'openrouter', label: 'Work', settings: { apiKey } })
 // edit without resending the key:
 await providers.putProfile({ id: 'openrouter-2', label: 'Work (renamed)', settings: { apiKey: { keep: true } } })
@@ -58,7 +60,7 @@ model picker is `await providers.models(id)` → `{ id, name, info?, reasoning?,
 `describe()` gives every provider as a field list; render it with any framework.
 
 ```ts
-const { providers: defs, profiles } = await manager.describe()   // send to the browser
+const { providers: defs, profiles } = await providers.describe()   // send to the browser
 ```
 
 Svelte 5 sketch (React is the same loop):
@@ -94,17 +96,21 @@ Paths are dotted for nested objects; show "set …1234" from `profile.settings.a
 
 **Changing the endpoint resets the secrets.** A `format: 'uri'` field (`z.url()`), or one marked
 `ehMeta({ endpoint: true })` (`FormField.endpoint` is `true`), says where the stored secrets are
-sent. If an edit changes it (a new `baseURL`), `putProfile` / `mergeSecretPatch` do not keep the
+sent. If an edit changes it (a new `baseURL`), `putProfile` does not keep the
 old key or header values: the form must resend them, otherwise the save fails with
 `EH_CONFIG_INVALID` for a required key (and an optional secret is cleared). So an edit that only
 repoints a profile cannot make `test()` / `models()` send the old key to another host. Show "enter
 the key again" in the UI when the person edits the URL.
-The same machinery works on any zod object (`formSpec`, `redactSettings`, `mergeSecretPatch`,
-`fromEnv`, `ConfigProfile`, `ProfileStore` with another `kind`).
+The same machinery works on any zod object (`formSpec`, `redactSettings`, `fromEnv`,
+`ConfigProfile`, `ProfileStore` with another `kind`).
 
 ## Writing your own provider
 
 ```ts
+import { z } from 'zod/v4'
+import { defineProvider, ehMeta } from 'eharness/providers'
+
+// yours: `createAcme` is the provider SDK factory
 const settings = z.object({
   apiKey: z.string().min(1).meta({ title: 'API key', ...ehMeta({ secret: true, group: 'auth' }) }),
   region: z.enum(['us', 'eu']).default('us').meta({ ...ehMeta({ group: 'endpoint', widget: 'radio' }) }),
@@ -120,11 +126,23 @@ export const acme = defineProvider({
 
 ## A `ProfileStore` that encrypts
 
-The library stores secrets only in the `ProfileStore` you give it, so encrypt there. Encrypt the
+The library stores secrets only in the `ProfileStore` you give it, so encrypt there. The ready way
+is `sealedProfileStore({ inner, vault })`, which encrypts the settings of any profile kind with a
+`SecretVault` (`webCryptoVault(keys)`, `plaintextVault()` for tests) in front of your store:
+
+```ts
+import { sealedProfileStore, webCryptoVault } from 'eharness/providers'
+
+// yours: `rawStore` (any ProfileStore), `keyBytes` (a 32-byte Uint8Array from your KMS or env)
+const store = sealedProfileStore({ inner: rawStore, vault: webCryptoVault(keyBytes) })
+```
+
+To do it by hand instead, encrypt the
 whole `settings` object (it is JSON) with an app key (KMS or an env key), keep `id`, `kind`,
 `definitionId`, `label`, `enabled`, `source`, `updatedAt` and `models` in clear columns:
 
 ```ts
+// yours: `Db` and `box` are your database client and cipher
 function encryptedStore(db: Db, box: { seal(text: string): string; open(text: string): string }): ProfileStore {
   const row = (p: ConfigProfile) => ({ ...p, settings: box.seal(JSON.stringify(p.settings)) })
   const unrow = (r): ConfigProfile => ({ ...r, settings: JSON.parse(box.open(r.settings)) })
@@ -152,8 +170,8 @@ read from the store; send `describe()` / `listProfiles()` output to browsers.
 |---|---|
 | `createProviderManager`, `parseModelRef`, `formatModelRef` | the manager |
 | `defineProvider`, `openRouterProvider`, `gatewayProvider`, `openAIProvider`, `anthropicProvider`, `openAICompatibleProvider` | definitions |
-| `formSpec`, `providerFormSpec`, `ehMeta` | form description |
-| `redactSettings`, `redactProfile`, `mergeSecretPatch`, `validateSettings`, `scrub`, `secretStatus`, `secretValuesOf` | secrets (any zod schema) |
-| `memoryProfileStore`, `fromEnv` | profiles |
-| `loadCachedJson`, `loadModelsDev`, `loadOpenRouterModels`, `parseOpenRouterModels`, `parseModelsDevModels`, `memoryCatalogCache` | catalogs |
+| `formSpec`, `ehMeta` | form description |
+| `redactSettings`, `redactProfile`, `validateSettings`, `secretStatus` | secrets (any zod schema) |
+| `inMemoryProfileStore`, `sealedProfileStore`, `plaintextVault`, `webCryptoVault`, `fromEnv` | profiles and sealing |
+| `loadModelsDev`, `loadOpenRouterModels`, `inMemoryCatalogCache` | catalogs |
 | `profileStoreConformance`, `scriptedProvider` (`eharness/testing`) | tests |

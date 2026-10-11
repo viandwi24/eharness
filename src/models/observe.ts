@@ -428,6 +428,8 @@ export function modelCallMiddleware(report: Report): LanguageModelMiddleware {
  * await generateText({ model: judge, prompt })
  * ```
  * @see docs/specs/12-models-and-cost.md#7-model-call-observation
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
  */
 export function observeModel(
   model: LanguageModel,

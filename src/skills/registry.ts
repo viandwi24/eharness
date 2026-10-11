@@ -7,7 +7,8 @@
  *
  * @see docs/specs/07-skills.md#6-registry-collisions-refresh
  */
-import type { HarnessWarning } from '../errors.ts'
+import { configError, type HarnessWarning } from '../errors.ts'
+import { errorText } from '../internal/util.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { Skill, SkillMeta, SkillSource } from '../registry/types.ts'
 import { skillMetaError } from './define.ts'
@@ -126,10 +127,6 @@ export function indexLine(meta: SkillMeta): string {
 const byName = (a: { name: string }, b: { name: string }) =>
   a.name < b.name ? -1 : a.name > b.name ? 1 : 0
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /**
  * Resolve the skills of one turn: list every source (cached per `refresh`), validate the
  * metadata (`W_INVALID_SKILL`), drop later duplicates (`W_SHADOWED`, first source wins), and build
@@ -154,12 +151,12 @@ export async function resolveTurnSkills(args: {
       let raw: unknown
       try {
         raw = await source.list(contextOf(owner))
-        if (!Array.isArray(raw)) throw new Error('list() must return an array')
+        if (!Array.isArray(raw)) throw configError('list() must return an array')
       } catch (error) {
         warn(
           {
             code: 'W_SKILL_SOURCE_FAILED',
-            message: `Skill source '${source.id}' failed to list its skills: ${describe(error)}`,
+            message: `Skill source '${source.id}' failed to list its skills: ${errorText(error)}`,
             details: { source: source.id, owner },
           },
           source.id,

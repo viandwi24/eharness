@@ -1,8 +1,9 @@
 # Spec 22 — Web plugins (`eharness/web`)
 
 Status: **Draft (0.7)**. Module: `src/web/*`. Built only with the public core API (ADR-0008) and
-Web APIs (`fetch`, `URL`, `TextDecoder`); no `node:` imports, so the library cannot resolve DNS —
-the resolver is injectable. Design principle: ADR-0034.
+Web APIs (`fetch`, `URL`, `TextDecoder`); the main entry has no `node:` imports, so it cannot
+resolve DNS — the resolver is injectable. The Node-only subpath `eharness/web/node` (ADR-0036)
+exports a ready resolver, `nodeResolveHost`. Design principle: ADR-0034.
 
 Both tools carry `metadata.risk: 'external'` (spec 11 §3: approval policy and risk rules apply).
 Failures are returned as `ERROR:` strings (hard rule 6). The default tool names are exported as the
@@ -33,11 +34,11 @@ webFetch({
   fetch?: typeof fetch
   wrapUntrusted?: boolean   // true: frame the page content (spec 03 §10)
   toolName?: string         // WEB_FETCH_TOOL = 'web_fetch'
-  userAgent?: string
+  userAgent?: string        // 'eharness-web-fetch/0'
 })
 ```
 
-Host patterns (`matchHost`): `example.com` (exact), `*.example.com` (subdomains, not the apex),
+Host patterns (internal matcher): `example.com` (exact), `*.example.com` (subdomains, not the apex),
 `*`, optionally `:port`; case-insensitive.
 
 Tool input `{ url, prompt? }`. Rules, in order:
@@ -49,13 +50,16 @@ Tool input `{ url, prompt? }`. Rules, in order:
      single-label names; one trailing dot is stripped first: `localhost.`) in private, loopback, link-local, CGNAT
      (`100.64.0.0/10`), benchmarking (`198.18.0.0/15`), `0.0.0.0/8`, `192.0.0.0/24`, documentation, unspecified or
      multicast ranges (IPv4; IPv6 incl. unique-local, `fe80::/10`, site-local `fec0::/10`, IPv4-mapped/compatible,
-     NAT64 `64:ff9b::/96` and 6to4 `2002::/16` with the embedded IPv4 checked, Teredo) → `ERROR: <host> is a private or local host and is not allowed. Add it to the <toolName> allow list (allow: ['<host>']) to fetch it.` (`<toolName>` is the configured `toolName`, default `web_fetch`). **Always** applied to untrusted hosts, with or without
+     NAT64 `64:ff9b::/96` and 6to4 `2002::/16` with the embedded IPv4 checked, Teredo) (the shared core `isPrivateHost`, also exported from `eharness`) → `ERROR: <host> is a private or local host and is not allowed. Add it to the <toolName> allow list (allow: ['<host>']) to fetch it.` (`<toolName>` is the configured `toolName`, default `web_fetch`). **Always** applied to untrusted hosts, with or without
      `resolveHost`.
    - ports other than 80/443 → refused.
-   - with `resolveHost`: any resolved address in a private range → refused. A resolver error is
+   - with `resolveHost`: any resolved address in a private range → `ERROR: <host> resolves to a private address and is not fetched`. A resolver error is
      ignored (the fetch reports it). **Without `resolveHost` a public hostname that resolves to a
      private address is NOT blocked** (DNS-based SSRF; the library has no DNS, it is runtime-neutral):
-     servers fetching on behalf of untrusted users must pass `resolveHost` (guide: `docs/guides/web.md`).
+     servers fetching on behalf of untrusted users must pass `resolveHost` (ready Node resolver
+     `nodeResolveHost` from `eharness/web/node`; guide: `docs/guides/web.md`). Creating `webFetch` without
+     `resolveHost` and without `onlyAllowed` emits `W_WEB_NO_RESOLVER` once per session. DNS rebinding
+     between the resolve and the fetch is not prevented; the guide shows a pinned-IP `fetch` recipe.
    - `http` is upgraded to `https`.
    Trusted hosts skip all of rule 3 (their private addresses, odd ports and `http` are fetched).
 4. Redirects are handled manually: a same-host redirect is followed (re-checked, never downgraded
@@ -77,7 +81,7 @@ The DNS check has a time-of-check gap (rebinding); resolve in the injected funct
 addresses in a custom `fetch` for strict environments. Document-level threats: page text is data,
 never instructions (the description says so).
 
-`htmlToText(html)` is the dependency-free fallback converter: drops `script`, `style`, `nav`,
+The default `toMarkdown` is a dependency-free converter (internal, not exported): drops `script`, `style`, `nav`,
 `footer`, `head`, `svg`, `iframe`, `noscript`, `template`; keeps headings, links, lists, emphasis,
 `pre`/`code`; decodes entities. It is not a full HTML parser: plug `turndown` (or similar) into
 `toMarkdown` for fidelity.

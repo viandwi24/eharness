@@ -7,9 +7,10 @@ import {
   type HarnessAgentConfig,
   type HarnessWarning,
 } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { latestTodos, TODOS_INSTRUCTION, todos } from './index.ts'
+import { latestTodos, todos } from './index.ts'
+import { TODOS_INSTRUCTION } from './plugin.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -38,8 +39,8 @@ function summarizer(text: string) {
 function setup(
   config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'model'>,
   storage: NonNullable<HarnessAgentConfig['storage']> = {
-    messages: memoryMessages(),
-    state: memoryState(),
+    messages: inMemoryMessages(),
+    state: inMemoryState(),
   },
 ) {
   const warnings: HarnessWarning[] = []
@@ -191,7 +192,7 @@ describe('todos plugin', () => {
   })
 
   test('the list survives a restart followed by a compaction (fresh instance, same storage)', async () => {
-    const storage = { messages: memoryMessages(), state: memoryState() }
+    const storage = { messages: inMemoryMessages(), state: inMemoryState() }
     const model = scriptedModel([
       write([['Ship it', 'in_progress']]),
       { text: 'first answer' },

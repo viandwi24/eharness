@@ -1,4 +1,5 @@
 /** `/diff`: working-tree changes of the project, file list plus the patch of the selected file. */
+import { errorText } from 'eharness'
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { CoderController, DiffFile, DiffResult } from '../../contracts.ts'
@@ -162,7 +163,7 @@ export function DiffPage({
         if (mine === generation.current)
           setState({
             status: 'error',
-            message: error instanceof Error ? error.message : String(error),
+            message: errorText(error),
           })
       },
     )

@@ -5,8 +5,9 @@ import type {
   MessageAdapter,
   SessionLock,
 } from '../agent/session-types.ts'
+import { HarnessError } from '../errors.ts'
 import { uuidv7 } from '../messages/ids.ts'
-import { memoryInbox, memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryInbox, inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { inboxAdapterConformance } from '../testing/inbox-adapter.conformance.ts'
 import { lockConformance } from '../testing/lock.conformance.ts'
 import { messageAdapterConformance } from '../testing/message-adapter.conformance.ts'
@@ -14,20 +15,20 @@ import { multiInstanceConformance } from '../testing/multi-instance.conformance.
 import { stateAdapterConformance } from '../testing/state-adapter.conformance.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
-describe('memoryMessages() conformance', () => {
-  for (const c of messageAdapterConformance(() => memoryMessages(), { requireLastId: true })) {
+describe('inMemoryMessages() conformance', () => {
+  for (const c of messageAdapterConformance(() => inMemoryMessages(), { requireLastId: true })) {
     test(c.name, c.run)
   }
 })
 
-describe('memoryState() conformance', () => {
-  for (const c of stateAdapterConformance(() => memoryState(), { requireSetIf: true })) {
+describe('inMemoryState() conformance', () => {
+  for (const c of stateAdapterConformance(() => inMemoryState(), { requireSetIf: true })) {
     test(c.name, c.run)
   }
 })
 
-describe('memoryInbox() conformance', () => {
-  for (const c of inboxAdapterConformance(() => memoryInbox(), {
+describe('inMemoryInbox() conformance', () => {
+  for (const c of inboxAdapterConformance(() => inMemoryInbox(), {
     requireNotify: true,
     requirePending: true,
     requireRetry: true,
@@ -41,7 +42,7 @@ describe('memoryInbox() conformance', () => {
 
 describe('a 0.4-style inbox adapter (no retry members) still passes the conformance', () => {
   const legacy = (): InboxAdapter => {
-    const inner = memoryInbox()
+    const inner = inMemoryInbox()
     return {
       enqueue: (sessionId, item) => inner.enqueue(sessionId, item),
       claim: (sessionId, owner, opts) => inner.claim(sessionId, owner, opts),
@@ -63,10 +64,10 @@ describe('core default memory adapters conformance', () => {
   }
 })
 
-describe('memoryMessages()', () => {
+describe('inMemoryMessages()', () => {
   test('rejects fromId together with beforeId', async () => {
     await expect(
-      memoryMessages().load({ sessionId: 's', fromId: 'a', beforeId: 'b' }),
+      inMemoryMessages().load({ sessionId: 's', fromId: 'a', beforeId: 'b' }),
     ).rejects.toThrow()
   })
 })
@@ -98,7 +99,7 @@ describe('conformance suites detect broken adapters', () => {
 
   test('an adapter whose save merges instead of replacing fails the suite', async () => {
     const merging = (): MessageAdapter => {
-      const inner = memoryMessages()
+      const inner = inMemoryMessages()
       return {
         load: (q) => inner.load(q),
         async save(sessionId, messages) {
@@ -123,7 +124,7 @@ describe('conformance suites detect broken adapters', () => {
 
   test('an adapter whose fromId needs an exact id fails the suite', async () => {
     const indexed = (): MessageAdapter => {
-      const inner = memoryMessages()
+      const inner = inMemoryMessages()
       return {
         save: (sessionId, messages) => inner.save(sessionId, messages),
         async load(q) {
@@ -140,7 +141,7 @@ describe('conformance suites detect broken adapters', () => {
   })
 
   test('a setIf without CAS fails the setIf case', async () => {
-    const state = memoryState()
+    const state = inMemoryState()
     const broken = {
       ...state,
       setIf: async (id: string, s: never) => {
@@ -187,7 +188,7 @@ function memoryLock(
   return {
     held,
     async acquire(sessionId: string) {
-      if (held.has(sessionId)) throw new Error('locked')
+      if (held.has(sessionId)) throw new HarnessError('EH_SESSION_BUSY', 'locked')
       const owner = Symbol(sessionId)
       held.set(sessionId, owner)
       return async () => {
@@ -215,7 +216,7 @@ describe('SessionLock conformance (memory lock)', () => {
       const held = new Set<string>()
       return {
         async acquire(sessionId) {
-          if (held.has(sessionId)) throw new Error('locked')
+          if (held.has(sessionId)) throw new HarnessError('EH_SESSION_BUSY', 'locked')
           held.add(sessionId)
           return async () => {
             held.delete(sessionId)
@@ -230,9 +231,9 @@ describe('SessionLock conformance (memory lock)', () => {
 
 describe('multi-instance conformance (memory adapters)', () => {
   const makeStorage = () => ({
-    messages: memoryMessages(),
-    state: memoryState(),
-    inbox: memoryInbox(),
+    messages: inMemoryMessages(),
+    state: inMemoryState(),
+    inbox: inMemoryInbox(),
     lock: memoryLock(),
   })
   for (const c of multiInstanceConformance({ makeStorage })) test(c.name, c.run, 20_000)

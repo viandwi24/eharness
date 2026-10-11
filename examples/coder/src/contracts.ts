@@ -84,7 +84,7 @@ export interface CoderSettings {
   }
   /** Auto permission mode: the classifier `model` (default: the session's model) and `enabled` (default true). */
   autoMode?: { model?: string; enabled?: boolean }
-  /** MCP servers (M5); shape of `mcpServer()` transport configs, keyed by server name. */
+  /** MCP servers (M5); shape of `mcpServerSource()` transport configs, keyed by server name. */
   mcpServers?: Record<string, unknown>
   /** UI palette. Default `dark`; `auto` reads `COLORFGBG`. */
   theme?: 'dark' | 'light' | 'auto'

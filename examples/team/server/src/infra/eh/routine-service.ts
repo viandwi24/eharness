@@ -23,6 +23,7 @@
  * `failed`, `needs_action`) arrives from the `routineOutcomes` plugin on turn end; consecutive
  * failures pause the routine (`maxFailures`).
  */
+import { errorText } from 'eharness'
 import type { AgentRepo, EventAppender, RoutineEngine, ScheduleCalc } from '../../app/ports.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import type { EventType } from '../../domain/events.ts'
@@ -69,6 +70,8 @@ export interface TurnOutcome {
   inboxId?: string
   stop: string
   errorMessage?: string
+  /** `TurnResult.error.code` (always set when the turn failed). */
+  errorCode?: string
   /** Approvals or questions wait for a person. */
   needsPerson: boolean
 }
@@ -97,9 +100,12 @@ export interface RoutineServiceDeps {
   log?: { warn(message: string): void }
 }
 
+/** What the person does about `EH_PROVIDER_AUTH` (shown as the reason of the failed run). */
+const PROVIDER_AUTH_HINT = 'the model provider rejected the API key: set it in Settings > Providers'
+const suffix = (message: string | undefined): string =>
+  message === undefined ? '' : `: ${message}`
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-const messageOf = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
 
 /** Failure stops that count against `maxFailures`; the rest is a normal end. */
 const NORMAL_STOPS = new Set(['complete', 'length', 'content-filter', 'blocked'])
@@ -226,7 +232,7 @@ export function createRoutineService(
       emitRun(routine, after, now)
       return after
     } catch (error) {
-      return fail(`enqueue failed: ${messageOf(error)}`)
+      return fail(`enqueue failed: ${errorText(error)}`)
     }
   }
 
@@ -345,16 +351,16 @@ export function createRoutineService(
   let ticking: Promise<TickReport> | undefined
   async function runTick(now: number): Promise<TickReport> {
     const report: TickReport = { fired: [], skipped: [], lost: 0, recovered: 0, swept: 0 }
-    await recover(now, report).catch((e) => log.warn(`routines: recovery failed: ${messageOf(e)}`))
+    await recover(now, report).catch((e) => log.warn(`routines: recovery failed: ${errorText(e)}`))
     for (const row of store.due(now + lookaheadMs, maxPerTick)) {
       try {
         await processDue(row, now, report)
       } catch (error) {
-        log.warn(`routines: ${row.id} failed: ${messageOf(error)}`)
+        log.warn(`routines: ${row.id} failed: ${errorText(error)}`)
       }
     }
     report.swept = await sweep().catch((e) => {
-      log.warn(`routines: sweep failed: ${messageOf(e)}`)
+      log.warn(`routines: sweep failed: ${errorText(e)}`)
       return 0
     })
     return report
@@ -391,11 +397,19 @@ export function createRoutineService(
           outcome = { status: 'failed', reason: 'aborted', countFailure: false }
         } else if (NORMAL_STOPS.has(e.stop)) {
           outcome = { status: 'succeeded' }
-        } else {
+        } else if (e.errorCode === 'EH_LOCK_UNAVAILABLE') {
+          // the lock service was down, not the routine: the run fails but does not count toward
+          // pausing it (the next slot tries again)
           outcome = {
             status: 'failed',
-            reason: `${e.stop}${e.errorMessage === undefined ? '' : `: ${e.errorMessage}`}`,
+            reason: 'storage unavailable (the session lock could not be taken)',
+            countFailure: false,
           }
+        } else if (e.errorCode === 'EH_PROVIDER_AUTH') {
+          // every later run fails the same way until someone fixes the key
+          outcome = { status: 'failed', reason: `${PROVIDER_AUTH_HINT}${suffix(e.errorMessage)}` }
+        } else {
+          outcome = { status: 'failed', reason: `${e.stop}${suffix(e.errorMessage)}` }
         }
         const done = store.finishRun(run.id, outcome, now)
         if (done === undefined) continue
@@ -442,7 +456,7 @@ export function createRoutineService(
     start() {
       if (tickMs <= 0 || timer !== undefined) return
       timer = setInterval(() => {
-        void this.tick().catch((error) => log.warn(`routines: tick failed: ${messageOf(error)}`))
+        void this.tick().catch((error) => log.warn(`routines: tick failed: ${errorText(error)}`))
       }, tickMs)
       timer.unref()
     },

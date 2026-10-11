@@ -2,9 +2,10 @@
  * `sealedProfileStore`: encrypt the secrets of ANY profile kind (provider profiles, connections,
  * OAuth credentials) with one {@link SecretVault}, in front of any {@link ProfileStore}.
  *
- * @see docs/specs/23-providers.md#8-sealing-secrets-at-rest
+ * @see docs/specs/23-providers.md#8-sealing-secrets-at-rest-generic
  */
 import type { z } from 'zod/v4'
+import { isRecord } from '../index.ts'
 import { formSpec } from './form.ts'
 import type { ConfigProfile, ProfileStore, SecretVault } from './types.ts'
 
@@ -12,12 +13,15 @@ import type { ConfigProfile, ProfileStore, SecretVault } from './types.ts'
 export const SEALED_KEY = '~sealed'
 
 type Json = Record<string, unknown>
-const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v)
 const isSealed = (v: unknown): v is { [SEALED_KEY]: string } =>
-  isObject(v) && typeof v[SEALED_KEY] === 'string'
+  isRecord(v) && typeof v[SEALED_KEY] === 'string'
 
 /** Options of {@link sealedProfileStore}. */
 export interface SealedProfileStoreOptions {
+  /** The store that persists the sealed profiles. */
+  inner: ProfileStore
+  /** Encrypts and decrypts the sealed fields. */
+  vault: SecretVault
   /** Seal only these kinds (default: every kind). Others pass through unchanged. */
   kinds?: readonly string[]
   /**
@@ -50,7 +54,7 @@ function pathParts(path: string): string[] {
 function getAt(root: unknown, path: string): unknown {
   let cur: unknown = root
   for (const part of pathParts(path)) {
-    if (!isObject(cur)) return undefined
+    if (!isRecord(cur)) return undefined
     cur = cur[part]
   }
   return cur
@@ -61,7 +65,7 @@ function setAt(root: Json, path: string, value: unknown): void {
   let cur = root
   for (const part of parts.slice(0, -1)) {
     const next = cur[part]
-    if (!isObject(next)) return
+    if (!isRecord(next)) return
     cur = next
   }
   cur[parts[parts.length - 1] as string] = value
@@ -77,15 +81,12 @@ function setAt(root: Json, path: string, value: unknown): void {
  *
  * @example
  * ```ts
- * const profiles = sealedProfileStore(dbProfileStore, webCryptoVault(key))
+ * const profiles = sealedProfileStore({ inner: dbProfileStore, vault: webCryptoVault(key) })
  * const manager = createProviderManager({ definitions, store: profiles })
  * ```
  */
-export function sealedProfileStore(
-  inner: ProfileStore,
-  vault: SecretVault,
-  options: SealedProfileStoreOptions = {},
-): SealedProfileStore {
+export function sealedProfileStore(options: SealedProfileStoreOptions): SealedProfileStore {
+  const { inner, vault } = options
   const applies = (kind: string): boolean =>
     options.kinds === undefined || options.kinds.includes(kind)
 
@@ -149,7 +150,7 @@ export function sealedProfileStore(
     const out: string[] = []
     const walk = (v: unknown): void => {
       if (isSealed(v)) out.push(v[SEALED_KEY])
-      else if (isObject(v)) for (const x of Object.values(v)) walk(x)
+      else if (isRecord(v)) for (const x of Object.values(v)) walk(x)
     }
     walk(profile.settings)
     return out

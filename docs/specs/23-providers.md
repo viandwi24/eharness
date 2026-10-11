@@ -58,21 +58,20 @@ Field metadata is the standard zod `.meta()`: `title`, `description`, `default`,
 objects), `kind` (`string | number | integer | boolean | enum | record | array | json`), `widget`,
 `label` (`title`, else the humanized key), `description`, `required`, `secret`, `secretValues`,
 `options`, `default`, `group`, `showWhen`, `placeholder`, `envHint`, `format`, `min`, `max`. Order is
-the schema's property order. `providerFormSpec(def)` is `formSpec(def.settings)`.
+the schema's property order. `formSpec(def.settings)` gives the form of a provider definition (the manager's `describe()` does it for every definition).
 
 - `redactSettings(schema, settings)` / `redactProfile(schema, profile)`: only fields the schema
   knows are copied (unknown keys are dropped); a secret becomes `SecretStatus = { set: boolean,
   hint? }` (`hint` is `…` + the last 4 characters of values of 12+ characters; `{ hint: false }`
   option disables it); a `secretValues` record maps every key to a `SecretStatus`. The result
   contains no secret and can be serialized or logged.
-- `mergeSecretPatch(schema, stored, patch)`: an edit without resending secrets. A field absent
+- Secret-preserving edits (internal `mergeSecretPatch`, used by `putProfile`): an edit without resending secrets. A field absent
   from the patch keeps its stored value; a secret given as `undefined`, `''` or `{ keep: true }`
   keeps it; `null` removes any field; a `secretValues` record keeps a stored value for a key given
   as `''` / `{ keep: true }` and drops keys missing from the patch; unknown keys are ignored.
   **Secrets are bound to the endpoint**: a field is an *endpoint* when its JSON Schema `format` is
   `uri` / `url` (`z.url()`) or its meta says `ehMeta({ endpoint: true })` (`endpoint: false` opts a
-  URL out; `FormField.endpoint` tells a UI). When a patch changes an endpoint (`endpointChanged`:
-  a different value, or `null` on a stored one) no stored secret is kept: `secret` fields and
+  URL out; `FormField.endpoint` tells a UI). When a patch changes an endpoint (a different value, or `null` on a stored one) no stored secret is kept: `secret` fields and
   `secretValues` entries absent from the patch, or given as `''` / `{ keep: true }`, are cleared and
   must be resent in the same patch. A required one then fails `validateSettings` with the usual
   `EH_CONFIG_INVALID` (`apiKey: …`). Otherwise an edit of only `baseURL` would make `test()` /
@@ -80,7 +79,7 @@ the schema's property order. `providerFormSpec(def)` is `formSpec(def.settings)`
 - `validateSettings(schema, settings, name?)`: `safeParse`; failure throws `EH_CONFIG_INVALID`
   (`details.reason: 'settings-invalid'`, `details.issues`) with `path: message` lines and never a
   value.
-- `scrub(text, secrets)` and `secretValuesOf(schema, settings)` remove secrets from messages.
+- Messages produced by the manager (warnings, `test()` results) have every known secret value scrubbed (internal helpers).
 
 ## 3. Profiles and the store
 
@@ -103,7 +102,7 @@ interface ProfileStore {
 
 `kind` namespaces profiles so one store can hold providers and other kinds. Providers use
 `kind: 'provider'`; the profile id has no `:` (a model reference is `profile:model`). The
-library ships `memoryProfileStore()`; databases are the app's adapters (**encrypt `settings`
+library ships `inMemoryProfileStore()`; databases are the app's adapters (**encrypt `settings`
 there**, see the guide) and are checked with `profileStoreConformance` from `eharness/testing`.
 Adapters return copies. `allow` / `deny` entries may use `*`.
 
@@ -115,7 +114,7 @@ settings validate.
 ## 4. The provider manager
 
 ```ts
-createProviderManager({ definitions, store?, fetch?, cache?, catalogs?, env?, seed?, now?, onWarning?, listTtlMs? })
+createProviderManager({ definitions, store?, fetch?, cache?, catalogs?, env?, seed?, now?, onWarning?(message, { profileId? }), listTtlMs? })
 ```
 
 - `ready()` loads profiles (and persists `seed` once when the store has no provider profile);
@@ -153,13 +152,17 @@ createProviderManager({ definitions, store?, fetch?, cache?, catalogs?, env?, se
 
 ## 5. Catalog loader
 
-`loadCachedJson({ key, url, fetch, cache?, now?, ttlMs?, timeoutMs?, offline?, force?, signal? })`:
-cache miss → fetch (bounded by `timeoutMs`, default 3 s); cache older than `ttlMs` (default 24 h)
+The loader (internal `loadCachedJson({ key, url, fetch, cache?, now?, ttlMs?, timeoutMs?, offline?, force?, signal?, validate?, maxBytes?, onWarning? })`)
+works like this: cache miss → fetch (bounded by `timeoutMs`, default 3 s); cache older than `ttlMs` (default 24 h)
 → returned as is plus a background `refresh` promise; a failed download keeps the stale cache;
-`offline` never fetches. It never throws. `CatalogCache` is a port (`get` / `set` of
-`{ data, fetchedAt }`; `memoryCatalogCache()` ships, apps bring file/DB adapters). Helpers:
-`loadModelsDev` (key `models.dev`), `loadOpenRouterModels` (key `openrouter`),
-`parseOpenRouterModels`, `parseModelsDevModels`. The manager's `catalogs` option: `offline`,
+`offline` never fetches. The body is read up to `maxBytes` (default 16 MiB) and must pass `validate`
+(`loadModelsDev` / `loadOpenRouterModels` check the shape per source with zod: a non-empty provider map /
+a non-empty `data` array of `{ id }`); an oversized, invalid or empty document is never cached, never
+replaces a valid cache entry, and is reported through `onWarning(message)` (an invalid cached entry is
+ignored the same way). It never throws. `CatalogCache` is a port (`get` / `set` of
+`{ data, fetchedAt }`; `inMemoryCatalogCache()` ships, apps bring file/DB adapters). Public
+helpers: `loadModelsDev` (key `models.dev`) and `loadOpenRouterModels` (key `openrouter`); the parsers
+are internal. The manager's `catalogs` option: `offline`,
 `ttlMs`, `timeoutMs`, URLs, and `data` (raw JSON supplied by the app, never fetched).
 
 ## 6. Built-in definitions
@@ -170,8 +173,8 @@ Each takes the provider package factory and optional `id` / `label`; settings fi
 
 | Helper | Factory option | envMap | Models / catalog |
 |---|---|---|---|
-| `openRouterProvider` | `createOpenRouter` | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` | `catalog.kind: 'openrouter'`; `live: true` adds `GET <baseURL>/models` |
-| `gatewayProvider` | `createGateway?` (none: plain id strings, key from the AI SDK environment) | `AI_GATEWAY_API_KEY` (the AI SDK gateway has no base-URL environment variable: set `baseURL` on the profile) | models.dev providers (`GATEWAY_MODELS_DEV_PROVIDERS`); with `createGateway`, live `getAvailableModels()` with prices |
+| `openRouterProvider` | `createOpenRouter` | `OPENROUTER_API_KEY`, `OPENROUTER_BASE_URL` | `catalog.kind: 'openrouter'`; `live: true` lists from `GET <baseURL>/models` instead |
+| `gatewayProvider` | `createGateway?` (none: plain id strings, key from the AI SDK environment) | `AI_GATEWAY_API_KEY` (the AI SDK gateway has no base-URL environment variable: set `baseURL` on the profile) | models.dev providers (a fixed internal list); with `createGateway`, live `getAvailableModels()` with prices |
 | `openAICompatibleProvider` | `createOpenAICompatible` | none | live `GET <baseURL>/models`; `baseURL` required, `apiKeyOptional`, `defaultBaseURL`, `id` for presets |
 | `openAIProvider` | `createOpenAI` | `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_ORG_ID`, `OPENAI_PROJECT_ID` | models.dev `openai` + live `GET /models` (embedding/audio/image ids dropped) |
 | `anthropicProvider` | `createAnthropic` | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` | models.dev `anthropic` + live `GET /v1/models` |
@@ -202,11 +205,11 @@ interface SecretVault {
 
 - `webCryptoVault(key | { keys, current })`: AES-256-GCM over `crypto.subtle`, fresh IV per seal,
   `context` authenticated, blob `v2.<keyId>.<base64url(iv || ct)>`. Several keys support rotation.
-  `withLegacyVault(vault, { matches, open })` reads blobs of an older format and writes the
-  current one (`needsReseal` is true for legacy blobs, so `reseal()` migrates them).
+  An app that has blobs of an older format wraps the port itself: `open` reads both formats and
+  `needsReseal` is true for legacy blobs, so `reseal()` migrates them (`examples/team` has one).
   `plaintextVault()` is for tests only. An app that already has a secret box implements the
   three-method port around it.
-- `sealedProfileStore(inner, vault, { kinds?, schemaOf? })` wraps any `ProfileStore`: `put`
+- `sealedProfileStore({ inner, vault, kinds?, schemaOf? })` wraps any `ProfileStore`: `put`
   seals, `get` / `list` open, so the manager and the connector service see plain settings and the
   database only ciphertext. Default: the whole `settings` JSON becomes `{ "~sealed": blob }`,
   bound to `profile:<kind>:<id>` (a row cannot be moved to another id). With `schemaOf(profile)`

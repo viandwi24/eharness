@@ -22,7 +22,7 @@ describe('diskFs binary files', () => {
   test('readBytes returns bytes, binary meta, media type and a bytes version', async () => {
     const root = await temp()
     await writeFile(join(root, 'a.png'), PNG)
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     const file = await fs.readBytes?.('/a.png')
     expect(Array.from(file?.bytes ?? [])).toEqual(Array.from(PNG))
     expect(file?.mediaType).toBe('image/png')
@@ -38,7 +38,7 @@ describe('diskFs binary files', () => {
 
   test('writeBytes writes binary files atomically with compare-and-set; text bytes get the text version', async () => {
     const root = await temp()
-    const fs = diskFs(root)
+    const fs = diskFs({ root })
     const created = await fs.writeBytes?.('/x/a.bin', PNG, { ifVersion: null })
     expect(created).toEqual({ ok: true, version: await bytesVersion(PNG) })
     expect(new Uint8Array(await readFile(join(root, 'x/a.bin')))).toEqual(PNG)
@@ -56,7 +56,7 @@ describe('diskFs binary files', () => {
     await writeFile(join(root, 'big.bin'), new Uint8Array(2000).fill(0))
     await writeFile(join(root, 'ok.bin'), new Uint8Array(100).fill(0))
     await writeFile(join(root, 'long.txt'), 'a'.repeat(1500))
-    const fs = diskFs(root, { maxBinaryBytes: 1000, maxFileBytes: 1000 })
+    const fs = diskFs({ root, maxBinaryBytes: 1000, maxFileBytes: 1000 })
     expect((await fs.list()).map((m) => m.path)).toEqual(['/ok.bin'])
     await expect(fs.readBytes?.('/big.bin')).rejects.toThrow('too large file: /big.bin')
     await expect(fs.read('/long.txt')).rejects.toThrow('too large file: /long.txt')
@@ -70,7 +70,7 @@ describe('diskFs binary files', () => {
         new Uint8Array([0x6e, 0x65, 0x65, 0x64, 0x6c, 0x65, 0, 1]),
       )
       await writeFile(join(root, 'a.txt'), 'needle\n')
-      const fs = diskFs(root, { grep })
+      const fs = diskFs({ root, grep })
       expect(await fs.grep?.(/needle/)).toEqual([{ path: '/a.txt', line: 1, text: 'needle' }])
     })
   }

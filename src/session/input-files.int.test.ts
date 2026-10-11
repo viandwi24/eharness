@@ -3,7 +3,7 @@ import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import { isHarnessError } from '../errors.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { spyMessages, spyState } from './int-kit.ts'
+import { spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 

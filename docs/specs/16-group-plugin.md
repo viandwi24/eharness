@@ -15,13 +15,13 @@ No new message type: everything is a `UIMessage`, metadata (`metadata.group`) an
 ## 1. API
 
 ```ts
-import { groupChat, routeGroupMessage } from 'eharness/group'
+import { group, routeGroupMessage } from 'eharness/group'
 
-const group = groupChat({ botId: 'bot-123', botName: 'Harness' })
-const agent = defineHarnessAgent({ model, plugins: [group] })
+const groupPlugin = group({ botId: 'bot-123', botName: 'Harness' })
+const agent = defineHarnessAgent({ model, plugins: [groupPlugin] })
 const session = agent.session(chatId, { acceptClientMetadata: true })
 
-const result = await routeGroupMessage(group, session, {
+const result = await routeGroupMessage(groupPlugin, session, {
   text, author: { id, name, isBot }, mentionsBot, replyToBot, chatId, messageId,
 })
 if (result.responded) for await (const chunk of result.run.stream) { /* … */ }
@@ -34,7 +34,7 @@ interface GroupMessage {
   mentionsBot?: boolean; replyToBot?: boolean
   chatId?: string; messageId?: string; at?: number
 }
-interface GroupChatOptions {
+interface GroupOptions {
   botId: string                                   // own author id: own messages are dropped
   botName?: string                                // `@name` is a default mention pattern
   requireMention?: boolean                        // default true
@@ -52,9 +52,9 @@ type GroupRouteResult =
   | { responded: true; run: HarnessRun }
 ```
 
-`groupChat()` returns a `HarnessPlugin<'group'>` that also has a `route(session, message, sendOptions?)`
+`group()` returns a `HarnessPlugin<'group'>` that also has a `route(session, message, sendOptions?)`
 method; `routeGroupMessage(group, session, message, sendOptions?)` is the same call as a function.
-`GroupSession` is the structural part of a session the plugin uses (`send`, `messages`, `inject`);
+The types `GroupAuthor`, `GroupMessage`, `GroupOptions`, `GroupPlugin`, `GroupRouteResult`, `GroupSession`, `GroupDecision`, `GroupIgnoreReason` and `GroupMessageData` are exported. `GroupSession` is the structural part of a session the plugin uses (`send`, `messages`, `inject`);
 any `HarnessSession` fits. The plugin defines the kind `group.message` (§3) and one hook
 (`input.submit`, §6); the rest happens in `route`, **outside** the turn (ADR-0031).
 
@@ -86,7 +86,7 @@ on its own. Data: `{ author, text, files?: [{ mediaType, filename? }], chatId?, 
 When a message is answered, the helper builds **one user message**:
 
 ```
-<GROUP_HISTORY_PREAMBLE>
+<history preamble line>
 <group-message author="Bob">…</group-message>        ← newest historyLimit pending, oldest first
 …
 
@@ -109,8 +109,8 @@ When a message is answered, the helper builds **one user message**:
 - History text is data: `<group-message` / `<system-reminder` tags in it are neutralised
   (`<` → `&lt;`, as in spec 14 §4) and author names are attribute-escaped. File names appear as
   `[attached: name]`.
-- `GROUP_HISTORY_PREAMBLE` and the `[group] ` speaker-line prefix (`GROUP_SPEAKER_PREFIX`) are
-  exported, model-visible fixed texts; changing them is a minor change.
+- The history preamble line and the `[group] ` speaker-line prefix are model-visible fixed texts,
+  internal (not exported); their wording may change in any release.
 - Speaker facts go to `metadata.group = { author, chatId?, messageId?, consumed? }` of the user message. This
   uses client metadata: the session must be opened with **`acceptClientMetadata: true`** (spec 05
   §1). Without it the metadata is dropped (the visible speaker line remains); with `allowBots`

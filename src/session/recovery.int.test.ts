@@ -8,7 +8,8 @@ import { uuidv7 } from '../messages/ids.ts'
 import { INTERRUPTED_CRASH, INTERRUPTED_TURN, INTERRUPTED_UNKNOWN } from '../messages/texts.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { collect, spyMessages, spyState } from './int-kit.ts'
+import { until } from '../testing/test-utils.ts'
+import { collect, spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -191,10 +192,12 @@ describe('scenario 29: crash recovery', () => {
   })
 
   test('long turns refresh the heartbeat', async () => {
+    let writesOf: () => number = () => 0
     const slow = tool({
       inputSchema: z.object({}),
       execute: async () => {
-        await new Promise((r) => setTimeout(r, 120))
+        // runs until the heartbeat was refreshed at least once (no fixed delay)
+        await until('a refreshed heartbeat', () => writesOf() > 1)
         return 'ok'
       },
     })
@@ -203,6 +206,7 @@ describe('scenario 29: crash recovery', () => {
       { text: 'done' },
     ])
     const { agent, state } = setup({ model, tools: { slow }, recovery: { staleMs: 100 } })
+    writesOf = () => state.writes.filter((w) => w.core.activeTurn !== undefined).length
     await agent.session('s1').send('hi').result
     const heartbeats = state.writes.filter((w) => w.core.activeTurn !== undefined)
     expect(heartbeats.length).toBeGreaterThan(1)
@@ -213,8 +217,15 @@ describe('scenario 30: abort / timeout with a running tool', () => {
   const slowTool = () =>
     tool({
       inputSchema: z.object({}),
-      execute: async () => {
-        await new Promise((r) => setTimeout(r, 300))
+      execute: async (_input, { abortSignal }) => {
+        // runs until the turn is aborted or times out (capped so a bug cannot hang the suite)
+        await new Promise<void>((resolve) => {
+          const cap = setTimeout(resolve, 5_000)
+          abortSignal?.addEventListener('abort', () => {
+            clearTimeout(cap)
+            resolve()
+          })
+        })
         return 'late'
       },
     })
@@ -395,12 +406,14 @@ describe('session.recover() and recovery.instanceId (spec 05 §9.2)', () => {
     const messages = spyMessages()
     const state = spyState()
     let release!: () => void
+    let toolStarted = false
     const held = new Promise<void>((r) => {
       release = r
     })
     const slow = tool({
       inputSchema: z.object({}),
       execute: async () => {
+        toolStarted = true
         await held
         return 'ok'
       },
@@ -420,7 +433,7 @@ describe('session.recover() and recovery.instanceId (spec 05 §9.2)', () => {
     ])
     const b = make([{ text: 'x' }])
     const run = a.session('s').send('go')
-    await new Promise((r) => setTimeout(r, 50))
+    await until('the tool started', () => toolStarted)
     expect(await b.session('s').recover()).toEqual({ recovered: false, reason: 'live' })
     expect((await b.session('s').busy())?.scope).toBe('remote')
     release()

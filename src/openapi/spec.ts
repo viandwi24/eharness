@@ -4,7 +4,7 @@
  *
  * @see docs/specs/17-openapi-plugin.md
  */
-import { HarnessError } from '../index.ts'
+import { HarnessError, isRecord } from '../index.ts'
 
 /** A JSON object. */
 export type Json = Record<string, unknown>
@@ -27,10 +27,6 @@ export function invalid(message: string): never {
   throw new HarnessError('EH_CONFIG_INVALID', message)
 }
 
-export function isObject(value: unknown): value is Json {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 /** Parse and validate the document (OpenAPI 3.0.x / 3.1.x JSON only). */
 export function loadSpec(spec: unknown, at: string): Json {
   let doc: unknown = spec
@@ -43,7 +39,7 @@ export function loadSpec(spec: unknown, at: string): Json {
       )
     }
   }
-  if (!isObject(doc)) invalid(`${at}: the spec must be a parsed OpenAPI object or a JSON string.`)
+  if (!isRecord(doc)) invalid(`${at}: the spec must be a parsed OpenAPI object or a JSON string.`)
   if (typeof doc.swagger === 'string') {
     invalid(
       `${at}: Swagger ${doc.swagger} is not supported; convert the document to OpenAPI 3.0 or 3.1.`,
@@ -52,7 +48,7 @@ export function loadSpec(spec: unknown, at: string): Json {
   if (typeof doc.openapi !== 'string' || !/^3\.[01]\.\d+/.test(doc.openapi)) {
     invalid(`${at}: \`openapi\` must be 3.0.x or 3.1.x (got '${String(doc.openapi)}').`)
   }
-  if (!isObject(doc.paths)) invalid(`${at}: the spec has no \`paths\` object.`)
+  if (!isRecord(doc.paths)) invalid(`${at}: the spec has no \`paths\` object.`)
   assertLocalRefs(doc, at)
   return doc
 }
@@ -86,7 +82,7 @@ export function resolvePointer(doc: Json, ref: string, at: string): unknown {
   for (const raw of ref.slice(2).split('/')) {
     const key = decodeURIComponent(raw).replaceAll('~1', '/').replaceAll('~0', '~')
     if (Array.isArray(node)) node = node[Number(key)]
-    else if (isObject(node)) node = node[key]
+    else if (isRecord(node)) node = node[key]
     else node = undefined
     if (node === undefined) invalid(`${at}: $ref '${ref}' does not resolve.`)
   }
@@ -96,7 +92,7 @@ export function resolvePointer(doc: Json, ref: string, at: string): unknown {
 /** Follow `$ref` chains of a non-schema object (parameter, request body). */
 export function deref<T = Json>(doc: Json, value: unknown, at: string): T {
   let current = value
-  for (let hops = 0; isObject(current) && typeof current.$ref === 'string'; hops++) {
+  for (let hops = 0; isRecord(current) && typeof current.$ref === 'string'; hops++) {
     if (hops > 20) invalid(`${at}: $ref chain is too long.`)
     current = resolvePointer(doc, current.$ref, at)
   }
@@ -146,7 +142,7 @@ export function summarizeSchema(
   /** Pointers resolved during this call: a ref used many times is looked up once. */
   const resolved = new Map<string, unknown>()
   const walk = (node: unknown, depth: number, stack: readonly string[]): Json => {
-    if (!isObject(node)) return {}
+    if (!isRecord(node)) return {}
     if (typeof node.$ref === 'string') {
       const ref = node.$ref
       if (stack.includes(ref) || depth > limits.maxDepth) {
@@ -183,12 +179,12 @@ export function summarizeSchema(
       if (Array.isArray(out.enum) && !out.enum.includes(null)) out.enum = [...out.enum, null]
     }
     if (node.items !== undefined) out.items = walk(node.items, depth + 1, stack)
-    if (isObject(node.properties)) {
+    if (isRecord(node.properties)) {
       const properties: Json = {}
       const dropped = new Set<string>()
       for (const [name, value] of Object.entries(node.properties)) {
         const resolved = deref(doc, value, at)
-        if (opts.request === true && isObject(resolved) && resolved.readOnly === true) {
+        if (opts.request === true && isRecord(resolved) && resolved.readOnly === true) {
           dropped.add(name)
           continue
         }
@@ -205,7 +201,7 @@ export function summarizeSchema(
     }
     if (typeof node.additionalProperties === 'boolean') {
       out.additionalProperties = node.additionalProperties
-    } else if (isObject(node.additionalProperties)) {
+    } else if (isRecord(node.additionalProperties)) {
       out.additionalProperties = walk(node.additionalProperties, depth + 1, stack)
     }
     for (const key of ['allOf', 'anyOf', 'oneOf'] as const) {

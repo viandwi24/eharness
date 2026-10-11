@@ -1,12 +1,22 @@
 /**
- * `openApiTools()`: an OpenAPI 3.0 / 3.1 document as a `ToolSource` (one AI SDK tool per selected
+ * `openApiSource()`: an OpenAPI 3.0 / 3.1 document as a `ToolSource` (one AI SDK tool per selected
  * operation). Outbound HTTP goes only to the app-supplied base URL; auth comes only from the
  * app-supplied `headers()` function.
  *
  * @see docs/specs/17-openapi-plugin.md
  */
 import { jsonSchema, type Tool, type ToolSet, tool } from 'ai'
-import { defineToolSource, type HarnessContext, type ToolRisk, type ToolSource } from '../index.ts'
+import {
+  compileGlobRegExp,
+  defineToolSource,
+  errorText,
+  type HarnessContext,
+  isRecord,
+  type ToolRisk,
+  type ToolSource,
+  untrustedContent,
+  withToolFields,
+} from '../index.ts'
 import {
   BLOCKED_HEADERS,
   execute,
@@ -18,7 +28,6 @@ import {
   capText,
   deref,
   invalid,
-  isObject,
   type Json,
   loadSpec,
   type SchemaBudget,
@@ -55,8 +64,10 @@ export type OperationFilter =
     }
   | ((op: OperationInfo) => boolean)
 
-/** Options of {@link openApiTools}. */
-export interface OpenApiToolsOptions {
+/** Options of {@link openApiSource}. */
+export interface OpenApiSourceOptions {
+  /** The OpenAPI 3.x document: an object or a JSON string. */
+  spec: object | string
   /** Short name: source id `'openapi:<name>'` and default tool prefix `<name>_`. `^[a-z0-9-]{1,32}$` */
   name: string
   /**
@@ -88,6 +99,13 @@ export interface OpenApiToolsOptions {
   maxResponseChars?: number
   /** Schema summarization limits. */
   schema?: { maxDepth?: number; maxDescriptionChars?: number; maxSchemaBytes?: number }
+  /**
+   * Wrap successful response content in an `<untrusted-content source="openapi" name="<name>">`
+   * frame (`untrustedContent()`, spec 03 §10), like MCP text: the API's text is data, never
+   * instructions. JSON responses become the compact JSON text inside the frame. Errors and status
+   * lines stay unwrapped. Default `true`; `false` returns the parsed JSON value as before.
+   */
+  wrapUntrusted?: boolean
   /** Injectable `fetch` (tests, proxies). Default: global `fetch`. */
   fetch?: typeof fetch
 }
@@ -114,18 +132,12 @@ interface OpPlan {
   bodyRequired: boolean
 }
 
+/** `*` matches within a path segment, `**` anything; the rest is literal (the shared core compiler). */
 function globToRegExp(glob: string): RegExp {
-  let source = ''
-  for (let i = 0; i < glob.length; i++) {
-    const c = glob.charAt(i)
-    if (c === '*') {
-      if (glob.charAt(i + 1) === '*') {
-        source += '.*'
-        i++
-      } else source += '[^/]*'
-    } else source += c.replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-  }
-  return new RegExp(`^${source}$`)
+  const compiled = compileGlobRegExp(glob, { wildcard: true })
+  if (!compiled.ok)
+    invalid(`openApiSource: path filter ${JSON.stringify(glob)}: ${compiled.error}.`)
+  return compiled.regex
 }
 
 function matcher(filter: OperationFilter | OperationFilter[]): (op: OperationInfo) => boolean {
@@ -158,13 +170,13 @@ function sanitizeName(raw: string): string {
 function specServer(doc: Json, at: string): string {
   const servers = doc.servers
   const first = Array.isArray(servers) ? servers[0] : undefined
-  if (!isObject(first) || typeof first.url !== 'string') {
+  if (!isRecord(first) || typeof first.url !== 'string') {
     invalid(`${at}: \`useSpecServers\` needs \`servers[0].url\` in the spec (or pass \`baseUrl\`).`)
   }
   let url = first.url
-  const vars = isObject(first.variables) ? first.variables : {}
+  const vars = isRecord(first.variables) ? first.variables : {}
   for (const [key, value] of Object.entries(vars)) {
-    if (isObject(value) && typeof value.default === 'string') {
+    if (isRecord(value) && typeof value.default === 'string') {
       url = url.replaceAll(`{${key}}`, value.default)
     }
   }
@@ -184,7 +196,8 @@ function specServer(doc: Json, at: string): string {
  * defineHarnessAgent({
  *   model,
  *   tools: [
- *     openApiTools(petstoreJson, {
+ *     openApiSource({
+ *       spec: petstoreJson,
  *       name: 'pets',
  *       baseUrl: 'https://petstore.example.com/v1',
  *       headers: (ctx) => ({ authorization: `Bearer ${ctx.runtime.petToken}` }),
@@ -195,12 +208,15 @@ function specServer(doc: Json, at: string): string {
  * ```
  * @see docs/specs/17-openapi-plugin.md
  */
-export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): ToolSource {
-  if (typeof opts !== 'object' || opts === null) invalid('openApiTools: options are required.')
-  if (typeof opts.name !== 'string' || !NAME.test(opts.name)) {
-    invalid(`openApiTools: \`name\` must match ${NAME} (got '${String(opts.name)}').`)
+export function openApiSource(options: OpenApiSourceOptions): ToolSource {
+  if (typeof options !== 'object' || options === null) {
+    invalid('openApiSource: options are required.')
   }
-  const at = `openApiTools('${opts.name}')`
+  const { spec, ...opts } = options
+  if (typeof opts.name !== 'string' || !NAME.test(opts.name)) {
+    invalid(`openApiSource: \`name\` must match ${NAME} (got '${String(opts.name)}').`)
+  }
+  const at = `openApiSource('${opts.name}')`
   const doc = loadSpec(spec, at)
   const id = `openapi:${opts.name}`
   const prefix = opts.prefix ?? `${opts.name}_`
@@ -255,12 +271,12 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
   // API-key schemes in headers: never settable by the model
   const blockedHeaders = new Set(BLOCKED_HEADERS)
   const schemes =
-    isObject(doc.components) && isObject(doc.components.securitySchemes)
+    isRecord(doc.components) && isRecord(doc.components.securitySchemes)
       ? doc.components.securitySchemes
       : {}
   for (const scheme of Object.values(schemes)) {
     const s = deref(doc, scheme, at)
-    if (isObject(s) && s.type === 'apiKey' && s.in === 'header' && typeof s.name === 'string') {
+    if (isRecord(s) && s.type === 'apiKey' && s.in === 'header' && typeof s.name === 'string') {
       blockedHeaders.add(s.name.toLowerCase())
     }
   }
@@ -269,10 +285,10 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
   const plans: OpPlan[] = []
   for (const [path, rawItem] of Object.entries(doc.paths as Json)) {
     const item = deref(doc, rawItem, at)
-    if (!isObject(item)) continue
+    if (!isRecord(item)) continue
     for (const method of METHODS) {
       const rawOp = item[method]
-      if (!isObject(rawOp)) continue
+      if (!isRecord(rawOp)) continue
       const op = deref(doc, rawOp, at)
       const info: OperationInfo = {
         method,
@@ -306,7 +322,7 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
       if (!Array.isArray(list)) continue
       for (const raw of list) {
         const p = deref(root, raw, at)
-        if (isObject(p) && typeof p.name === 'string' && typeof p.in === 'string') {
+        if (isRecord(p) && typeof p.name === 'string' && typeof p.in === 'string') {
           merged.set(`${p.in}:${p.name}`, p)
         }
       }
@@ -325,8 +341,8 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
       }
       const name = p.name as string
       if (where === 'header' && blockedHeaders.has(name.toLowerCase())) continue // app-supplied
-      const content = isObject(p.content) ? Object.values(p.content)[0] : undefined
-      const rawSchema = p.schema ?? (isObject(content) ? content.schema : undefined)
+      const content = isRecord(p.content) ? Object.values(p.content)[0] : undefined
+      const rawSchema = p.schema ?? (isRecord(content) ? content.schema : undefined)
       const schema = summarizeSchema(root, rawSchema, limits, `${at} ${label}`, {
         request: true,
         budget,
@@ -365,23 +381,23 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
     const rawBody = op.requestBody
     if (rawBody !== undefined) {
       const body = deref(root, rawBody, at)
-      const content = isObject(body) && isObject(body.content) ? body.content : {}
+      const content = isRecord(body) && isRecord(body.content) ? body.content : {}
       const key = Object.keys(content).find((t) => /^application\/(.+\+)?json/i.test(t))
       const media = key === undefined ? undefined : content[key]
-      if (!isObject(media)) {
+      if (!isRecord(media)) {
         skipped.push(`${label}: the request body is not JSON`)
         // keep the operation without a body only when the body is optional
-        if (isObject(body) && body.required === true) {
+        if (isRecord(body) && body.required === true) {
           return undefined
         }
       } else {
         hasBody = true
-        bodyRequired = isObject(body) && body.required === true
+        bodyRequired = isRecord(body) && body.required === true
         const schema = summarizeSchema(root, media.schema, limits, `${at} ${label}`, {
           request: true,
           budget,
         })
-        const description = isObject(body)
+        const description = isRecord(body)
           ? capText(body.description, limits.maxDescriptionChars)
           : undefined
         if (schema.description === undefined && description !== undefined)
@@ -493,7 +509,7 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
               const raw = resolveBase(ctx)
               base = typeof raw === 'string' ? normalizeBase(raw) : undefined
             } catch (error) {
-              return `Request failed: baseUrl could not be resolved (${error instanceof Error ? error.message : String(error)}).`
+              return `Request failed: baseUrl could not be resolved (${errorText(error)}).`
             }
             if (base === undefined) return 'Request failed: baseUrl is not a valid http(s) URL.'
             const prepared = prepareRequest({
@@ -521,7 +537,7 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
                   headers[key] = value
                 })
               } catch (error) {
-                return `Request failed: could not build the request headers (${error instanceof Error ? error.message : String(error)}).`
+                return `Request failed: could not build the request headers (${errorText(error)}).`
               }
             }
             return await execute({
@@ -533,11 +549,20 @@ export function openApiTools(spec: object | string, opts: OpenApiToolsOptions): 
               body: prepared.body,
               timeoutMs,
               maxResponseChars,
+              ...(opts.wrapUntrusted === false
+                ? {}
+                : {
+                    frame: (text: string): string =>
+                      untrustedContent(text, {
+                        source: 'openapi',
+                        name: `${opts.name}/${plan.toolName}`,
+                      }),
+                  }),
               signals: [ctx.signal, options?.abortSignal],
             })
           },
         }) as Tool
-        out[plan.toolName] = deferred ? ({ ...t, deferLoading: true } as Tool) : t
+        out[plan.toolName] = deferred ? withToolFields(t, { deferLoading: true }) : t
       }
       return out
     },

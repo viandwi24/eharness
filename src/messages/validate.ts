@@ -8,6 +8,7 @@
 import { safeValidateUIMessages } from 'ai'
 import { z } from 'zod/v4'
 import { HarnessError, type HarnessWarning } from '../errors.ts'
+import { errorText } from '../internal/util.ts'
 import { kindOf } from './kinds.ts'
 import type { MessageRegistry } from './registry.ts'
 import { normalizeDeniedApprovals, normalizeRawInput } from './tool-parts.ts'
@@ -53,10 +54,6 @@ const metadataSchema = z
   })
   .optional()
 
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
-}
-
 /**
  * Validate stored messages one by one (spec 03 §7):
  *
@@ -96,7 +93,7 @@ export async function validateStoredMessages(
     try {
       copy = structuredClone(stored) as HarnessUIMessage
     } catch (error) {
-      invalid(stored, `not cloneable: ${describe(error)}`)
+      invalid(stored, `not cloneable: ${errorText(error)}`)
       continue
     }
     const id = (copy as { id?: unknown } | null)?.id
@@ -132,7 +129,7 @@ export async function validateStoredMessages(
             structuredClone((part as { data: unknown }).data),
           )
         } catch (error) {
-          problem ??= `upgrade of '${type}' failed: ${describe(error)}`
+          problem ??= `upgrade of '${type}' failed: ${errorText(error)}`
         }
       }
       parts.push(part)
@@ -165,7 +162,7 @@ export async function validateStoredMessages(
         result.push(validated.data[0] as HarnessUIMessage)
         continue
       }
-      problem = describe(validated.error)
+      problem = errorText(validated.error)
     }
     invalid(copy, problem, stored)
   }
@@ -221,7 +218,7 @@ export async function checkMessageShape(
   try {
     copy = structuredClone(message) as HarnessUIMessage
   } catch (error) {
-    return `not cloneable: ${describe(error)}`
+    return `not cloneable: ${errorText(error)}`
   }
   if (typeof copy !== 'object' || copy === null || !Array.isArray(copy.parts)) {
     return 'not a UIMessage (missing parts)'
@@ -245,8 +242,8 @@ export async function checkMessageShape(
       metadataSchema,
       dataSchemas: registry.dataSchemas(),
     })
-    return validated.success ? undefined : describe(validated.error)
+    return validated.success ? undefined : errorText(validated.error)
   } catch (error) {
-    return describe(error)
+    return errorText(error)
   }
 }

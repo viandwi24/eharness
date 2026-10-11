@@ -3,7 +3,7 @@
  *
  * @see docs/specs/24-connectors.md#6-stores
  */
-import { memoryProfileStore, type ProfileStore, sealedProfileStore } from '../providers/index.ts'
+import { inMemoryProfileStore, type ProfileStore, sealedProfileStore } from '../providers/index.ts'
 import type {
   AgentEnablement,
   ConnectionCredentials,
@@ -75,26 +75,34 @@ export function credentialStoreFromProfiles(profiles: ProfileStore): CredentialS
   }
 }
 
+/** Options of {@link inMemoryConnectionStore}. */
+export interface InMemoryConnectionStoreOptions {
+  /** Connections the store starts with (copied). */
+  initial?: ConnectionRecord[]
+}
+
 /** A {@link ConnectionStore} in memory (tests, single-process apps). Stores copies. */
-export function memoryConnectionStore(initial: ConnectionRecord[] = []): ConnectionStore {
-  return connectionStoreFromProfiles(memoryProfileStore(initial))
+export function inMemoryConnectionStore(
+  options: InMemoryConnectionStoreOptions = {},
+): ConnectionStore {
+  return connectionStoreFromProfiles(inMemoryProfileStore({ initial: options.initial ?? [] }))
 }
 
 /**
  * A {@link CredentialStore} in memory. With a `vault` the credentials are kept sealed (through
  * `sealedProfileStore`, as a database adapter would keep them encrypted).
  */
-export function memoryCredentialStore(options: { vault?: SecretVault } = {}): CredentialStore {
-  const profiles = memoryProfileStore()
+export function inMemoryCredentialStore(options: { vault?: SecretVault } = {}): CredentialStore {
+  const profiles = inMemoryProfileStore()
   return credentialStoreFromProfiles(
     options.vault === undefined
       ? profiles
-      : sealedProfileStore(profiles, options.vault, { kinds: [CREDENTIALS_KIND] }),
+      : sealedProfileStore({ inner: profiles, vault: options.vault, kinds: [CREDENTIALS_KIND] }),
   )
 }
 
 /** An {@link EnablementStore} in memory. Stores copies. */
-export function memoryEnablementStore(): EnablementStore {
+export function inMemoryEnablementStore(): EnablementStore {
   const agents = new Map<string, AgentEnablement>()
   return {
     get: async (agentId) => structuredClone(agents.get(agentId) ?? {}),
@@ -118,7 +126,7 @@ export function memoryEnablementStore(): EnablementStore {
 }
 
 /** A {@link FlowStore} in memory. Stores copies. */
-export function memoryFlowStore(): FlowStore {
+export function inMemoryFlowStore(): FlowStore {
   const map = new Map<string, FlowState>()
   return {
     get: async (id) => {

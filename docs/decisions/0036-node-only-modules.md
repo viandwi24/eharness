@@ -29,3 +29,7 @@ Those need `node:` built-ins. The library must offer them without making the cor
 - Importing a Node-only subpath on an unsupported runtime fails at import time, not at call time.
 - Future Node-only modules must be added to `nodeOnly` and documented in architecture §2.
 - Packaging checks (`check:package`) cover the new subpaths like any other export.
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): `eharness/web/node` (`nodeResolveHost`) joins the Node-only modules (`nodeOnly` in `scripts/check-imports.ts`). The local shell sandbox passes commands only an allow-list of environment variables (`SAFE_ENV_NAMES`, extended through `env`, `inheritEnv: true` for the old behaviour), so provider keys of the host process do not reach commands the model writes.

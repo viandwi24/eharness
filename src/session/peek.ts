@@ -4,7 +4,7 @@
  * Reads the stored state and messages through the adapters only: no `session.start` hook, no crash
  * recovery, no reconcile, no inbox drain, no lock, no write (spec 05 §2.2).
  *
- * @see docs/specs/05-session-and-storage.md#22-read-only-handle-peek
+ * @see docs/specs/05-session-and-storage.md#22-read-only-handle-agentpeekid
  */
 import type {
   MessageAdapter,

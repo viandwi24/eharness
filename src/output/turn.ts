@@ -2,7 +2,7 @@
  * Structured final output of one turn (internal): spec validation, the per-turn `final_answer`
  * tool (tool mode), AI SDK `Output.object` (native mode) and the answer checks the step loop runs.
  *
- * @see docs/specs/05-session-and-storage.md#33-structured-output-normative-040
+ * @see docs/specs/05-session-and-storage.md#33-structured-output
  * @see docs/decisions/0023-structured-final-output.md
  */
 import {
@@ -17,6 +17,7 @@ import {
   tool,
 } from 'ai'
 import { HarnessError } from '../errors.ts'
+import { errorText } from '../internal/util.ts'
 import {
   FINAL_ANSWER_DESCRIPTION,
   FINAL_ANSWER_RECORDED,
@@ -98,7 +99,7 @@ export async function prepareTurnOutput(
     await asSchema(spec.schema).jsonSchema
   } catch (error) {
     throw invalid(
-      `\`output.schema\` cannot be converted to JSON Schema: ${error instanceof Error ? error.message : String(error)}`,
+      `\`output.schema\` cannot be converted to JSON Schema: ${errorText(error)}`,
       'output-schema',
       error,
     )
@@ -235,7 +236,7 @@ function describeOutputError(error: unknown): string {
       ? `${error.message} ${cause.message}`
       : error.message
   }
-  return error instanceof Error ? error.message : String(error)
+  return errorText(error)
 }
 
 /** The `OUTPUT_RETRY` text for a failed attempt (error trimmed to 1 000 characters). */

@@ -3,17 +3,17 @@ import { describe, expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { type ScriptedStep, scriptedModel } from '../testing/scripted-model.ts'
 import { createPermissionEngine } from './engine.ts'
-import { permissionsPlugin } from './plugin.ts'
+import { permissions } from './plugin.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const SEP = '\u0000'
 
 function setup(steps: ScriptedStep[]) {
   const ran: string[] = []
-  const state = memoryState()
+  const state = inMemoryState()
   const engine = createPermissionEngine({
     roots: () => [{ virtual: '/', real: '/' }],
     mode: 'default',
@@ -21,7 +21,7 @@ function setup(steps: ScriptedStep[]) {
   const agent = defineHarnessAgent({
     model: scriptedModel(steps),
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state },
+    storage: { messages: inMemoryMessages(), state },
     logger: silent,
     tools: {
       bash: tool({
@@ -41,7 +41,7 @@ function setup(steps: ScriptedStep[]) {
         },
       }),
     },
-    plugins: [permissionsPlugin({ engine, planExitTool: false })],
+    plugins: [permissions({ engine, planExitTool: false })],
   })
   return { agent, state, ran }
 }

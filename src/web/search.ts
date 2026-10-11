@@ -7,7 +7,13 @@
 import type { LanguageModel } from 'ai'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
-import { type AddUsageInput, definePlugin, type HarnessPlugin, untrustedContent } from '../index.ts'
+import {
+  type AddUsageInput,
+  definePlugin,
+  errorText,
+  type HarnessPlugin,
+  untrustedContent,
+} from '../index.ts'
 import { WEB_FETCH_TOOL } from './fetch.ts'
 
 /** Filters and abort signal passed to the app's `search` function. */
@@ -94,7 +100,7 @@ export function webSearch(options: WebSearchOptions): HarnessPlugin<'web-search'
                 : untrustedContent(body, { source: toolName })
             } catch (error) {
               if (abortSignal?.aborted) return 'ERROR: the search was aborted'
-              return `ERROR: web search failed: ${error instanceof Error ? error.message : String(error)}`
+              return `ERROR: web search failed: ${errorText(error)}`
             }
           },
         }),

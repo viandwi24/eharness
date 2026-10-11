@@ -31,7 +31,7 @@ const seqs = (records: readonly ActivityRecord[]): number[] => records.map((r) =
  *
  * @example
  * ```ts
- * for (const c of activityStoreConformance(() => ({ store: memoryActivityStore() }))) test(c.name, c.run)
+ * for (const c of activityStoreConformance(() => ({ store: inMemoryActivityStore() }))) test(c.name, c.run)
  * ```
  * @see docs/specs/25-activity.md#3-activitystore
  */

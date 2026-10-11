@@ -15,6 +15,7 @@ import type { HarnessWarning } from '../errors.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import type { HarnessContext, HarnessLogger, TurnInfo } from '../plugin/types.ts'
 import type { NormalizedInstruction } from '../registry/static.ts'
+import type { SourceFailure, SourceListingOptions } from '../registry/tools.ts'
 import type { ToolSource } from '../registry/types.ts'
 import type { SessionSkills } from '../skills/registry.ts'
 import type { HookRunner } from './hooks.ts'
@@ -44,6 +45,10 @@ export interface OpenSession {
   toolOrderWarned?: Set<string>
   /** `list()` results of `refresh: 'session'` sources. */
   sourceCache: Map<ToolSource, Array<{ name: string; tool: Tool }>>
+  /** Negative cache of failed `list()` calls (backoff). */
+  sourceFailures: Map<ToolSource, SourceFailure>
+  /** `config.toolSources`: listing timeout and retry backoff. */
+  sourceOptions?: SourceListingOptions
   /** Skill sources in registry order (static skills wrapped), `list()` cache, index limit. */
   skills: SessionSkills
   /** Signature of the request-scoped client tools of the previous turn ('' = none). */

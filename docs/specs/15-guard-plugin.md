@@ -12,32 +12,33 @@ output cannot talk to it.
 ## 1. Usage
 
 ```ts
-import { approvalGuard } from 'eharness/guard'
+import { guard } from 'eharness/guard'
 
 defineHarnessAgent({
   model,
   // permissive base: the guard decides what needs a person
   approval: { risk: { read: 'approved', write: 'approved', external: 'approved', destructive: 'user-approval' } },
-  plugins: [approvalGuard({ model: 'openai/gpt-5-mini', policy: 'Emails go only to @acme.com.' })],
+  plugins: [guard({ model: 'openai/gpt-5-mini', policy: 'Emails go only to @acme.com.' })],
 })
 
-export interface ApprovalGuardOptions {
+export interface GuardOptions {
   model: LanguageModel                         // the judge; usage charged to the turn (§7)
-  policy?: string                              // default GUARD_DEFAULT_POLICY
+  policy?: string                              // default: a built-in policy (§5)
   skipRisks?: Array<ToolRisk | 'unknown'>      // default ['read'] — fast path, no judge call
   skipTools?: string[]                         // tool names (after prefixing) never reviewed
   onlyTools?: string[]                         // when set, only these names are reviewed
-  transcript?: { maxMessages?: number /* 20 */; maxChars?: number /* 12_000 */ }
+  transcript?: { maxMessages?: number /* 20 */; maxChars?: number /* 12_000 */ } // the transcript view only
+  maxCallChars?: number                        // longest call input judged, default 8_000 (DEFAULT_JUDGE_MAX_CALL_CHARS); longer → ask a person
   timeoutMs?: number                           // default 15_000 → user-approval
   maxRetries?: number                          // AI SDK retries of the judge call, default 1
   maxConsecutiveDenials?: number               // default 3; Infinity disables the breaker
-  cache?: { maxEntries?: number /* 200 */; ttlMs?: number /* default: no expiry */ }
+  cache?: { maxEntries?: number /* 200 */; ttlMs?: number /* default 3_600_000 (1 h); Infinity = no expiry */ }
 }
-export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'guard'>
+export function guard(options: GuardOptions): HarnessPlugin<'guard'>
 ```
 
-Invalid options (missing `model`, empty `policy`, a non-positive number, a negative or
-non-integer `maxRetries`) throw `EH_CONFIG_INVALID` at `approvalGuard()`.
+Invalid options (missing `model`, empty `policy`, a non-positive or NaN number, a negative or
+non-integer `maxRetries`) throw `EH_CONFIG_INVALID` at `guard()`.
 
 The plugin registers a `tool.approve` hook and an `approval.decided` hook; it adds no tools,
 instructions, data parts or services.
@@ -58,8 +59,10 @@ instructions, data parts or services.
    message by itself (e.g. a group history block) is user text to the core and does appear. The
    view is built in core, so the plugin cannot widen it.
    Transcript and call are JSON-encoded (an entry cannot close a section). Limits: the last
-   `maxMessages` entries; every entry and the call input cut to `maxChars` (marker
-   `GUARD_TRUNCATED`); oldest entries dropped until the transcript fits `maxChars`.
+   `maxMessages` entries; every transcript entry cut to `maxChars` (marker `…[truncated]`); oldest entries dropped until the transcript fits `maxChars`.
+2b. **Truncated input fails closed.** When the call input is longer than `maxCallChars`
+   (default 8 000; not the transcript window, `transcript.maxChars`; `callInputTruncated`), the judge would see only its head, so the guard does not judge it:
+   the answer is `user-approval` (reason via the `GUARD_ASK` text plus an internal "input too long" explanation), recorded in `calls`, never cached.
 3. **Fast path.** `onlyTools`, `skipTools` and `skipRisks` decide before anything else; a skipped
    call returns `'not-applicable'`, makes no model call and records nothing. The risk is the
    event's `risk` (P21 traits; `read` only from trusted app metadata, spec 11 §3.2), `'unknown'`
@@ -72,10 +75,10 @@ instructions, data parts or services.
      and never turns a person's approval into a denial (the rule "approval hooks must be
      deterministic" holds per session). A reused `toolCallId` with a different tool or input is
      a different call and is judged again;
-   - `verdicts`: judge verdicts keyed by `toolName + ':' + sha256(policy + NUL + judge model id +
-     NUL + canonicalJson(input))` (`crypto.subtle`; `input` after `tool.before` refinement), so a
-     changed policy or judge never reuses an older verdict, LRU-bounded by
-     `cache.maxEntries`, optionally expiring after `cache.ttlMs`. The same call (same tool and
+   - `verdicts`: judge verdicts keyed by `toolName + ':' + sha256(scope + NUL + canonicalJson(input))` (`crypto.subtle`;
+     `input` after `tool.before` refinement; `scope` = role, instructions, policy and judge model
+     id), so a changed policy or judge never reuses an older verdict, LRU-bounded by
+     `cache.maxEntries`, expiring after `cache.ttlMs` (default 1 hour; `Infinity` disables). The same call (same tool and
      input) with a new id reuses the verdict. A cached `allow` ignores later conversation
      context; set `cache.ttlMs` when context can change what is acceptable.
    The state is persisted with the turn, so it survives a cold reload. Verdicts are never shared
@@ -102,16 +105,31 @@ statuses); exclude such tools with `skipTools` to save the call.
 
 ## 3. Judge call
 
+The guard is a thin wrapper over the **shared judge engine** (`createJudge` in core, role
+`tighten`; [ADR-0060](../decisions/0060-shared-llm-judge-engine.md), guide
+[LLM judge: two modes](../guides/llm-judge.md)). The engine owns the model call, the restricted
+transcript renderer, the truncation rule, the verdict cache, the circuit breaker, retries and
+timeouts; permissions auto mode (spec 18 §12) uses the same engine with role `decide`. The guard
+supplies the instructions (internal), the policy, and the plugin-state store
+(the cache and the denial counter live in `plugins.guard[...]`).
+
 ```ts
 generateText({
-  model, instructions: GUARD_INSTRUCTIONS, prompt,           // prompt = GUARD_PROMPT filled
+  model: ctx.observeModel(model), instructions: <guard instructions>, prompt,
+  // prompt = <policy>…</policy> <transcript>[JSON entries]</transcript> <action>{JSON call}</action>
   output: Output.object({ schema: z.object({ decision: z.enum(['allow', 'ask', 'deny']), reason: z.string() }) }),
   abortSignal: AbortSignal.any([AbortSignal.timeout(timeoutMs), turn.abortSignal]),
-  maxRetries,
+  maxRetries, maxOutputTokens: 1024, temperature: 0,
 })
+// the call input is reviewed in full up to maxCallChars (default 8_000, one default for guard() and
+// modelClassifier()); transcript.maxChars (12_000) bounds the transcript view only
 ```
 
-`result.output` is validated again; anything else is "unavailable" (rule 6).
+Frame tags (`policy`, `environment`, `transcript`, `action`, `system-reminder`) inside untrusted text
+are neutralised. `result.output` is validated again; anything else is "unavailable" (rule 6).
+A call whose canonical input JSON is longer than `maxCallChars` is never judged: a person
+decides (`GUARD_ASK` + an "input too long" reason), nothing is cached. The verdict cache key hashes
+tool, canonical input, the role, the instructions, the policy and the judge model id.
 
 ## 4. Verdict → status
 
@@ -125,11 +143,10 @@ generateText({
 
 ## 5. Texts
 
-Exported constants (model-visible; changing one is a minor change): `GUARD_INSTRUCTIONS`,
-`GUARD_DEFAULT_POLICY`, `GUARD_PROMPT` (`{policy}`, `{transcript}`, `{call}`), `GUARD_DENIED`
+Exported constants (model-visible reasons; changing one is a minor change): `GUARD_DENIED`
 (`{reason}`), `GUARD_ASK` (`{reason}`), `GUARD_BREAKER` (`{count}`, `{reason}`),
-`GUARD_UNAVAILABLE` (`{error}`), `GUARD_TRUNCATED`. Helpers: `canonicalJson(value)`,
-`verdictKey(toolName, input)` (rule 4).
+`GUARD_UNAVAILABLE` (`{error}`). The judge instructions, the default policy, the prompt layout
+and the helpers (`canonicalJson`, the key hash) are internal and may change in any release.
 
 ## 6. Limits
 
@@ -138,3 +155,21 @@ An LLM judge is a probabilistic second line, not a security boundary: determinis
 The judge adds latency (one model call per reviewed, uncached call, before the tool runs) and
 cost. Injections that the user typed, or that the agent copied from a tool output into a tool
 call's input, are visible to the judge (the input is what it reviews).
+
+## 7. Combined call with auto mode
+
+`guard({ combineWithAutoMode })` (default `true`). In `session()` the guard registers a
+`JudgeParticipant` (`model`, `instructions`, `policy`, `limits`, `applies(call)`, `settled(call)`)
+with `judgeCoordinator(ctx.signal)` (core, keyed on the session's abort signal; ADR-0060
+amendment). When `modelClassifier()` judges the same tool call (permissions plugin, same session,
+`auto: 'classify'`) and the guard is the only participant, `applies` (the guard's fast path:
+`skipRisks`, `skipTools`, `onlyTools`) is true, `settled` is false (no recorded answer for the call
+id, no fresh cache hit) and the guard's model is the classifier's (`===`) with equal view limits
+(`transcript.maxMessages`/`maxChars`, `maxCallChars`), the classifier makes ONE call with the
+combined schema `{ auto, autoReason, guard, guardReason }` and stores the guard half by
+`toolCallId` (checked against tool and input hash). In `tool.approve` the guard takes it before
+step 3 and runs the same engine path with `precomputed` (no model): cache write, breaker, call
+record and status mapping (§4) are unchanged; a failed combined call becomes the usual
+`W_GUARD_UNAVAILABLE` + `GUARD_UNAVAILABLE` ask; the combined call's usage is charged as
+`source: 'guard'`. A truncated input is not judged (no combined call, the guard handles it as in §3).
+Requires `permissions()` before `guard()`; otherwise the guard judges alone (two calls).

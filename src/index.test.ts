@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import snapshot from '../scripts/exports.snapshot.json'
 import * as core from './index.ts'
 
 describe('core entry', () => {
@@ -13,59 +14,8 @@ describe('core entry', () => {
     expect(error.name).toBe('HarnessError')
   })
 
-  test('runtime exports', () => {
-    expect(Object.keys(core).sort()).toEqual([
-      'CLIENT_TOOL_TIMED_OUT',
-      'DENIED_NEW_INPUT',
-      'FILE_UNAVAILABLE',
-      'FINAL_ANSWER_DESCRIPTION',
-      'FINAL_ANSWER_RECORDED',
-      'FLUSH_APPROVAL_DENIED',
-      'HarnessError',
-      'HarnessToolError',
-      'INTERRUPTED_CRASH',
-      'INTERRUPTED_TURN',
-      'INTERRUPTED_UNKNOWN',
-      'MAX_STEPS_WRAP_UP',
-      'NOT_EXECUTED_NEW_INPUT',
-      'OUTPUT_INSTRUCTION',
-      'OUTPUT_RETRY',
-      'PAGE_CONTEXT_PREAMBLE',
-      'PROGRESS_NUDGE',
-      'TOOL_OUTPUT_PRUNED',
-      'TOOL_OUTPUT_TRUNCATED',
-      'UNTRUSTED_CONTENT_INSTRUCTIONS',
-      'WAIT_CANCELLED_NEW_INPUT',
-      'WAIT_TIMED_OUT',
-      'computeCost',
-      'createKindMessage',
-      'defineDataPart',
-      'defineHarnessAgent',
-      'defineMessageKind',
-      'definePlugin',
-      'defineSkill',
-      'defineSkillSource',
-      'defineToolSource',
-      'estimateStepCostUsd',
-      'externalTool',
-      'handleChatRequest',
-      'handleResumeRequest',
-      'isHarnessError',
-      'isKindMessage',
-      'isUuidV7',
-      'lookupModel',
-      'messageToChunks',
-      'modelsDevCatalog',
-      'neutralizeTags',
-      'observeModel',
-      'openRouterCatalog',
-      'parseSkillMarkdown',
-      'toolTraits',
-      'untrustedContent',
-      'uuidv7',
-      'validateSkillPath',
-      'version',
-      'wrapPlugin',
-    ])
+  test('runtime exports match the committed export snapshot', () => {
+    // one list to maintain: `bun scripts/exports-snapshot.ts --write` (see src/exports.test.ts)
+    expect(Object.keys(core).sort()).toEqual(snapshot.eharness)
   })
 })

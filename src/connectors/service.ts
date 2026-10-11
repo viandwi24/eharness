@@ -5,7 +5,8 @@
  *
  * @see docs/specs/24-connectors.md#10-the-connector-service
  */
-import { endpointChanged, mergeSecretPatch, validateSettings } from '../providers/index.ts'
+import { errorText } from '../index.ts'
+import { endpointChanged, mergeSecretPatch, validateSettings } from '../providers/form.ts'
 import { type ActivateOptions, activateConnectors } from './activate.ts'
 import { createCredentialManager, type RefreshLock } from './credentials.ts'
 import {
@@ -64,6 +65,14 @@ export interface ConnectorServiceOptions {
   lock?: RefreshLock
   /** Flow lifetime. Default 15 minutes. */
   ttlMs?: number
+  /** Called when `test` meets an unexpected error (outage, network, store). Default: `console.warn`. */
+  onError?: (error: unknown, info: { connectionId: string; operation: 'test' }) => void
+  /**
+   * Network policy of the OAuth requests of flows and refreshes: `allowPrivateNetwork` (local
+   * development servers), `isAllowedUrl`, `maxResponseBytes`, `timeoutMs`. By default private,
+   * loopback and link-local hosts are refused.
+   */
+  oauth?: FlowDeps['oauth']
 }
 
 /** A flow for a browser, with the connection once the flow finished. */
@@ -78,7 +87,13 @@ export type ServiceAdvance =
   | ({ ok: true } & ServiceFlow)
   | ({
       ok: false
-      error: 'stale-view' | 'expired' | 'finished' | 'invalid-action' | 'not-found'
+      error:
+        | 'stale-view'
+        | 'expired'
+        | 'finished'
+        | 'invalid-action'
+        | 'not-found'
+        | 'principal-mismatch'
       message: string
     } & Partial<ServiceFlow>)
 
@@ -90,6 +105,12 @@ export interface StartConnectParams {
   label?: string
   /** Workspace and user scope: every agent inherits the connection. Default: the connector's scope default, else `false` (agent scope: `true`). */
   defaultEnabled?: boolean
+  /**
+   * An opaque id of the person starting the flow (user id, session id). The OAuth callback and
+   * `advance` must present the same value (`completeOAuth({ principal })`, `FlowInput.principal`),
+   * else they fail with `principal-mismatch`. Optional.
+   */
+  principal?: string
 }
 
 /** What `update` may change. Secrets in `settings` follow `mergeSecretPatch`. */
@@ -115,7 +136,7 @@ export interface ConnectorService {
   /** Start a connect flow. */
   startConnect(params: StartConnectParams): Promise<ServiceFlow>
   /** Reconnect (re-authorize) a connection. */
-  reconnect(connectionId: string): Promise<ServiceFlow>
+  reconnect(connectionId: string, options?: { principal?: string }): Promise<ServiceFlow>
   /** The current state of a flow (a reload resumes here). */
   getFlow(flowId: string): Promise<ServiceFlow | undefined>
   advance(flowId: string, input: FlowInput): Promise<ServiceAdvance>
@@ -157,6 +178,7 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
     ...(options.redirectUri === undefined ? {} : { redirectUri: options.redirectUri }),
     ...(options.clientConfig === undefined ? {} : { clientConfig: options.clientConfig }),
     ...(options.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
+    ...(options.oauth === undefined ? {} : { oauth: options.oauth }),
   }
   const ids = resolveFlowDeps(flowDeps)
   const manager = createCredentialManager({
@@ -165,6 +187,7 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
     ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
     now,
     ...(options.lock === undefined ? {} : { lock: options.lock }),
+    ...(options.oauth === undefined ? {} : { oauth: options.oauth }),
   })
 
   const definitionOf = (id: string): AnyConnectorDefinition => {
@@ -287,12 +310,13 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
           ...(params.scopeId === undefined ? {} : { scopeId: params.scopeId }),
           ...(params.label === undefined ? {} : { label: params.label }),
           ...(params.defaultEnabled === undefined ? {} : { defaultEnabled: params.defaultEnabled }),
+          ...(params.principal === undefined ? {} : { principal: params.principal }),
         },
         flowDeps,
       )
       return settled(state)
     },
-    reconnect: async (connectionId) => {
+    reconnect: async (connectionId, reconnectOptions) => {
       const record = await options.connections.get(connectionId)
       if (record === undefined)
         throw connectorError('not-found', `Unknown connection '${connectionId}'.`)
@@ -302,6 +326,9 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
           scope: record.scope,
           ...(record.scopeId === undefined ? {} : { scopeId: record.scopeId }),
           connection: record,
+          ...(reconnectOptions?.principal === undefined
+            ? {}
+            : { principal: reconnectOptions.principal }),
         },
         flowDeps,
       )
@@ -331,6 +358,9 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
       const result = await completeOAuth(callback, options.flows, flowDeps)
       if (!result.ok && result.error === 'unknown-state') {
         return { ok: false, error: 'not-found', message: result.message }
+      }
+      if (!result.ok && result.error === 'principal-mismatch' && !('state' in result)) {
+        return { ok: false, error: 'principal-mismatch', message: result.message }
       }
       // completeOAuth stored the new state; finish the connection when the flow is done
       return asAdvance(result as Awaited<ReturnType<typeof advanceFlow>>)
@@ -386,14 +416,27 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
       if (def.auth.type === 'oauth2' || def.auth.type === 'deviceCode') {
         try {
           accessToken = await manager.getAccessToken(id)
-        } catch {
+        } catch (error) {
           if (
             def.auth.type === 'oauth2' &&
             def.auth.when?.(parsed.data as Record<string, unknown>) === false
           ) {
             // the connector does not use OAuth with these settings
-          } else {
+          } else if (
+            (error as { details?: { reason?: unknown } }).details?.reason === 'needs-auth'
+          ) {
             return { ok: false, message: 'Reconnect required.' }
+          } else {
+            // a provider outage, a network or store error: the connection may well be fine
+            const code = (error as { code?: unknown }).code
+            const reason = (error as { details?: { reason?: unknown } }).details?.reason
+            if (options.onError !== undefined)
+              options.onError(error, { connectionId: id, operation: 'test' })
+            else console.warn(`[eharness/connectors] test of '${id}' failed: ${errorText(error)}`)
+            return {
+              ok: false,
+              message: `Temporarily unavailable (${typeof reason === 'string' ? reason : typeof code === 'string' ? code : 'error'}); try again later.`,
+            }
           }
         }
       }

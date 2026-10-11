@@ -6,14 +6,14 @@
 import { expect, test } from 'bun:test'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { InboxAdapter } from '../agent/session-types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 test('a restarted agent with the same instanceId claims with a new owner string', async () => {
-  const inner = memoryInbox()
+  const inner = inMemoryInbox()
   const owners = new Set<string>()
   const inbox: InboxAdapter = {
     ...inner,

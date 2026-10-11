@@ -49,6 +49,9 @@ describe('profile and argv', () => {
     expect(s).toContain('--bind /extra /extra')
     expect(s).toContain('--tmpfs /tmp')
     expect(s).toContain('--unshare-net')
+    expect(s).toContain('--unshare-pid')
+    expect(s).toContain('--unshare-ipc')
+    expect(s).toContain('--new-session')
     expect(s).toContain('--die-with-parent')
     expect(argv.indexOf('--tmpfs')).toBeLessThan(argv.indexOf('--bind'))
     const net = wrapCommand('ls', {
@@ -68,7 +71,8 @@ describe('profile and argv', () => {
   })
 
   test('unavailable tool: sandbox reports not enabled and still runs', async () => {
-    const sb = localSandbox('/tmp', {
+    const sb = localSandbox({
+      root: '/tmp',
       os: { enabled: false, network: false, allowWrite: [] },
     })
     expect(sb.state().enabled).toBe(false)
@@ -86,7 +90,7 @@ describe.skipIf(!available)('real OS sandbox', () => {
   async function setup(network = false) {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'eh-os-')))
     dirs.push(root)
-    const sb = localSandbox(root, { os: { enabled: true, network } })
+    const sb = localSandbox({ root, os: { enabled: true, network } })
     return { root, sb }
   }
 

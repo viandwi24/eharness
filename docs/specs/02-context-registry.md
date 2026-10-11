@@ -14,7 +14,7 @@ agent and the model cannot tell them apart.
 | instructions | `string` | `(ctx) => string \| undefined \| Promise<…>`, refreshed per session or per turn |
 | tools | `Tool` or `(ctx) => Tool` in a record | `defineToolSource({ list, refresh, defer })` |
 | skills | `defineSkill({...})` | `defineSkillSource({ list, load, readFile, … })` (spec 07) |
-| mcp | — | `mcpServer({...})` → a `ToolSource` (spec 09) |
+| mcp | — | `mcpServerSource({...})` → a `ToolSource` (spec 09) |
 
 ## 2. Instructions
 
@@ -79,6 +79,13 @@ export interface ToolSourceDef {
   close?(): Promise<void> | void
 }
 ```
+
+Sources are listed concurrently; results keep source order. A `list()` that does not settle within
+`config.toolSources.timeoutMs` (default 30 000) fails like a throwing one: it contributes nothing
+for that turn (`W_TOOL_SOURCE_FAILED`) and is not asked again for `toolSources.retryAfterMs`
+(default 5 000, doubling per consecutive failure up to 60 000; `0` = retry at the next turn). A
+source skipped by its backoff counts `tool-source.backoff` on `config.observe` (spec 10 §8).
+Invalid tool names are skipped with `W_INVALID_TOOL_NAME`.
 
 ### 3.3 Deferred tools and tool search
 
@@ -180,7 +187,7 @@ messages:     projection of the view (spec 03 §6)
   reminders are inserted into the rewritten wire afterwards, so a rewrite never drops them.
 - **Page context (0.5.0, spec 11 §7.1 rule 6)** is part of the turn reminder: after the turn-refresh
   instructions of plugins, before the output instruction, framed as untrusted data
-  (`PAGE_CONTEXT_PREAMBLE`, neutralised tags, capped). It is never stored and never in `instructions`.
+  (a fixed preamble, neutralised tags, capped). It is never stored and never in `instructions`.
 - Reminder text format (model-visible): `<system-reminder>\n{text}\n</system-reminder>`; several
   `step.prepare` reminders of one step are joined with a blank line.
 
@@ -241,8 +248,8 @@ Usage metadata records cache reads/writes (`metadata.eharness.usage.cachedInputT
 
 A dynamic source returning a **reserved** tool name (`tool_search`, `load_skill`,
 `read_skill_file`, `search_skills`) is treated like a shadowed name: skipped with `W_SHADOWED`.
-A failed `list()` contributes nothing for that turn and is retried at the next turn regardless of
-`refresh` (`W_TOOL_SOURCE_FAILED`).
+A failed `list()` contributes nothing for that turn and is retried after its backoff (§3.2)
+regardless of `refresh` (`W_TOOL_SOURCE_FAILED`).
 
 Warnings are sent to `config.onWarning` **and** written to the turn stream as a transient
 `data-eh.warning` part (spec 04) when a turn is running.
@@ -267,5 +274,5 @@ type SkillIndexEntry = SkillMeta & { source: string }   // source = SkillSource.
 ```
 
 Level 2/3 access (`getSkill` / `readSkillFile`) lives in the skill tools of the turn
-(`src/skills/tools.ts`: `loadSkillText`, `readSkillFileText`), which resolve names only against the
+(`src/skills/tools.ts`, internal), which resolve names only against the
 turn's locked set and validate paths before calling the owning source (spec 07 §4.3, §5).

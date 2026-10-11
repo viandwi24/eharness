@@ -9,7 +9,7 @@ import type { HarnessUIMessage } from '../messages/types.ts'
 import { checkNative, outputRetryText } from '../output/turn.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import { type ScriptedCallOptions, scriptedModel } from '../testing/scripted-model.ts'
-import { spyMessages, spyState } from './int-kit.ts'
+import { spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 

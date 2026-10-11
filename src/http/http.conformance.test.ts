@@ -1,7 +1,7 @@
 /** `httpConformance` against `createHarnessHttp(...).fetch` and through a real `Bun.serve`. */
 import { test } from 'bun:test'
 import { defineHarnessAgent } from '../index.ts'
-import { memoryMessages, memoryState, memoryStreamLog } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState, inMemoryStreamLog } from '../storage/memory.ts'
 import { httpConformance } from '../testing/index.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { createHarnessHttp, openAccess } from './index.ts'
@@ -14,7 +14,7 @@ function slowAgent() {
       Array.from({ length: 20 }, () => ({ text: 'a slow answer', delayMs: 60 })),
     ),
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState(), streams: memoryStreamLog() },
+    storage: { messages: inMemoryMessages(), state: inMemoryState(), streams: inMemoryStreamLog() },
     streams: { flushMs: 5, pollMs: 10 },
     logger: silent,
     onWarning() {},

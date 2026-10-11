@@ -19,7 +19,7 @@ import {
   handleChatRequest,
 } from '../../stream/chat-request.ts'
 import { type ScriptedCallOptions, scriptedModel } from '../../testing/scripted-model.ts'
-import { spyMessages, spyState } from '../int-kit.ts'
+import { spyMessages, spyState } from '../test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 

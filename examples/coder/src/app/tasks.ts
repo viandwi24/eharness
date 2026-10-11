@@ -17,7 +17,7 @@ export interface TaskHubDeps {
 }
 
 export interface TaskHub {
-  /** Add it to the MAIN agent's plugins (after `shell()` and `subagents()`). */
+  /** Add it to the MAIN agent's plugins (after `shell()` and `subagent()`). */
   plugin: HarnessPlugin<'task-hub'>
   /** Tasks of the current session, oldest first. */
   tasks(): BackgroundTask[]

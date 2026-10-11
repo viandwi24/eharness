@@ -7,13 +7,15 @@
  * Imports core only through `src/index.ts` (ADR-0008). Unlike the core, this module fetches
  * (model lists, public catalogs), only through an injected `fetch`.
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/23-providers.md
  */
 export {
   type AnthropicProviderOptions,
   anthropicProvider,
   defineProvider,
-  GATEWAY_MODELS_DEV_PROVIDERS,
   type GatewayProviderOptions,
   gatewayProvider,
   type OpenAICompatibleProviderOptions,
@@ -27,33 +29,19 @@ export {
 export {
   type CatalogCache,
   type CatalogCacheEntry,
-  DEFAULT_CATALOG_TIMEOUT_MS,
-  DEFAULT_CATALOG_TTL_MS,
-  type LoadCachedJsonOptions,
+  inMemoryCatalogCache,
   type LoadCatalogOptions,
-  type LoadedJson,
-  loadCachedJson,
   loadModelsDev,
   loadOpenRouterModels,
-  MODELS_DEV_URL,
-  memoryCatalogCache,
-  OPENROUTER_MODELS_URL,
-  parseModelsDevModels,
-  parseOpenRouterModels,
 } from './catalog-loader.ts'
 export { type EnvConfigurable, type FromEnvOptions, fromEnv } from './env.ts'
 export {
   ehMeta,
-  endpointChanged,
   formSpec,
-  mergeSecretPatch,
-  providerFormSpec,
   type RedactOptions,
   redactProfile,
   redactSettings,
-  scrub,
   secretStatus,
-  secretValuesOf,
   validateSettings,
 } from './form.ts'
 export {
@@ -66,12 +54,11 @@ export {
   parseModelRef,
 } from './manager.ts'
 export {
-  SEALED_KEY,
   type SealedProfileStore,
   type SealedProfileStoreOptions,
   sealedProfileStore,
 } from './sealed.ts'
-export { memoryProfileStore } from './store.ts'
+export { type InMemoryProfileStoreOptions, inMemoryProfileStore } from './store.ts'
 export type {
   AnyProviderDefinition,
   ConfigProfile,
@@ -102,9 +89,7 @@ export type {
   TestResult,
 } from './types.ts'
 export {
-  type LegacyOpener,
   plaintextVault,
   type VaultKeys,
   webCryptoVault,
-  withLegacyVault,
 } from './vault.ts'

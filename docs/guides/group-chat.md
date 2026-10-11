@@ -8,15 +8,17 @@ what it missed, and does not get stuck in a bot-to-bot loop. Contract:
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { groupChat, routeGroupMessage } from 'eharness/group'
+import { group, routeGroupMessage } from 'eharness/group'
 
-const group = groupChat({ botId: 'bot-123', botName: 'Harness' })
-const agent = defineHarnessAgent({ model, plugins: [group] })
+const groupPlugin = group({ botId: 'bot-123', botName: 'Harness' })
+// model: yours
+const agent = defineHarnessAgent({ model, plugins: [groupPlugin] })
 
 // one session per chat; acceptClientMetadata keeps the speaker (`metadata.group`) in storage
+// yours: chatId, text, from, mentionsBot, replyToBot, messageId come from your channel adapter
 const session = agent.session(`telegram:${chatId}`, { acceptClientMetadata: true })
 
-const result = await routeGroupMessage(group, session, {
+const result = await routeGroupMessage(groupPlugin, session, {
   text,
   author: { id: String(from.id), name: from.first_name, isBot: from.is_bot },
   mentionsBot, // the channel adapter's fact
@@ -29,7 +31,7 @@ if (result.responded) {
 }
 ```
 
-The agent answers when `mentionsBot` is set, when `replyToBot` is set (`replyCountsAsMention`), or
+Set `requireMention: false` to answer every message. The agent answers when `mentionsBot` is set, when `replyToBot` is set (`replyCountsAsMention`), or
 when the text matches `mentionPatterns` (or `@botName`). Everything else is stored as a
 `group.message` kind (visible to your UI, never sent to the model alone) and handed to the model —
 the newest `historyLimit` (default 20), framed as data — with the next answer, exactly once.

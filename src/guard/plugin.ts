@@ -1,39 +1,36 @@
 /**
- * The `approvalGuard()` plugin (spec 15): an LLM judge on the approval chain that can only
+ * The `guard()` plugin (spec 15): an LLM judge on the approval chain that can only
  * tighten — it denies (with a reason the model reads) or escalates to a person, never approves.
  *
- * Built only with the public core API (ADR-0008). The judge reads the core's restricted
+ * A thin wrapper over the shared judge engine (`createJudge`, role `tighten`, ADR-0060), built only
+ * with the public core API (ADR-0008). The judge reads the core's restricted
  * transcript (`tool.approve` event `transcript()`: user messages and tool calls only), so a prompt
  * injection in a tool output cannot reach it. Verdicts are cached in plugin state per session.
  *
  * @see docs/specs/15-guard-plugin.md
  * @see docs/decisions/0030-llm-approval-guard-plugin.md
  */
+import type { JSONValue, LanguageModel, ToolApprovalStatus } from 'ai'
 import {
-  generateText,
-  type JSONValue,
-  type LanguageModel,
-  type LanguageModelUsage,
-  Output,
-  type ToolApprovalStatus,
-} from 'ai'
-import { z } from 'zod/v4'
-import {
+  createJudge,
   definePlugin,
-  type HarnessContext,
+  errorText,
   HarnessError,
-  type HarnessHooks,
   type HarnessPlugin,
+  type JudgeCacheEntry,
+  type JudgeStore,
+  JudgeUnavailableError,
+  judgeCoordinator,
   type SessionContribution,
   type ToolRisk,
 } from '../index.ts'
-import { renderCall, renderPrompt, renderTranscript, verdictKey } from './prompt.ts'
 import {
   fill,
   GUARD_ASK,
   GUARD_BREAKER,
   GUARD_DEFAULT_POLICY,
   GUARD_DENIED,
+  GUARD_INPUT_TOO_LONG,
   GUARD_INSTRUCTIONS,
   GUARD_UNAVAILABLE,
 } from './texts.ts'
@@ -41,8 +38,8 @@ import {
 /** A judge verdict. */
 export type GuardVerdict = 'allow' | 'ask' | 'deny'
 
-/** Options of {@link approvalGuard}. */
-export interface ApprovalGuardOptions {
+/** Options of {@link guard}. */
+export interface GuardOptions {
   /** The judge: a cheap, fast model. Its usage is charged to the turn (`addUsage`). */
   model: LanguageModel
   /** The application's policy text for the judge. Default {@link GUARD_DEFAULT_POLICY}. */
@@ -53,8 +50,16 @@ export interface ApprovalGuardOptions {
   skipTools?: string[]
   /** When set, only these tool names (after prefixing) are reviewed. */
   onlyTools?: string[]
-  /** Transcript view limits: last `maxMessages` entries (default 20), `maxChars` in total (default 12 000). */
+  /**
+   * Transcript view limits: last `maxMessages` entries (default 20), `maxChars` in total (default
+   * 12 000). Bounds the transcript only; the call input has its own limit, `maxCallChars`.
+   */
   transcript?: { maxMessages?: number; maxChars?: number }
+  /**
+   * Longest call input (canonical JSON) that is judged; a longer one is never judged and asks a
+   * person. Default `DEFAULT_JUDGE_MAX_CALL_CHARS` (8 000), the same as `modelClassifier()`.
+   */
+  maxCallChars?: number
   /** Judge timeout in ms; a timeout escalates to a person. Default 15 000. */
   timeoutMs?: number
   /** AI SDK retries of the judge call. Default 1. */
@@ -65,15 +70,25 @@ export interface ApprovalGuardOptions {
    */
   maxConsecutiveDenials?: number
   /**
-   * Verdict cache (per session, in plugin state): `maxEntries` (default 200), `ttlMs` (default: no
-   * expiry). A cached `allow` ignores later conversation context (it is keyed by tool, input,
-   * policy and judge model only); set a `ttlMs` when context can change what is acceptable.
+   * Verdict cache (per session, in plugin state): `maxEntries` (default 200), `ttlMs` (default
+   * 1 hour; `Infinity` = no expiry). A cached `allow` ignores later conversation context (it is
+   * keyed by tool, input, policy and judge model only); lower `ttlMs` when context can change
+   * what is acceptable.
    */
   cache?: { maxEntries?: number; ttlMs?: number }
+  /**
+   * Let permissions auto mode answer this guard's question in its own judge call. When the
+   * `permissions` plugin runs in `auto` mode in the same session, with a classifier on the same
+   * model instance (or gateway string) and the same view limits (`transcript`, `maxCallChars`),
+   * ONE model call judges the action against both the auto rules and this policy, and the guard
+   * records its half without calling its model (spec 15 §7). Outcomes are the same as with two
+   * calls. Needs `permissions` listed before `guard` (the engine decides first); otherwise, with a
+   * different model or limits, or with auto mode paused, the guard judges alone. `false`: always
+   * judge alone. Default `true`.
+   */
+  combineWithAutoMode?: boolean
 }
 
-/** `[key, verdict, reason, at]` — one cached judge verdict. */
-type CachedVerdict = [string, GuardVerdict, string, number]
 /**
  * `[toolCallId, status, reason, toolName, key]` — the status this plugin returned for a call. The
  * record is reused only when the tool name and the verdict key (tool + input hash) match, so a
@@ -86,45 +101,8 @@ const VERDICTS = 'verdicts'
 const CALLS = 'calls'
 const DENIALS = 'denials'
 
-const verdictSchema = z.object({
-  decision: z.enum(['allow', 'ask', 'deny']),
-  reason: z.string(),
-})
-
-type ApproveEvent = Parameters<NonNullable<HarnessHooks['tool.approve']>>[1]
-
 function invalid(message: string): HarnessError {
-  return new HarnessError('EH_CONFIG_INVALID', `approvalGuard: ${message}`)
-}
-
-function positive(name: string, value: number | undefined, fallback: number): number {
-  if (value === undefined) return fallback
-  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
-    throw invalid(`${name} must be a positive number.`)
-  }
-  return value
-}
-
-function isUsage(value: unknown): value is LanguageModelUsage {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    ('inputTokens' in value || 'outputTokens' in value)
-  )
-}
-
-function modelId(model: LanguageModel): string {
-  if (typeof model === 'string') return model
-  const m = model as { provider?: unknown; modelId?: unknown }
-  return `${String(m.provider ?? '')}/${String(m.modelId ?? '')}`
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof Error) {
-    if (error.name === 'TimeoutError') return 'timed out'
-    return error.message.length > 200 ? `${error.message.slice(0, 200)}…` : error.message
-  }
-  return String(error)
+  return new HarnessError('EH_CONFIG_INVALID', `guard: ${message}`)
 }
 
 /**
@@ -138,12 +116,12 @@ function errorText(error: unknown): string {
  * defineHarnessAgent({
  *   model,
  *   approval: { risk: { read: 'approved', write: 'approved', external: 'approved' } },
- *   plugins: [approvalGuard({ model: 'openai/gpt-5-mini', policy: 'Only email @acme.com.' })],
+ *   plugins: [guard({ model: 'openai/gpt-5-mini', policy: 'Only email @acme.com.' })],
  * })
  * ```
  * @see docs/specs/15-guard-plugin.md
  */
-export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'guard'> {
+export function guard(options: GuardOptions): HarnessPlugin<'guard'> {
   if (typeof options !== 'object' || options === null || options.model === undefined) {
     throw invalid('`model` is required.')
   }
@@ -154,84 +132,36 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
   const skipRisks = new Set<string>(options.skipRisks ?? ['read'])
   const skipTools = new Set(options.skipTools ?? [])
   const onlyTools = options.onlyTools === undefined ? undefined : new Set(options.onlyTools)
-  const limits = {
-    maxMessages: positive('transcript.maxMessages', options.transcript?.maxMessages, 20),
-    maxChars: positive('transcript.maxChars', options.transcript?.maxChars, 12_000),
-  }
-  const timeoutMs = positive('timeoutMs', options.timeoutMs, 15_000)
-  const maxRetries = options.maxRetries ?? 1
-  if (!Number.isInteger(maxRetries) || maxRetries < 0) {
-    throw invalid('maxRetries must be a non-negative integer.')
-  }
-  const maxDenials = positive('maxConsecutiveDenials', options.maxConsecutiveDenials, 3)
-  const maxEntries = positive('cache.maxEntries', options.cache?.maxEntries, 200)
-  const ttlMs =
-    options.cache?.ttlMs === undefined ? undefined : positive('cache.ttlMs', options.cache.ttlMs, 0)
-  const judgeModel = options.model
-  /** Scope of cached verdicts: a changed policy or judge model never reuses an older verdict. */
-  const scope = `${policy}\u0000${modelId(judgeModel)}`
-
-  /** Ask the judge. Throws when it is unavailable (error, timeout, unparseable output). */
-  async function judge(
-    ctx: HarnessContext,
-    e: ApproveEvent,
-    risk: string,
-  ): Promise<{ decision: GuardVerdict; reason: string }> {
-    const prompt = renderPrompt({
-      policy,
-      transcript: renderTranscript(e.transcript(), limits),
-      call: renderCall({ toolName: e.toolName, input: e.input, risk }, limits.maxChars),
-    })
-    const signals = [AbortSignal.timeout(timeoutMs)]
-    const turnSignal = ctx.turn?.abortSignal
-    if (turnSignal !== undefined) signals.push(turnSignal)
-    const charge = (usage: unknown) => {
-      if (isUsage(usage)) ctx.turn?.addUsage(usage, { source: 'guard', model: judgeModel })
-    }
-    try {
-      const result = await generateText({
-        model: ctx.observeModel(judgeModel),
-        instructions: GUARD_INSTRUCTIONS,
-        prompt,
-        output: Output.object({ schema: verdictSchema }),
-        abortSignal: AbortSignal.any(signals),
-        maxRetries,
-      })
-      charge(result.totalUsage)
-      const parsed = verdictSchema.safeParse(result.output)
-      if (!parsed.success) throw new Error('unparseable verdict')
-      return { decision: parsed.data.decision, reason: parsed.data.reason.trim() }
-    } catch (error) {
-      charge((error as { usage?: unknown } | null)?.usage)
-      throw error
-    }
-  }
+  const maxCallRecords = options.cache?.maxEntries ?? 200
+  const judge = createJudge({
+    name: 'guard',
+    role: 'tighten',
+    model: options.model,
+    instructions: GUARD_INSTRUCTIONS,
+    policy,
+    ...(options.transcript === undefined ? {} : { transcript: options.transcript }),
+    ...(options.maxCallChars === undefined ? {} : { maxCallChars: options.maxCallChars }),
+    timeoutMs: options.timeoutMs ?? 15_000,
+    ...(options.maxRetries === undefined ? {} : { maxRetries: options.maxRetries }),
+    ...(options.maxConsecutiveDenials === undefined
+      ? {}
+      : { maxConsecutiveDenials: options.maxConsecutiveDenials }),
+    cache: options.cache ?? {},
+  })
 
   return definePlugin({
     name: 'guard',
     session(ctx): SessionContribution {
       let warnedTurn: string | undefined
 
-      const readVerdicts = (): CachedVerdict[] =>
-        (ctx.state.get<JSONValue>(VERDICTS) as CachedVerdict[] | undefined) ?? []
       const readCalls = (): CallRecord[] =>
         (ctx.state.get<JSONValue>(CALLS) as CallRecord[] | undefined) ?? []
-      const denials = (): number => ctx.state.get<number>(DENIALS) ?? 0
-
-      const cached = (key: string): CachedVerdict | undefined => {
-        const now = Date.now()
-        const list = readVerdicts()
-        const index = list.findIndex((entry) => entry[0] === key)
-        if (index < 0) return undefined
-        const entry = list[index] as CachedVerdict
-        if (ttlMs !== undefined && now - entry[3] > ttlMs) return undefined
-        return entry
-      }
-      const remember = (key: string, decision: GuardVerdict, reason: string) => {
-        const list = readVerdicts().filter((entry) => entry[0] !== key)
-        list.push([key, decision, reason, Date.now()])
-        while (list.length > maxEntries) list.shift()
-        ctx.state.set(VERDICTS, list as unknown as JSONValue)
+      /** Verdict cache and denial counter of the judge engine, kept in session plugin state. */
+      const store: JudgeStore = {
+        verdicts: () => (ctx.state.get<JSONValue>(VERDICTS) as JudgeCacheEntry[] | undefined) ?? [],
+        setVerdicts: (entries) => ctx.state.set(VERDICTS, entries as unknown as JSONValue),
+        denials: () => ctx.state.get<number>(DENIALS) ?? 0,
+        setDenials: (count) => ctx.state.set(DENIALS, count === 0 ? undefined : count),
       }
       const record = (
         toolCallId: string,
@@ -242,80 +172,130 @@ export function approvalGuard(options: ApprovalGuardOptions): HarnessPlugin<'gua
       ) => {
         const list = readCalls().filter((entry) => entry[0] !== toolCallId)
         list.push([toolCallId, status, reason, toolName, key])
-        while (list.length > maxEntries) list.shift()
+        while (list.length > maxCallRecords) list.shift()
         ctx.state.set(CALLS, list as unknown as JSONValue)
       }
       const answer = (status: CallRecord[1], reason: string): ToolApprovalStatus =>
         status === 'not-applicable' ? 'not-applicable' : { type: status, reason }
+      const fastPath = (toolName: string, risk: string): boolean =>
+        (onlyTools !== undefined && !onlyTools.has(toolName)) ||
+        skipTools.has(toolName) ||
+        skipRisks.has(risk)
+
+      // permissions auto mode may judge this guard's policy in its own call (spec 15 §7)
+      if (options.combineWithAutoMode !== false) {
+        judgeCoordinator(ctx.signal).register({
+          model: options.model,
+          instructions: GUARD_INSTRUCTIONS,
+          policy,
+          limits: judge.limits,
+          applies: (call) => !fastPath(call.toolName, call.risk ?? 'unknown'),
+          settled: async (call) => {
+            const key = await judge.key(call)
+            if (
+              readCalls().some(
+                (entry) =>
+                  entry[0] === call.toolCallId && entry[3] === call.toolName && entry[4] === key,
+              )
+            ) {
+              return true
+            }
+            return (await judge.cachedVerdict(call, store)) !== undefined
+          },
+        })
+      }
 
       return {
         hooks: {
           'tool.approve': async (hookCtx, e) => {
             // 1. fast path: no model call, nothing recorded
-            if (onlyTools !== undefined && !onlyTools.has(e.toolName)) return 'not-applicable'
-            if (skipTools.has(e.toolName)) return 'not-applicable'
             const risk = e.risk ?? 'unknown'
-            if (skipRisks.has(risk)) return 'not-applicable'
+            if (fastPath(e.toolName, risk)) return 'not-applicable'
 
             // 2. the same call again (AI SDK re-validates approved calls): the same answer. A
             //    reused call id with another tool or input is a different call: judged again.
-            const key = await verdictKey(e.toolName, e.input, scope)
+            const call = { toolName: e.toolName, input: e.input, risk }
+            const key = await judge.key(call)
             const previous = readCalls().find(
               (entry) => entry[0] === e.toolCallId && entry[3] === e.toolName && entry[4] === key,
             )
             if (previous !== undefined) return answer(previous[1], previous[2])
 
-            // 3. verdict: cache, else the judge (unavailable → a person decides)
-            let verdict: { decision: GuardVerdict; reason: string }
-            const hit = cached(key)
-            if (hit !== undefined) {
-              verdict = { decision: hit[1], reason: hit[2] }
-            } else {
-              try {
-                verdict = await judge(hookCtx, e, risk)
-              } catch (error) {
-                const text = errorText(error)
-                const turnId = hookCtx.turn?.id
-                if (turnId === undefined || warnedTurn !== turnId) {
-                  warnedTurn = turnId
-                  hookCtx.warn({
-                    code: 'W_GUARD_UNAVAILABLE',
-                    message: `The approval guard could not review '${e.toolName}' (${text}); the call needs a person.`,
-                    details: { tool: e.toolName, toolCallId: e.toolCallId, error: text },
+            // 3. the shared engine: cache, else the model (unavailable → a person decides)
+            //    A combined call of permissions auto mode (same session, same call) already holds
+            //    this guard's half: no second model call (its usage is charged here).
+            const combined =
+              options.combineWithAutoMode === false
+                ? undefined
+                : await judgeCoordinator(hookCtx.signal).take({
+                    toolCallId: e.toolCallId,
+                    toolName: e.toolName,
+                    input: e.input,
                   })
-                }
-                const reason = fill(GUARD_UNAVAILABLE, { error: text })
-                record(e.toolCallId, 'user-approval', reason, e.toolName, key)
-                return answer('user-approval', reason)
+            if (combined?.usage !== undefined) {
+              hookCtx.turn?.addUsage(combined.usage, { source: 'guard', model: options.model })
+            }
+            let result: Awaited<ReturnType<typeof judge.judge>>
+            try {
+              if (combined !== undefined && 'error' in combined) {
+                throw new JudgeUnavailableError(combined.error, 'unavailable')
               }
-              remember(key, verdict.decision, verdict.reason)
+              result = await judge.judge(call, {
+                ...(combined === undefined
+                  ? {}
+                  : { precomputed: { verdict: combined.verdict, reason: combined.reason } }),
+                transcript: e.transcript(),
+                store,
+                observeModel: (m) => hookCtx.observeModel(m),
+                onUsage: (usage) =>
+                  hookCtx.turn?.addUsage(usage, { source: 'guard', model: options.model }),
+                ...(hookCtx.turn?.abortSignal === undefined
+                  ? {}
+                  : { abortSignal: hookCtx.turn.abortSignal }),
+              })
+            } catch (error) {
+              const text = errorText(error)
+              const turnId = hookCtx.turn?.id
+              if (turnId === undefined || warnedTurn !== turnId) {
+                warnedTurn = turnId
+                hookCtx.warn({
+                  code: 'W_GUARD_UNAVAILABLE',
+                  message: `The approval guard could not review '${e.toolName}' (${text}); the call needs a person.`,
+                  details: { tool: e.toolName, toolCallId: e.toolCallId, error: text },
+                })
+              }
+              const reason = fill(GUARD_UNAVAILABLE, { error: text })
+              record(e.toolCallId, 'user-approval', reason, e.toolName, key)
+              return answer('user-approval', reason)
             }
 
-            // 4. status, with the circuit breaker on consecutive denials
-            const reason = verdict.reason === '' ? 'no reason given.' : verdict.reason
+            // 4. status from the outcome (the engine applied the circuit breaker)
+            const why = result.reason === '' ? 'no reason given.' : result.reason
             let status: CallRecord[1]
             let text: string
-            if (verdict.decision === 'allow') {
-              ctx.state.set(DENIALS, undefined)
+            if (result.truncated) {
+              status = 'user-approval'
+              text = fill(GUARD_ASK, {
+                reason: fill(GUARD_INPUT_TOO_LONG, { max: result.maxCallChars }),
+              })
+            } else if (result.outcome === 'no-objection' || result.outcome === 'approve') {
               status = 'not-applicable'
               text = ''
-            } else if (verdict.decision === 'ask') {
+            } else if (result.outcome === 'ask') {
               status = 'user-approval'
-              text = fill(GUARD_ASK, { reason })
-            } else if (denials() >= maxDenials) {
-              status = 'user-approval'
-              text = fill(GUARD_BREAKER, { count: denials(), reason })
+              text = result.breaker
+                ? fill(GUARD_BREAKER, { count: result.denials, reason: why })
+                : fill(GUARD_ASK, { reason: why })
             } else {
-              ctx.state.set(DENIALS, denials() + 1)
               status = 'denied'
-              text = fill(GUARD_DENIED, { reason })
+              text = fill(GUARD_DENIED, { reason: why })
             }
             record(e.toolCallId, status, text, e.toolName, key)
             return answer(status, text)
           },
           'approval.decided': (_ctx, decision) => {
             // a person answered: the breaker starts over
-            if (decision.by === 'user' && denials() > 0) ctx.state.set(DENIALS, undefined)
+            if (decision.by === 'user') judge.resetBreaker(store)
           },
         },
       }

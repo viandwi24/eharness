@@ -2,10 +2,10 @@
  * Form description derived from a provider's zod settings, plus secret redaction and the
  * edit-without-resending-secrets merge.
  *
- * @see docs/specs/23-providers.md#2-forms-redaction-and-secrets
+ * @see docs/specs/23-providers.md#2-forms-redaction-and-secrets-generic
  */
 import { toJSONSchema, type z } from 'zod/v4'
-import { HarnessError } from '../index.ts'
+import { HarnessError, isRecord } from '../index.ts'
 import type {
   ConfigProfile,
   FieldGroup,
@@ -31,9 +31,6 @@ export function ehMeta(meta: FieldMeta): { 'x-eh': FieldMeta } {
 
 type Json = Record<string, unknown>
 
-const isObject = (value: unknown): value is Json =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
-
 /** Words of a camelCase / snake_case key as a label (`baseURL` → `Base URL`). */
 function humanize(key: string): string {
   const spaced = key
@@ -48,10 +45,10 @@ function humanize(key: string): string {
 function normalize(node: Json): Json {
   const variants = (node.anyOf ?? node.oneOf) as unknown
   if (!Array.isArray(variants)) return node
-  const rest = (variants as Json[]).filter((v) => !(isObject(v) && v.type === 'null'))
+  const rest = (variants as Json[]).filter((v) => !(isRecord(v) && v.type === 'null'))
   const { anyOf: _a, oneOf: _o, ...outer } = node
-  if (rest.length === 1 && isObject(rest[0])) return { ...normalize(rest[0]), ...outer }
-  if (rest.length > 1 && rest.every((v) => isObject(v) && 'const' in v)) {
+  if (rest.length === 1 && isRecord(rest[0])) return { ...normalize(rest[0]), ...outer }
+  if (rest.length > 1 && rest.every((v) => isRecord(v) && 'const' in v)) {
     return { ...outer, enum: rest.map((v) => v.const) }
   }
   return { ...outer, type: 'json' }
@@ -59,7 +56,7 @@ function normalize(node: Json): Json {
 
 function toField(path: string, key: string, raw: Json, required: boolean): FormField {
   const node = normalize(raw)
-  const meta = isObject(node['x-eh']) ? (node['x-eh'] as FieldMeta) : {}
+  const meta = isRecord(node['x-eh']) ? (node['x-eh'] as FieldMeta) : {}
   const secret = meta.secret === true
   const secretValues = meta.secretValues === true
   let kind: FormField['kind'] = 'json'
@@ -107,14 +104,14 @@ function toField(path: string, key: string, raw: Json, required: boolean): FormF
 
 function collect(schema: Json, prefix: string, parentRequired: boolean, out: FormField[]): void {
   const props = schema.properties
-  if (!isObject(props)) return
+  if (!isRecord(props)) return
   const required = Array.isArray(schema.required) ? (schema.required as string[]) : []
   for (const [key, value] of Object.entries(props)) {
-    if (!isObject(value)) continue
+    if (!isRecord(value)) continue
     const node = normalize(value)
     const path = prefix === '' ? key : `${prefix}.${key}`
     const isRequired = parentRequired && required.includes(key)
-    if (node.type === 'object' && isObject(node.properties)) {
+    if (node.type === 'object' && isRecord(node.properties)) {
       collect(node, path, isRequired, out)
     } else {
       out.push(toField(path, key, value, isRequired))
@@ -140,15 +137,10 @@ export function formSpec(schema: z.ZodObject): ProviderFormSpec {
   return { fields, jsonSchema }
 }
 
-/** {@link formSpec} of a provider definition (generic machinery: any zod object works). */
-export function providerFormSpec(definition: { settings: z.ZodObject }): ProviderFormSpec {
-  return formSpec(definition.settings)
-}
-
 function getPath(root: unknown, path: string): unknown {
   let cur: unknown = root
   for (const part of path.split('.')) {
-    if (!isObject(cur)) return undefined
+    if (!isRecord(cur)) return undefined
     cur = cur[part]
   }
   return cur
@@ -157,7 +149,7 @@ function getPath(root: unknown, path: string): unknown {
 function hasPath(root: unknown, path: string): boolean {
   let cur: unknown = root
   for (const part of path.split('.')) {
-    if (!isObject(cur) || !Object.hasOwn(cur, part)) return false
+    if (!isRecord(cur) || !Object.hasOwn(cur, part)) return false
     cur = cur[part]
   }
   return true
@@ -168,7 +160,7 @@ function setPath(root: Json, path: string, value: unknown): void {
   let cur = root
   for (const part of parts.slice(0, -1)) {
     const next = cur[part]
-    if (isObject(next)) cur = next
+    if (isRecord(next)) cur = next
     else {
       const created: Json = {}
       cur[part] = created
@@ -183,16 +175,16 @@ function deletePath(root: Json, path: string): void {
   const parts = path.split('.')
   let cur: unknown = root
   for (const part of parts.slice(0, -1)) {
-    if (!isObject(cur)) return
+    if (!isRecord(cur)) return
     cur = cur[part]
   }
   const last = parts[parts.length - 1] as string
-  if (isObject(cur)) delete cur[last]
+  if (isRecord(cur)) delete cur[last]
 }
 
 /** `true` for the patch value that keeps a stored secret: `{ keep: true }`. */
 function isKeep(value: unknown): boolean {
-  return isObject(value) && value.keep === true
+  return isRecord(value) && value.keep === true
 }
 
 /** A secret as {@link SecretStatus}: set or not, plus the last 4 characters of long values. */
@@ -224,7 +216,7 @@ export function redactSettings(
     if (field.secret) {
       setPath(out, field.path, secretStatus(value, hint))
     } else if (field.secretValues) {
-      if (isObject(value)) {
+      if (isRecord(value)) {
         const redacted: Record<string, SecretStatus> = {}
         for (const [k, v] of Object.entries(value)) redacted[k] = secretStatus(v, hint)
         setPath(out, field.path, redacted)
@@ -309,12 +301,12 @@ export function mergeSecretPatch(
     } else if (field.secret) {
       if (value === undefined || value === '' || isKeep(value)) continue
       setPath(out, field.path, value)
-    } else if (field.secretValues && isObject(value)) {
+    } else if (field.secretValues && isRecord(value)) {
       const before = getPath(base, field.path)
       const next: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(value)) {
         if (v === '' || isKeep(v) || v === undefined) {
-          if (isObject(before) && typeof before[k] === 'string') next[k] = before[k]
+          if (isRecord(before) && typeof before[k] === 'string') next[k] = before[k]
         } else next[k] = v
       }
       setPath(out, field.path, next)
@@ -331,7 +323,7 @@ export function secretValuesOf(schema: z.ZodObject, settings: Record<string, unk
   for (const field of formSpec(schema).fields) {
     const value = getPath(settings, field.path)
     if (field.secret && typeof value === 'string' && value !== '') out.push(value)
-    else if (field.secretValues && isObject(value)) {
+    else if (field.secretValues && isRecord(value)) {
       for (const v of Object.values(value)) if (typeof v === 'string' && v !== '') out.push(v)
     }
   }

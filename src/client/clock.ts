@@ -41,3 +41,8 @@ export function sleepOf(clock: Clock): (ms: number, signal: AbortSignal) => Prom
       signal.addEventListener('abort', done, { once: true })
     })
 }
+
+const never = new AbortController().signal
+
+/** Resolve after `ms` on the real timers. */
+export const sleep = (ms: number): Promise<void> => sleepOf(systemClock)(ms, never)

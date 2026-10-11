@@ -64,10 +64,10 @@ describe('names', () => {
   test('local name rules', () => {
     expect(invalidLocalName('invoice')).toBeUndefined()
     expect(invalidLocalName('myPart-2')).toBeUndefined()
-    expect(invalidLocalName('a.b')).toBeDefined()
-    expect(invalidLocalName('Invoice')).toBeDefined()
-    expect(invalidLocalName('ehlo')).toBeDefined()
-    expect(invalidLocalName('')).toBeDefined()
+    expect(invalidLocalName('a.b')).toBeString()
+    expect(invalidLocalName('Invoice')).toBeString()
+    expect(invalidLocalName('ehlo')).toBeString()
+    expect(invalidLocalName('')).toBeString()
   })
 })
 

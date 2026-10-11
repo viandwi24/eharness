@@ -318,6 +318,7 @@ const FLOW_STATUS = {
   finished: 409,
   'invalid-action': 400,
   'not-found': 404,
+  'principal-mismatch': 403,
 } as const
 const FLOW_CODE = {
   'stale-view': 'STALE_VIEW',
@@ -325,6 +326,7 @@ const FLOW_CODE = {
   finished: 'FLOW_FINISHED',
   'invalid-action': 'INVALID_ACTION',
   'not-found': 'NOT_FOUND',
+  'principal-mismatch': 'FORBIDDEN',
 } as const
 
 export function connectorRoutes(deps: Deps): OpenAPIHono {

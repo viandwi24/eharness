@@ -1,4 +1,5 @@
 /** `/btw`: an inline dim box that streams the answer to a side question. Not part of the transcript. */
+import { errorText } from 'eharness'
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import type { CoderController } from '../contracts.ts'
@@ -40,7 +41,7 @@ export function SideQuestion({ controller, question, onClose }: SideQuestionProp
         },
         (e: unknown) => {
           if (signal.aborted) return
-          setError(e instanceof Error ? e.message : String(e))
+          setError(errorText(e))
           setState('error')
         },
       )

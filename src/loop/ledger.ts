@@ -7,6 +7,7 @@
 import type { LanguageModel } from 'ai'
 import type { BudgetLedgerConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
+import { errorText } from '../internal/util.ts'
 import { DEFAULT_ESTIMATE_OUTPUT_TOKENS, estimateStepCostUsd } from '../models/cost.ts'
 import type { ModelCatalog } from '../models/types.ts'
 import type { HarnessContext } from '../plugin/types.ts'
@@ -267,9 +268,4 @@ export async function recordOutsideTurn(args: {
       args.key,
     )
   }
-}
-
-function errorText(error: unknown): string {
-  if (error instanceof Error) return error.message
-  return String(error)
 }

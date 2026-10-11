@@ -13,6 +13,7 @@ import type {
 } from '../agent/session-types.ts'
 import { isHarnessError } from '../errors.ts'
 import { uuidv7 } from '../messages/ids.ts'
+import { RESPOND_IGNORE_UNKNOWN } from '../messages/pending-state.ts'
 import { isToolPart } from '../messages/tool-parts.ts'
 import type {
   ClientToolDeclaration,
@@ -20,7 +21,6 @@ import type {
   PageContextEntry,
   PageContextOptions,
 } from '../registry/request-tools.ts'
-import { RESPOND_IGNORE_UNKNOWN } from '../session/interaction/pending.ts'
 import { failedRun } from './run.ts'
 
 /**
@@ -115,17 +115,17 @@ export function extractResponses(message: UIMessage): PendingResponse {
  *
  * 1. `trigger: 'regenerate-message'` → `regenerate({ messageId })`;
  * 2. last message `role: 'assistant'` → `respond()` with its decision fields (answers that are
- *    not pending are ignored; a pending item without an answer → `EH_INVALID_INPUT`);
- * 3. `messageId` set and last message `role: 'user'` → `edit(messageId, last)`;
+ *    not pending are ignored; a pending item without an answer stays pending: the request is a
+ *    partial answer, recorded, and the run ends `stop: 'tool-pending'`, `partial: true`, spec 11 §4.3);
+ * 3. `messageId` set and last message `role: 'user'` → `edit({ messageId, input: last })`;
  * 4. otherwise → `send(last)`.
  *
  * Throws only `EH_SESSION_CLOSED`. A busy session (`EH_SESSION_BUSY`) is returned as a failed run
- * (`stop: 'error'`, `error.code: 'EH_SESSION_BUSY'`) whose `toResponse()` / `pipeTo()` answer
+ * (`stop: 'error'`, `error.code: 'EH_SESSION_BUSY'`) whose `toResponse()` / `toStreamResponse()` / `pipeTo()` answer
  * **409** with `{ error: { code, message } }`; pass `{ ifBusy: 'wait' }` to wait instead (send and
  * respond only). Failures **before the turn's commit point** that only the run can see (a lock
- * held by another instance, a turn running in another instance, `EH_INVALID_INPUT`, a pending
- * item without an answer) are in-stream `error` chunks of `toResponse()`; use
- * `await run.toHttpResponse()` to answer them with a status (409 / 400 / 503, JSON body) too.
+ * held by another instance, a turn running in another instance, `EH_INVALID_INPUT`) are in-stream `error` chunks of `toStreamResponse()`; `await run.toResponse()` answers them with
+ * a status (409 / 400 / 503, JSON body) too.
  * Failures after the stream started stay in the stream.
  *
  * @example
@@ -133,7 +133,7 @@ export function extractResponses(message: UIMessage): PendingResponse {
  * export async function POST(req: Request) {
  *   const body = await req.json()
  *   const session = agent.session(body.id, { runtime: { userId } })
- *   return await handleChatRequest(session, body).toHttpResponse()
+ *   return await handleChatRequest(session, body).toResponse()
  * }
  * ```
  * @see docs/specs/11-interaction.md#7-handlechatrequest-usechat-adapter
@@ -185,7 +185,7 @@ export function handleChatRequest<
     }
     if (messageId !== undefined && last?.role === 'user') {
       kind = 'edit'
-      return session.edit(messageId, last, options)
+      return session.edit({ messageId, input: last, ...options })
     }
     // no message at all: an empty user message, rejected by input normalization as a run error
     return session.send(last ?? ({ role: 'user', parts: [] } as unknown as UIMessage), options)
@@ -215,7 +215,7 @@ function parseCursor(value: string | null | undefined): number | undefined | 'in
  * Handle the `GET` reconnect request of AI SDK `useChat({ resume: true })` (spec 04 §6.2): `204`
  * (no body) when no stream is active, otherwise the UI message SSE stream of the active turn
  * from `session.attachRemote()` — also when another instance runs it. The cursor (0-based chunk
- * index; the stream starts at 0, which is what `useChat` expects) comes from `opts.from`, the
+ * index; the stream starts at 0, which is what `useChat` expects) comes from `options.from`, the
  * `?from=` query or the `Last-Event-ID` header; AI SDK's SSE helpers do not write event ids, so a
  * client that tracks its position sends it with `prepareReconnectToStreamRequest`. The stream of a `respond()` continuation starts with a replay of the
  * continued message, so AI SDK's `resumeStream()` rebuilds it (spec 04 §6.3; `from` counts replay
@@ -232,6 +232,8 @@ function parseCursor(value: string | null | undefined): number | undefined | 'in
  * })
  * ```
  * @see docs/specs/04-streaming.md#62-stream-log-port
+ *
+ * @experimental Draft (stream log, spec 04 §6): may change in a minor release (docs/engineering/api-stability.md).
  */
 export async function handleResumeRequest<
   M extends UIMessage,
@@ -239,9 +241,9 @@ export async function handleResumeRequest<
 >(
   session: HarnessSession<M, Kinds>,
   request: Request,
-  opts: ResumeRequestOptions = {},
+  options: ResumeRequestOptions = {},
 ): Promise<Response> {
-  let from = opts.from
+  let from = options.from
   if (from === undefined) {
     const url = new URL(request.url)
     const cursor = parseCursor(url.searchParams.get('from') ?? request.headers.get('last-event-id'))
@@ -253,11 +255,13 @@ export async function handleResumeRequest<
     }
     from = cursor
   }
-  const signal = opts.signal ?? request.signal
+  const signal = options.signal ?? request.signal
   const run = await session.attachRemote({
     ...(from === undefined ? {} : { from }),
     ...(signal === undefined ? {} : { signal }),
   })
   if (run === undefined) return new Response(null, { status: 204 })
-  return run.toResponse(opts.headers === undefined ? undefined : { headers: opts.headers })
+  return run.toStreamResponse(
+    options.headers === undefined ? undefined : { headers: options.headers },
+  )
 }

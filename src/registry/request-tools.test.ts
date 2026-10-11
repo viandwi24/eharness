@@ -89,8 +89,10 @@ describe('buildRequestTools', () => {
       reasonOf(() => buildRequestTools([decl('a', { inputSchema: big })], none)).problems[0],
     ).toContain('8192 bytes')
     expect(
-      buildRequestTools([decl('a', { inputSchema: big })], none, { maxSchemaBytes: 20_000 }),
-    ).toBeDefined()
+      buildRequestTools([decl('a', { inputSchema: big })], none, {
+        maxSchemaBytes: 20_000,
+      })?.tools.map((t) => t.name),
+    ).toEqual(['a'])
     reasonOf(() => buildRequestTools([decl('a', { inputSchema: { type: 'string' } })], none))
     reasonOf(() => buildRequestTools([decl('a', { inputSchema: 'object' })], none))
     reasonOf(() => buildRequestTools([decl('a', { inputSchema: undefined })], none))
@@ -103,7 +105,9 @@ describe('buildRequestTools', () => {
       properties: { x: { $ref: '#/definitions/d' } },
       definitions: { d: { type: 'string' } },
     }
-    expect(buildRequestTools([decl('a', { inputSchema: internal })], none)).toBeDefined()
+    expect(
+      buildRequestTools([decl('a', { inputSchema: internal })], none)?.tools.map((t) => t.name),
+    ).toEqual(['a'])
     let deep: Record<string, unknown> = { type: 'string' }
     for (let i = 0; i < 40; i++) deep = { type: 'object', properties: { x: deep } }
     expect(
@@ -122,13 +126,17 @@ describe('buildRequestTools', () => {
   })
 
   test('allow: a list or a predicate; a throwing predicate denies', () => {
-    expect(buildRequestTools([decl('a')], none, { allow: ['a', 'b'] })).toBeDefined()
+    expect(
+      buildRequestTools([decl('a')], none, { allow: ['a', 'b'] })?.tools.map((t) => t.name),
+    ).toEqual(['a'])
     expect(
       reasonOf(() => buildRequestTools([decl('a'), decl('c')], none, { allow: ['a'] })).names,
     ).toEqual(['c'])
     expect(
-      buildRequestTools([decl('ui_x')], none, { allow: (d) => d.name.startsWith('ui_') }),
-    ).toBeDefined()
+      buildRequestTools([decl('ui_x')], none, {
+        allow: (d) => d.name.startsWith('ui_'),
+      })?.tools.map((t) => t.name),
+    ).toEqual(['ui_x'])
     reasonOf(() =>
       buildRequestTools([decl('a')], none, {
         allow: () => {

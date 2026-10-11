@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
-import { memoryMessages, memoryState } from 'eharness/storage/memory'
+import { inMemoryMessages, inMemoryState } from 'eharness/storage/memory'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { z } from 'zod/v4'
 import {
@@ -37,7 +37,7 @@ async function setup(
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState() },
+    storage: { messages: inMemoryMessages(), state: inMemoryState() },
     logger: silent,
     tools: { echo },
     plugins: [

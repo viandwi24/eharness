@@ -5,10 +5,15 @@
 import { describe, expect, test } from 'bun:test'
 import { tool, type UIMessage } from 'ai'
 import { z } from 'zod/v4'
-import { activity, memoryActivityStore } from '../activity/index.ts'
-import { defineHarnessAgent, type HarnessAgent } from '../index.ts'
-import { memoryInbox, memoryMessages, memoryState, memoryStreamLog } from '../storage/memory.ts'
-import { subagentChild, subagents } from '../subagent/index.ts'
+import { activity, inMemoryActivityStore } from '../activity/index.ts'
+import { defineHarnessAgent, type HarnessAgent, HarnessError } from '../index.ts'
+import {
+  inMemoryInbox,
+  inMemoryMessages,
+  inMemoryState,
+  inMemoryStreamLog,
+} from '../storage/memory.ts'
+import { subagent, subagentChild } from '../subagent/index.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { until } from '../testing/test-utils.ts'
 import { createHarnessHttp, type HarnessHttpOptions, openAccess } from './index.ts'
@@ -20,11 +25,11 @@ type Agent = HarnessAgent<any>
 
 function world() {
   return {
-    messages: memoryMessages(),
-    state: memoryState(),
-    streams: memoryStreamLog(),
-    inbox: memoryInbox(),
-    store: memoryActivityStore(),
+    messages: inMemoryMessages(),
+    state: inMemoryState(),
+    streams: inMemoryStreamLog(),
+    inbox: inMemoryInbox(),
+    store: inMemoryActivityStore(),
   }
 }
 type World = ReturnType<typeof world>
@@ -528,7 +533,7 @@ describe('attention', () => {
       ]),
       plugins: [
         activity({ store: w.store }),
-        subagents({
+        subagent({
           agents: { worker: { agent: worker, description: 'works' } },
           approvals: 'park',
         }),
@@ -808,11 +813,11 @@ describe('sessions list and describe', () => {
     const agent = agentOf(world(), { model: scriptedModel([]) })
     const without = createHarnessHttp(agent, { authorize: openAccess })
     expect((await without.fetch(get('/sessions'))).status).toBe(404)
-    const http = createHarnessHttp<string>(agent, {
-      authorize: () => 'u1',
+    const http = createHarnessHttp<{ id: string }>(agent, {
+      authorize: () => ({ id: 'u1' }),
       sessions: {
         list: ({ principal, query }) => ({
-          sessions: [{ id: `${principal}-1`, title: `limit ${query.limit}` }],
+          sessions: [{ id: `${principal.id}-1`, title: `limit ${query.limit}` }],
           next: 'c2',
         }),
         describe: (id) => ({ title: `title of ${id}` }),
@@ -836,7 +841,7 @@ describe('turn of another instance (lock)', () => {
     const held = new Set<string>()
     return {
       async acquire(id: string) {
-        if (held.has(id)) throw new Error('held')
+        if (held.has(id)) throw new HarnessError('EH_SESSION_BUSY', 'held')
         held.add(id)
         return async () => {
           held.delete(id)

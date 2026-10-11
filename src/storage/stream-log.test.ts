@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { streamLogConformance } from '../testing/stream-log.conformance.ts'
-import { memoryStreamLog } from './memory.ts'
+import { inMemoryStreamLog } from './memory.ts'
 
-describe('memoryStreamLog() conformance', () => {
-  for (const c of streamLogConformance(() => memoryStreamLog())) test(c.name, c.run)
+describe('inMemoryStreamLog() conformance', () => {
+  for (const c of streamLogConformance(() => inMemoryStreamLog())) test(c.name, c.run)
 })
 
-describe('memoryStreamLog()', () => {
+describe('inMemoryStreamLog()', () => {
   test('retention follows the injected clock, also for an unclosed log', async () => {
     let now = 1_000
-    const log = memoryStreamLog({ retentionMs: 100, now: () => now })
+    const log = inMemoryStreamLog({ retentionMs: 100, now: () => now })
     const k = { sessionId: 's', turnId: 't' }
     await log.append(k, [{ a: 1 }])
     now += 99
@@ -19,7 +19,7 @@ describe('memoryStreamLog()', () => {
   })
 
   test('a subscriber registered before the first append is notified', async () => {
-    const log = memoryStreamLog()
+    const log = inMemoryStreamLog()
     const k = { sessionId: 's', turnId: 't' }
     let calls = 0
     log.subscribe?.(k, () => calls++)

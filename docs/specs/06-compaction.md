@@ -74,7 +74,7 @@ Guard settings: `config.guard?: { maxContextRatio?: number /* 0.9 */; reserveTok
   the `read_file` result for an image or PDF, spec 08 §12; detected structurally, core cannot import
   the subpath) is counted like the wire it stands for: `countTokens(text)` + 1_500 for an image or
   any other media type, + 1_500 per started 50 000 bytes for a PDF (1 to 100 pages), never its JSON
-  or base64 size (`mediaRefTokens()`). Tool definitions: name + description + JSON schema of the input + 10. Instructions:
+  or base64 size. Tool definitions: name + description + JSON schema of the input + 10. Instructions:
   block 1 + block 2 (+ the turn reminder inside a turn).
 - Calibration: after each step the core compares provider-reported `usage.inputTokens` with the
   estimate of the same request (instructions, tools, reminders, messages) and keeps a factor
@@ -108,8 +108,7 @@ reminder). `toolSources[].source` uses the labels of `SessionToolInfo.source` (s
 are calibrated like the totals and rounded per entry, so a sum may differ from the total by up to
 one token per entry. `session.stats()` (idle) resolves the registry like `session.tools()` does, so
 `instructions` and `tools` cover the whole next request (skills index, turn-refresh text, skill and
-source tools), not only the static part (before, the idle totals counted static
-instructions, the session block and static tools only). The `data-eh.context` part of a turn
+source tools), not only the static part. The `data-eh.context` part of a turn
 carries the same split for the request it measured.
 
 With prune on, `messages` reflects the **pruned** wire: the turn's `data-eh.context` measures the
@@ -118,7 +117,7 @@ turn except the newest `keepTurns` is pruned. The saving of a message (estimate 
 minus the estimate of its pruned projection) is computed once per stored message and cached for
 the session; `metadata.eharness.tokens` stays the unpruned estimate.
 Prune sizes media by a fixed amount, not by its data: each non-text item of a `content` output, and
-the media of a `media-ref`, counts `1_500 × 4` characters (`PRUNE_MEDIA_CHARS`), so `stats.chars`
+the media of a `media-ref`, counts a fixed `1_500 × 4` characters, so `stats.chars`
 is not inflated by base64 and the `minChars` decision is stable.
 
 ## 3. Marker payload
@@ -204,7 +203,7 @@ session `data` event.
 
 ## 5. Algorithm
 
-### 5.0 Prune (0.4.0, off by default)
+### 5.0 Prune
 
 With `compaction.prune` set, old and large tool outputs are replaced by a short placeholder in
 the request — cheaper than summarizing and friendly to the prompt cache — before the summarizer
@@ -299,11 +298,11 @@ to the skip rule (§4) and the guard. Mid-turn keeps exactly the last completed 
 that step alone exceeds 25% of the window, its tool outputs are truncated in the summarizer
 transcript and the guard handles the wire.
 
-### 5.2a Flush (0.4.0)
+### 5.2a Flush
 
 Before history is summarized (lossy), plugins can give the agent one bounded, internal chance to
 save facts — typically into memory files (spec 14 §9) — through the `compaction.before` hook
-(spec 01 §5) and a **flush turn** (ADR-0020). Normative rules:
+(spec 01 §5; bounded by `config.hooks.timeoutMs`) and a **flush turn** (ADR-0020). Normative rules:
 
 1. **When.** Once per compaction, after the split (§5.1), the skip rule (§4) and the budget check
    (§5.3 item 5) decided that summarizing will happen — so after prune (§5.0) — and after the

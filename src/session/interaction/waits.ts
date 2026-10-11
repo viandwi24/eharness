@@ -14,7 +14,7 @@ import type {
   PendingState,
   WaitResult,
 } from '../../messages/types.ts'
-import type { ExternalToolMeta, WaitStart } from '../../registry/external.ts'
+import type { WaitStart } from '../../registry/external.ts'
 import { listSourceTools } from '../../registry/tools.ts'
 import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import type { RespondPlan } from './pending.ts'
@@ -109,35 +109,6 @@ export function timeoutResult(entry: Pick<TimedWait, 'onTimeout'>): WaitResult {
     : { errorText: entry.onTimeout.errorText, by: 'timeout' }
 }
 
-/** Environment of {@link armExternals}. */
-export interface ParkEnv {
-  /** `externalTool()` definitions of the turn, by tool name. */
-  externals: ReadonlyMap<string, { owner: string; meta: ExternalToolMeta }>
-  now?: () => number
-}
-
-/**
- * Complete the external entries of a pending state that is about to be committed: `timeoutAt` and
- * `onTimeout` from the tool's defaults, and `started: false` for tools with a `start` (it runs
- * after the commit, spec 11 §4.2 rule 1) with `parkedAt`. Synchronous: no user code runs before the commit.
- * Mutates `pending`.
- */
-export function armExternals(pending: PendingState, env: ParkEnv): void {
-  const now = env.now ?? Date.now
-  for (const entry of pending.externals ?? []) {
-    const def = env.externals.get(entry.toolName)
-    const timeoutMs = def?.meta.timeoutMs
-    if (timeoutMs !== undefined && Number.isFinite(now() + timeoutMs)) {
-      entry.timeoutAt = now() + timeoutMs
-    }
-    if (def?.meta.onTimeout !== undefined) entry.onTimeout = structuredClone(def.meta.onTimeout)
-    if (def?.meta.start !== undefined) {
-      entry.started = false
-      entry.parkedAt = now()
-    }
-  }
-}
-
 /**
  * Apply what `start` returned to a dispatched wait: correlation id, payload, timeout overrides.
  * Mutates `entry`.
@@ -167,6 +138,8 @@ export async function findWaitTool(
     const listed = await listSourceTools({
       sources: open.toolSources,
       cache: open.sourceCache,
+      failures: open.sourceFailures,
+      options: open.sourceOptions,
       taken: new Set(open.tools.map((t) => t.name)),
       contextOf: rt.contextOf,
       warn: rt.warn,

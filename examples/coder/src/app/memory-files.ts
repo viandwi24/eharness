@@ -98,7 +98,7 @@ export async function listMemoryFiles(opts: {
 export async function loadUserMemory(
   userDir: string,
 ): Promise<{ name: string; text: string; ignored: string[] } | undefined> {
-  const info = await loadProjectInstructions(diskFs(userDir), { nested: false }).catch(
+  const info = await loadProjectInstructions(diskFs({ root: userDir }), { nested: false }).catch(
     () => undefined,
   )
   const root = info?.root

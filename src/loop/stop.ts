@@ -4,10 +4,10 @@
  * @see docs/specs/05-session-and-storage.md#31-continue-vs-stop-after-a-step-normative
  */
 import type { FinishReason, ModelMessage } from 'ai'
+import { clientToolEntry } from '../messages/pending-state.ts'
 import { WAIT_TIMED_OUT } from '../messages/texts.ts'
 import type { PendingState, StopReason } from '../messages/types.ts'
 import type { ToolTraits } from '../registry/risk.ts'
-import { clientToolEntry } from '../session/interaction/pending.ts'
 
 /** The wait id of an external call: stable per tool call (spec 11 §4.2 rule 1). */
 export function waitIdOf(toolCallId: string): string {

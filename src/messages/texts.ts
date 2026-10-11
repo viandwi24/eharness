@@ -1,8 +1,18 @@
 /**
- * Fixed model- and UI-visible texts written by the core. Changing one is a minor change.
+ * Fixed model- and UI-visible texts written by the core.
+ *
+ * One rule (docs/engineering/api-stability.md): texts that end up in stored messages or tool
+ * results a UI or application may need to recognise (`INTERRUPTED_*`, `DENIED_NEW_INPUT`,
+ * `WAIT_TIMED_OUT`, `TOOL_OUTPUT_TRUNCATED`, …) are exported from `eharness`, and changing one is a
+ * minor change. Instruction, nudge and preamble wording (`PROGRESS_NUDGE`, `MAX_STEPS_WRAP_UP`,
+ * `OUTPUT_INSTRUCTION`, `OUTPUT_RETRY`, `FINAL_ANSWER_DESCRIPTION`, `PAGE_CONTEXT_PREAMBLE`) is
+ * internal: it is not exported from the package and may change in any release.
  *
  * @see docs/specs/10-errors-and-stop-reasons.md#5-fixed-texts
  */
+
+/** Block reason shown to the user when an `input.submit` hook fails (fail closed; the error is logged). */
+export const INPUT_CHECK_FAILED: string = 'Input check failed.'
 
 /** Error result of tool calls left without a result when a turn ends. */
 export const INTERRUPTED_TURN: string = 'Interrupted: the turn ended before this tool finished.'

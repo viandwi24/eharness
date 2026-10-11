@@ -3,13 +3,12 @@ import { defineHarnessAgent, type PendingState } from '../index.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import {
   answerOutput,
-  askUser,
-  formatAnswers,
+  ask,
   type PendingQuestion,
-  parseQuestions,
   pendingQuestions,
   type Question,
 } from './index.ts'
+import { formatAnswers, parseQuestions } from './plugin.ts'
 
 const QUESTIONS: Question[] = [
   {
@@ -103,10 +102,10 @@ const call = (toolName = 'ask_user_question') => ({
   toolCalls: [{ toolName, toolCallId: 'q1', input: { questions: QUESTIONS } }],
 })
 
-describe('askUser in a session', () => {
+describe('ask in a session', () => {
   test('interactive: tool-pending, answered through respond({ toolOutputs })', async () => {
     const model = scriptedModel([call(), { text: 'SQLite it is.' }])
-    const agent = defineHarnessAgent({ model, contextWindow: 100_000, plugins: [askUser()] })
+    const agent = defineHarnessAgent({ model, contextWindow: 100_000, plugins: [ask()] })
     const session = agent.session('s1')
     const first = await session.send('plan').result
     expect(first.stop).toBe('tool-pending')
@@ -136,7 +135,7 @@ describe('askUser in a session', () => {
     const agent = defineHarnessAgent({
       model,
       contextWindow: 100_000,
-      plugins: [askUser({ interactive: false, whenNoHuman })],
+      plugins: [ask({ interactive: false, whenNoHuman })],
     })
     const result = await agent.session('s2').send('plan').result
     expect(result.stop).toBe('complete')
@@ -149,7 +148,7 @@ describe('askUser in a session', () => {
     const agent = defineHarnessAgent({
       model,
       contextWindow: 100_000,
-      plugins: [askUser({ toolName: 'ask_me', interactive: (ctx) => ctx.runtime.human === true })],
+      plugins: [ask({ toolName: 'ask_me', interactive: (ctx) => ctx.runtime.human === true })],
     })
     const session = agent.session('s3', { runtime: { human: false } })
     expect((await session.send('plan').result).stop).toBe('complete')

@@ -56,12 +56,12 @@ createHarnessHttp<Principal>(undefined, {
   },
 })
 
-// `openAccess` has no principal (`undefined`)
+// `openAccess` has an empty principal (`{}`): a principal is always an object (fail closed)
 createHarnessHttp(undefined, {
   authorize: openAccess,
   chat: {
     actorOf: (principal) => {
-      type _P = Expect<Equal<typeof principal, undefined>>
+      type _P = Expect<Equal<typeof principal, object>>
       return undefined
     },
   },

@@ -1,3 +1,4 @@
+// plain-error-file: filesystem adapter I/O failures are plain exceptions by adapter contract; the tool maps them to `ERROR: …` (spec 08 §2, onAdapterError)
 /**
  * `nodeWorkspace`: a virtual tree over real directories (spec 08 §10): `/` = the project root,
  * `/@dirs/<name>/` = extra directories, `/.eharness/tool-outputs/` = an optional real directory
@@ -32,7 +33,7 @@ export interface NodeWorkspaceOptions {
    */
   toolOutputsDir?: string
   /** Options for every `diskFs` of the workspace (ignore rules, size limit, grep, readonly). */
-  diskFs?: DiskFsOptions
+  diskFs?: Omit<DiskFsOptions, 'root'>
 }
 
 /** The result of {@link nodeWorkspace}. */
@@ -98,7 +99,8 @@ export async function nodeWorkspace(options: NodeWorkspaceOptions): Promise<Node
     const key = `${mount.real}\u0000${mount.readonly}`
     let fs = disks.get(key)
     if (!fs) {
-      fs = diskFs(mount.real, {
+      fs = diskFs({
+        root: mount.real,
         ...options.diskFs,
         readonly: mount.readonly || options.diskFs?.readonly,
       })
@@ -114,9 +116,10 @@ export async function nodeWorkspace(options: NodeWorkspaceOptions): Promise<Node
 
   return {
     root,
-    fs: mountFs(() =>
-      mounts.map((m) => ({ virtual: m.virtual, fs: diskOf(m), readonly: m.readonly })),
-    ),
+    fs: mountFs({
+      mounts: () =>
+        mounts.map((m) => ({ virtual: m.virtual, fs: diskOf(m), readonly: m.readonly })),
+    }),
     mounts: () => mounts.map((m) => ({ ...m })),
 
     async toReal(virtual) {

@@ -1,4 +1,5 @@
 import type { FileUIPart } from 'ai'
+import { errorText } from 'eharness'
 import { Box, useApp, useInput, useStdout } from 'ink'
 import {
   type ReactElement,
@@ -516,7 +517,7 @@ export function App({
           .catch((error: unknown) => {
             dispatch({
               type: 'system',
-              text: `Shell failed: ${error instanceof Error ? error.message : String(error)}`,
+              text: `Shell failed: ${errorText(error)}`,
               tone: 'error',
             })
           })
@@ -554,7 +555,7 @@ export function App({
           } catch (error) {
             dispatch({
               type: 'system',
-              text: `/${parsed.name} failed: ${error instanceof Error ? error.message : String(error)}`,
+              text: `/${parsed.name} failed: ${errorText(error)}`,
               tone: 'error',
             })
             release()
@@ -837,7 +838,7 @@ export function App({
         } catch (error) {
           dispatch({
             type: 'system',
-            text: `Cannot resume ${id}: ${error instanceof Error ? error.message : String(error)}`,
+            text: `Cannot resume ${id}: ${errorText(error)}`,
             tone: 'error',
           })
         } finally {
@@ -903,7 +904,7 @@ export function App({
         } catch (error) {
           dispatch({
             type: 'system',
-            text: `Rewind failed: ${error instanceof Error ? error.message : String(error)}`,
+            text: `Rewind failed: ${errorText(error)}`,
             tone: 'error',
           })
         } finally {
@@ -923,7 +924,7 @@ export function App({
         .catch((error: unknown) =>
           dispatch({
             type: 'system',
-            text: `Cannot save: ${error instanceof Error ? error.message : String(error)}`,
+            text: `Cannot save: ${errorText(error)}`,
             tone: 'error',
           }),
         )

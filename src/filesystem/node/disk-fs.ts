@@ -1,5 +1,6 @@
+// plain-error-file: filesystem adapter I/O failures are plain exceptions by adapter contract; the tool maps them to `ERROR: …` (spec 08 §2, onAdapterError)
 /**
- * `diskFs(root)`: the `FileSystem` contract over `node:fs/promises` (spec 08 §8).
+ * `diskFs({ root })`: the `FileSystem` contract over `node:fs/promises` (spec 08 §8).
  *
  * Containment is enforced on every call. Conditional writes are compare-and-set under a per-path
  * in-process mutex; writes go through a temp file and `rename`, keeping the file mode.
@@ -12,7 +13,6 @@ import {
   constants,
   mkdir,
   readdir,
-  readFile,
   rename,
   rm,
   stat,
@@ -22,6 +22,7 @@ import {
 import { basename, delimiter, dirname, join } from 'node:path'
 import { compileGlob } from '../glob.ts'
 import { detectMediaType } from '../media.ts'
+import { statelessPattern } from '../text.ts'
 import type {
   BinaryFile,
   DeleteResult,
@@ -45,6 +46,8 @@ export const DEFAULT_MAX_BINARY_BYTES: number = 10 * 1024 * 1024
 
 /** Options of {@link diskFs}. */
 export interface DiskFsOptions {
+  /** Real absolute directory; it is the virtual `/`. */
+  root: string
   /** `write`, `delete` and `move` throw `read-only directory: <path>`. */
   readonly?: boolean
   /** Which paths `list`, `grep` and `glob` hide (explicit reads still work). */
@@ -60,6 +63,12 @@ export interface DiskFsOptions {
   maxBinaryBytes?: number
   /** `'auto'` (default): use ripgrep when it is on `PATH`, else JavaScript; `'js'`: never spawn. */
   grep?: 'auto' | 'js'
+  /** Ripgrep is killed after this many ms and the search falls back to JavaScript. Default 30000. */
+  grepTimeoutMs?: number
+  /** Ripgrep is killed once it printed this many bytes (then JavaScript runs). Default 64 MiB. */
+  grepMaxOutputBytes?: number
+  /** Called with the reason whenever a ripgrep search falls back to the JavaScript path. */
+  onGrepFallback?: (reason: string) => void
 }
 
 const strictUtf8 = new TextDecoder('utf-8', { fatal: true })
@@ -124,18 +133,20 @@ async function which(name: string): Promise<string | null> {
  * throw `path outside the workspace: <path>`. `list`, `glob` and `stat` skip hidden and oversized
  * files and show binary files (`binary: true`); `grep` skips binary files.
  *
- * @param root Real absolute directory; it is the virtual `/`.
- * @param opts See {@link DiskFsOptions}.
+ * @param options See {@link DiskFsOptions} (`root` is the real absolute directory that becomes the virtual `/`).
  * @example
  * ```ts
- * const fs = diskFs('/home/me/project', { ignore: { hidden: ['dist/'] } })
+ * const fs = diskFs({ root: '/home/me/project', ignore: { hidden: ['dist/'] } })
  * ```
  * @see docs/specs/08-filesystem-plugin.md#8-node-adapter
  */
-export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
+export function diskFs(options: DiskFsOptions): FileSystem {
+  const { root, ...opts } = options
   const guard = createGuard(root)
   const exclusive = keyedMutex()
   const maxBytes = opts.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
+  const grepTimeoutMs = opts.grepTimeoutMs ?? 30_000
+  const grepMaxOutput = opts.grepMaxOutputBytes ?? 64 * 1024 * 1024
   const maxBinary = Math.max(maxBytes, opts.maxBinaryBytes ?? DEFAULT_MAX_BINARY_BYTES)
   const metaCache = new Map<
     string,
@@ -158,7 +169,7 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
     try {
       const info = await stat(real)
       if (!info.isFile()) return null
-      return (await versionOf(await readFile(real))).version
+      return (await versionOf(await guard.readContained(real))).version
     } catch (error) {
       if (isMissing(error)) return null
       throw error
@@ -173,7 +184,9 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
       .then((info) => (info.isFile() ? info.mode & 0o7777 : null))
       .catch(() => null)
     try {
-      await writeFile(temp, content)
+      await guard.assertParentInside(real)
+      await writeFile(temp, content, { flag: 'wx' })
+      await guard.assertParentInside(real) // re-check: a parent swapped after the first check
       if (mode !== null) await chmod(temp, mode).catch(() => {}) // best effort
       await rename(temp, real)
     } catch (error) {
@@ -208,7 +221,7 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
           }
     if (cached && cached.mtimeNs === info.mtimeNs && cached.ino === info.ino) return build(cached)
     try {
-      const bytes = await readFile(real)
+      const bytes = await guard.readContained(real)
       const { version, binary } = await versionOf(bytes)
       const entry = { mtimeNs: info.mtimeNs, ino: info.ino, size: bytes.length, version, binary }
       metaCache.set(real, entry)
@@ -273,7 +286,7 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
   }
 
   const grepJs = async (pattern: RegExp, prefix: string, maxHits: number): Promise<GrepHit[]> => {
-    const re = new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, ''))
+    const re = statelessPattern(pattern)
     const hits: GrepHit[] = []
     for (const meta of await list(prefix)) {
       if (meta.binary) continue
@@ -294,7 +307,7 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
     pattern: RegExp,
     prefix: string,
     maxHits: number,
-  ): Promise<GrepHit[] | null> => {
+  ): Promise<GrepHit[] | string> => {
     const realRoot = await guard.resolve('/')
     const realDir = await guard.resolve(trimDir(dirOf(prefix)))
     const hidden = await rules(realRoot)
@@ -313,15 +326,54 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
       '!node_modules',
     ]
     if (pattern.flags.includes('i')) args.push('--ignore-case')
+    // a file can contribute at most `maxHits` hits to the final answer
+    if (Number.isFinite(maxHits)) args.push('--max-count', String(Math.max(1, maxHits)))
     args.push('-e', pattern.source, '--', realDir)
-    const output = await new Promise<{ code: number | null; stdout: string }>((done, fail) => {
-      const child = spawn(rg, args, { cwd: realRoot, stdio: ['ignore', 'pipe', 'ignore'] })
-      const chunks: Buffer[] = []
-      child.stdout.on('data', (c: Buffer) => chunks.push(c))
-      child.on('error', fail)
-      child.on('close', (code) => done({ code, stdout: Buffer.concat(chunks).toString('utf8') }))
-    })
-    if (output.code !== 0 && output.code !== 1) return null // pattern rg cannot compile etc.
+    const output = await new Promise<{ code: number | null; stdout: string; reason?: string }>(
+      (done, fail) => {
+        const child = spawn(rg, args, { cwd: realRoot, stdio: ['ignore', 'pipe', 'ignore'] })
+        const chunks: Buffer[] = []
+        let bytes = 0
+        let reason: string | undefined
+        let settled = false
+        const finish = (code: number | null): void => {
+          if (settled) return
+          settled = true
+          clearTimeout(timer)
+          done({ code, stdout: Buffer.concat(chunks).toString('utf8'), reason })
+        }
+        const stop = (why: string): void => {
+          if (reason !== undefined) return
+          reason = why
+          child.kill('SIGKILL')
+          // do not wait for the pipes to close: a grandchild could hold them open
+          child.once('exit', (code) => finish(code))
+        }
+        const timer = setTimeout(
+          () => stop(`ripgrep timed out after ${grepTimeoutMs} ms`),
+          grepTimeoutMs,
+        )
+        child.stdout.on('data', (c: Buffer) => {
+          bytes += c.length
+          if (bytes > grepMaxOutput) {
+            stop(`ripgrep output exceeded ${grepMaxOutput} bytes`)
+            return
+          }
+          chunks.push(c)
+        })
+        child.on('error', (error) => {
+          clearTimeout(timer)
+          if (!settled) {
+            settled = true
+            fail(error)
+          }
+        })
+        child.on('close', (code) => finish(code))
+      },
+    )
+    if (output.reason !== undefined) return output.reason
+    // 0 = matches, 1 = none; anything else (a pattern rg cannot compile, ...) falls back
+    if (output.code !== 0 && output.code !== 1) return `ripgrep exited with code ${output.code}`
     const hits: GrepHit[] = []
     for (const line of output.stdout.split('\n')) {
       if (!line.startsWith('{')) continue
@@ -366,7 +418,7 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
       if (info.isDirectory()) return null
       if (!info.isFile()) throw new Error(binaryMessage(path))
       if (info.size > maxBinary) throw new Error(tooLargeMessage(path))
-      const bytes = await readFile(real)
+      const bytes = await guard.readContained(real)
       const content = decodeText(bytes)
       if (content === null) throw new Error(binaryMessage(path))
       if (bytes.length > maxBytes) throw new Error(tooLargeMessage(path))
@@ -393,7 +445,7 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
       if (info.size > maxBinary) {
         throw new Error(`too large file: ${path} (up to ${formatLimit(maxBinary)} only)`)
       }
-      const bytes = new Uint8Array(await readFile(real))
+      const bytes = await guard.readContained(real)
       const { version, binary } = await versionOf(bytes)
       const mediaType = detectMediaType(bytes, path)
       return {
@@ -473,8 +525,11 @@ export function diskFs(root: string, opts: DiskFsOptions = {}): FileSystem {
       if (opts.grep !== 'js' && pattern.flags.replace(/[gyi]/g, '') === '') {
         const rg = await which('rg')
         if (rg) {
-          const hits = await grepRg(rg, pattern, prefix, maxHits).catch(() => null)
-          if (hits) return hits
+          const hits = await grepRg(rg, pattern, prefix, maxHits).catch(
+            (error: unknown) => `ripgrep failed: ${error instanceof Error ? error.message : error}`,
+          )
+          if (typeof hits !== 'string') return hits
+          opts.onGrepFallback?.(hits)
         }
       }
       return grepJs(pattern, prefix, maxHits)

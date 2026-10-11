@@ -11,7 +11,7 @@ import type { StreamLogAdapter } from '../agent/session-types.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { defaultMemoryMessages, defaultMemoryState } from '../session/memory-storage.ts'
-import { memoryStreamLog } from '../storage/memory.ts'
+import { inMemoryStreamLog } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { handleResumeRequest } from './chat-request.ts'
 import { createStreamLogWriter, resolveStreamLogOptions } from './log-writer.ts'
@@ -25,7 +25,7 @@ const collect = async (stream: ReadableStream<unknown>): Promise<UIMessageChunk[
   return out
 }
 
-function world(streams: StreamLogAdapter = memoryStreamLog()) {
+function world(streams: StreamLogAdapter = inMemoryStreamLog()) {
   const messages = defaultMemoryMessages()
   const state = defaultMemoryState()
   const warnings: HarnessWarning[] = []
@@ -146,7 +146,7 @@ describe('attachRemote across instances', () => {
   })
 
   test('a failing adapter warns and never fails the turn', async () => {
-    const inner = memoryStreamLog()
+    const inner = inMemoryStreamLog()
     const broken: StreamLogAdapter = {
       ...inner,
       append: async () => {
@@ -202,7 +202,7 @@ describe('stream log writer', () => {
 
   test('batches by batchSize and closes after the last chunk', async () => {
     const calls: number[][] = []
-    const inner = memoryStreamLog()
+    const inner = inMemoryStreamLog()
     const adapter: StreamLogAdapter = {
       ...inner,
       append: async (k, chunks, o) => {
@@ -227,7 +227,7 @@ describe('stream log writer', () => {
   })
 
   test('a failed append is retried with the same cursor and warns once', async () => {
-    const inner = memoryStreamLog()
+    const inner = inMemoryStreamLog()
     let failures = 2
     const warnings: HarnessWarning[] = []
     const adapter: StreamLogAdapter = {
@@ -259,7 +259,7 @@ describe('stream log writer', () => {
   })
 
   test('never closes a log it could not complete, and does nothing when never started', async () => {
-    const inner = memoryStreamLog()
+    const inner = inMemoryStreamLog()
     const adapter: StreamLogAdapter = {
       ...inner,
       append: async () => {

@@ -3,10 +3,10 @@ import { webCryptoVault } from '../providers/index.ts'
 import { remoteMcpConnector } from './remote-mcp.ts'
 import { createConnectorService } from './service.ts'
 import {
-  memoryConnectionStore,
-  memoryCredentialStore,
-  memoryEnablementStore,
-  memoryFlowStore,
+  inMemoryConnectionStore,
+  inMemoryCredentialStore,
+  inMemoryEnablementStore,
+  inMemoryFlowStore,
 } from './store.ts'
 import { fakeAuthServer } from './test-kit.ts'
 import type { FlowView, McpSourceSpec } from './types.ts'
@@ -22,10 +22,10 @@ function make() {
   })
   const service = createConnectorService({
     definitions: [connector],
-    connections: memoryConnectionStore(),
-    credentials: memoryCredentialStore({ vault }),
-    enablement: memoryEnablementStore(),
-    flows: memoryFlowStore(),
+    connections: inMemoryConnectionStore(),
+    credentials: inMemoryCredentialStore({ vault }),
+    enablement: inMemoryEnablementStore(),
+    flows: inMemoryFlowStore(),
     vault,
     fetch: server.fetch,
     redirectUri: 'https://app.example.com/oauth/callback',

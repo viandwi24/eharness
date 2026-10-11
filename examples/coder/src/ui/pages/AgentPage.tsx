@@ -6,6 +6,7 @@
  * Live updates: the child session persists after every step, so the page polls `messagesOf`
  * while the agent runs (and reads once more when it settles).
  */
+import { errorText } from 'eharness'
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useCallback, useEffect, useRef, useState } from 'react'
 import type { BackgroundTask, CoderController, CoderMessage } from '../../contracts.ts'
@@ -106,7 +107,7 @@ export function AgentPage({
       setError(undefined)
       setMessages((prev) => (prev !== null && sameMessages(prev, next) ? prev : next))
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      setError(errorText(e))
     }
   }, [controller, target.sessionId])
 
@@ -147,7 +148,7 @@ export function AgentPage({
           )
         void load()
       })
-      .catch((e: unknown) => show(e instanceof Error ? e.message : String(e), 'error'))
+      .catch((e: unknown) => show(errorText(e), 'error'))
   }
 
   const head = agentHeader(target, task, now)

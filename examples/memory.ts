@@ -7,14 +7,16 @@
  */
 import { defineHarnessAgent } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { executeMemoryCommand, memory } from 'eharness/memory'
 import { exampleModel } from './shared/model.ts'
 
 // One file system for the app; memory lives under /memories (seeded with a shared policy file).
-const fs = memoryFs({
-  '/memories/org/style.md': '- Answer in short paragraphs.\n- Never promise delivery dates.\n',
-  '/workspace/README.md': '# Project\n',
+const fs = inMemoryFs({
+  seed: {
+    '/memories/org/style.md': '- Answer in short paragraphs.\n- Never promise delivery dates.\n',
+    '/workspace/README.md': '# Project\n',
+  },
 })
 
 const model = exampleModel([

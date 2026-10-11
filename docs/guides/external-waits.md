@@ -16,6 +16,8 @@ runnable: [`examples/external-wait.ts`](../../examples/external-wait.ts).
 import { externalTool } from 'eharness'
 import { z } from 'zod/v4'
 
+declare const ci: { trigger(ref: string, options: { idempotencyKey: string }): Promise<void> } // yours
+
 const build = externalTool({
   description: 'Run a CI build for a git ref and wait for its result.',
   inputSchema: z.object({ ref: z.string() }),
@@ -47,6 +49,8 @@ and the turn ends with `stop: 'tool-pending'`; the result carries
 ## 2. Resolve from a webhook
 
 ```ts
+// yours: agent (defineHarnessAgent) and verifySignature (checks the webhook signature, returns
+// { sessionId, waitId, result })
 // POST /webhooks/ci — runs in ANY instance, not necessarily the one that parked the turn
 export async function POST(req: Request) {
   const event = await verifySignature(req)                // the core cannot authenticate a webhook
@@ -106,6 +110,7 @@ through the same compare-and-set as a result. Three paths, use what your deploym
 3. `session.expireWaits(now?)` for a cron sweeper without an inbox:
 
 ```ts
+// yours: agent, sessionsWithOpenWaits(), log
 // every minute, for sessions you track (or from adapter.pending() with an inbox)
 for (const id of await sessionsWithOpenWaits()) {
   const { expired } = await agent.session(id).expireWaits()
@@ -131,7 +136,7 @@ new input fails with `EH_PENDING_RESPONSE` and the waits stay open.
   with `started: false`: once `recovery.staleMs` passed, the next session open or `expireWaits()`
   runs `start` again (same `waitId`).
 - Replaying a webhook is safe: the recorded result is final.
-- Stored pending state carries `v: 2`. State written by 0.3 / 0.4 (no `v`) still works with
+- Stored pending state carries a version (`v: 2`). State without `v` still works with
   `respond()`; an unknown `v` authorizes nothing (`resolveWait` → `'not-pending'`).
 
 ## Events and testing

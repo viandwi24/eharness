@@ -11,7 +11,7 @@ import type { HarnessAgentConfig } from '../../agent/types.ts'
 import type { HarnessUIMessage } from '../../messages/types.ts'
 import { definePlugin } from '../../plugin/define-plugin.ts'
 import { type ScriptedPrompt, scriptedModel } from '../../testing/scripted-model.ts'
-import { collect, normalizeVolatile, spyMessages, spyState } from '../int-kit.ts'
+import { collect, normalizeVolatile, spyMessages, spyState } from '../test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))

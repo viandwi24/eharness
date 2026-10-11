@@ -4,7 +4,7 @@
  * pause the routine. A routine task session (`routine:<id>:<slot>`) is matched by its id, a DM fire
  * by the `inboxId` of the user message the inbox item became. Never throws into the turn.
  */
-import { definePlugin, type HarnessPlugin } from 'eharness'
+import { definePlugin, errorText, type HarnessPlugin } from 'eharness'
 import type { RoutineOutcomes } from './routine-service.ts'
 
 interface InputLike {
@@ -27,7 +27,8 @@ export function routineOutcomes(options: {
           ctx,
           e: {
             stop: string
-            error?: { message: string }
+            /** `code` is always set (`HarnessErrorCode`, `EH_RUN_FAILED` when nothing more is known). */
+            error?: { code: string; message: string }
             pending?: {
               approvals: unknown[]
               clientTools: Array<{ result?: unknown }>
@@ -46,13 +47,13 @@ export function routineOutcomes(options: {
               sessionId: ctx.session.id,
               ...(inboxId === undefined ? {} : { inboxId }),
               stop: e.stop,
-              ...(e.error === undefined ? {} : { errorMessage: e.error.message }),
+              ...(e.error === undefined
+                ? {}
+                : { errorMessage: e.error.message, errorCode: e.error.code }),
               needsPerson,
             })
             .catch((error) => {
-              ctx.log.warn(
-                `routineOutcomes failed: ${error instanceof Error ? error.message : String(error)}`,
-              )
+              ctx.log.warn(`routineOutcomes failed: ${errorText(error)}`)
             })
         },
       },

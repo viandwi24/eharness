@@ -15,6 +15,8 @@ const count = (value: number | undefined): number =>
  * tokens (`inputTokenDetails`), output into text and reasoning (`outputTokenDetails`; AI SDK
  * already includes reasoning in `outputTokens`). A tier reprices the whole call when the prompt
  * (all input tokens) is above its threshold.
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
  */
 export function computeCost(usage: LanguageModelUsage, pricing: ModelPricing): number {
   const input = count(usage.inputTokens)
@@ -46,7 +48,11 @@ export function computeCost(usage: LanguageModelUsage, pricing: ModelPricing): n
   return usd / 1_000_000
 }
 
-/** Cost of a call of `model` from the catalog pricing; `undefined` when the model has no pricing. */
+/**
+ * Cost of a call of `model` from the catalog pricing; `undefined` when the model has no pricing.
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
+ */
 export function costOf(
   catalog: ModelCatalog | undefined,
   model: LanguageModel,
@@ -70,6 +76,8 @@ export const DEFAULT_ESTIMATE_OUTPUT_TOKENS = 4_096
  * estimateStepCostUsd({ models, model, contextTokens: 20_000, maxOutputTokens: 1_000 })
  * ```
  * @see docs/specs/12-models-and-cost.md#2-pricing
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
  */
 export function estimateStepCostUsd(args: {
   models: ModelCatalog | undefined

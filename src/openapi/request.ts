@@ -5,6 +5,7 @@
  *
  * @see docs/specs/17-openapi-plugin.md
  */
+import { errorText } from '../index.ts'
 
 /** One declared parameter of an operation. */
 export interface ParamPlan {
@@ -236,6 +237,8 @@ export interface ExecuteArgs {
   body: string | undefined
   timeoutMs: number
   maxResponseChars: number
+  /** Frames successful response content (untrusted-content frame); omitted: content is returned as is. */
+  frame?: (text: string) => string
   signals: Array<AbortSignal | undefined>
 }
 
@@ -299,12 +302,12 @@ export async function execute(args: ExecuteArgs): Promise<unknown> {
         url = next
         continue
       }
-      return await mapResponse(response, args.maxResponseChars)
+      return await mapResponse(response, args.maxResponseChars, args.frame)
     }
   } catch (error) {
     if (timedOut) return `Request timed out after ${args.timeoutMs} ms.`
     if (controller.signal.aborted) return 'Request aborted.'
-    return `Request failed: ${error instanceof Error ? error.message : String(error)}`
+    return `Request failed: ${errorText(error)}`
   } finally {
     clearTimeout(timer)
     for (const off of listeners) off()
@@ -336,7 +339,12 @@ async function readLimited(
 const TEXT_TYPE =
   /^(text\/|application\/(json|xml|x-www-form-urlencoded|yaml|x-yaml|javascript)|.*\+(json|xml))/i
 
-async function mapResponse(response: Response, max: number): Promise<unknown> {
+async function mapResponse(
+  response: Response,
+  max: number,
+  frame: ((text: string) => string) | undefined,
+): Promise<unknown> {
+  const wrap = (text: string): string => (frame === undefined ? text : frame(text))
   const type = (response.headers.get('content-type') ?? '').split(';')[0]?.trim() ?? ''
   if (!response.ok) {
     const { text } = await readLimited(response, 500)
@@ -351,13 +359,15 @@ async function mapResponse(response: Response, max: number): Promise<unknown> {
     return `UNSUPPORTED: the response content type '${type}' is binary or unsupported.`
   }
   const { text, truncated } = await readLimited(response, max)
-  if (truncated) return `${text}\n[truncated: the response is longer than ${max} characters]`
+  if (truncated) return `${wrap(text)}\n[truncated: the response is longer than ${max} characters]`
   if (/json/i.test(type) || (type === '' && /^\s*[[{]/.test(text))) {
     try {
-      return JSON.parse(text)
+      const parsed: unknown = JSON.parse(text)
+      // a frame is text: framed JSON is returned as the (compact) JSON text inside the frame
+      return frame === undefined ? parsed : frame(JSON.stringify(parsed))
     } catch {
-      return text
+      return wrap(text)
     }
   }
-  return text === '' ? `OK: HTTP ${response.status} ${response.statusText}`.trimEnd() : text
+  return text === '' ? `OK: HTTP ${response.status} ${response.statusText}`.trimEnd() : wrap(text)
 }

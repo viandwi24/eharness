@@ -20,6 +20,8 @@ import type { FileEntry, FileSystem } from './types.ts'
 
 /** Options of {@link fsSkillSource}. */
 export interface FsSkillSourceOptions {
+  /** The filesystem the skills are read from. */
+  fs: FileSystem
   /** Directory holding one sub-directory per skill (`<root>/<name>/SKILL.md`). */
   root: string
   /** When the core calls `list()`. Default `'session'`. */
@@ -48,24 +50,25 @@ type Parsed = ReturnType<typeof parseSkillMarkdown>
  *
  * @example
  * ```ts
- * defineHarnessAgent({ model, skills: [fsSkillSource(memoryFs(seed), { root: '/skills' })] })
+ * defineHarnessAgent({ model, skills: [fsSkillSource({ fs: inMemoryFs({ seed }), root: '/skills' })] })
  * ```
  * @throws {HarnessError} `EH_CONFIG_INVALID` for an invalid `root` or `refresh`.
  * @see docs/specs/07-skills.md#8-filesystem-autoload-in-eharnessfilesystem
  */
-export function fsSkillSource(fs: FileSystem, opts: FsSkillSourceOptions): SkillSource {
-  const normalized = normalizePath(opts?.root)
+export function fsSkillSource(options: FsSkillSourceOptions): SkillSource {
+  const normalized = normalizePath(options?.root)
   if (!normalized.ok) {
     throw new HarnessError(
       'EH_CONFIG_INVALID',
-      `fsSkillSource: invalid root ${JSON.stringify(opts?.root)}: ${normalized.error}.`,
+      `fsSkillSource: invalid root ${JSON.stringify(options?.root)}: ${normalized.error}.`,
     )
   }
-  const refresh = opts.refresh ?? 'session'
+  const { fs } = options
+  const refresh = options.refresh ?? 'session'
   if (refresh !== 'session' && refresh !== 'turn') {
     throw new HarnessError(
       'EH_CONFIG_INVALID',
-      `fsSkillSource: refresh must be 'session' or 'turn', got ${JSON.stringify(opts.refresh)}.`,
+      `fsSkillSource: refresh must be 'session' or 'turn', got ${JSON.stringify(options.refresh)}.`,
     )
   }
   const root = normalized.path
@@ -145,7 +148,8 @@ export function fsSkillSource(fs: FileSystem, opts: FsSkillSourceOptions): Skill
       const entry = await fs.read(joinPath(dir, 'SKILL.md'))
       if (entry === null) return null
       const parsed = parse(entry)
-      if ('error' in parsed) throw new Error(`invalid SKILL.md: ${parsed.error}`)
+      if ('error' in parsed)
+        throw new HarnessError('EH_INVALID_INPUT', `invalid SKILL.md: ${parsed.error}`)
       if (parsed.meta.name !== name) return null
       const prefix = dirPrefix(dir)
       const manifest: SkillDoc['manifest'] = []

@@ -3,20 +3,14 @@
  * touches a file system, reads the environment or imports a Node built-in (spec 18 §5).
  */
 
+import { collapseSegments, compileGitignorePattern, escapeRegExp, foldSegment } from '../index.ts'
+
+export { escapeRegExp, foldSegment }
+
 /** Normalise a POSIX path lexically: collapse `//`, `.` and `..` (an absolute path stops at `/`). */
 export function normalize(path: string): string {
   const absolute = path.startsWith('/')
-  const out: string[] = []
-  for (const part of path.split('/')) {
-    if (part === '' || part === '.') continue
-    if (part === '..') {
-      if (out.length > 0 && out[out.length - 1] !== '..') out.pop()
-      else if (!absolute) out.push('..')
-      continue
-    }
-    out.push(part)
-  }
-  const joined = out.join('/')
+  const joined = collapseSegments(path.split('/'), { keepLeadingDotDot: !absolute }).join('/')
   if (absolute) return `/${joined}`
   return joined === '' ? '.' : joined
 }
@@ -51,11 +45,6 @@ export function isInside(path: string, dir: string): boolean {
   return rel === '' || (rel !== '..' && !rel.startsWith('../'))
 }
 
-/** Escape a string for use inside a RegExp. */
-export function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 // ─── gitignore-style matching ────────────────────────────────────────────────────────────────
 
 /** A compiled gitignore pattern. */
@@ -68,66 +57,6 @@ export interface IgnorePattern {
 }
 
 /**
- * Fold a path segment for a case-insensitive comparison: NFC, lower case, and no trailing dots or
- * spaces (Windows ignores them, so `.git.` and `.git ` name `.git`). Used for protected paths and
- * deny/ask rules, where an extra match only costs an extra question.
- */
-export function foldSegment(segment: string): string {
-  const folded = segment.normalize('NFC').toLowerCase()
-  const trimmed = folded.replace(/[. ]+$/, '')
-  return trimmed === '' ? folded : trimmed
-}
-
-/** Translate the glob part of a gitignore pattern (no leading or trailing `/`) to a RegExp source. */
-function globSource(glob: string): string {
-  let out = ''
-  for (let i = 0; i < glob.length; i++) {
-    const ch = glob[i] as string
-    if (ch === '*') {
-      if (glob[i + 1] === '*') {
-        let j = i
-        while (glob[j + 1] === '*') j++
-        const before = i === 0 || glob[i - 1] === '/'
-        const after = j + 1 === glob.length || glob[j + 1] === '/'
-        if (before && after) {
-          if (j + 1 === glob.length) {
-            out += '.*'
-          } else {
-            out += '(?:.*/)?'
-            j++ // the following slash is part of the group
-          }
-          i = j
-          continue
-        }
-        i = j
-      }
-      out += '[^/]*'
-    } else if (ch === '?') {
-      out += '[^/]'
-    } else if (ch === '[') {
-      const end = glob.indexOf(']', i + 2)
-      if (end === -1) {
-        out += '\\['
-      } else {
-        let body = glob.slice(i + 1, end)
-        let negate = false
-        if (body.startsWith('!') || body.startsWith('^')) {
-          negate = true
-          body = body.slice(1)
-        }
-        out += `[${negate ? '^' : ''}${body.replace(/[\\\]^]/g, '\\$&')}]`
-        i = end
-      }
-    } else if (ch === '\\' && i + 1 < glob.length) {
-      out += escapeRegExp(glob[++i] as string)
-    } else {
-      out += escapeRegExp(ch)
-    }
-  }
-  return out
-}
-
-/**
  * Compile one gitignore pattern. Returns `undefined` for a blank pattern, a comment (`#`) and a
  * negation (`!`): rules never un-match.
  *
@@ -137,23 +66,11 @@ function globSource(glob: string): string {
  * - `*` and `?` never match a `/` and, unlike a shell, do match a leading dot.
  */
 export function compilePattern(pattern: string, ci = false): IgnorePattern | undefined {
-  let p = ci ? pattern.normalize('NFC') : pattern.replace(/(?<!\\)\s+$/, '')
-  if (p === '' || p.startsWith('#') || p.startsWith('!')) return undefined
-  if (p.startsWith('\\#') || p.startsWith('\\!')) p = p.slice(1)
-  const dirOnly = p.endsWith('/')
-  p = p.replace(/\/+$/, '')
-  if (p === '') return undefined
-  const anchored = p.includes('/')
-  p = p.replace(/^\/+/, '')
-  const body = globSource(p)
-  try {
-    const source = anchored ? `^${body}$` : `^(?:.*/)?${body}$`
-    return ci
-      ? { dirOnly, regex: new RegExp(source, 'i'), ci: true }
-      : { dirOnly, regex: new RegExp(source) }
-  } catch {
-    return undefined
-  }
+  const line = compileGitignorePattern(pattern, { caseFold: ci })
+  if (line === undefined || line.negate) return undefined
+  return ci
+    ? { dirOnly: line.dirOnly, regex: line.regex, ci: true }
+    : { dirOnly: line.dirOnly, regex: line.regex }
 }
 
 /**

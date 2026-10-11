@@ -5,10 +5,15 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import type { UIMessage, UIMessageChunk } from 'ai'
 import type { ActivityRecord } from '../activity/index.ts'
-import { activity, memoryActivityStore } from '../activity/index.ts'
+import { activity, inMemoryActivityStore } from '../activity/index.ts'
 import { createHarnessHttp, openAccess } from '../http/index.ts'
 import { defineHarnessAgent, type HarnessAgent } from '../index.ts'
-import { memoryInbox, memoryMessages, memoryState, memoryStreamLog } from '../storage/memory.ts'
+import {
+  inMemoryInbox,
+  inMemoryMessages,
+  inMemoryState,
+  inMemoryStreamLog,
+} from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { until } from '../testing/test-utils.ts'
 import { createActivityFeed, type ResyncReason } from './activity-feed.ts'
@@ -26,15 +31,15 @@ afterEach(async () => {
 })
 
 function boot(replies: string[]) {
-  const store = memoryActivityStore()
+  const store = inMemoryActivityStore()
   const agent: Agent = defineHarnessAgent({
     contextWindow: 100_000,
     model: scriptedModel(replies.map((text) => ({ text }))),
     storage: {
-      messages: memoryMessages(),
-      state: memoryState(),
-      streams: memoryStreamLog(),
-      inbox: memoryInbox(),
+      messages: inMemoryMessages(),
+      state: inMemoryState(),
+      streams: inMemoryStreamLog(),
+      inbox: inMemoryInbox(),
     },
     streams: { flushMs: 5, pollMs: 10 },
     inbox: { pollMs: 10 },

@@ -8,12 +8,14 @@
  *
  * @see docs/specs/08-filesystem-plugin.md#3-tools
  */
+
 import { type Tool, tool } from 'ai'
 import { z } from 'zod/v4'
+import { errorText, withToolExecute } from '../index.ts'
 import { compileGlob } from './glob.ts'
 import type { LastRead } from './last-read.ts'
 import { bytesToBase64, detectMediaType, imageDimensions, MODEL_IMAGE_TYPES } from './media.ts'
-import { dirPrefix, isUnder, isUnderAny, normalizePath } from './paths.ts'
+import { dirPrefix, isUnder, isUnderAnyFolded, normalizePath } from './paths.ts'
 import { smartReplace } from './smart-replace.ts'
 import {
   GREP_PATTERN_RULE,
@@ -204,7 +206,7 @@ export const MAX_EDITS = 50
 
 /** `ERROR: <message>` for an exception thrown by an adapter (a leading `Error: ` is dropped). */
 function defaultAdapterError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = errorText(error)
   return `ERROR: ${message.replace(/^Error:\s*/, '')}`
 }
 
@@ -349,8 +351,8 @@ export function createFileTools(
 
   const hiddenText = (path: string): string => `ERROR: file not found: ${path}`
   const policy = (path: string, what: 'write' | 'delete'): string | undefined => {
-    if (isUnderAny(path, env.hidden)) return `REJECTED: ${path} is not accessible.`
-    if (isUnderAny(path, env.readonly)) return `REJECTED: ${path} is read-only.`
+    if (isUnderAnyFolded(path, env.hidden)) return `REJECTED: ${path} is not accessible.`
+    if (isUnderAnyFolded(path, env.readonly)) return `REJECTED: ${path} is read-only.`
     if (what === 'write' && env.allowedExtensions !== undefined) {
       const base = path.slice(path.lastIndexOf('/') + 1)
       const dot = base.lastIndexOf('.')
@@ -367,7 +369,7 @@ export function createFileTools(
 
   /** Visible in listings/searches under `root` (the requested prefix). */
   const listed = (path: string, root: string): boolean =>
-    !isUnderAny(path, env.hidden) &&
+    !isUnderAnyFolded(path, env.hidden) &&
     env.unlisted.every((dir) => !isUnder(path, dir) || isUnder(root, dir))
 
   const stale = (current: FileEntry): string => {
@@ -400,7 +402,7 @@ export function createFileTools(
         const resolved = resolvePath(prefix ?? '/')
         if (!resolved.ok) return resolved.text
         const root = resolved.path
-        if (isUnderAny(root, env.hidden)) return `No files under ${root}.`
+        if (isUnderAnyFolded(root, env.hidden)) return `No files under ${root}.`
         const files = (await fs.list(dirPrefix(root))).filter(
           (file) => isUnder(file.path, root) && listed(file.path, root),
         )
@@ -440,7 +442,7 @@ export function createFileTools(
         const resolved = resolvePath(input)
         if (!resolved.ok) return resolved.text
         const path = resolved.path
-        if (isUnderAny(path, env.hidden)) return hiddenText(path)
+        if (isUnderAnyFolded(path, env.hidden)) return hiddenText(path)
         const binary = await binaryMeta(path)
         if (binary !== undefined) return readBinary(path, binary)
         const entry = await fs.read(path)
@@ -627,12 +629,12 @@ export function createFileTools(
         try {
           regex = new RegExp(pattern)
         } catch (error) {
-          return `ERROR: invalid pattern: ${error instanceof Error ? error.message : String(error)}`
+          return `ERROR: invalid pattern: ${errorText(error)}`
         }
         const resolved = resolvePath(prefix ?? '/')
         if (!resolved.ok) return resolved.text
         const root = resolved.path
-        if (isUnderAny(root, env.hidden)) return 'No matches.'
+        if (isUnderAnyFolded(root, env.hidden)) return 'No matches.'
         const hits = await search(root, regex, isLiteralPattern(pattern) ? pattern : undefined)
         if (hits.length === 0) return 'No matches.'
         const matcher = statelessPattern(regex)
@@ -661,7 +663,7 @@ export function createFileTools(
         const root = resolved.path
         const compiled = compileGlob(pattern)
         if (!compiled.ok) return `ERROR: invalid pattern: ${compiled.error}`
-        if (isUnderAny(root, env.hidden)) return 'No files match.'
+        if (isUnderAnyFolded(root, env.hidden)) return 'No files match.'
         const prefix = dirPrefix(root)
         const relative = (file: FileMeta): string => file.path.slice(prefix.length)
         const visible = (file: FileMeta): boolean =>
@@ -747,24 +749,21 @@ export function createFileTools(
   function guarded(name: FileToolName, base: Tool): Tool {
     const execute = base.execute as ((input: unknown, options: unknown) => unknown) | undefined
     if (execute === undefined) return base
-    return {
-      ...base,
-      execute: async (input: unknown, options: unknown): Promise<unknown> => {
-        try {
-          return await execute(input, options)
-        } catch (error) {
-          const raw = (input as { path?: unknown; prefix?: unknown } | null) ?? {}
-          const given = typeof raw.path === 'string' ? raw.path : raw.prefix
-          const normalized = typeof given === 'string' ? normalizePath(given) : undefined
-          const path =
-            normalized?.ok === true ? normalized.path : typeof given === 'string' ? given : '/'
-          const mapped = env.onAdapterError
-            ? env.onAdapterError(error, { tool: name, path })
-            : defaultAdapterError(error)
-          if (mapped === undefined) throw error
-          return mapped
-        }
-      },
-    } as Tool
+    return withToolExecute(base, async (input: unknown, options: unknown): Promise<unknown> => {
+      try {
+        return await execute(input, options)
+      } catch (error) {
+        const raw = (input as { path?: unknown; prefix?: unknown } | null) ?? {}
+        const given = typeof raw.path === 'string' ? raw.path : raw.prefix
+        const normalized = typeof given === 'string' ? normalizePath(given) : undefined
+        const path =
+          normalized?.ok === true ? normalized.path : typeof given === 'string' ? given : '/'
+        const mapped = env.onAdapterError
+          ? env.onAdapterError(error, { tool: name, path })
+          : defaultAdapterError(error)
+        if (mapped === undefined) throw error
+        return mapped
+      }
+    })
   }
 }

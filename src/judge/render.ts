@@ -1,10 +1,17 @@
 /**
- * Judge prompt rendering and the verdict cache key of the approval guard (spec 15 §3, §4).
+ * Prompt rendering and the verdict cache key of the shared LLM judge engine (spec 15 §3, spec 18
+ * §12): one renderer for the restricted transcript, the call under review and the framed prompt.
  *
- * @see docs/specs/15-guard-plugin.md
+ * @see docs/decisions/0060-shared-llm-judge-engine.md
  */
-import type { GuardTranscriptEntry } from '../index.ts'
-import { fill, GUARD_PROMPT, GUARD_TRUNCATED } from './texts.ts'
+import { neutralizeTags } from '../messages/framing.ts'
+import type { GuardTranscriptEntry } from '../registry/transcript.ts'
+
+/** Marker appended to truncated transcript texts and inputs. */
+export const JUDGE_TRUNCATED = '…[truncated]'
+
+/** Frame tags of the judge prompt; the same names inside untrusted text are neutralised. */
+const BLOCK_TAGS = ['policy', 'environment', 'transcript', 'action', 'system-reminder'] as const
 
 /** Canonical JSON: object keys sorted recursively, `undefined` dropped, non-JSON values as strings. */
 export function canonicalJson(value: unknown): string {
@@ -34,14 +41,10 @@ function canonical(value: unknown, seen: Set<unknown>): unknown {
 
 /**
  * Cache key of a call: `<toolName>:<sha256 hex of the canonical JSON input>` (`crypto.subtle`).
- * With `scope` (the policy text and judge model id) the hash covers it too, so a changed policy
- * or judge never reuses an older verdict.
+ * With `scope` (instructions, policy, environment and judge model id) the hash covers it too, so a
+ * changed rule set or judge never reuses an older verdict.
  */
-export async function verdictKey(
-  toolName: string,
-  input: unknown,
-  scope?: string,
-): Promise<string> {
+export async function judgeKey(toolName: string, input: unknown, scope?: string): Promise<string> {
   const bytes = new TextEncoder().encode(
     scope === undefined ? canonicalJson(input) : `${scope}\u0000${canonicalJson(input)}`,
   )
@@ -53,13 +56,42 @@ export async function verdictKey(
 
 function cut(text: string, max: number): string {
   if (text.length <= max) return text
-  return text.slice(0, Math.max(0, max - GUARD_TRUNCATED.length)) + GUARD_TRUNCATED
+  return text.slice(0, Math.max(0, max - JUDGE_TRUNCATED.length)) + JUDGE_TRUNCATED
 }
 
 /** An input as JSON, or a truncated JSON string when it is longer than `max`. */
 function boundedInput(input: unknown, max: number): unknown {
   const json = canonicalJson(input)
   return json.length <= max ? JSON.parse(json) : cut(json, max)
+}
+
+/** The call under review. */
+export interface JudgeRenderCall {
+  toolName: string
+  input: unknown
+  /** Tool risk (`'unknown'` when none). */
+  risk?: string
+  /** Tool kind (`shell`, `fetch`, …) when known. */
+  kind?: string
+  /** The command of a shell tool or the URL of a fetch tool, when there is one. */
+  summary?: string
+  /** Name of the (sub)agent making the call, when known. */
+  agent?: string
+}
+
+/**
+ * True when {@link renderCall} would cut the input (or the summary is longer than
+ * `maxSummaryChars`): the judge would not see all of it, so the caller must not trust an `allow`.
+ */
+export function callTruncated(
+  call: Pick<JudgeRenderCall, 'input' | 'summary'>,
+  maxChars: number,
+  maxSummaryChars: number,
+): boolean {
+  return (
+    canonicalJson(call.input).length > Math.max(64, Math.floor(maxChars)) ||
+    (call.summary?.length ?? 0) > maxSummaryChars
+  )
 }
 
 /** Limits of the transcript view. */
@@ -98,14 +130,14 @@ export function renderTranscript(
 }
 
 /** The call under review, as JSON. */
-export function renderCall(
-  call: { toolName: string; input: unknown; risk: string },
-  maxChars: number,
-): string {
+export function renderCall(call: JudgeRenderCall, maxChars: number): string {
   return JSON.stringify(
     {
       toolName: call.toolName,
-      risk: call.risk,
+      ...(call.kind === undefined ? {} : { kind: call.kind }),
+      ...(call.risk === undefined ? {} : { risk: call.risk }),
+      ...(call.agent === undefined ? {} : { agent: call.agent }),
+      ...(call.summary === undefined ? {} : { summary: call.summary }),
       input: boundedInput(call.input, Math.max(64, Math.floor(maxChars))),
     },
     null,
@@ -113,7 +145,25 @@ export function renderCall(
   )
 }
 
-/** The whole user prompt of one judge call. */
-export function renderPrompt(values: { policy: string; transcript: string; call: string }): string {
-  return fill(GUARD_PROMPT, values)
+/** Wrap text in a prompt block; the frame tags inside the text are neutralised. */
+function block(tag: string, text: string): string {
+  return `<${tag}>\n${neutralizeTags(text, BLOCK_TAGS)}\n</${tag}>`
+}
+
+/** The whole user prompt of one judge call: optional policy and environment, transcript, action. */
+export function renderPrompt(values: {
+  policy?: string
+  environment?: string
+  transcript: string
+  call: string
+}): string {
+  const sections: string[] = []
+  if (values.policy !== undefined && values.policy.trim() !== '') {
+    sections.push(block('policy', values.policy.trim()))
+  }
+  if (values.environment !== undefined && values.environment.trim() !== '') {
+    sections.push(block('environment', values.environment.trim()))
+  }
+  sections.push(block('transcript', values.transcript), block('action', values.call))
+  return sections.join('\n\n')
 }

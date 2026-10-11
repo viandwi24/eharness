@@ -82,6 +82,70 @@ async function drive(
   return { calls, events, status, reasons, feed }
 }
 
+describe('activity feed: failing servers (K-11, P3-14)', () => {
+  test('a stream that ends without data counts as a failure: polling and a rising backoff', async () => {
+    const delays: number[] = []
+    const calls: string[] = []
+    let feed!: ActivityFeed
+    const client = createHarnessClient({
+      baseUrl: '/api/',
+      fetch: (async (input: RequestInfo | URL) => {
+        const url = String(input)
+        calls.push(url)
+        if (url.includes('/activity/stream')) return sse('') // 200, closed at once, no frame
+        return json({ events: [], lastSeq: 0 })
+      }) as typeof fetch,
+    })
+    feed = createActivityFeed({
+      client,
+      backoff: [100, 200, 400, 800],
+      clock: {
+        random: () => 0.5,
+        sleep: async (ms) => {
+          delays.push(ms)
+          await Promise.resolve()
+          if (delays.length >= 4) feed.stop()
+        },
+      },
+    })
+    feed.start()
+    for (let i = 0; i < 200 && feed.get().status !== 'stopped'; i++) {
+      await new Promise((r) => setTimeout(r, 1))
+    }
+    expect(delays.length).toBeGreaterThanOrEqual(4)
+    // the pause after each empty stream grows (it used to restart at the base delay each time)
+    expect(delays[1] ?? 0).toBeGreaterThan(delays[0] ?? 0)
+    expect(delays[2] ?? 0).toBeGreaterThan(delays[1] ?? 0)
+    expect(calls.some((c) => c.startsWith('/api/activity?'))).toBe(true)
+  })
+
+  test('an `error` frame from the server is a failure too', async () => {
+    const r = await drive(
+      (url, n) =>
+        url.includes('/activity/stream')
+          ? sse(
+              `event: boot\ndata: {"boot":"b"}\n\nevent: error\ndata: {"code":"EH_STORAGE","message":"store down"}\n\n`,
+            )
+          : json({ events: [], lastSeq: n }),
+      4,
+    )
+    expect(r.status).toContain('polling')
+  })
+
+  test('401 / 403 are terminal: status unauthorized, no further requests', async () => {
+    for (const code of [401, 403]) {
+      const r = await drive(
+        () => json({ error: { code: 'EH_HTTP_UNAUTHORIZED', message: 'no' } }, code),
+        50,
+      )
+      // the loop returned on its own; stop() is only for the cleanup of the test
+      expect(r.status.at(-1)).toBe('unauthorized')
+      expect(r.calls).toHaveLength(1)
+      r.feed.stop()
+    }
+  })
+})
+
 describe('activity feed', () => {
   test('streams with headers, resumes with Last-Event-ID after the stream ends, dedups replays', async () => {
     const r = await drive(

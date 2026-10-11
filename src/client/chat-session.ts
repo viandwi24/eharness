@@ -25,6 +25,7 @@ import {
   mergeOlder,
   replaceTail,
 } from './chat-helpers.ts'
+import { sleep as defaultSleep } from './clock.ts'
 import { type HarnessClient, isHarnessHttpError, isNetworkError } from './http-client.ts'
 import { createStore, type Store } from './store.ts'
 import { createHarnessTransport, type HarnessTransportOptions } from './transport.ts'
@@ -60,6 +61,11 @@ export interface ChatSessionState {
   activity: ChatActivity
   /** A turn runs or is being followed in this chat. */
   busy: boolean
+  /**
+   * `stop()` could not reach the server (or has not been confirmed yet): the run may still be going
+   * there. Stays `true`, and `busy` with it, until the server confirms the stop.
+   */
+  stopping: boolean
 }
 
 /** Options of {@link createChatSession}. */
@@ -112,7 +118,11 @@ export interface ChatSession<UI extends UIMessage = UIMessage> extends Store<Cha
   refetch(): Promise<void>
   /** Send a user message; while a turn runs it is steered into it. */
   send(text: string, files?: FileUIPart[]): Promise<void>
-  /** Interrupt the server turn, then stop reading locally. */
+  /**
+   * Interrupt the server turn (retried twice), then stop reading locally. When the server cannot
+   * be reached it reports through `notify` and keeps `stopping` (and `busy`) until `checkStalled`
+   * sees the turn end.
+   */
   stop(): Promise<void>
   /** Send {@link CONTINUE_TEXT} after an interrupted turn. */
   continueTurn(): Promise<void>
@@ -128,7 +138,8 @@ export interface ChatSession<UI extends UIMessage = UIMessage> extends Store<Cha
 }
 
 const NOTICE_STEERED = 'Sent to the running turn'
-const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+/** Interrupt requests `stop()` makes before it gives up (the first one and two retries). */
+const STOP_ATTEMPTS = 3
 
 /** Create the session logic of one eharness session. */
 export function createChatSession<UI extends UIMessage = UIMessage>(
@@ -148,6 +159,7 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     problem: null,
     activity: null,
     busy: false,
+    stopping: false,
   })
 
   let chat: ChatBridge<UI> | undefined
@@ -163,10 +175,11 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     const s = chat?.status
     return s === 'submitted' || s === 'streaming'
   }
-  const busyNow = (): boolean => store.get().following || sending || running()
+  const busyNow = (): boolean =>
+    store.get().following || sending || running() || store.get().stopping
   const patch = (changes: Partial<ChatSessionState>): void => {
     const next = { ...store.get(), ...changes }
-    next.busy = next.following || sending || running()
+    next.busy = next.following || sending || running() || next.stopping
     if (shallowEqual(next, store.get())) return
     store.set(next)
   }
@@ -212,6 +225,23 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
       nextBefore = first.nextBefore
       patch({ hasOlder: first.nextBefore !== undefined, notice: null })
     } else patch({ notice: null })
+  }
+
+  /** The last `interruptOnce` failed in a way a retry cannot fix (not authorised). */
+  let lastInterruptDefinitive = false
+  /** One interrupt request; `true` when the server answered (or has no such session: nothing to stop). */
+  const interruptOnce = async (): Promise<boolean> => {
+    lastInterruptDefinitive = false
+    try {
+      await client.sessions.interrupt(sessionId)
+      return true
+    } catch (e) {
+      if (isHarnessHttpError(e)) {
+        if (e.status === 404) return true
+        if (e.status === 401 || e.status === 403) lastInterruptDefinitive = true
+      }
+      return false
+    }
   }
 
   const clearChatError = (): void => {
@@ -381,6 +411,18 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     },
 
     async checkStalled() {
+      if (store.get().stopping) {
+        // a stop the server did not confirm: ask again until it says the turn is over
+        const snap = await snapshot()
+        if (snap === undefined) return // unreachable: keep waiting
+        if (snap.running) {
+          if (await interruptOnce()) patch({ stopping: false })
+          return
+        }
+        patch({ stopping: false })
+        await refetch()
+        return
+      }
       if (!busyNow()) {
         idlePolls = 0
         return
@@ -440,13 +482,24 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     },
 
     async stop() {
-      try {
-        await client.sessions.interrupt(sessionId)
-      } catch {
-        // network failure: still stop reading
+      patch({ stopping: true })
+      let confirmed = false
+      for (let attempt = 0; attempt < STOP_ATTEMPTS; attempt++) {
+        if (attempt > 0) await sleep(300 * attempt)
+        const outcome = await interruptOnce()
+        if (outcome) {
+          confirmed = true
+          break
+        }
+        if (lastInterruptDefinitive) break // 401/403: retrying cannot help
       }
+      // reading stops either way; the server turn may still run when the interrupt failed
       await chat?.stop()
-      refreshBusy()
+      if (confirmed) patch({ stopping: false })
+      else {
+        notify('error', 'Could not stop the run on the server; it may still be running.')
+        refreshBusy()
+      }
     },
 
     continueTurn: () => session.send(CONTINUE_TEXT),

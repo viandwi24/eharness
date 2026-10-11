@@ -152,3 +152,13 @@ export function createProgressTracker(config: ProgressConfig = {}): ProgressTrac
     },
   }
 }
+
+export function describeStuck(stuck: StuckReason): string {
+  if (stuck.kind === 'repeat') {
+    return `'${stuck.toolName}' was called ${stuck.count} times with the same input and the same result`
+  }
+  if (stuck.kind === 'tool-errors') {
+    return `'${stuck.toolName}' failed ${stuck.count} times in a row (it may be unavailable or misconfigured)`
+  }
+  return `the last ${stuck.count} steps' tool calls all failed`
+}

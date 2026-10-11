@@ -51,7 +51,10 @@ class HeadlessChat<M extends UIMessage> extends AbstractChat<M> {
 
 /** Route requests to the handlers like Next.js would. */
 const appFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const req = new Request(new URL(String(input), 'http://localhost'), init)
+  // the demo "logs in" as `demo` (see `requireUser` in next-route.ts)
+  const headers = new Headers(init?.headers)
+  headers.set('x-demo-user', 'demo')
+  const req = new Request(new URL(String(input), 'http://localhost'), { ...init, headers })
   const url = new URL(req.url)
   if (req.method === 'POST' && url.pathname === '/api/chat') return POST(req)
   const resume = url.pathname.match(/^\/api\/chat\/([^/]+)\/stream$/)
@@ -62,7 +65,7 @@ const appFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 }) as typeof fetch
 
 const chat = new HeadlessChat<ChatMessage>({
-  id: 'chat-1',
+  id: 'demo:chat-1',
   transport: new DefaultChatTransport({ api: '/api/chat', fetch: appFetch }),
   sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithApprovalResponses,
 })
@@ -95,7 +98,7 @@ print('after approving')
 await chat.resumeStream()
 
 // 4. The server owns history: same assistant message id, one continued message.
-const stored = await agent.session('chat-1').messages()
+const stored = await agent.session('demo:chat-1').messages()
 const [clientAssistant, storedAssistant] = [chat.lastMessage, stored.at(-1)]
 console.log(`\nstored messages: ${stored.length} (client: ${chat.messages.length})`)
 console.log(

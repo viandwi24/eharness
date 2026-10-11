@@ -7,6 +7,7 @@
  * @see docs/specs/05-session-and-storage.md#7-state
  */
 import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
+import { invalidInputError } from '../errors.ts'
 
 type StoredMessage = Parameters<MessageAdapter['save']>[1][number]
 
@@ -23,7 +24,7 @@ export function defaultMemoryMessages(): MessageAdapter {
   return {
     async load(q) {
       if (q.fromId !== undefined && q.beforeId !== undefined) {
-        throw new TypeError('MessageAdapter.load: pass either fromId or beforeId, not both.')
+        throw invalidInputError('MessageAdapter.load: pass either fromId or beforeId, not both.')
       }
       let result = sorted(q.sessionId)
       if (q.fromId !== undefined) {

@@ -6,6 +6,8 @@
  */
 import type { LanguageModel } from 'ai'
 import {
+  compileGlobRegExp,
+  errorText,
   HarnessError,
   lookupModel,
   type ModelCatalog,
@@ -15,10 +17,10 @@ import {
 } from '../index.ts'
 import {
   type CatalogCache,
+  inMemoryCatalogCache,
   type LoadCatalogOptions,
   loadModelsDev,
   loadOpenRouterModels,
-  memoryCatalogCache,
   parseModelsDevModels,
   parseOpenRouterModels,
 } from './catalog-loader.ts'
@@ -31,7 +33,7 @@ import {
   secretValuesOf,
   validateSettings,
 } from './form.ts'
-import { memoryProfileStore } from './store.ts'
+import { inMemoryProfileStore } from './store.ts'
 import type {
   AnyProviderDefinition,
   ListedModel,
@@ -174,13 +176,19 @@ function stable(value: unknown): string {
   return JSON.stringify(value) ?? 'null'
 }
 
+const globCache = new Map<string, RegExp | null>()
+
+/** `*` matches any text (also across `/`); a pattern the compiler refuses matches only itself. */
 function globMatch(pattern: string, id: string): boolean {
   if (!pattern.includes('*')) return pattern === id
-  const re = pattern
-    .split('*')
-    .map((p) => p.replace(/[.+?^${}()|[\]\\]/g, '\\$&'))
-    .join('.*')
-  return new RegExp(`^${re}$`).test(id)
+  let regex = globCache.get(pattern)
+  if (regex === undefined) {
+    const compiled = compileGlobRegExp(pattern.replace(/\*+/g, '**'), { wildcard: true })
+    regex = compiled.ok ? compiled.regex : null
+    if (globCache.size > 500) globCache.clear()
+    globCache.set(pattern, regex)
+  }
+  return regex === null ? pattern === id : regex.test(id)
 }
 
 function allowed(models: ProfileModels | undefined, id: string): boolean {
@@ -215,7 +223,7 @@ type Source = 'modelsDev' | 'openRouter'
  * ```ts
  * const providers = createProviderManager({
  *   definitions: [openRouterProvider({ createOpenRouter }), gatewayProvider({})],
- *   store: memoryProfileStore(),
+ *   store: inMemoryProfileStore(),
  *   env: process.env,
  * })
  * await providers.ready()
@@ -233,10 +241,10 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
       throw fail('duplicate-provider', `Duplicate provider definition "${def.id}".`)
     defs.set(def.id, def)
   }
-  const store = options.store ?? memoryProfileStore()
+  const store = options.store ?? inMemoryProfileStore()
   const doFetch: typeof fetch =
     options.fetch ?? (((...args) => globalThis.fetch(...args)) as typeof fetch)
-  const cache = options.cache ?? memoryCatalogCache()
+  const cache = options.cache ?? inMemoryCatalogCache()
   const now = options.now ?? Date.now
   const listTtl = options.listTtlMs ?? 5 * 60 * 1000
   const cat = options.catalogs ?? {}
@@ -604,7 +612,7 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
     } catch (error) {
       return {
         ok: false,
-        message: scrub(error instanceof Error ? error.message : String(error), secrets),
+        message: scrub(errorText(error), secrets),
       }
     }
     const started = now()
@@ -624,7 +632,7 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
     } catch (error) {
       return {
         ok: false,
-        message: scrub(error instanceof Error ? error.message : String(error), secrets),
+        message: scrub(errorText(error), secrets),
         latencyMs: now() - started,
       }
     }

@@ -41,3 +41,7 @@ web, ask, subagents) should appear in the same list.
 + Built-in and external tools share one enablement model and one UI.
 + Apps keep their database and encryption; the library ships memory adapters only (ADR-0008).
 − Apps wire factories for built-ins and the MCP source (a few lines each, documented).
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): OAuth requests (discovery, registration, token, refresh, device) refuse private, loopback and link-local hosts, including discovered endpoints, and do not follow cross-origin redirects (`oauth: { allowPrivateNetwork: true }` for local development); response bodies are capped. Setup flows can be bound to a `principal` (`principal-mismatch` on another caller). The OAuth helpers, `BUILTIN_TOOLS` and the plaintext and WebCrypto vaults are no longer exported from `eharness/connectors` (vaults live in `eharness/providers`).

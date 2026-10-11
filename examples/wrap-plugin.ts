@@ -1,7 +1,7 @@
 /**
  * Wrapping a plugin: per-request configuration of a shipped plugin through the public API.
  *
- * `approvalGuard()` takes its judge model at construction. Here the judge is chosen per request
+ * `guard()` takes its judge model at construction. Here the judge is chosen per request
  * (`runtime.judge`), a request can be marked trusted (no review), and every decision is logged,
  * all with `wrapPlugin()` and without touching the plugin's internals.
  *
@@ -9,7 +9,7 @@
  */
 import { tool } from 'ai'
 import { defineHarnessAgent, wrapPlugin } from 'eharness'
-import { approvalGuard } from 'eharness/guard'
+import { guard } from 'eharness/guard'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
@@ -27,12 +27,12 @@ const strictJudge = exampleModel([
   { text: '{"decision":"deny","reason":"The recipient is outside the company."}' },
 ])
 
-const guard = wrapPlugin(approvalGuard({ model: defaultJudge }), {
+const guarded = wrapPlugin(guard({ model: defaultJudge }), {
   // per-request options: build the guard from the request and delegate to its session phase
   session: (ctx, next) =>
     ctx.runtime.judge === undefined
       ? next()
-      : next.using(approvalGuard({ model: ctx.runtime.judge as typeof strictJudge })),
+      : next.using(guard({ model: ctx.runtime.judge as typeof strictJudge })),
   hooks: {
     'tool.approve': async (ctx, e, next) => {
       // trusted requests skip the review; the wrapper never returns 'approved' (tighten-only)
@@ -61,7 +61,7 @@ const agent = defineHarnessAgent({
     }),
   },
   approval: { risk: { external: 'approved' } },
-  plugins: [guard],
+  plugins: [guarded],
 })
 
 const strictSession = agent.session('strict', { runtime: { judge: strictJudge } })

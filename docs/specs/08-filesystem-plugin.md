@@ -3,7 +3,7 @@
 Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Module: `src/filesystem` (`eharness/filesystem`, `eharness/filesystem/memory`).
 
 The filesystem plugin is the **reference plugin**: it shows how a plugin provides a service, tools,
-skills, state and data parts using only the public API. It ships one adapter (`memoryFs`). Anything
+skills, state and data parts using only the public API. It ships one adapter (`inMemoryFs`). Anything
 else (JSON file, Postgres, S3, a sandbox's disk) implements the `FileSystem` contract.
 
 ## 1. Contract
@@ -16,7 +16,7 @@ export interface FileSystem {
    * Write text. `ifVersion`: string → only if current version matches; null → only if the file does
    * not exist; undefined → unconditional.
    */
-  write(path: string, content: string, opts?: { ifVersion?: string | null }): Promise<WriteResult>
+  write(path: string, content: string, opts?: { ifVersion?: string | null; author?: string }): Promise<WriteResult>
   delete(path: string, opts?: { ifVersion?: string }): Promise<DeleteResult>
   /** Files under `prefix` (default '/'), recursive, sorted by path. */
   list(prefix?: string): Promise<FileMeta[]>
@@ -24,13 +24,13 @@ export interface FileSystem {
   stat?(path: string): Promise<FileMeta | null>
   grep?(pattern: RegExp, opts?: { prefix?: string; maxHits?: number }): Promise<GrepHit[]>
   /**
-   * Optional (since 0.5): fast path of the `glob` tool. `pattern` is relative to `prefix` (a
+   * Optional fast path of the `glob` tool. `pattern` is relative to `prefix` (a
    * directory prefix ending in `/`) and uses the glob syntax of §3; at most `limit` files, any order.
    */
   glob?(pattern: string, opts: { prefix: string; limit: number }): Promise<FileMeta[]>
-  /** Optional (since 0.4): atomic rename of one file; never overwrites `to`. */
+  /** Optional: atomic rename of one file; never overwrites `to`. */
   move?(from: string, to: string, opts?: { ifVersion?: string }): Promise<MoveResult>
-  /** Optional (since 0.10, §14): states of a file, newest first. */
+  /** Optional (§14): states of a file, newest first. */
   versions?(path: string): Promise<FileVersion[]>
   /** Optional (§14): content of one listed state; `null` if unknown or pruned. */
   readVersion?(path: string, version: string): Promise<FileEntry | BinaryFile | null>
@@ -73,14 +73,14 @@ Rules for adapters:
 - `write` with `ifVersion: string` on a missing file → `{ ok: false, reason: 'conflict' }` (no
   `currentVersion`); `ifVersion: null` on an existing file → `'exists'`. `currentVersion`, when
   given, is the stored version. Conditional writes and deletes are atomic compare-and-set.
-- `grep` (optional): lines are split on `\n` with a trailing `\r` removed; `line` is 1-based;
+- `grep` (optional; `diskFs` may use ripgrep, bounded by `grepTimeoutMs` / `grepMaxOutputBytes` and falling back to the JS path, reported through `onGrepFallback`): lines are split on `\n` with a trailing `\r` removed; `line` is 1-based;
   hits sorted by path then line, at most `maxHits`; `prefix` has the `list` semantics; the
   pattern's `g`/`y` flags must not make matching stateful. The tool only passes patterns of its
   conservative safe subset (§3: at most one variable-width quantifier, no quantified groups), a syntactic guard, not a guarantee: an adapter that pushes `grep`
   down (a database, a search service) should run a linear-time engine (e.g. RE2) or apply the
   same limits — at most 512 pattern characters, only the first 2 000 characters of each line
-  matched (`memoryFs` does) — so a model's pattern cannot freeze the process or the backend.
-- `move` (optional, since 0.4): `to` gets the content — and therefore the version — of `from` and
+  matched (`inMemoryFs` does) — so a model's pattern cannot freeze the process or the backend.
+- `move` (optional): `to` gets the content — and therefore the version — of `from` and
   `from` disappears, as one atomic step. Checks in this order: `from` missing → `'missing'`;
   `ifVersion` given and not the version of `from` → `'conflict'` (with `currentVersion`); `to`
   exists (also `to === from`) → `'exists'`. A rejected move changes nothing; of concurrent moves
@@ -126,6 +126,8 @@ export interface FilesystemOptions {
    * tool error).
    */
   onAdapterError?: (error: unknown, info: { tool: FileToolName; path: string }) => string | undefined
+  /** The `toolOutputs` service (evicted tool outputs, spec 09 §4). Default `{ dir: '/.eharness/tool-outputs' }`; `false` disables it. */
+  toolOutputs?: false | { dir?: string }
   /** Record files before the first change of each turn (§11). Default: off. */
   checkpoints?: CheckpointStore
   /** Binary files `read_file` shows to the model (§12). Needs an adapter with `readBytes`. */
@@ -142,10 +144,12 @@ once per live session with the plugin's context. Invalid options throw `EH_CONFI
 normalized with `normalizePath` and use directory semantics (`'/skills'` covers `/skills` and
 `/skills/**`, not `/skillsx`). `allowedExtensions` entries may omit the dot and are compared
 case-insensitively with the last `.ext` of the file name (a name without extension never matches).
+`hiddenPrefixes` and `readonlyPrefixes` are compared **case-insensitively** on NFC-folded segments
+with trailing dots and spaces ignored (`foldSegment`, the permissions engine's rule): `/Secrets` and
+`/secrets.` are under `/secrets`, since an extra match only hides or protects a little more.
 Exported constants: `DEFAULT_MAX_READ_CHARS` (50_000) and `DEFAULT_TOOL_OUTPUTS_DIR`.
 
-Option `toolOutputs?: false | { dir?: string }` (default `{ dir: '/.eharness/tool-outputs' }`)
-controls the second service, used by `toolOutput.strategy: 'evict'` (spec 09 §4):
+Option `toolOutputs` (above) controls the second service, used by `toolOutput.strategy: 'evict'` (spec 09 §4):
 
 ```ts
 export interface ToolOutputStore {
@@ -172,7 +176,7 @@ cleaned up by the core (the application owns retention). `dir` must not be `/`.
 | `edit_file` | `{ path, old_string, new_string, replace_all? }` or `{ path, edits }` | smart replace (§4); requires prior read; `edits` = 1–50 `{ old_string, new_string, replace_all? }`, all or nothing |
 | `delete_file` | `{ path }` | requires prior read; respects `isUndeletable` |
 | `grep` | `{ pattern, prefix? }` | regex, max 50 hits |
-| `glob` | `{ pattern, path? }` | files matching a glob under `path` (default `/`), max 200 (since 0.5) |
+| `glob` | `{ pattern, path? }` | files matching a glob under `path` (default `/`), max 200 |
 
 All tools **return strings**, except `read_file` of an image or PDF, which returns a media
 reference (§12). Expected failures use prefixes the model (and UIs) can recognise:
@@ -196,7 +200,7 @@ Exact formats (model-visible, api-stability.md):
 - `read_file`: `offset` is the 1-based first line (default 1), `limit` the line count (default and
   maximum 2000). Lines are split like `grep` (a final line break does not start a line) and shown
   `cat -n` style: the number right-aligned to 6 characters, a tab, the text. `charOffset` (default
-  0, added in 0.4.0) is a character offset inside the first line of the window: that line is shown
+  0) is a character offset inside the first line of the window: that line is shown
   from there (line numbers stay the file's lines, which `edit_file` users rely on). The window
   stops before `maxReadChars` output characters. A single longer line is cut, ending in
   ` … [line truncated]`, followed by a blank line and
@@ -213,7 +217,7 @@ Exact formats (model-visible, api-stability.md):
 - `edit_file` → `Edited <path> (1 replacement).` / `(<n> replacements).`; missing file →
   `ERROR: file not found: <path> (use write_file to create it)`; smart replace failures →
   `ERROR: <reason>`.
-- `edit_file` with `edits` (since 0.5): exactly one form per call — both →
+- `edit_file` with `edits`: exactly one form per call — both →
   `ERROR: pass either old_string and new_string, or edits, not both.`, neither →
   `ERROR: pass old_string and new_string, or edits.`, `old_string` without `new_string` (or the
   reverse) → `ERROR: old_string and new_string must be given together.`, not 1–50 entries →
@@ -224,12 +228,15 @@ Exact formats (model-visible, api-stability.md):
   check, one staleness check, one `ifVersion` write and one change part for the whole call.
   Result `Edited <path> (<n> edits, <m> replacements).` (`1 edit`, `1 replacement` singular).
   The single form's texts are unchanged.
-- `glob` (since 0.5): `pattern` is relative to `path` and supports `**` (any number of
+- `glob`: `pattern` is relative to `path` and supports `**` (any number of
   directories), `*`, `?`, `[abc]` / `[!abc]` / `[a-z]` and `{a,b}` (nested, at most 64
   alternatives). Paths are virtual; a pattern with a leading `/` or `~`, a `..` segment or a `\`
   is `ERROR: invalid pattern: <reason>`. A segment that does not start with a literal `.` never
   matches a name starting with `.` (so `*` and `**` skip dotfiles and dot directories; `.*` and
-  `.github/**` name them). Hidden prefixes are excluded and the tool outputs directory only
+  `.github/**` name them). The pattern is compiled by the shared core glob compiler
+  (`compileGlobRegExp`), which collapses consecutive `**` segments and refuses a pattern with more
+  than 4 `**` segments or 8 `*` wildcards (`ERROR: invalid pattern: …`), so a pattern cannot
+  backtrack catastrophically. Hidden prefixes are excluded and the tool outputs directory only
   appears when `path` is inside it (like `list_files`). Output: one absolute path per line, newest
   first (`updatedAt` descending, ties by path) when every match has `updatedAt`, else sorted by
   path; at most 200, then `(Showing 200 of <n> matches; narrow the pattern.)`; none (or a hidden
@@ -249,7 +256,7 @@ Exact formats (model-visible, api-stability.md):
 - `grep`: `pattern` is a JavaScript regular expression without flags, matched per line (only
   the first 2 000 characters of a line are matched; a pattern without regex metacharacters is a
   plain substring search); `ERROR: invalid pattern: <message>` when it does not compile.
-  **Safe subset (0.4.0)** — a conservative guard against slow backtracking, so an accepted
+  **Safe subset** — a conservative guard against slow backtracking, so an accepted
   pattern is at worst quadratic in the 2 000 scanned characters (a few ms per line). The rule,
   exactly: at most 512 characters; **at most one variable-width quantifier in the whole pattern**,
   counting `*`, `+`, `?`, their lazy variants, `{n,}` and `{n,m}` with m > n (a fixed `{n}` on a
@@ -274,11 +281,10 @@ Exact formats (model-visible, api-stability.md):
   budget), the tool falls back to list + read, so hidden files never hide visible hits.
 - Order of checks for mutations: path → policy (`REJECTED`) → existence → read-before-write →
   staleness → operation (`CONFLICT`). Adapter exceptions (I/O failures, e.g. a binary or
-  oversized file) are mapped by `onAdapterError` (since 0.5): by default the tool returns
+  oversized file) are mapped by `onAdapterError`: by default the tool returns
   `ERROR: <message>` (a leading `Error: ` is dropped), so the model reads an ordinary `ERROR:`
   string and `classifyToolResult` says `'error'`. The callback receives `{ tool, path }` (the
-  normalized requested path); returning `undefined` rethrows, i.e. the pre-0.5 behaviour of an
-  ordinary tool error.
+  normalized requested path); returning `undefined` rethrows (an ordinary tool error).
 
 ## 4. Editing rules (from the predecessor harness, proven in production)
 
@@ -319,21 +325,21 @@ assistant message keeps the latest change per path.
 
 Model projection: `omit` (the model already saw the tool result).
 
-## 6. `memoryFs`
+## 6. `inMemoryFs`
 
 ```ts
-export function memoryFs(seed?: Record<string, string | Uint8Array>): FileSystem
+export function inMemoryFs(options?: { seed?: Record<string, string | Uint8Array>; maxVersions?: number }): FileSystem  // maxVersions default 100 (§14)
 ```
 
 Map-backed, versions via `contentVersion`, implements `stat`, `grep`, `move`, `readBytes` and
 `writeBytes` (§12; the seed may hold `Uint8Array` values too). Used by tests, examples
 and as the default for demos. Not persistent. Seed keys are normalized with `normalizePath`
-(invalid key or non-string content → `TypeError`); methods expect normalized paths like every
+(an invalid seed key or seed content → `EH_CONFIG_INVALID`; non-string `write` content or non-`Uint8Array` `writeBytes` bytes → `EH_INVALID_INPUT`, both `HarnessError`s); methods expect normalized paths like every
 adapter. `updatedAt` is set on every write.
 
 ## 7. Writing your own adapter (guide excerpt)
 
-**Grep helpers.** `splitLines(content)` (split on `\n`, trailing `\r` removed), `statelessPattern(regex)` (drops `g`/`y`) and `GREP_SCAN_CHARS` (2000, characters of a line a pattern is matched against) are exported from `eharness/filesystem`, so an adapter's optional `grep` behaves like `memoryFs`. `fileSystemConformance`'s factory must return an empty, isolated adapter per call.
+**Grep helpers.** `splitLines(content)` (split on `\n`, trailing `\r` removed), `statelessPattern(regex)` (drops `g`/`y`) and `GREP_SCAN_CHARS` (2000, characters of a line a pattern is matched against) are exported from `eharness/filesystem`, so an adapter's optional `grep` behaves like `inMemoryFs`. `fileSystemConformance`'s factory must return an empty, isolated adapter per call.
 
 ```ts
 import type { FileSystem } from 'eharness/filesystem'
@@ -360,14 +366,18 @@ Run `fileSystemConformance(() => postgresFs(testDb, crypto.randomUUID()))` in yo
 the library does not). It runs on Node >= 22 and Bun; it never uses `Bun.*`.
 
 ```ts
-export function diskFs(root: string, opts?: DiskFsOptions): FileSystem
+export function diskFs(options: DiskFsOptions): FileSystem
 
 export interface DiskFsOptions {
+  root: string                                        // a real directory; it is the virtual `/`
   readonly?: boolean                                  // write/delete/move throw `read-only directory: <path>`
   ignore?: { gitignore?: boolean; hidden?: string[] } // default gitignore: true
   maxFileBytes?: number                               // default 2 MiB (DEFAULT_MAX_FILE_BYTES): text files
   maxBinaryBytes?: number                             // default 10 MiB (DEFAULT_MAX_BINARY_BYTES): binary files
   grep?: 'auto' | 'js'                                // default 'auto'
+  grepTimeoutMs?: number                              // default 30 000: ripgrep is killed, the JS path runs
+  grepMaxOutputBytes?: number                         // default 64 MiB: same fallback when rg prints more
+  onGrepFallback?: (reason: string) => void           // called whenever a search falls back to JS
 }
 ```
 
@@ -380,8 +390,10 @@ contract: `stat`, `grep`, `glob`, `move`, `readBytes` and `writeBytes`; it passe
   (`realpath` of the nearest existing parent); a result outside the real root throws `path outside
   the workspace: <path>`. Relative paths, `..` segments and NUL do too. This covers a symlinked
   file or directory that points outside, and a symlink swapped in between a read and a write
-  (the check runs again on every call). Symlinks that stay inside the root work. `list`, `grep`
+  (the check runs again on every call). Reads open the real path with `O_NOFOLLOW` (where the platform has it) and re-check containment with `realpath` after the open; writes re-check the real parent directory before and after the temp file is written, so a swap between check and use cannot escape the root. Symlinks that stay inside the root work. `list`, `grep`
   and `glob` silently skip dangling or escaping links.
+- **`nodeRealpath`** (`eharness/filesystem/node`, the loose `realpath` of the containment guard) is what the permissions engine's `realpath` option takes (spec 18 §5). **`nodeContainsProtected(realDir, patterns, limits?)`** is its `containsProtected` option: a bounded, fail-closed walk that tells whether anything below a directory matches gitignore-style patterns (`.env*`, `.git`); it never follows symlinks and honours no `.gitignore`.
+- **Checkpoint store ids.** `nodeCheckpointStore` escapes dot-only session ids (`''`, `.`, `..`) so no id leaves the store directory.
 - **Text and binary.** A file is binary when its first 8000 bytes contain a NUL byte or it is not
   valid UTF-8 (`looksBinary`). `read` throws `binary file: <path> (it cannot be read as text; use
   readBytes)` for a binary file and `too large file: <path> (text files up to 2 MB only)` for a
@@ -418,7 +430,9 @@ contract: `stat`, `grep`, `glob`, `move`, `readBytes` and `writeBytes`; it passe
   `--json --no-ignore --hidden`, size limit = `maxFileBytes`); ignore rules are applied by
   `diskFs` to rg's output, so rg and the JavaScript path see the same files. Flags other than `i`,
   an rg exit code other than 0/1 (e.g. a pattern rg cannot compile) and a failure to spawn fall
-  back to the JavaScript implementation. `'js'` never spawns. Hits: sorted by path then line,
+  back to the JavaScript implementation (reported through `onGrepFallback`), as does an rg
+  that outlives `grepTimeoutMs` or prints more than `grepMaxOutputBytes` (it is killed; `--max-count`
+  bounds the hits per file). `'js'` never spawns. Hits: sorted by path then line,
   line breaks stripped.
 - **Glob.** `glob(pattern, { prefix, limit })` walks the visible tree, matches with `compileGlob`
   against the path relative to `prefix`, and reads metadata only for the matches.
@@ -426,13 +440,13 @@ contract: `stat`, `grep`, `glob`, `move`, `readBytes` and `writeBytes`; it passe
 ## 9. Mounts
 
 ```ts
-export function mountFs(mounts: () => FsMount[]): FileSystem
+export function mountFs(options: { mounts: () => FsMount[] }): FileSystem
 export interface FsMount { virtual: string; fs: FileSystem; readonly?: boolean }
 ```
 
 A composite file system: `virtual` starts and ends with `/` (`'/'`, `'/@dirs/lib/'`; otherwise
-`TypeError`), and the mount's `fs` sees its own `/` at that prefix. Any `FileSystem` can be mounted
-(`diskFs`, `memoryFs`, your adapter). The list is read on every call, so mounts added later are
+`EH_CONFIG_INVALID`), and the mount's `fs` sees its own `/` at that prefix. Any `FileSystem` can be mounted
+(`diskFs`, `inMemoryFs`, your adapter). The list is read on every call, so mounts added later are
 visible at once.
 
 - `read`, `write`, `delete`, `stat`: the mount with the longest matching prefix serves the path
@@ -457,7 +471,7 @@ export interface NodeWorkspaceOptions {
   root: string                // real project directory, mounted at '/'
   extraDirs?: string[]        // mounted at '/@dirs/<basename>/' ('-2', '-3' on a clash)
   toolOutputsDir?: string     // created if missing; mounted at '/.eharness/tool-outputs/', writable
-  diskFs?: DiskFsOptions      // applied to every mount
+  diskFs?: Omit<DiskFsOptions, 'root'>   // applied to every mount
 }
 export interface NodeWorkspace {
   readonly root: string       // realpath of `root`
@@ -490,17 +504,15 @@ export interface CheckpointStore {
   list(sessionId: string): Promise<CheckpointRecord[]> // { turnKey, path, before, at }
   /** The given turns, or the whole session when `turnKeys` is omitted. */
   delete(sessionId: string, turnKeys?: readonly string[]): Promise<void>
-  /** Optional (0.8): copy the snapshots of `from` for `turnKeys` (all when omitted) into `to`. */
+  /** Optional: copy the snapshots of `from` for `turnKeys` (all when omitted) into `to`. */
   copy?(from: string, to: string, turnKeys?: readonly string[]): Promise<void>
 }
 
-export function memoryCheckpointStore(opts?: { keepTurns?: number }): CheckpointStore // eharness/filesystem
-export function nodeCheckpointStore(dir: string, opts?: { keepTurns?: number }): CheckpointStore // eharness/filesystem/node
+export function inMemoryCheckpointStore(opts?: { keepTurns?: number }): CheckpointStore // eharness/filesystem
+export function nodeCheckpointStore(options: { dir: string; keepTurns?: number }): CheckpointStore // eharness/filesystem/node
 
 export function checkpointsSince(args: { store; sessionId; sessionIds?; fromTurnKey; fs? }): Promise<FileCheckpoint[]>
 export function rewindFiles(args: { fs; store; sessionId; sessionIds?; fromTurnKey; keepRecords? }): Promise<RewindFilesResult>
-export function checkpointTurnKey(turn: { id: string; input?: { id: string } }): string
-export function copyCheckpoints(args: { store; from; to; turnKeys?; beforeTurnKey? }): Promise<void>
 ```
 
 - **What is recorded.** The plugin hands the tools and the `fs` service a recording wrapper of the
@@ -510,23 +522,23 @@ export function copyCheckpoints(args: { store; from; to; turnKeys?; beforeTurnKe
   the tool outputs directory, binary files (snapshots are text; nothing is logged), files that
   cannot be read (oversized: a warning is logged and the change still goes through), and everything that does not go through the `fs` service
   (the shell, other processes, an app writing to the adapter directly).
-- **Turn key.** `checkpointTurnKey(turn)` = the id of the turn's user message, else the turn id
+- **Turn key.** The key (computed by the plugin) is the id of the turn's user message, else the turn id
   (`respond`, `regenerate`, wake and input-less turns have no user message). Both are UUIDv7, so
   keys sort by creation time; "at or after a point" compares keys as strings, and the point does
   not need a checkpoint of its own. The natural point of a UI is the id of a user message.
 - **Sessions.** The key's `sessionId` is the id of the session that ran the tool; a subagent's
   child session has its own checkpoints (the plugin does not map them to the parent's turn).
-  **Children in a rewind (0.8).** `checkpointsSince` and `rewindFiles` take `sessionIds`: more
+  **Children in a rewind.** `checkpointsSince` and `rewindFiles` take `sessionIds`: more
   sessions whose snapshots are included. Turn keys are UUIDv7, so snapshots of the parent and of
   its children are ordered by time together, and the earliest per path wins across sessions
   (`FileCheckpoint.sessionId` says which). Collect the ids with `session.children()` (recursively
   for nested children; a child's own `children()` needs `agent.session(childId)`, or read
   `core.children` from the `StateAdapter`). `rewindFiles` deletes the rewound snapshots of every
   listed session.
-- **Fork (0.8).** The plugin registers a `session.fork` hook (spec 01 §5): when
+- **Fork.** The plugin registers a `session.fork` hook (spec 01 §5): when
   `session.fork({ beforeMessageId })` succeeds it copies the checkpoints of the source whose turn
   key is `< beforeMessageId` (all when omitted) into the new session (`store.copy` when the store
-  has it, else `list` + `save`; `copyCheckpoints` is exported). The cut is by key comparison:
+  has it, else `list` + `save`). The cut is by key comparison:
   turn keys are message or turn ids (UUIDv7), so a turn that started before the cut message is
   kept. Checkpoints of child sessions are not copied (the fork has no children). A failing copy is
   `W_HOOK_FAILED`; the fork still succeeds.
@@ -542,7 +554,7 @@ export function copyCheckpoints(args: { store; from; to; turnKeys?; beforeTurnKe
 - **Independent of conversation rewind.** Checkpoints only know files, sessions and turn keys;
   forking or truncating the conversation (`session.fork`) is a separate operation the app combines
   with `rewindFiles`.
-- **Durability.** The store is the only state: use `nodeCheckpointStore(dir)` (one JSON file per
+- **Durability.** The store is the only state: use `nodeCheckpointStore({ dir })` (one JSON file per
   turn, atomic writes, survives restarts, last `keepTurns` = 50 turns per session) for a CLI or a
   single server, and implement `CheckpointStore` over your database for a split web/server
   deployment (a conformance-style contract: first-write-wins `save`, sorted `list`). The memory
@@ -550,7 +562,7 @@ export function copyCheckpoints(args: { store; from; to; turnKeys?; beforeTurnKe
 
 ## 12. Binary files and images
 
-*Since 0.7. Works in every deployment profile (ADR-0034): `Uint8Array`, `TextDecoder`,
+*Works in every deployment profile (ADR-0034): `Uint8Array`, `TextDecoder`,
 `btoa`; no Node built-ins outside `eharness/filesystem/node`.*
 
 **Contract (optional methods).**
@@ -575,20 +587,20 @@ interface FileSystem {
   binary file replaces it.
 - `binary` classification is the same everywhere (`looksBinary`, exported): NUL byte in the first
   8000 bytes, or invalid UTF-8.
-- `writeBytes(..., { mediaType })` (0.8.0) declares the IANA media type. An adapter that can keep
+- `writeBytes(..., { mediaType })` declares the IANA media type. An adapter that can keep
   it (a database column, object metadata) returns it as `FileMeta.mediaType` (`list`, `stat`) and
   `BinaryFile.mediaType` afterwards, also for text files (`text/csv`), until the next write without
-  one; others may ignore it. `memoryFs` keeps it; the conformance option `keepsMediaType` checks
+  one; others may ignore it. `inMemoryFs` keeps it; the conformance option `keepsMediaType` checks
   it.
 - `mediaType` on `FileMeta`/`BinaryFile` is optional (an object store knows it); the plugin falls
   back to `detectMediaType(bytes, path)` (magic bytes for PNG, JPEG, GIF, WebP, PDF, BMP, ZIP,
-  gzip, then the extension; `undefined` when unknown). `imageDimensions`, `bytesToBase64`,
-  `looksBinary` and `bytesVersion` are exported helpers.
-- `memoryFs`, `diskFs` and `mountFs` implement both; `checkpointedFs` passes them through (binary
+  gzip, then the extension; `undefined` when unknown). `looksBinary`, `detectMediaType` and `bytesVersion` are exported helpers (reading image
+  dimensions for the `Image <path>` line is internal).
+- `inMemoryFs`, `diskFs` and `mountFs` implement both; `checkpointedFs` passes them through (binary
   files are not snapshotted). The plugin only treats a file as binary when the adapter has
   `readBytes`; without it everything is text and nothing changes.
 - Conformance: `fileSystemConformance(factory, { requireBytes: true })`.
-- `fsSkillSource(fs).readFile()` uses `readBytes` when present: a binary skill asset is returned as `{ type: 'binary', mediaType, data }` (spec 07), text as `{ type: 'text' }`.
+- `fsSkillSource({ fs, root }).readFile()` uses `readBytes` when present: a binary skill asset is returned as `{ type: 'binary', mediaType, data }` (spec 07), text as `{ type: 'text' }`.
 
 **`read_file` of a binary file** (needs `readBytes`; the check is one `stat`):
 
@@ -702,10 +714,10 @@ readVersion?(path: string, version: string): Promise<FileEntry | BinaryFile | nu
 
 - `versions` returns the states of a file **newest first**, the current state first; one entry per
   content change (writing the same content adds none); `[]` for a path that never existed. An
-  adapter may keep history after a `delete` (`memoryFs` does), so a deleted file can be restored.
+  adapter may keep history after a `delete` (`inMemoryFs` does), so a deleted file can be restored.
 - `readVersion` returns the content of one listed state (`FileEntry` for text, `BinaryFile` for a
-  binary state) or `null` when unknown or pruned (adapters may bound history; `memoryFs` keeps
-  100 per path, `memoryFs(seed, { maxVersions })`).
+  binary state) or `null` when unknown or pruned (adapters may bound history; `inMemoryFs` keeps
+  100 per path, `inMemoryFs({ seed, maxVersions })`).
 - **Restore is a write** of the old content: because versions are content hashes the file gets the
   old version string back. No new method, no tool change: the file tools never use these methods.
 - `author` is whatever the app passes to `write` / `writeBytes` (an adapter wrapper or the app's own

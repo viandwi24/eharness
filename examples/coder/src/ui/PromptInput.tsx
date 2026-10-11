@@ -1,4 +1,5 @@
 import type { FileUIPart } from 'ai'
+import { errorText } from 'eharness'
 import { Box, type Key, Text, useApp, useInput, usePaste, useWindowSize } from 'ink'
 import { type ReactElement, useEffect, useMemo, useRef, useState } from 'react'
 import type { CustomCommand } from '../contracts.ts'
@@ -505,7 +506,7 @@ export function PromptInput(props: PromptInputProps): ReactElement {
         if (res.ok) edit(bufferOf(res.text))
         else onHint?.(res.error)
       })
-      .catch((error: unknown) => onHint?.(error instanceof Error ? error.message : String(error)))
+      .catch((error: unknown) => onHint?.(errorText(error)))
       .finally(() => {
         editorBusy.current = false
         onExternalEditor?.(false)

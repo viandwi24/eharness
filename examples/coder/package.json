@@ -18,9 +18,9 @@
     "ai": "^7.0.127",
     "commander": "15.0.0",
     "diff": "9.0.0",
+    "eharness": "file:../..",
     "ink": "8.0.0",
     "react": "19.3.0",
-    "tinyglobby": "0.2.17",
     "turndown": "7.2.4",
     "zod": "^4.6.5"
   },

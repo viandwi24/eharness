@@ -28,7 +28,7 @@ bun run typecheck           # tsc --noEmit
 bun test                    # unit + conformance tests
 bun run build               # tsdown → dist/
 bun run check:package       # publint + attw on the built package
-bun run check:imports       # subpath modules may import core only via src/index.ts
+bun run check:imports       # subpath modules may import core only via src/index.ts; no core import cycles
 bunx changeset              # add a changeset (required for every user-facing change)
 ```
 

@@ -14,17 +14,24 @@ which ones it uses and how freely. Contract: [spec 24](../specs/24-connectors.md
 ## Setup
 
 ```ts
-import { webCryptoVault, memoryProfileStore, sealedProfileStore } from 'eharness/providers'
+import { webCryptoVault, sealedProfileStore } from 'eharness/providers'
 import {
   builtinConnectors, createConnectorService, ensureBuiltinConnections, remoteMcpConnector,
-  connectionStoreFromProfiles, credentialStoreFromProfiles, memoryEnablementStore, memoryFlowStore,
+  connectionStoreFromProfiles, credentialStoreFromProfiles, inMemoryEnablementStore, inMemoryFlowStore,
 } from 'eharness/connectors'
 import { listRemoteMcpTools, remoteMcpSource } from 'eharness/mcp'
 import { filesystem, type FileToolName } from 'eharness/filesystem'
 import { memory } from 'eharness/memory'
+import { todos } from 'eharness/todos'
+import { webFetch, webSearch } from 'eharness/web'
+import { ask } from 'eharness/ask'
+import { subagent } from 'eharness/subagent'
+import { z } from 'zod/v4'
 
+// yours: keyBytes (32-byte Uint8Array), dbProfileStore (a ProfileStore), fs, search, agents,
+// adminOAuthClients, agentId, and a fetch that blocks private networks
 const vault = webCryptoVault(keyBytes)                       // or your own SecretVault
-const profiles = sealedProfileStore(dbProfileStore, vault, { kinds: ['connection', 'connection-credentials'] })
+const profiles = sealedProfileStore({ inner: dbProfileStore, vault, kinds: ['connection', 'connection-credentials'] })
 
 const definitions = [
   ...builtinConnectors({
@@ -35,8 +42,8 @@ const definitions = [
     },
     planning: { plugin: () => todos() },
     web: { search: () => webSearch({ search }), read: () => webFetch() },
-    ask: { plugin: () => askUser() },
-    team: { plugin: () => subagents({ agents }) },
+    ask: { plugin: () => ask() },
+    team: { plugin: () => subagent({ agents }) },
     labels: { files: { name: 'Berkas' } },                  // relabel / translate
   }),
   remoteMcpConnector({ listTools: listRemoteMcpTools }),
@@ -47,9 +54,9 @@ const connectors = createConnectorService({
   definitions,
   connections: connectionStoreFromProfiles(profiles),
   credentials: credentialStoreFromProfiles(profiles),
-  enablement: memoryEnablementStore(),                       // or your adapter
-  flows: memoryFlowStore(),                                  // or your adapter
-  vault, fetch,                                              // fetch: block private networks
+  enablement: inMemoryEnablementStore(),                       // or your adapter
+  flows: inMemoryFlowStore(),                                  // or your adapter
+  vault, fetch,                                              // fetch: your network policy
   redirectUri: 'https://app.example.com/connectors/oauth/callback',
   clientConfig: (id) => adminOAuthClients[id],               // curated OAuth connectors
 })
@@ -59,15 +66,17 @@ await ensureBuiltinConnections({ store: connectionStoreFromProfiles(profiles), d
 ## Giving an agent its connectors
 
 ```ts
+// base: your own permission rules, { allow?, ask?, deny? } as rule strings
 const out = await connectors.activate({ agent: { id: agentId }, mcp: remoteMcpSource, appRules: base })
 const agent = defineHarnessAgent({
   model,
-  instructions: [BASE_INSTRUCTIONS, ...out.instructions],   // static, stable order
+  instructions: [BASE_INSTRUCTIONS, ...out.instructions],   // BASE_INSTRUCTIONS: yours; stable order
   plugins: out.plugins,
   tools: out.mcpSources,
 })
 const engine = createPermissionEngine({
-  roots, rules: out.rules,                                    // allow / ask / deny
+  roots: () => roots,                                         // yours: PermissionRoot[]
+  rules: { allow: out.rules.allow, ask: out.rules.ask, deny: out.rules.deny },
   toolKinds: { ...myToolKinds, ...out.rules.toolKinds },      // pinned asks: bypass cannot skip them
 })
 ```
@@ -85,8 +94,15 @@ Routes (all JSON; the service returns browser-safe data):
 POST /connectors/connect       -> connectors.startConnect({ definitionId, scope, scopeId, label })
 GET  /connectors/flows/:id     -> connectors.getFlow(id)
 POST /connectors/flows/:id     -> connectors.advance(id, { viewId, action, data })
-GET  /connectors/oauth/callback?state&code&error -> connectors.completeOAuth({ state, code, error })
+GET  /connectors/oauth/callback?state&code&error -> connectors.completeOAuth({ state, code, error, principal })
 ```
+
+Bind the flow to the person who started it: pass the same opaque `principal` (user id or session id)
+to `startConnect({ principal })` / `reconnect(id, { principal })` and to `completeOAuth` / `advance`.
+A callback opened in another person's browser then fails with `principal-mismatch` instead of
+attaching the attacker's account (login CSRF). OAuth requests refuse private and link-local hosts and
+cross-origin redirects; local development MCP servers need
+`createConnectorService({ oauth: { allowPrivateNetwork: true } })`.
 
 The UI keeps `flow` and renders `flow.view` by `type`; every action quotes `flow.view.viewId`:
 
@@ -146,6 +162,7 @@ defineConnector({
     { id: 'write', title: 'Edit contacts', description: '…', kind: 'write', tools: ['update_contact'], defaultMode: 'ask' },
   ],
   test: async ({ settings, fetch }) => ({ ok: true, accountLabel: 'acme' }),
+  // myCrmPlugin: yours, a plugin whose tools are named ctx.toolPrefix + tool
   activate: (ctx) => myCrmPlugin({ apiKey: ctx.settings.apiKey, prefix: ctx.toolPrefix }),
 })
 ```
@@ -164,7 +181,7 @@ tokenUrl, scopes, pkce: true }`, give the admin client with `clientConfig`, and 
   for any field that decides where requests go ([Providers](providers-and-profiles.md)).
 - **Annotations come from the remote server.** `remoteMcpConnector` groups a tool with
   `readOnlyHint: true` into the `read` capability when the connection is tested, but that
-  capability now defaults to `ask` like the others (a hostile server can mislabel a mutating tool).
+  capability defaults to `ask` like the others (a hostile server can mislabel a mutating tool).
   Switch it to `allow` (a capability mode on the enablement, `modes: { read: 'allow' }`) only for servers you
   trust. Curated connectors you define yourself keep the defaults you give them
   ([tools and MCP](tools-and-mcp.md#mcp-servers-eharnessmcp)).
@@ -173,14 +190,17 @@ tokenUrl, scopes, pkce: true }`, give the admin client with `clientConfig`, and 
 
 ## Reference
 
-Everything is exported from `eharness/connectors`: `defineConnector`, `connectorSchema`,
-`describeConnector`, `publicConnection`, `startFlow`, `advanceFlow`, `completeOAuth`,
-`flowCompletion`, `publicFlow`, `defaultFlowSteps`, the OAuth helpers (`generatePkce`,
-`buildAuthorizationUrl`, `exchangeCode`, `refreshTokens`, `discoverMcpAuthorization`,
-`registerClient`, `requestDeviceCode`, `pollDeviceToken`), `createCredentialManager`,
-`activateConnectors`, `compileConnectorRules`, `mergeConnectorRules`, `resolveModes`,
-`mostRestrictive`, `builtinConnectors`, `ensureBuiltinConnections`, `remoteMcpConnector`,
-`createConnectorService`, the memory stores and `connectionStoreFromProfiles` /
-`credentialStoreFromProfiles`, `webCryptoVault`, `plaintextVault`. Conformance suites for your
-adapters: `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`,
-`flowStoreConformance` (`eharness/testing`).
+Exported from `eharness/connectors`: `defineConnector`, `connectorSchema`, `describeConnector`,
+`publicConnection`, `startFlow`, `advanceFlow`, `completeOAuth`, `flowCompletion`, `publicFlow`,
+`defaultFlowSteps`, `discoverMcpAuthorization`, `createCredentialManager`, `activateConnectors`,
+`compileConnectorRules`, `mergeConnectorRules`, `resolveModes`, `mostRestrictive`,
+`capabilitiesOf`, `capabilitiesFromTools`, `isConnectionEnabled`, `builtinConnectors`,
+`builtinConnectionId`, `ensureBuiltinConnections`, `remoteMcpConnector`, `createConnectorService`,
+the `inMemory*` stores (`inMemoryConnectionStore`, `inMemoryCredentialStore`,
+`inMemoryEnablementStore`, `inMemoryFlowStore`, `inMemoryRefreshLock`) and
+`connectionStoreFromProfiles` / `credentialStoreFromProfiles`. The OAuth step helpers (PKCE,
+authorization URL, code exchange, refresh, dynamic client registration, device code) are internal:
+the service and flows call them for you. Secret vaults (`webCryptoVault`, `plaintextVault`) come
+from `eharness/providers`. Conformance suites for your adapters: `connectionStoreConformance`,
+`credentialStoreConformance`, `enablementStoreConformance`, `flowStoreConformance`
+(`eharness/testing`).

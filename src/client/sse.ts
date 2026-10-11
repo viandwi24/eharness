@@ -19,8 +19,32 @@ export interface SseParser {
   reset(): void
 }
 
-/** Create a parser; `onMessage` runs for every complete event that has data. */
-export function createSseParser(onMessage: (message: SseMessage) => void): SseParser {
+/** Default longest line (characters) the parser buffers before it discards it. */
+export const DEFAULT_SSE_MAX_LINE_CHARS: number = 1024 * 1024
+/** Default most `data` characters of one event before the event is dropped. */
+export const DEFAULT_SSE_MAX_EVENT_CHARS: number = 4 * 1024 * 1024
+
+/** Limits of {@link createSseParser}: a hostile or broken server cannot grow the buffer forever. */
+export interface SseParserLimits {
+  /** A line longer than this is discarded (never buffered whole). Default 1 MiB. */
+  maxLineChars?: number
+  /** An event whose `data` is longer than this is dropped. Default 4 MiB. */
+  maxEventChars?: number
+}
+
+/**
+ * Create a parser; `onMessage` runs for every complete event that has data. Oversized lines and
+ * events are dropped silently (the stream goes on).
+ */
+export function createSseParser(
+  onMessage: (message: SseMessage) => void,
+  limits: SseParserLimits = {},
+): SseParser {
+  const maxLine = limits.maxLineChars ?? DEFAULT_SSE_MAX_LINE_CHARS
+  const maxEvent = limits.maxEventChars ?? DEFAULT_SSE_MAX_EVENT_CHARS
+  let discarding = false
+  let dataChars = 0
+  let tooBig = false
   let buffer = ''
   let id: string | undefined
   let event = ''
@@ -31,7 +55,7 @@ export function createSseParser(onMessage: (message: SseMessage) => void): SsePa
 
   const dispatch = (): void => {
     if (id !== undefined) lastId = id
-    if (data.length > 0) {
+    if (data.length > 0 && !tooBig) {
       const message: SseMessage = { event: event || 'message', data: data.join('\n') }
       if (lastId !== undefined) message.id = lastId
       if (retry !== undefined) message.retry = retry
@@ -40,6 +64,8 @@ export function createSseParser(onMessage: (message: SseMessage) => void): SsePa
     id = undefined
     event = ''
     data = []
+    dataChars = 0
+    tooBig = false
     retry = undefined
   }
 
@@ -53,8 +79,13 @@ export function createSseParser(onMessage: (message: SseMessage) => void): SsePa
     const field = i < 0 ? l : l.slice(0, i)
     let value = i < 0 ? '' : l.slice(i + 1)
     if (value.startsWith(' ')) value = value.slice(1)
-    if (field === 'data') data.push(value)
-    else if (field === 'event') event = value
+    if (field === 'data') {
+      dataChars += value.length + 1
+      if (dataChars > maxEvent) {
+        tooBig = true
+        data = []
+      } else if (!tooBig) data.push(value)
+    } else if (field === 'event') event = value
     else if (field === 'id') {
       if (!value.includes('\0')) id = value
     } else if (field === 'retry' && /^\d+$/.test(value)) retry = Number(value)
@@ -62,6 +93,14 @@ export function createSseParser(onMessage: (message: SseMessage) => void): SsePa
 
   return {
     push(chunk) {
+      if (discarding) {
+        const at = chunk.search(/[\r\n]/)
+        if (at < 0) return
+        discarding = false
+        skipLf = chunk[at] === '\r' && at === chunk.length - 1
+        if (chunk[at] === '\r' && chunk[at + 1] === '\n') chunk = chunk.slice(at + 2)
+        else chunk = chunk.slice(at + 1)
+      }
       buffer += chunk
       let start = 0
       for (let i = 0; i < buffer.length; i++) {
@@ -85,6 +124,10 @@ export function createSseParser(onMessage: (message: SseMessage) => void): SsePa
         }
       }
       buffer = buffer.slice(start)
+      if (buffer.length > maxLine) {
+        buffer = ''
+        discarding = true
+      }
     },
     reset() {
       buffer = ''
@@ -93,6 +136,9 @@ export function createSseParser(onMessage: (message: SseMessage) => void): SsePa
       data = []
       retry = undefined
       skipLf = false
+      discarding = false
+      dataChars = 0
+      tooBig = false
     },
   }
 }

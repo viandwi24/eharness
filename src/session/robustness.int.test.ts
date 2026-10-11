@@ -9,11 +9,12 @@ import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent, definePlugin } from '../index.ts'
 import { externalTool } from '../registry/external.ts'
-import { memoryMessages, memoryState, memoryStreamLog } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState, inMemoryStreamLog } from '../storage/memory.ts'
 import { createStreamLogWriter, resolveStreamLogOptions } from '../stream/log-writer.ts'
 import { createTurnBuffer } from '../stream/run.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
-import { spyMessages, spyState } from './int-kit.ts'
+import { until } from '../testing/test-utils.ts'
+import { spyMessages, spyState } from './test-kit.ts'
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {} }
 const timeout = <T>(p: Promise<T>, ms = 2000): Promise<T | 'HUNG'> =>
@@ -35,7 +36,7 @@ describe('throwing onWarning / logger never break a turn (A1)', () => {
       model: scriptedModel([{ text: 'hi' }, { text: 'again' }]),
       contextWindow: 100_000,
       plugins: [plugin],
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: {
         debug() {},
         info() {},
@@ -64,7 +65,7 @@ describe('inject({ key }) (A2)', () => {
   test('concurrent injects with the same key store exactly one message', async () => {
     const agent = defineHarnessAgent({
       model: scriptedModel([{ text: 'hi' }]),
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: quiet,
     } as never)
     const s = agent.session('s1') as any
@@ -81,7 +82,7 @@ describe('inject({ key }) (A2)', () => {
 
 describe('wait-timeout expiry backoff (A3)', () => {
   test('a failing state store is not retried in a hot loop', async () => {
-    const inner = memoryState()
+    const inner = inMemoryState()
     let failing = false
     let writes = 0
     const state: any = {
@@ -98,7 +99,7 @@ describe('wait-timeout expiry backoff (A3)', () => {
           writes++
           throw new Error('db down')
         }
-        return inner.setIf!(id, s, r)
+        return inner.setIf?.(id, s, r)
       },
     }
     const build = externalTool({
@@ -113,7 +114,7 @@ describe('wait-timeout expiry backoff (A3)', () => {
       ]),
       contextWindow: 100_000,
       tools: { build },
-      storage: { messages: memoryMessages(), state },
+      storage: { messages: inMemoryMessages(), state },
       logger: quiet,
     } as never)
     const s = agent.session('s1')
@@ -155,7 +156,7 @@ describe('failed regenerate leaves no ghost rewind (A7)', () => {
 describe('stream log retention (A8)', () => {
   test('a quiet turn that outlives the retention is restarted, not lost', async () => {
     let t = 0
-    const adapter = memoryStreamLog({ retentionMs: 1000, now: () => t })
+    const adapter = inMemoryStreamLog({ retentionMs: 1000, now: () => t })
     const buffer = createTurnBuffer()
     const warnings: string[] = []
     const key = { sessionId: 's', turnId: 't' }
@@ -179,8 +180,8 @@ describe('stream log retention (A8)', () => {
     expect(warnings).toEqual([])
   })
 
-  test('memoryStreamLog does not create a log on a gap', async () => {
-    const adapter = memoryStreamLog()
+  test('inMemoryStreamLog does not create a log on a gap', async () => {
+    const adapter = inMemoryStreamLog()
     const key = { sessionId: 's', turnId: 'gap' }
     await expect(adapter.append(key, [{ a: 1 }], { at: 3 })).rejects.toThrow(/gap/)
     expect((await adapter.read(key, 0)).status).toBe('missing')
@@ -188,7 +189,7 @@ describe('stream log retention (A8)', () => {
 
   test('the writer refreshes the retention of a quiet log (keep-alive)', async () => {
     const expired: number[] = []
-    const inner = memoryStreamLog()
+    const inner = inMemoryStreamLog()
     const adapter = {
       ...inner,
       expire: async (k: any, ttl: number) => {
@@ -206,7 +207,7 @@ describe('stream log retention (A8)', () => {
     })
     w.start()
     buffer.push({ type: 'start', messageId: 'm' } as never)
-    await new Promise((r) => setTimeout(r, 80))
+    await until('the keep-alive refreshed the retention', () => expired.length > 0)
     expect(expired.length).toBeGreaterThan(0)
     buffer.close()
     await w.finish('done')
@@ -218,7 +219,7 @@ describe('listeners and outputs (A10)', () => {
     const agent = defineHarnessAgent({
       model: scriptedModel(Array.from({ length: 10 }, () => ({ text: 'ok' }))),
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: quiet,
     } as never)
     const s = agent.session('s')
@@ -242,7 +243,7 @@ describe('listeners and outputs (A10)', () => {
       model: scriptedModel([{ toolCalls: [{ toolName: 't', input: {} }] }, { text: 'done' }]),
       contextWindow: 100_000,
       tools: { t },
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: quiet,
     } as never)
     const result = await agent.session('s').send('go').result

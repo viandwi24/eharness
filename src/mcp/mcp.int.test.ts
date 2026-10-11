@@ -11,14 +11,14 @@ import {
   type SessionStateSnapshot,
   type StateAdapter,
 } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import {
   type ScriptedCallOptions,
   type ScriptedStepInput,
   scriptedModel,
 } from '../testing/index.ts'
-import { clearMcpPins, mcpServer } from './index.ts'
-import { createMcpServer, type McpServerOptions, mcpSourceInternals } from './server.ts'
+import { clearMcpPins, mcpServerSource } from './index.ts'
+import { createMcpServer, type McpServerSourceOptions, mcpSourceInternals } from './server.ts'
 import { type FakeMcpServer, type FakeMcpTool, fakeMcpServer } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
@@ -26,14 +26,14 @@ const silent = { debug() {}, info() {}, warn() {}, error() {} }
 function setup(
   steps: ScriptedStepInput[],
   config: Partial<HarnessAgentConfig> = {},
-  state: StateAdapter = memoryState(),
+  state: StateAdapter = inMemoryState(),
 ) {
   const model = scriptedModel(steps)
   const warnings: HarnessWarning[] = []
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state },
+    storage: { messages: inMemoryMessages(), state },
     logger: silent,
     onWarning: (w) => warnings.push(w),
     ...config,
@@ -73,10 +73,10 @@ const tools = (): FakeMcpTool[] => [
   },
 ]
 
-const gh = (server: FakeMcpServer, opts: Partial<McpServerOptions> = {}) =>
-  mcpServer({ name: 'gh', transport: () => server.transport(), ...opts })
+const gh = (server: FakeMcpServer, opts: Partial<McpServerSourceOptions> = {}) =>
+  mcpServerSource({ name: 'gh', transport: () => server.transport(), ...opts })
 
-describe('mcpServer: listing', () => {
+describe('mcpServerSource: listing', () => {
   test('lists the server tools with the default prefix and calls them over MCP', async () => {
     const server = fakeMcpServer(tools())
     const { agent, model } = setup(
@@ -211,7 +211,7 @@ describe('mcpServer: listing', () => {
   })
 })
 
-describe('mcpServer: connection lifecycle', () => {
+describe('mcpServerSource: connection lifecycle', () => {
   test('lazy (default): connects at the first turn, not at session open', async () => {
     const server = fakeMcpServer(tools())
     const { agent } = setup([{ text: 'a' }, { text: 'b' }], { mcp: [gh(server)] })
@@ -237,7 +237,10 @@ describe('mcpServer: connection lifecycle', () => {
   test('a connection failure warns W_TOOL_SOURCE_FAILED and is retried at the next turn', async () => {
     const server = fakeMcpServer(tools())
     server.failStart = 1
-    const { agent, model, warnings } = setup([{ text: 'a' }, { text: 'b' }], { mcp: [gh(server)] })
+    const { agent, model, warnings } = setup([{ text: 'a' }, { text: 'b' }], {
+      mcp: [gh(server)],
+      toolSources: { retryAfterMs: 0 },
+    })
     const session = agent.session('s1')
     expect((await session.send('x').result).stop).toBe('complete')
     expect(toolNames(model.calls[0])).toEqual([])
@@ -441,7 +444,7 @@ describe('mcpServer: connection lifecycle', () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve
     })
-    const source = mcpServer({
+    const source = mcpServerSource({
       name: 'gh',
       connect: 'eager',
       transport: async () => {
@@ -462,7 +465,7 @@ describe('mcpServer: connection lifecycle', () => {
   })
 })
 
-describe('mcpServer: definition pinning', () => {
+describe('mcpServerSource: definition pinning', () => {
   const pinsOf = async (state: StateAdapter, sessionId: string) =>
     (await state.get(sessionId))?.plugins.app?.['mcp:gh:pins'] as Record<string, string> | undefined
 
@@ -501,7 +504,7 @@ describe('mcpServer: definition pinning', () => {
 
   test('drift is detected across sessions reopened from storage', async () => {
     const { server, drift } = drifting()
-    const state = memoryState()
+    const state = inMemoryState()
     const first = setup([{ text: 'a' }], { mcp: [gh(server, { pinDefinitions: true })] }, state)
     await first.agent.session('s1').send('x').result
     await first.agent.close()
@@ -537,7 +540,7 @@ describe('mcpServer: definition pinning', () => {
 
   test('clearMcpPins on a stored session edits the state through the adapter', async () => {
     const { server } = drifting()
-    const state = memoryState()
+    const state = inMemoryState()
     const { agent } = setup([{ text: 'a' }], { mcp: [gh(server, { pinDefinitions: true })] }, state)
     await agent.session('s1').send('x').result
     await agent.close()
@@ -548,7 +551,7 @@ describe('mcpServer: definition pinning', () => {
     expect(after.plugins.app?.['mcp:gh:pins']).toBeUndefined()
     expect(after.rev).toBe(before.rev + 1)
     // opts.stateAdapter wins (session storage override)
-    const override = memoryState()
+    const override = inMemoryState()
     await override.set('s2', {
       ...before,
       plugins: { app: { 'mcp:gh:pins': { a: 'x' }, keep: 1 } },
@@ -584,8 +587,8 @@ describe('mcpServer: definition pinning', () => {
   test('clearMcpPins never touches another agent with the same (default) id', async () => {
     const a = drifting()
     const b = drifting()
-    const stateA = memoryState()
-    const stateB = memoryState()
+    const stateA = inMemoryState()
+    const stateB = inMemoryState()
     const agentA = setup(
       [{ text: 'a1' }, { text: 'a2' }, { text: 'a3' }],
       {
@@ -645,10 +648,10 @@ describe('mcpServer: definition pinning', () => {
     await two.agent.close()
   })
 
-  test('mcpServer and clearMcpPins validate their options', async () => {
+  test('mcpServerSource and clearMcpPins validate their options', async () => {
     const bad = (opts: unknown) => {
       try {
-        mcpServer(opts as McpServerOptions)
+        mcpServerSource(opts as McpServerSourceOptions)
       } catch (error) {
         return isHarnessError(error, 'EH_CONFIG_INVALID')
       }
@@ -671,13 +674,13 @@ describe('mcpServer: definition pinning', () => {
     expect(bad({ name: 'gh-2', transport, defer: true, connect: 'eager', maxRetries: 3 })).toBe(
       false,
     )
-    expect(mcpServer({ name: 'gh', transport }).id).toBe('mcp:gh')
+    expect(mcpServerSource({ name: 'gh', transport }).id).toBe('mcp:gh')
     const { agent } = setup([])
     await expect(clearMcpPins(agent, 's1', 'Bad Name')).rejects.toThrow()
   })
 })
 
-describe('mcpServer: annotations and risk (spec 11 §3.2)', () => {
+describe('mcpServerSource: annotations and risk (spec 11 §3.2)', () => {
   const hinted = (): FakeMcpTool[] => [
     { name: 'plain' },
     { name: 'read_only', annotations: { readOnlyHint: true } },
@@ -731,7 +734,7 @@ describe('mcpServer: annotations and risk (spec 11 §3.2)', () => {
     await agent.close()
   })
 
-  test('mcpServer({ risk }) as a constant is trusted and wins over the hints', async () => {
+  test('mcpServerSource({ risk }) as a constant is trusted and wins over the hints', async () => {
     const server = fakeMcpServer(hinted())
     const seen: unknown[] = []
     const { agent } = setup(calls(['wipe', 'plain']), {
@@ -749,7 +752,7 @@ describe('mcpServer: annotations and risk (spec 11 §3.2)', () => {
     await agent.close()
   })
 
-  test('mcpServer({ risk }) as a function: per server tool; undefined, throws or invalid keep the derived risk', async () => {
+  test('mcpServerSource({ risk }) as a function: per server tool; undefined, throws or invalid keep the derived risk', async () => {
     const server = fakeMcpServer(hinted())
     const seen: unknown[] = []
     const asked: unknown[] = []

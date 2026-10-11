@@ -2,7 +2,7 @@
  * The chat routes: `POST /sessions/:id/chat`, `GET /sessions/:id/chat/stream` and
  * `POST /sessions/:id/interrupt`.
  *
- * @see docs/specs/26-http.md#8-chat-routes
+ * @see docs/specs/26-http.md#5-chat
  */
 import type { UIMessage } from 'ai'
 import { type ChatRequestOptions, handleChatRequest, handleResumeRequest } from '../index.ts'
@@ -83,6 +83,7 @@ export async function handleChat<P>(env: HttpEnv<P>, call: HttpCall<P>): Promise
     sessionId,
     ...(chat.maxParts === undefined ? {} : { maxParts: chat.maxParts }),
     ...(chat.maxTextBytes === undefined ? {} : { maxTextBytes: chat.maxTextBytes }),
+    ...(chat.allowFileUrls === undefined ? {} : { allowFileUrls: chat.allowFileUrls }),
     clientTools: chat.clientTools !== undefined && chat.clientTools !== false,
     pageContext: chat.pageContext !== undefined && chat.pageContext !== false,
   })
@@ -219,7 +220,7 @@ export async function handleChat<P>(env: HttpEnv<P>, call: HttpCall<P>): Promise
     ...(chat.pageContext === undefined ? {} : { pageContext: chat.pageContext }),
   }
   const run = handleChatRequest(session, body, options)
-  return await run.toHttpResponse({ headers: streamHeaders(sessionId, run.turnId) })
+  return await run.toResponse({ headers: streamHeaders(sessionId, run.turnId) })
 }
 
 export async function handleResume<P>(env: HttpEnv<P>, call: HttpCall<P>): Promise<Response> {
@@ -255,6 +256,6 @@ export async function handleInterrupt<P>(env: HttpEnv<P>, call: HttpCall<P>): Pr
   }
   const session = await env.session?.(sessionId, ctx)
   if (session === undefined) return httpError('EH_HTTP_NOT_FOUND', 'Not found.')
-  const result: InterruptResult = await session.requestAbort(reason)
+  const result: InterruptResult = await session.abort(reason)
   return jsonResponse({ target: result.target })
 }

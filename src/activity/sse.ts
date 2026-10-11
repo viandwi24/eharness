@@ -4,7 +4,9 @@
  *
  * Wire format (spec 25 §4): `retry` + a `: connected` comment + `event: boot` first; then one
  * frame per record (`id: <seq>`, `event: <type>`, `data: <record JSON>`); `: keep-alive` comments
- * while quiet; `event: resync` when the cursor is outside what the store still holds.
+ * while quiet; `event: resync` when the cursor is outside what the store still holds;
+ * `event: error` (`{ code: 'EH_STORAGE', message }`, no store details) as the last frame when the
+ * store failed, followed by the end of the stream.
  *
  * @see docs/specs/25-activity.md#4-sse
  */
@@ -46,20 +48,21 @@ export interface ActivityStreamOptions {
   batch?: number
   /** Ends the stream. */
   signal?: AbortSignal
-  /** Called with a store failure; the stream ends. */
+  /** Called with a store failure; the stream sends an `event: error` frame and ends. */
   onError?: (error: unknown) => void
 }
 
-const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
+/** Resolve after `ms`, or early (never rejecting) when `signal` aborts. Internal to `activity`. */
+export const sleep = (ms: number, signal?: AbortSignal): Promise<void> =>
   new Promise((resolve) => {
-    if (signal.aborted) return resolve()
+    if (signal?.aborted === true) return resolve()
     const timer = setTimeout(done, ms)
     function done(): void {
       clearTimeout(timer)
-      signal.removeEventListener('abort', done)
+      signal?.removeEventListener('abort', done)
       resolve()
     }
-    signal.addEventListener('abort', done, { once: true })
+    signal?.addEventListener('abort', done, { once: true })
   })
 
 /**
@@ -127,7 +130,28 @@ export function activityStream(options: ActivityStreamOptions): ReadableStream<U
             await sleep(pollMs, internal.signal)
           }
         } catch (error) {
-          if (!internal.signal.aborted) options.onError?.(error)
+          if (!internal.signal.aborted) {
+            // a failing store is not an end of the feed: say so (`event: error`, no store details)
+            // before closing, so the client counts it as a failure and backs off instead of
+            // reconnecting at the base interval as after a clean close (spec 25 §4)
+            try {
+              controller.enqueue(
+                encoder.encode(
+                  `event: error\ndata: ${JSON.stringify({
+                    code: 'EH_STORAGE',
+                    message: 'The activity store failed.',
+                  })}\n\n`,
+                ),
+              )
+            } catch {
+              // the reader is gone
+            }
+            try {
+              options.onError?.(error)
+            } catch {
+              // a throwing listener must not mask the stream end
+            }
+          }
         } finally {
           options.signal?.removeEventListener('abort', onOuterAbort)
           internal.abort()

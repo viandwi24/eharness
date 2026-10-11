@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import {
   type CoderConfig,
   type PermissionEngine,
@@ -24,7 +24,7 @@ const engine: PermissionEngine = createPermissionEngine({
   mounts: () => [{ virtual: '/', real: root, readonly: false }],
 })
 const call = (toolName: string, input: unknown): ToolCallInfo => ({ toolName, input })
-const fs = memoryFs({ '/a.ts': 'one\ntwo\nthree\n', '/dup.txt': 'x\nx\n' })
+const fs = inMemoryFs({ seed: { '/a.ts': 'one\ntwo\nthree\n', '/dup.txt': 'x\nx\n' } })
 
 describe('describeApproval', () => {
   test('bash: title from the command, detail is the command, suggested rule', async () => {

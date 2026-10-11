@@ -37,13 +37,15 @@
     "access": "public"
   },
   "scripts": {
-    "lint": "biome check .",
+    "lint": "biome check . && bun scripts/check-throws.ts",
     "format": "biome format --write .",
     "typecheck": "tsc --noEmit && tsc --noEmit -p examples && tsc --noEmit -p examples/coder && tsc --noEmit -p examples/team/server && bun run --cwd examples/team/web check",
     "test": "bun test",
     "build": "tsdown",
-    "check:package": "bun scripts/check-client-bundle.ts && publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz",
-    "check:imports": "bun scripts/check-imports.ts",
+    "check:package": "bun scripts/check-client-bundle.ts && bun scripts/exports-snapshot.ts --dist && publint && bun pm pack --quiet --filename eharness-attw.tgz && attw eharness-attw.tgz --profile esm-only && rm eharness-attw.tgz",
+    "check:imports": "bun scripts/check-imports.ts && bun scripts/check-cycles.ts",
+    "check:throws": "bun scripts/check-throws.ts",
+    "check:exports": "bun scripts/exports-snapshot.ts",
     "release:version": "changeset version && bun scripts/sync-version.ts && bun install --lockfile-only"
   },
   "peerDependencies": {
@@ -93,6 +95,7 @@
     "./testing": "./dist/testing/index.js",
     "./todos": "./dist/todos/index.js",
     "./web": "./dist/web/index.js",
+    "./web/node": "./dist/web/node.js",
     "./package.json": "./package.json"
   }
 }

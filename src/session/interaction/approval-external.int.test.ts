@@ -12,7 +12,7 @@ import type { HarnessAgentConfig } from '../../agent/types.ts'
 import type { HarnessUIMessage, PendingState } from '../../messages/types.ts'
 import { externalTool } from '../../registry/external.ts'
 import { scriptedModel } from '../../testing/scripted-model.ts'
-import { collect, spyMessages, spyState } from '../int-kit.ts'
+import { collect, spyMessages, spyState } from '../test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 

@@ -7,8 +7,8 @@
  * @see docs/specs/09-tools-and-mcp.md#4-tool-output-limits
  */
 import type { ToolOutputConfig } from '../agent/types.ts'
-import { truncateMiddle } from '../compaction/truncate.ts'
 import type { HarnessWarning } from '../errors.ts'
+import { truncateMiddle } from '../messages/truncate.ts'
 
 /** Default `toolOutput.maxChars`. */
 export const DEFAULT_TOOL_OUTPUT_MAX_CHARS = 50_000

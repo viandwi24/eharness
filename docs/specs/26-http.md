@@ -5,12 +5,17 @@ Status: **Draft (0.8)**. Module: `src/http/*`. Built only with the public core A
 counterpart is `eharness/client` (spec 27, same release).
 
 ```ts
-import { createHarnessHttp, openAccess, sanitizeChatBody, classifyChatBody, httpError, statusOfCode } from 'eharness/http'
+import { createHarnessHttp, openAccess } from 'eharness/http'
 import type { SessionSnapshot, MessagesPage, ChatQueued, InterruptResult, AttentionListResponse, AnswerRequest, AttentionAnswerWire, HttpErrorBody, HttpErrorCode, SessionSummary } from 'eharness/http'
 ```
 
 Web APIs only: `Request` in, `Response` out. The module is a `fetch` handler; mounting it in a
 framework is one line (guide `docs/guides/http-server.md`).
+
+The public surface is `createHarnessHttp`, `openAccess`, the `Authorize` / hook option types and the
+wire types. Body sanitising (`sanitizeChatBody`, `classifyChatBody`) and the error mapping
+(`httpError`, `statusOfCode`) are internal to the module and described here as behaviour only; the
+whole subpath is Draft, so every symbol is experimental.
 
 ## 1. `createHarnessHttp`
 
@@ -25,7 +30,7 @@ interface HarnessHttp {
 ```
 
 - `authorize` is **required** (`EH_CONFIG_INVALID` at creation when missing). `openAccess` allows
-  everything and is for development and tests only.
+  everything (principal `{}`) and is for development and tests only.
 - `agent` supplies the defaults of `session(id, ctx)` (`agent.session(id)`) and `peek(id, ctx)`
   (`agent.peek(id)`). Without an agent, a route that needs a hook that was not given is not
   mounted (404). Hooks receive `{ principal, request, action }` and may return another agent's
@@ -50,7 +55,7 @@ Paths are relative to `basePath`. `:id` is URL-decoded (`dm%3Aabc` is `dm:abc`).
 | `GET /sessions/:id/messages?before&limit` | `session.messages` | `MessagesPage`; `limit` 1..200 (default 50), oldest first, `nextBefore` = id to pass as `before` |
 | `POST /sessions/:id/chat?ifBusy=` | `chat` | `200` UI message stream, or `202 ChatQueued` |
 | `GET /sessions/:id/chat/stream?from=` | `chat.resume` | `200` stream of the active turn, `204` when none; `Last-Event-ID` is accepted; malformed cursor `400` |
-| `POST /sessions/:id/interrupt` | `chat.interrupt` | `InterruptResult` (`session.requestAbort`) |
+| `POST /sessions/:id/interrupt` | `chat.interrupt` | `InterruptResult` (`session.abort`) |
 | `GET /attention` | `attention.list` | `{ items: AttentionItem[] }` |
 | `POST /attention/:id/answer` | `attention.answer` | `AnswerResponse`; `404` when not found |
 | `GET /activity/stream?after=` | `activity.stream` | SSE (`handleActivityStream`) |
@@ -84,7 +89,7 @@ that does not exist reads as an empty snapshot (not 404); an app that must hide 
 | `EH_STORAGE` | 503 |
 | other `EH_*`, `EH_INTERNAL` | 500 |
 
-`statusOfCode(code)` is this table. A thrown `HarnessError` below 500 keeps its message and details;
+The internal `statusOfCode(code)` is this table. A thrown `HarnessError` below 500 keeps its message and details;
 a 5xx answer has a generic message and no details, and the real error goes to `onFailure(error,
 { request, action })`. `onError(error, { request, action? })` runs first for every thrown error
 (hook errors included) and may return a `Response`. Failures after a stream started stay in the
@@ -95,7 +100,11 @@ stream. A `Response` returned by `authorize` is passed through (plus `headers`).
 `authorize({ request, action, sessionId?, attentionId? })` runs once per request, **before the body
 is read** and before any session is opened, and returns a principal `P` or a denial: a `Response`, or
 `{ deny: 401 | 403 | 404, code?, message? }` (a principal object must not have a numeric `deny`
-key). It must not throw for a denial; a throw is an error (§3). `sessionId` is the `:id` of session
+key). **Fail closed:** the principal must be an object; any other result (`undefined`, `null`, a
+string, an array) is answered with `401 EH_HTTP_UNAUTHORIZED`, so `authorize: ({ request }) =>
+userOf(request)` denies anonymous callers instead of opening every route (use `?? { deny: 401 }`
+to choose the message). `P` is constrained to `object` in `createHarnessHttp<P extends object>`.
+It must not throw for a denial; a throw is an error (§3). `sessionId` is the `:id` of session
 routes, `attentionId` the `:id` of the answer route. `chat.authorizeKind({ principal, kind, sessionId,
 request })` runs after the chat body was classified (`send`, `respond`, `regenerate`, `edit`) and may
 return a denial. `chat.validate({ body, kind, principal, request })` runs right after sanitising
@@ -111,7 +120,7 @@ a denial, or `{ body }` to continue with a normalised body (not sanitised again)
 missing or false header cannot pass the limit. A body that does not parse is `400
 EH_HTTP_INVALID_JSON`; a content type that is not `application/json` (or `+json`) is `415`.
 
-### 5.2 Body whitelist (`sanitizeChatBody`)
+### 5.2 Body whitelist (internal `sanitizeChatBody`)
 
 Errors are values (`{ ok: false, code, message, details? }`). Rules:
 
@@ -119,7 +128,7 @@ Errors are values (`{ ok: false, code, message, details? }`). Rules:
 2. `trigger` is absent, `submit-message` or `regenerate-message`; `messageId` a non-empty string.
 3. Only the **last** message is kept (a regenerate may have none).
 4. A **user** message keeps `{ id, role, parts }`; parts are `text` (at most `maxTextBytes`, default
-   64 KiB) and `file` (`url`, `mediaType`, `filename?`), at most `maxParts` (default 32); any other
+   64 KiB) and `file` (`url`, `mediaType`, `filename?`; the `url` must be a `data:` URL unless `chat.allowFileUrls` is `true` (http/https) or a predicate accepts it, `details.reason: 'file-url'`: a provider or the AI SDK may download other URLs server-side), at most `maxParts` (default 32); any other
    part type, or a violation, is `400 EH_INVALID_INPUT` (`details.reason`). Its `metadata` is dropped.
 5. An **assistant** message (a `respond`) is reduced to the decision fields of tool parts
    (`approval-responded` with `approval.{id,approved,reason?}`, `output-available`,
@@ -129,14 +138,14 @@ Errors are values (`{ ok: false, code, message, details? }`). Rules:
    `settings`, `output`, `endTurn`. `ifBusy` comes from the query; `actor` from `chat.actorOf`;
    server options from `chat.sendOptions`.
 
-`classifyChatBody(body)` returns `send | respond | regenerate | edit` with the dispatch of
+The internal `classifyChatBody(body)` returns `send | respond | regenerate | edit` with the dispatch of
 `handleChatRequest`.
 
 ### 5.3 Pipeline
 
 `authorize` → content type and body (§5.1) → sanitize (§5.2) → `authorizeKind` → `validate` → idempotency key →
 stale-answer check → remote-busy check → busy policy → `handleChatRequest(session, body, options)` →
-`await run.toHttpResponse()`. Stream responses carry `x-eharness-turn-id`, `x-eharness-session-id`,
+`await run.toResponse()`. Stream responses carry `x-eharness-turn-id`, `x-eharness-session-id`,
 `cache-control: no-cache, no-transform` and `x-accel-buffering: no`.
 
 - **Idempotency.** The key is the `Idempotency-Key` header (invalid: `400`), else the id of the
@@ -174,7 +183,7 @@ interface HarnessHttpOptions<P> {
   peek?(id, ctx): MaybePromise<SessionPeek>
   basePath?: string; maxBodyBytes?: number; headers?: HeadersInit
   chat?: { ifBusy?; defaultIfBusy?; clientTools?: false | ClientToolsOptions; pageContext?: false | PageContextOptions
-           actorOf?(principal): ApprovalActor | undefined; authorizeKind?; validate?; sendOptions?(ctx); maxParts?; maxTextBytes? }
+           actorOf?(principal): ApprovalActor | undefined; authorizeKind?; validate?; sendOptions?(ctx); maxParts?; maxTextBytes?; allowFileUrls?: boolean | ((url: URL) => boolean) }
   sessions?: { list({ principal, request, query: { cursor?, limit } }): { sessions, next? }; describe?(id, { principal, request }) }
   attention?: { roots({ principal, request }); peek: AttentionPeekFn; open(id, { principal, request }); canAnswer?; parseAnswer?; decorate?; onSettled?
                 waits?; maxDepth?; store?; agentId?: string | ((sessionId) => string | undefined); allowRemember?: boolean; maxNoteChars?: number }

@@ -1,17 +1,18 @@
 /**
- * `mcpServer()`: a `ToolSource` over `@ai-sdk/mcp` (optional peer dependency) with one MCP client
+ * `mcpServerSource()`: a `ToolSource` over `@ai-sdk/mcp` (optional peer dependency) with one MCP client
  * per session, allow/deny, prefixing, deferral, lazy/eager connect and definition pinning; and
  * `clearMcpPins()`.
  *
  * `@ai-sdk/mcp` is loaded with a dynamic `import()` at connect time; only its types are imported
  * statically, so importing `eharness/mcp` never fails without it.
  *
- * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
+ * @see docs/specs/09-tools-and-mcp.md#3-mcpserversource-eharnessmcp
  */
 import type { MCPClient, MCPClientConfig, MCPTransport, McpToolAnnotations } from '@ai-sdk/mcp'
 import { detectToolDrift, fingerprintTools, type Tool, type ToolSet } from 'ai'
 import {
   defineToolSource,
+  errorText,
   type HarnessAgent,
   type HarnessContext,
   HarnessError,
@@ -20,6 +21,8 @@ import {
   type ToolRisk,
   type ToolSource,
   untrustedContent,
+  withToolExecute,
+  withToolFields,
 } from '../index.ts'
 
 /** A transport config accepted by `createMCPClient({ transport })` (`{ type: 'http' | 'sse', url, … }`). */
@@ -28,12 +31,45 @@ export type McpTransportConfig = Exclude<MCPClientConfig['transport'], MCPTransp
 /** What a transport resolver may return: a config, or a **new** `MCPTransport` for this session. */
 export type McpTransportInput = MCPClientConfig['transport']
 
+/** Default of `McpServerSourceOptions.timeoutMs`. */
+export const DEFAULT_TIMEOUT_MS = 15_000
+
 /**
- * Options of {@link mcpServer}.
- *
- * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
+ * Settle with `promise`, or reject with `EH_MCP_TIMEOUT` after `ms`. A value that arrives after the
+ * timeout goes to `onLate` (to close a client that connected too late).
  */
-export interface McpServerOptions {
+export function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  what: string,
+  onLate?: (value: T) => void,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let done = false
+    const timer = setTimeout(() => {
+      done = true
+      reject(new HarnessError('EH_MCP_TIMEOUT', `${what} within ${ms} ms.`, { details: { ms } }))
+    }, ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        if (done) onLate?.(value)
+        else resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        if (!done) reject(error)
+      },
+    )
+  })
+}
+
+/**
+ * Options of {@link mcpServerSource}.
+ *
+ * @see docs/specs/09-tools-and-mcp.md#3-mcpserversource-eharnessmcp
+ */
+export interface McpServerSourceOptions {
   /** Short name; used as tool prefix and source id `'mcp:<name>'`. `^[a-z0-9-]{1,32}$` */
   name: string
   /**
@@ -62,13 +98,24 @@ export interface McpServerOptions {
    * frame (`untrustedContent()`, spec 03 §10) so the model treats them as data (the frame's meaning is
    * stated by the app with `UNTRUSTED_CONTENT_INSTRUCTIONS`; content inside it is data, never
    * instructions). A tool without `toModelOutput` is framed too (string output as text). Images and other
-   * non-text parts, structured JSON output and `isError` are unchanged. Default `true`.
+   * non-text parts and `isError` results are unchanged; structured JSON output is serialized and framed as text. Default `true`.
    */
   wrapUntrusted?: boolean
-  /** Pin tool definitions on first connect and exclude changed or added tools (drift). Default false. */
+  /**
+   * Pin tool definitions on first connect and exclude changed or added tools (drift). Default:
+   * `true` for a remote server (`transport` config or resolver result with `type: 'http' | 'sse'`,
+   * whose tool list the operator does not control), `false` for stdio and `MCPTransport` instances.
+   * Pass `false` to accept every change of a remote server.
+   */
   pinDefinitions?: boolean
   /** `createMCPClient` `maxRetries`: retries of `tools/call` requests only (not connect). Default 0. */
   maxRetries?: number
+  /**
+   * Default 15 000 — limit for connecting (`initialize`) and for listing the tools. A server that
+   * does not answer in time fails with `EH_MCP_TIMEOUT`, which the registry reports as
+   * `W_TOOL_SOURCE_FAILED`; the other sources and the turn are not held up.
+   */
+  timeoutMs?: number
   /** When to list the tools: once per session (default) or before every turn. */
   refresh?: 'session' | 'turn'
   /**
@@ -81,7 +128,7 @@ export interface McpServerOptions {
   risk?: ToolRisk | McpRiskFunction
 }
 
-/** Per-tool risk resolver of {@link McpServerOptions.risk}. */
+/** Per-tool risk resolver of {@link McpServerSourceOptions.risk}. */
 export type McpRiskFunction = (tool: {
   /** The server's tool name (before prefixing). */
   name: string
@@ -119,9 +166,11 @@ interface Conn {
   client: McpClient | undefined
   connecting: Promise<McpClient> | undefined
   closed: boolean
+  /** The resolved transport is a remote (`http` / `sse`) config. */
+  remote?: boolean
 }
 
-/** Internals of one `mcpServer()` source (tests and `clearMcpPins`). */
+/** Internals of one `mcpServerSource()` source (tests and `clearMcpPins`). */
 export interface McpSourceInternals {
   readonly name: string
   /** Number of sessions with state in this source (open, not yet released). */
@@ -143,12 +192,12 @@ function invalid(message: string): never {
   throw new HarnessError('EH_CONFIG_INVALID', message)
 }
 
-function validate(opts: McpServerOptions): void {
-  if (typeof opts !== 'object' || opts === null) invalid('mcpServer: options are required.')
+function validate(opts: McpServerSourceOptions): void {
+  if (typeof opts !== 'object' || opts === null) invalid('mcpServerSource: options are required.')
   if (typeof opts.name !== 'string' || !NAME.test(opts.name)) {
-    invalid(`mcpServer: \`name\` must match ${NAME} (got '${String(opts.name)}').`)
+    invalid(`mcpServerSource: \`name\` must match ${NAME} (got '${String(opts.name)}').`)
   }
-  const at = `mcpServer('${opts.name}')`
+  const at = `mcpServerSource('${opts.name}')`
   const transport = opts.transport as unknown
   if (
     transport === undefined ||
@@ -192,6 +241,9 @@ function validate(opts: McpServerOptions): void {
   ) {
     invalid(`${at}: \`maxRetries\` must be a non-negative integer.`)
   }
+  if (opts.timeoutMs !== undefined && !(Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0)) {
+    invalid(`${at}: \`timeoutMs\` must be a positive number.`)
+  }
   if (opts.pinDefinitions !== undefined && typeof opts.pinDefinitions !== 'boolean') {
     invalid(`${at}: \`pinDefinitions\` must be a boolean.`)
   }
@@ -206,23 +258,30 @@ const RISKS: ReadonlySet<unknown> = new Set(['read', 'write', 'destructive', 'ex
 
 const internalsOf = new WeakMap<ToolSource, McpSourceInternals>()
 
-/** Internals of a source created by `mcpServer()` (`undefined` for other sources). */
+/** Internals of a source created by `mcpServerSource()` (`undefined` for other sources). */
 export function mcpSourceInternals(source: ToolSource): McpSourceInternals | undefined {
   return internalsOf.get(source)
 }
 
+/** A `{ type: 'http' | 'sse', url }` config (an `MCPTransport` instance is not known to be remote). */
+function isRemoteTransport(transport: McpTransportInput): boolean {
+  const type = (transport as { type?: unknown }).type
+  return type === 'http' || type === 'sse'
+}
+
 /**
- * Create the MCP tool source with an injectable module loader (tests). Use {@link mcpServer}.
+ * Create the MCP tool source with an injectable module loader (tests). Use {@link mcpServerSource}.
  *
  * @internal
  */
 export function createMcpServer(
-  opts: McpServerOptions,
+  opts: McpServerSourceOptions,
   load: () => Promise<McpModule> = importMcp,
 ): ToolSource {
   validate(opts)
   const name = opts.name
   const id = `mcp:${name}`
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const prefix = opts.prefix ?? `${name}_`
   const allow = opts.allow === undefined ? undefined : new Set(opts.allow)
   const deny = new Set(opts.deny ?? [])
@@ -237,11 +296,12 @@ export function createMcpServer(
   const loadModule = async (): Promise<McpModule> => {
     try {
       const mod = await load()
+      // plain-error: internal, rethrown below as McpMissingError
       if (typeof mod?.createMCPClient !== 'function') throw new Error('createMCPClient missing')
       return mod
     } catch (error) {
       throw new McpMissingError(
-        `MCP server '${name}': @ai-sdk/mcp could not be loaded; ${INSTALL_HINT}. (${error instanceof Error ? error.message : String(error)})`,
+        `MCP server '${name}': @ai-sdk/mcp could not be loaded; ${INSTALL_HINT}. (${errorText(error)})`,
         { cause: error },
       )
     }
@@ -292,19 +352,26 @@ export function createMcpServer(
     if (conn.client !== undefined) return Promise.resolve(conn.client)
     if (conn.connecting !== undefined) return conn.connecting
     const connecting = (async () => {
-      if (conn.closed) throw new Error(`MCP server '${name}': the session is closed.`)
+      if (conn.closed)
+        throw new HarnessError('EH_SESSION_CLOSED', `MCP server '${name}': the session is closed.`)
       const mod = await loadModule()
       const transport =
         typeof opts.transport === 'function' ? await opts.transport(conn.ctx) : opts.transport
-      const client = await mod.createMCPClient({
-        transport,
-        ...(opts.maxRetries === undefined ? {} : { maxRetries: opts.maxRetries }),
-        onUncaughtError: (error: unknown) =>
-          conn.ctx.log.warn(`eharness: MCP server '${name}' error`, { error }),
-      })
+      conn.remote = isRemoteTransport(transport)
+      const client = await withTimeout(
+        mod.createMCPClient({
+          transport,
+          ...(opts.maxRetries === undefined ? {} : { maxRetries: opts.maxRetries }),
+          onUncaughtError: (error: unknown) =>
+            conn.ctx.log.warn(`eharness: MCP server '${name}' error`, { error }),
+        }),
+        timeoutMs,
+        `MCP server '${name}' did not finish connecting`,
+        (late) => void late.close().catch(() => undefined),
+      )
       if (conn.closed) {
         await client.close().catch(() => undefined)
-        throw new Error(`MCP server '${name}': the session is closed.`)
+        throw new HarnessError('EH_SESSION_CLOSED', `MCP server '${name}': the session is closed.`)
       }
       conn.client = client
       return client
@@ -326,7 +393,11 @@ export function createMcpServer(
     try {
       // `@ai-sdk/mcp` types its tools with its own `inputSchema` generics; at runtime they are AI SDK
       // tools, so the plugin treats them as a `ToolSet`
-      return (await client.tools()) as unknown as ToolSet
+      return (await withTimeout(
+        client.tools(),
+        timeoutMs,
+        `MCP server '${name}' did not list its tools`,
+      )) as unknown as ToolSet
     } catch (error) {
       // a broken connection: drop the client so the next turn reconnects
       if (conn.client === client) conn.client = undefined
@@ -346,7 +417,7 @@ export function createMcpServer(
     return new Set([...drift.changed, ...drift.added])
   }
 
-  /** The trusted risk of `mcpServer({ risk })` for one server tool (`undefined` = derived). */
+  /** The trusted risk of `mcpServerSource({ risk })` for one server tool (`undefined` = derived). */
   function riskFor(ctx: HarnessContext, serverName: string, tool: Tool): ToolRisk | undefined {
     const option = opts.risk
     if (option === undefined) return undefined
@@ -360,12 +431,12 @@ export function createMcpServer(
       })
       if (risk === undefined || RISKS.has(risk)) return risk
       ctx.log.warn(
-        `eharness: mcpServer('${name}') risk function returned an invalid risk for '${serverName}'; using the derived risk`,
+        `eharness: mcpServerSource('${name}') risk function returned an invalid risk for '${serverName}'; using the derived risk`,
         { risk },
       )
     } catch (error) {
       ctx.log.warn(
-        `eharness: mcpServer('${name}') risk function failed for '${serverName}'; using the derived risk`,
+        `eharness: mcpServerSource('${name}') risk function failed for '${serverName}'; using the derived risk`,
         { error },
       )
     }
@@ -382,12 +453,22 @@ export function createMcpServer(
           ? { type: 'text' as const, value: output }
           : { type: 'json' as const, value: (output ?? null) as never })
     const mapped = original as (options: unknown) => Promise<ModelOutput> | ModelOutput
-    return {
-      ...tool,
-      toModelOutput: async (options: unknown) => {
+    const execute = tool.execute
+    const framed = withToolFields(tool, {
+      toModelOutput: (async (options: unknown) => {
         const out = await mapped(options)
         if (out.type === 'text') {
           return { ...out, value: untrustedContent(out.value, { source: 'mcp', name: label }) }
+        }
+        if (out.type === 'json') {
+          // structured output is as untrusted as text: frame its JSON text
+          return {
+            type: 'text' as const,
+            value: untrustedContent(JSON.stringify(out.value ?? null), {
+              source: 'mcp',
+              name: label,
+            }),
+          }
         }
         if (out.type !== 'content') return out
         return {
@@ -398,8 +479,22 @@ export function createMcpServer(
               : part,
           ),
         }
-      },
-    } as Tool
+      }) as Tool['toModelOutput'],
+    })
+    // a thrown call error (JSON-RPC error, transport failure) reaches the model as `error-text`
+    // without `toModelOutput`; its message is server-provided text too, so frame it here
+    if (execute === undefined) return framed
+    return withToolExecute(framed, async (...args: Parameters<typeof execute>) => {
+      try {
+        return await execute(...args)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        // plain-error: the server's message, framed; the loop turns it into a tool error
+        throw new Error(untrustedContent(errorText(error), { source: 'mcp', name: label }), {
+          cause: error,
+        })
+      }
+    })
   }
 
   const source = defineToolSource({
@@ -420,7 +515,7 @@ export function createMcpServer(
           release(conn)
           throw new HarnessError(
             'EH_CONFIG_INVALID',
-            `mcpServer('${name}') with connect: 'eager' needs @ai-sdk/mcp; ${INSTALL_HINT}.`,
+            `mcpServerSource('${name}') with connect: 'eager' needs @ai-sdk/mcp; ${INSTALL_HINT}.`,
             { cause: error, details: { source: id } },
           )
         }
@@ -436,7 +531,8 @@ export function createMcpServer(
     async list(ctx) {
       const conn = register(ctx)
       const all = await serverTools(conn)
-      const blocked = opts.pinDefinitions === true ? await pinned(ctx, all) : new Set<string>()
+      const pin = opts.pinDefinitions ?? conn.remote === true
+      const blocked = pin ? await pinned(ctx, all) : new Set<string>()
       const exposed: Array<[string, Tool]> = []
       const drifted: string[] = []
       for (const [serverName, tool] of Object.entries(all)) {
@@ -462,10 +558,12 @@ export function createMcpServer(
         let tool = original
         if (risk !== undefined) {
           const metadata = (original as { metadata?: Record<string, unknown> }).metadata
-          tool = { ...tool, metadata: { ...metadata, risk } } as Tool
+          tool = withToolFields(tool, { metadata: { ...metadata, risk } })
         }
         if (opts.wrapUntrusted !== false) tool = frameResults(tool, `${name}/${serverName}`)
-        out[`${prefix}${serverName}`] = deferred ? ({ ...tool, deferLoading: true } as Tool) : tool
+        out[`${prefix}${serverName}`] = deferred
+          ? withToolFields(tool, { deferLoading: true })
+          : tool
       }
       return out
     },
@@ -505,11 +603,11 @@ export function createMcpServer(
  *
  * @example
  * ```ts
- * // mcpServer comes from the 'eharness/mcp' entry point
+ * // mcpServerSource comes from the 'eharness/mcp' entry point
  * defineHarnessAgent({
  *   model,
  *   mcp: [
- *     mcpServer({
+ *     mcpServerSource({
  *       name: 'github',
  *       transport: (ctx) => ({
  *         type: 'http',
@@ -522,13 +620,13 @@ export function createMcpServer(
  *   ],
  * })
  * ```
- * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
+ * @see docs/specs/09-tools-and-mcp.md#3-mcpserversource-eharnessmcp
  */
-export function mcpServer(opts: McpServerOptions): ToolSource {
-  return createMcpServer(opts)
+export function mcpServerSource(options: McpServerSourceOptions): ToolSource {
+  return createMcpServer(options)
 }
 
-/** Internals of the `mcpServer()` sources in an agent's root `mcp` / `tools` config. */
+/** Internals of the `mcpServerSource()` sources in an agent's root `mcp` / `tools` config. */
 function configuredSources(config: { tools?: unknown; mcp?: unknown }): McpSourceInternals[] {
   const candidates: unknown[] = []
   for (const slot of [config.mcp, config.tools]) {
@@ -572,7 +670,7 @@ function stripPins(snapshot: SessionStateSnapshot, key: string): SessionStateSna
  * ```ts
  * await clearMcpPins(agent, sessionId, 'github') // after reviewing the changed tools
  * ```
- * @see docs/specs/09-tools-and-mcp.md#3-mcpserver-eharnessmcp
+ * @see docs/specs/09-tools-and-mcp.md#3-mcpserversource-eharnessmcp
  */
 export async function clearMcpPins(
   agent: HarnessAgent<unknown>,
@@ -593,14 +691,14 @@ export async function clearMcpPins(
   if (internals.length !== 1) {
     invalid(
       internals.length === 0
-        ? `clearMcpPins: agent '${agent.id}' has no mcpServer('${name}') in its \`mcp\` or \`tools\` config (sources contributed by plugins cannot be resolved).`
-        : `clearMcpPins: agent '${agent.id}' has more than one mcpServer('${name}').`,
+        ? `clearMcpPins: agent '${agent.id}' has no mcpServerSource('${name}') in its \`mcp\` or \`tools\` config (sources contributed by plugins cannot be resolved).`
+        : `clearMcpPins: agent '${agent.id}' has more than one mcpServerSource('${name}').`,
     )
   }
   const own = internals[0] as McpSourceInternals
   if (own.shared()) {
     invalid(
-      `clearMcpPins: mcpServer('${name}') is used by more than one agent; create one mcpServer() per agent so its sessions can be told apart.`,
+      `clearMcpPins: mcpServerSource('${name}') is used by more than one agent; create one mcpServerSource() per agent so its sessions can be told apart.`,
     )
   }
   const contexts = own.contexts(sessionId)

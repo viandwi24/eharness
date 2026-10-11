@@ -32,9 +32,9 @@ describe('scriptedModel', () => {
   test('throws before streaming and rejects calls beyond the script', async () => {
     const model = scriptedModel([{ throws: new Error('boom') }])
     const failed = streamText({ model, prompt: 'x', maxRetries: 0 })
-    await expect(failed.responseMessages).rejects.toBeDefined()
+    await expect(failed.responseMessages).rejects.toThrow(/No output generated/)
     const beyond = streamText({ model, prompt: 'x', maxRetries: 0 })
-    await expect(beyond.responseMessages).rejects.toBeDefined()
+    await expect(beyond.responseMessages).rejects.toThrow(/No output generated/)
     expect(model.calls).toHaveLength(2)
   })
 
@@ -44,7 +44,7 @@ describe('scriptedModel', () => {
     const result = streamText({ model, prompt: 'x', abortSignal: controller.signal })
     setTimeout(() => controller.abort('stop'), 10)
     const started = Date.now()
-    await expect(result.responseMessages).rejects.toBeDefined()
+    await expect(result.responseMessages).rejects.toThrow(/stop|abort/i)
     expect(Date.now() - started).toBeLessThan(500)
   })
 })
@@ -83,7 +83,7 @@ describe('scriptedModel with generateText', () => {
     const aborted = Date.now()
     await expect(
       generateText({ model, prompt: 'x', maxRetries: 0, abortSignal: controller.signal }),
-    ).rejects.toBeDefined()
+    ).rejects.toThrow(/stop|abort/i)
     expect(Date.now() - aborted).toBeLessThan(500)
     expect(model.calls).toHaveLength(2)
   })

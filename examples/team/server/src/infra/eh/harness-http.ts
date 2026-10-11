@@ -15,7 +15,7 @@
  * The order a request meets the hooks (authorize, validate, session/peek, attention hooks) and
  * why each exists: docs/guides/walkthrough-server.md section 14.
  */
-import { HarnessError } from 'eharness'
+import { HarnessError, isRecord } from 'eharness'
 import type { ActivityStore, AttentionAnswer } from 'eharness/activity'
 import { ASK_TOOL, answerOutput, pendingQuestions } from 'eharness/ask'
 import { createHarnessHttp, type HarnessHttp } from 'eharness/http'
@@ -56,9 +56,6 @@ const json = (status: number, code: string, message: string, details?: unknown):
     JSON.stringify({ error: { code, message, ...(details === undefined ? {} : { details }) } }),
     { status, headers: { 'content-type': 'application/json' } },
   )
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v)
 
 /** A refused answer body (`EH_INVALID_INPUT`: 400 with the library's error shape). */
 const invalidAnswer = (message: string): HarnessError =>
@@ -140,6 +137,9 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
         ...(principal.name === undefined ? {} : { name: principal.name }),
       }),
       maxTextBytes: 1024 * 1024,
+      // attachments are `library:///uploads/...` references checked by `checkChatBody`; nothing else
+      // than `data:` and these references may reach the model (no client-chosen http URLs)
+      allowFileUrls: (url) => url.protocol === 'library:',
       authorizeKind: ({ sessionId }) => {
         if (!isDmSession(sessionId)) {
           return json(

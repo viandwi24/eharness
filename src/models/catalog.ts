@@ -22,6 +22,8 @@ function keysOf(model: LanguageModel): string[] {
 /**
  * Find the {@link ModelInfo} of `model` in a catalog. A function catalog that throws counts as
  * unknown.
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
  */
 export function lookupModel(
   catalog: ModelCatalog | undefined,
@@ -92,6 +94,8 @@ function pricingOf(cost: unknown): ModelPricing | undefined {
  * const models = modelsDevCatalog(await (await fetch('https://models.dev/api.json')).json())
  * defineHarnessAgent({ model, models, budget: { maxTurnUsd: 2 } })
  * ```
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
  */
 export function modelsDevCatalog(data: unknown): Record<string, ModelInfo> {
   const catalog: Record<string, ModelInfo> = {}
@@ -134,6 +138,8 @@ const numeric = (value: unknown): number | undefined =>
  * const models = openRouterCatalog(await (await fetch('https://openrouter.ai/api/v1/models')).json())
  * defineHarnessAgent({ model, models })
  * ```
+ *
+ * @experimental Draft (spec 12): may change in a minor release (docs/engineering/api-stability.md).
  */
 export function openRouterCatalog(data: unknown): Record<string, ModelInfo> {
   const catalog: Record<string, ModelInfo> = {}

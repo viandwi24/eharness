@@ -44,12 +44,12 @@ defineConnector({
 `defineConnector` validates (id pattern, scopes, unique capability ids, a tool in one capability,
 no collision between auth fields and settings) and throws `EH_CONFIG_INVALID`
 (`details.reason: 'definition-invalid'`). `connectorSchema(def)` is the merged settings schema,
-`connectorForm(def)` its `formSpec`, `describeConnector(def)` what a UI shows (no functions).
+`describeConnector(def)` what a UI shows (no functions, including the form of the settings).
 
 `activate(ctx)` receives: `connection` (`id`, `label`, `scope`, `accountLabel`, `getAccessToken()`),
 validated `settings` (secrets included: never log them), `choices`, `agent`, `modes` (every
 capability), `capabilities` (not `off`), `tools` (not `off`, the connector's own names),
-`toolModes`, `toolPrefix`, `slug`, `fetch`. `OAuth2Auth.when(settings) === false` skips the
+`toolModes`, `toolPrefix`, `slug`, `fetch`. Every OAuth request (token, refresh, registration, discovery, device code) carries an abort signal with a default 15 000 ms limit (`timeoutMs`; error code `oauth-timeout`), so the `refresh:<id>` lock is never held by a silent identity provider. `OAuth2Auth.when(settings) === false` skips the
 authorization step (the custom MCP connector with a header token). Capabilities discovered at
 connect time (`test` returns `capabilities`) are stored on the connection and replace the
 definition's (`capabilitiesOf`).
@@ -64,9 +64,9 @@ definition and skipped when they do not apply: `settings` (form of the auth fiel
 or `device`, `choose`, `test`. A definition may replace or edit them (`flow`).
 
 ```ts
-startFlow({ definition, scope, scopeId?, label?, connection? /* reconnect */, defaultEnabled? }, deps): FlowState
-advanceFlow(state, { viewId, action: 'submit'|'poll'|'back'|'cancel'|'retry', data? }, deps): AdvanceResult
-completeOAuth({ state, code?, error?, errorDescription? }, flowStore, deps)
+startFlow({ definition, scope, scopeId?, label?, connection? /* reconnect */, defaultEnabled?, principal? }, deps): FlowState
+advanceFlow(state, { viewId, action: 'submit'|'poll'|'back'|'cancel'|'retry', data?, principal? }, deps): AdvanceResult
+completeOAuth({ state, code?, error?, errorDescription?, principal? }, flowStore, deps)
 flowCompletion(state, deps)    // secrets included: save as a connection; never send to a browser
 publicFlow(state)              // strips sealed scratch and state hash
 ```
@@ -87,12 +87,20 @@ publicFlow(state)              // strips sealed scratch and state hash
 (`active | done | failed | cancelled`), `step`, `rev`, `view`, timestamps, `expiresAt` (default
 15 min), `stateHash?` and `sealed` (the scratch, sealed by the vault). `AdvanceResult` is
 `{ ok: true, state }` or `{ ok: false, error: 'stale-view' | 'expired' | 'finished' |
-'invalid-action', message, state }`; the failure carries the current state. A `viewId` that is not the
+'invalid-action' | 'principal-mismatch', message, state }`; the failure carries the current state. A `viewId` that is not the
 current view's is `stale-view` (resume and double-submit safety). Validation problems are a `form`
 state with `errors` (a new `viewId`), never values. A thrown step error becomes a retryable `error`
 view with secrets scrubbed. `poll` that finds nothing returns the state unchanged (`device`
 polls honour the server interval and `slow_down`). `completeOAuth` finds the flow by the hashed
 `state` (single use; `unknown-state` otherwise), exchanges the code, persists the new state.
+
+**Principal binding (login CSRF).** `startFlow({ principal })` takes an opaque string (a user id, a
+session id); only its SHA-256 is stored (`FlowState.principalHash`). A flow with a principal can only
+be advanced or completed by a caller that presents the same `principal` (`FlowInput.principal`,
+`OAuthCallback.principal`); a missing or different one fails with `principal-mismatch` (for
+`completeOAuth`: `{ ok: false, error: 'principal-mismatch', message }` without a state) and does not
+consume the `state`. Flows without a principal behave as before. `service.startConnect({ principal })`
+and `service.reconnect(id, { principal })` forward it.
 
 Custom steps (`FlowStepDef`): `id`, `skip?`, `auto?`, `enter?`, `view(ctx)`, `advance(ctx, input)`
 returning `{ next } | { goto } | { stay, errors?, message? } | { pending } | { error, retryable? }`.
@@ -121,16 +129,26 @@ Combined with the app's own rules the **most restrictive** wins (`mostRestrictiv
 
 All take an injected `fetch` and use `crypto.subtle`; failures throw `EH_CONFIG_INVALID`
 (`details.reason: 'oauth-*'`, `details.oauthError`) without tokens, codes or secrets in messages.
-Endpoints must be https (localhost excepted).
+Endpoints must be https (`allowInsecure` allows http). Every URL a helper fetches, discovered ones
+included (authorization servers, registration, token and device endpoints), must be a public host:
+`isPrivateHost` (core, shared with `web_fetch`) refuses loopback, private, link-local and reserved
+ranges and local names with `details.reason: 'oauth-url-private'`, unless the app passes
+`allowPrivateNetwork: true` (local development servers) or its own `isAllowedUrl(url)`, which
+replaces the default check. Requests use `redirect: 'manual'`: a same-origin redirect is followed at
+most 3 times (each target re-validated), a cross-origin one is refused (`oauth-redirect-refused`).
+Response bodies are capped by `maxResponseBytes` (default 1 MiB, `oauth-response-too-large`).
+`FlowDeps.oauth` / `ConnectorServiceOptions.oauth` / `CredentialManagerOptions.oauth` forward these
+options (`allowPrivateNetwork`, `isAllowedUrl`, `allowInsecure`, `maxResponseBytes`, `timeoutMs`).
 
-`generatePkce()` / `pkceChallenge` (S256), `generateState`, `buildAuthorizationUrl` (RFC 8707
-`resource`), `exchangeCode`, `refreshTokens` (keeps the old refresh token unless rotated),
-`discoverProtectedResource` (RFC 9728, from the 401 `resource_metadata` or the well-known URLs;
-the `resource` must be on the server's origin), `discoverAuthorizationServer` (RFC 8414, then OIDC;
-issuer check, S256 required when methods are listed), `discoverMcpAuthorization`,
-`registerClient` (RFC 7591, public client), `requestDeviceCode` / `pollDeviceToken` (RFC 8628).
-`createCredentialManager({ credentials, connections?, lock?, fetch? })` hands out
-`getAccessToken(connectionId)`: refresh under a per-connection `RefreshLock` (default in-process;
+The flow engine and the credential manager use these internal helpers; only
+`discoverMcpAuthorization` is public: PKCE S256 and state, the authorization URL (RFC 8707
+`resource`), code exchange, token refresh (keeps the old refresh token unless rotated), protected
+resource discovery (RFC 9728, from the 401 `resource_metadata` or the well-known URLs; the
+`resource` must be on the server's origin), authorization server discovery (RFC 8414, then OIDC;
+issuer check, S256 required when methods are listed), dynamic client registration (RFC 7591, public
+client) and the device flow (RFC 8628).
+`createCredentialManager({ credentials, connections?, lock?, fetch?, now?, skewMs?, timeoutMs?, oauth? })` hands out
+`getAccessToken(connectionId)`: refresh (`skewMs` before expiry, default 60 s) under a per-connection `RefreshLock` (default in-process;
 pass a distributed lock for several instances), re-reading credentials inside the lock; a rejected
 refresh token (`invalid_grant`) marks the connection `needs-auth` and rejects with
 `details.reason: 'needs-auth'`. Tokens are only in `CredentialStore` rows and in memory; no public
@@ -139,23 +157,23 @@ shape (`PublicConnection`, `PublicFlow`, `ActivatedConnectors`, service results)
 ## 5. Secrets and the vault
 
 `SecretVault`, `webCryptoVault`, `plaintextVault` and `sealedProfileStore` are the generic layer
-of spec 23 §8, re-exported here. Flow scratch is sealed with the vault (context `flow:<id>`);
+of spec 23 §8 and are imported from `eharness/providers` (this subpath does not re-export them). Flow scratch is sealed with the vault (context `flow:<id>`);
 connection and credential rows are encrypted by wrapping the profile store:
-`sealedProfileStore(db, vault, { kinds: ['connection', 'connection-credentials'] })`.
+`sealedProfileStore({ inner: db, vault, kinds: ['connection', 'connection-credentials'] })`.
 
 ## 6. Stores
 
 - `ConnectionStore` (`list({ scope?, scopeId?, definitionId? })`, `get`, `put`, `delete`,
   `subscribe?`) is a view over any `ProfileStore`: `connectionStoreFromProfiles(profiles)`; a
   connection is a `ConfigProfile` with `kind: 'connection'` plus the `ConnectionRecord` fields, so
-  the same store, redaction (`publicConnection`) and secret patch (`mergeSecretPatch`) apply.
+  the same store, redaction (`publicConnection`) and secret patch (spec 23 §2) apply.
   `subscribe` has the `ProfileStore` shape (cross-instance invalidation).
 - `CredentialStore` (`get`, `put`, `delete` by connection id): `credentialStoreFromProfiles`;
   rows of kind `connection-credentials` (tokens, OAuth client, endpoints), apart from the
   connection, so refreshing never rewrites settings.
 - `EnablementStore`, `FlowStore` (`get`, `put`, `delete`, `findByStateHash`, `deleteExpired`).
-- Memory adapters: `memoryConnectionStore`, `memoryCredentialStore({ vault? })`,
-  `memoryEnablementStore`, `memoryFlowStore`. Databases are the app's adapters, checked with
+- Memory adapters: `inMemoryConnectionStore`, `inMemoryCredentialStore({ vault? })`,
+  `inMemoryEnablementStore`, `inMemoryFlowStore`. Databases are the app's adapters, checked with
   `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`,
   `flowStoreConformance` from `eharness/testing`.
 
@@ -214,7 +232,7 @@ definitions only for the factories the app passes (the module imports no plugin)
 | `planning` | Plan with todos (`todo_write`) | `planning.plugin` |
 | `web` | Search the web (`web_search`), Read web pages (`web_fetch`) | `web.search` / `web.read` factories (search backend) |
 | `ask` | Ask questions (`ask_user_question`) | `ask.plugin` |
-| `team` | Delegate work (`agent, agent_output, agent_stop`), Message agents (`send_message`) | `team.plugin` → `subagents({ agents })`; off by default |
+| `team` | Delegate work (`agent, agent_output, agent_stop`), Message agents (`send_message`) | `team.plugin` → `subagent({ agents })`; off by default |
 
 `input` = `{ tools, modes, capabilities }` (what is on). Memory's `combine` builds one root per
 connection (`{ path, write, label, scope, connectionId }`; `write` follows the write capability),
@@ -235,14 +253,14 @@ the `resource` indicator. `listTools` (`listRemoteMcpTools` from `eharness/mcp`)
 connection test; tools are grouped by annotations into `read`, `write` and `destructive`; all default to `ask`
 (annotations are server-controlled and untrusted; `write` and `destructive` are pinned, `read` is
 not, so a person can switch it to `allow`) and stored on the connection. `activate` returns an
-`McpSourceSpec`; pass `mcp: remoteMcpSource` (`eharness/mcp`), which builds an `mcpServer`
+`McpSourceSpec`; pass `mcp: remoteMcpSource` (`eharness/mcp`), which builds an `mcpServerSource`
 transport whose `authProvider` (`bearerAuthProvider`) returns a fresh token for every request, so
 refreshed tokens apply without reconnecting (spec 09 §3).
 
 ## 10. The connector service
 
 `createConnectorService({ definitions, connections, credentials, enablement, flows, vault, fetch?,
-redirectUri?, clientConfig?, lock?, ttlMs?, now?, newId? })` is what an app's routes call; every
+redirectUri?, clientConfig?, lock?, ttlMs?, oauth?, onError?, now?, newId? })` is what an app's routes call; every
 return value is browser-safe (redacted connections, flows without scratch, no tokens):
 `clientConfig(definitionId, { flowId, scope, scopeId, reconnect, settings })` returns the OAuth app of
 the asking flow (an app may keep one per scope or hand out one entered earlier in the same flow;
@@ -250,9 +268,9 @@ a dedicated "enter the OAuth app" flow step is not part of the library: apps sav
 before connecting, see ADR-0053). `catalog()`, `list`, `get`, `startConnect`, `reconnect`, `getFlow`, `advance`, `completeOAuth`
 (the callback route), `update` (secret patch + validation; a changed endpoint field, e.g. the custom MCP `url`, drops every stored
 secret the patch does not resend, deletes the stored OAuth credentials and sets `needs-auth` for `oauth2` / `deviceCode`
-connectors: spec 23 §2 `endpointChanged`), `remove` (connection, credentials,
+connectors: spec 23 §2, endpoint-bound secrets), `remove` (connection, credentials,
 every agent's entry), `enablement`, `setEnablement`, `test` (records status, account, discovered
-capabilities), `accessToken` (server side only), `activate`, `sweep`. A finished flow saves the
+capabilities; only a missing or rejected credential answers "Reconnect required.", any other failure (provider outage, network, store error) answers "Temporarily unavailable (<reason>)", is reported to `onError` (default `console.warn`) and leaves the stored status untouched), `accessToken` (server side only), `activate`, `sweep`. A finished flow saves the
 connection and credentials, stays for 5 minutes (a polling tab gets `finished` with the
 connection) with its scratch cleared. `defaultEnabled` defaults to the connector's scope default,
 else `false` (agent scope: `true`).
@@ -260,6 +278,6 @@ else `false` (agent scope: `true`).
 ## Security notes
 
 Discovery and OAuth fetches run on the server with user-supplied URLs: give the injected `fetch`
-private-network blocking (the module only enforces https). Redirect URIs are the app's fixed
+private-network blocking for connector `test` calls; the OAuth helpers themselves refuse private hosts and cross-origin redirects (§4). Redirect URIs are the app's fixed
 callback; `state` is single use; PKCE S256 is mandatory; tokens are bound to the resource. MCP tool
-results are framed as untrusted by `mcpServer` (`wrapUntrusted`).
+results are framed as untrusted by `mcpServerSource` (`wrapUntrusted`).

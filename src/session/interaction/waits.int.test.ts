@@ -1,6 +1,6 @@
 /**
  * External waits (spec 11 §4.2, ADR-0027): two agent instances share one message store, one state
- * store and one `memoryInbox()`. A turn parks on an `externalTool()`; the result (or a timeout)
+ * store and one `inMemoryInbox()`. A turn parks on an `externalTool()`; the result (or a timeout)
  * arrives in another instance and continues the same assistant message.
  */
 import { describe, expect, test } from 'bun:test'
@@ -13,10 +13,10 @@ import { type HarnessWarning, isHarnessError } from '../../errors.ts'
 import { WAIT_CANCELLED_NEW_INPUT, WAIT_TIMED_OUT } from '../../messages/texts.ts'
 import type { HarnessUIMessage, PendingState } from '../../messages/types.ts'
 import { externalTool } from '../../registry/external.ts'
-import { memoryInbox } from '../../storage/memory.ts'
+import { inMemoryInbox } from '../../storage/memory.ts'
 import { scriptedModel } from '../../testing/scripted-model.ts'
 import { sleep, until } from '../../testing/test-utils.ts'
-import { collect, spyMessages, spyState } from '../int-kit.ts'
+import { collect, spyMessages, spyState } from '../test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -30,7 +30,7 @@ function storage(options: { inbox?: boolean } = {}): Storage {
   return {
     messages: spyMessages(),
     state: spyState(),
-    ...(options.inbox === true ? { inbox: memoryInbox() } : {}),
+    ...(options.inbox === true ? { inbox: inMemoryInbox() } : {}),
   }
 }
 

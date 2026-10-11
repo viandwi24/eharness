@@ -160,7 +160,7 @@ function matchPath(pattern: string, segments: string[]): Record<string, string> 
  * ```
  * @see docs/specs/26-http.md
  */
-export function createHarnessHttp<P = unknown>(
+export function createHarnessHttp<P extends object = object>(
   agent: HarnessAgent | undefined,
   options: HarnessHttpOptions<P>,
 ): HarnessHttp {

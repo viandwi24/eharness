@@ -19,6 +19,8 @@
  *
  * @see docs/specs/07-skills.md#8-filesystem-autoload-in-eharnessfilesystem
  */
+
+import { isRecord } from '../internal/util.ts'
 import type { SkillMeta } from '../registry/types.ts'
 import { skillDescriptionError, skillNameError, skillVersionError } from './define.ts'
 
@@ -414,7 +416,7 @@ export function serializeFrontmatter(record: Record<string, unknown>): string {
   for (const [key, value] of Object.entries(record)) {
     if (value === undefined) continue
     const shownKey = KEY.test(key) ? key : JSON.stringify(key)
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+    if (isRecord(value)) {
       const entries = Object.entries(value).filter(([, v]) => v !== undefined)
       if (entries.length === 0) {
         lines.push(`${shownKey}: {}`)

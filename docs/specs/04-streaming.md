@@ -208,8 +208,11 @@ ordering and part shapes are identical on both sides (ADR-0003).
   `attachRemote()` (§6.2).
 - `session.events(): ReadableStream<SessionEvent>` — long-lived channel for things that happen
   outside a turn stream. A session with an open `events()` reader is not idle-evicted.
-  Each reader queues at most 1 000 events: a reader that falls further behind is closed (its stream
-  ends) instead of buffering without bound; open a new `events()` reader and re-read state.
+  Each reader queues at most 1 000 events: a reader that falls further behind is **errored** with
+  `EH_EVENTS_OVERFLOW` (spec 10) and removed, instead of buffering without bound or ending as if
+  nothing was missed (`config.observe` counts `events.overflow`, spec 10 §8). The drop is logged once per reader (`logger.warn`); open a new `events()` reader and
+  re-read state. An emitted event is copied once and the copy is shared by the readers: treat it
+  as read-only. `session.close()` still ends every reader normally.
 
 - For a `respond()` continuation the buffer holds only the continuation chunks (the live stream
   of the `respond()` call is unchanged). `attach()` / `attachRemote()` and the stream log serve the
@@ -283,7 +286,7 @@ Rules:
    until the log is closed. `undefined` also without `storage.streams` and when the log is
    missing; the client then uses the stored messages. A stream whose turn left the state and whose
    log stays open for 5 s ends (crashed owner). `signal` and cancelling `run.stream` stop only
-   the reader; `run.abort()` is `requestAbort()`. The remote `run.result` has only `turnId`,
+   the reader; `run.abort()` is `session.abort()`. The remote `run.result` has only `turnId`,
    `kind` and `stop` (empty `messages`, zero usage).
 5. **`handleResumeRequest(session, request, { from?, signal?, headers? })`**: `204` when
    `attachRemote()` is `undefined`, `400` for a malformed cursor, else the UI message stream
@@ -293,7 +296,7 @@ Rules:
    resumes from 0 and reconciles by message id. For a continuation the stream is the replay view
    (§6.3).
 6. The log stores the replay view (§6.3), so cursors are positions in it.
-7. Conformance: `streamLogConformance` (`eharness/testing`); memory adapter: `memoryStreamLog()`.
+7. Conformance: `streamLogConformance` (`eharness/testing`); memory adapter: `inMemoryStreamLog()`.
 
 ### 6.3 Resume replay of a continuation
 
@@ -348,16 +351,19 @@ export interface HarnessRun<M extends HarnessUIMessage = HarnessUIMessage, O = n
    * error: blocked, aborted); the error `{ code, message, details? }` of a turn that failed
    * BEFORE its commit point (nothing persisted). attach() / attachRemote() runs: `undefined`.
    */
-  readonly accepted: Promise<{ code?: string; message: string; details?: Record<string, unknown> } | undefined>
+  readonly accepted: Promise<{ code: HarnessErrorCode | HarnessNoticeCode; message: string; details?: Record<string, unknown> } | undefined>
   abort(reason?: string): void
-  /** createUIMessageStreamResponse({ stream }) with UI_MESSAGE_STREAM_HEADERS. */
-  toResponse(init?: ResponseInit): Response
   /**
-   * `await accepted`, then `toResponse()`; a pre-commit failure answers an HTTP status with the
-   * JSON body `{ error: { code, message } }` instead (§7.1). Failures after the stream started
-   * stay in-stream.
+   * The safe HTTP answer: `await accepted`, then `toStreamResponse()`; a pre-commit failure answers
+   * an HTTP status with the JSON body `{ error: { code, message } }` instead (§7.1). Failures after
+   * the stream started stay in-stream.
    */
-  toHttpResponse(init?: ResponseInit): Promise<Response>
+  toResponse(init?: ResponseInit): Promise<Response>
+  /**
+   * createUIMessageStreamResponse({ stream }) with UI_MESSAGE_STREAM_HEADERS, at once: always 200,
+   * a pre-commit failure is an in-stream `error` chunk.
+   */
+  toStreamResponse(init?: ResponseInit): Response
   /** pipeUIMessageStreamToResponse for Node's ServerResponse (typed without importing node:). */
   pipeTo(response: Parameters<typeof pipeUIMessageStreamToResponse>[0]['response']): Promise<void>
 }
@@ -369,12 +375,12 @@ Typical route (works with `useChat`'s default request body `{ id, messages, trig
 export async function POST(req: Request) {
   const body = await req.json()
   const session = agent.session(body.id, { runtime: { userId } })
-  return handleChatRequest(session, body).toHttpResponse()   // send / respond / regenerate / edit (spec 11 §7)
+  return handleChatRequest(session, body).toResponse()   // send / respond / regenerate / edit (spec 11 §7)
 }
 export async function GET(req: Request) {        // reconnect (useChat resume)
   const id = new URL(req.url).searchParams.get('id')!
   const run = agent.session(id).attach()
-  return run ? await run.toHttpResponse() : new Response(null, { status: 204 })
+  return run ? await run.toResponse() : new Response(null, { status: 204 })
 }
 ```
 
@@ -409,12 +415,12 @@ Verified AI SDK v7 behaviour and what the core does with it:
   payloads.
 - The stream always ends with exactly one `finish` or one `abort`, never left hanging.
 
-### 7.1 Status of failures before the commit point (0.8.0)
+### 7.1 Status of failures before the commit point
 
 `run.accepted` separates failures **before** the turn's commit point (spec 05 §3 step 11:
 busy in this or another instance, a `SessionLock` held elsewhere, `EH_INVALID_INPUT`, a pending
 item without an answer, a stale state; nothing was persisted and no model call happened) from
-everything after it. `toHttpResponse()` maps the former to a status and a JSON body
+everything after it. `toResponse()` maps the former to a status and a JSON body
 `{ error: { code, message } }`; the latter stay `error` chunks of a `200` stream (the stream and
 the stored message are the record, spec 04 §5).
 
@@ -426,7 +432,7 @@ the stored message are the record, spec 04 §5).
 | any other pre-commit failure | 500 |
 
 Rules: (1) `accepted` never rejects and resolves once; (2) a blocked or aborted turn is accepted
-(`200`); (3) `toResponse()` is unchanged (an in-stream error for those failures; in-process busy
+(`200`); (3) `toStreamResponse()` is unchanged (an in-stream error for those failures; in-process busy
 of `handleChatRequest` is still a 409); (4) the unread stream of a rejected run is cancelled.
 (5) a run that waits before it starts (queued, `ifBusy: 'wait'`, held behind an inbox drain) carries
 the `accepted` of the turn it becomes, so a lock held elsewhere is a `409` for it too, not a `200`

@@ -1,12 +1,12 @@
 /** Public types of `eharness/permissions` (spec 18). */
 
-import type { GuardTranscriptEntry } from '../index.ts'
+import type { GuardTranscriptEntry, JudgeCoordinator } from '../index.ts'
 
 /**
  * How the engine decides when no rule does. `auto` hands the calls no rule or read-only check
  * settles to an {@link AutoClassifier} (spec 18 §12); it needs the engine's `classifier` option.
  *
- * @experimental The `auto` mode is Draft in 0.7: it may change in a minor release
+ * @experimental The `auto` mode is Draft: it may change in a minor release
  * (docs/engineering/api-stability.md). The other modes are not affected.
  */
 export type PermissionMode =
@@ -100,15 +100,29 @@ export interface AutoClassifierContext {
    */
   transcript: readonly GuardTranscriptEntry[]
   abortSignal?: AbortSignal
+  /**
+   * Meeting point with an approval guard of the same session (`judgeCoordinator`, spec 15 §7):
+   * a classifier on the shared judge engine asks the guard's question in its own model call
+   * instead of letting the guard make a second one. Set by the permissions plugin.
+   */
+  coordinator?: JudgeCoordinator
+  /** Id of the tool call under review (needed to hand the guard its answer). */
+  toolCallId?: string
+  /** Risk of the tool under review, when known (`unknown` when none). */
+  risk?: string
 }
 
 /**
  * A classifier verdict. `reason` is shown to the model when the action is blocked.
  *
- * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
+ * @experimental Draft: may change in a minor release (docs/engineering/api-stability.md).
  */
 export interface AutoVerdict {
-  decision: 'allow' | 'block'
+  /**
+   * `ask` hands the action to a person (neither allowed nor counted as a block): a classifier
+   * returns it when it could not see the whole action, e.g. a truncated input.
+   */
+  decision: 'allow' | 'block' | 'ask'
   reason?: string
 }
 
@@ -117,10 +131,12 @@ export interface AutoVerdict {
  * network), as opposed to a verdict. The action is still denied (fail closed), but it does not
  * count towards the repeated-blocks pause and the `unavailable` event reports it distinctly.
  *
- * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
+ * @experimental Draft: may change in a minor release (docs/engineering/api-stability.md).
  */
 export class ClassifierUnavailableError extends Error {
   override readonly name = 'ClassifierUnavailableError'
+  /** The judge failed to run (spec 10 §1.2): a provider-side failure, never a verdict. */
+  readonly code = 'EH_PROVIDER' as const
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options)
   }
@@ -130,7 +146,7 @@ export class ClassifierUnavailableError extends Error {
  * Judges one action in `auto` mode. It must be fail-safe: throwing (or returning anything but a
  * well-formed verdict) blocks the action.
  *
- * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
+ * @experimental Draft: may change in a minor release (docs/engineering/api-stability.md).
  */
 export type AutoClassifier = (
   action: AutoAction,

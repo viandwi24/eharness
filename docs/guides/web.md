@@ -3,8 +3,10 @@
 Two plugins, both `risk: 'external'` (approval rules apply). Contract: [spec 22](../specs/22-web-plugin.md).
 
 ```ts
+import { defineHarnessAgent } from 'eharness'
 import { webFetch, webSearch } from 'eharness/web'
 
+// yours: model (LanguageModel) and search (see `webSearch` below)
 defineHarnessAgent({
   model,
   plugins: [
@@ -25,24 +27,59 @@ Safety, all `ERROR:` strings for the model:
   `metadata.google.internal.`) is ignored, and IPv4-mapped / compatible, NAT64 (`64:ff9b::/96`),
   6to4 (`2002::/16`, embedded IPv4 checked), site-local (`fec0::/10`), `100.64.0.0/10`,
   `198.18.0.0/15`, `0.0.0.0/8`, `192.0.0.0/24` and the documentation ranges are refused too.
-- The library has no DNS. To refuse names that resolve to private addresses, inject a resolver:
-  `resolveHost: async (host) => (await dns.lookup(host, { all: true })).map((e) => e.address)`
-  **Without `resolveHost`, a public hostname that resolves to a private address is not blocked**
-  (DNS-based SSRF), so set it on any server that fetches for untrusted users. Node (and Bun):
+- The library has no DNS (the core is runtime-neutral). To refuse names that resolve to private
+  addresses, pass `resolveHost: (host) => Promise<string[]>`, which returns the addresses of a
+  name. Node ships a ready one, `nodeResolveHost` in `eharness/web/node` (Node-only, ADR-0036;
+  `dns.lookup` with all addresses, IP literals resolve to themselves, an unresolvable name is left
+  to the fetch to report):
 
   ```ts
-  import { lookup } from 'node:dns/promises'
+  import { webFetch } from 'eharness/web'
+  import { nodeResolveHost } from 'eharness/web/node'
 
-  webFetch({
-    resolveHost: async (host) => (await lookup(host, { all: true })).map((e) => e.address),
-  })
+  webFetch({ resolveHost: nodeResolveHost })
   ```
+
+  **Without `resolveHost`, a public hostname that resolves to a private address is not blocked**
+  (DNS-based SSRF), so set it on any server that fetches for untrusted users. Creating `webFetch`
+  without it (and without `onlyAllowed`) emits a `W_WEB_NO_RESOLVER` warning once per session
+  (`onWarning`); with `onlyAllowed: true` no resolver is needed because only hosts you named are
+  fetched. On other runtimes pass your own resolver (for example a DNS-over-HTTPS lookup).
+- `isPrivateHost(host)` (exported from `eharness`, not `eharness/web`) is the check `webFetch` uses
+  for IP literals and local names; call it yourself, for example in a pinned-IP `fetch` as below.
+- **DNS rebinding is not prevented.** The resolver check and the connection are two lookups: a
+  hostile DNS server can answer a public address first and `169.254.169.254` second. For a hard
+  guarantee, pin the checked address in your `fetch`. Node recipe with `undici`
+  (`bun add undici`; your app dependency, not the library's):
+
+  ```ts
+  import { lookup } from 'node:dns'
+  import { Agent, fetch as undiciFetch } from 'undici'
+  import { isPrivateHost } from 'eharness'
+  import { webFetch } from 'eharness/web'
+
+  // validates the address the socket really connects to, at connect time
+  const dispatcher = new Agent({
+    connect: {
+      lookup: (host, opts, cb) =>
+        lookup(host, opts, (err, address, family) => {
+          const list = Array.isArray(address) ? address.map((a) => a.address) : [address]
+          if (!err && list.some((a) => isPrivateHost(a))) return cb(new Error('private address'), '', 4)
+          cb(err, address as never, family)
+        }),
+    },
+  })
+  webFetch({ fetch: ((url, init) => undiciFetch(url as string, { ...init, dispatcher })) as typeof fetch })
+  ```
+
+  Trusted hosts (`allow`) that are private will fail this dispatcher: use it only for deployments
+  without an `allow` list of internal hosts, or branch on the host.
 - `deny` always wins; `onlyAllowed: true` turns `allow` into a strict allow-list (the right setup
   for an autonomous server). `allow` can be a predicate wired to your own permission system.
 - Cross-host redirects are returned as `REDIRECT: <url>` so the model's next call is checked again.
 - Plain `http` is upgraded to `https` for untrusted hosts; ports other than 80/443 are refused.
 
-HTML conversion: the built-in `htmlToText` is a small fallback. For better Markdown inject
+HTML conversion: the built-in converter is a small fallback. For better Markdown inject
 `turndown`:
 
 ```ts
@@ -73,7 +110,9 @@ OpenRouter (`web` plugin, with the AI SDK OpenRouter provider; citations are AI 
 
 ```ts
 import { generateText } from 'ai'
+import type { WebSearchOptions } from 'eharness/web'
 
+// yours: openrouter (the AI SDK OpenRouter provider instance)
 const search: WebSearchOptions['search'] = async (query, { allowedDomains, blockedDomains, signal }) => {
   const model = openrouter('google/gemini-2.5-flash')
   const result = await generateText({
@@ -101,6 +140,7 @@ AI Gateway (Perplexity search tool, provider-executed):
 
 ```ts
 import { gateway, generateText, stepCountIs } from 'ai'
+import type { WebSearchOptions } from 'eharness/web'
 
 const search: WebSearchOptions['search'] = async (query, { allowedDomains, blockedDomains, signal }) => {
   const model = gateway('anthropic/claude-haiku-4.5')

@@ -15,7 +15,13 @@
  * A session is a DM chat when its id starts with `dm:`, a task when it has a `parent` (delegated
  * by the lead) or starts with `routine:` (M7). Hook errors are logged, never thrown.
  */
-import { definePlugin, type HarnessContext, type HarnessPlugin, type PendingState } from 'eharness'
+import {
+  definePlugin,
+  errorText,
+  type HarnessContext,
+  type HarnessPlugin,
+  type PendingState,
+} from 'eharness'
 import type { EventAppender } from '../../app/ports.ts'
 import { isDmSession } from '../../domain/chat.ts'
 import type { NewEvent } from '../../domain/events.ts'
@@ -73,9 +79,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
       try {
         fn(ctx, ...args)
       } catch (error) {
-        ctx.log.warn(
-          `taskIndex ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
-        )
+        ctx.log.warn(`taskIndex ${name} failed: ${errorText(error)}`)
       }
     }
 
@@ -146,6 +150,8 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
             ctx,
             e: {
               stop: string
+              /** `TurnResult.error`: `code` is always set (`EH_PROVIDER_AUTH`, `EH_LOCK_UNAVAILABLE`, ...). */
+              error?: { code: string; message: string }
               pending?: PendingState
               messages: Message[]
               messageId?: string
@@ -167,6 +173,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                     role: 'assistant',
                     preview: previewOf(assistantText) || pendingPreview(e.pending) || `(${e.stop})`,
                     stop: e.stop,
+                    ...(e.error === undefined ? {} : { errorCode: e.error.code }),
                     ...(e.messageId === undefined ? {} : { messageId: e.messageId }),
                   },
                 },
@@ -182,7 +189,12 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 status: effective,
                 pendingKind: kind,
                 now: t,
-                summary: assistantText === '' ? null : previewOf(assistantText, 500),
+                summary:
+                  e.error?.code === 'EH_PROVIDER_AUTH'
+                    ? 'The model provider rejected the API key. Set it in Settings > Providers.'
+                    : assistantText === ''
+                      ? null
+                      : previewOf(assistantText, 500),
                 addCostUsd: e.usage.costUsd ?? 0,
                 addTokens: e.usage.totalTokens,
               })
@@ -199,6 +211,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                       title: row.title,
                       parentSessionId: row.parentSessionId,
                       stop: e.stop,
+                      ...(e.error === undefined ? {} : { errorCode: e.error.code }),
                     },
                   },
                   t,

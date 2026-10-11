@@ -4,7 +4,7 @@
  *
  * @see docs/specs/09-tools-and-mcp.md#4-tool-output-limits
  */
-import { TOOL_OUTPUT_TRUNCATED } from '../messages/texts.ts'
+import { TOOL_OUTPUT_TRUNCATED } from './texts.ts'
 
 /** Share of the budget kept from the start of the text; the rest is kept from the end. */
 const HEAD_SHARE = 0.7

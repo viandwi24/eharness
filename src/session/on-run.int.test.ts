@@ -8,7 +8,7 @@ import { definePlugin } from '../plugin/define-plugin.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { sleep, until } from '../testing/test-utils.ts'
-import { collect } from './int-kit.ts'
+import { collect } from './test-kit.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: runs of a loosely typed test agent
 type AnyRun = HarnessRun<any>

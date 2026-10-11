@@ -1,3 +1,4 @@
+import { errorText } from 'eharness'
 import { useEffect, useState } from 'react'
 
 /** Result of {@link useAsync}. */
@@ -20,7 +21,7 @@ export function useAsync<T>(load: () => Promise<T>): Async<T> {
         if (!cancelled)
           setState({
             status: 'error',
-            message: error instanceof Error ? error.message : String(error),
+            message: errorText(error),
           })
       },
     )

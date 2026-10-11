@@ -3,7 +3,9 @@
  *
  * @see docs/specs/03-messages.md
  */
+
 import type { FileUIPart, InferUITools, JSONValue, ToolSet, UIMessage } from 'ai'
+import type { HarnessErrorCode, HarnessNoticeCode } from '../codes.ts'
 
 /**
  * What started a turn.
@@ -98,7 +100,7 @@ export interface PendingState {
    */
   clientTools: PendingClientTool[]
   /**
-   * Format version of the stored pending state: `2` since 0.5.0; absent = 0.3 / 0.4 shape. An
+   * Format version of the stored pending state: `2`; absent = the legacy shape (still read for back-compat). An
    * unknown version authorizes nothing (spec 11 §2).
    */
   v?: number
@@ -254,7 +256,7 @@ export interface HarnessMessageMeta {
   /** Assistant messages: wall-clock duration. */
   durationMs?: number
   /** Assistant messages: error of a turn that ended with `stop: 'error'`. */
-  error?: { code?: string; message: string }
+  error?: { code?: HarnessErrorCode | HarnessNoticeCode; message: string }
   /**
    * Assistant messages of a turn with `SendOptions.output` (0.4.0, spec 05 §3.3): whether a valid
    * final answer was recorded, and how many answers were checked.
@@ -402,7 +404,7 @@ export interface OutputPartData {
 /** Payload of the `eh.notice` kind (errors, timeouts, blocked input, recovered turns). */
 export interface NoticePayload {
   level: 'info' | 'warning' | 'error'
-  code?: string
+  code?: HarnessErrorCode | HarnessNoticeCode
   message: string
 }
 
@@ -528,7 +530,11 @@ export interface TurnResult<M = HarnessUIMessage, O = unknown> {
   steps: number
   durationMs: number
   /** Set when stop is `error`; `details` of an `EH_*` error (e.g. `{ reason: 'stale' }`, spec 11). */
-  error?: { code?: string; message: string; details?: Record<string, unknown> }
+  error?: {
+    code: HarnessErrorCode | HarnessNoticeCode
+    message: string
+    details?: Record<string, unknown>
+  }
   /**
    * The validated final answer of a turn started with `SendOptions.output` (0.4.0, spec 05 §3.3);
    * typed from the schema. Set only when `stop` is `'complete'` and the answer was valid.

@@ -14,7 +14,7 @@ import type {
   FlowStore,
   RefreshLock,
 } from 'eharness/connectors'
-import { memoryRefreshLock } from 'eharness/connectors'
+import { inMemoryRefreshLock } from 'eharness/connectors'
 
 export function sqliteFlowStore(sqlite: Database): FlowStore {
   const write = (state: FlowState): void => {
@@ -110,7 +110,7 @@ export function sqliteRefreshLock(
   lock: SessionLock,
   options: { waitMs?: number; pollMs?: number } = {},
 ): RefreshLock {
-  const local = memoryRefreshLock()
+  const local = inMemoryRefreshLock()
   const waitMs = options.waitMs ?? 15_000
   const pollMs = options.pollMs ?? 50
   return (key, fn) =>

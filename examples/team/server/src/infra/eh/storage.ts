@@ -14,6 +14,7 @@ import type { UIMessage } from 'ai'
 import {
   type BudgetLedger,
   type DeadInboxItem,
+  HarnessError,
   type InboxAdapter,
   type InboxItem,
   type InboxItemInput,
@@ -203,7 +204,8 @@ export function sqliteLock(sqlite: Sqlite, options: SqliteLockOptions = {}): Ses
           .run(sessionId, owner, now + leaseMs)
         return result.changes === 1
       })
-      if (!taken) throw new Error(`session ${sessionId} is locked elsewhere`)
+      if (!taken)
+        throw new HarnessError('EH_SESSION_BUSY', `session ${sessionId} is locked elsewhere`)
       held.add(owner)
       const timer = setInterval(
         () => {

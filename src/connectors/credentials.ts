@@ -6,7 +6,12 @@
  * @see docs/specs/24-connectors.md#4-oauth-helpers
  */
 import { refreshTokens } from './oauth.ts'
-import type { ConnectionCredentials, ConnectionStore, CredentialStore } from './types.ts'
+import type {
+  ConnectionCredentials,
+  ConnectionStore,
+  CredentialStore,
+  OAuthNetworkOptions,
+} from './types.ts'
 import { connectorError } from './util.ts'
 
 /**
@@ -17,7 +22,7 @@ import { connectorError } from './util.ts'
 export type RefreshLock = <T>(key: string, fn: () => Promise<T>) => Promise<T>
 
 /** A per-process {@link RefreshLock}. */
-export function memoryRefreshLock(): RefreshLock {
+export function inMemoryRefreshLock(): RefreshLock {
   const tails = new Map<string, Promise<unknown>>()
   return async <T>(key: string, fn: () => Promise<T>): Promise<T> => {
     const previous = tails.get(key) ?? Promise.resolve()
@@ -44,6 +49,10 @@ export interface CredentialManagerOptions {
   lock?: RefreshLock
   /** Refresh this long before expiry. Default 60 s. */
   skewMs?: number
+  /** Default 15 000 — limit of the refresh request; the `refresh:<id>` lock is held at most this long. */
+  timeoutMs?: number
+  /** Network policy of the refresh request (private hosts, response size). */
+  oauth?: OAuthNetworkOptions
 }
 
 /** Hands out fresh access tokens. */
@@ -60,7 +69,7 @@ export interface CredentialManager {
 export function createCredentialManager(options: CredentialManagerOptions): CredentialManager {
   const now = options.now ?? Date.now
   const skew = options.skewMs ?? 60_000
-  const lock = options.lock ?? memoryRefreshLock()
+  const lock = options.lock ?? inMemoryRefreshLock()
   const fresh = (
     c: ConnectionCredentials | undefined,
   ): c is ConnectionCredentials & { tokens: NonNullable<ConnectionCredentials['tokens']> } =>
@@ -119,7 +128,9 @@ export function createCredentialManager(options: CredentialManagerOptions): Cred
             ...(current.endpoints.resource === undefined
               ? {}
               : { resource: current.endpoints.resource }),
+            ...options.oauth,
             ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+            ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
             now,
           })
           await options.credentials.put(connectionId, { ...current, tokens })

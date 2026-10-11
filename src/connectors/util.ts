@@ -1,21 +1,7 @@
 /** Small shared helpers of `eharness/connectors` (Web APIs only). */
 import { HarnessError } from '../index.ts'
 
-/** Base64url (RFC 4648 §5) without padding. */
-export function base64url(bytes: Uint8Array): string {
-  let text = ''
-  for (const byte of bytes) text += String.fromCharCode(byte)
-  return btoa(text).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-/** Inverse of {@link base64url}. */
-export function fromBase64url(text: string): Uint8Array {
-  const padded = text.replace(/-/g, '+').replace(/_/g, '/')
-  const raw = atob(padded + '='.repeat((4 - (padded.length % 4)) % 4))
-  const out = new Uint8Array(raw.length)
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i)
-  return out
-}
+export { base64url, fromBase64url } from '../providers/base64url.ts'
 
 /** `n` cryptographically random bytes. */
 export function randomBytes(n: number): Uint8Array {
@@ -46,9 +32,6 @@ export function connectorError(
     ...(cause === undefined ? {} : { cause }),
   })
 }
-
-export const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /** Lowercase `[a-z0-9-]` slug of at most `max` characters (`''` when nothing is left). */
 export function slugify(text: string, max = 32): string {

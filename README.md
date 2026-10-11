@@ -1,18 +1,59 @@
 # eharness
 
-> Build your own agent harness on the [Vercel AI SDK](https://ai-sdk.dev) v7 — plugins, context,
+> Build your own agent harness on the [Vercel AI SDK](https://ai-sdk.dev) v7: plugins, context,
 > messages, streaming, sessions and compaction, with storage you plug in.
 
 [![CI](https://github.com/viandwi24/eharness/actions/workflows/ci.yml/badge.svg)](https://github.com/viandwi24/eharness/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/eharness)](https://www.npmjs.com/package/eharness)
 
-**Status: 0.7.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before
-1.0, breaking changes ship only in minor versions (`0.7 → 0.8`) with a migration note in the
-[changelog](CHANGELOG.md), so `^0.7.0` is safe to depend on
-([API stability](docs/engineering/api-stability.md)). Coming from 0.6? Read
-[Upgrading](docs/guides/upgrading.md) (0.7, 0.8). Modules and sections marked *Draft* in the specs
-(auto permission mode, agent messaging, the `<untrusted-content>` frame, project instructions) may
-still change in a minor release.
+<!-- remove at 0.8 release -->
+> **This README follows `main`.** The latest npm release is 0.7.0 (tag `v0.7.0`). The 0.8 modules
+> (`eharness/providers`, `eharness/connectors`, `eharness/activity`, `eharness/http`,
+> `eharness/client`, `eharness/client/react`) and the features marked *Draft (0.8)* are
+> **unreleased** until the 0.8 release: `import 'eharness/http'` fails on 0.7.0. 0.8 also renames
+> and removes public names: see [Upgrading](docs/guides/upgrading.md#upgrading-to-08).
+<!-- end remove at 0.8 release -->
+
+Every agent built on AI SDK ends up writing the same harness around `streamText`: a step loop,
+prompt assembly, skills, MCP, history that survives restarts, compaction, approvals, a UI stream.
+**eharness** is that skeleton as a library. You keep your server, auth, database and domain logic;
+it standardises the parts every harness reimplements and stays out of the rest.
+
+**Status.** The contracts in [`docs/specs`](docs/specs) are implemented and tested. Before 1.0,
+breaking changes ship only in minor versions with a migration note in the
+[changelog](CHANGELOG.md) and in [Upgrading](docs/guides/upgrading.md)
+([API stability](docs/engineering/api-stability.md)). Modules marked *Draft* below may change in a
+minor release.
+
+## Why
+
+- **Plugins and typed context.** Tools, skills, instructions, hooks, services and UI data parts
+  bundle into plugins. Declare them as constants or load them at runtime (per user, per turn, from
+  a database, from MCP); the agent does not care which.
+- **AI SDK all the way down.** The stream is the AI SDK UI message stream (it works with `useChat`
+  as is), messages are `UIMessage`s, tools are `tool()`, models are `LanguageModel`. No parallel
+  types.
+- **Storage is yours.** A two-method `MessageAdapter`, a `StateAdapter`, an optional durable
+  inbox. The library ships memory adapters and conformance suites, so your Postgres, JSON or Redis
+  adapter is provably correct.
+- **Built for long, interactive, multi-instance turns.** 500 steps by default with a progress
+  guard, fixed compaction, USD budgets, risk-based approvals, steering, crash recovery, locks and a
+  Stop button that reaches the instance running the turn.
+- **Product building blocks, all optional.** Filesystem, shell, permissions, subagents, memory,
+  todos, an LLM approval guard, OpenAPI tools, providers, connectors, an activity feed, an HTTP
+  module and a browser client.
+
+How it compares:
+
+| | What it is | Relation to eharness |
+|---|---|---|
+| AI SDK core (`ai`) | Model calls, tools, streams, UI messages | eharness is built directly on it; no parallel types |
+| AI SDK Harnesses (`@ai-sdk/harness`) | Adapter layer to run *existing* harness runtimes (Claude Code, Codex, ...) in a sandbox | Different layer: eharness is for building **your own** harness |
+| eve (Vercel) | Filesystem-first, opinionated agent framework with Vercel-native durability | eharness is code-first, unopinionated about infrastructure and much thinner |
+| Mastra | Full framework (workspaces, memory, workflows, deployment) | eharness is a library, not a framework: it owns no server, routes, auth or UI |
+| LangChain Deep Agents | Harness on LangGraph with pluggable filesystem backends | Similar ideas (backends, composition); eharness has no graph runtime dependency |
+
+More in [concept](docs/concept.md) (what eharness is and is not, principles, glossary).
 
 ## Install
 
@@ -30,7 +71,7 @@ dependencies of its own.
 import { tool } from 'ai'
 import { defineHarnessAgent, defineSkill } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { z } from 'zod/v4'
 
 const agent = defineHarnessAgent({
@@ -51,58 +92,86 @@ const agent = defineHarnessAgent({
       content: 'Bullets only.',
     }),
   ],
-  plugins: [filesystem({ fs: memoryFs() })],
+  plugins: [filesystem({ fs: inMemoryFs() })],
 })
 
 const session = agent.session('demo')
 const run = session.send('Write the current time to /notes/now.md')
 for await (const chunk of run.stream) {
-  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or, in a route: await run.toHttpResponse()
+  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or, in a route: await run.toResponse()
 }
 
 const result = await run.result // never rejects: errors end the turn with stop: 'error'
 console.log(`\n${result.stop} after ${result.steps} steps`)
+if (result.stop === 'error') console.error(result.error?.code, result.error?.message) // e.g. EH_PROVIDER_AUTH: set AI_GATEWAY_API_KEY
 console.log(`${(await session.messages()).length} messages stored`)
 ```
 
 The model string goes through the [AI Gateway](https://vercel.com/docs/ai-gateway)
-(`AI_GATEWAY_API_KEY`); any AI SDK provider model (`anthropic('claude-sonnet-4-6')`, …) works too.
+(`AI_GATEWAY_API_KEY`); any AI SDK provider model (`anthropic('claude-sonnet-4-6')`, ...) works too.
 This code is [`examples/quick-start.ts`](examples/quick-start.ts); `bun examples/quick-start.ts`
 runs it offline with a scripted model. Walkthrough: [getting started](docs/guides/getting-started.md).
+Terms such as *turn*, *step*, *kind message* and *commit point* are in the
+[glossary](docs/concept.md#glossary).
+
+## Tour
+
+Each snippet is small; the guide linked under it has the full version. Values marked
+`// yours: ...` are your application's.
 
 ### Serve it to `useChat`
 
 ```ts
 import { handleChatRequest } from 'eharness'
+import { agent } from './agent' // yours: the agent from the quick start
 
-export async function POST(req: Request) {
-  const user = await authenticate(req) // yours: eharness knows only the session id
+declare function authenticate(req: Request): Promise<{ id: string }> // yours
+declare function userOwnsChat(userId: string, chatId: string): Promise<boolean> // yours
+
+// POST /api/chat: send, approval answers, regenerate and edit in one route
+export async function POST(req: Request): Promise<Response> {
+  const user = await authenticate(req) // eharness knows only the session id
   const body = await req.json() // useChat's { id, messages, trigger, messageId }
   if (!(await userOwnsChat(user.id, body.id))) return new Response(null, { status: 404 })
-  // send, approval answers, regenerate and edit — one AI SDK UI message stream;
-  // a busy session answers 409 { error: { code: 'EH_SESSION_BUSY' } } (or pass ifBusy: 'wait')
-  return handleChatRequest(agent.session(body.id), body, {
+  return await handleChatRequest(agent.session(body.id), body, {
     runtime: { userId: user.id }, // per-request values go into the turn, not the cached session
-  }).toHttpResponse()
+  }).toResponse() // waits until the turn is accepted, so a failure gets its HTTP status
 }
 
-// GET /api/chat/[id]/stream — useChat({ resume: true }) replays the running turn
-export async function GET(req: Request, { params }: { params: Promise<{ id: string }> }) {
+// GET /api/chat/[id]/stream: useChat({ resume: true }) replays the running turn
+export async function GET(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> },
+): Promise<Response> {
   const { id } = await params
   const user = await authenticate(req)
   if (!(await userOwnsChat(user.id, id))) return new Response(null, { status: 404 }) // same check
-  const run = agent.session(id).attach()
-  return run ? await run.toHttpResponse() : new Response(null, { status: 204 })
+  const run = agent.session(id).attach() // the running turn, or undefined when idle
+  return run ? run.toStreamResponse() : new Response(null, { status: 204 })
 }
 ```
 
-On the client: `useChat<InferHarnessUIMessage<typeof agent>>()` — every data part, tool and
-message kind is typed. Full route + client: [`examples/next-route.ts`](examples/next-route.ts).
+On the client: `useChat<InferHarnessUIMessage<typeof agent>>()` types every data part, tool and
+message kind. Runnable: [`examples/next-route.ts`](examples/next-route.ts) (offline demo:
+`bun examples/next-route.demo.ts`). Guides: [HTTP server](docs/guides/http-server.md),
+[getting started](docs/guides/getting-started.md#6-serve-it-to-usechat).
 
-### Tools that use the running chat and stream custom UI data
+**Which one: `handleChatRequest` or `createHarnessHttp`?**
 
-Write a tool as a function `(ctx) => tool()` to get the session context, and declare `dataParts`
-to stream your own typed UI data from inside the tool:
+| You have | Use | You get |
+|---|---|---|
+| One chat route in your own framework (Next, Hono, Express, ...) | `handleChatRequest(...)` from `eharness` (and `handleResumeRequest(...)` to resume across instances with a stream log) | The `useChat` protocol on routes you write. Auth, ownership checks and every other route are yours. |
+| A whole server, or a browser using `eharness/client` | `createHarnessHttp(agent, { authorize })` from `eharness/http` (Draft) | Chat, resume, steer, interrupt, session reads, attention queue and activity feed behind one `authorize` hook, with idempotency and status codes handled. A `fetch(Request)` handler. |
+| A script, a test, a CLI | `session.send()`; read `run.stream` and `await run.result` | No HTTP. |
+
+In a POST route use `await run.toResponse()`: a failure before the turn is accepted (busy, bad
+input) answers 409 / 400 / 503. `run.toStreamResponse()` streams at once and carries such
+failures inside a `200` stream; use it for resume only.
+
+### Tools that know the chat
+
+Write a tool as `(ctx) => tool()` to get the session, the turn, your runtime values and state, and
+a typed writer for custom UI data parts:
 
 ```ts
 import { tool } from 'ai'
@@ -113,79 +182,34 @@ const agent = defineHarnessAgent({
   model: 'anthropic/claude-sonnet-4.6',
   dataParts: {
     invoice: defineDataPart({ schema: z.object({ total: z.number(), status: z.string() }) }),
-    progress: defineDataPart({ schema: z.object({ percent: z.number() }), transient: true }),
   },
   tools: {
     create_invoice: (ctx) =>
       tool({
+        description: 'Create and send an invoice',
         inputSchema: z.object({ total: z.number() }),
-        execute: async ({ total }, { toolCallId, messages, abortSignal }) => {
-          const userText = ctx.turn?.input?.parts.find((p) => p.type === 'text')?.text
-          const userId = String(ctx.runtime.userId) // agent.session(id, { runtime: { userId } })
+        execute: async ({ total }, { toolCallId }) => {
           ctx.state.set('lastInvoice', total) // persisted with the session
-
-          ctx.stream.data('progress', { percent: 50 }) // transient: streamed, never stored
-          ctx.stream.data('invoice', { total, status: 'draft' }, { id: toolCallId })
-          ctx.stream.data('invoice', { total, status: 'sent' }, { id: toolCallId }) // same id → replaced
-          return `Invoice sent for ${userId}`
+          ctx.stream.data('invoice', { total, status: 'sent' }, { id: toolCallId }) // typed
+          return `Invoice sent for ${String(ctx.runtime.userId)}` // agent.session(id, { runtime })
         },
       }),
   },
 })
 ```
 
-| In a tool | What you get |
-|---|---|
-| `ctx.session.id`, `ctx.agent.id` | which chat and agent the call belongs to |
-| `ctx.turn` | this turn's user message (`input`), model, `abortSignal`, `addUsage()` for nested model calls |
-| `ctx.runtime` | your app values (user, tenant, request) from `agent.session(id, { runtime })` and `send(…, { runtime })` |
-| `ctx.state` | JSON state stored with the session |
-| `ctx.services` | services from plugins, e.g. `ctx.services.fs` |
-| `ctx.stream.data(name, data, { id })` | write a declared data part (type-checked); `ctx.stream.write(chunk)` for any registered part |
-| 2nd `execute` argument (AI SDK) | `toolCallId`, `messages` (model messages so far), `abortSignal` |
-
-The client sees `data-invoice` in `message.parts` (typed) and transient parts in
-`useChat({ onData })`. Runnable: [`examples/tool-context.ts`](examples/tool-context.ts); more in
-[rendering data parts](docs/guides/rendering-data-parts.md).
-
-### Long-running turns, cost and budgets
-
-Turns run up to 500 steps by default. Instead of a small step cap, a progress guard stops a turn
-that repeats itself (`stop: 'stuck'`), and when the step budget runs out the model gets one
-tool-less step to summarize what is done and what is left. Give the agent prices and it tracks the
-estimated cost of every turn and enforces USD budgets:
-
-```ts
-import { defineHarnessAgent, modelsDevCatalog } from 'eharness'
-import { todos } from 'eharness/todos'
-
-// models.dev database, fetched (and cached) by your app — eharness never fetches anything
-const models = modelsDevCatalog(await (await fetch('https://models.dev/api.json')).json())
-
-const agent = defineHarnessAgent({
-  model: 'anthropic/claude-sonnet-4.6',
-  models, // context window + prices per model (or your own record / function)
-  budget: { maxTurnUsd: 2, maxSessionUsd: 20 }, // used up → stop 'cost-cap' (W_BUDGET at 80%)
-  loop: { maxSteps: 500, wrapUp: true, progress: { repeats: 3 } }, // the defaults
-  plugins: [todos({ enforce: true })], // a checklist tool; keep going while todos are open
-})
-
-const result = await agent.session('job-1').send('Migrate the test suite to Vitest').result
-console.log(result.stop, result.usage.costUsd) // 'complete' | 'stuck' | 'max-steps' | 'cost-cap' | …
-```
-
-Cost also appears per step (`step.end` → `costUsd`), live in `data-eh.usage`, and on stored
-messages (`metadata.eharness.usage.costUsd`). Guides: [long-running turns](docs/guides/long-running-turns.md) ·
-[models and cost](docs/guides/models-and-cost.md) · [todos](docs/guides/todos.md).
+Guides: [getting started](docs/guides/getting-started.md#5-tools-that-use-the-running-chat),
+[rendering data parts](docs/guides/rendering-data-parts.md). Runnable:
+[`examples/tool-context.ts`](examples/tool-context.ts).
 
 ### Risk-based approvals
 
-Tools declare a risk; the agent decides which risks need a person. Pending approvals carry the
-tool input, `respond()` records who answered, and one hook sees every decision for your audit log:
+Tools declare a risk; the agent decides which risks need a person. `respond()` records who
+answered, and one hook sees every decision:
 
 ```ts
 import { tool } from 'ai'
-import { defineHarnessAgent, definePlugin } from 'eharness'
+import { defineHarnessAgent } from 'eharness'
 import { z } from 'zod/v4'
 
 const agent = defineHarnessAgent({
@@ -198,246 +222,127 @@ const agent = defineHarnessAgent({
     }),
   },
   approval: { risk: { destructive: 'user-approval', unknown: 'user-approval' } },
-  plugins: [
-    definePlugin({
-      name: 'audit',
-      setup: () => ({
-        hooks: { 'approval.decided': (ctx, d) => console.log(d.toolName, d.approved, d.by, d.actor) },
-      }),
-    }),
-  ],
 })
 
 const session = agent.session('ops-1')
 const { pending } = await session.send('Delete record r1').result // stop: 'tool-pending'
 await session.respond({
-  approvals: (pending?.approvals ?? []).map((p) => ({
-    id: p.approvalId, // p.toolName, p.input and p.risk are there for your inbox UI
-    approved: true,
-    actor: { id: 'u_7', name: 'Ada' }, // passed to approval.decided, never stored
-  })),
+  approvals: (pending?.approvals ?? []).map((p) => ({ id: p.approvalId, approved: true })),
 }).result
 ```
 
-With `useChat`, approvals need no server code: `handleChatRequest` calls `respond()`. Guide:
-[approvals and interaction](docs/guides/approvals-and-interaction.md).
+With `useChat`, approvals need no server code: `handleChatRequest` calls `respond()`. Guides:
+[approvals and interaction](docs/guides/approvals-and-interaction.md),
+[permissions](docs/guides/permissions.md), [approval guard](docs/guides/guard.md).
 
-### Waiting for the outside world, browser tools, budgets and guards (0.5)
+### Long turns, cost and budgets
+
+Turns run up to 500 steps. A progress guard stops a turn that repeats itself or keeps failing
+(`stop: 'stuck'`), and when the step budget runs out the model gets one tool-less step to
+summarize. With prices, every turn records its estimated cost and USD budgets are enforced:
 
 ```ts
-import { defineHarnessAgent, externalTool, handleChatRequest } from 'eharness'
-import { approvalGuard } from 'eharness/guard'
-import { openApiTools } from 'eharness/openapi'
-import { memoryBudgetLedger } from 'eharness/storage/memory'
-import { z } from 'zod/v4'
+import { defineHarnessAgent, modelsDevCatalog } from 'eharness'
+
+declare const modelsDevJson: unknown // yours: models.dev's api.json, fetched and cached by your app
 
 const agent = defineHarnessAgent({
   model: 'anthropic/claude-sonnet-4.6',
-  models, // prices (see above): the ledger estimates and charges in USD
-  tools: [
-    {
-      // park the turn on a webhook: no process is held while it waits
-      run_build: externalTool({
-        description: 'Run a CI build and wait for its result.',
-        inputSchema: z.object({ ref: z.string() }),
-        outputSchema: z.object({ ok: z.boolean() }),
-        timeoutMs: 60 * 60_000,
-        onTimeout: { output: { ok: false } },
-      }),
-    },
-    // an OpenAPI document as tools: your base URL, your auth, risk from the HTTP method
-    openApiTools(specJson, { name: 'orders', baseUrl: 'https://orders.example.com/v1' }),
-  ],
-  // a cheap judge that can only tighten: deny or ask a person, never approve
-  approval: { risk: { read: 'approved', write: 'approved', external: 'approved' } },
-  plugins: [approvalGuard({ model: 'openai/gpt-5-mini', policy: 'Never delete customer data.' })],
-  // spending limits across sessions and instances, reserved before every model call
-  budget: {
-    ledger: {
-      adapter: memoryBudgetLedger({ limits: { 'tenant:acme': 50 } }), // yours in production
-      scopes: (ctx) => [`tenant:${String(ctx.runtime.tenantId)}`],
-    },
-  },
-  inbox: { retry: { maxAttempts: 5 }, onDeadLetter: (item) => alert(item) }, // poison items stop cycling
+  models: modelsDevCatalog(modelsDevJson), // context window and prices (or your own record)
+  budget: { maxTurnUsd: 2, maxSessionUsd: 20 }, // used up: stop 'cost-cap'
 })
 
-// A webhook in ANY instance resolves the parked call; the same assistant message continues
-await agent.session(sessionId).resolveWait(waitId, { output: { ok: true } })
-
-// The browser declares tools and page context per request — opt-in, validated, untrusted
-export async function POST(req: Request) {
-  const body = await req.json()
-  return handleChatRequest(agent.session(body.id), body, {
-    clientTools: { allow: ['get_location'], timeoutMs: 120_000 }, // body.clientTools
-    pageContext: { maxChars: 4_000 }, // body.pageContext → a turn reminder framed as data
-  }).toHttpResponse()
-}
+const result = await agent.session('job-1').send('Migrate the test suite').result
+console.log(result.stop, result.usage.costUsd) // 'complete' | 'stuck' | 'max-steps' | 'cost-cap' | ...
 ```
 
-- **External waits:** `externalTool()` + `session.resolveWait()` park a turn for minutes or days
-  and continue it from any instance; timeouts resolve through a timer, a durable inbox item or
-  `expireWaits()`. Guide: [external waits](docs/guides/external-waits.md).
-- **Frontend tools and page context:** `handleChatRequest(…, { clientTools, pageContext })` accepts
-  what the browser declares for one turn, treated as untrusted; an unanswered call times out.
-  Guide: [frontend tools](docs/guides/client-tools.md).
-- **Risk `'external'`:** MCP `openWorldHint` maps to it (hints only tighten); route it with
-  `approval.risk`. Guide: [approvals](docs/guides/approvals-and-interaction.md).
-- **`eharness/guard`:** an LLM approval judge on a restricted transcript, with a verdict cache, a
-  circuit breaker and fail-closed escalation. Guide: [approval guard](docs/guides/guard.md).
-- **Budget ledger:** `budget.ledger` reserves and commits cost per app-defined scope across
-  sessions; fails closed. Guide: [models and cost](docs/guides/models-and-cost.md#budgets-across-sessions).
-- **Inbox dead-letter:** `inbox.retry` and `inbox.onDeadLetter` stop poison items from blocking a
-  session. Guide: [several instances](docs/guides/multi-instance.md#poison-items).
-- **`eharness/group`:** answer only when addressed, keep what was missed, stop bot-to-bot loops.
-  Guide: [group chat](docs/guides/group-chat.md).
-- **`eharness/openapi`:** curated OpenAPI operations as tools. Guide:
-  [OpenAPI tools](docs/guides/openapi-tools.md).
+Guides: [long-running turns](docs/guides/long-running-turns.md),
+[models and cost](docs/guides/models-and-cost.md), [todos](docs/guides/todos.md).
 
-### Memory, background work and several instances (0.4)
+### Storage and several instances
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { filesystem } from 'eharness/filesystem'
-import { memory } from 'eharness/memory'
+import type { InboxAdapter, MessageAdapter, StateAdapter } from 'eharness'
+
+declare const messages: MessageAdapter // yours: Postgres, JSON files, ...
+declare const state: StateAdapter // yours
+declare const inbox: InboxAdapter // yours (optional): queue, steer, wake and abort across instances
 
 const agent = defineHarnessAgent({
   model: 'anthropic/claude-sonnet-4.6',
-  plugins: [
-    filesystem({ fs: (ctx) => filesFor(ctx.session.id), hiddenPrefixes: ['/memories'] }),
-    memory({
-      roots: (ctx) => [{ path: `/memories/${String(ctx.runtime.userId)}/`, write: true }],
-      flushOnCompaction: true, // save facts to memory right before history is summarized
-    }),
-  ],
-  compaction: { prune: {} }, // drop old large tool outputs from the request before summarizing
-  storage: { messages, state, inbox }, // your adapters; the inbox is optional
+  storage: { messages, state, inbox },
+  recovery: { instanceId: 'web-1' }, // a stable id: a restarted process recovers its turns at once
 })
 
 const session = agent.session('chat-1')
-await session.enqueue('One more thing…', { mode: 'collect' }) // any instance; one turn per burst
-await session.inject('eh.event', { name: 'job', text: 'Export finished.' }, { wake: true })
-await session.requestAbort() // stops the turn even when another instance runs it
+await session.enqueue('One more thing...', { mode: 'collect' }) // any instance
+await session.abort() // stops the turn even when another instance runs it
 ```
 
-- **Memory:** `eharness/memory` gives the agent memory files under roots your app chooses per
-  user, pinned files in every turn, and a pre-compaction **flush** (`compaction.before`) that saves
-  facts before a lossy summary. Guide: [memory](docs/guides/memory.md).
-- **Context:** `compaction.prune` replaces old tool outputs by placeholders in the request only;
-  a turn whose context refills right after a compaction stops with `'context-thrash'`. Guide:
-  [compaction](docs/guides/compaction.md).
-- **Several instances:** a durable `InboxAdapter` queues, steers, wakes and debounces
-  (`collect`) across instances; `requestAbort()` stops a turn anywhere; `ifBusy: 'wait'` and
-  `session.idle()` serialize work in one process. Guide: [several instances](docs/guides/multi-instance.md).
-- **Structured output:** `send(input, { output: { schema } })` validates the final answer against
-  your schema (a `final_answer` tool, or AI SDK `Output.object` with `mode: 'native'`), retries a
-  bounded number of times and returns it typed in `result.output` (stop `'output-invalid'` when
-  no valid answer came). Guide: [structured output](docs/guides/structured-output.md).
-- **Production patterns:** ephemeral context, episodic memory, background events, heartbeats
-  with a "silent OK", skills from a database, and the security checklist:
-  [production patterns](docs/guides/production-patterns.md).
-
-## Why
-
-AI SDK gives you `streamText`, tools, `UIMessage` and UI streams. Every serious agent then
-re-implements the same harness around them: a step loop, prompt assembly, skills, MCP lifecycle,
-history that survives restarts, compaction, custom UI data. **eharness** is that skeleton, kept
-thin and idiomatic:
-
-- **Plugins** bundle tools, skills, instructions, hooks, services and typed UI data parts.
-- **Static or dynamic, your choice:** declare tools/skills/instructions as constants, or load them
-  at runtime (per user, per turn, from a database, from MCP).
-- **One stream protocol:** the AI SDK UI message stream — works with `useChat` out of the box.
-- **Messages are `UIMessage`s:** custom messages (compaction markers, events) are ordinary messages
-  with typed data parts.
-- **Storage is yours:** a two-method `MessageAdapter`; the library ships memory adapters and
-  conformance tests so your Postgres/JSON/Redis adapter is provably correct.
-- **Compaction built in:** summarize + keep tail + guard, stored as data, one-query cold loads,
-  automatic recovery when the provider says the context is too long.
-- **Long-running turns:** 500 steps by default, a progress guard instead of a small step cap
-  (`'stuck'`), a wrap-up summary when the step budget runs out, `turn.beforeEnd` continuations
-  bounded by progress.
-- **Cost you can see and cap:** a model catalog (your record, a function, or
-  [models.dev](https://models.dev) via `modelsDevCatalog`) supplies context windows and prices;
-  every turn records `costUsd`; `budget` stops turns and sessions in USD; subagent usage counts
-  too (`ctx.turn.addUsage`).
-- **Interactive and safe:** tool approvals by policy or by tool risk (`read` / `write` / `external` /
-  `destructive`), an `approval.decided` audit hook and `actor` on answers, client-side tools,
-  regenerate/edit, steering while the agent works, background wake-ups, crash recovery.
-- **Built for several instances:** session locks, compare-and-set state, a durable inbox for
-  queue / steer / wake / collect across processes, and a Stop button that reaches the instance
-  running the turn.
-- **Memory that survives compaction:** file-based memory under app-chosen roots, pinned files,
-  and a pre-compaction flush; old tool outputs are pruned before anything is summarized.
-- **Tools that know the chat:** `(ctx) => tool()` gets the session, the turn's input, your runtime
-  values, state, services, and a typed writer for custom UI data parts.
-- **Batteries included, optional:** a todos plugin (`eharness/todos`), a memory plugin
-  (`eharness/memory`), a filesystem plugin with skills autoload, MCP servers as tool sources, a
-  scripted test model and conformance suites.
-- **Waits that outlive the process (0.5):** a tool can park the turn on a webhook, a job or a
-  person (`externalTool()`, `resolveWait()`), and a browser can declare its own tools and page
-  context per request, safely opt-in.
-- **Guarded and capped across sessions (0.5):** an LLM approval guard that can only tighten
-  (`eharness/guard`), a `BudgetLedger` port for per-user / tenant limits, `'external'` tool risk,
-  and a dead-letter for poison inbox items.
-- **Beyond one-to-one chat (0.5):** group-chat gating and anti-loop (`eharness/group`) and
-  OpenAPI operations as tools (`eharness/openapi`).
-- **Coding-agent building blocks (0.7):** real-disk and mounted file systems with checkpoints and
-  binary files (`eharness/filesystem/node`), a bash tool over a local sandbox
-  (`eharness/shell`), rule-based permissions and plan mode (`eharness/permissions`), subagents with
-  nested approvals that survive restarts (`eharness/subagent`), user questions (`eharness/ask`),
-  web fetch and search (`eharness/web`), `session.fork()` and a parent/child index.
-- **Product building blocks (0.8, Draft):** provider profiles with secrets, model lists and a form
-  spec (`eharness/providers`), connectors with server-driven setup flows and OAuth
-  (`eharness/connectors`), a durable session activity feed and attention queue
-  (`eharness/activity`), a `fetch`-style HTTP module for chat, sessions, approvals and the feed
-  (`eharness/http`), and its browser client with React bindings (`eharness/client`).
-- **Prompt-cache friendly:** stable instructions and tool order; volatile context goes into
-  per-turn and per-step reminders.
+Guides: [writing a storage adapter](docs/guides/writing-a-storage-adapter.md),
+[several instances](docs/guides/multi-instance.md),
+[production patterns](docs/guides/production-patterns.md). More snippets (external waits, browser
+tools, guard, ledger, memory, background events) are in
+[getting started](docs/guides/getting-started.md#7-more-capabilities).
 
 ## Entry points
 
-| Import | Contents |
-|---|---|
-| `eharness` | `defineHarnessAgent`, `definePlugin`, `defineSkill`, `defineSkillSource`, `defineToolSource`, `defineDataPart`, `defineMessageKind`, `handleChatRequest`, `externalTool`, `toolTraits`, `modelsDevCatalog`, `lookupModel`, `computeCost`, errors, fixed texts, types |
-| `eharness/filesystem` | `FileSystem` contract, `filesystem()` plugin (file tools, skills autoload), helpers |
-| `eharness/filesystem/memory` | `memoryFs()` |
-| `eharness/filesystem/node` | `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()` (Node-only) |
-| `eharness/shell` | `shell()` plugin (`bash`, background tasks), `localSandbox()` with optional OS isolation (Node-only) |
-| `eharness/permissions` | `permissionsPlugin()`, `createPermissionEngine()`: rules, modes, plan mode, shell command analysis |
-| `eharness/subagent` | `subagents()` (`agent` tool; approvals inline / park / policy), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()` |
-| `eharness/ask` | `askUser()` plugin (`ask_user_question`), `pendingQuestions()`, `answerOutput()` |
-| `eharness/web` | `webFetch()` (SSRF guards, Markdown) and `webSearch()` (provider-agnostic) plugins |
-| `eharness/providers` | Draft (0.8). `createProviderManager()`, provider definitions, `ProfileStore`, `formSpec()`, `SecretVault`, catalog loaders |
-| `eharness/connectors` | Draft (0.8). `createConnectorService()`, setup flows, OAuth 2.1, enablement, `activateConnectors()`, built-in connectors |
-| `eharness/activity` | Draft (0.8). `activity()` plugin, `ActivityStore` port, SSE helpers, `listAttention()` / `answerAttention()` |
-| `eharness/http` | Draft (0.8). `createHarnessHttp()`: a `fetch(Request)` handler for chat, resume, sessions, attention and activity behind one `authorize` hook |
-| `eharness/client` | Draft (0.8). Browser client, AI SDK transport, chat session, activity feed, attention list; `eharness/client/react` adds React bindings |
-| `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage), `memoryInbox()`, `memoryBudgetLedger()` |
-| `eharness/mcp` | `mcpServer()` tool source (optional peer `@ai-sdk/mcp`) |
-| `eharness/todos` | `todos()` plugin (`todo_write` tool, `data-todos.list`), `latestTodos()`, `renderTodos()`, `openTodos()` |
-| `eharness/memory` | `memory()` plugin (memory files under app-chosen roots, pinned files, pre-compaction flush), `executeMemoryCommand()` |
-| `eharness/guard` | `approvalGuard()` plugin: an LLM judge on the approval chain that can only tighten (deny / ask a person) |
-| `eharness/group` | `groupChat()` plugin and `routeGroupMessage()`: should-respond gating, pending history, speaker metadata, bot-to-bot anti-loop |
-| `eharness/openapi` | `openApiTools()` tool source (OpenAPI 3.0 / 3.1 JSON → tools), `riskFromMethod()` |
-| `eharness/testing` | `scriptedModel()` and conformance suites for your adapters (messages, state, inbox, budget ledger, file system, skill source, ids) |
+Every `package.json#exports` entry. *Draft* means all symbols of the subpath are experimental and
+may change in a minor release ([API stability](docs/engineering/api-stability.md)). *Node-only*
+subpaths import `node:` built-ins; everything else is runtime-neutral.
+
+| Import | Status | Contents |
+|---|---|---|
+| `eharness` | Accepted (model catalog and cost: Draft) | `defineHarnessAgent`, `definePlugin`, `wrapPlugin`, `defineSkill`, `defineSkillSource`, `defineToolSource`, `defineDataPart`, `defineMessageKind`, `handleChatRequest`, `handleResumeRequest`, `externalTool`, `toolTraits`, `createJudge`, `modelsDevCatalog`, `openRouterCatalog`, `lookupModel`, `computeCost`, `observeModel`, `isPrivateHost`, errors, stored-text constants, types |
+| `eharness/filesystem` | Accepted | `FileSystem` contract, `filesystem()` plugin (file tools, skills autoload), `fsSkillSource()`, checkpoints, `projectInstructions()` (Draft), helpers |
+| `eharness/filesystem/memory` | Accepted | `inMemoryFs()` |
+| `eharness/filesystem/node` | Accepted, Node-only | `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()`, `nodeRealpath()` |
+| `eharness/storage/memory` | Accepted | `inMemoryMessages()`, `inMemoryState()` (the default storage), `inMemoryInbox()`, `inMemoryBudgetLedger()`, `inMemoryStreamLog()` |
+| `eharness/mcp` | Accepted | `mcpServerSource()`, `remoteMcpSource()`, `listRemoteMcpTools()`, `bearerAuthProvider()` (optional peer `@ai-sdk/mcp`) |
+| `eharness/todos` | Draft | `todos()` plugin (`todo_write`, `data-todos.list`), `latestTodos()`, `renderTodos()`, `openTodos()` |
+| `eharness/memory` | Draft | `memory()` plugin: memory files under app-chosen roots, pinned files, pre-compaction flush |
+| `eharness/guard` | Draft | `guard()`: an LLM approval judge that can only tighten (deny or ask a person) |
+| `eharness/group` | Draft | `group()` and `routeGroupMessage()`: should-respond gating, pending history, anti-loop |
+| `eharness/openapi` | Draft | `openApiSource()`: OpenAPI 3.0 / 3.1 JSON as tools |
+| `eharness/permissions` | Draft | `permissions()`, `createPermissionEngine()`: rules, modes, plan mode, shell command analysis |
+| `eharness/subagent` | Draft | `subagent()` (`agent` tool; approvals inline / park / policy), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()`, `reconcileBackgroundChildren()` |
+| `eharness/ask` | Draft | `ask()` (`ask_user_question`), `pendingQuestions()`, `answerOutput()` |
+| `eharness/web` | Draft | `webFetch()` (SSRF guards, Markdown) and `webSearch()` (provider-agnostic) |
+| `eharness/web/node` | Draft, Node-only | `nodeResolveHost()`: a DNS resolver for `webFetch` |
+| `eharness/shell` | Draft, Node-only | `shell()` (`bash`, background tasks), `localSandbox()`, `detectOsSandbox()` |
+| `eharness/providers` | Draft (0.8) | `createProviderManager()`, provider definitions, `inMemoryProfileStore()`, `sealedProfileStore()`, `formSpec()`, `SecretVault`s, catalog loaders |
+| `eharness/connectors` | Draft (0.8) | `createConnectorService()`, `defineConnector()`, setup flows, enablement, `activateConnectors()`, built-in connectors |
+| `eharness/activity` | Draft (0.8) | `activity()` plugin, `ActivityStore` port, SSE helpers, `listAttention()` / `answerAttention()` |
+| `eharness/http` | Draft (0.8) | `createHarnessHttp()`: a `fetch(Request)` handler for chat, resume, sessions, attention and activity behind one `authorize` hook; `openAccess` |
+| `eharness/client` | Draft (0.8) | `createHarnessClient()`, `createHarnessTransport()`, `createChatSession()`, `createActivityFeed()`, `createAttentionList()` |
+| `eharness/client/react` | Draft (0.8) | `createReactBindings(React)`, `chatBridgeOf()` |
+| `eharness/testing` | Accepted | `scriptedModel()`, `scriptedProvider()` and conformance suites for your adapters |
+
+The full table with source files is in [architecture](docs/architecture.md#2-package--exports).
 
 ### Deployment profiles
 
-Every shipped module serves three product shapes: an autonomous server (no human, policy and
-budgets), a single-process interactive app (CLI/TUI), and a split web/server app (pending state in
-storage, answers from any instance). Node-only subpaths are marked above. See
+Every shipped module serves three product shapes: an autonomous server (no human; policy and
+budgets), a single-process interactive app (CLI or TUI), and a split web/server app (pending state
+in storage, answers from any instance). See
 [ADR-0034](docs/decisions/0034-deployment-profiles.md).
 
 ## Examples
 
-Every example runs offline (`bun examples/<file>`) and is typechecked and executed in CI.
+Every example runs offline (`bun examples/<file>`) and is typechecked and executed in CI, except
+`next-route.ts` (route handlers: run `next-route.demo.ts` instead), the Postgres examples (they
+need `DATABASE_URL` and skip otherwise) and the two apps, `team/` and `coder/`.
 
 | Example | Shows |
 |---|---|
 | [`quick-start.ts`](examples/quick-start.ts) | the code above |
 | [`tool-context.ts`](examples/tool-context.ts) | a tool that reads the running chat and streams custom data parts |
 | [`basic-cli.ts`](examples/basic-cli.ts) | terminal rendering with `readUIMessageStream`, filesystem plugin |
-| [`next-route.ts`](examples/next-route.ts) · [`.demo.ts`](examples/next-route.demo.ts) | Next.js routes, `useChat` client, approvals, resume |
+| [`next-route.ts`](examples/next-route.ts) | Next.js routes and a `useChat` client (not runnable alone) |
+| [`next-route.demo.ts`](examples/next-route.demo.ts) | the offline demo of `next-route.ts`: `bun examples/next-route.demo.ts` (approvals, resume) |
+| [`structured-output.ts`](examples/structured-output.ts) | a typed, validated final answer with `send(…, { output })`: tool mode and native mode |
+| [`wrap-plugin.ts`](examples/wrap-plugin.ts) | `wrapPlugin()`: per-request configuration of `guard()` (judge per request, trusted requests, decision log) |
 | [`plugin-authoring.ts`](examples/plugin-authoring.ts) | a plugin with a service, tool, data part, hooks and state |
 | [`long-running.ts`](examples/long-running.ts) | the progress guard (`'stuck'`) and the wrap-up step (`'max-steps'`) |
 | [`context-prune.ts`](examples/context-prune.ts) | view-only pruning of old tool outputs (`compaction.prune`) and the thrash stop (`'context-thrash'`) |
@@ -448,7 +353,7 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`memory.ts`](examples/memory.ts) | the `memory()` plugin: per-user root, read-only org root, pinned profile, `onWrite` audit |
 | [`background-events.ts`](examples/background-events.ts) | a job result as a message kind, `inject(…, { wake: true })`, a heartbeat that ends silently |
 | [`inbox.ts`](examples/inbox.ts) | two instances sharing a durable inbox: steer, `collect`, Stop across instances |
-| [`remote-abort.ts`](examples/remote-abort.ts) | `requestAbort()` from another instance through the state (`setIf`) |
+| [`remote-abort.ts`](examples/remote-abort.ts) | `abort()` from another instance through the state (`setIf`) |
 | [`external-wait.ts`](examples/external-wait.ts) | a build tool parks the turn; a webhook in another instance resolves it; a timeout through the inbox |
 | [`client-tools.ts`](examples/client-tools.ts) | request-declared client tools and page context, validation, timeouts |
 | [`approval-guard.ts`](examples/approval-guard.ts) | an LLM judge denies a prompt-injected exfiltration and escalates an odd call |
@@ -456,49 +361,38 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 | [`openapi-tools.ts`](examples/openapi-tools.ts) | an OpenAPI document as tools: curation, base URL, auth header, risk from the method |
 | [`subagent-tool.ts`](examples/subagent-tool.ts) | a tool that runs a child session, streams its progress, reports usage |
 | [`json-file-storage.ts`](examples/json-file-storage.ts) | `MessageAdapter` + `StateAdapter` on JSON files |
-| [`postgres-storage.ts`](examples/postgres-storage.ts) | Postgres adapters + advisory-lock `SessionLock` |
-| [`postgres-inbox.ts`](examples/postgres-inbox.ts) | Postgres `InboxAdapter` (`FOR UPDATE SKIP LOCKED`, `LISTEN`/`NOTIFY`) |
-| [`postgres-budget-ledger.ts`](examples/postgres-budget-ledger.ts) | Postgres `BudgetLedger`: monthly scopes, atomic reservations, conformance |
+| [`postgres-storage.ts`](examples/postgres-storage.ts) | Postgres adapters + advisory-lock `SessionLock`. Needs `DATABASE_URL` (skips otherwise). |
+| [`postgres-inbox.ts`](examples/postgres-inbox.ts) | Postgres `InboxAdapter` (`FOR UPDATE SKIP LOCKED`, `LISTEN`/`NOTIFY`). Needs `DATABASE_URL` (skips otherwise). |
+| [`postgres-budget-ledger.ts`](examples/postgres-budget-ledger.ts) | Postgres `BudgetLedger`: monthly scopes, atomic reservations, conformance. Needs `DATABASE_URL` (skips otherwise). |
 | [`custom-fs-adapter.ts`](examples/custom-fs-adapter.ts) | a `FileSystem` over a key-value store |
+| [`team/`](examples/team/README.md) | a team of agents: Bun + Hono + SQLite server and a SvelteKit web app; approvals inbox, routines, connectors (`bun run dev` in `examples/team`) |
 | [`coder/`](examples/coder/README.md) | a terminal coding agent (Ink UI): permissions, subagents, todos, compaction, JSON storage |
 
 ## Guides
 
-[Getting started](docs/guides/getting-started.md) ·
-[Instructions, tools and MCP](docs/guides/tools-and-mcp.md) ·
-[Writing a plugin](docs/guides/writing-a-plugin.md) ·
-[Writing a storage adapter](docs/guides/writing-a-storage-adapter.md) ·
-[Running several instances](docs/guides/multi-instance.md) ·
-[Production patterns](docs/guides/production-patterns.md) ·
-[Rendering data parts](docs/guides/rendering-data-parts.md) ·
-[Skills](docs/guides/skills.md) ·
-[Filesystem](docs/guides/filesystem.md) ·
-[Context and compaction](docs/guides/compaction.md) ·
-[Approvals and interaction](docs/guides/approvals-and-interaction.md) ·
-[Approval guard](docs/guides/guard.md) ·
-[Frontend tools and page context](docs/guides/client-tools.md) ·
-[External waits](docs/guides/external-waits.md) ·
-[Long-running turns](docs/guides/long-running-turns.md) ·
-[Structured output](docs/guides/structured-output.md) ·
-[Models and cost](docs/guides/models-and-cost.md) ·
-[Todos](docs/guides/todos.md) ·
-[Memory](docs/guides/memory.md) ·
-[OpenAPI tools](docs/guides/openapi-tools.md) ·
-[Group chat](docs/guides/group-chat.md) ·
-[Permissions](docs/guides/permissions.md) ·
-[Shell](docs/guides/shell.md) ·
-[Ask the user](docs/guides/ask.md) ·
-[Web fetch and search](docs/guides/web.md) ·
-[Subagents](docs/guides/subagents.md) ·
-[Providers and profiles](docs/guides/providers-and-profiles.md) ·
-[Connectors](docs/guides/connectors.md) ·
-[HTTP server](docs/guides/http-server.md) ·
-[Web client](docs/guides/web-client.md) ·
-[Testing](docs/guides/testing.md) ·
-[Reference](docs/guides/reference.md) ·
-[Upgrading to 0.7](docs/guides/upgrading.md)
+Start with [getting started](docs/guides/getting-started.md), then the
+[guide index](docs/guides/README.md) (every guide, one line each). Often needed:
 
-Reference: [concept](docs/concept.md) · [architecture](docs/architecture.md) ·
+- Build: [instructions, tools and MCP](docs/guides/tools-and-mcp.md) ·
+  [writing a plugin](docs/guides/writing-a-plugin.md) ·
+  [writing a storage adapter](docs/guides/writing-a-storage-adapter.md) ·
+  [skills](docs/guides/skills.md) · [filesystem](docs/guides/filesystem.md)
+- Interactive and safe: [approvals and interaction](docs/guides/approvals-and-interaction.md) ·
+  [permissions](docs/guides/permissions.md) · [approval guard](docs/guides/guard.md) ·
+  [LLM judge](docs/guides/llm-judge.md)
+- Long-running and scaled: [long-running turns](docs/guides/long-running-turns.md) ·
+  [models and cost](docs/guides/models-and-cost.md) ·
+  [several instances](docs/guides/multi-instance.md) ·
+  [observability](docs/guides/observability.md)
+- Serve and render: [HTTP server](docs/guides/http-server.md) ·
+  [web client](docs/guides/web-client.md) ·
+  [rendering data parts](docs/guides/rendering-data-parts.md)
+- Ship: [production patterns](docs/guides/production-patterns.md) ·
+  [production checklist](docs/guides/production-checklist.md) ·
+  [testing](docs/guides/testing.md) · [reference](docs/guides/reference.md) ·
+  [upgrading to 0.7 and 0.8](docs/guides/upgrading.md)
+
+Reference: [concept](docs/concept.md) (incl. glossary) · [architecture](docs/architecture.md) ·
 [specs](docs/specs) (the contracts) · [decisions (ADRs)](docs/decisions) ·
 [contributing](CONTRIBUTING.md)
 

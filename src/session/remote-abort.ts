@@ -1,6 +1,6 @@
 /**
  * Cross-process abort through state compare-and-set (internal): the requester side
- * (`session.requestAbort()` when no local turn runs) and the owner side (the bounded poll of a
+ * (`session.abort()` when no local turn runs) and the owner side (the bounded poll of a
  * running turn).
  *
  * @see docs/specs/05-session-and-storage.md#91-cross-process-abort
@@ -12,7 +12,7 @@ import type {
   SessionStateSnapshot,
   StateAdapter,
 } from '../agent/session-types.ts'
-import { HarnessError, type HarnessWarning, isHarnessError } from '../errors.ts'
+import { HarnessError, type HarnessWarning, storageError } from '../errors.ts'
 
 /** Default `recovery.staleMs`. */
 export const DEFAULT_STALE_MS = 120_000
@@ -32,11 +32,6 @@ export interface RemoteAbortDeps {
   warn(warning: HarnessWarning, key?: string): void
   /** Called after the request was written (the requester's cached state is stale now). */
   written?(): void
-}
-
-function storageError(cause: unknown): HarnessError {
-  if (isHarnessError(cause)) return cause
-  return new HarnessError('EH_STORAGE', 'State storage failed (abort request).', { cause })
 }
 
 function unsupported(deps: RemoteAbortDeps, why: string): AbortRequestResult {
@@ -71,7 +66,7 @@ export async function requestRemoteAbort(
     try {
       stored = await deps.adapter.get(deps.sessionId)
     } catch (error) {
-      throw storageError(error)
+      throw storageError('State', 'abort request', error)
     }
     const active = stored?.core?.activeTurn
     const live =
@@ -98,7 +93,7 @@ export async function requestRemoteAbort(
     try {
       ok = await deps.adapter.setIf(deps.sessionId, next, stored.rev ?? null)
     } catch (error) {
-      throw storageError(error)
+      throw storageError('State', 'abort request', error)
     }
     if (ok) {
       deps.written?.()

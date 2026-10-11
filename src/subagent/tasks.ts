@@ -40,7 +40,7 @@ export interface SubagentTasks {
   /**
    * Stop a running task (task id or child session id): aborts the child (its turn ends
    * `aborted`) and marks the task `stopped`; the parent is told. An id this process does not know
-   * is taken for a child session id and gets `requestAbort()`, which reaches a child running in
+   * is taken for a child session id and gets `abort()`, which reaches a child running in
    * another instance (spec 05 §9.1).
    */
   stop(id: string): Promise<void>

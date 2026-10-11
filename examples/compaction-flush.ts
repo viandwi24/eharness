@@ -16,13 +16,13 @@ import {
   isKindMessage,
 } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { memory } from 'eharness/memory'
-import { memoryMessages } from 'eharness/storage/memory'
+import { inMemoryMessages } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
-const fs = memoryFs({})
+const fs = inMemoryFs()
 const facts: string[] = []
 
 /** A plugin with its own tool that asks for the same flush. */
@@ -65,7 +65,7 @@ const compactionModel = exampleModel([
   { text: 'The user planned the launch (now May 12) and got the 40k budget approved.' },
 ])
 
-const messages = memoryMessages()
+const messages = inMemoryMessages()
 const agent = defineHarnessAgent({
   model: exampleModel([
     { text: 'Got it: the launch moves to May 12.' },

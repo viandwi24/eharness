@@ -8,19 +8,19 @@ import { describe, expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent, type HarnessAgent } from '../index.ts'
-import { memoryInbox, memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryInbox, inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { until } from '../testing/test-utils.ts'
-import { reconcileBackgroundChildren, subagents } from './index.ts'
+import { reconcileBackgroundChildren, subagent } from './index.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} } // biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
 type Agent = HarnessAgent<any>
 type Steps = Parameters<typeof scriptedModel>[0]
 
 const newStorage = () => ({
-  messages: memoryMessages(),
-  state: memoryState(),
-  inbox: memoryInbox(),
+  messages: inMemoryMessages(),
+  state: inMemoryState(),
+  inbox: inMemoryInbox(),
 })
 type Storage = ReturnType<typeof newStorage>
 
@@ -67,7 +67,7 @@ function processOf(
     tools: { gated } as never,
     ...recovery,
     plugins: [
-      subagents({
+      subagent({
         agents: {},
         approvals: 'park',
         parentAgent: () => holder.main as Agent,
@@ -85,7 +85,7 @@ function processOf(
     inbox: { pollMs: 20 },
     ...recovery,
     plugins: [
-      subagents({
+      subagent({
         agents: { worker: { agent: worker, description: 'does work' } },
         approvals: 'park',
         background: true,

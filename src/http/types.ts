@@ -76,6 +76,13 @@ export interface HttpChatOptions<P> {
   maxParts?: number
   /** UTF-8 bytes of one text part. Default 64 KiB. */
   maxTextBytes?: number
+  /**
+   * Which `url`s a client file part may carry. Default: `data:` URLs only (a provider or the AI
+   * SDK may download any other URL server-side: SSRF). `true` also accepts `http(s)` URLs; a
+   * predicate decides per URL (return `true` to accept). Other schemes are never accepted
+   * unless the predicate says so.
+   */
+  allowFileUrls?: boolean | ((url: URL) => boolean)
 }
 
 /** Options of the session routes. */
@@ -188,7 +195,7 @@ export interface HttpActivityOptions<P> {
 }
 
 /** Options of {@link createHarnessHttp}. */
-export interface HarnessHttpOptions<P = unknown> {
+export interface HarnessHttpOptions<P = object> {
   /** Required. Runs before anything else of a route; there is no default. */
   authorize: Authorize<P>
   /** The live session of a request. Default `agent.session(id)`. */

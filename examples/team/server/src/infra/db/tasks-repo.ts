@@ -5,8 +5,8 @@
  * SQL (`cost_usd = cost_usd + ?`), so two instances never lose an update.
  */
 import type { Database } from 'bun:sqlite'
+import { uuidv7 } from 'eharness'
 import type { AgentActivity, TaskStore } from '../../app/ports.ts'
-import { newId } from '../../domain/ids.ts'
 import type { PendingKind, Task, TaskOrigin, TaskStatus } from '../../domain/tasks.ts'
 
 interface TaskRow {
@@ -177,7 +177,7 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
            ON CONFLICT(session_id) DO NOTHING`,
         )
         .run(
-          newId(task.startedAt),
+          uuidv7(),
           task.agentId,
           task.sessionId,
           task.parentSessionId,

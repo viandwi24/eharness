@@ -1,4 +1,5 @@
 /** `/config`: edit settings. ↑↓ select, Enter/Space toggle or edit, `u` / `l` choose the scope. */
+import { errorText } from 'eharness'
 import { Box, Text, useInput } from 'ink'
 import { type ReactElement, useEffect, useRef, useState } from 'react'
 import type { CoderController, SettingView } from '../../contracts.ts'
@@ -52,7 +53,7 @@ export function ConfigPage({ controller, onClose, onSaved, size }: ConfigPagePro
     controller
       .settings()
       .then((list) => alive.current && setItems(list))
-      .catch((e: unknown) => alive.current && setNote(e instanceof Error ? e.message : String(e)))
+      .catch((e: unknown) => alive.current && setNote(errorText(e)))
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: load once on mount
   useEffect(reload, [])
@@ -66,8 +67,7 @@ export function ConfigPage({ controller, onClose, onSaved, size }: ConfigPagePro
         onSaved?.(view.key, value)
         reload()
       },
-      (e: unknown) =>
-        alive.current && setNote(`Cannot save: ${e instanceof Error ? e.message : e}`),
+      (e: unknown) => alive.current && setNote(`Cannot save: ${errorText(e)}`),
     )
   }
 

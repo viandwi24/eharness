@@ -1,14 +1,14 @@
 /**
- * `groupChat()` / `routeGroupMessage()` (spec 16): the decision table, gated-out messages stored as
+ * `group()` / `routeGroupMessage()` (spec 16): the decision table, gated-out messages stored as
  * kind messages and handed to the next answer exactly once and in order, `historyLimit`, tag
  * neutralisation, the bot-to-bot loop limit across two instances sharing storage, `collect` bursts
  * and speaker metadata.
  */
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent, type HarnessAgentConfig, isKindMessage } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { type ScriptedStep, scriptedModel } from '../testing/scripted-model.ts'
-import { type GroupChatOptions, type GroupMessage, groupChat, routeGroupMessage } from './index.ts'
+import { type GroupMessage, type GroupOptions, group, routeGroupMessage } from './index.ts'
 import { neutralizeSpeakerLines, neutralizeTags } from './plugin.ts'
 import { GROUP_HISTORY_PREAMBLE } from './texts.ts'
 
@@ -23,7 +23,7 @@ const msg = (author: GroupMessage['author'], text: string, extra: Partial<GroupM
 })
 
 function setup(
-  group: Partial<GroupChatOptions> = {},
+  overrides: Partial<GroupOptions> = {},
   script: ScriptedStep[] = Array.from({ length: 12 }, (_, i) => ({ text: `answer ${i + 1}` })),
   extra: {
     storage?: NonNullable<HarnessAgentConfig['storage']>
@@ -31,13 +31,13 @@ function setup(
     warnings?: string[]
   } = {},
 ) {
-  const plugin = groupChat({ botId: 'bot', botName: 'Harness', ...group })
+  const plugin = group({ botId: 'bot', botName: 'Harness', ...overrides })
   const model = scriptedModel(script)
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
     plugins: [plugin],
-    storage: extra.storage ?? { messages: memoryMessages(), state: memoryState() },
+    storage: extra.storage ?? { messages: inMemoryMessages(), state: inMemoryState() },
     logger: {
       debug() {},
       info() {},
@@ -63,7 +63,7 @@ const promptText = (model: ReturnType<typeof scriptedModel>, index: number): str
 describe('decision table', () => {
   const cases: Array<{
     name: string
-    group?: Partial<GroupChatOptions>
+    group?: Partial<GroupOptions>
     message: GroupMessage
     expected: 'respond' | 'not-mentioned' | 'bot' | 'ignored'
   }> = [
@@ -309,7 +309,7 @@ describe('gated-out messages and history', () => {
 
 describe('bot-to-bot anti-loop', () => {
   test('stops a bot within the window, across two instances sharing storage', async () => {
-    const storage = { messages: memoryMessages(), state: memoryState() }
+    const storage = { messages: inMemoryMessages(), state: inMemoryState() }
     const a = setup({ allowBots: true, maxBotTurns: { count: 2, windowMs: 60_000 } }, undefined, {
       storage,
     })

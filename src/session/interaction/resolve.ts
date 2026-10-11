@@ -17,12 +17,14 @@ import type {
   SendOptions,
 } from '../../agent/session-types.ts'
 import type { ToolOutputConfig } from '../../agent/types.ts'
-import { HarnessError } from '../../errors.ts'
+import { HarnessError, isHarnessError, lockFailure } from '../../errors.ts'
+import { hookFailed, hookTimeoutOf } from '../../internal/hook-run.ts'
+import { unref } from '../../internal/util.ts'
 import { WAIT_TIMED_OUT } from '../../messages/texts.ts'
 import type { PendingExternal, PendingState, WaitResult } from '../../messages/types.ts'
 import { externalOf, type WaitStart } from '../../registry/external.ts'
 import type { ToolOutputSink } from '../../registry/output-limits.ts'
-import { finishToolOutput, hookFailed } from '../../registry/wrap.ts'
+import { finishToolOutput } from '../../registry/wrap.ts'
 import type { OpenSession, SessionRuntime } from '../runtime.ts'
 import {
   applyStart,
@@ -103,10 +105,6 @@ function isBusy(error: unknown): boolean {
   return error instanceof HarnessError && error.code === 'EH_SESSION_BUSY'
 }
 
-function unref(timer: unknown): void {
-  ;(timer as { unref?: () => void } | undefined)?.unref?.()
-}
-
 /** Create the wait operations of a session. */
 export function createWaitOps(host: WaitOpsHost): WaitOps {
   const { rt } = host
@@ -160,6 +158,7 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     ) as { input?: unknown } | undefined
     const final = await finishToolOutput(entry.toolName, entry.toolCallId, part?.input, output, {
       hooks: open.hooks,
+      hookTimeoutMs: hookTimeoutOf(rt.agent.config),
       contextOf: rt.contextOf,
       warn: rt.warn,
       status: () => {},
@@ -197,9 +196,10 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
       try {
         release = await lock.acquire(rt.id, { signal: rt.signal })
       } catch (error) {
-        throw new HarnessError('EH_SESSION_BUSY', 'The session is locked by another instance.', {
-          cause: error,
-        })
+        if (!isHarnessError(error, 'EH_SESSION_BUSY')) {
+          rt.log.warn('eharness: acquiring the session lock failed', { error })
+        }
+        throw lockFailure(rt.id, error)
       }
     }
     try {
@@ -370,7 +370,15 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
   async function underLock<T>(fn: () => Promise<T>): Promise<T> {
     const lock = rt.options.lock
     if (lock === undefined || rt.state.canCas) return fn()
-    const release = await lock.acquire(rt.id, { signal: rt.signal })
+    let release: () => Promise<void>
+    try {
+      release = await lock.acquire(rt.id, { signal: rt.signal })
+    } catch (error) {
+      if (!isHarnessError(error, 'EH_SESSION_BUSY')) {
+        rt.log.warn('eharness: acquiring the session lock failed', { error })
+      }
+      throw lockFailure(rt.id, error)
+    }
     try {
       return await fn()
     } finally {

@@ -1,5 +1,5 @@
 /**
- * The `askUser()` plugin (spec 21): `ask_user_question`, a multiple-choice question tool.
+ * The `ask()` plugin (spec 21): `ask_user_question`, a multiple-choice question tool.
  *
  * Built only with the public core API (ADR-0008). Interactive profile: a client tool (no
  * `execute`), the turn stops `tool-pending` and the app answers with `respond({ toolOutputs })`.
@@ -12,7 +12,9 @@ import { tool } from 'ai'
 import { z } from 'zod/v4'
 import {
   definePlugin,
+  errorText,
   type HarnessContext,
+  HarnessError,
   type HarnessPlugin,
   type PendingState,
 } from '../index.ts'
@@ -20,7 +22,7 @@ import {
 /** Default tool name. */
 export const ASK_TOOL = 'ask_user_question'
 
-/** Model-facing description of the tool (changing it is a minor change). */
+/** Model-facing description of the tool (internal wording: may change in any release). */
 export const ASK_DESCRIPTION: string =
   'Ask the user one to four multiple-choice questions to gather requirements, learn their ' +
   'preferences or resolve an ambiguity that changes the result. Each question has 2 to 4 ' +
@@ -55,8 +57,8 @@ export interface Answer {
 /** The user's answers (one per question, same order) or `null` when the questions were dismissed. */
 export type QuestionResult = { answers: Answer[] } | null
 
-/** Options of {@link askUser}. */
-export interface AskUserOptions {
+/** Options of {@link ask}. */
+export interface AskOptions {
   /** Default `'ask_user_question'`. */
   toolName?: string
   /** Default 4 (the schema allows 1 to `maxQuestions`, at most 4). */
@@ -186,8 +188,33 @@ export function answerOutput(
   return { toolCallId: call.toolCallId, output: note ? `${text}\n\n${note}` : text }
 }
 
+/** Throw `EH_CONFIG_INVALID` unless `value` is undefined or a finite number in range. */
+function checkNumber(
+  name: string,
+  value: number | undefined,
+  min: number,
+  integer: boolean,
+  max?: number,
+): void {
+  if (value === undefined) return
+  const ok =
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    (!integer || Number.isInteger(value)) &&
+    value >= min &&
+    (max === undefined || value <= max)
+  if (!ok) {
+    throw new HarnessError(
+      'EH_CONFIG_INVALID',
+      `ask: \`${name}\` must be ${integer ? 'an integer' : 'a number'} ≥ ${min}${max === undefined ? '' : ` and ≤ ${max}`}.`,
+      { details: { plugin: 'ask', option: name } },
+    )
+  }
+}
+
 /** The ask plugin. @see docs/specs/21-ask-plugin.md */
-export function askUser(options: AskUserOptions = {}): HarnessPlugin<'ask'> {
+export function ask(options: AskOptions = {}): HarnessPlugin<'ask'> {
+  checkNumber('maxQuestions', options.maxQuestions, 1, true, 4)
   const toolName = options.toolName ?? ASK_TOOL
   const max = clampMax(options.maxQuestions)
   const whenNoHuman = options.whenNoHuman ?? 'dismiss'
@@ -213,7 +240,7 @@ export function askUser(options: AskUserOptions = {}): HarnessPlugin<'ask'> {
               try {
                 return formatAnswers(questions, await whenNoHuman(questions))
               } catch (error) {
-                return `ERROR: ${error instanceof Error ? error.message : String(error)}`
+                return `ERROR: ${errorText(error)}`
               }
             },
           }),

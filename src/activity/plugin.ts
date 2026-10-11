@@ -7,6 +7,7 @@
  */
 import {
   definePlugin,
+  errorText,
   type HarnessContext,
   type HarnessPlugin,
   type HarnessUIMessage,
@@ -103,7 +104,7 @@ const num = (n: number | undefined): number => (typeof n === 'number' ? n : 0)
  *
  * @example
  * ```ts
- * const store = memoryActivityStore()
+ * const store = inMemoryActivityStore()
  * defineHarnessAgent({ model, plugins: [activity({ store })] })
  * ```
  */
@@ -130,9 +131,7 @@ export function activity(options: ActivityPluginOptions): HarnessPlugin<'activit
     try {
       await store.append(input)
     } catch (error) {
-      ctx.log.warn(
-        `activity: appending ${type} failed: ${error instanceof Error ? error.message : String(error)}`,
-      )
+      ctx.log.warn(`activity: appending ${type} failed: ${errorText(error)}`)
     }
   }
 
@@ -187,7 +186,7 @@ export function activity(options: ActivityPluginOptions): HarnessPlugin<'activit
               ? {}
               : {
                   error: {
-                    ...(e.error.code === undefined ? {} : { code: e.error.code }),
+                    code: e.error.code,
                     message: e.error.message,
                   },
                 }),

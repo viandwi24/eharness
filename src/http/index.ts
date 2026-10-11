@@ -5,6 +5,9 @@
  *
  * Imports core only through `src/index.ts` and `eharness/activity` (ADR-0008, ADR-0059).
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/26-http.md
  */
 
@@ -14,16 +17,7 @@ export {
   type HttpDeny,
   openAccess,
 } from './authorize.ts'
-export { httpError, statusOfCode } from './errors.ts'
 export { createHarnessHttp } from './router.ts'
-export {
-  type ChatKind,
-  classifyChatBody,
-  type SanitizeCaps,
-  type SanitizeProblem,
-  type SanitizeResult,
-  sanitizeChatBody,
-} from './sanitize.ts'
 export type {
   AttentionTarget,
   HarnessHttp,

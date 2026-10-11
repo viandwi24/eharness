@@ -1,23 +1,23 @@
 /** The `filesystem({ checkpoints })` option with scripted turns. */
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent, definePlugin } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import {
   type CheckpointStore,
   checkpointsSince,
-  memoryCheckpointStore,
+  inMemoryCheckpointStore,
   rewindFiles,
 } from './checkpoints.ts'
-import { memoryFs } from './memory.ts'
+import { inMemoryFs } from './memory.ts'
 import { filesystem } from './plugin.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 describe('filesystem({ checkpoints })', () => {
   test('records the content before the first change of each turn under the user message id; rewind restores', async () => {
-    const fs = memoryFs({ '/a.txt': 'a0\n', '/b.txt': 'b0\n', '/c.txt': 'c0\n' })
-    const store = memoryCheckpointStore()
+    const fs = inMemoryFs({ seed: { '/a.txt': 'a0\n', '/b.txt': 'b0\n', '/c.txt': 'c0\n' } })
+    const store = inMemoryCheckpointStore()
     const agent = defineHarnessAgent({
       model: scriptedModel([
         // turn 1: read + edit a, overwrite b, create d, edit a again
@@ -48,7 +48,7 @@ describe('filesystem({ checkpoints })', () => {
         { text: 'two' },
       ]),
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: silent,
       plugins: [filesystem({ fs, checkpoints: store })],
     })
@@ -76,8 +76,8 @@ describe('filesystem({ checkpoints })', () => {
   })
 
   test('writers through the fs service are recorded; tool outputs are not; no option, no records', async () => {
-    const fs = memoryFs({ '/note.txt': 'n0' })
-    const store = memoryCheckpointStore()
+    const fs = inMemoryFs({ seed: { '/note.txt': 'n0' } })
+    const store = inMemoryCheckpointStore()
     const other = definePlugin({
       name: 'writer',
       requires: ['fs'],
@@ -93,7 +93,7 @@ describe('filesystem({ checkpoints })', () => {
     const agent = defineHarnessAgent({
       model: scriptedModel([{ text: 'hi' }]),
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: silent,
       plugins: [filesystem({ fs, checkpoints: store }), other],
     })
@@ -108,8 +108,8 @@ describe('filesystem({ checkpoints })', () => {
   test('invalid checkpoints option is a config error', () => {
     expect(() =>
       filesystem({
-        fs: memoryFs(),
-        checkpoints: {} as unknown as ReturnType<typeof memoryCheckpointStore>,
+        fs: inMemoryFs(),
+        checkpoints: {} as unknown as ReturnType<typeof inMemoryCheckpointStore>,
       }),
     ).toThrow('checkpoints')
   })
@@ -117,7 +117,7 @@ describe('filesystem({ checkpoints })', () => {
 
 describe('checkpoints and session.fork', () => {
   function forkSetup(store: CheckpointStore, extra: unknown[] = []) {
-    const fs = memoryFs({ '/a.txt': 'a0', '/b.txt': 'b0' })
+    const fs = inMemoryFs({ seed: { '/a.txt': 'a0', '/b.txt': 'b0' } })
     let turn = 0
     const writer = definePlugin({
       name: 'writer',
@@ -135,7 +135,7 @@ describe('checkpoints and session.fork', () => {
     const agent = defineHarnessAgent({
       model: scriptedModel([{ text: 'one' }, { text: 'two' }]),
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: silent,
       onWarning: (w) => warnings.push(w.code),
       plugins: [filesystem({ fs, checkpoints: store }), writer, ...extra] as never,
@@ -144,7 +144,7 @@ describe('checkpoints and session.fork', () => {
   }
 
   test('a fork copies the checkpoints of the kept turns only', async () => {
-    const store = memoryCheckpointStore()
+    const store = inMemoryCheckpointStore()
     const { agent } = forkSetup(store)
     const session = agent.session('src')
     const first = await session.send('one').result
@@ -165,7 +165,7 @@ describe('checkpoints and session.fork', () => {
   })
 
   test("a store's own copy() is used; a failing copy warns and the fork still succeeds", async () => {
-    const inner = memoryCheckpointStore()
+    const inner = inMemoryCheckpointStore()
     const copies: Array<[string, string, readonly string[] | undefined]> = []
     const store: CheckpointStore = {
       ...inner,
@@ -192,8 +192,8 @@ describe('checkpoints and session.fork', () => {
 
 describe('checkpoints of child sessions in a rewind', () => {
   test('checkpointsSince and rewindFiles take sessionIds; the earliest snapshot wins across sessions', async () => {
-    const fs = memoryFs({ '/a.txt': 'now-a', '/b.txt': 'now-b' })
-    const store = memoryCheckpointStore()
+    const fs = inMemoryFs({ seed: { '/a.txt': 'now-a', '/b.txt': 'now-b' } })
+    const store = inMemoryCheckpointStore()
     const k = (n: number) => `0000000${n}`
     // parent turn 1 changed a (before: a0); the child (later) changed a (before: a1) and b (before: b0)
     await store.save({ sessionId: 'p', turnKey: k(1), path: '/a.txt' }, { content: 'a0' })
@@ -228,8 +228,8 @@ describe('checkpoints of child sessions in a rewind', () => {
   })
 
   test('without sessionIds the child is untouched', async () => {
-    const fs = memoryFs({ '/b.txt': 'now-b' })
-    const store = memoryCheckpointStore()
+    const fs = inMemoryFs({ seed: { '/b.txt': 'now-b' } })
+    const store = inMemoryCheckpointStore()
     await store.save({ sessionId: 'c', turnKey: '00000002', path: '/b.txt' }, { content: 'b0' })
     const result = await rewindFiles({ fs, store, sessionId: 'p', fromTurnKey: '00000001' })
     expect(result.restored).toEqual([])

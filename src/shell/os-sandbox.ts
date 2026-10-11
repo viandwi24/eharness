@@ -144,6 +144,8 @@ export function wrapCommand(command: string, opts: WrapOptions): string[] {
       '/tmp', // before the binds: the root may live under /tmp
     ]
     for (const d of dirs) argv.push('--bind', d, d)
+    // Own PID and IPC namespaces and a new session (no TIOCSTI / signals to the host's processes).
+    argv.push('--unshare-pid', '--unshare-ipc', '--new-session')
     if (!opts.network) argv.push('--unshare-net')
     argv.push('--die-with-parent', '--chdir', opts.root, '--', ...shell)
     return argv

@@ -1,17 +1,21 @@
 import { describe, expect, test } from 'bun:test'
-import { APICallError, RetryError, StreamProviderError } from 'ai'
+import { APICallError, LoadAPIKeyError, RetryError, StreamProviderError } from 'ai'
 import { HarnessError, isHarnessError } from '../errors.ts'
 import { uuidv7 } from '../messages/ids.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { createCoreMessageRegistry } from '../messages/registry.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
-import { describeError, UNEXPECTED_ERROR_TEXT } from '../stream/describe-error.ts'
+import {
+  describeError,
+  describeErrorWithCode,
+  UNEXPECTED_ERROR_TEXT,
+} from '../stream/describe-error.ts'
 import { createTurnBuffer } from '../stream/run.ts'
 import { normalizeInput } from './input.ts'
-import { collect, spyMessages } from './int-kit.ts'
 import { loadContext, PAGE_SIZE } from './load-context.ts'
 import { defaultMemoryState } from './memory-storage.ts'
 import { createStateStore } from './state.ts'
+import { collect, spyMessages } from './test-kit.ts'
 
 describe('describeError (spec 10 §3)', () => {
   const api = (statusCode: number) =>
@@ -27,7 +31,7 @@ describe('describeError (spec 10 §3)', () => {
     expect(describeError(api(429))).toBe('Rate limited: status 429')
     expect(describeError(api(503))).toBe('Provider unavailable: status 503')
     expect(describeError(new Error('wrapped', { cause: api(401) }))).toBe(
-      'Provider rejected the request: status 401',
+      'Provider rejected the request: status 401. Check the provider API key and its access to the model.',
     )
     const retry = new RetryError({
       message: 'retries',
@@ -91,6 +95,49 @@ describe('describeError (spec 10 §3)', () => {
     expect(describeError(long).length).toBeLessThanOrEqual(
       'Provider rejected the request: '.length + 300,
     )
+  })
+
+  test('codes: auth failures are EH_PROVIDER_AUTH, other provider failures EH_PROVIDER (P2-2)', () => {
+    expect(describeErrorWithCode(api(401)).code).toBe('EH_PROVIDER_AUTH')
+    expect(describeErrorWithCode(api(403)).code).toBe('EH_PROVIDER_AUTH')
+    expect(describeErrorWithCode(api(429)).code).toBe('EH_PROVIDER')
+    expect(describeErrorWithCode(api(503)).code).toBe('EH_PROVIDER')
+    expect(describeErrorWithCode(api(400)).code).toBe('EH_PROVIDER')
+    expect(describeErrorWithCode(new Error('boom')).code).toBe('EH_RUN_FAILED')
+    expect(describeErrorWithCode(new HarnessError('EH_STORAGE', 'x')).code).toBe('EH_STORAGE')
+  })
+
+  test('an AI Gateway auth error names AI_GATEWAY_API_KEY and keeps the redaction rules', () => {
+    // what `GatewayAuthenticationError` of @ai-sdk/gateway looks like (it is not exported by `ai`)
+    const gateway = Object.assign(
+      new Error(
+        'AI Gateway authentication failed: key sk-live-abcdefghijklmnop1234 at https://x.test/?k=1',
+      ),
+      {
+        name: 'GatewayAuthenticationError',
+        statusCode: 401,
+        [Symbol.for('vercel.ai.gateway.error')]: true,
+        [Symbol.for('vercel.ai.gateway.error.GatewayAuthenticationError')]: true,
+      },
+    )
+    const described = describeErrorWithCode(new Error('call failed', { cause: gateway }))
+    expect(described.code).toBe('EH_PROVIDER_AUTH')
+    expect(described.message).toContain('AI_GATEWAY_API_KEY')
+    expect(described.message).not.toContain('sk-live')
+    expect(described.message).not.toContain('x.test')
+    // a name without the marker is just an error with a status: generic text
+    const lookalike = Object.assign(new Error('nope'), {
+      name: 'GatewayAuthenticationError',
+      statusCode: 401,
+    })
+    expect(describeErrorWithCode(lookalike).message).not.toContain('AI_GATEWAY_API_KEY')
+  })
+
+  test('a missing provider API key (LoadAPIKeyError) is EH_PROVIDER_AUTH with the provider text', () => {
+    const missing = new LoadAPIKeyError({ message: 'API key is missing. Set OPENAI_API_KEY.' })
+    const described = describeErrorWithCode(missing)
+    expect(described.code).toBe('EH_PROVIDER_AUTH')
+    expect(described.message).toContain('OPENAI_API_KEY')
   })
 
   test('HarnessErrors keep their message; others fall back and are logged', () => {

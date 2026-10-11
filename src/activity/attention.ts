@@ -4,6 +4,12 @@
  * instance. Reads go through `SessionPeek` (no hooks, no resume); answers open the owning session
  * and use `respond()` / `resolveWait()`.
  *
+ * Why it lives in `activity`: "what waits for a person" is the actionable half of the activity
+ * feed (spec 25), `eharness/http` and `eharness/client` both build on it, and the module is public
+ * API of `eharness/activity`, so moving it (to `http`, which would pull the HTTP layer into
+ * non-HTTP servers) would break that import path for no gain. It is the one file of this subpath
+ * that talks to sessions; the rest only reads and writes the activity store.
+ *
  * @see docs/specs/25-activity.md#5-the-attention-queue
  */
 import {
@@ -21,6 +27,7 @@ import {
   type ToolRisk,
   type TurnResult,
 } from '../index.ts'
+import { sleep } from './sse.ts'
 import type { ActivityStore } from './types.ts'
 
 /** What kind of answer an item needs. */
@@ -309,8 +316,6 @@ export interface AnswerAttentionResult {
   done?: Promise<TurnResult<unknown> | undefined>
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-
 type Located = { kind: AttentionKind; answered: boolean }
 
 function locate(pending: PendingState | null, id: string): Located | undefined {
@@ -355,13 +360,9 @@ async function inHistory(peek: SessionPeek, id: string): Promise<boolean> {
 }
 
 function rejected(error: NonNullable<TurnResult['error']>): HarnessError {
-  return new HarnessError(
-    (error.code as HarnessErrorCode | undefined) ?? 'EH_INVALID_INPUT',
-    error.message,
-    {
-      ...(error.details === undefined ? {} : { details: error.details }),
-    },
-  )
+  return new HarnessError(error.code as HarnessErrorCode, error.message, {
+    ...(error.details === undefined ? {} : { details: error.details }),
+  })
 }
 
 /**
@@ -483,7 +484,7 @@ export async function answerAttention(
           : {}),
       }
       const run = session.respond(response, sendOptions)
-      result = run.result.catch(() => undefined)
+      result = run.result
     }
   } catch (error) {
     // busy because the same item is being answered right now (a second tab, another instance):

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { MockLanguageModelV4 } from 'ai/test'
+import { defaultCountTokens } from '../models/tokens.ts'
 import { summarize } from './summarize.ts'
-import { defaultCountTokens } from './tokens.ts'
 
 function model(finishReason: 'stop' | 'length', text = 'SUMMARY') {
   return new MockLanguageModelV4({

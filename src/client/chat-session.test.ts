@@ -27,6 +27,7 @@ function world() {
     log: [] as string[],
     chat: (_body: Record<string, unknown>): Response => new Response(null, { status: 500 }),
     resume: (): Response => new Response(null, { status: 204 }),
+    interrupt: (): Response => json({ target: 'local' }),
     pageLimit: 50,
   }
   const client = createHarnessClient({
@@ -44,7 +45,7 @@ function world() {
         const hasOlder = first !== undefined && pool.length > messages.length
         return json({ messages, ...(hasOlder ? { nextBefore: first.id } : {}) })
       }
-      if (url.pathname.endsWith('/interrupt')) return json({ target: 'local' })
+      if (url.pathname.endsWith('/interrupt')) return w.interrupt()
       if (url.pathname.endsWith('/chat/stream')) return w.resume()
       if (url.pathname.endsWith('/chat')) {
         return w.chat(JSON.parse(String(init?.body)) as Record<string, unknown>)
@@ -326,6 +327,37 @@ describe('chat session: stop, stalled, paging, interrupted', () => {
     await t.session.stop()
     expect(t.w.log).toContain('POST /api/sessions/s1/interrupt')
     expect(t.chat.stopped).toBe(1)
+  })
+
+  test('a failing interrupt is retried, reported, and keeps `stopping` until the server confirms (K-11)', async () => {
+    const t = setup()
+    t.w.running = true
+    t.w.interrupt = () => {
+      throw new TypeError('Failed to fetch')
+    }
+    await t.session.stop()
+    const attempts = () => t.w.log.filter((l) => l.endsWith('/interrupt')).length
+    expect(attempts()).toBe(3)
+    expect(t.chat.stopped).toBe(1) // reading stops regardless
+    expect(t.notes.map((n) => n[0])).toEqual(['error'])
+    expect(t.session.get()).toMatchObject({ stopping: true, busy: true })
+    // the server is back and still runs the turn: the next check asks again, and now it works
+    t.w.interrupt = () => json({ target: 'local' })
+    await t.session.checkStalled()
+    expect(attempts()).toBe(4)
+    expect(t.session.get()).toMatchObject({ stopping: false, busy: false })
+  })
+
+  test('a stop that failed ends when the server reports the turn is over', async () => {
+    const t = setup()
+    t.w.interrupt = () => json({ error: { code: 'EH_HTTP_FORBIDDEN', message: 'no' } }, 403)
+    await t.session.stop()
+    // 403: retrying cannot help
+    expect(t.w.log.filter((l) => l.endsWith('/interrupt'))).toHaveLength(1)
+    expect(t.session.get().stopping).toBe(true)
+    t.w.running = false
+    await t.session.checkStalled()
+    expect(t.session.get()).toMatchObject({ stopping: false, busy: false })
   })
 
   test('a silent connection is dropped after two idle checks', async () => {

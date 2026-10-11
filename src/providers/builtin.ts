@@ -6,6 +6,7 @@
  */
 import type { LanguageModel } from 'ai'
 import { z } from 'zod/v4'
+import { HarnessError } from '../index.ts'
 import { parseOpenRouterModels } from './catalog-loader.ts'
 import { ehMeta } from './form.ts'
 import type {
@@ -75,6 +76,9 @@ const headersField = z
     ...ehMeta({ group: 'advanced', widget: 'keyvalue', secretValues: true }),
   })
 
+/** Suggested model of the gateway-style providers (OpenRouter, Vercel AI Gateway): one constant, one generation. */
+const DEFAULT_GATEWAY_MODEL = 'anthropic/claude-sonnet-5.5'
+
 const trimSlash = (url: string): string => url.replace(/\/+$/, '')
 
 async function getJson(
@@ -87,7 +91,10 @@ async function getJson(
     ...(ctx.signal ? { signal: ctx.signal } : {}),
   })
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status} ${response.statusText} from ${new URL(url).origin}`)
+    throw new HarnessError(
+      'EH_PROVIDER',
+      `HTTP ${response.status} ${response.statusText} from ${new URL(url).origin}`,
+    )
   }
   return response.json()
 }
@@ -152,7 +159,7 @@ export function openRouterProvider(options: OpenRouterProviderOptions): Provider
     doc: 'https://openrouter.ai/docs',
     settings: openRouterSettings,
     envMap: { apiKey: 'OPENROUTER_API_KEY', baseURL: 'OPENROUTER_BASE_URL' },
-    defaultModel: 'anthropic/claude-sonnet-5.5',
+    defaultModel: DEFAULT_GATEWAY_MODEL,
     catalog: { kind: 'openrouter' },
     create: (s) =>
       instanceOf(
@@ -246,7 +253,7 @@ export function gatewayProvider(options: GatewayProviderOptions = {}): ProviderD
     // `@ai-sdk/gateway` reads only AI_GATEWAY_API_KEY from the environment (checked in 4.0.110: no
     // base-URL variable exists), so `baseURL` has no env mapping: set it on the profile.
     envMap: { apiKey: 'AI_GATEWAY_API_KEY' },
-    defaultModel: 'anthropic/claude-sonnet-4.6',
+    defaultModel: DEFAULT_GATEWAY_MODEL,
     catalog: { modelsDevKey: GATEWAY_MODELS_DEV_PROVIDERS },
     create: (s) => {
       const provider = make(s)

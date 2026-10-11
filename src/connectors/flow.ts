@@ -7,14 +7,14 @@
  *
  * @see docs/specs/24-connectors.md#2-setup-flows
  */
-import { uuidv7 } from '../index.ts'
+import { isRecord, uuidv7 } from '../index.ts'
 import {
   formSpec,
   mergeSecretPatch,
   redactSettings,
   scrub,
   secretValuesOf,
-} from '../providers/index.ts'
+} from '../providers/form.ts'
 import { connectorSchema } from './definition.ts'
 import {
   buildAuthorizationUrl,
@@ -49,7 +49,7 @@ import type {
   ResolvedFlowDeps,
   StepOutcome,
 } from './types.ts'
-import { base64url, connectorError, isRecord, randomBytes, sha256Hex } from './util.ts'
+import { base64url, connectorError, randomBytes, sha256Hex } from './util.ts'
 
 /** Default lifetime of a flow. */
 export const DEFAULT_FLOW_TTL_MS: number = 15 * 60_000
@@ -63,6 +63,7 @@ export function resolveFlowDeps(deps: FlowDeps): ResolvedFlowDeps {
     definition: (id) => (typeof list === 'function' ? list(id) : list.find((d) => d.id === id)),
     vault: deps.vault,
     fetch: deps.fetch ?? globalThis.fetch,
+    oauth: deps.oauth ?? {},
     now: deps.now ?? Date.now,
     newId: deps.newId ?? uuidv7,
     redirectUri: (definitionId) =>
@@ -90,7 +91,8 @@ function callContext(ctx: FlowStepContext): ConnectorCallContext {
   }
 }
 
-const errorText = (error: unknown): string =>
+/** The text of a failure shown to a person: a message or string, never `String(object)`. */
+const failureText = (error: unknown): string =>
   error instanceof Error ? error.message : typeof error === 'string' ? error : 'Unexpected error.'
 
 // -- default steps ------------------------------------------------------------------------
@@ -165,6 +167,7 @@ async function oauthClient(
       clientName: ctx.definition.name,
       redirectUris: [register.redirectUri],
       scopes: register.scopes,
+      ...ctx.deps.oauth,
       fetch: ctx.deps.fetch,
       now: ctx.now,
     })
@@ -197,7 +200,11 @@ function authorizeStep(): FlowStepDef {
         if (typeof url !== 'string') {
           throw connectorError('settings-invalid', 'The server URL is missing.')
         }
-        const found = await discoverMcpAuthorization(url, { fetch: ctx.deps.fetch, now: ctx.now })
+        const found = await discoverMcpAuthorization(url, {
+          ...ctx.deps.oauth,
+          fetch: ctx.deps.fetch,
+          now: ctx.now,
+        })
         endpoints = {
           authorizationUrl: found.server.authorization_endpoint,
           tokenUrl: found.server.token_endpoint,
@@ -301,6 +308,7 @@ function authorizeStep(): FlowStepDef {
           redirectUri: oauth.redirectUri,
           codeVerifier: oauth.verifier,
           ...(oauth.endpoints.resource === undefined ? {} : { resource: oauth.endpoints.resource }),
+          ...ctx.deps.oauth,
           fetch: ctx.deps.fetch,
           now: ctx.now,
         })
@@ -334,6 +342,7 @@ function deviceStep(): FlowStepDef {
         deviceAuthorizationUrl: auth.deviceAuthorizationUrl,
         clientId: client.clientId,
         scopes: auth.scopes,
+        ...ctx.deps.oauth,
         fetch: ctx.deps.fetch,
         now: ctx.now,
       })
@@ -386,6 +395,7 @@ function deviceStep(): FlowStepDef {
         ...(d.client.clientSecret === undefined ? {} : { clientSecret: d.client.clientSecret }),
         deviceCode: d.deviceCode,
         intervalMs: d.intervalMs,
+        ...ctx.deps.oauth,
         fetch: ctx.deps.fetch,
         now: ctx.now,
       })
@@ -561,7 +571,7 @@ function secretsOf(m: Machine): string[] {
   return out
 }
 
-const safeMessage = (m: Machine, error: unknown): string => scrub(errorText(error), secretsOf(m))
+const safeMessage = (m: Machine, error: unknown): string => scrub(failureText(error), secretsOf(m))
 
 async function viewId(m: Machine, step: string): Promise<string> {
   return (await sha256Hex(`${String(m.scratch.salt)}:${step}:${m.state.rev}`)).slice(0, 24)
@@ -711,6 +721,17 @@ async function openMachine(state: FlowState, deps: ResolvedFlowDeps): Promise<Ma
   }
 }
 
+const principalHash = (principal: string): Promise<string> => sha256Hex(`principal:${principal}`)
+
+/** True when the flow is bound to a principal and `principal` is not it. */
+async function principalMismatch(
+  state: FlowState,
+  principal: string | undefined,
+): Promise<boolean> {
+  if (state.principalHash === undefined) return false
+  return principal === undefined || (await principalHash(principal)) !== state.principalHash
+}
+
 /** Parameters of {@link startFlow}. */
 export interface StartFlowParams {
   definition: AnyConnectorDefinition
@@ -723,6 +744,12 @@ export interface StartFlowParams {
   connection?: ConnectionRecord
   /** Passed through to {@link FlowCompletion.defaultEnabled}. */
   defaultEnabled?: boolean
+  /**
+   * An opaque identifier of the person who starts the flow (a user id, a session id). Only its
+   * hash is stored. `completeOAuth` / `advanceFlow` must then present the same `principal`, so a
+   * callback delivered in another person's browser (login CSRF) is refused. Optional.
+   */
+  principal?: string
 }
 
 /**
@@ -769,6 +796,9 @@ export async function startFlow(params: StartFlowParams, depsInput: FlowDeps): P
     createdAt: now,
     updatedAt: now,
     expiresAt: now + deps.ttlMs,
+    ...(params.principal === undefined
+      ? {}
+      : { principalHash: await principalHash(params.principal) }),
     sealed: '',
   }
   const m: Machine = {
@@ -808,8 +838,12 @@ async function advance(
   data: Record<string, unknown>,
   quotedViewId: string | undefined,
   depsInput: FlowDeps,
+  principal?: string,
 ): Promise<AdvanceResult> {
   const deps = resolveFlowDeps(depsInput)
+  if (await principalMismatch(state, principal)) {
+    return failure(state, 'principal-mismatch', 'The flow belongs to someone else.')
+  }
   if (state.status !== 'active') return failure(state, 'finished', 'The flow is finished.')
   if (deps.now() > state.expiresAt)
     return failure(state, 'expired', 'The flow expired; start again.')
@@ -879,7 +913,7 @@ export function advanceFlow(
   input: FlowInput,
   deps: FlowDeps,
 ): Promise<AdvanceResult> {
-  return advance(state, input.action, input.data ?? {}, input.viewId, deps)
+  return advance(state, input.action, input.data ?? {}, input.viewId, deps, input.principal)
 }
 
 /** The OAuth redirect parameters of the app's callback route. */
@@ -888,12 +922,19 @@ export interface OAuthCallback {
   code?: string
   error?: string
   errorDescription?: string
+  /**
+   * The person completing the flow (same opaque value as `startFlow({ principal })`). Required
+   * when the flow was started with a principal; a missing or different one is refused with
+   * `principal-mismatch` and the flow stays usable.
+   */
+  principal?: string
 }
 
 /** Result of {@link completeOAuth}. */
 export type CompleteOAuthResult =
   | AdvanceResult
   | { ok: false; error: 'unknown-state'; message: string }
+  | { ok: false; error: 'principal-mismatch'; message: string }
 
 /**
  * Deliver the OAuth redirect to the flow waiting for it (found by `state`; a state works once),
@@ -914,6 +955,13 @@ export async function completeOAuth(
       message: 'The authorization request is unknown or expired.',
     }
   }
+  if (await principalMismatch(found, callback.principal)) {
+    return {
+      ok: false,
+      error: 'principal-mismatch',
+      message: 'The authorization request was started by someone else.',
+    }
+  }
   const result = await advance(
     found,
     'callback',
@@ -926,6 +974,7 @@ export async function completeOAuth(
     },
     undefined,
     depsInput,
+    callback.principal,
   )
   if (result.ok) await store.put(result.state)
   return result

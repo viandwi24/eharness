@@ -1,4 +1,4 @@
-import type { SessionLock } from '../index.ts'
+import { isHarnessError, type SessionLock } from '../index.ts'
 import { assertTrue, uniqueSessionId } from './assert.ts'
 import type { ConformanceCase } from './types.ts'
 
@@ -27,7 +27,7 @@ export interface LockConformanceOptions {
   maxAcquireMs?: number
 }
 
-type Outcome = { ok: true; release: () => Promise<void> } | { ok: false }
+type Outcome = { ok: true; release: () => Promise<void> } | { ok: false; error: unknown }
 
 /**
  * Conformance cases for a {@link SessionLock} (spec 05 §8): acquire resolves with a release
@@ -69,7 +69,7 @@ export function lockConformance(
       return { ok: true, release }
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('acquire did not settle')) throw error
-      return { ok: false }
+      return { ok: false, error }
     } finally {
       clearTimeout(timer)
     }
@@ -85,6 +85,11 @@ export function lockConformance(
       await got.release()
       throw new Error(`${what}: the acquire must be rejected`)
     }
+    // contention is EH_SESSION_BUSY; anything else reads as a failing lock service (spec 05 §8)
+    assertTrue(
+      isHarnessError(got.error, 'EH_SESSION_BUSY'),
+      `${what}: a held session rejects with HarnessError('EH_SESSION_BUSY')`,
+    )
   }
 
   return [

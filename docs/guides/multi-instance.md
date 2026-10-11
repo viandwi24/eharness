@@ -34,6 +34,8 @@ the same process.
 ```ts
 import { defineHarnessAgent } from 'eharness'
 
+// yours: `model`, `messages`, `state` adapters, `db`, `listener`; `postgresInbox` is the
+// examples/postgres-inbox.ts adapter, not a package export
 const agent = defineHarnessAgent({
   model,
   storage: { messages, state, inbox: postgresInbox(db, { listener }) },
@@ -65,6 +67,7 @@ exactly once. While approvals are pending, queued items wait (like the in-memory
 `send()` is unchanged. A chat route that wants cross-instance queuing calls `enqueue()` itself:
 
 ```ts
+// yours: `agent` as above
 export async function POST(req: Request) {
   const body = await req.json()
   const session = agent.session(body.id)
@@ -75,8 +78,8 @@ export async function POST(req: Request) {
     const { inboxId } = await session.enqueue(body.messages.at(-1), { mode: 'steer' })
     return Response.json({ inboxId }, { status: 202 })
   }
-  // toHttpResponse(): a pre-commit failure answers 409 / 400 / 503, not a 200 stream
-  return await handleChatRequest(session, body).toHttpResponse()
+  // toResponse(): a pre-commit failure answers 409 / 400 / 503, not a 200 stream
+  return await handleChatRequest(session, body).toResponse()
 }
 ```
 
@@ -89,7 +92,7 @@ and `send(input, { ifBusy: 'collect' })` debounces bursts in-process.
 there. When the turn runs in another instance, it saves the event and enqueues a `wake` item; the
 holder runs a wake turn after its current turn.
 
-`session.abort()` / `requestAbort()` on an instance without the turn: with an inbox, an `abort`
+`session.abort()` on an instance without the turn: with an inbox, an `abort`
 item for the running turn is enqueued (the holder applies it at its next drain — at once with
 `subscribe`, within `pollMs` otherwise, also during a long tool call); without one, an abort
 request is written into the state (`StateAdapter.setIf`, polled every `recovery.abortPollMs`).
@@ -99,7 +102,7 @@ inbox items are never dropped by `abort()`.
 ## Resuming a stream on another instance
 
 A reload that lands on another instance finds no turn buffer there. Give every instance the same
-`StreamLogAdapter` (`storage.streams`; `memoryStreamLog()` in tests, a table or Redis Streams in
+`StreamLogAdapter` (`storage.streams`; `inMemoryStreamLog()` in tests, a table or Redis Streams in
 production, checked with `streamLogConformance`). The instance that runs a turn appends its chunks
 in the background (`streams: { flushMs, batchSize, retentionMs, pollMs }`); failures are
 `W_STREAM_LOG_FAILED` warnings and never fail the turn.
@@ -114,7 +117,7 @@ app.get('/api/chat/:id/stream', (c) =>
 
 `204` means nothing is streaming: the client keeps the stored messages. The cursor is the chunk
 index (`?from=` or `Last-Event-ID`); `useChat` resumes from 0. A disconnected reader never stops
-the turn (use `requestAbort`). Committed messages stay the truth; the log lives
+the turn (use `abort`). Committed messages stay the truth; the log lives
 `retentionMs` after the turn ends. Details: spec 04 §6.2, ADR-0039.
 
 ## Poison items
@@ -125,6 +128,7 @@ because claims are head-of-line, it blocks every later item of its session. `inb
 that (spec 05 §12 rules 11–15, ADR-0026):
 
 ```ts
+// yours: `model`, `messages`, `state`, `inbox` adapters, `alerts` (your paging client)
 const agent = defineHarnessAgent({
   model,
   storage: { messages, state, inbox },
@@ -145,9 +149,11 @@ const agent = defineHarnessAgent({
 - **Choosing `maxAttempts`.** Attempts are counted at claim; deferrals (a turn of another
   instance runs, approvals are pending, a burst is not due, the items wait behind a running unit)
   are released with `uncount` and do not count. That only holds with an adapter that honours the
-  0.5 `release` options — `memoryInbox()`, `examples/postgres-inbox.ts`, or yours once it passes
+  `release` options (`delayMs`, `uncount`, `lastError`) — `inMemoryInbox()`,
+  `examples/postgres-inbox.ts`, or yours once it passes
   `inboxAdapterConformance(…, { requireRetry: true })`. With such an adapter `5` is a good start;
-  with a 0.4 adapter leave `retry` off (it would dead-letter healthy items behind long turns).
+  with an adapter that ignores them leave `retry` off (it would dead-letter healthy items behind
+  long turns).
   A drain that cannot read the session's own state is not an item failure: its items are
   released uncounted, so a storage outage never dead-letters a healthy backlog.
 - **Backoff.** A failed attempt waits `delayMs × 2^(attempts − 1)` (or `delayMs` with
@@ -180,7 +186,7 @@ const agent = defineHarnessAgent({
 - **Side effects are at-least-once.** A retried unit can run the start of a turn again, and a
   crashed turn after its commit point is redelivered and deduped — but a tool that already
   changed the outside world in the lost attempt does not know that. Mark tools whose effects are
-  safe to repeat (`tool({ metadata: { idempotent: true } })`, P21) and give the others an
+  safe to repeat (`tool({ metadata: { idempotent: true } })`) and give the others an
   idempotency key (the `inboxId` in `metadata.eharness` of the user message is a natural one).
 
 ## Routines on the inbox
@@ -191,6 +197,7 @@ inbox already has timers, claims, leases, retry and dead-letter, and a fire is j
 The schedule table and the cron parser (`croner`, `cron-parser`, …) stay in your app.
 
 ```ts
+// yours: `agent`, `db` (your schedule store), `cronNext` (a cron parser)
 // table schedules(id, session_id, cron, prompt, next_at, paused, failures, running_since)
 async function tick(now = Date.now()) {
   for (const row of await db.dueSchedules(now)) {          // next_at <= now AND NOT paused
@@ -218,8 +225,8 @@ setInterval(tick, 15_000)                                   // any number of ins
   `metadata.eharness.inboxKey` and your `metadata.app`. No need to wait for `enqueue()` to return
   and match `inboxId` (spec 05 §12 rule 18).
 - **Overlap `skip`.** A fire is a queued turn, so a slow run would pile fires up. Before enqueueing,
-  skip when the previous fire is still in flight (`running_since` set, cleared by `onRun` of the
-  fire's turn, or the inbox `stats({ sessionId })` showing something ready or claimed). Use `mode: 'collect'` instead when a burst of fires should merge
+  skip when the previous fire is still in flight (`running_since` set, cleared by your `turn.end` hook
+  for the fire's turn, or the inbox `stats({ sessionId })` showing something ready or claimed). Use `mode: 'collect'` instead when a burst of fires should merge
   into one turn.
 - **Missed fires are skipped.** After downtime `next_at` is far in the past; set it to the next
   slot after *now* instead of replaying every missed one (optional catch-up window: fire the
@@ -228,7 +235,7 @@ setInterval(tick, 15_000)                                   // any number of ins
   `enqueue(text, { availableAt: Date.now() + 600_000, id })`. The item survives restarts and is
   claimed by whichever instance holds the session when it is due.
 - **Pause and cost guards.** `paused` is a column the tick checks; count consecutive failed runs
-  (`failures`, from `onRun` / the `inbox-dead` event) and pause after N, and cap fires per day,
+  (`failures`, from your `turn.end` hook / the `inbox-dead` event) and pause after N, and cap fires per day,
   so a broken routine cannot run up a bill. A dead-lettered fire (`inbox.retry`) is reported by
   `onDeadLetter`.
 - Without `storage.inbox` there is no durable timer: `availableAt` in the future is refused, and
@@ -240,6 +247,7 @@ Items wait in the inbox until an instance with the session live claims them. If 
 that knew a session went away, an application sweeper picks them up:
 
 ```ts
+// yours: `inbox` (your InboxAdapter), `agent`
 setInterval(async () => {
   for (const id of (await inbox.pending?.({ limit: 100 })) ?? []) agent.session(id) // drains once on open
 }, 30_000)
@@ -284,7 +292,7 @@ RETURN QUERY UPDATE eh_inbox SET claimed_by = p_owner, claimed_until = v_until,
   RETURNING id::text, item::text, attempts, last_error;
 ```
 
-A 0.4 table is upgraded in place: `ALTER TABLE eh_inbox ADD COLUMN IF NOT EXISTS available_at
+An existing table is upgraded in place: `ALTER TABLE eh_inbox ADD COLUMN IF NOT EXISTS available_at
 timestamptz` (and `delayed_until`, `last_error`, `dead_at`, `dead_reason`; all nullable, so
 existing rows stay ready items), then drop and recreate `eh_inbox_claim` (its result gained a
 column). `migrateInbox` in the example does exactly that.
@@ -292,7 +300,7 @@ column). `migrateInbox` in the example does exactly that.
 `notify` is `SELECT pg_notify('eh_inbox', $sessionId)`; `subscribe` routes the notifications of
 one `LISTEN` connection by payload. Full version: `examples/postgres-inbox.ts`. Prove it with
 `inboxAdapterConformance` (see [Writing a storage adapter](writing-a-storage-adapter.md)).
-`examples/inbox.ts` runs two instances on `memoryInbox()` in one process.
+`examples/inbox.ts` runs two instances on `inMemoryInbox()` in one process.
 
 ## Tuning failover time
 

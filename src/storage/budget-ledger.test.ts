@@ -1,17 +1,17 @@
 import { describe, expect, test } from 'bun:test'
 import { budgetLedgerConformance } from '../testing/budget-ledger.conformance.ts'
-import { memoryBudgetLedger } from './memory.ts'
+import { inMemoryBudgetLedger } from './memory.ts'
 
-describe('memoryBudgetLedger() conformance', () => {
-  for (const c of budgetLedgerConformance((limits) => memoryBudgetLedger({ limits }))) {
+describe('inMemoryBudgetLedger() conformance', () => {
+  for (const c of budgetLedgerConformance((limits) => inMemoryBudgetLedger({ limits }))) {
     test(c.name, c.run)
   }
 })
 
-describe('memoryBudgetLedger()', () => {
+describe('inMemoryBudgetLedger()', () => {
   test('expiry follows the injected clock', async () => {
     let now = 1_000
-    const ledger = memoryBudgetLedger({ limits: { a: 1 }, now: () => now })
+    const ledger = inMemoryBudgetLedger({ limits: { a: 1 }, now: () => now })
     const r = await ledger.reserve({ scopes: ['a'], amountUsd: 1, ttlMs: 100, key: 'k' })
     expect(r.ok).toBe(true)
     expect(
@@ -25,7 +25,7 @@ describe('memoryBudgetLedger()', () => {
   })
 
   test('a scope listed twice is charged once', async () => {
-    const ledger = memoryBudgetLedger()
+    const ledger = inMemoryBudgetLedger()
     await ledger.record({ scopes: ['a', 'a'], amountUsd: 1, key: 'k' })
     expect((await ledger.check(['a'])).scopes).toEqual([
       { scope: 'a', spentUsd: 1, reservedUsd: 0 },

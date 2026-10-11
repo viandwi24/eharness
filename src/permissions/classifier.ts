@@ -1,24 +1,23 @@
 /**
- * `modelClassifier`: an {@link AutoClassifier} backed by one AI SDK `generateText` call with a
- * structured verdict (spec 18 §12). It reads the restricted transcript (user messages and earlier
+ * `modelClassifier`: an {@link AutoClassifier} on the shared judge engine (`createJudge`, role
+ * `decide`, ADR-0060; spec 18 §12). It reads the restricted transcript (user messages and earlier
  * tool calls only), so text inside a tool output cannot talk it into an approval.
  */
-import { generateText, type LanguageModel, NoObjectGeneratedError, Output } from 'ai'
-import { z } from 'zod/v4'
-import { type ModelCallRecord, neutralizeTags, observeModel } from '../index.ts'
+import type { LanguageModel, LanguageModelUsage } from 'ai'
 import {
-  type AutoAction,
-  type AutoClassifier,
-  type AutoClassifierContext,
-  type AutoVerdict,
-  ClassifierUnavailableError,
-} from './types.ts'
+  createJudge,
+  type JudgeParticipant,
+  JudgeUnavailableError,
+  type ModelCallRecord,
+  observeModel,
+} from '../index.ts'
+import { type AutoClassifier, type AutoVerdict, ClassifierUnavailableError } from './types.ts'
 
 /**
  * The default rules of the model classifier. Extend it (`${AUTO_CLASSIFIER_INSTRUCTIONS}\n…`) or
  * replace it through the `instructions` option.
  *
- * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
+ * @experimental Draft: may change in a minor release (docs/engineering/api-stability.md).
  */
 export const AUTO_CLASSIFIER_INSTRUCTIONS = `You are the safety classifier of an autonomous coding agent. Decide whether ONE pending action may run without asking the user. Reply allow or block, with a short reason.
 
@@ -54,8 +53,13 @@ export interface ModelClassifierOptions {
   instructions?: string
   /** What is trusted in this deployment (repositories, hosts, buckets), added to the prompt. */
   environment?: string
-  /** Transcript limits: the last `maxEntries` entries (default 20), `maxChars` in total (default 12 000). */
+  /** Transcript limits: the last `maxEntries` entries (default 20), `maxChars` in total (default 12 000). Bounds the transcript only. */
   maxContext?: { maxEntries?: number; maxChars?: number }
+  /**
+   * Longest action input (canonical JSON) that is classified; a longer one is never judged and
+   * asks a person. Default `DEFAULT_JUDGE_MAX_CALL_CHARS` (8 000), the same as `guard()`.
+   */
+  maxCallChars?: number
   /** Timeout of the judge call in ms. Default 20 000. */
   timeoutMs?: number
   /** AI SDK retries of the judge call. Default 1. */
@@ -68,68 +72,18 @@ export interface ModelClassifierOptions {
   maxOutputTokens?: number
   /** Sampling temperature of the judge call. Default 0. */
   temperature?: number
+  /**
+   * Verdict cache (tool + input + rules), off by default: a cached allow would ignore a boundary
+   * the user states later. `{ maxEntries, ttlMs }` turns it on (engine memory, not per session).
+   */
+  cache?: false | { maxEntries?: number; ttlMs?: number }
 }
 
 /** Default `maxOutputTokens` of {@link modelClassifier}. */
 export const DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS = 1024
 
-const verdictSchema = z.object({
-  decision: z.enum(['allow', 'block']).describe('allow the action, or block it'),
-  reason: z.string().describe('one short sentence; for a block, what rule it matches'),
-})
-
-const clip = (text: string, max: number): string =>
-  text.length <= max ? text : `${text.slice(0, max)}… [truncated]`
-
-function render(value: unknown, max: number): string {
-  let text: string
-  try {
-    text = typeof value === 'string' ? value : (JSON.stringify(value) ?? String(value))
-  } catch {
-    text = String(value)
-  }
-  return clip(text, max)
-}
-
-function renderTranscript(
-  entries: AutoClassifierContext['transcript'],
-  maxEntries: number,
-  maxChars: number,
-): string {
-  const lines: string[] = []
-  let used = 0
-  for (const entry of entries.slice(-maxEntries).reverse()) {
-    const line =
-      entry.role === 'user'
-        ? `user: ${clip(entry.text, 2000)}`
-        : `agent called ${entry.toolName}: ${render(entry.input, 500)}`
-    if (used + line.length > maxChars && lines.length > 0) break
-    used += line.length
-    lines.push(line)
-  }
-  return lines.reverse().join('\n')
-}
-
-function renderAction(action: AutoAction, maxChars: number): string {
-  const lines = [`tool: ${action.toolName} (${action.kind})`]
-  if (action.agent !== undefined) lines.push(`agent: ${action.agent}`)
-  if (action.summary !== undefined) lines.push(`summary: ${clip(action.summary, 2000)}`)
-  lines.push(`input: ${render(action.input, maxChars)}`)
-  return lines.join('\n')
-}
-
-const BLOCK_TAGS = [
-  'environment',
-  'transcript',
-  'action',
-  'untrusted-content',
-  'system-reminder',
-] as const
-
-/** Wrap text in a classifier block; the frame tags inside the text are neutralised. */
-function block(tag: string, text: string): string {
-  return `<${tag}>\n${neutralizeTags(text, BLOCK_TAGS)}\n</${tag}>`
-}
+/** Longest `summary` (the shell command) the classifier reviews; more is never judged (asks). */
+const SUMMARY_MAX_CHARS = 2000
 
 /**
  * Build an {@link AutoClassifier} from a model. A call that fails, times out or returns an
@@ -140,48 +94,110 @@ function block(tag: string, text: string): string {
  * createPermissionEngine({ roots, classifier: modelClassifier({ model: cheapModel }) })
  * ```
  *
- * @experimental Draft in 0.7: may change in a minor release (docs/engineering/api-stability.md).
+ * @experimental Draft: may change in a minor release (docs/engineering/api-stability.md).
  */
 export function modelClassifier(options: ModelClassifierOptions): AutoClassifier {
-  const instructions = options.instructions ?? AUTO_CLASSIFIER_INSTRUCTIONS
-  const maxEntries = options.maxContext?.maxEntries ?? 20
-  const maxChars = options.maxContext?.maxChars ?? 12_000
-  const timeoutMs = options.timeoutMs ?? 20_000
+  const onModelCall = options.onModelCall
+  const judge = createJudge({
+    name: 'modelClassifier',
+    role: 'decide',
+    model: options.model,
+    instructions: options.instructions ?? AUTO_CLASSIFIER_INSTRUCTIONS,
+    ...(options.environment === undefined ? {} : { environment: options.environment }),
+    transcript: {
+      ...(options.maxContext?.maxEntries === undefined
+        ? {}
+        : { maxMessages: options.maxContext.maxEntries }),
+      ...(options.maxContext?.maxChars === undefined
+        ? {}
+        : { maxChars: options.maxContext.maxChars }),
+    },
+    // an action input longer than this is never classified (the engine asks); `maxContext.maxChars`
+    // bounds only the transcript
+    ...(options.maxCallChars === undefined ? {} : { maxCallChars: options.maxCallChars }),
+    maxSummaryChars: SUMMARY_MAX_CHARS,
+    timeoutMs: options.timeoutMs ?? 20_000,
+    ...(options.maxRetries === undefined ? {} : { maxRetries: options.maxRetries }),
+    maxOutputTokens: options.maxOutputTokens ?? DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS,
+    temperature: options.temperature ?? 0,
+    ...(options.cache === undefined ? {} : { cache: options.cache }),
+  })
   return async (action, ctx): Promise<AutoVerdict> => {
-    const sections = [
-      options.environment === undefined || options.environment.trim() === ''
+    // an approval guard of this session on the same model and limits rides along: one model call
+    // answers both questions and hands the guard its half (spec 18 §12, ADR-0060)
+    const coordinator = ctx.coordinator
+    const ref =
+      ctx.toolCallId === undefined
         ? undefined
-        : block('environment', options.environment.trim()),
-      block('transcript', renderTranscript(ctx.transcript, maxEntries, maxChars)),
-      block('action', renderAction(action, 4000)),
-    ].filter((section): section is string => section !== undefined)
-    const signals = [AbortSignal.timeout(timeoutMs)]
-    if (ctx.abortSignal !== undefined) signals.push(ctx.abortSignal)
-    let output: unknown
-    try {
-      const result = await generateText({
-        model:
-          options.onModelCall === undefined
-            ? options.model
-            : observeModel(options.model, options.onModelCall),
-        instructions,
-        prompt: sections.join('\n\n'),
-        output: Output.object({ schema: verdictSchema }),
-        abortSignal: AbortSignal.any(signals),
-        maxRetries: options.maxRetries ?? 1,
-        maxOutputTokens: options.maxOutputTokens ?? DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS,
-        temperature: options.temperature ?? 0,
-      })
-      output = result.output
-    } catch (error) {
-      // an unreadable verdict is the judge's answer (a block); anything else means it did not run
-      if (NoObjectGeneratedError.isInstance(error)) throw new Error('unreadable verdict')
-      throw new ClassifierUnavailableError(error instanceof Error ? error.message : String(error), {
-        cause: error,
-      })
+        : { toolCallId: ctx.toolCallId, toolName: action.toolName, input: action.input }
+    let partner: JudgeParticipant | undefined
+    if (coordinator !== undefined && ref !== undefined) {
+      const all = coordinator.participants()
+      const only = all.length === 1 ? all[0] : undefined
+      if (
+        only !== undefined &&
+        judge.combinable(only) &&
+        only.applies({
+          toolName: action.toolName,
+          ...(ctx.risk === undefined ? {} : { risk: ctx.risk }),
+        }) &&
+        !(await only.settled(ref))
+      ) {
+        partner = only
+      }
     }
-    const parsed = verdictSchema.safeParse(output)
-    if (!parsed.success) throw new Error('unreadable verdict')
-    return { decision: parsed.data.decision, reason: parsed.data.reason.trim() }
+    const usages: LanguageModelUsage[] = []
+    try {
+      const result = await judge.judge(
+        {
+          toolName: action.toolName,
+          input: action.input,
+          kind: action.kind,
+          ...(action.summary === undefined ? {} : { summary: action.summary }),
+          ...(action.agent === undefined ? {} : { agent: action.agent }),
+        },
+        {
+          transcript: ctx.transcript,
+          ...(partner === undefined
+            ? {}
+            : { alongside: partner, onUsage: (usage: LanguageModelUsage) => usages.push(usage) }),
+          ...(ctx.abortSignal === undefined ? {} : { abortSignal: ctx.abortSignal }),
+          ...(onModelCall === undefined
+            ? {}
+            : { observeModel: (m: LanguageModel) => observeModel(m, onModelCall) }),
+        },
+      )
+      if (result.tighten !== undefined && coordinator !== undefined && ref !== undefined) {
+        await coordinator.put(ref, { ...result.tighten, ...sumUsage(usages) })
+      }
+      if (result.truncated) {
+        return {
+          decision: 'ask',
+          reason: `the action is longer than the ${result.maxCallChars} characters the classifier reviews in full, so it was not judged.`,
+        }
+      }
+      if (result.outcome === 'approve') return { decision: 'allow', reason: result.reason }
+      if (result.outcome === 'ask') return { decision: 'ask', reason: result.reason }
+      return { decision: 'block', reason: result.reason }
+    } catch (error) {
+      // the combined call failed: the guard's half failed with it (it fails closed on its own)
+      if (partner !== undefined && coordinator !== undefined && ref !== undefined) {
+        const message = error instanceof Error ? error.message : String(error)
+        await coordinator.put(ref, { error: message, ...sumUsage(usages) })
+      }
+      // an unreadable verdict is the judge's answer (a block); anything else means it did not run
+      if (error instanceof JudgeUnavailableError) {
+        // plain-error: control flow, caught in this function and turned into a block verdict
+        if (error.kind === 'unreadable') throw new Error('unreadable verdict')
+        throw new ClassifierUnavailableError(error.message, { cause: error.cause ?? error })
+      }
+      throw error
+    }
   }
+}
+
+/** The usage of the (one) combined call, for the guard to charge to the turn. */
+function sumUsage(usages: readonly LanguageModelUsage[]): { usage?: LanguageModelUsage } {
+  const last = usages.at(-1)
+  return last === undefined ? {} : { usage: last }
 }

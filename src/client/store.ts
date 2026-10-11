@@ -2,7 +2,7 @@
  * The store contract of `eharness/client`: the Svelte store contract (`subscribe` calls back
  * synchronously) that `useSyncExternalStore` also accepts through `get()`.
  *
- * @see docs/specs/27-client.md#2-stores
+ * @see docs/specs/27-client.md#1-stores
  */
 
 /** A readable store. Snapshots are immutable and referentially stable until the next change. */

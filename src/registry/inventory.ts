@@ -6,14 +6,16 @@
  * @see docs/specs/02-context-registry.md#3-tools
  * @see docs/specs/06-compaction.md#2-token-accounting
  */
-import { asSchema, type JSONSchema7, type Tool } from 'ai'
-import { type CountTokens, toolTokens } from '../compaction/tokens.ts'
+import { asSchema, type JSONSchema7 } from 'ai'
 import type { HarnessWarning } from '../errors.ts'
+import type { Observer } from '../internal/observe.ts'
 import type { InstructionBlockStats, ToolSourceStats } from '../messages/types.ts'
+import { type CountTokens, toolTokens } from '../models/tokens.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 import type { OpenSession } from '../session/runtime.ts'
 import { resolveTurnSkills, type TurnSkills } from '../skills/registry.ts'
 import { createSkillTools } from '../skills/tools.ts'
+import { withToolFields } from './tool-copy.ts'
 import { listSourceTools, type TurnToolEntry, withToolSearch } from './tools.ts'
 
 /**
@@ -69,8 +71,13 @@ export async function collectToolEntries(args: {
   skills: TurnSkills
   contextOf: (owner: string) => HarnessContext
   warn: (warning: HarnessWarning, key?: string) => void
+  /** `config.observe`: counts the tool sources skipped by their backoff. */
+  observe?: Observer | undefined
+  sessionId?: string | undefined
   /** `config.deferTools` (spec 02 §3.3). */
   deferTools?: readonly string[] | undefined
+  /** `config.hooks.timeoutMs` for the `skill.load` hook. */
+  hookTimeoutMs?: number | undefined
 }): Promise<CollectedTools> {
   const { open } = args
   const raw: TurnToolEntry[] = open.tools.map((t) => ({
@@ -84,6 +91,7 @@ export async function collectToolEntries(args: {
     hooks: open.hooks,
     contextOf: args.contextOf,
     warn: args.warn,
+    ...(args.hookTimeoutMs === undefined ? {} : { hookTimeoutMs: args.hookTimeoutMs }),
   })) {
     raw.push({ owner: 'eh', name, tool })
   }
@@ -91,9 +99,13 @@ export async function collectToolEntries(args: {
     ...(await listSourceTools({
       sources: open.toolSources,
       cache: open.sourceCache,
+      failures: open.sourceFailures,
+      options: open.sourceOptions,
       taken: new Set(raw.map((t) => t.name)),
       contextOf: args.contextOf,
       warn: args.warn,
+      observe: args.observe,
+      sessionId: args.sessionId,
     })),
   )
   const defer = new Set(args.deferTools ?? [])
@@ -102,7 +114,7 @@ export async function collectToolEntries(args: {
       ? raw
       : raw.map((entry) =>
           defer.has(entry.name) && entry.tool.deferLoading !== true
-            ? { ...entry, tool: { ...entry.tool, deferLoading: true } as Tool }
+            ? { ...entry, tool: withToolFields(entry.tool, { deferLoading: true }) }
             : entry,
         )
   return { entries: withToolSearch(marked), staticCount }

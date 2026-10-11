@@ -13,6 +13,7 @@ import {
   type CompactionBeforePatch,
   neutralizeTags as coreNeutralizeTags,
   definePlugin,
+  errorText,
   type HarnessContext,
   HarnessError,
   type HarnessPlugin,
@@ -243,7 +244,7 @@ export function memory(options: MemoryOptions): HarnessPlugin<'memory'> {
           onWriteError: (error) =>
             ctx.warn({
               code: 'W_HOOK_FAILED',
-              message: `Hook 'onWrite' of plugin 'memory' threw and was skipped: ${error instanceof Error ? error.message : String(error)}`,
+              message: `Hook 'onWrite' of plugin 'memory' threw and was skipped: ${errorText(error)}`,
               details: { hook: 'onWrite', owner: 'memory' },
             }),
         })

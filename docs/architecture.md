@@ -10,38 +10,32 @@ Status: **Accepted** (v0).
 └──────────────┬───────────────────────────────────────────────────────▲────────────┘
                │ defineHarnessAgent(), agent.session(id).send()         │ UIMessageStream
 ┌──────────────▼──────────────────── eharness core ─────────────────────┴────────────┐
-│ agent      config, boot validation, session cache                                │
-│ plugin     definePlugin, setup/session phases, hooks, services                   │
-│ registry   instructions · tools · skills · data parts · message kinds            │
+│ agent      config, boot validation, option bounds, session cache                 │
+│ plugin     definePlugin, wrapPlugin, setup/session phases, hooks, services       │
+│ registry   instructions · tools · skills · data parts · message kinds · sources  │
 │ session    send/respond/regenerate/edit/attach/abort/inject/compact, lock, load, │
 │            persist, pending (approvals, client tools, external waits), rewinds,  │
-│            steer/queue, crash recovery                                           │
+│            steer/queue, durable inbox, crash recovery, invariants                │
 │ loop       manual step loop (1 streamText per step), stop rules, progress guard  │
 │ models     model catalog lookup, models.dev adapter, cost, budgets, ledger       │
-│ stream     createUIMessageStream, namespaced writers, turn buffer                │
+│ stream     createUIMessageStream, namespaced writers, turn buffer, stream log    │
 │ messages   HarnessUIMessage, metadata, ids (UUIDv7), projection, validation      │
 │ compaction token accounting, fixed summarize algorithm, guard, sanitize          │
 │ skills     Skill, SkillSource, load_skill / read_skill_file                      │
+│ judge      createJudge: the shared LLM judge engine (guard, permissions auto)    │
+│ output     structured final answers (`send(…, { output })`)                      │
+│ internal   leaf helpers: glob, regex safety, private hosts, hook runner, observe │
 └──────────────┬─────────────────────────────────────────────────────────────────────┘
                │ public API only (src/index.ts)
 ┌──────────────▼───────── shipped extensions (same package, subpaths) ──────────────┐
-│ eharness/filesystem         FileSystem contract, filesystem() plugin, file tools │
-│ eharness/filesystem/memory  memoryFs()                                           │
-│ eharness/filesystem/node    diskFs(), mountFs(), nodeWorkspace() (Node-only)     │
-│ eharness/shell              shell(), localSandbox(): bash tool (Node-only)       │
-│ eharness/permissions        permissionsPlugin(), createPermissionEngine()        │
-│ eharness/subagent           subagents(), subagentChild(): child sessions         │
-│ eharness/ask                askUser(): multiple-choice questions                 │
-│ eharness/web                webFetch(), webSearch(): guarded fetch, search       │
-│ eharness/storage/memory     memoryMessages(), memoryState(), memoryInbox(),      │
-│                             memoryBudgetLedger()                                 │
-│ eharness/mcp                mcpServer() tool source over @ai-sdk/mcp             │
-│ eharness/todos              todos() plugin: todo_write, data-todos.list          │
-│ eharness/memory             memory() plugin: memory files under app roots        │
-│ eharness/guard              approvalGuard(): LLM judge, tighten-only             │
-│ eharness/group              groupChat(), routeGroupMessage(): multi-party chat   │
-│ eharness/openapi            openApiTools(): OpenAPI 3.x operations as tools      │
-│ eharness/testing            conformance suites + mock helpers                    │
+│ filesystem (+ /memory, /node)   FileSystem contract, plugin, disk and mounts     │
+│ shell · permissions · subagent · ask · web (+ /node)     coding-agent blocks     │
+│ storage/memory   in-memory messages, state, inbox, budget ledger, stream log     │
+│ mcp · openapi    tool sources                                                    │
+│ todos · memory · guard · group       reference plugins                           │
+│ providers · connectors               profiles, secrets, setup flows, OAuth       │
+│ activity · http · client (+ /react)  feed, attention queue, routes, browser side │
+│ testing          conformance suites + mock helpers                               │
 └──────────────┬─────────────────────────────────────────────────────────────────────┘
                │
 ┌──────────────▼──────────── AI SDK v7 (peer) ─────────────────────────────────────┐
@@ -51,42 +45,95 @@ Status: **Accepted** (v0).
 ```
 
 Dependency direction is strictly downward. Core never imports a subpath module. Subpath modules
-import core only through `src/index.ts`.
+import core only through `src/index.ts` (the exceptions are listed in `scripts/check-imports.ts`:
+`connectors` reuses `providers`, `http` reuses `activity`, `client` imports types of `http` and
+`activity`, and `testing` imports `activity` and `http`).
+
+### 1.1 Source map (`src/`)
+
+| Folder | Holds |
+|---|---|
+| `index.ts`, `errors.ts`, `codes.ts` | the public core barrel, `HarnessError` and its helpers, the error / warning / stop code unions |
+| `agent/` | `define-agent.ts` (boot: normalize, order plugins, validate, bounds-check options), `types.ts` (`HarnessAgentConfig`, `HarnessAgent`), `session-types.ts` (`HarnessSession`, adapters, `SendOptions`), `sessions.ts` (the session cache), `internals.ts` |
+| `plugin/` | `definePlugin`, `wrapPlugin`, hook and context types |
+| `registry/` | static and turn registries, tool sources, request tools, external tools, output limits, risk traits, the tool inventory |
+| `skills/` | `defineSkill`, frontmatter parsing, skill sources, `load_skill` / `read_skill_file` |
+| `messages/` | message and metadata types, ids, data parts, kinds, projection, sanitize, validation, pending state, framing of untrusted text |
+| `models/` | catalog lookup, cost, token estimates, model-call observation |
+| `compaction/` | summarize algorithm, prune, guard, flush, overflow recovery, thrash detection |
+| `loop/` | the step loop: `steps.ts` drives one turn; each step is split into `step-build`, `step-input`, `step-call`, `step-settle`, `step-decide` (+ `step-ctx`, `step-events`, `step-files`, `step-guards`, `step-settings`), plus `progress`, `stop`, `usage`, `ledger`, `prompt` |
+| `stream/` | the run object (`run.ts`), writers, `handleChatRequest`, stream log writer and reader, error description |
+| `session/` | `session.ts` assembles a live session from `handle/` (the public API split into `api-session`, `api-turns`, `api-read`, `open`, `queue`, `inbox`), `turn/` (the turn lifecycle as phase functions: `prepare`, `commit`, `body`, `stream`, `end`, `heartbeat`, `output`, `inbox`) over one explicit state object, `interaction/` (approvals, pending, external waits, rewind, notes), `inbox/` (collect, dedupe, retry, driver), `events`, `hooks`, `invariants`, `recover`, `remote-abort`, `peek`, `load-context` |
+| `judge/` | `createJudge` and its restricted transcript renderer (ADR-0060) |
+| `output/` | structured final answers (tool mode and native mode) |
+| `internal/` | leaf helpers with no upward imports: `glob`, `path-segments`, `regex-safety`, `private-host`, `hook-run`, `observe`, `model`, `provider-errors`, `ai-types`, `util` (`errorText`, `isRecord`) |
+| `filesystem/`, `storage/`, `mcp/`, `todos/`, `memory/`, `guard/`, `group/`, `openapi/`, `ask/`, `permissions/`, `shell/`, `subagent/`, `web/`, `providers/`, `connectors/`, `activity/`, `http/`, `client/`, `testing/` | one folder per subpath module, see the table in section 2 |
+
+### 1.2 Import rules and the core DAG
+
+`bun run check:imports` runs two scripts. `scripts/check-imports.ts` enforces the subpath rules
+(core only through `src/index.ts`, no `Bun.` and no `node:` outside the Node-only modules, no Node
+globals in runtime-neutral files, no test kits in production files, the stricter `src/client` rule
+that runtime imports are limited to `ai`). `scripts/check-cycles.ts` (`bun run check:cycles`)
+builds the folder graph of the core from non-test files, ignores type-only imports and fails on
+any cycle. The core is layered; a folder imports only from layers below it:
+
+```
+7  agent
+6  session
+5  compaction · loop
+4  registry
+3  models · plugin · stream · output · judge
+2  messages · skills
+1  errors (and codes)
+0  internal
+```
+
+(`skills` and `messages` import only `errors` and `internal`; `models` adds `messages`; `registry`
+adds `models` and `skills`; `compaction` and `loop` sit on `registry`, and `loop` also uses
+`output` and `stream`; `session` uses `compaction`, `loop`, `output`, `registry`, `skills` and
+`stream`; `agent` uses `session`, `registry` and `plugin`.) Hook running, token estimates, text
+truncation and model-call observation live in the lowest layer that needs them, so no folder
+reaches "up" the stack and module initialisation order stays predictable.
 
 ## 2. Package & exports
 
-`eharness/filesystem/node` and `eharness/shell` are **Node-only**: they import `node:` built-ins,
-run on Node >= 22 and Bun, and are the only paths allowed to (`scripts/check-imports.ts`
-`nodeOnly`, ADR-0036). The core and every other subpath stay runtime-neutral. All shipped modules
-must serve the three deployment profiles (ADR-0034).
+`eharness/filesystem/node`, `eharness/shell` and `eharness/web/node` are **Node-only**: they import
+`node:` built-ins, run on Node >= 22 and Bun, and are the only paths allowed to
+(`scripts/check-imports.ts` `nodeOnly`, ADR-0036). The core and every other subpath stay
+runtime-neutral. All shipped modules must serve the three deployment profiles (ADR-0034).
 
-One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
+One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007). The exact runtime exports of
+every entry are a committed snapshot, `scripts/exports.snapshot.json`, derived from
+`package.json#exports` (`bun run check:exports`; update with `bun scripts/exports-snapshot.ts
+--write`, and review the diff). Stability per entry: [API stability](engineering/api-stability.md).
 
 | Import | Source | Contents |
 |---|---|---|
-| `eharness` | `src/index.ts` | core API and types |
-| `eharness/filesystem` | `src/filesystem/index.ts` | `FileSystem` contract, `filesystem()` plugin, `fsSkillSource()`, checkpoints (`checkpointedFs()`, `memoryCheckpointStore()`, `rewindFiles()`, `checkpointsSince()`), binary helpers (`looksBinary()`, `detectMediaType()`, `imageDimensions()`, `isFileMediaRef()`), `normalizePath()`, `compileGlob()`, `contentVersion()` / `bytesVersion()` |
-| `eharness/filesystem/memory` | `src/filesystem/memory.ts` | `memoryFs()` |
-| `eharness/filesystem/node` | `src/filesystem/node.ts` | `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()`, `compileIgnore()` (Node-only, ADR-0036) |
-| `eharness/shell` | `src/shell/index.ts` | `shell()` plugin (`bash`, `bash_output`, `kill_shell`, the `shellTasks` service), `localSandbox()`, `detectOsSandbox()`, `seatbeltProfile()`, `wrapCommand()`, `killAllSandboxProcesses()` (Node-only, ADR-0036) |
-| `eharness/permissions` | `src/permissions/index.ts` | `permissionsPlugin()`, `createPermissionEngine()`, `parseRule()` / `matchRule()`, `parseCommand()`, `isReadOnlyCommand()`, `PERMISSION_MODES`, `DEFAULT_PROTECTED_PATHS` (spec 18) |
-| `eharness/subagent` | `src/subagent/index.ts` | `subagents()` (approvals `'inline'` / `'park'` / `'policy'`, background children), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()`, `subagentWaitId()`, `SUBAGENT_*` texts (spec 20, ADR-0035) |
-| `eharness/ask` | `src/ask/index.ts` | `askUser()`, `pendingQuestions()`, `answerOutput()`, `parseQuestions()`, `formatAnswers()`, `ASK_TOOL` (spec 21) |
-| `eharness/providers` | `src/providers/index.ts` | `createProviderManager()`, `defineProvider()`, `openRouterProvider()` / `gatewayProvider()` / `openAIProvider()` / `anthropicProvider()` / `openAICompatibleProvider()`, `formSpec()`, `redactSettings()`, `mergeSecretPatch()`, `memoryProfileStore()`, `fromEnv()`, `loadCachedJson()` (spec 23) |
-| `eharness/connectors` | `src/connectors/index.ts` | `createConnectorService()`, `defineConnector()`, `activateConnectors()`, `startFlow()` / `advanceFlow()` / `completeOAuth()`, OAuth helpers, `builtinConnectors()`, `remoteMcpConnector()`, `memoryConnectionStore()` (spec 24) |
-| `eharness/activity` | `src/activity/index.ts` | `activity()`, `memoryActivityStore()`, `handleActivityStream()`, `activityStream()`, `readActivityPage()`, `listAttention()`, `answerAttention()` (spec 25) |
-| `eharness/http` | `src/http/index.ts` | `createHarnessHttp()`, `openAccess`, `sanitizeChatBody()`, `classifyChatBody()`, `httpError()`, `statusOfCode()`, wire types (spec 26, ADR-0059) |
-| `eharness/client` | `src/client/index.ts` | `createHarnessClient()`, `createHarnessTransport()`, `createChatSession()`, `createActivityFeed()`, `createAttentionList()`, `createStore()`, `HarnessHttpError` (spec 27, ADR-0059); runtime imports only `ai` |
+| `eharness` | `src/index.ts` | `defineHarnessAgent`, `definePlugin`, `wrapPlugin`, `defineSkill`, `defineSkillSource`, `defineToolSource`, `defineDataPart`, `defineMessageKind`, `handleChatRequest`, `handleResumeRequest`, `externalTool`, `withToolExecute`, `withToolFields`, `toolTraits`, `createJudge`, `judgeCoordinator`, `observeModel`, `modelsDevCatalog`, `openRouterCatalog`, `lookupModel`, `computeCost`, `estimateStepCostUsd`, `HarnessError` and helpers (`isHarnessError`, `errorText`, `isRecord`), `uuidv7`, `isPrivateHost`, `untrustedContent`, `messageToChunks`, stored-text constants, types |
+| `eharness/filesystem` | `src/filesystem/index.ts` | `FileSystem` contract, `filesystem()` plugin, `fsSkillSource()`, `projectInstructions()` / `loadProjectInstructions()`, checkpoints (`checkpointedFs()`, `inMemoryCheckpointStore()`, `rewindFiles()`, `checkpointsSince()`), binary helpers (`looksBinary()`, `detectMediaType()`, `isFileMediaRef()`), `normalizePath()`, `compileGlob()`, `contentVersion()` / `bytesVersion()`, adapter helpers (`splitLines()`, `statelessPattern()`, `classifyToolResult()`) |
+| `eharness/filesystem/memory` | `src/filesystem/memory.ts` | `inMemoryFs()` |
+| `eharness/filesystem/node` | `src/filesystem/node.ts` | `diskFs()`, `mountFs()`, `nodeWorkspace()`, `nodeCheckpointStore()`, `nodeRealpath()`, `nodeContainsProtected()`, `compileIgnore()` (Node-only, ADR-0036) |
+| `eharness/web` | `src/web/index.ts` | `webFetch()`, `webSearch()`, `WEB_FETCH_TOOL`, `WEB_SEARCH_TOOL` (spec 22) |
+| `eharness/web/node` | `src/web/node.ts` | `nodeResolveHost()`, the DNS resolver for `webFetch` (Node-only, ADR-0036) |
+| `eharness/shell` | `src/shell/index.ts` | `shell()` plugin (`bash`, `bash_output`, `kill_shell`, the `shellTasks` service), `localSandbox()`, `detectOsSandbox()`, `killAllSandboxProcesses()`, `capOutput()`, `SAFE_ENV_NAMES` (Node-only, ADR-0036) |
+| `eharness/permissions` | `src/permissions/index.ts` | `permissions()`, `createPermissionEngine()`, `parseRule()` / `matchRule()`, `domainSpecifierMatches()`, `isReadOnlyCommand()`, `modelClassifier()`, `PERMISSION_MODES`, `DEFAULT_PROTECTED_PATHS`, `DEFAULT_TOOL_KINDS` (spec 18) |
+| `eharness/subagent` | `src/subagent/index.ts` | `subagent()` (approvals `'inline'` / `'park'` / `'policy'`, background children), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()`, `reconcileBackgroundChildren()`, tool-name and `SUBAGENT_*` text constants (spec 20, ADR-0035) |
+| `eharness/ask` | `src/ask/index.ts` | `ask()`, `pendingQuestions()`, `answerOutput()`, `ASK_TOOL` (spec 21) |
+| `eharness/storage/memory` | `src/storage/memory.ts` | `inMemoryMessages()`, `inMemoryState()`, `inMemoryInbox()`, `inMemoryBudgetLedger()`, `inMemoryStreamLog()` |
+| `eharness/mcp` | `src/mcp/index.ts` | `mcpServerSource()`, `remoteMcpSource()`, `listRemoteMcpTools()`, `bearerAuthProvider()`, `clearMcpPins()` (optional peer `@ai-sdk/mcp`) |
+| `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, `TODO_TOOL` |
+| `eharness/memory` | `src/memory/index.ts` | `memory()` plugin, `executeMemoryCommand()`, `MEMORY_TOOLS`, `MEMORY_FLUSH_TOOLS` |
+| `eharness/guard` | `src/guard/index.ts` | `guard()` (a wrapper over the core `createJudge` engine, ADR-0060), `GUARD_*` denial texts (spec 15) |
+| `eharness/group` | `src/group/index.ts` | `group()`, `routeGroupMessage()` (spec 16) |
+| `eharness/openapi` | `src/openapi/index.ts` | `openApiSource()` (spec 17) |
+| `eharness/providers` | `src/providers/index.ts` | `createProviderManager()`, `defineProvider()`, `openRouterProvider()` / `gatewayProvider()` / `openAIProvider()` / `anthropicProvider()` / `openAICompatibleProvider()`, `formSpec()` / `ehMeta()`, `redactProfile()` / `redactSettings()`, `inMemoryProfileStore()`, `sealedProfileStore()`, `plaintextVault()` / `webCryptoVault()`, `fromEnv()`, `loadModelsDev()` / `loadOpenRouterModels()` (spec 23) |
+| `eharness/connectors` | `src/connectors/index.ts` | `createConnectorService()`, `defineConnector()`, `activateConnectors()`, `startFlow()` / `advanceFlow()` / `completeOAuth()`, `createCredentialManager()`, `builtinConnectors()`, `remoteMcpConnector()`, `inMemoryConnectionStore()` and the other in-memory stores (spec 24) |
+| `eharness/activity` | `src/activity/index.ts` | `activity()`, `inMemoryActivityStore()`, `handleActivityStream()`, `activityStream()`, `readActivityPage()`, `listAttention()`, `answerAttention()` (spec 25) |
+| `eharness/http` | `src/http/index.ts` | `createHarnessHttp()`, `openAccess`, wire types (spec 26, ADR-0059) |
+| `eharness/client` | `src/client/index.ts` | `createHarnessClient()`, `createHarnessTransport()`, `createChatSession()`, `createActivityFeed()`, `createAttentionList()`, `followSessionStream()`, `describeChatError()`, `HarnessHttpError` (spec 27, ADR-0059); runtime imports only `ai` |
 | `eharness/client/react` | `src/client/react.ts` | `createReactBindings(React)`, `chatBridgeOf()` (no import of `react`) |
-| `eharness/web` | `src/web/index.ts` | `webFetch()`, `webSearch()`, `htmlToText()`, `isPrivateHost()`, `matchHost()` (spec 22) |
-| `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()`, `memoryBudgetLedger()` |
-| `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
-| `eharness/todos` | `src/todos/index.ts` | `todos()` plugin, `latestTodos()`, `openTodos()`, `renderTodos()`, fixed texts |
-| `eharness/memory` | `src/memory/index.ts` | `memory()` plugin, `executeMemoryCommand()`, `MEMORY_PROTOCOL`, `MEMORY_TOOLS`, `MEMORY_FLUSH_PROMPT`, `MEMORY_FLUSH_TOOLS` |
-| `eharness/guard` | `src/guard/index.ts` | `approvalGuard()`, `canonicalJson()`, `verdictKey()`, `GUARD_*` texts (spec 15) |
-| `eharness/group` | `src/group/index.ts` | `groupChat()`, `routeGroupMessage()`, `GROUP_HISTORY_PREAMBLE`, `GROUP_SPEAKER_PREFIX` (spec 16) |
-| `eharness/openapi` | `src/openapi/index.ts` | `openApiTools()`, `riskFromMethod()`, `OPENAPI_AUTO_DEFER_THRESHOLD` (spec 17) |
-| `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `budgetLedgerConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
+| `eharness/testing` | `src/testing/index.ts` | `scriptedModel()`, `scriptedProvider()`, `schemaCheckedMessages()`, `assertValidUIMessage()`, `assertStoredSessionInvariants()`, and the conformance suites (`messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `lockConformance()`, `streamLogConformance()`, `multiInstanceConformance()`, `budgetLedgerConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `activityStoreConformance()`, `httpConformance()`, and the provider and connector store suites) |
 
 Peer dependencies: `ai@^7.0.137`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
 peer: `@ai-sdk/mcp@^2.0.73`. No runtime dependencies. The floors are the locked, tested versions
@@ -106,7 +153,7 @@ normalize config (root plugin from top-level tools/skills/instructions/dataParts
 → build static registries: data parts, message kinds, services (provides/requires),
   static tools, static skills, static instructions
 → validate: duplicate names, reserved prefixes, missing required services,
-  plugin name rules, schema presence                → throws HarnessError(EH_*) on conflict
+  plugin name rules, schema presence, numeric option bounds → throws HarnessError(EH_*) on conflict
 → return HarnessAgent (frozen config + registries + empty session cache)
 ```
 
@@ -222,6 +269,8 @@ process died mid-turn ──▶ next operation recovers: dangling calls answered
 | Insert non-model messages (notices, events) | `defineMessageKind` + `session.inject()` | 03 §5 |
 | Gate tools behind approval | `approval.policy`, `approval.risk` + tool `metadata.risk`, `tool.approve` hook | 11 §3 |
 | Audit approvals / build an approval inbox | `approval.decided` hook, `TurnResult.pending`, `respond({ approvals: [{ actor }] })` | 11 §3.3 |
+| Measure phases and count failures (metrics, tracing) | `observe` callback | 10 §8, [observability](guides/observability.md) |
+| Put a cheap LLM in front of risky calls | `guard()` (tighten-only) or permissions auto mode, both on `createJudge` | 15, 18, [LLM judge](guides/llm-judge.md) |
 | Know context windows and prices | `models` (record, function, `modelsDevCatalog`) | 12 |
 | Limit spending | `budget` (USD), `loop.maxTurnOutputTokens` | 12 §4, 05 §3.1 |
 | Validate / rewrite / block user input | `input.submit` hook | 01 §5 |
@@ -248,6 +297,9 @@ process died mid-turn ──▶ next operation recovers: dangling calls answered
   by `eh.rewind` markers (ADR-0011).
 - **Server-owned decisions:** clients send input and answers only; pending ids, message ids and
   metadata are server-owned (spec 11 §8).
+- **Bounded waits:** nothing the core awaits can hang a turn: hooks, model streams, MCP connects,
+  tool source listings and OAuth requests all have default time limits (`hooks.timeoutMs`,
+  `settings.timeout`, `toolSources.timeoutMs`, ...).
 - **Errors:** boot conflicts throw; turn operations throw only `EH_SESSION_BUSY` / `EH_SESSION_CLOSED`;
   every other turn failure ends the turn with `stop: 'error'` and never rejects `run.result`
   (spec 05 §2, spec 10).

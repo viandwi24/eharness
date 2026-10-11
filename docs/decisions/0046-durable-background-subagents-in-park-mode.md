@@ -94,3 +94,7 @@ for the brief window above. Normally resolved waits are untouched.
   lead finds it with `agent_output` / `children()`. A graceful close aborts the turn and reports
   it as stopped.
 − The brief window described in 2.
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): background children are bounded by default: `background.timeoutMs` is one hour (`Number.POSITIVE_INFINITY` opts out) and `stopOnTimeout` is `true`, enforced by a timer (`reconcileEveryMs` defaults to `min(60 000, timeoutMs / 4)`). The subagent plugin runs every execution mode through one child lifecycle that owns the abort wiring, the concurrency slot and the child session handle.

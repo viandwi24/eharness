@@ -6,7 +6,7 @@ import { Branch, Indent } from './Branch.tsx'
 import { DiffView } from './DiffView.tsx'
 import { keyedLines } from './keys.ts'
 import { SubagentTree } from './SubagentTree.tsx'
-import { expandTabs } from './sanitize.ts'
+import { expandTabs, stripControl } from './sanitize.ts'
 import { TodoList } from './TodoPanel.tsx'
 import { color, sym } from './theme.ts'
 import {
@@ -77,7 +77,7 @@ function Lines({ lines, dim = true }: { lines: string[]; dim?: boolean }): React
     <Box flexDirection="column">
       {keyedLines(lines).map(({ key, line }) => (
         <Text key={key} dimColor={dim}>
-          {line === '' ? ' ' : expandTabs(line)}
+          {line === '' ? ' ' : expandTabs(stripControl(line))}
         </Text>
       ))}
     </Box>
@@ -101,7 +101,9 @@ function Body({
   if (desc.error) {
     return (
       <Branch>
-        <Text color={desc.status === 'denied' ? color.denied : color.error}>{desc.error}</Text>
+        <Text color={desc.status === 'denied' ? color.denied : color.error}>
+          {stripControl(desc.error)}
+        </Text>
       </Branch>
     )
   }
@@ -126,7 +128,7 @@ function Body({
           {result ? (
             <Branch>
               <Text dimColor wrap="truncate-end">
-                {result}
+                {stripControl(result)}
               </Text>
             </Branch>
           ) : null}
@@ -168,7 +170,7 @@ function Body({
                   color={desc.summaryError ? color.error : undefined}
                   dimColor={!desc.summaryError}
                 >
-                  {desc.summary}
+                  {stripControl(desc.summary)}
                 </Text>
               </Indent>
             ) : (
@@ -177,7 +179,7 @@ function Body({
                   color={desc.summaryError ? color.error : undefined}
                   dimColor={!desc.summaryError}
                 >
-                  {desc.summary}
+                  {stripControl(desc.summary)}
                 </Text>
               </Branch>
             )
@@ -192,7 +194,7 @@ function Body({
         <>
           {desc.summary ? (
             <Branch>
-              <Text dimColor>{desc.summary}</Text>
+              <Text dimColor>{stripControl(desc.summary)}</Text>
             </Branch>
           ) : null}
           {desc.status === 'ok'
@@ -217,7 +219,7 @@ function Body({
           {desc.summary ? (
             <Branch>
               <Text dimColor wrap="truncate-end">
-                {desc.summary}
+                {stripControl(desc.summary)}
               </Text>
             </Branch>
           ) : null}
@@ -261,8 +263,8 @@ export function ToolLine({
         <StatusBullet status={desc.status} />
       </Box>
       <Text wrap="truncate-end">
-        <Text bold>{desc.label}</Text>
-        {desc.target ? `(${desc.target})` : ''}
+        <Text bold>{stripControl(desc.label)}</Text>
+        {desc.target ? `(${stripControl(desc.target)})` : ''}
         {stat ? <Text dimColor> {stat}</Text> : null}
       </Text>
     </Box>

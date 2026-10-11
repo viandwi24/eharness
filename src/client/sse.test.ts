@@ -40,3 +40,21 @@ describe('sse parser', () => {
     ])
   })
 })
+
+describe('limits', () => {
+  test('an oversized line is discarded without buffering it, the stream goes on', () => {
+    const out: SseMessage[] = []
+    const p = createSseParser((m) => out.push(m), { maxLineChars: 10 })
+    p.push('data: ')
+    for (let i = 0; i < 5; i++) p.push('x'.repeat(100))
+    p.push('tail\ndata: ok\n\n')
+    expect(out.map((m) => m.data)).toEqual(['ok'])
+  })
+
+  test('an event with too much data is dropped', () => {
+    const out: SseMessage[] = []
+    const p = createSseParser((m) => out.push(m), { maxEventChars: 20 })
+    p.push(`data: ${'a'.repeat(15)}\ndata: ${'b'.repeat(15)}\n\ndata: fine\n\n`)
+    expect(out.map((m) => m.data)).toEqual(['fine'])
+  })
+})

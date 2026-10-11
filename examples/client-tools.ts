@@ -17,7 +17,7 @@
 import type { UIMessage } from 'ai'
 import { tool } from 'ai'
 import { type ChatRequestOptions, defineHarnessAgent, handleChatRequest } from 'eharness'
-import { memoryMessages, memoryState } from 'eharness/storage/memory'
+import { inMemoryMessages, inMemoryState } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
@@ -40,7 +40,7 @@ const agent = defineHarnessAgent({
   contextWindow: 200_000,
   instructions: 'You help shoppers. Use the browser tools when you need the page.',
   tools: { lookup_order: lookupOrder },
-  storage: { messages: memoryMessages(), state: memoryState() },
+  storage: { messages: inMemoryMessages(), state: inMemoryState() },
 })
 
 /** What a real route passes: the application decides what a request may add (spec 11 §7.1). */

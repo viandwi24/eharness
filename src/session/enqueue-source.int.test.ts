@@ -7,7 +7,7 @@ import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import type { HarnessContext, TurnSource } from '../plugin/types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
@@ -23,7 +23,7 @@ for (const durable of [false, true]) {
       const storage = {
         messages: defaultMemoryMessages(),
         state: defaultMemoryState(),
-        ...(durable ? { inbox: memoryInbox() } : {}),
+        ...(durable ? { inbox: inMemoryInbox() } : {}),
       }
       const sources: Array<TurnSource | undefined> = []
       const agent = defineHarnessAgent({

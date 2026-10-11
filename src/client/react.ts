@@ -4,7 +4,10 @@
  * `chatBridgeOf` adapts the result of `@ai-sdk/react` `useChat` to the {@link ChatBridge} of a
  * chat session.
  *
- * @see docs/specs/27-client.md#7-react
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
+ * @see docs/specs/27-client.md#7-react-eharnessclientreact
  */
 import type { ChatStatus, FileUIPart, UIMessage } from 'ai'
 import {

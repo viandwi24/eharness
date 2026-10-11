@@ -33,21 +33,22 @@ evaluates it) but warns once with `W_DEPRECATED`.
 Defined in spec 02 §3.2. Semantics:
 
 - `open()` at session open (before the first `list()`), `close()` on session close/eviction.
-- `list()` errors: warning `W_TOOL_SOURCE_FAILED`, source contributes no tools for that period;
-  the turn continues.
+- `list()` errors (and a `list()` that does not settle within `config.toolSources.timeoutMs`):
+  warning `W_TOOL_SOURCE_FAILED`, source contributes no tools for that period; the turn continues.
+  The source is asked again after a backoff (spec 02 §3.2).
 - Returned tool names are validated (`^[a-zA-Z0-9_-]{1,64}$`); invalid names are skipped with
   `W_INVALID_TOOL_NAME`. Reserved names are skipped with `W_SHADOWED`.
 
-## 3. `mcpServer` (`eharness/mcp`)
+## 3. `mcpServerSource` (`eharness/mcp`)
 
 Thin `ToolSource` over `@ai-sdk/mcp` (optional peer dependency).
 
 ```ts
-import { mcpServer } from 'eharness/mcp'
+import { mcpServerSource } from 'eharness/mcp'
 
-export function mcpServer(opts: McpServerOptions): ToolSource
+export function mcpServerSource(opts: McpServerSourceOptions): ToolSource
 
-export interface McpServerOptions {
+export interface McpServerSourceOptions {
   /** Short name; used as tool prefix and source id 'mcp:<name>'. ^[a-z0-9-]{1,32}$ */
   name: string
   /** A transport config for createMCPClient({ transport }), or a resolver per session (per-user
@@ -62,12 +63,14 @@ export interface McpServerOptions {
   defer?: boolean | 'auto'
   /** 'lazy' (default): connect at the first turn of the session. 'eager': connect at session open. */
   connect?: 'lazy' | 'eager'
-  /** Pin tool definitions on first connect and block changed definitions (drift). Default false. */
+  /** Pin tool definitions on first connect and block changed definitions (drift). Default: true for remote (`type: 'http' | 'sse'`) transports, false otherwise. */
   pinDefinitions?: boolean
-  /** Frame text results as untrusted content (spec 03 §10). Default true. */
+  /** Frame text and structured (JSON) results as untrusted content (spec 03 §10). Default true. */
   wrapUntrusted?: boolean
   /** createMCPClient `maxRetries`: retries of tools/call requests only (not connect). Default 0. */
   maxRetries?: number
+  /** Default 15 000: limit for connecting and for listing tools; a silent server fails with `EH_MCP_TIMEOUT` (`W_TOOL_SOURCE_FAILED`). */
+  timeoutMs?: number
   refresh?: 'session' | 'turn'
   /** Trusted risk for this server's tools (spec 11 §3.2): written to each tool's metadata.risk.
    *  A function gets the server tool name (before prefixing) and the annotations as sent;
@@ -79,17 +82,18 @@ export type McpRiskFunction = (tool: { name: string; annotations?: McpToolAnnota
 
 export type McpTransportConfig = Exclude<MCPClientConfig['transport'], MCPTransport>
 export type McpTransportInput = MCPClientConfig['transport']
-export const MCP_AUTO_DEFER_THRESHOLD = 20   // defer: 'auto' defers above this many tools
 ```
 
+`defer: 'auto'` defers when more than 20 tools remain after allow/deny.
+
 Invalid options (name pattern, missing transport, unknown `defer`/`connect`/`risk`, negative
-`maxRetries`, …) throw `EH_CONFIG_INVALID` from `mcpServer()`.
+`maxRetries`, …) throw `EH_CONFIG_INVALID` from `mcpServerSource()`.
 
 Lifecycle:
 
 - `@ai-sdk/mcp` is loaded with `await import('@ai-sdk/mcp')` at connect time (only type imports
   are static), so importing `eharness/mcp` never fails; a missing package becomes a clear
-  `W_TOOL_SOURCE_FAILED` warning, and `mcpServer()` called with `connect: 'eager'` rejects the
+  `W_TOOL_SOURCE_FAILED` warning, and `mcpServerSource()` called with `connect: 'eager'` rejects the
   session open with `EH_CONFIG_INVALID` ("install @ai-sdk/mcp").
 - One MCP client **per session** (credentials can differ per user). Created at the first turn
   (`lazy`) or at `open()` (`eager`); closed when the session closes. `ToolSource.close()` carries
@@ -104,7 +108,7 @@ Lifecycle:
 - `list()` calls `client.tools()`, applies allow/deny, prefixes names, sets `deferLoading` per
   `defer`. `defer: 'auto'` counts the tools that remain after allow/deny and drift exclusion. A
   failing `client.tools()` closes the client, so the next turn reconnects.
-- `pinDefinitions`: on first successful connect, `await fingerprintTools(tools)` of **all** server
+- `pinDefinitions` (default `true` when the transport config, or the config a resolver returns, has `type: 'http' | 'sse'`; `false` for stdio-like and `MCPTransport` instances; an explicit value always wins): on first successful connect, `await fingerprintTools(tools)` of **all** server
   tools (before allow/deny) is stored in the session state under
   `plugins[<owner plugin>]['mcp:<name>:pins']`, keyed by the **server** tool name (before
   prefixing). On later lists `detectToolDrift()` runs; changed or added tools are **excluded**
@@ -113,9 +117,9 @@ Lifecycle:
 - Re-pinning is an explicit application action:
   `clearMcpPins(agent, sessionId, name, opts?: { stateAdapter?: StateAdapter }): Promise<void>`
   (exported from `eharness/mcp`). The server is resolved through the agent's own configuration:
-  the `mcpServer()` named `name` in the root `mcp` / `tools` config; if there is none (e.g. a
+  the `mcpServerSource()` named `name` in the root `mcp` / `tools` config; if there is none (e.g. a
   source contributed by a plugin), more than one, or the instance is shared by several agents, it
-  throws `EH_CONFIG_INVALID` instead of guessing (use one `mcpServer()` instance per agent). It
+  throws `EH_CONFIG_INVALID` instead of guessing (use one `mcpServerSource()` instance per agent). It
   never reads or writes another agent's sessions. If the session is open in that source (live),
   it clears through the live
   session state (so the turn-end state write cannot restore the old pins); otherwise it uses the
@@ -134,7 +138,7 @@ Lifecycle:
   reach `tool.approve` as `hints`.
 - `risk` (0.5.0): a constant, or a function called per server tool at every listing (after
   allow/deny and drift exclusion, before prefixing and deferral), sets `metadata.risk` — trusted,
-  so it wins over the hints (`mcpServer({ risk: 'read' })` for a trusted read-only server).
+  so it wins over the hints (`mcpServerSource({ risk: 'read' })` for a trusted read-only server).
   `undefined` keeps the derived risk; a function that throws or returns an invalid value keeps
   the derived risk and logs `ctx.log.warn`. Pins (`fingerprintTools`) are computed on the
   server's tools before `risk` is applied.
@@ -142,21 +146,24 @@ Lifecycle:
   so a `text` output and every `text` part of a `content` output becomes
   `untrustedContent(text, { source: 'mcp', name: '<server>/<tool>' })` (spec 03 §10; the app should include `UNTRUSTED_CONTENT_INSTRUCTIONS`, but the frame's own
   wording already tells the model that content inside is data, not instructions). Image/file
-  parts, the `json` output of structured results (a tool without `toModelOutput` is wrapped with the
-  default mapping first: a string output is framed as text, anything else stays `json`) and the `isError` flag are unchanged (an error
-  result's text is framed too: the server wrote it). The stored UI tool output stays the raw MCP
-  result; only the model-visible projection is framed. `mcpServer` exposes tool calls only (no
+  parts and the `isError` flag are unchanged. A `json` output (structured results; a tool without
+  `toModelOutput` is wrapped with the default mapping first: a string output is framed as text,
+  anything else is `json`) is serialized and framed as text too (an `isError` result's text is framed: the server wrote it). A call that throws (JSON-RPC or
+  transport error) is framed too: the message of the thrown error, which reaches the model as
+  `error-text`, is wrapped in the same frame (aborts are not). The stored UI tool output stays the raw MCP
+  result; only the model-visible projection is framed. `mcpServerSource` exposes tool calls only (no
   resource reads).
-- Connection failures → `W_TOOL_SOURCE_FAILED`, zero tools, retried at the next turn regardless
-  of `refresh`.
+- Connection failures and timeouts (`timeoutMs`, `EH_MCP_TIMEOUT`; a client that connects too late
+  is closed) → `W_TOOL_SOURCE_FAILED`, zero tools, retried after the source backoff (spec 02 §3.2)
+  regardless of `refresh`.
 
-Top-level sugar: `defineHarnessAgent({ mcp: [mcpServer({...})] })` is identical to
-`tools: [mcpServer({...})]` — the `mcp` slot exists for readability.
+Top-level sugar: `defineHarnessAgent({ mcp: [mcpServerSource({...})] })` is identical to
+`tools: [mcpServerSource({...})]` — the `mcp` slot exists for readability.
 
 ### 3.x Remote servers with a fresh bearer (`remoteMcpSource`)
 
 `remoteMcpSource({ name, url, headers?, getAccessToken?, allow?, deny?, prefix?, defer?, risk? })`
-is `mcpServer` over a streamable-HTTP transport whose `authProvider` (`bearerAuthProvider`) returns
+(`risk` is a constant `ToolRisk`) is `mcpServerSource` (so remote definitions are pinned by default) over a streamable-HTTP transport whose `authProvider` (`bearerAuthProvider`) returns
 `getAccessToken()` for **every** request, so a refreshed OAuth token is used without reconnecting.
 `listRemoteMcpTools(spec)` connects once, returns `{ name, description?, annotations? }` and closes
 the client. Both are used by `eharness/connectors` (spec 24 §9).
@@ -258,5 +265,5 @@ steps, spec 02 §3.3). Up to five matches are returned per search (AI SDK behavi
 
 ## 8. OpenAPI tools
 
-`openApiTools()` (`eharness/openapi`) is a tool source that turns an OpenAPI 3.0 / 3.1 JSON document
+`openApiSource()` (`eharness/openapi`) is a tool source that turns an OpenAPI 3.0 / 3.1 JSON document
 into tools, with an app-supplied base URL and auth headers; see [spec 17](17-openapi-plugin.md).

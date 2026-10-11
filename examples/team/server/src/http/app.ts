@@ -6,7 +6,7 @@
 import { OpenAPIHono } from '@hono/zod-openapi'
 import { Scalar } from '@scalar/hono-api-reference'
 import { HTTPException } from 'hono/http-exception'
-import { checkBearer } from '../app/auth.ts'
+import { checkBearer, originAllowed } from '../app/auth.ts'
 import { DomainError } from '../app/errors.ts'
 import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
@@ -27,6 +27,11 @@ export interface AppOptions {
   deps: Deps
   /** `TEAM_TOKEN`; absent or empty = open (localhost only). */
   token?: string | undefined
+  /**
+   * Origins allowed to send state-changing requests that carry an `Origin` header (the web app and
+   * this server's own public origin). Absent: the check is off (tests).
+   */
+  allowedOrigins?: readonly string[] | undefined
   /** `eharness/http` (`infra/eh/harness-http.ts`): chat, sessions, attention answers, activity. */
   harness: HarnessFetch
 }
@@ -90,6 +95,10 @@ const EH_STATUS: Record<string, number> = {
   EH_PENDING_RESPONSE: 409,
   EH_INVALID_INPUT: 400,
   EH_STORAGE: 503,
+  // the lock service is down (not contention, which is EH_SESSION_BUSY): "storage unavailable"
+  EH_LOCK_UNAVAILABLE: 503,
+  EH_PROVIDER_AUTH: 502,
+  EH_PROVIDER: 502,
   EH_COMPACTION_FAILED: 502,
 }
 
@@ -121,6 +130,19 @@ export function createApp(options: AppOptions): OpenAPIHono {
     type: 'http',
     scheme: 'bearer',
     description: 'The value of TEAM_TOKEN. Not required when the server runs without one.',
+  })
+
+  app.use('*', async (c, next) => {
+    if (
+      options.allowedOrigins !== undefined &&
+      !originAllowed(c.req.method, c.req.header('origin'), options.allowedOrigins)
+    ) {
+      return c.json(
+        { error: { code: 'FORBIDDEN_ORIGIN', message: 'cross-origin request refused' } },
+        403,
+      )
+    }
+    return next()
   })
 
   app.use('*', async (c, next) => {
@@ -162,6 +184,18 @@ export function createApp(options: AppOptions): OpenAPIHono {
     const code = (error as { code?: unknown }).code
     if (typeof code === 'string' && code.startsWith('EH_')) {
       const status = EH_STATUS[code] ?? 500
+      if (code === 'EH_PROVIDER_AUTH') {
+        // safe text, and the hint that fixes it
+        return c.json(
+          {
+            error: {
+              code,
+              message: 'The model provider rejected the API key. Set it in Settings > Providers.',
+            },
+          },
+          502,
+        )
+      }
       if (status >= 500) {
         // storage and provider failures may carry SQL or upstream text: log it, answer generically
         console.error(error)

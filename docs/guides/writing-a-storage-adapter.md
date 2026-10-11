@@ -11,6 +11,7 @@ anything persistent is your code — usually under 100 lines. Contract: spec 05 
 ```ts
 import { defineHarnessAgent } from 'eharness'
 
+// yours: model (LanguageModel), myMessages() / myState() (the adapters below)
 const agent = defineHarnessAgent({
   model,
   storage: { messages: myMessages(), state: myState() }, // or per session: SessionOptions.storage
@@ -45,8 +46,12 @@ export function myMessages(): MessageAdapter {
 Requirements:
 
 1. **Order by id string.** Ids are UUIDv7: string order is creation order. Never rely on insertion
-   order or timestamps. (Postgres `uuid` byte order works too.)
-2. **`save` upserts** — same id replaces `role`, `parts` and `metadata`.
+   order or timestamps; ids that share a millisecond prefix must still list in one deterministic id
+   order. (Postgres `uuid` byte order works too.)
+2. **`save` is an atomic upsert** — the same id replaces the whole message (`role`, `parts`,
+   `metadata`), never merges. Concurrent saves of one id (two instances, or a retried step) must end
+   with exactly one row, and concurrent saves of disjoint batches must all be visible afterwards:
+   use `INSERT … ON CONFLICT (session_id, id) DO UPDATE` or a transaction, not read-then-write.
 3. **Round-trip JSON losslessly** (unknown keys, part order; object key order may change).
 4. **Return copies** — callers may mutate what `load` returns.
 5. **Isolate sessions.** Never delete: history is append-only for the core (regenerate/edit hide
@@ -105,28 +110,39 @@ describe('my storage', () => {
 
 Each case uses random session ids, so the factory may return adapters on one shared database.
 
+What the suites pin beyond the basics: `messageAdapterConformance` checks the query shapes, the
+upsert, copies and ordering, plus three concurrency cases (concurrent saves of one id end with one
+row, concurrent disjoint batches are all visible in id order, ids sharing a millisecond prefix keep
+a deterministic order), so a read-then-write `save` fails it. `lockConformance(factory, options?)`
+takes a `SessionLock` or `{ lock, peer?, expire? }` and checks acquire / release, prompt rejection
+while held (an acquire must never block), an idempotent release that never frees a newer holder,
+one winner among parallel acquires, exclusion across `peer`, and takeover of an expired lease via
+`expire` (omit `expire` for a lock without a lease, such as an advisory lock). Contributor notes:
+[`docs/engineering/testing.md`](../engineering/testing.md#lock-conformance).
+
 ## Several instances (serverless, horizontal scaling)
 
 | Need | Provide |
 |---|---|
 | Detect history written by another instance | `MessageAdapter.lastId` |
 | Exactly-once approvals across instances | `StateAdapter.setIf`, or a `SessionLock` |
-| Stop a turn running in another instance (`session.abort()` / `requestAbort()`) | `StateAdapter.setIf` (atomic) |
+| Stop a turn running in another instance (`session.abort()`) | `StateAdapter.setIf` (atomic) |
 | At most one running turn per session, exactly | a `SessionLock` (`SessionOptions.lock`) |
 | Queue, steer, wake, collect and abort across instances (`session.enqueue()`) | an `InboxAdapter` (`storage.inbox`) |
-| Reload on another instance while a turn streams (`attachRemote`, `useChat({ resume: true })`) | a `StreamLogAdapter` (`storage.streams`, `memoryStreamLog()`, `streamLogConformance`) |
+| Reload on another instance while a turn streams (`attachRemote`, `useChat({ resume: true })`) | a `StreamLogAdapter` (`storage.streams`, `inMemoryStreamLog()`, `streamLogConformance`) |
 
 ```ts
 import type { SessionLock } from 'eharness'
 
 const lock: SessionLock = {
-  // Resolve with a release function, or reject at once if another instance holds the session
-  // (the run then ends with EH_SESSION_BUSY). Must not block indefinitely.
+  // Resolve with a release function, or reject at once with
+  // `new HarnessError('EH_SESSION_BUSY', …)` if another instance holds the session. Any other
+  // rejection is a failing lock service (EH_LOCK_UNAVAILABLE). Must not block indefinitely.
   async acquire(sessionId, { signal }) {
     return async () => {}
   },
 }
-agent.session('s1', { lock })
+agent.session('s1', { lock }) // `agent` from the first snippet
 ```
 
 The Postgres example implements it with `pg_try_advisory_lock` on a dedicated connection. Check
@@ -155,7 +171,7 @@ const inbox: InboxAdapter = {
     /* clear the claim; uncount → attempts − 1; delayMs → not claimable before now + delayMs */
   },
   // optional: notify(sessionId), subscribe(sessionId, onNotify) → unsubscribe, pending({ limit })
-  // optional (poison items, 0.5): deadLetter(ids, { reason, lastError }), redrive(ids),
+  // optional (poison items): deadLetter(ids, { reason, lastError }), redrive(ids),
   //   listDead({ sessionId, limit }), stats({ sessionId })
 }
 ```
@@ -174,9 +190,9 @@ items after a running unit claimed, so no other instance starts them out of orde
 owner that already holds items renews those claims (not returned again, `attempts` unchanged), and
 an expired claim makes the item ready again — the core relies on that to redeliver the items of an
 instance that died. In Postgres, serialize the claims of a session with a transaction-scoped
-advisory lock (`FOR UPDATE SKIP LOCKED` alone lets a second claimer skip past a held row). Store the item as JSON and return copies. `memoryInbox()` is the reference.
+advisory lock (`FOR UPDATE SKIP LOCKED` alone lets a second claimer skip past a held row). Store the item as JSON and return copies. `inMemoryInbox()` is the reference.
 
-Checklist for the 0.5 members (spec 05 §12 rules 11–15) — needed before an application turns on
+Checklist for retry, dead-letter and dedupe (spec 05 §12 rules 11–15, 17) — needed before an application turns on
 `inbox.retry.maxAttempts`:
 
 - `release(ids, opts)`: only claimed rows, and with `owner` only rows still claimed by that owner

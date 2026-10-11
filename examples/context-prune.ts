@@ -9,7 +9,7 @@
  */
 import { tool } from 'ai'
 import { defineHarnessAgent, type HarnessWarning, isKindMessage, type PruneConfig } from 'eharness'
-import { memoryMessages } from 'eharness/storage/memory'
+import { inMemoryMessages } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
@@ -31,7 +31,7 @@ function script(turns: number) {
 }
 
 async function session(prune: PruneConfig | undefined) {
-  const messages = memoryMessages()
+  const messages = inMemoryMessages()
   const agent = defineHarnessAgent({
     model: exampleModel(script(TURNS)),
     contextWindow: 12_000,

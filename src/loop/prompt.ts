@@ -8,6 +8,7 @@
 import type { LanguageModel, ModelMessage, SystemModelMessage, Tool, ToolSet } from 'ai'
 import type { CacheConfig } from '../agent/types.ts'
 import type { ProviderOptions } from '../internal/ai-types.ts'
+import { isRecord } from '../internal/util.ts'
 
 /** Wrap volatile text as a `<system-reminder>` user message (never stored, never in the UI). */
 export function reminderMessage(text: string): ModelMessage {
@@ -66,15 +67,11 @@ export function deepMerge<T extends Record<string, unknown>>(
   for (const [key, value] of Object.entries(b)) {
     const previous = out[key]
     out[key] =
-      isPlainObject(previous) && isPlainObject(value)
+      isRecord(previous) && isRecord(value)
         ? deepMerge(previous as Record<string, unknown>, value as Record<string, unknown>)
         : value
   }
   return out as T
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 function cacheControl(config: CacheConfig): { type: 'ephemeral'; ttl?: '5m' | '1h' } {

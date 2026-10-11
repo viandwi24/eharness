@@ -15,19 +15,17 @@ export {
   type CheckpointStore,
   checkpointedFs,
   checkpointsSince,
-  checkpointTurnKey,
-  copyCheckpoints,
   DEFAULT_CHECKPOINT_KEEP_TURNS,
   type FileCheckpoint,
   type FileSnapshot,
-  type MemoryCheckpointStoreOptions,
-  memoryCheckpointStore,
+  type InMemoryCheckpointStoreOptions,
+  inMemoryCheckpointStore,
   type RewindFilesResult,
   rewindFiles,
 } from './checkpoints.ts'
 export { classifyToolResult, type FileToolResultKind } from './classify.ts'
 export { type CompiledGlob, compileGlob } from './glob.ts'
-export { bytesToBase64, detectMediaType, imageDimensions, looksBinary } from './media.ts'
+export { detectMediaType, looksBinary } from './media.ts'
 export { normalizePath } from './paths.ts'
 export {
   DEFAULT_MAX_READ_CHARS,
@@ -39,8 +37,6 @@ export {
   DEFAULT_PROJECT_INSTRUCTION_FILES,
   DEFAULT_PROJECT_INSTRUCTIONS_MAX_CHARS,
   DEFAULT_PROJECT_INSTRUCTIONS_MAX_NESTED,
-  defaultNestedInstructionsFrame,
-  defaultProjectInstructionsFrame,
   loadProjectInstructions,
   type NestedProjectInstructionFile,
   type ProjectInstructionFile,

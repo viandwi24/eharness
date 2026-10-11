@@ -12,11 +12,11 @@
  */
 import { setTimeout as sleep } from 'node:timers/promises'
 import { defineHarnessAgent, externalTool } from 'eharness'
-import { memoryInbox, memoryMessages, memoryState } from 'eharness/storage/memory'
+import { inMemoryInbox, inMemoryMessages, inMemoryState } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
-const storage = { messages: memoryMessages(), state: memoryState(), inbox: memoryInbox() }
+const storage = { messages: inMemoryMessages(), state: inMemoryState(), inbox: inMemoryInbox() }
 
 /** The fake CI system: remembers what it was asked to build (an idempotency key per wait). */
 const ci = new Map<string, string>()

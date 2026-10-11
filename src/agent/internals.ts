@@ -1,7 +1,8 @@
 /**
  * Boot-time state of an agent that the runtime (P2+) needs but that is not public API.
  */
-import type { WarningEmitter } from '../errors.ts'
+import { configError, type WarningEmitter } from '../errors.ts'
+import type { Observer } from '../internal/observe.ts'
 import type { MessageRegistry } from '../messages/registry.ts'
 import type { DataPartMap, HarnessPlugin, KindMap } from '../plugin/types.ts'
 import type { StaticRegistry } from '../registry/static.ts'
@@ -21,6 +22,8 @@ export interface AgentInternals {
   statics: StaticRegistry
   /** The agent's warning emitter (`config.onWarning` or deduplicated console). */
   emitWarning: WarningEmitter
+  /** `config.observe`, wrapped so it never throws; `undefined` = observability off (zero cost). */
+  observe: Observer | undefined
   /** Message/turn id generator (`config.generateId` or monotonic UUIDv7). */
   generateId: (floor?: string) => string
 }
@@ -35,6 +38,6 @@ export function setAgentInternals(agent: object, value: AgentInternals): void {
 /** Internals of an agent created by `defineHarnessAgent`; throws for foreign objects. */
 export function getAgentInternals(agent: HarnessAgent<unknown>): AgentInternals {
   const value = internals.get(agent)
-  if (value === undefined) throw new TypeError('Not an agent created by defineHarnessAgent().')
+  if (value === undefined) throw configError('Not an agent created by defineHarnessAgent().')
   return value
 }

@@ -1,5 +1,6 @@
 /**
- * Helpers for the integration tests of the runtime (not part of the public API, not bundled).
+ * Helpers for the integration tests of the runtime. Test-only: imported by `*.test.ts` files, never by
+ * production code (`scripts/check-imports.ts` enforces it), so it is not bundled.
  */
 import type { UIMessageChunk } from 'ai'
 import type { MessageAdapter, SessionStateSnapshot, StateAdapter } from '../agent/session-types.ts'
@@ -123,5 +124,15 @@ export function normalizeVolatile(value: unknown): unknown {
 export function chunkTypes(chunks: readonly UIMessageChunk[]): string[] {
   return chunks.map((c) =>
     c.type === 'data-eh.status' ? `data-eh.status:${(c.data as { state: string }).state}` : c.type,
+  )
+}
+
+/**
+ * Let the current test break a session invariant on purpose (`W_INVARIANT_VIOLATION` otherwise fails
+ * the test, see `scripts/test-preload.ts`). Reset after the test.
+ */
+export function allowInvariantViolation(pattern: RegExp): void {
+  ;(globalThis as { allowInvariantViolation?: (p: RegExp) => void }).allowInvariantViolation?.(
+    pattern,
   )
 }

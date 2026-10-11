@@ -1,7 +1,7 @@
 # Spec 12 — Models, cost and budgets
 
-Status: **Draft (0.3)** (shipped in 0.3.0), updated for 0.4.0 and 0.5.0 (§4.1). Modules: `src/models/*`, cost accounting in `src/loop/steps.ts`,
-`src/session/turn.ts`.
+Status: **Draft (0.3)** (shipped in 0.3.0), updated for 0.4.0 and 0.5.0 (§4.1). Modules: `src/models/*`, cost accounting in `src/loop/step-*.ts`,
+`src/session/turn/*.ts`.
 
 AI SDK knows a model only as `{ provider, modelId }`: no context window, no prices. The core needs
 both — the window for compaction and the guard (spec 06), prices for cost and budgets. The
@@ -22,7 +22,7 @@ export interface ModelInfo {
 }
 ```
 
-`lookupModel(catalog, model)` resolves a record by, in order: `describeModel(model)`
+`lookupModel(catalog, model)` resolves a record by, in order: the model description
 (`anthropic/claude-sonnet-4.6` for gateway strings, `anthropic.messages/claude-sonnet-4-6` for
 provider instances), `<provider family>/<modelId>` (`anthropic/claude-sonnet-4-6`), `<modelId>`.
 A function catalog that throws counts as unknown.
@@ -162,7 +162,7 @@ export interface BudgetLedger {
 ```
 
 **Adapter contract** (checked by `budgetLedgerConformance(factory)` in `eharness/testing`;
-`memoryBudgetLedger({ limits })` in `eharness/storage/memory` passes it):
+`inMemoryBudgetLedger({ limits })` in `eharness/storage/memory` passes it):
 
 - A scope **with a limit** takes a reservation when it is not used up (spent + reserved < limit)
   and spent + reserved + amount ≤ limit; a scope **without a limit** always does. `reserve` is
@@ -189,7 +189,7 @@ export interface BudgetLedger {
    `details: { scope: 'ledger', ledgerScope, limitUsd, spentUsd, exceeded: true }` (once per turn).
    The reservation is taken after input delivery and the guard of the step; a refusal at that
    point leaves delivered input in the message like a compaction that uses up a budget (§4).
-2. **After the step** the reservation is committed with the step's actual cost (`costOf` with the
+2. **After the step** the reservation is committed with the step's actual cost (priced with the
    step model); a step whose usage AI SDK did not report (abort, timeout, provider failure before
    streaming) commits 0. A failed commit stays queued and is retried (commit is idempotent) before
    the next reservation and at turn end; a commit still failing at turn end is charged with
@@ -218,7 +218,7 @@ export interface BudgetLedger {
    are app policy, e.g. inside its adapter).
 7. **Scopes, periods, prices and limits** are never interpreted by the core: scope strings are
    opaque; an empty scope list leaves the turn unlimited by the ledger (no calls).
-   `memoryBudgetLedger` has static limits and no periods; `examples/postgres-budget-ledger.ts`
+   `inMemoryBudgetLedger` has static limits and no periods; `examples/postgres-budget-ledger.ts`
    shows monthly periods.
 
 Without `budget.ledger`, behaviour, warnings and storage are exactly those of §4.
@@ -273,7 +273,7 @@ Rules:
    redacted. `request.body` is what the provider reports it sent; `response.headers` drops
    `set-cookie` and names matching authorization / api-key / token / secret / cookie / credential.
 4. The core observes steps, the compaction summarizer (`'compaction'`), the pre-compaction flush
-   (`'flush'`) and `approvalGuard`'s judge (`'other'`). Plugins wrap their own models with
+   (`'flush'`) and the shared LLM judge of `guard` (`'other'`; `createJudge`, ADR-0060). Plugins wrap their own models with
    `ctx.observeModel`; code without a session uses `observeModel` (the permission engine's
    `modelClassifier` takes `onModelCall`).
 5. Without a `model.call` listener nothing is wrapped. These events do not charge budgets.

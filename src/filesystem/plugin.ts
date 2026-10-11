@@ -101,7 +101,11 @@ function toolOutputStore(fs: FileSystem, dir: string): ToolOutputStore {
         name = `${name || 'output'}-${(await contentVersion(id)).slice(0, 8)}`
       const path = joinPath(dir, `${name}.txt`)
       const result = await fs.write(path, text)
-      if (!result.ok) throw new Error(`toolOutputs: could not write ${path} (${result.reason})`)
+      if (!result.ok)
+        throw new HarnessError(
+          'EH_STORAGE',
+          `toolOutputs: could not write ${path} (${result.reason})`,
+        )
       return path
     },
   }
@@ -124,7 +128,7 @@ function toolOutputStore(fs: FileSystem, dir: string): ToolOutputStore {
  *   model,
  *   plugins: [
  *     filesystem({
- *       fs: memoryFs({ '/README.md': '# Hello\n' }),
+ *       fs: inMemoryFs({ seed: { '/README.md': '# Hello\n' } }),
  *       skills: { root: '/skills', refresh: 'turn' },
  *       readonlyPrefixes: ['/vendor'],
  *     }),
@@ -276,7 +280,7 @@ export function filesystem(
           tools,
         ),
       }
-      if (skills !== undefined) contribution.skills = [fsSkillSource(fs, skills)]
+      if (skills !== undefined) contribution.skills = [fsSkillSource({ fs, ...skills })]
       return contribution
     },
   })

@@ -10,6 +10,7 @@ spec 09 (tools and MCP).
 ```ts
 import { defineHarnessAgent } from 'eharness'
 
+// yours: model (LanguageModel)
 const agent = defineHarnessAgent({
   model,
   instructions: [
@@ -38,6 +39,7 @@ import { tool } from 'ai'
 import { defineHarnessAgent, defineToolSource } from 'eharness'
 import { z } from 'zod/v4'
 
+// yours: model
 const agent = defineHarnessAgent({
   model,
   tools: [
@@ -85,7 +87,10 @@ const agent = defineHarnessAgent({
 - Static names must be unique (`EH_DUPLICATE_TOOL`: at boot for config / `setup()` tools, at
   session open for a plugin's `session()` tools). A source that returns a name that is
   already taken is skipped with `W_SHADOWED`; a failing `list()` contributes nothing for that turn
-  (`W_TOOL_SOURCE_FAILED`) and is retried next turn.
+  (`W_TOOL_SOURCE_FAILED`). Sources are listed concurrently; a `list()` that does not settle within
+  `toolSources.timeoutMs` (default 30 000) fails the same way, and a failed source is not asked
+  again for `toolSources.retryAfterMs` (default 5 000, doubling per consecutive failure up to
+  60 000; `0` retries at every turn).
 - The tool set is fixed for a turn and keeps a stable order (static, skill tools, sources,
   `tool_search`) for the prompt cache. Restricting tools per step (`activeTools`) busts the cache
   (`W_CACHE_BUST`); prefer `toolChoice` or a `tool.approve` denial.
@@ -112,12 +117,15 @@ const catalog = defineToolSource({
 
 Each discovery changes the provider-visible tool list, so it costs one prompt-cache miss.
 
-Defer tools you do not own by name with `deferTools` (0.7): app, plugin and source tools alike. When
+Defer tools you do not own by name with `deferTools`: app, plugin and source tools alike. When
 any tool is deferred, the core adds a turn reminder that lists the deferred tools by name with a
 one-line description, so the model knows they exist (the exact format is Draft). Deferred tools do
 not count toward `session.stats()` token totals; `session.tools()` still reports their size.
 
 ```ts
+import { localSandbox, shell } from 'eharness/shell'
+
+const sandbox = localSandbox({ root: process.cwd() })
 defineHarnessAgent({ model, plugins: [shell({ sandbox })], deferTools: ['kill_shell', 'bash_output'] })
 ```
 
@@ -129,17 +137,18 @@ the list stable across turns: a changed order busts the prompt cache.
 
 ## MCP servers (`eharness/mcp`)
 
-`mcpServer()` turns an MCP server into a tool source over `@ai-sdk/mcp` (an optional peer
+`mcpServerSource()` turns an MCP server into a tool source over `@ai-sdk/mcp` (an optional peer
 dependency: `npm install @ai-sdk/mcp`).
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { mcpServer } from 'eharness/mcp'
+import { mcpServerSource } from 'eharness/mcp'
 
+// yours: model, and githubToken in the session `runtime`
 const agent = defineHarnessAgent({
   model,
   mcp: [
-    mcpServer({
+    mcpServerSource({
       name: 'github', // tools become github_<tool>; source id 'mcp:github'
       // a config, or a resolver per session (per-user credentials)
       transport: (ctx) => ({
@@ -148,9 +157,10 @@ const agent = defineHarnessAgent({
         headers: { authorization: `Bearer ${String(ctx.runtime.githubToken)}` },
       }),
       allow: ['search_issues', 'create_issue'], // or deny: [...]; server names, before the prefix
-      defer: 'auto', // default: deferred when more than 20 tools remain (MCP_AUTO_DEFER_THRESHOLD)
+      defer: 'auto', // default: deferred when more than 20 tools remain
       connect: 'lazy', // default: connect at the first turn; 'eager': at session open
-      pinDefinitions: true, // exclude tools whose definition changed since the first connect
+      pinDefinitions: true, // default for http/sse (false for stdio); excludes tools whose definition changed since the first connect
+      timeoutMs: 15_000, // default: limit for connect and tool listing (EH_MCP_TIMEOUT)
     }),
   ],
 })
@@ -159,11 +169,15 @@ const agent = defineHarnessAgent({
 - One MCP client **per session** (credentials can differ per user), closed when the session closes.
   A resolver must return a new transport per call; an `MCPTransport` instance as `transport` is
   rejected (`EH_CONFIG_INVALID`).
-- Connection or listing failures give zero tools and `W_TOOL_SOURCE_FAILED`; the next turn retries.
+- Connection or listing failures give zero tools and `W_TOOL_SOURCE_FAILED` (a server that does not
+  answer within `timeoutMs`, default 15 000, fails with `EH_MCP_TIMEOUT`); the source is retried
+  after the `toolSources.retryAfterMs` backoff.
   Importing `eharness/mcp` never fails without `@ai-sdk/mcp`; connecting does.
-- `pinDefinitions` stores a fingerprint of every server tool in the session state; changed or new
-  tools are excluded with `W_MCP_DRIFT` until you re-pin with
-  `clearMcpPins(agent, sessionId, 'github')` (use one `mcpServer()` instance per agent).
+- `pinDefinitions` defaults to `true` for remote (`http` / `sse`) servers, also when a resolver
+  returns one, and `false` for stdio and `MCPTransport` instances; pass `false` to accept every
+  change of a remote server. It stores a fingerprint of every server tool in the session state;
+  changed or new tools are excluded with `W_MCP_DRIFT` until you re-pin with
+  `clearMcpPins(agent, sessionId, 'github')` (use one `mcpServerSource()` instance per agent).
 - Annotations stay in the tool's `metadata.annotations` exactly as the server sent them and only
   **tighten** the risk used by `approval.risk`: `destructiveHint: true` → `'destructive'`, else
   `openWorldHint: true` → `'external'`. `readOnlyHint` never makes a tool `'read'` and
@@ -174,7 +188,7 @@ const agent = defineHarnessAgent({
   `risk: 'read'` for a trusted read-only server, or a function per tool:
 
   ```ts
-  mcpServer({
+  mcpServerSource({
     name: 'mail',
     transport,
     // server tool name (before the prefix) and the annotations as sent; undefined = derived risk
@@ -186,20 +200,22 @@ const agent = defineHarnessAgent({
   A function that throws or returns an invalid risk keeps the derived risk and logs a warning.
 - `mcp: [...]` is the same as putting the sources into `tools`; it exists for readability.
 - Other options: `prefix` (default `<name>_`, `''` for none), `maxRetries` (retries of tool calls,
-  default 0), `refresh` (`'session'` or `'turn'`).
+  default 0), `timeoutMs` (connect and listing limit, default 15 000), `refresh` (`'session'` or
+  `'turn'`), `wrapUntrusted` (below).
 
-> **Remote MCP and `readOnlyHint`.** `mcpServer()` treats annotations as tighten-only (above). The
+> **Remote MCP and `readOnlyHint`.** `mcpServerSource()` treats annotations as tighten-only (above). The
 > connectors module (`remoteMcpConnector`, [Connectors](connectors.md)) instead groups a custom
 > server's tools by the annotations it sent at connect time: `readOnlyHint: true` lands in the
 > `read` capability. A hostile or compromised server controls that label, so that capability
-> defaults to `ask` like `write` and `destructive` (since 0.8); set the `read` mode to `allow` (`modes: { read: 'allow' }`)
+> defaults to `ask` like `write` and `destructive`; set the `read` mode to `allow` (`modes: { read: 'allow' }`)
 > on an enablement only for servers you trust.
 
 MCP output is untrusted: the text parts of every tool result reach the model inside
-`<untrusted-content source="mcp" name="<server>/<tool>">…</untrusted-content>` (images, structured
-JSON and `isError` are unchanged, and the UI keeps the raw result). Opt out per server with
-`mcpServer({ wrapUntrusted: false })`, e.g. for a server you fully trust. Add
-`UNTRUSTED_CONTENT_INSTRUCTIONS` to your instructions. See
+`<untrusted-content source="mcp" name="<server>/<tool>">…</untrusted-content>`; structured (JSON)
+output is serialized and framed the same way, and so are the error messages of failed MCP tool
+calls. Images are unchanged, and the UI keeps the raw result. Opt out per server with
+`mcpServerSource({ wrapUntrusted: false })`, e.g. for a server you fully trust. Add
+`UNTRUSTED_CONTENT_INSTRUCTIONS` (exported from `eharness`) to your instructions. See
 [Permissions → Prompt injection](permissions.md#prompt-injection).
 
 ## Tool output limits
@@ -210,8 +226,9 @@ before it reaches the model, the stream and storage:
 ```ts
 import { defineHarnessAgent } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 
+// yours: model
 defineHarnessAgent({
   model,
   toolOutput: {
@@ -219,7 +236,7 @@ defineHarnessAgent({
     perTool: { read_logs: 200_000, get_price: false }, // false = unlimited
     strategy: 'evict', // default 'truncate'
   },
-  plugins: [filesystem({ fs: memoryFs() })], // provides the toolOutputs service `evict` needs
+  plugins: [filesystem({ fs: inMemoryFs() })], // provides the toolOutputs service `evict` needs
 })
 ```
 
@@ -236,6 +253,7 @@ defineHarnessAgent({
 ```ts
 import { defineHarnessAgent } from 'eharness'
 
+// yours: model
 defineHarnessAgent({
   model,
   settings: {
@@ -249,7 +267,10 @@ defineHarnessAgent({
 ```
 
 A timed-out tool becomes a tool error the model can read; a step timeout ends the turn with
-`'timeout'`. `settings.timeout.totalMs` is rejected — use `loop.turnTimeoutMs`.
+`'timeout'`. `settings.timeout.totalMs` is rejected — use `loop.turnTimeoutMs`. Without a
+`timeout` the core applies idle timeouts of 120 000 ms to the first chunk and between chunks
+(`timeout: false` turns them off) and `maxRetries: 2`; awaited plugin hooks are bounded by
+`hooks.timeoutMs` (default 30 000).
 
 ## Choosing the model per turn or step
 
@@ -258,7 +279,7 @@ import { defineHarnessAgent, definePlugin } from 'eharness'
 import { z } from 'zod/v4'
 
 const agent = defineHarnessAgent({
-  model: 'anthropic/claude-sonnet-4.6',
+  model: 'anthropic/claude-sonnet-4.6', // a gateway model id string; or pass a LanguageModel
   // typed per-call options: send(…, { options }) is validated (EH_INVALID_INPUT) → ctx.turn.options
   callOptions: z.object({ effort: z.enum(['low', 'high']) }),
   plugins: [

@@ -19,7 +19,12 @@
  * command whose text mentions a protected path asks, and an allow rule never approves a command
  * that redirects (or `tee`s) outside the working directories.
  */
-import { type GuardTranscriptEntry, HarnessError } from '../index.ts'
+import {
+  errorText,
+  type GuardTranscriptEntry,
+  HarnessError,
+  type JudgeCoordinator,
+} from '../index.ts'
 import { parseCommand, restrictiveForms } from './command.ts'
 import {
   escapeRegExp,
@@ -55,6 +60,7 @@ import { commandOf, createToolTable, fieldOf, type ToolTable } from './tools.ts'
 import {
   type AutoAction,
   type AutoClassifier,
+  type AutoClassifierContext,
   type AutoEvent,
   type AutoListener,
   type AutoState,
@@ -140,9 +146,32 @@ export interface PermissionEngineOptions {
    * Rules are in memory otherwise.
    */
   persist?: (rules: PermissionRules, change: RuleChange) => void | Promise<void>
+  /**
+   * Resolves a real (OS) path through symlinks, `undefined` when it cannot (spec 18 §5). With it
+   * `decideAsync` matches protected paths and Read/Edit rules against the resolved path as well,
+   * so a committed symlink (`g -> .git`, `x -> .env`) does not hide its target. Without it matching
+   * stays lexical. Use `nodeRealpath` from `eharness/filesystem/node`. Only the file tools' paths
+   * and the path words of shell commands are resolved; `decide` (sync) stays lexical.
+   */
+  realpath?: (real: string) => Promise<string | undefined>
+  /**
+   * Looks inside a directory a command reads RECURSIVELY (spec 18 §5). The engine itself cannot
+   * list directories (core is runtime-neutral), so without this option a recursive read
+   * (`grep -r KEY .`, `rg KEY`, `ag`, `find . -exec cat {} +`, `cp -r`, `rsync`, `tar`, `zip` of a
+   * directory) is judged lexically only: the built-in `.env*` asks and protected paths do not stop
+   * it, while a user `Read` deny/ask rule that could match something below the directory still
+   * asks. With it, `decideAsync` calls it with the symlink-resolved directory and gitignore-style
+   * patterns (relative `Read` specifiers or protected paths; a pattern with a `/` may also match
+   * at any depth below the directory) and acts on the answer: a match of a `Read` deny rule
+   * denies the call, a match of a built-in ask rule or a protected path asks (an allow rule
+   * overrides both, as for an explicit read). It resolves `true` when a file or directory below
+   * `realDir` (or `realDir` itself) matches any pattern; a rejection counts as `true`, and an
+   * implementation must answer `true` when it gives up (fail closed). Use `nodeContainsProtected`
+   * from `eharness/filesystem/node`. `decide` (sync) stays lexical.
+   */
+  containsProtected?: (realDir: string, patterns: readonly string[]) => Promise<boolean>
 }
 
-/** The permission engine. */
 /** Options of {@link PermissionEngine.decideAsync}. */
 export interface DecideOptions {
   /** Mode of this call instead of the engine's (as `decide`'s second argument). */
@@ -155,8 +184,13 @@ export interface DecideOptions {
   /** The restricted transcript for the classifier (`tool.approve` event `transcript()`). */
   transcript?: () => readonly GuardTranscriptEntry[]
   abortSignal?: AbortSignal
+  /** Passed to the classifier (`AutoClassifierContext.coordinator`): the guard of the same session. */
+  coordinator?: JudgeCoordinator
+  /** Passed to the classifier (`AutoClassifierContext.risk`). */
+  risk?: string
 }
 
+/** The permission engine. */
 export interface PermissionEngine {
   readonly mode: PermissionMode
   /** `setMode('auto')` throws `EH_CONFIG_INVALID` when the engine has no `classifier`. */
@@ -362,6 +396,94 @@ function readRuleCovering(
 
 const COVER_REASON = (rule: ParsedRule): string => `may read files matched by ${rule.raw}`
 
+/** Most directories one call has looked into (`containsProtected`); more ask without looking. */
+const MAX_RECURSIVE_DIRS = 8
+
+const hasShortFlag = (args: readonly string[], letters: string): boolean =>
+  args.some(
+    (a) =>
+      /^-[A-Za-z]/.test(a) &&
+      !a.startsWith('--') &&
+      [...a.slice(1)].some((c) => letters.includes(c)),
+  )
+
+/**
+ * Lexical real paths a command reads recursively: the directory arguments of the read-only
+ * grammar's recursive commands (`grep -r`, `rg`, default `.`) and of recursive commands outside it
+ * (`ag`, `ack`, `find … -exec`, `cp -r`, `rsync -r`, `tar`, `zip -r`). Over-approximates: a
+ * non-directory argument is looked at too (the lookup then answers `false` for a missing path).
+ */
+function recursiveReadDirs(command: string, env: Env): string[] {
+  const dirs = new Set<string>()
+  const add = (arg: string): void => {
+    if (unresolvable(arg) || isGlobArg(arg)) return
+    const real = shellPath(arg, env)
+    if (env.workingDirs.some((dir) => isInside(real, dir))) dirs.add(real)
+  }
+  for (const c of bashReadAccess(command, env).cover) if (c.subtree) add(c.arg)
+  for (const sub of parseCommand(command).subcommands) {
+    const [name, ...args] = sub.split(' ')
+    const positional = args.filter((a) => !a.startsWith('-'))
+    switch (name) {
+      case 'ag':
+      case 'ack':
+        if (positional.length <= 1) add('.')
+        for (const arg of positional.slice(1)) add(arg)
+        break
+      case 'cp':
+        if (hasShortFlag(args, 'rRa') || args.some((a) => a === '--recursive' || a === '--archive'))
+          for (const arg of positional.slice(0, -1)) add(arg)
+        break
+      case 'rsync':
+        if (hasShortFlag(args, 'ra') || args.some((a) => a === '--recursive' || a === '--archive'))
+          for (const arg of positional.slice(0, -1)) add(arg)
+        break
+      case 'tar':
+        for (const arg of positional) add(arg)
+        break
+      case 'zip':
+        if (hasShortFlag(args, 'r') || args.includes('--recurse-paths'))
+          for (const arg of positional.slice(1)) add(arg)
+        break
+      case 'find': {
+        const executes = args.some((a) => /^-(exec|execdir|ok|okdir)$/.test(a))
+        const shallow = args.some(
+          (a, i) => /^-maxdepth$/.test(a) && /^[01]$/.test(args[i + 1] ?? ''),
+        )
+        if (!executes || shallow) break
+        let i = 0
+        while (args[i] !== undefined && /^-[HLP]$/.test(args[i] as string)) i++
+        let starts = 0
+        while (args[i] !== undefined && !/^[-!(),]/.test(args[i] as string)) {
+          add(args[i] as string)
+          starts++
+          i++
+        }
+        if (starts === 0) add('.')
+        break
+      }
+    }
+  }
+  return [...dirs]
+}
+
+/** What a look into a recursively read directory found. */
+interface RecursiveHit {
+  /** A `Read` deny rule has a match below the directory. */
+  deny?: ParsedRule
+  /** A built-in ask rule or protected path has a match, or the look could not be completed. */
+  ask?: boolean
+}
+
+/** Relative path specifiers (gitignore-style patterns) of a list of `Read` rules. */
+const relativeSpecifiers = (rules: readonly ParsedRule[]): string[] =>
+  rules
+    .map((r) => r.specifier)
+    .filter(
+      (s): s is string =>
+        s !== undefined && !s.startsWith('/') && !s.startsWith('~') && !s.startsWith('!'),
+    )
+
 /** Real paths a call would write: the target of a write tool, or the redirect targets of a shell command. */
 function writeTargets(call: PermissionCall, env: Env): string[] {
   switch (env.tools.kindOf(call.toolName)) {
@@ -469,6 +591,31 @@ function bashSuggestion(command: string): string | undefined {
 }
 
 /**
+ * High-risk flags: a command that carries one is never covered by a prefix grant or a suggested
+ * prefix rule (`git push` approved for the session does not approve `git push --force`). Small on
+ * purpose: force/destructive switches and container escapes (spec 18 §7).
+ */
+function hasRiskyFlag(program: string, words: readonly string[]): boolean {
+  const args = words.slice(1)
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i] as string
+    if (a === '--') break
+    if (
+      /^--(force(-with-lease|-if-includes)?(=.*)?|privileged|hard|mount(=.*)?|no-preserve-root)$/.test(
+        a,
+      )
+    )
+      return true
+    if (/^--(pid|net|network|ipc|userns)=host$/.test(a)) return true
+    if (program === 'git' && args[0] === 'push' && /^-[a-zA-Z]*f[a-zA-Z]*$/.test(a)) return true
+    if (program === 'rm' && /^-[a-zA-Z]*[rRf][a-zA-Z]*$/.test(a)) return true
+    if (/^(-v|--volume|-mount)$/.test(a) && (args[i + 1] ?? '').startsWith('/')) return true
+    if (/^(-v|--volume=?)\//.test(a)) return true
+  }
+  return false
+}
+
+/**
  * The command prefix a rule suggestion or a session grant is scoped to: `prog sub` for an ordinary
  * program, the whole command (`exact`) for an interpreter, shell or wrapper, when the second word
  * is a flag, for `git config` and for a one-word command. `undefined` for compound and complex
@@ -476,7 +623,7 @@ function bashSuggestion(command: string): string | undefined {
  */
 function shellPrefix(
   command: string,
-): { text: string; exact: boolean; wrapper: boolean } | undefined {
+): { text: string; exact: boolean; wrapper: boolean; risky: boolean } | undefined {
   const parsed = parseCommand(command)
   if (parsed.complex || parsed.subcommands.length !== 1) return undefined
   const first = parsed.subcommands[0] as string
@@ -485,11 +632,13 @@ function shellPrefix(
   const program = (words[0] as string).split('/').pop() as string
   const second = words[1]
   const wrapper = WRAPPERS.has(program) || /^python[\d.]*$/.test(program)
-  if (second === undefined) return { text: first, exact: true, wrapper }
-  const risky = wrapper || second.startsWith('-') || (program === 'git' && second === 'config')
-  return risky
-    ? { text: first, exact: true, wrapper }
-    : { text: `${words[0]} ${second}`, exact: false, wrapper }
+  const flagged = hasRiskyFlag(program, words)
+  if (second === undefined) return { text: first, exact: true, wrapper, risky: flagged }
+  const exact =
+    wrapper || flagged || second.startsWith('-') || (program === 'git' && second === 'config')
+  return exact
+    ? { text: first, exact: true, wrapper, risky: flagged }
+    : { text: `${words[0]} ${second}`, exact: false, wrapper, risky: flagged }
 }
 
 /**
@@ -589,11 +738,16 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       ? undefined
       : new Set(options.readOnlyCommands.filter((n) => READ_ONLY_COMMAND_NAMES.includes(n)))
 
+  // symlink-resolved paths of the call `decideAsync` is deciding (set around one sync `decide`)
+  let resolvedPaths: Map<string, string> | undefined
+  // what `containsProtected` found below the directories of that call (lexical dir → hit)
+  let recursiveHits: Map<string, RecursiveHit> | undefined
+
   const env = (): Env => {
     const roots = options.roots()
     const projectRoot = roots.find((r) => normalize(`/${r.virtual}`) === '/') ?? roots[0]
     const root = projectRoot === undefined ? '/' : normalize(projectRoot.real)
-    const isProtected = (real: string): boolean => {
+    const lexicalProtected = (real: string): boolean => {
       for (const r of roots) {
         const dir = normalize(r.real)
         if (!isInside(real, dir)) continue
@@ -602,10 +756,17 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       }
       return false
     }
+    const canon = (real: string): string | undefined => resolvedPaths?.get(real)
+    const isProtected = (real: string): boolean => {
+      if (lexicalProtected(real)) return true
+      const alt = canon(real)
+      return alt !== undefined && alt !== real && lexicalProtected(alt)
+    }
     const out: Env = {
       root,
       roots,
       tools,
+      canon,
       ro,
       isProtected,
       protectedText,
@@ -715,6 +876,22 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     if (denied !== undefined) {
       return { status: 'denied', rule: denied.raw, reason: `Denied by the rule ${denied.raw}.` }
     }
+    // files below a directory read recursively that a deny rule matches (`containsProtected`)
+    const recursive: RecursiveHit = {}
+    if (bash !== undefined && recursiveHits !== undefined) {
+      for (const dir of recursiveReadDirs(bash, e)) {
+        const hit = recursiveHits.get(dir)
+        if (hit?.deny !== undefined) recursive.deny ??= hit.deny
+        if (hit?.ask === true) recursive.ask = true
+      }
+    }
+    if (recursive.deny !== undefined) {
+      return {
+        status: 'denied',
+        rule: recursive.deny.raw,
+        reason: `Denied by the rule ${recursive.deny.raw}: files below a directory this command reads recursively match it.`,
+      }
+    }
 
     // the question tool is not an action: it only talks to the user (ask rules cannot gate it)
     if (kind === 'ask') return { status: 'approved' }
@@ -785,6 +962,21 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       (rule) =>
         !(m === 'auto' && broadAutoAllow(rule, e)) && ruleMatchesCall(rule, call, 'allow', e),
     )
+    // inline interpreter code (`python -c`, `node -e`, …): only an exact allow rule (no wildcard)
+    // approves it; `Bash(python *)` asks, since the code can do anything the rules try to stop
+    if (
+      allow !== undefined &&
+      bash !== undefined &&
+      m !== 'bypassPermissions' &&
+      (allow.specifier === undefined || allow.specifier.includes('*')) &&
+      restrictiveForms(bash).inlineCode
+    ) {
+      return {
+        status: 'user-approval',
+        rule: allow.raw,
+        reason: 'runs inline interpreter code (-c/-e): always asks unless an exact rule allows it',
+      }
+    }
     if (allow !== undefined) {
       const blocker = allowBlocker(call, targets, e)
       if (blocker !== undefined) {
@@ -795,6 +987,13 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
 
     // 7. built-in ask rules (an allow rule above overrides them)
     if (m !== 'bypassPermissions') {
+      if (recursive.ask === true) {
+        return {
+          status: 'user-approval',
+          reason:
+            'reads a directory recursively that holds environment files or protected paths: asks first.',
+        }
+      }
       const soft =
         e.builtinAsk.find((rule) => ruleMatchesCall(rule, call, 'restrict', e)) ??
         readRule(e.builtinAsk)
@@ -891,10 +1090,13 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     } catch {
       transcript = []
     }
-    const ctx: { transcript: readonly GuardTranscriptEntry[]; abortSignal?: AbortSignal } = {
-      transcript,
-    }
+    const ctx: AutoClassifierContext = { transcript }
     if (opts.abortSignal !== undefined) ctx.abortSignal = opts.abortSignal
+    if (opts.coordinator !== undefined && opts.toolCallId !== undefined) {
+      ctx.coordinator = opts.coordinator
+      ctx.toolCallId = opts.toolCallId
+      if (opts.risk !== undefined) ctx.risk = opts.risk
+    }
     let why: string
     let reason: string
     try {
@@ -902,6 +1104,13 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       if (verdict?.decision === 'allow') {
         auto.consecutive = 0
         return { status: 'approved', auto: 'allowed' }
+      }
+      if (verdict?.decision === 'ask') {
+        const note = typeof verdict.reason === 'string' ? verdict.reason.trim() : ''
+        return {
+          status: 'user-approval',
+          reason: `Auto mode asks a person${note === '' ? '' : `: ${note}`}`,
+        }
       }
       if (verdict?.decision === 'block') {
         why = typeof verdict.reason === 'string' ? verdict.reason.trim() : ''
@@ -912,7 +1121,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
         reason = 'Auto mode could not classify this action (unreadable verdict), so it was blocked.'
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
+      const message = errorText(error)
       if (error instanceof ClassifierUnavailableError) {
         // the judge did not run: fail closed, but it is not a block (no counter, no pause)
         emitAuto({
@@ -932,6 +1141,105 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     }
     recordBlock(call.toolName, why)
     return { status: 'denied', reason, auto: 'blocked' }
+  }
+
+  /** Lexical real paths a call touches (file target, redirects, path words of a command) → resolved. */
+  const resolveCallPaths = async (call: PermissionCall): Promise<Map<string, string>> => {
+    const found = new Map<string, string>()
+    const resolver = options.realpath
+    if (resolver === undefined) return found
+    const e = env()
+    const candidates = new Set<string>(writeTargets(call, e))
+    const target = callTarget(call, e)
+    if (target !== undefined && target !== null) candidates.add(target.real)
+    if (tools.kindOf(call.toolName) === 'shell') {
+      const command = commandOf(call, tools.spec(call.toolName))
+      if (command !== undefined) {
+        for (const sub of parseCommand(command).subcommands) {
+          for (const word of sub.split(' ').slice(1)) {
+            if (word === '' || word.startsWith('-') || /[$`*?[{]/.test(word)) continue
+            if (candidates.size >= 64) break
+            candidates.add(shellPath(word, e))
+          }
+        }
+      }
+    }
+    // roots may themselves sit behind a symlink (`/tmp` → `/private/tmp`): express a resolved
+    // path in the root's own spelling so it compares with the rules and protected patterns
+    const canonRoots: Array<{ dir: string; resolved: string }> = []
+    for (const r of e.roots) {
+      try {
+        const resolved = await resolver(normalize(r.real))
+        if (resolved !== undefined)
+          canonRoots.push({ dir: normalize(r.real), resolved: normalize(resolved) })
+      } catch {
+        // keep lexical
+      }
+    }
+    const back = (alt: string): string => {
+      for (const c of canonRoots) {
+        if (isInside(alt, c.resolved)) return join(c.dir, relative(c.resolved, alt))
+      }
+      return alt
+    }
+    for (const lexical of candidates) {
+      try {
+        const real = await resolver(lexical)
+        if (real === undefined) continue
+        const alt = back(normalize(real))
+        if (alt !== lexical) found.set(lexical, alt)
+      } catch {
+        // unresolvable: stay lexical
+      }
+    }
+    return found
+  }
+
+  /** Looks into the directories a shell command reads recursively (`containsProtected` option). */
+  const lookIntoRecursiveReads = async (
+    call: PermissionCall,
+    resolved: ReadonlyMap<string, string>,
+  ): Promise<Map<string, RecursiveHit>> => {
+    const hits = new Map<string, RecursiveHit>()
+    const look = options.containsProtected
+    if (look === undefined || tools.kindOf(call.toolName) !== 'shell') return hits
+    const command = commandOf(call, tools.spec(call.toolName))
+    if (command === undefined) return hits
+    const e = env()
+    const dirs = recursiveReadDirs(command, e)
+    if (dirs.length === 0) return hits
+    if (dirs.length > MAX_RECURSIVE_DIRS) {
+      for (const dir of dirs) hits.set(dir, { ask: true })
+      return hits
+    }
+    const safe = async (dir: string, patterns: readonly string[]): Promise<boolean> => {
+      if (patterns.length === 0) return false
+      try {
+        return (await look(dir, patterns)) !== false
+      } catch {
+        return true // could not look: fail closed
+      }
+    }
+    const denyRules = readRulesOf(parsed(rules.deny), e).filter(
+      (r) => relativeSpecifiers([r]).length > 0,
+    )
+    const askPatterns = [...relativeSpecifiers(readRulesOf(e.builtinAsk, e)), ...protectedPatterns]
+    for (const dir of dirs) {
+      const where = resolved.get(dir) ?? dir
+      const hit: RecursiveHit = {}
+      if (await safe(where, relativeSpecifiers(denyRules))) {
+        for (const rule of denyRules) {
+          if (await safe(where, relativeSpecifiers([rule]))) {
+            hit.deny = rule
+            break
+          }
+        }
+        hit.deny ??= denyRules[0]
+      }
+      if (await safe(where, askPatterns)) hit.ask = true
+      hits.set(dir, hit)
+    }
+    return hits
   }
 
   const decide = (call: PermissionCall, modeOverride?: PermissionMode): PermissionDecision => {
@@ -1028,7 +1336,21 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     },
     async decideAsync(call: PermissionCall, opts: DecideOptions = {}): Promise<PermissionDecision> {
       const m = opts.mode ?? mode
-      const decision = decide(call, opts.mode)
+      let decision: PermissionDecision
+      if (options.realpath === undefined && options.containsProtected === undefined) {
+        decision = decide(call, opts.mode)
+      } else {
+        const found = await resolveCallPaths(call)
+        const hits = await lookIntoRecursiveReads(call, found)
+        resolvedPaths = found
+        recursiveHits = hits
+        try {
+          decision = decide(call, opts.mode)
+        } finally {
+          resolvedPaths = undefined
+          recursiveHits = undefined
+        }
+      }
       if (decision.auto !== 'classify') return decision
       if (classifier === undefined) {
         return { status: 'user-approval', reason: 'Auto mode has no classifier configured.' }
@@ -1063,7 +1385,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       if (command === undefined) return null
       const e = env()
       const prefix = shellPrefix(command)
-      if (prefix === undefined || prefix.wrapper || prefix.text === '') return null
+      if (prefix === undefined || prefix.wrapper || prefix.risky || prefix.text === '') return null
       if (writeTargets(call, e).some((real) => e.isProtected(real))) return null
       if (mentionsProtected(e, command)) return null
       if (parseCommand(command).redirects.some((t) => t !== NULL_DEVICE)) return null

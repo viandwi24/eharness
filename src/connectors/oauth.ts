@@ -10,17 +10,127 @@
  * @see docs/specs/24-connectors.md#4-oauth-helpers
  */
 
+import { isPrivateHost, isRecord } from '../index.ts'
 import type { OAuthClient, OAuthTokens } from './types.ts'
-import { base64url, connectorError, isRecord, randomBytes, sha256 } from './util.ts'
+import { base64url, connectorError, randomBytes, sha256 } from './util.ts'
 
 /** Options shared by the helpers that call the network. */
 export interface OAuthFetchOptions {
   /** Default `globalThis.fetch`. The app's fetch is where private-network blocking belongs. */
   fetch?: typeof fetch
   signal?: AbortSignal
+  /** Default 15 000 — limit of every request (token, refresh, registration, discovery). */
+  timeoutMs?: number
   now?: () => number
   /** Allow `http://` for hosts other than localhost (tests, private networks). Default `false`. */
   allowInsecure?: boolean
+  /**
+   * Allow loopback, private and link-local hosts (a local development MCP server or identity
+   * provider). Default `false`: every URL the helpers follow (including discovered endpoints) must
+   * be a public host, so a hostile resource cannot point the server at `169.254.169.254`.
+   */
+  allowPrivateNetwork?: boolean
+  /**
+   * Replaces the default private-host check: return `false` to refuse a URL (an allow-list, a DNS
+   * check). It runs for every URL the helpers fetch, redirects included.
+   */
+  isAllowedUrl?: (url: URL) => boolean
+  /** Default 1 048 576 — a larger response body is refused. */
+  maxResponseBytes?: number
+}
+
+/** Default of `OAuthFetchOptions.maxResponseBytes`. */
+export const OAUTH_MAX_RESPONSE_BYTES = 1_048_576
+const OAUTH_MAX_REDIRECTS = 3
+
+/** Default of `OAuthFetchOptions.timeoutMs`. */
+export const OAUTH_TIMEOUT_MS = 15_000
+
+/**
+ * `fetch` bounded by `options.timeoutMs` and `options.signal`: a request that goes silent rejects
+ * (the refresh lock can never hang on an identity provider). Also rejects when the injected
+ * `fetch` ignores the abort signal.
+ */
+async function timedFetch(
+  options: OAuthFetchOptions,
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  const doFetch = options.fetch ?? globalThis.fetch
+  const timeoutMs = options.timeoutMs ?? OAUTH_TIMEOUT_MS
+  const signal =
+    options.signal === undefined
+      ? AbortSignal.timeout(timeoutMs)
+      : AbortSignal.any([options.signal, AbortSignal.timeout(timeoutMs)])
+  let onAbort: (() => void) | undefined
+  const aborted = new Promise<never>((_, reject) => {
+    onAbort = () =>
+      reject(
+        options.signal?.aborted === true
+          ? options.signal.reason
+          : connectorError(
+              'oauth-timeout',
+              `The identity provider did not answer within ${timeoutMs} ms.`,
+              {
+                timeoutMs,
+              },
+            ),
+      )
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  })
+  aborted.catch(() => undefined)
+  try {
+    return await Promise.race([followRedirects(doFetch, url, init, signal, options), aborted])
+  } finally {
+    if (onAbort !== undefined) signal.removeEventListener('abort', onAbort)
+  }
+}
+
+/**
+ * One request with `redirect: 'manual'`. A same-origin redirect is followed (at most
+ * {@link OAUTH_MAX_REDIRECTS} times, each target re-validated); a cross-origin one is refused, so a
+ * hostile endpoint cannot bounce the server to an internal host.
+ */
+async function followRedirects(
+  doFetch: typeof fetch,
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal,
+  options: OAuthFetchOptions,
+): Promise<Response> {
+  let current = url
+  let method = init.method ?? 'GET'
+  let body = init.body
+  for (let hop = 0; ; hop++) {
+    const response = await doFetch(current, { ...init, method, body, signal, redirect: 'manual' })
+    const location = response.headers.get('location')
+    if (response.status < 300 || response.status >= 400 || location === null) return response
+    await response.body?.cancel().catch(() => undefined)
+    let next: URL
+    try {
+      next = new URL(location, current)
+    } catch {
+      throw connectorError('oauth-redirect-refused', 'The server sent an invalid redirect.')
+    }
+    if (next.origin !== new URL(current).origin) {
+      throw connectorError(
+        'oauth-redirect-refused',
+        'The server redirected to another origin, which is refused.',
+      )
+    }
+    if (hop >= OAUTH_MAX_REDIRECTS) {
+      throw connectorError('oauth-redirect-refused', 'The server redirected too many times.')
+    }
+    assertSecureUrl(next.toString(), 'A redirect target', options)
+    if (response.status === 307 || response.status === 308) {
+      // method and body are kept
+    } else if (method !== 'GET' && method !== 'HEAD') {
+      method = 'GET'
+      body = undefined
+    }
+    current = next.toString()
+  }
 }
 
 /** A PKCE pair. */
@@ -90,7 +200,10 @@ export function buildAuthorizationUrl(params: AuthorizationUrlParams): string {
   return url.toString()
 }
 
-/** Reject non-HTTPS URLs (except localhost), so discovered endpoints cannot downgrade. */
+/**
+ * Reject non-HTTPS URLs (except localhost) and private-network hosts (unless `allowPrivateNetwork`
+ * or a custom `isAllowedUrl`), so discovered endpoints cannot downgrade or reach internal services.
+ */
 export function assertSecureUrl(url: string, what: string, options: OAuthFetchOptions = {}): URL {
   let parsed: URL
   try {
@@ -108,6 +221,16 @@ export function assertSecureUrl(url: string, what: string, options: OAuthFetchOp
     !(parsed.protocol === 'http:' && (local || options.allowInsecure === true))
   ) {
     throw connectorError('oauth-url-insecure', `${what} must use https.`)
+  }
+  if (options.isAllowedUrl !== undefined) {
+    if (!options.isAllowedUrl(parsed)) {
+      throw connectorError('oauth-url-private', `${what} is not an allowed URL.`)
+    }
+  } else if (options.allowPrivateNetwork !== true && isPrivateHost(parsed.hostname)) {
+    throw connectorError(
+      'oauth-url-private',
+      `${what} points to a private or local network address (set allowPrivateNetwork to allow it).`,
+    )
   }
   return parsed
 }
@@ -139,8 +262,37 @@ function applyClientAuth(
   }
 }
 
-async function readJson(response: Response): Promise<Record<string, unknown>> {
-  const text = await response.text()
+async function readText(response: Response, maxBytes: number): Promise<string> {
+  const tooLarge = (): Error =>
+    connectorError('oauth-response-too-large', `The response is larger than ${maxBytes} bytes.`)
+  const declared = Number(response.headers.get('content-length'))
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined)
+    throw tooLarge()
+  }
+  if (response.body === null) return ''
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let total = 0
+  let text = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    total += value.byteLength
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => undefined)
+      throw tooLarge()
+    }
+    text += decoder.decode(value, { stream: true })
+  }
+  return text + decoder.decode()
+}
+
+async function readJson(
+  response: Response,
+  options: OAuthFetchOptions,
+): Promise<Record<string, unknown>> {
+  const text = await readText(response, options.maxResponseBytes ?? OAUTH_MAX_RESPONSE_BYTES)
   try {
     const parsed: unknown = JSON.parse(text)
     return isRecord(parsed) ? parsed : {}
@@ -202,7 +354,6 @@ export interface ExchangeCodeParams extends OAuthFetchOptions, TokenClientAuth {
 /** Exchange an authorization code (with the PKCE verifier) for tokens. */
 export async function exchangeCode(params: ExchangeCodeParams): Promise<OAuthTokens> {
   assertSecureUrl(params.tokenUrl, 'The token URL', params)
-  const doFetch = params.fetch ?? globalThis.fetch
   const now = (params.now ?? Date.now)()
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -216,13 +367,12 @@ export async function exchangeCode(params: ExchangeCodeParams): Promise<OAuthTok
     accept: 'application/json',
   }
   applyClientAuth(headers, body, params)
-  const response = await doFetch(params.tokenUrl, {
+  const response = await timedFetch(params, params.tokenUrl, {
     method: 'POST',
     headers,
     body,
-    ...(params.signal === undefined ? {} : { signal: params.signal }),
   })
-  const json = await readJson(response)
+  const json = await readJson(response, params)
   if (!response.ok || typeof json.error === 'string') {
     oauthFailure('The token exchange', response, json, [
       params.code,
@@ -247,7 +397,6 @@ export interface RefreshParams extends OAuthFetchOptions, TokenClientAuth {
  */
 export async function refreshTokens(params: RefreshParams): Promise<OAuthTokens> {
   assertSecureUrl(params.tokenUrl, 'The token URL', params)
-  const doFetch = params.fetch ?? globalThis.fetch
   const now = (params.now ?? Date.now)()
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
@@ -262,13 +411,12 @@ export async function refreshTokens(params: RefreshParams): Promise<OAuthTokens>
     accept: 'application/json',
   }
   applyClientAuth(headers, body, params)
-  const response = await doFetch(params.tokenUrl, {
+  const response = await timedFetch(params, params.tokenUrl, {
     method: 'POST',
     headers,
     body,
-    ...(params.signal === undefined ? {} : { signal: params.signal }),
   })
-  const json = await readJson(response)
+  const json = await readJson(response, params)
   if (!response.ok || typeof json.error === 'string') {
     oauthFailure('The token refresh', response, json, [params.refreshToken, params.clientSecret])
   }
@@ -301,19 +449,17 @@ async function getJson(
   options: OAuthFetchOptions,
 ): Promise<Record<string, unknown> | undefined> {
   assertSecureUrl(url, 'A discovery URL', options)
-  const doFetch = options.fetch ?? globalThis.fetch
   let response: Response
   try {
-    response = await doFetch(url, {
+    response = await timedFetch(options, url, {
       method: 'GET',
       headers: { accept: 'application/json' },
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
   } catch {
     return undefined
   }
   if (!response.ok) return undefined
-  const json = await readJson(response)
+  const json = await readJson(response, options)
   return Object.keys(json).length === 0 ? undefined : json
 }
 
@@ -339,12 +485,10 @@ export async function discoverProtectedResource(
 ): Promise<ProtectedResourceMetadata | undefined> {
   const target = assertSecureUrl(resourceUrl, 'The resource URL', options)
   const candidates: string[] = []
-  const doFetch = options.fetch ?? globalThis.fetch
   try {
-    const probe = await doFetch(target.toString(), {
+    const probe = await timedFetch(options, target.toString(), {
       method: 'GET',
       headers: { accept: 'application/json, text/event-stream' },
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
     })
     const advertised = resourceMetadataFromChallenge(probe.headers.get('www-authenticate'))
     if (advertised !== undefined) candidates.push(new URL(advertised, target).toString())
@@ -426,7 +570,11 @@ export async function discoverAuthorizationServer(
       ).toString()
     }
     if (typeof json.device_authorization_endpoint === 'string') {
-      meta.device_authorization_endpoint = json.device_authorization_endpoint
+      meta.device_authorization_endpoint = assertSecureUrl(
+        json.device_authorization_endpoint,
+        'The device authorization endpoint',
+        options,
+      ).toString()
     }
     const scopes = strings(json.scopes_supported)
     if (scopes !== undefined) meta.scopes_supported = scopes
@@ -483,8 +631,7 @@ export interface RegisterClientParams extends OAuthFetchOptions {
 /** Register a public client (RFC 7591): authorization code and refresh grants, no secret. */
 export async function registerClient(params: RegisterClientParams): Promise<OAuthClient> {
   assertSecureUrl(params.registrationEndpoint, 'The registration endpoint', params)
-  const doFetch = params.fetch ?? globalThis.fetch
-  const response = await doFetch(params.registrationEndpoint, {
+  const response = await timedFetch(params, params.registrationEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json' },
     body: JSON.stringify({
@@ -497,9 +644,8 @@ export async function registerClient(params: RegisterClientParams): Promise<OAut
         ? {}
         : { scope: params.scopes.join(' ') }),
     }),
-    ...(params.signal === undefined ? {} : { signal: params.signal }),
   })
-  const json = await readJson(response)
+  const json = await readJson(response, params)
   if (!response.ok || typeof json.client_id !== 'string') {
     throw connectorError(
       'oauth-registration-failed',
@@ -543,18 +689,16 @@ export interface DeviceCodeParams extends OAuthFetchOptions {
 /** Start a device authorization (RFC 8628 §3.1). */
 export async function requestDeviceCode(params: DeviceCodeParams): Promise<DeviceAuthorization> {
   assertSecureUrl(params.deviceAuthorizationUrl, 'The device authorization URL', params)
-  const doFetch = params.fetch ?? globalThis.fetch
   const now = (params.now ?? Date.now)()
   const body = new URLSearchParams({ client_id: params.clientId })
   if (params.scopes !== undefined && params.scopes.length > 0)
     body.set('scope', params.scopes.join(' '))
-  const response = await doFetch(params.deviceAuthorizationUrl, {
+  const response = await timedFetch(params, params.deviceAuthorizationUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
     body,
-    ...(params.signal === undefined ? {} : { signal: params.signal }),
   })
-  const json = await readJson(response)
+  const json = await readJson(response, params)
   if (!response.ok || typeof json.error === 'string') {
     oauthFailure('The device authorization', response, json, [])
   }
@@ -601,7 +745,6 @@ export interface DevicePollParams extends OAuthFetchOptions {
 /** One poll of the token endpoint during a device authorization (the caller waits between polls). */
 export async function pollDeviceToken(params: DevicePollParams): Promise<DevicePollResult> {
   assertSecureUrl(params.tokenUrl, 'The token URL', params)
-  const doFetch = params.fetch ?? globalThis.fetch
   const now = (params.now ?? Date.now)()
   const body = new URLSearchParams({
     grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
@@ -609,13 +752,12 @@ export async function pollDeviceToken(params: DevicePollParams): Promise<DeviceP
     client_id: params.clientId,
   })
   if (params.clientSecret !== undefined) body.set('client_secret', params.clientSecret)
-  const response = await doFetch(params.tokenUrl, {
+  const response = await timedFetch(params, params.tokenUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
     body,
-    ...(params.signal === undefined ? {} : { signal: params.signal }),
   })
-  const json = await readJson(response)
+  const json = await readJson(response, params)
   if (response.ok && typeof json.error !== 'string') {
     return { status: 'authorized', tokens: parseTokens(json, now) }
   }

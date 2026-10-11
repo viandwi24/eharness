@@ -4,8 +4,8 @@ import { uuidv7 } from '../messages/ids.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { createCoreMessageRegistry } from '../messages/registry.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
-import { spyMessages } from './int-kit.ts'
 import { loadContext } from './load-context.ts'
+import { spyMessages } from './test-kit.ts'
 
 const registry = createCoreMessageRegistry()
 const user = (id: string): HarnessUIMessage => ({

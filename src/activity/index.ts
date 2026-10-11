@@ -4,6 +4,9 @@
  *
  * Imports core only through `src/index.ts` (ADR-0008).
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/25-activity.md
  */
 
@@ -20,9 +23,8 @@ export {
   listAttention,
 } from './attention.ts'
 export {
-  type MemoryActivityStoreOptions,
-  memoryActivityStore,
-  pruneBoundary,
+  type InMemoryActivityStoreOptions,
+  inMemoryActivityStore,
 } from './memory.ts'
 export { type ActivityPluginOptions, activity } from './plugin.ts'
 export {
@@ -31,7 +33,6 @@ export {
   type ActivityStreamOptions,
   activityCursor,
   activityStream,
-  encodeActivityEvent,
   handleActivityStream,
   readActivityPage,
 } from './sse.ts'

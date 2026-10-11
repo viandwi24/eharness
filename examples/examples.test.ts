@@ -141,7 +141,7 @@ describe('examples run offline', () => {
     'remote-abort (stop a turn running in another instance)',
     async () => {
       const out = await run('remote-abort.ts')
-      expect(out).toContain('B: requestAbort → remote')
+      expect(out).toContain('B: abort → remote')
       expect(out).toContain('A: turn ended → aborted')
       expect(out).toContain('state: activeTurn cleared')
     },
@@ -189,7 +189,7 @@ describe('examples run offline', () => {
       expect(out).toContain(
         'collect: 3 inputs → 1 message: "hi\\n\\none more thing:\\n\\nwhat about discounts?"',
       )
-      expect(out).toContain('B: requestAbort → remote')
+      expect(out).toContain('B: abort → remote')
       expect(out).toContain('A: turn 3 → aborted')
       expect(out).toContain('dead letter: non-retryable (EH_INVALID_INPUT)')
       expect(out).toContain('stats: {"ready":0,"claimed":0,"delayed":0,"dead":1}')

@@ -5,7 +5,7 @@
  */
 import { Box, Text } from 'ink'
 import type { ReactElement } from 'react'
-import { expandTabs } from './sanitize.ts'
+import { expandTabs, stripControl } from './sanitize.ts'
 import { color } from './theme.ts'
 
 /** A styled run of inline text. */
@@ -161,7 +161,7 @@ export function InlineMarkdown({
   bold?: boolean
   dim?: boolean
 }): ReactElement {
-  const spans = parseInline(text)
+  const spans = parseInline(stripControl(text))
   return (
     <Text bold={bold} dimColor={dim}>
       {spans.map((span, i) => {
@@ -269,7 +269,8 @@ function BlockView({ block }: { block: Block }): ReactElement {
 
 /** Rendered Markdown; long lines wrap inside the available width (lists keep a hanging indent). */
 export function Markdown({ text }: { text: string }): ReactElement {
-  const blocks = parseMarkdown(text)
+  // model text: no OSC/CSI/control bytes reach the terminal (the renderer emits its own styling)
+  const blocks = parseMarkdown(stripControl(text))
   return (
     <Box flexDirection="column" flexGrow={1} flexShrink={1}>
       {blocks.map((block, i) => (

@@ -66,6 +66,8 @@ export interface StaticToolEntry {
 export interface StaticSkillEntry {
   owner: string
   skill: Skill
+  /** Position in the `skills` array of the owner's contribution (names the duplicate precisely). */
+  index?: number
 }
 
 /** A hook with the plugin that registered it. */
@@ -88,6 +90,29 @@ export interface StaticRegistry {
 /** Human-readable owner for error messages. */
 export function describeOwner(owner: string): string {
   return owner === 'app' ? 'the app (agent config)' : `plugin '${owner}'`
+}
+
+/** `EH_DUPLICATE_SKILL`; names the array indexes when the declarations are of one owner (the app config). */
+export function duplicateSkillError(
+  name: string,
+  first: { owner: string; index?: number | undefined },
+  second: { owner: string; index?: number | undefined },
+): HarnessError {
+  const at = (site: { index?: number | undefined }): string =>
+    site.index === undefined ? '' : ` (skills[${site.index}])`
+  const message =
+    first.owner === second.owner && first.index !== undefined && second.index !== undefined
+      ? `Skill '${name}' is declared twice by ${describeOwner(first.owner)}: skills[${first.index}] and skills[${second.index}].`
+      : `Skill '${name}' is declared twice: by ${describeOwner(first.owner)}${at(first)} and by ${describeOwner(second.owner)}${at(second)}.`
+  return new HarnessError('EH_DUPLICATE_SKILL', message, {
+    details: {
+      skill: name,
+      owners: [first.owner, second.owner],
+      ...(first.index === undefined || second.index === undefined
+        ? {}
+        : { indexes: [first.index, second.index] }),
+    },
+  })
 }
 
 function invalid(owner: string, message: string): never {
@@ -183,7 +208,7 @@ export function addContribution(
 
   if (contribution.skills !== undefined) {
     if (!Array.isArray(contribution.skills)) invalid(owner, '`skills` must be an array.')
-    for (const entry of contribution.skills) {
+    for (const [index, entry] of contribution.skills.entries()) {
       if (isSkillSource(entry)) {
         validateSkillInput(owner, () => defineSkillSource(entry))
         registry.skillSources.push({ owner, source: entry })
@@ -191,13 +216,9 @@ export function addContribution(
         validateSkillInput(owner, () => defineSkill(entry))
         const existing = registry.skills.find((s) => s.skill.name === entry.name)
         if (existing !== undefined) {
-          throw new HarnessError(
-            'EH_DUPLICATE_SKILL',
-            `Skill '${entry.name}' is declared twice: by ${describeOwner(existing.owner)} and by ${describeOwner(owner)}.`,
-            { details: { skill: entry.name, owners: [existing.owner, owner] } },
-          )
+          throw duplicateSkillError(entry.name, existing, { owner, index })
         }
-        registry.skills.push({ owner, skill: entry })
+        registry.skills.push({ owner, skill: entry, index })
       } else {
         invalid(owner, 'a skill must be a Skill ({ name, description, content }) or a SkillSource.')
       }

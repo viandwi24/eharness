@@ -5,9 +5,9 @@
  * @see docs/specs/06-compaction.md#53-summarize
  */
 import { generateText, type LanguageModel, type LanguageModelUsage } from 'ai'
+import { truncateMiddle } from '../messages/truncate.ts'
+import type { CountTokens } from '../models/tokens.ts'
 import { summarizerInput } from './prompt.ts'
-import type { CountTokens } from './tokens.ts'
-import { truncateMiddle } from './truncate.ts'
 
 /** Share of the summarizer window a single transcript chunk may use (spec 06 §5.3). */
 export const CHUNK_SHARE = 0.6
@@ -37,8 +37,13 @@ export interface SummarizeResult {
   usage: LanguageModelUsage[]
 }
 
-/** A summarizer failure; `reason: 'length'` when the summary was cut by `maxSummaryTokens`. */
+/**
+ * A summarizer failure; `reason: 'length'` when the summary was cut by `maxSummaryTokens`.
+ * `code` is always `'EH_COMPACTION_FAILED'`; compaction wraps it in a `HarnessError` with that code
+ * (spec 10 §1.2).
+ */
 export class SummarizeError extends Error {
+  readonly code = 'EH_COMPACTION_FAILED' as const
   readonly reason: 'length' | 'empty'
   constructor(reason: 'length' | 'empty', message: string) {
     super(message)
@@ -121,6 +126,6 @@ export async function summarize(input: SummarizeInput): Promise<SummarizeResult>
       throw new SummarizeError('empty', 'The summarizer returned an empty summary.')
     summary = text
   }
-  if (summary === undefined) throw new Error('Nothing to summarize.')
+  if (summary === undefined) throw new SummarizeError('empty', 'Nothing to summarize.')
   return { summary, usage }
 }

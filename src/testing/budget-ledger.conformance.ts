@@ -1,5 +1,6 @@
 import type { BudgetLedger, BudgetScopeStatus } from '../index.ts'
 import { assertTrue, uniqueSessionId } from './assert.ts'
+import { sleep } from './sleep.ts'
 import type { ConformanceCase } from './types.ts'
 
 /** Options of {@link budgetLedgerConformance}. */
@@ -13,7 +14,6 @@ export interface BudgetLedgerConformanceOptions {
   concurrency?: number
 }
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 const LONG = 600_000
 
 function near(actual: number | undefined, expected: number, what: string): void {
@@ -42,7 +42,7 @@ async function status(ledger: BudgetLedger, scope: string): Promise<BudgetScopeS
  *
  * @example
  * ```ts
- * for (const c of budgetLedgerConformance((limits) => memoryBudgetLedger({ limits }))) test(c.name, c.run)
+ * for (const c of budgetLedgerConformance((limits) => inMemoryBudgetLedger({ limits }))) test(c.name, c.run)
  * ```
  * @see docs/specs/12-models-and-cost.md#41-budget-ledger-normative
  */

@@ -47,6 +47,36 @@ export function hostAllowed(hostHeader: string | undefined, allowed: readonly st
   return allowed.some((a) => hostnameOf(a) === name)
 }
 
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
+
+/**
+ * CSRF guard (also protects a token-less loopback server): a state-changing request whose `Origin`
+ * header is present must come from an allowed origin. A cross-site `multipart/form-data` POST is a
+ * "simple request" (no preflight), so without this check any page the developer opens could post
+ * to `127.0.0.1`. Requests without `Origin` (curl, server-to-server) and safe methods pass.
+ */
+export function originAllowed(
+  method: string,
+  origin: string | undefined,
+  allowed: readonly string[],
+): boolean {
+  if (SAFE_METHODS.has(method.toUpperCase())) return true
+  if (origin === undefined) return true
+  return allowed.includes(origin)
+}
+
+/** Origin (`scheme://host[:port]`) of a URL, or undefined when it is not a valid URL. */
+export function originOf(url: string): string | undefined {
+  try {
+    return new URL(url).origin
+  } catch {
+    return undefined
+  }
+}
+
+/** Shortest token accepted on a non-loopback bind. */
+export const MIN_TOKEN_CHARS = 16
+
 export interface ListenConfig {
   hostname: string
   allowedHosts: string[]
@@ -54,7 +84,9 @@ export interface ListenConfig {
 
 /**
  * Where the server listens. Without a token only loopback is allowed: binding elsewhere without
- * `TEAM_TOKEN` throws (the caller prints it and exits). Default bind is `127.0.0.1`.
+ * `TEAM_TOKEN` throws (the caller prints it and exits), and so does a weak token (shorter than
+ * {@link MIN_TOKEN_CHARS} or starting with `dev-`) on a non-loopback bind. Default bind is
+ * `127.0.0.1`.
  */
 export function listenConfig(
   env: Record<string, string | undefined> & {
@@ -70,6 +102,14 @@ export function listenConfig(
     throw new Error(
       `TEAM_HOST=${hostname} is not a loopback address and TEAM_TOKEN is not set: refusing to start an open server on the network. Set TEAM_TOKEN, or bind to 127.0.0.1.`,
     )
+  }
+  if (!isLoopbackHost(hostname)) {
+    const token = env.TEAM_TOKEN ?? ''
+    if (token.length < MIN_TOKEN_CHARS || token.startsWith('dev-')) {
+      throw new Error(
+        `TEAM_HOST=${hostname} is not a loopback address: TEAM_TOKEN must be at least ${MIN_TOKEN_CHARS} characters and must not start with "dev-" (generate one with: openssl rand -base64 32).`,
+      )
+    }
   }
   const allowedHosts = (env.TEAM_ALLOWED_HOSTS ?? '')
     .split(',')

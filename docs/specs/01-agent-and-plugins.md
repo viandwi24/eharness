@@ -41,19 +41,31 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   toolOrder?: string[]                                           // spec 02 §6: these final tool names first, the rest after
   deferTools?: string[]                                          // spec 02 §3.3: hide these tools until tool_search finds them
   skills?: Array<Skill | SkillSource>                            // spec 07
-  mcp?: ToolSource[]                                             // spec 09 (e.g. mcpServer(...))
+  mcp?: ToolSource[]                                             // spec 09 (e.g. mcpServerSource(...))
   dataParts?: DP                                                 // spec 03 §4 (app namespace)
   messageKinds?: Record<string, MessageKindDef>                  // spec 03 §5 (app namespace)
   plugins?: HarnessPlugin[]
 
-  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter }  // spec 05; default: memory, no inbox
-  /** Durable inbox drain and collect debounce (spec 05 §12). */
-  inbox?: { pollMs?: number; claimTtlMs?: number; collect?: CollectOptions }
+  /** Spec 05; default: memory adapters, no inbox. `streams`: stream log for cross-process resume (spec 04 §6.2), default none. */
+  storage?: { messages?: MessageAdapter; state?: StateAdapter; inbox?: InboxAdapter; streams?: StreamLogAdapter }
+  /** Stream log behaviour (spec 04 §6.2): flushMs 100, batchSize 64, retentionMs 600_000, pollMs 500. */
+  streams?: { flushMs?: number; batchSize?: number; retentionMs?: number; pollMs?: number }
+  /**
+   * Durable inbox (spec 05 §12): `pollMs` default 2 000 (`0` = no polling), `claimTtlMs` default
+   * `recovery.staleMs`, `collect` debounce, `retry` poison-item limits (default none, unlimited
+   * redelivery), `onDeadLetter` report of items that went dead.
+   */
+  inbox?: { pollMs?: number; claimTtlMs?: number; collect?: CollectOptions; retry?: InboxRetryOptions
+            onDeadLetter?: (item: DeadInboxItem) => void | Promise<void> }
   compaction?: CompactionConfig | false                          // spec 06
   guard?: { maxContextRatio?: number; reserveTokens?: number }   // spec 06 §6
   /** Extra overflow detection for providers the built-in patterns miss (spec 06 §7). */
   isContextOverflow?: (error: unknown) => boolean
   loop?: LoopConfig
+  /** Bounds of awaited plugin hooks (§5): `timeoutMs` default 30 000 (W_HOOK_TIMEOUT). */
+  hooks?: { timeoutMs?: number }
+  /** Tool source listing limits (spec 02 §3.1): `timeoutMs` default 30 000, `retryAfterMs` default 5 000 (backoff doubles up to 60 000). */
+  toolSources?: { timeoutMs?: number; retryAfterMs?: number }
   settings?: ModelSettings                                       // passed to every streamText call
   /** Human-in-the-loop tool approval (spec 11 §3). */
   approval?: ApprovalConfig
@@ -77,9 +89,23 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   callOptions?: FlexibleSchema
   /** Passed to streamText `repairToolCall` (fix malformed tool calls). */
   repairToolCall?: ToolCallRepairFunction<ToolSet>
-  /** Crash recovery of turns interrupted by a dead process (spec 05 §9). */
-  recovery?: { staleMs?: number } | false                        // default { staleMs: 120_000 }
+  /**
+   * Crash recovery of turns interrupted by a dead process and cross-process abort (spec 05 §9).
+   * Default { staleMs: 120_000, abortPollMs: 2_000 } (`abortPollMs: 0` = never poll). `instanceId`:
+   * a stable id of this instance (default random per process): a restarted process recovers the
+   * turns its previous run left active at once. Unique among live instances of one storage.
+   */
+  recovery?: { staleMs?: number; abortPollMs?: number; instanceId?: string } | false
   telemetry?: TelemetryOptions                                   // passed through to AI SDK
+  observe?: (event: ObserveEvent) => void                        // spans + counters (spec 10 §8): sync, cheap, a throw is ignored, zero cost when unset
+  warnings?: { dedupeWindowMs?: number }                         // default handler: once per code+key per window (default 60 000, 0 = every time, max 86 400 000)
+  /**
+   * Session invariants (spec 05 §15). `true`: an invalid message about to be saved is a programmer
+   * error (EH_INVALID_MESSAGE, nothing saved) and an inconsistent session state at turn end is
+   * W_INVARIANT_VIOLATION. Default false (production: W_INVALID_MESSAGE, save anyway). Never
+   * inferred from NODE_ENV.
+   */
+  debug?: { invariants?: boolean }
   /** Throw EH_CONFIG_INVALID instead of warning on API misuse (W_TRANSIENT_OVERRIDE, W_UNKNOWN_DATA_PART, W_WRITE_OUTSIDE_TURN). Default false. */
   strict?: boolean
   /** Logger used for ctx.log (§4). */
@@ -120,8 +146,12 @@ export type ModelSettings = Pick<LanguageModelCallOptions,
   'stopSequences' | 'seed' | 'reasoning'> & Pick<RequestOptions, 'maxRetries'> & {
   headers?: Record<string, string>
   providerOptions?: ProviderOptions
-  /** Per step. A number means stepMs. `totalMs` is rejected (one streamText per step) — use loop.turnTimeoutMs. */
-  timeout?: number | Omit<Exclude<TimeoutConfiguration<ToolSet>, number>, 'totalMs'>
+  /**
+   * Per step. A number means stepMs. `totalMs` is rejected (one streamText per step) — use
+   * loop.turnTimeoutMs. Default { firstChunkMs: 120_000, chunkMs: 120_000 } (idle timeouts: a
+   * silent stream fails the step); keys you set override per key, `false` turns the default off.
+   */
+  timeout?: number | false | Omit<Exclude<TimeoutConfiguration<ToolSet>, number>, 'totalMs'>
   /** Retries of a step after streaming started (AI SDK streamRetries; `reset-step` is forwarded). */
   streamRetries?: number
 }
@@ -163,6 +193,11 @@ export interface HarnessAgent<C = HarnessAgentConfig> {
   readonly config: Readonly<C>
   /** Get (hot) or create a live session. Does no I/O until first use. */
   session(sessionId: string, options?: SessionOptions): HarnessSession<AgentMessageOf<C>, AgentKindTypes<C>>
+  /**
+   * Side-effect-free read handle (spec 05 §2.2): messages, stats, busy, pending state, children and
+   * parent, read from storage without opening the session (no hooks, recovery, lock or writes).
+   */
+  peek(sessionId: string, options?: Pick<SessionOptions, 'storage'>): SessionPeek<AgentMessageOf<C>>
   /** Close and evict a cached session (runs plugin dispose). */
   closeSession(sessionId: string): Promise<void>
   /** Close all sessions. Call on shutdown. */
@@ -270,7 +305,7 @@ plugin (it goes through §7 unchanged) with the inner plugin's `version`, `provi
   They keep the phase rules of §2 (setup sync and pure, session may do I/O). The contribution
   returned by `session` must still satisfy `provides` and carries its own `dispose`.
 - `next.using(other)` runs the **session phase** of another plugin with the same context. It is how
-  a plugin whose options are fixed at construction (`approvalGuard({ model })`) gets
+  a plugin whose options are fixed at construction (`guard({ model })`) gets
   per-session / per-request options: build the plugin from `ctx.runtime` and delegate to it.
   The other plugin's `name`, `provides` and setup phase are not used.
 - `hooks.<name>(...args, next)`: same arguments as the hook, `next` last. `next()` calls the inner
@@ -281,6 +316,11 @@ plugin (it goes through §7 unchanged) with the inner plugin's `version`, `provi
   keep a tighten-only plugin tighten-only. Overrides also wrap hooks returned by a `setup` /
   `session` override.
 - Wrapping is repeatable; the outermost override runs first.
+- Wrapping a *tool* (as opposed to a plugin) uses `withToolExecute(tool, execute)` and
+  `withToolFields(tool, { deferLoading, toModelOutput, metadata })` (`@experimental`): copies that
+  keep every other field and hold the one `Tool` cast. AI SDK v7 has no tool-wrapping helper.
+  `withToolExecute` throws `EH_CONFIG_INVALID` for a tool without `execute` (client or
+  provider-executed); `withToolFields` works for every shape.
 - `ctx.plugin.name` and the state namespace are those of the wrapper (its name). Keep the default
   name for plugins with stored state.
 
@@ -321,6 +361,12 @@ export interface HarnessContext<DP extends DataPartMap = {}> {
       Promise<{ message: HarnessUIMessage; run?: HarnessRun }>
   }
   readonly plugin: { name: string }            // the plugin this ctx belongs to ('app' for root)
+  /**
+   * Wrap a model this plugin calls itself (a judge, a search model) so its calls fire the
+   * `model.call` hook with `kind: 'other'` (or `kind`). Returns `model` unchanged when no plugin
+   * listens to `model.call`.
+   */
+  observeModel(model: LanguageModel, options?: { kind?: ModelCallKind }): LanguageModel
 
   readonly turn: TurnInfo | undefined
   readonly step: { index: number; model: LanguageModel } | undefined
@@ -404,6 +450,17 @@ An invalid tool context fails the whole step in AI SDK (not just the tool), so t
 
 All hooks receive `HarnessContext<DP>` of the plugin that registered them. "Chainable" hooks
 receive the previous hook's result (plugin order, root first; setup hooks before session hooks).
+
+**Hooks are bounded.** Every hook the core awaits is raced against the turn abort signal and
+`config.hooks.timeoutMs` (default 30 000). A hook that does not settle is treated like a throwing
+hook and reported as `W_HOOK_TIMEOUT` (`details: { hook, owner, timeoutMs }`); the abandoned call
+cannot be cancelled and its late result is ignored. `input.submit` stays fail-closed (the input is
+blocked) and `tool.approve` still denies. Aborting the turn cuts running hooks short without a
+warning; `turn.end`, `session.start/close/fork` and the message hooks have no turn signal, only
+the timeout. A failing `input.submit` hook blocks with the generic text `Input check failed.`
+(never the raw error); the real error is logged with its cause and reported as `W_HOOK_FAILED`.
+The default logger prints errors as `{ name, message, code, statusCode, cause }` only (no request
+bodies, headers or query strings).
 
 ```ts
 export interface HarnessHooks<DP extends DataPartMap = {}> {
@@ -547,8 +604,8 @@ streaming (`responseMessages` rejects then). Should `result.finalStep` fail alth
 `responseMessages` instead.
 
 Failure policy: a hook that throws raises `W_HOOK_FAILED` and is skipped — except
-`tool.approve` (throw = `denied`, fail closed) and `input.submit` (throw = `block` with the error
-message, fail closed).
+`tool.approve` (throw = `denied`, fail closed) and `input.submit` (throw = `block` with the generic
+text `Input check failed.`, fail closed).
 
 Implementation notes:
 
@@ -602,7 +659,7 @@ declare module 'eharness' {
 | Unknown hook name, hook that is not a function, invalid instruction/skill shape | `EH_CONFIG_INVALID` |
 | `setup()` returns a promise or throws (the error is kept in `cause`) | `EH_CONFIG_INVALID` |
 | `model` missing, `contextWindow` not a positive number or function, `mcp` entry not a `ToolSource` | `EH_CONFIG_INVALID` |
-| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` / `compaction.prune.keepTurns` not an integer ≥ 0; `compaction.thrash.withinSteps` not a positive integer; `compaction.prune.minChars` negative; `progress.repeats` / `window` / `errorStreak` / `toolErrorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; a `toolOutput.perTool` value neither `false` nor an integer ≥ 0; `compaction.contextWindow` not positive; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens`, `budget.ledger.reservationTtlMs` not positive; `budget.ledger.adapter` without the five `BudgetLedger` methods, `budget.ledger.scopes` / `estimate` not functions, `budget.ledger.onError` neither `'stop'` nor `'continue'` (0.5.0); `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
+| Numeric option out of range (0.4.0): `loop.maxSteps` not a positive integer; `loop.maxContinues` / `maxIdleContinues` / `progress.nudges` / `compaction.keepLast` / `compaction.prune.keepTurns` not an integer ≥ 0; `compaction.thrash.withinSteps` not a positive integer; `compaction.prune.minChars` negative; `progress.repeats` / `window` / `errorStreak` / `toolErrorStreak`, `compaction.maxSummaryTokens`, `inputFiles.maxBytes`, `toolOutput.maxChars` not a positive integer; a `toolOutput.perTool` value neither `false` nor an integer ≥ 0; `compaction.contextWindow` not positive; `compaction.summarizeAt` outside (0, 1); `guard.maxContextRatio`, `budget.warnAt` outside (0, 1]; `budget.maxTurnUsd` / `maxSessionUsd`, `loop.maxTurnOutputTokens`, `budget.ledger.reservationTtlMs` not positive; `budget.ledger.adapter` without the five `BudgetLedger` methods, `budget.ledger.scopes` / `estimate` not functions, `budget.ledger.onError` neither `'stop'` nor `'continue'` (0.5.0); `loop.turnTimeoutMs`, `sessionIdleMs`, `guard.reserveTokens` negative; every duration above one day (86 400 000 ms; `sessionIdleMs` and `streams.retentionMs` 30 days); `recovery.staleMs` not positive (values below 1 000 are accepted but not recommended: the heartbeat writes every `staleMs / 4`); `recovery.abortPollMs`, `warnings.dedupeWindowMs`, `inbox.pollMs`, `inbox.collect.*`, `inbox.retry.backoff.*`, `toolSources.retryAfterMs` negative; `hooks.timeoutMs`, `toolSources.timeoutMs`, `inbox.claimTtlMs`, `streams.flushMs`, `streams.pollMs` not positive; `streams.batchSize` not a positive integer ≤ 10 000; `inbox.retry.maxAttempts` above 1 000; `settings.timeout` (number or `stepMs` / `firstChunkMs` / `chunkMs` / `toolMs` / `tools.*`) not positive; `observe` not a function, `debug.invariants` not a boolean (0.8.0); `inputFiles.protocols` not lowercase `scheme:` strings | `EH_CONFIG_INVALID` |
 
 Name conflicts that involve a **session-phase** contribution (`session()` tools or skills that
 collide with static ones or with each other) can only be detected when the session opens: they
@@ -624,7 +681,7 @@ Tool sources carry a `'~toolSource'` brand set by `defineToolSource` (spec 02 §
 ```ts
 import { defineHarnessAgent, defineSkill } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
 
@@ -640,7 +697,7 @@ export const agent = defineHarnessAgent({
     }),
   },
   skills: [defineSkill({ name: 'pine-v6', description: 'Pine v6 syntax and pitfalls', content: '…' })],
-  plugins: [filesystem({ fs: memoryFs(), skills: { root: '/skills' } })],
+  plugins: [filesystem({ fs: inMemoryFs(), skills: { root: '/skills' } })],
   compaction: { summarizeAt: 0.75, keepLast: 4 },
 })
 ```

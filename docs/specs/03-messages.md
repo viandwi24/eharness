@@ -46,6 +46,8 @@ overrides a client `app` key accepted through `acceptClientMetadata`.
 ```ts
 export interface HarnessMetadata {
   eharness?: HarnessMessageMeta
+  /** Server-set app metadata of an input made by `session.enqueue(…, { metadata })`. */
+  app?: Record<string, JSONValue>
 }
 
 export interface HarnessMessageMeta {
@@ -74,6 +76,8 @@ export interface HarnessMessageMeta {
   collected?: Array<{ inboxId?: string; clientId?: string; inboxKey?: string }>
   /** User messages made from an inbox item enqueued with `{ id }`: that caller id (spec 05 §12 rule 18). */
   inboxKey?: string
+  /** Kind messages saved with `session.inject(…, { key })`: the caller's dedupe key. A second inject of the same key (any instance) finds the stored message and saves nothing. */
+  key?: string
 
   // assistant messages only
   /** Gateway strings as-is ('anthropic/claude-sonnet-4.6'); provider instances as
@@ -92,7 +96,7 @@ export interface HarnessMessageMeta {
   pending?: PendingState | null
   steps?: number
   durationMs?: number
-  error?: { code?: string; message: string }
+  error?: { code?: HarnessErrorCode | HarnessNoticeCode; message: string }
   /** 0.4.0: turns with SendOptions.output (spec 05 §3.3): a valid answer was recorded; answers checked. */
   output?: { ok: boolean; attempts: number }
 }
@@ -152,7 +156,7 @@ export interface DataPartDef<S extends FlexibleSchema = FlexibleSchema> {
 | `data-eh.usage` | yes | `{ inputTokens; outputTokens; totalTokens; steps; costUsd? }` cumulative for the turn (cost: spec 12) | live cost |
 | `data-eh.context` | yes | `ContextStats` (spec 06 §2, absolute token counts), written after each step | context meter |
 | `data-eh.warning` | yes | `{ code: string; message: string }` | non-fatal problems (spec 10) |
-| `data-eh.input` | **no** | `{ source: 'user' \| 'event' \| \`plugin:${string}\`; text: string; files?: FileUIPart[]; clientId?: string; inboxId?: string; approvalNote?: { toolCallId: string; toolName: string; text: string } }` (`inboxId`: a steer from the durable inbox, spec 05 §12; `approvalNote`, 0.7.0: the note of an approved tool call, `text` is the framed `<user-note>` the model saw, spec 11 §3.6) | input delivered **inside** a running assistant message (steer, next-step events, hook context — spec 11 §6); projected by splitting the message (§6) |
+| `data-eh.input` | **no** | `{ source: 'user' \| 'event' \| \`plugin:${string}\`; text: string; files?: FileUIPart[]; clientId?: string; inboxId?: string; approvalNote?: { toolCallId: string; toolName: string; text: string } }` (`inboxId`: a steer from the durable inbox, spec 05 §12; `app`: the `EnqueueOptions.metadata` of an enqueued steer, as in `metadata.app`; `approvalNote`, 0.7.0: the note of an approved tool call, `text` is the framed `<user-note>` the model saw, spec 11 §3.6) | input delivered **inside** a running assistant message (steer, next-step events, hook context — spec 11 §6); projected by splitting the message (§6) |
 | `data-eh.output` | **no** | `{ value: unknown; mode: 'tool' \| 'native'; attempts: number }` | the validated final answer of a turn with `SendOptions.output` (0.4.0, spec 05 §3.3); id `output` (reconciled), written once after the last step; `model: 'omit'` (never projected); `value` equals `TurnResult.output` |
 | `data-eh.compaction` | — | kind payload (§5.3) | compaction marker (kind) |
 | `data-eh.notice` | — | kind payload (§5.3) | error/abort/system notices (kind) |
@@ -218,7 +222,7 @@ export interface MessageKindDef<S extends FlexibleSchema = FlexibleSchema> {
 | Kind | Role | Boundary | Model projection | Payload |
 |---|---|---|---|---|
 | `eh.compaction` | user | **yes** | `<conversation-summary>{summary}</conversation-summary>` (opening/closing `conversation-summary`, `event`, `system-reminder`, `untrusted-content` tags inside `summary` are neutralised, `<` → `&lt;`) | `CompactionPayload` (spec 06 §3): `{ summary; resumeFromId; partial?; tokens; trigger; model? }` |
-| `eh.notice` | assistant | no | omit | `{ level: 'info' \| 'warning' \| 'error'; code?: string; message: string }` — the core saves one for turns ending with `stop: 'error'`, `'timeout'`, `'blocked'` (with `persist`) and for recovered turns (`EH_TURN_INTERRUPTED`); aborts are recorded only in `metadata.eharness.stop` |
+| `eh.notice` | assistant | no | omit | `{ level: 'info' \| 'warning' \| 'error'; code?: HarnessErrorCode | HarnessNoticeCode; message: string }` — the core saves one for turns ending with `stop: 'error'`, `'timeout'`, `'blocked'` (with `persist`) and for recovered turns (`EH_TURN_INTERRUPTED`); aborts are recorded only in `metadata.eharness.stop` |
 | `eh.event` | user | no | `<event name="{name}">{text}</event>` (`name` is attribute-escaped; those same tags are neutralised inside `text`, so an event can never close its frame or the surrounding `<system-reminder>`; `agent-message` frames come from `eharness/subagent`, which neutralises that tag in the bodies it carries) | `{ name: string; text: string; data?: unknown }` |
 | `eh.rewind` | user | no | omit | `{ afterId: string \| null; reason: 'regenerate' \| 'edit' \| 'revert' }` — hides `afterId < id < rewind.id` (spec 11 §5) |
 | `eh.flush` (0.4.0) | assistant | no | omit | `FlushPayload` (spec 06 §5.2a): `{ trigger: 'auto' \| 'manual' \| 'turn' \| 'overflow'; prompt; model?; steps; toolCalls: Array<{ toolName; status: 'output' \| 'error' \| 'denied' }>; usage: { inputTokens; outputTokens; totalTokens }; costUsd?; error? }` — audit record of a pre-compaction flush; no tool inputs/outputs; saved before the marker; `turnId` = the running turn (manual: none) |
@@ -233,7 +237,7 @@ await session.inject('eh.event', {...}, { deliver: 'next-step' })   // into the 
 await session.inject('eh.event', {...}, { wake: true })             // start a turn if idle
 ```
 
-- `createKindMessage(kind, data, { role?, id?, createdAt?, turnId?, parentId?, deliveredIn?, partId? })`
+- `createKindMessage(kind, data, { role?, id?, createdAt?, turnId?, parentId?, deliveredIn?, partId?, key? })`
   builds the normative shape (§5.2) without validating `data`; `role` defaults to the core kind's
   role for `eh.*` kinds and to `'user'` otherwise. `isKindMessage(message, kind?)` checks the shape.
 - `session.inject(kind, data, opts?)` validates `data`, creates the message, saves it, and emits it
@@ -279,7 +283,7 @@ project(view: HarnessUIMessage[], ctx: { registry; tools; model; sessionId;   //
        ignoreIncompleteToolCalls: true, // safety net; step 3 already answered them
        convertDataPart: part => registry.dataPart(part.type)?.model …   // 'omit' | 'text' | fn
      })
-  6. convert: remove tool results without calls and empty messages (spec 06 §6)
+  7. sanitize: remove tool results without calls and empty messages (spec 06 §6)
 ```
 
 **Prune (turn wire only, 0.4.0).** With `compaction.prune` on, the wire builder of a turn (spec 06
@@ -436,6 +440,7 @@ Public helper (core, `src/index.ts`):
 ```ts
 untrustedContent(text: string, o: { source: string; url?: string; name?: string }): string
 UNTRUSTED_CONTENT_INSTRUCTIONS: string   // recommended one-sentence system-prompt line
+neutralizeTags(text: string, tags: readonly string[]): string   // `<` → `&lt;` for opening/closing tags of the given names
 ```
 
 - Format: `<untrusted-content source="…" url="…" name="…">\n<text>\n</untrusted-content>`; attributes
@@ -445,7 +450,7 @@ UNTRUSTED_CONTENT_INSTRUCTIONS: string   // recommended one-sentence system-prom
   never close the frame early. Attribute values escape `& " < >` and turn line breaks into spaces.
 - Deterministic (same input, same output): safe for golden tests and the prompt-cache prefix.
 - Applied by default (opt out with `wrapUntrusted: false`) in `webFetch`, `webSearch` (spec 22) and
-  `mcpServer` (spec 09 §3). **Not** applied to filesystem reads (the project is the user's own
+  `mcpServerSource` (spec 09 §3) and `openApiSource` (spec 17). **Not** applied to filesystem reads (the project is the user's own
   workspace; framing every read is noise) or subagent reports; apps can wrap any tool result
   themselves with `untrustedContent()`.
 - Framing is one layer of defence in depth, not a guarantee. See the guide "Permissions" →

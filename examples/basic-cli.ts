@@ -11,10 +11,12 @@
 import { getToolName, isToolUIPart, readUIMessageStream } from 'ai'
 import { defineHarnessAgent, type HarnessRun, type InferHarnessUIMessage } from 'eharness'
 import { classifyToolResult, filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { exampleModel } from './shared/model.ts'
 
-const fs = memoryFs({ '/README.md': '# Notes\n\nKeep notes as Markdown files under /notes.\n' })
+const fs = inMemoryFs({
+  seed: { '/README.md': '# Notes\n\nKeep notes as Markdown files under /notes.\n' },
+})
 
 const agent = defineHarnessAgent({
   model: exampleModel([

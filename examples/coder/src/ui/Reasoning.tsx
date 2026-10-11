@@ -2,6 +2,7 @@ import { Box, Text, useAnimation } from 'ink'
 import { type ReactElement, useRef } from 'react'
 import { Branch } from './Branch.tsx'
 import { keyedLines } from './keys.ts'
+import { stripControl } from './sanitize.ts'
 import { sym } from './theme.ts'
 import { firstLine } from './tool-summary.ts'
 
@@ -69,7 +70,7 @@ export function Reasoning({
       ? last.current - first.current
       : undefined
   const ms = durationMs ?? measured
-  const body = text.trim()
+  const body = stripControl(text).trim()
   const streaming = state === 'streaming'
 
   return (

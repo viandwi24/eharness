@@ -7,9 +7,11 @@ Contract: [spec 26](../specs/26-http.md).
 
 ```ts
 import { createHarnessHttp } from 'eharness/http'
-import { activity, memoryActivityStore } from 'eharness/activity'
+import { inMemoryActivityStore } from 'eharness/activity'
 
-const store = memoryActivityStore() // use your own ActivityStore in production
+// yours: agent (defineHarnessAgent), userOf(request) (your authentication, returns an object or
+// undefined) and mayUse(user, sessionId) (your ownership check)
+const store = inMemoryActivityStore() // use your own ActivityStore in production
 const http = createHarnessHttp(agent, {
   // required: runs before the body is read and before a session is opened
   authorize: async ({ request, action, sessionId }) => {
@@ -18,7 +20,7 @@ const http = createHarnessHttp(agent, {
     if (sessionId && !(await mayUse(user, sessionId))) return { deny: 403 }
     return user // the principal, handed to every other hook
   },
-  chat: { ifBusy: ['reject', 'steer'], actorOf: (user) => ({ id: user.id, name: user.name }) },
+  chat: { ifBusy: ['reject', 'steer'], /* file parts: data: URLs only; allowFileUrls: true | (url) => boolean to accept more */ actorOf: (user) => ({ id: user.id, name: user.name }) },
   activity: {
     store,
     bootId: crypto.randomUUID(),
@@ -33,7 +35,10 @@ const http = createHarnessHttp(agent, {
 })
 ```
 
-`openAccess` allows everything and exists for local development only.
+`openAccess` (from `eharness/http`) allows everything and exists for local development only. `authorize` fails closed: it
+must return an object (the principal), a `Response` or `{ deny }`; returning `undefined` or `null`
+answers 401, so `authorize: ({ request }) => userOf(request) ?? { deny: 401 }` is the idiom and
+the `?? { deny: 401 }` only chooses the message.
 
 ## Mounting
 
@@ -77,10 +82,16 @@ body (do not buffer it; the module enforces `maxBodyBytes` itself), call `http.f
   the message into the running turn (`200` stream when it runs here, `202` when it runs in another
   instance).
 - **Missing sessions** read as empty; deny in `authorize` if existence must stay hidden.
+- **File parts** may carry `data:` URLs only (a server-side download of any other URL is an SSRF
+  risk); `chat.allowFileUrls` accepts `http(s)` URLs (`true`) or decides per URL (a predicate).
 - **Errors** are always `{ error: { code, message, details? } }`; 5xx messages are generic and the
   real error goes to `onFailure`. Map your own errors with `onError`.
 - **Attention** answers are allowed only for sessions under the principal's `roots` (children
   included) unless you pass `canAnswer`.
+- **`allowRemember`** (attention options, default `false`): an approval answer may carry
+  `remember: 'once' | 'session'` (an allow rule for the same call, spec 18) only when this is `true`;
+  otherwise a body with `remember` is `400` (`reason: 'remember-not-allowed'`). Offer it only where
+  a client may widen the permissions of a session. `maxNoteChars` (default 2000) bounds an approval note.
 
 ## CORS
 

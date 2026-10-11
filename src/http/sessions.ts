@@ -1,7 +1,7 @@
 /**
  * Session reads: `GET /health`, `/sessions`, `/sessions/:id`, `/sessions/:id/messages`.
  *
- * @see docs/specs/26-http.md#7-session-routes
+ * @see docs/specs/26-http.md#2-routes
  */
 import type { PendingState } from '../index.ts'
 import { httpError, jsonResponse } from './errors.ts'

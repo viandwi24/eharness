@@ -85,3 +85,7 @@ had already fixed once (trusting client metadata, `actor` from the body, answere
 - A deployment behind a proxy must not buffer `text/event-stream` (documented, not enforceable).
 - The idempotency window (last 40 messages) is a known limit; a store can be added later without
   changing the wire.
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): `authorize` fails closed (a result that is not a `Response`, a `{ deny }` or an object answers `401 EH_HTTP_UNAUTHORIZED`), client file parts are accepted only as `data:` URLs unless `chat.allowFileUrls` is set, `run.toResponse()` is the safe HTTP answer and `run.toStreamResponse()` streams at once, and `eharness/client` no longer re-exports `http` and `activity` types except documented aliases or its SSE parser and store internals.

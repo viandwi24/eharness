@@ -9,7 +9,7 @@ import type { HarnessRun, PendingResponse, SendOptions } from '../../agent/sessi
 import type { TurnResult } from '../../messages/types.ts'
 import { createRun } from '../../stream/run.ts'
 import type { NormalizedInput } from '../input.ts'
-import type { TurnOperation } from '../turn.ts'
+import type { TurnOperation } from '../turn/ctx.ts'
 
 /** A queued `send` turn (or a `wake` turn that could not be delivered into a running turn). */
 export interface QueuedTurn {
@@ -68,7 +68,7 @@ export function createDeferredRun(args: {
   const result = new Promise<TurnResult<UIMessage>>((resolve) => {
     resolveResult = resolve
   })
-  // the turn's own pre-commit verdict (a lock held elsewhere, bad input): `toHttpResponse()` needs it
+  // the turn's own pre-commit verdict (a lock held elsewhere, bad input): `toResponse()` needs it
   let resolveAccepted!: (error: TurnResult<UIMessage>['error'] | undefined) => void
   const accepted = new Promise<TurnResult<UIMessage>['error'] | undefined>((resolve) => {
     resolveAccepted = resolve

@@ -25,7 +25,7 @@ export function clipInput(value: unknown, depth = 0): unknown {
 }
 
 /**
- * An `onDecision` callback for `permissionsPlugin()` that appends every decision to `file`
+ * An `onDecision` callback for `permissions()` that appends every decision to `file`
  * (owner-only permissions, size-based rotation, long tool inputs cut).
  *
  * @param file - The JSON-lines file.

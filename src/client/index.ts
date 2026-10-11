@@ -7,6 +7,9 @@
  * Runtime imports: only `ai`. Everything from `eharness/http` / `eharness/activity` is a type
  * (guarded by `check:imports` and `scripts/check-client-bundle.ts`, ADR-0059).
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/27-client.md
  */
 
@@ -34,7 +37,6 @@ export {
   type ActivityFeedState,
   createActivityFeed,
   type FeedStatus,
-  parseActivityEvent,
   type ResyncReason,
 } from './activity-feed.ts'
 export {
@@ -80,12 +82,5 @@ export {
   type SendResult,
   type SessionsApi,
 } from './http-client.ts'
-export { createSseParser, type SseMessage, type SseParser } from './sse.ts'
-export {
-  createStore,
-  type Store,
-  type StoreLifecycle,
-  type StoreTimers,
-  type WritableStore,
-} from './store.ts'
+export type { Store, StoreLifecycle, StoreTimers, WritableStore } from './store.ts'
 export { createHarnessTransport, type HarnessTransportOptions } from './transport.ts'

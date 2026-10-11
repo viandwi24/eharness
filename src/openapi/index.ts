@@ -1,13 +1,14 @@
 /**
  * `eharness/openapi`: OpenAPI 3.0 / 3.1 operations as agent tools.
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/17-openapi-plugin.md
  */
 export {
-  OPENAPI_AUTO_DEFER_THRESHOLD,
-  type OpenApiToolsOptions,
+  type OpenApiSourceOptions,
   type OperationFilter,
   type OperationInfo,
-  openApiTools,
-  riskFromMethod,
+  openApiSource,
 } from './source.ts'

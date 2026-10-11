@@ -73,6 +73,7 @@ export function createUuidV7Generator(options: UuidV7GeneratorOptions = {}): Uui
         counter = seedCounter()
       }
     }
+    // plain-error: unreachable until the year 10889
     if (lastMs > MAX_TIMESTAMP) throw new RangeError('UUIDv7 timestamp overflow')
     random(bytes)
     return format(lastMs, counter, bytes)
@@ -85,6 +86,7 @@ export function createUuidV7Generator(options: UuidV7GeneratorOptions = {}): Uui
     if (floor === undefined || id > floor) return id
     const floorMs = uuidV7Timestamp(floor)
     if (floorMs === undefined) return id
+    // plain-error: unreachable until the year 10889
     if (floorMs + 1 > MAX_TIMESTAMP) throw new RangeError('UUIDv7 timestamp overflow')
     const seed = seedCounter()
     random(bytes)

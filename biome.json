@@ -12,6 +12,7 @@
       "!!**/dist",
       "!!**/coverage",
       "!.changeset/*.md",
+      "!scripts/exports.snapshot.json",
       "!!examples/team/web",
       "!!examples/team/shared"
     ]

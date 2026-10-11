@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { tool } from 'ai'
 import { z } from 'zod/v4'
-import { memoryFs } from '../filesystem/memory.ts'
+import { inMemoryFs } from '../filesystem/memory.ts'
 import { filesystem } from '../filesystem/plugin.ts'
 import {
   defineHarnessAgent,
@@ -9,12 +9,10 @@ import {
   type HarnessWarning,
   isHarnessError,
 } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { type ScriptedCallOptions, scriptedModel } from '../testing/scripted-model.ts'
 import {
-  MEMORY_FLUSH_PROMPT,
   MEMORY_FLUSH_TOOLS,
-  MEMORY_PROTOCOL,
   MEMORY_TOOLS,
   type MemoryCommand,
   type MemoryExecutor,
@@ -23,6 +21,7 @@ import {
   memory,
 } from './index.ts'
 import { neutralizeTags, PINNED_PREAMBLE, trimMiddle } from './plugin.ts'
+import { MEMORY_FLUSH_PROMPT, MEMORY_PROTOCOL } from './texts.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -37,10 +36,10 @@ function setup(
   seed: Record<string, string> = {},
 ) {
   const warnings: HarnessWarning[] = []
-  const fs = memoryFs(seed)
+  const fs = inMemoryFs({ seed })
   const agent = defineHarnessAgent({
     contextWindow: 100_000,
-    storage: { messages: memoryMessages(), state: memoryState() },
+    storage: { messages: inMemoryMessages(), state: inMemoryState() },
     logger: silent,
     onWarning: (w) => warnings.push(w),
     plugins: [

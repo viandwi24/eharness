@@ -61,10 +61,16 @@ describe('PKCE and the authorization URL', () => {
 
   test('assertSecureUrl accepts https and localhost http only', () => {
     expect(() => assertSecureUrl('https://a.example.com', 'x')).not.toThrow()
-    expect(() => assertSecureUrl('http://localhost:3000/cb', 'x')).not.toThrow()
+    expect(() =>
+      assertSecureUrl('http://localhost:3000/cb', 'x', { allowPrivateNetwork: true }),
+    ).not.toThrow()
+    expect(() => assertSecureUrl('http://localhost:3000/cb', 'x')).toThrow()
+    expect(() => assertSecureUrl('https://169.254.169.254/x', 'x')).toThrow()
     expect(() => assertSecureUrl('http://a.example.com', 'x')).toThrow()
     expect(() => assertSecureUrl('nonsense', 'x')).toThrow()
-    expect(() => assertSecureUrl('http://10.0.0.1', 'x', { allowInsecure: true })).not.toThrow()
+    expect(() =>
+      assertSecureUrl('http://10.0.0.1', 'x', { allowInsecure: true, allowPrivateNetwork: true }),
+    ).not.toThrow()
   })
 })
 

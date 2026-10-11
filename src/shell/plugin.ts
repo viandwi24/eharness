@@ -13,11 +13,17 @@ import {
   type DataPartDef,
   defineDataPart,
   definePlugin,
+  errorText,
+  GREP_PATTERN_RULE,
+  GREP_SCAN_CHARS,
   type HarnessContext,
+  HarnessError,
   type HarnessPlugin,
   type InjectOptions,
   type SessionContribution,
+  statelessPattern,
   type ToolRisk,
+  unsafePatternReason,
 } from '../index.ts'
 import { SANDBOX_DENIAL } from './os-sandbox.ts'
 import type { Sandbox } from './sandbox-local.ts'
@@ -125,7 +131,10 @@ const MAX_MATCH_LINES = 40
 const MAX_MATCH_CHARS = 4000
 const TAIL_RESULT_CHARS = 4000
 
-/** Cap `text` to `max` characters: head (10 000) + marker + tail. */
+/**
+ * Cap `text` to `max` characters of kept text: a head of a third of `max` (at most 10 000
+ * characters), an omission marker and the tail that fills the rest.
+ */
 export function capOutput(text: string, max: number): string {
   if (text.length <= max) return text
   const head = Math.min(HEAD_CHARS, Math.floor(max / 3))
@@ -173,16 +182,59 @@ function oneLine(text: string, max: number): string {
   return line.length > max ? `${line.slice(0, max - 1)}…` : line
 }
 
-function compile(pattern: string | undefined): RegExp | undefined | { error: string } {
+/** Longest unfinished output line kept while waiting for its newline (characters). */
+const MAX_PARTIAL_LINE = 65_536
+
+/** Tests one output line (only its first {@link GREP_SCAN_CHARS} characters). */
+interface LineMatcher {
+  source: string
+  test(line: string): boolean
+}
+
+/**
+ * Compile a model-supplied `filter` / `notify_on` pattern. Only the safe regex subset of the
+ * `grep` tool is accepted (no catastrophic backtracking, ReDoS) and each line is cut to
+ * {@link GREP_SCAN_CHARS} characters before matching.
+ */
+function compile(pattern: string | undefined): LineMatcher | undefined | { error: string } {
   if (pattern === undefined || pattern === '') return undefined
+  const unsafe = unsafePatternReason(pattern)
+  if (unsafe !== undefined) return { error: `${unsafe}. ${GREP_PATTERN_RULE}` }
   try {
-    return new RegExp(pattern)
+    const regex = statelessPattern(new RegExp(pattern))
+    return {
+      source: regex.source,
+      test: (line) =>
+        regex.test(line.length > GREP_SCAN_CHARS ? line.slice(0, GREP_SCAN_CHARS) : line),
+    }
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) }
+    return { error: errorText(error) }
   }
 }
 
-const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+/** Throw `EH_CONFIG_INVALID` unless `value` is undefined or a finite number in range. */
+function checkNumber(
+  name: string,
+  value: number | undefined,
+  min: number,
+  integer: boolean,
+  max?: number,
+): void {
+  if (value === undefined) return
+  const ok =
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    (!integer || Number.isInteger(value)) &&
+    value >= min &&
+    (max === undefined || value <= max)
+  if (!ok) {
+    throw new HarnessError(
+      'EH_CONFIG_INVALID',
+      `shell: \`${name}\` must be ${integer ? 'an integer' : 'a number'} ≥ ${min}${max === undefined ? '' : ` and ≤ ${max}`}.`,
+      { details: { plugin: 'shell', option: name } },
+    )
+  }
+}
 
 /**
  * The shell plugin: `bash`, and with `background` also `bash_output` and `kill_shell`.
@@ -192,11 +244,18 @@ const errText = (error: unknown): string => (error instanceof Error ? error.mess
  * // shell and localSandbox come from the 'eharness/shell' entry point
  * defineHarnessAgent({
  *   model,
- *   plugins: [shell({ sandbox: localSandbox(process.cwd()), background: true })],
+ *   plugins: [shell({ sandbox: localSandbox({ root: process.cwd() }), background: true })],
  * })
  * ```
  */
 export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataParts> {
+  checkNumber('timeoutMs', options.timeoutMs, 1, false)
+  checkNumber('maxTimeoutMs', options.maxTimeoutMs, 1, false)
+  checkNumber('maxOutputChars', options.maxOutputChars, 1, true)
+  if (typeof options.background === 'object') {
+    checkNumber('background.maxTasks', options.background.maxTasks, 1, true)
+    checkNumber('background.monitorIntervalMs', options.background.monitorIntervalMs, 0, false)
+  }
   const defaultTimeout = options.timeoutMs ?? 120_000
   const maxTimeout = Math.max(options.maxTimeoutMs ?? 600_000, defaultTimeout)
   const maxChars = options.maxOutputChars ?? 30_000
@@ -296,7 +355,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
           } catch (error) {
             // a closed session or a failed store: the notice still reaches a running turn
             if (options.onTaskEvent === undefined) notices.push(text)
-            ctx.log.warn('shell: onTaskEvent failed', { error: errText(error) })
+            ctx.log.warn('shell: onTaskEvent failed', { error: errorText(error) })
           }
         })()
       }
@@ -307,7 +366,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
         notifyOn: string | undefined,
       ): Promise<string> {
         const monitor = compile(notifyOn)
-        if (monitor !== undefined && !(monitor instanceof RegExp)) {
+        if (monitor !== undefined && 'error' in monitor) {
           return `ERROR: notify_on is not a valid regular expression: ${monitor.error}`
         }
         const regex = monitor
@@ -318,7 +377,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
         try {
           proc = await sandbox.spawn({ command })
         } catch (error) {
-          return `ERROR: could not start the command: ${errText(error)}`
+          return `ERROR: could not start the command: ${errorText(error)}`
         }
         const name = label?.trim() ? label.trim() : oneLine(command, 80)
         const id = registry.add({
@@ -369,6 +428,11 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
             partial += chunk
             const lines = partial.split('\n')
             partial = lines.pop() ?? ''
+            // a line without a newline is judged by its head once it is long enough
+            if (partial.length > MAX_PARTIAL_LINE) {
+              lines.push(partial)
+              partial = ''
+            }
             const hits = lines.filter((l) => regex.test(l))
             if (hits.length > 0) {
               pending.push(...hits)
@@ -427,7 +491,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
         try {
           proc = await sandbox.spawn({ command })
         } catch (error) {
-          return `ERROR: could not start the command: ${errText(error)}`
+          return `ERROR: could not start the command: ${errorText(error)}`
         }
         let timedOut = false
         let aborted = false
@@ -505,7 +569,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
             ])
             exitCode = result.exitCode
           } catch (error) {
-            if (!aborted && !timedOut) failure = `ERROR: ${errText(error)}`
+            if (!aborted && !timedOut) failure = `ERROR: ${errorText(error)}`
           } finally {
             clearTimeout(timer)
             abortSignal?.removeEventListener('abort', onAbort)
@@ -576,7 +640,10 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
           description: BASH_OUTPUT_DESCRIPTION,
           inputSchema: z.object({
             id: z.string().describe('Task id, e.g. bash-1'),
-            filter: z.string().optional().describe('Regex; only matching lines are returned'),
+            filter: z
+              .string()
+              .optional()
+              .describe('Regex (safe subset, like grep); only matching lines are returned'),
           }),
           metadata: { risk: 'read' },
           execute: async ({ id, filter }): Promise<string> => {
@@ -586,7 +653,7 @@ export function shell(options: ShellOptions): HarnessPlugin<'shell', ShellDataPa
               return `ERROR: no background task "${id}".${known.length > 0 ? ` Known: ${known.join(', ')}` : ''}`
             }
             const re = compile(filter)
-            if (re !== undefined && !(re instanceof RegExp)) {
+            if (re !== undefined && 'error' in re) {
               return `ERROR: filter is not a valid regular expression: ${re.error}`
             }
             let text = registry.readNew(id) ?? ''

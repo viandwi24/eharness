@@ -248,6 +248,46 @@ Harness interaction and robustness (spec 05, 11; mostly P2 and P7):
 36. Chunk cloning: `attach()` replays chunks equal to what the first reader saw even when a data
     part was later reconciled by id.
 
+## Test preload: invariant violations fail the test
+
+`bunfig.toml` registers `scripts/test-preload.ts` for every `bun test` run. It does two things:
+
+- `debug.invariants` is **explicit only** in the library (it is never inferred from `NODE_ENV`), so
+  the preload switches it on for every agent a test defines, unless the test sets `debug.invariants`
+  itself.
+- A `W_INVARIANT_VIOLATION` raised by a session's own end-of-turn check fails the test that caused
+  it (the core only warns, because it must never break a running session; without the preload a
+  violation would scroll by in a green run). Direct calls to `checkSessionInvariants` from invariant
+  tests are not recorded.
+
+A test that provokes a violation on purpose opts out for that test with
+`allowInvariantViolation(/I5/)` (`src/session/test-kit.ts`), which takes a pattern for the expected
+problem text. Anything else that matches no pattern still fails. Application test suites do the same
+in their own setup: `debug: { invariants: true }` and an `onWarning` that throws on that code.
+
+## Static checks that run next to the tests
+
+| Command | What it enforces |
+|---|---|
+| `bun run lint` | `biome check` and `scripts/check-throws.ts`: no unmarked `throw new Error(...)` in non-test `src/` (public paths throw `HarnessError`; a deliberate exception carries `// plain-error: <why>` on the line or the line above, or `// plain-error-file: <why>` for a whole file) |
+| `bun run check:imports` | `scripts/check-imports.ts` (subpath modules reach core only through `src/index.ts`, no `Bun.*`, no `node:` outside the Node-only modules) and `scripts/check-cycles.ts` (no runtime import cycle between core folders) |
+| `bun run check:exports` | `scripts/exports-snapshot.ts` compares the real exports of every entry point with `scripts/exports.snapshot.json`; `bun test` runs the same comparison, and `check:package` runs it against `dist/` |
+
+### Exports snapshot workflow
+
+The snapshot is the reviewed list of every public runtime export, derived from
+`package.json#exports`. A change to a barrel (`src/**/index.ts`) fails the check until you regenerate
+and review the diff:
+
+```bash
+bun scripts/exports-snapshot.ts --write   # rewrite scripts/exports.snapshot.json
+git diff scripts/exports.snapshot.json    # every added or removed name is a public API change
+```
+
+An added name needs a spec/guide mention and a changeset; a removed name is a breaking change
+(`docs/engineering/api-stability.md`). Types are not in the snapshot (the type surface is covered by
+`tsc` and the `*.test-d.ts` files).
+
 ## Shared test helpers
 
 `src/testing/test-utils.ts` (internal: not exported from `eharness/testing`, not bundled) holds

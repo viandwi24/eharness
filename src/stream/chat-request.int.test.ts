@@ -16,7 +16,7 @@ import type { HarnessAgentConfig } from '../agent/types.ts'
 import type { HarnessUIMessage } from '../messages/types.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
 import type { ApprovalDecision } from '../plugin/types.ts'
-import { spyMessages, spyState } from '../session/int-kit.ts'
+import { spyMessages, spyState } from '../session/test-kit.ts'
 import { type ScriptedPrompt, scriptedModel } from '../testing/scripted-model.ts'
 import {
   type ChatRequestBody,
@@ -65,12 +65,12 @@ function setup(config: Partial<HarnessAgentConfig> & Pick<HarnessAgentConfig, 'm
   })
   const bodies: ChatRequestBody[] = []
   let routeOptions: ChatRequestOptions = {}
-  /** The application route: `handleChatRequest(session, body).toResponse()`. */
+  /** The application route: `handleChatRequest(session, body).toStreamResponse()`. */
   const route = async (request: Request): Promise<Response> => {
     const body = (await request.json()) as ChatRequestBody & { id: string }
     bodies.push(structuredClone(body))
     const session = agent.session(body.id) as HarnessSession<UIMessage>
-    return handleChatRequest(session, body, routeOptions).toResponse()
+    return handleChatRequest(session, body, routeOptions).toStreamResponse()
   }
   const transport = new DefaultChatTransport<UIMessage>({
     api: 'http://test.local/api/chat',

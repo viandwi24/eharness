@@ -1,7 +1,7 @@
 /**
  * Resolution of stored file references for the model (`inputFiles.resolve`, internal).
  *
- * @see docs/specs/03-messages.md#6-projection-to-model-messages
+ * @see docs/specs/03-messages.md#6-projection-to-the-model
  */
 import type { InputFilesConfig, ResolveInputFile } from '../agent/types.ts'
 import { FILE_UNAVAILABLE } from './texts.ts'

@@ -6,7 +6,7 @@ import type { HarnessAgentConfig, PruneConfig } from '../agent/types.ts'
 import type { HarnessWarning } from '../errors.ts'
 import { isKindMessage } from '../messages/kinds.ts'
 import type { ContextStats, HarnessUIMessage } from '../messages/types.ts'
-import { collect, normalizeVolatile, spyMessages, spyState } from '../session/int-kit.ts'
+import { collect, normalizeVolatile, spyMessages, spyState } from '../session/test-kit.ts'
 import {
   type ScriptedCallOptions,
   type ScriptedPrompt,

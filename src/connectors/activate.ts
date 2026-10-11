@@ -4,7 +4,9 @@
  *
  * @see docs/specs/24-connectors.md#7-activation
  */
+
 import type { HarnessPlugin, ToolSource } from '../index.ts'
+import { errorText } from '../index.ts'
 import { capabilitiesOf, connectorSchema } from './definition.ts'
 import { isConnectionEnabled, mostRestrictive, resolveModes } from './enablement.ts'
 import type {
@@ -376,7 +378,7 @@ export async function activateConnectors(options: ActivateOptions): Promise<Acti
       } catch (error) {
         warn({
           code: 'activate-failed',
-          message: `Connector '${connectorId}' failed to activate: ${error instanceof Error ? error.message : String(error)}`,
+          message: `Connector '${connectorId}' failed to activate: ${errorText(error)}`,
           connectorId,
         })
         contributions = []

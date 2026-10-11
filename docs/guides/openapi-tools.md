@@ -6,15 +6,22 @@
 [`examples/openapi-tools.ts`](../../examples/openapi-tools.ts).
 
 ```ts
-import { openApiTools } from 'eharness/openapi'
+import { defineHarnessAgent } from 'eharness'
+import { openApiSource } from 'eharness/openapi'
 
-const orders = openApiTools(specJson, {
-  name: 'orders',                                     // tools: orders_<operationId>
-  baseUrl: 'https://orders.example.com/v1',           // required; the spec's `servers` are ignored
+// yours: `model`, `specJson` (the OpenAPI document, object or JSON string)
+const orders = openApiSource({
+  spec: specJson,
+  name: 'orders',
+  baseUrl: 'https://orders.example.com/v1',
   headers: (ctx) => ({ authorization: `Bearer ${ctx.runtime.token}` }),
   include: { tags: ['orders'], methods: ['get', 'delete'] },
 })
-defineHarnessAgent({ model, tools: [orders], approval: { risk: { destructive: 'user-approval' } } })
+defineHarnessAgent({
+  model,
+  tools: [orders],
+  approval: { risk: { destructive: 'user-approval' } },
+})
 ```
 
 ## Curate, do not mirror
@@ -22,7 +29,8 @@ defineHarnessAgent({ model, tools: [orders], approval: { risk: { destructive: 'u
 A generated tool per endpoint is worse than a few well-chosen ones. Pick operations with
 `include` / `exclude` (methods, path globs, tags, operationIds, or a function), rename with
 `names`, and fix thin descriptions in the spec. More than 64 selected operations is a config
-error; above 20 the tools are deferred behind `tool_search` (`defer: 'auto'`).
+error (`maxTools`, default 64); above 20 the tools are deferred behind `tool_search`
+(`defer: 'auto'`). Requests time out after `timeoutMs` (default 30 000).
 
 ## Safety defaults
 
@@ -36,7 +44,12 @@ error; above 20 the tools are deferred behind `tool_search` (`defer: 'auto'`).
   `risk: (op) => (op.method === 'get' ? 'read' : 'external')`, then route it with `approval.risk`
   (spec 11 §3.2) or an [approval guard](guard.md).
 - **Failures** (HTTP errors, timeouts, bad input) come back as readable strings, so the model can
-  correct itself. Responses over `maxResponseChars` are cut.
+  correct itself. Responses over `maxResponseChars` (default 50 000) are cut.
+- **Responses are untrusted data.** By default (`wrapUntrusted: true`) successful
+  content is wrapped by `untrustedContent()` in an `<untrusted-content source="openapi">` frame
+  (JSON becomes compact JSON text inside it), like MCP text; errors and status lines stay unwrapped.
+  Add `UNTRUSTED_CONTENT_INSTRUCTIONS` (exported from `eharness`) to your instructions;
+  `wrapUntrusted: false` opts out and returns the parsed JSON value instead.
 
 ## Limits
 

@@ -35,6 +35,7 @@ Or a function, for your own database or naming scheme (a function that throws co
 ```ts
 import { defineHarnessAgent, type ModelInfo } from 'eharness'
 
+const model = 'anthropic/claude-sonnet-4.6'
 const prices: Record<string, ModelInfo> = {} // e.g. loaded at startup from your config service
 
 defineHarnessAgent({
@@ -104,6 +105,7 @@ function the core uses, exported for your own model calls:
 import { generateText } from 'ai'
 import { computeCost } from 'eharness'
 
+// yours: `model` is an AI SDK model; `gemini` is the ModelPricing above
 const { usage } = await generateText({ model, prompt: 'Hello' })
 console.log(computeCost(usage, gemini)) // USD
 ```
@@ -125,6 +127,7 @@ It is **absent** (not 0) when nothing was priced. These are estimates: providers
 reported). Use them for limits and dashboards; do not bill end users from them.
 
 ```ts
+// yours: `session` from agent.session(id)
 const result = await session.send('Summarize the report').result
 console.log(result.usage.costUsd?.toFixed(4) ?? 'not priced')
 ```
@@ -139,6 +142,7 @@ import { generateText, tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
 import { z } from 'zod/v4'
 
+// yours: `model` and `models` as above
 const cheap = 'anthropic/claude-haiku-4.5'
 
 defineHarnessAgent({
@@ -168,6 +172,7 @@ child turn's own estimate: `addUsage(usage, { costUsd: childResult.usage.costUsd
 ```ts
 import { defineHarnessAgent } from 'eharness'
 
+// yours: `model` and `models` as above
 defineHarnessAgent({
   model,
   models,
@@ -197,7 +202,7 @@ These budgets see one session. To cap a user, a tenant or a month across session
 
 ## Budgets across sessions
 
-`budget.ledger` (0.5.0) enforces limits that span sessions and instances — per user, tenant,
+`budget.ledger` enforces limits that span sessions and instances — per user, tenant,
 agent, month, whatever your product needs. Before **every** model call the core reserves an
 estimate of the call on your scopes, atomically; after the step it commits the actual cost. A
 refused reservation stops the turn with `'cost-cap'` **before** the call, so N sessions running at
@@ -205,9 +210,10 @@ once cannot overshoot by N steps — only by how far the estimates were off.
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { memoryBudgetLedger } from 'eharness/storage/memory'
+import { inMemoryBudgetLedger } from 'eharness/storage/memory'
 
-const ledger = memoryBudgetLedger({ limits: { 'tenant:acme': 50, 'user:ada': 5 } })
+// yours: `model`, `models` as above; `ctx.runtime` carries your tenant and user ids
+const ledger = inMemoryBudgetLedger({ limits: { 'tenant:acme': 50, 'user:ada': 5 } })
 
 defineHarnessAgent({
   model,
@@ -242,14 +248,14 @@ What the core does (spec 12 §4.1):
   runs the step unreserved with `W_BUDGET_LEDGER_FAILED`. Failures after the step (commit,
   record) are always warnings.
 - **Expiry.** A reservation of a crashed process stops counting after `reservationTtlMs`
-  (default `loop.turnTimeoutMs`, else 10 minutes).
+  (default `loop.turnTimeoutMs`, else 600 000 ms).
 - **Pre-turn check.** Not needed — the first reservation is the check. For a UI, call
   `ledger.check(scopes)` (`{ ok, scopes: [{ scope, limitUsd?, spentUsd, reservedUsd }] }`).
 - **Policy is yours.** Scope hierarchy, periods (monthly, rolling), price lists, soft limits and
   alerts live in your adapter. `warnAt` does not apply to ledger scopes; raise your own alert
   inside `reserve` / `commit`.
 
-`memoryBudgetLedger()` keeps static limits in one process — fine for tests and for several agent
+`inMemoryBudgetLedger()` keeps static limits in one process — fine for tests and for several agent
 instances in one process. A deployment needs a shared store: `examples/postgres-budget-ledger.ts`
 implements the port with monthly UTC periods (one atomic `UPDATE … WHERE spent + reserved +
 amount <= limit` per scope inside a function) and runs `budgetLedgerConformance` from

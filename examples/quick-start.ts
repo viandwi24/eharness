@@ -16,7 +16,7 @@ const demoModel = exampleModel([
 import { tool } from 'ai'
 import { defineHarnessAgent, defineSkill } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { z } from 'zod/v4'
 
 const agent = defineHarnessAgent({
@@ -37,17 +37,18 @@ const agent = defineHarnessAgent({
       content: 'Bullets only.',
     }),
   ],
-  plugins: [filesystem({ fs: memoryFs() })],
+  plugins: [filesystem({ fs: inMemoryFs() })],
 })
 
 const session = agent.session('demo')
 const run = session.send('Write the current time to /notes/now.md')
 for await (const chunk of run.stream) {
-  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or, in a route: await run.toHttpResponse()
+  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or, in a route: await run.toResponse()
 }
 
 const result = await run.result // never rejects: errors end the turn with stop: 'error'
 console.log(`\n${result.stop} after ${result.steps} steps`)
+if (result.stop === 'error') console.error(result.error?.code, result.error?.message) // e.g. EH_PROVIDER_AUTH: set AI_GATEWAY_API_KEY
 console.log(`${(await session.messages()).length} messages stored`)
 // --- end quick start ---
 

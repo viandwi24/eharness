@@ -4,6 +4,7 @@
  *
  * @see docs/specs/25-activity.md
  */
+import type { HarnessErrorCode, HarnessNoticeCode } from '../index.ts'
 
 /** What a producer appends. `type` is free-form: the library's own events and app events share one feed. */
 export interface ActivityInput {
@@ -118,7 +119,7 @@ export interface SessionActivityPayloads {
     usage: { inputTokens: number; outputTokens: number; totalTokens: number }
     costUsd?: number
     partial?: true
-    error?: { code?: string; message: string }
+    error?: { code?: HarnessErrorCode | HarnessNoticeCode; message: string }
     parentSessionId?: string
   }
   'pending-changed': {

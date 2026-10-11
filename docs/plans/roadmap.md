@@ -50,8 +50,9 @@ before implementation.
 
 ## 0.8.0
 
-P33–P38 (`docs/plans/README.md`), driven by the team example (`examples/team`) and a pre-release
-review. Six new Draft subpaths and many session APIs; nothing is removed (upgrade guide:
+P33–P39 (`docs/plans/README.md`), driven by the team example (`examples/team`) and an internal
+multi-perspective review. Six new Draft subpaths, many session APIs, and a breaking hardening pass
+(renames, trimmed exports, safer defaults; migration lines in the changesets and
 `docs/guides/upgrading.md`).
 
 | Item | Shipped as |
@@ -61,18 +62,19 @@ review. Six new Draft subpaths and many session APIs; nothing is removed (upgrad
 | Activity and attention | `eharness/activity`: `activity({ store })`, `ActivityStore`, SSE helpers, `listAttention` / `answerAttention`; spec 25, ADR-0058 |
 | HTTP and client | `eharness/http` (`createHarnessHttp`), `eharness/client`, `eharness/client/react`; specs 26-27, ADR-0059 |
 | Multi-instance and restarts | stream log and `attachRemote()`, `handleResumeRequest()`, held wakes, `recovery.instanceId`, `session.recover()`, `reconcileBackgroundChildren`, session invariants and fuzz suite, stale-handle reads (ADR-0039, 0054-0057) |
-| Interaction | partial resolution of approvals, continuation replay on resume, `run.accepted` / `toHttpResponse()`, `enqueue` timers, ids and metadata (ADR-0040, 0043-0045) |
+| Interaction | partial resolution of approvals, continuation replay on resume, `run.accepted` / `toResponse()`, `enqueue` timers, ids and metadata (ADR-0040, 0043-0045) |
 | Subagents | `agent.peek()`, child identity, `maxChildren`, park-mode messaging, durable background children (ADR-0041, 0042, 0046) |
 | Observability | `model.call` hook and `observeModel`, `openRouterCatalog`, `session.stats().usage` (ADR-0047) |
 | Security hardening | secrets bound to endpoints, case-insensitive deny/ask, dot-glob asks, prefix-scoped shell grants, remote MCP `read` asks, private-host checks, bounded event queues |
+| Hardening review (P39) | naming (`ask`, `guard`, `permissions`, `group`, `subagent`, `inMemory*`, `*Source`, one options object, `toResponse()` / `toStreamResponse()`, awaitable `session.abort()`), trimmed exports with a committed snapshot (`scripts/exports.snapshot.json`), timeouts for hooks, model streams, MCP, tool sources and OAuth, fail-closed `authorize`, `data:`-only client file URLs, OAuth private-host refusal, shell env allow-list, untrusted framing of OpenAPI and MCP structured output, one shared LLM judge (`createJudge`, ADR-0060), `config.observe`, one error taxonomy (`src/codes.ts`), one glob compiler, bounded background children, tests fail on `W_INVARIANT_VIOLATION`, core and subagent split into phase modules without import cycles |
 
 ### After 0.8.0 (not scheduled)
 
 | Item | Notes |
 |---|---|
-| **Stability pass toward 1.0** | Promote the Draft modules that settled in real use (permissions, subagent, shell, http, client); trim the widest surfaces (`eharness/connectors` exports about 90 names). |
+| **Stability pass toward 1.0** | Promote the Draft modules that settled in real use (permissions, subagent, shell, http, client). The export surface was already trimmed in P39 (`eharness/connectors` exports 35 runtime names); remaining candidates are reviewed through the exports snapshot diff. |
 | **One input verb** | `send({ ifBusy })`, `enqueue({ mode })` and `inject()` overlap; align names before 1.0 (the which-one table in `docs/guides/reference.md` covers the gap meanwhile). |
-| **Split the big files** | `src/subagent/plugin.ts`, `src/session/session.ts`, `src/session/turn.ts` and `src/permissions/engine.ts` into focused modules (no behaviour change). |
+| **Split the big files** | `src/subagent`, `src/session` and the turn lifecycle were split in P39; `src/permissions/engine.ts` is the remaining large module (no behaviour change). |
 | **Open items above** | The unstruck rows (code mode, `Agent` adapter, durable execution replay, goal plugin, shared task lists, immediate steer). |
 
 ## 0.5.0
@@ -82,7 +84,7 @@ the 0.5.0 results notes (internal).
 
 | Item | Phase | Shipped as |
 |---|---|---|
-| Tool risk `'external'` + MCP annotation mapping + approval routing | P21 | `ToolRisk` gains `'external'`, `toolTraits()`, `mcpServer({ risk })`; spec 11 §3.2, ADR-0025 |
+| Tool risk `'external'` + MCP annotation mapping + approval routing | P21 | `ToolRisk` gains `'external'`, `toolTraits()`, `mcpServerSource({ risk })`; spec 11 §3.2, ADR-0025 |
 | Inbox poison items | P22 | `inbox.retry`, `inbox.onDeadLetter`, `availableAt` timers; spec 05 §12, ADR-0026 |
 | Park-and-resume (external waits) | P23 | `externalTool()`, `resolveWait()`, `expireWaits()`; spec 11 §4.2, ADR-0027; partly covers **Durable execution** |
 | Request-scoped client tools + page context | P24 | `handleChatRequest(…, { clientTools, pageContext })`; spec 11 §7.1, ADR-0028 |
@@ -107,7 +109,7 @@ plugin).
 | **Client-tool declaration in the pending entry** | A continuation after a timeout may have no tool definitions for a stored client call; some providers could reject that. Storing the (size-capped) declaration in the pending entry would remove the risk (not observed so far). |
 | **`wait.resolved` hook** | `wait-resolved` events and `turn.end` cover audit; a hook would let plugins react (and carry `actor`). |
 | **Core wrappers for dead items** | `session.redrive()` / `agent.inbox.*` over the adapter operations (kept adapter-only in 0.5.0 to avoid a second API surface). |
-| **Trusted MCP hints** | `mcpServer({ trustHints: true })` to let `readOnlyHint` lower a risk for a server the app trusts (today `mcpServer({ risk })` covers it explicitly). |
+| **Trusted MCP hints** | `mcpServerSource({ trustHints: true })` to let `readOnlyHint` lower a risk for a server the app trusts (today `mcpServerSource({ risk })` covers it explicitly). |
 | **Partial usage on aborted steps** | An aborted or timed-out step commits 0 to the budget ledger because AI SDK reports no usage for it; the reservation estimate is the only bound. |
 | **OpenAPI extras** | YAML input, response schemas as `outputSchema`, binary / streamed responses, OAuth flows and external `$ref`s (JSON, local refs only in 0.5.0). |
 | **Group channel helpers** | Mention / reply extraction for Telegram, Slack and Discord events (the plugin takes the facts as input today). |
@@ -129,7 +131,7 @@ plugin** (done in P31), **AI SDK `Agent` interface adapter** (`asAgent()`) and *
 |---|---|
 | **Delta persistence** | `persistEachStep` rewrites the whole assistant message every step (write amplification on long turns). Options: optional `MessageAdapter.appendParts(sessionId, messageId, parts)` or batched step saves; must keep upsert-by-id semantics as the fallback. |
 | **Projection cache** | Every step re-projects the whole view (quadratic over a long session). Cache the model projection per message id + revision; invalidate on upsert. |
-| **Turn-level tracing** | OpenTelemetry spans per turn / step / tool / compaction around AI SDK's own telemetry (`telemetry` is only passed through today). |
+| **Turn-level tracing** | OpenTelemetry spans per turn / step / tool / compaction around AI SDK's own telemetry. **Partly done in 0.8.0:** `config.observe` reports phase durations and counters (an OpenTelemetry bridge is in `docs/guides/observability.md`); `telemetry` stays the AI SDK pass-through. |
 | **Typed `runtime` / `callOptions`** | Infer `ctx.runtime` and `ctx.turn.options` types from the agent config instead of `Record<string, unknown>` / `unknown`. |
 | **Plugin tools in `InferHarnessUIMessage`** | Tool parts of plugin-contributed tools are not in the inferred UI message type yet. |
 | **`TurnBufferAdapter`** | Cross-instance `attach()` (same as "Cross-process resumable streams"; listed here because the inbox makes it the next gap). |

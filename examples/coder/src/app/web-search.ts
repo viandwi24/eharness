@@ -1,18 +1,13 @@
 /**
  * The app's side of the network tools: `web_fetch` and `web_search` are the library's
  * (`eharness/web`); what stays here is policy and providers: the Markdown converter
- * (turndown), host resolution (Node DNS), and the provider-specific search (an OpenRouter web
+ * (turndown), host resolution (`nodeResolveHost`, in `app/agent.ts`), and the provider-specific search (an OpenRouter web
  * plugin call or the AI Gateway's Perplexity search tool).
  */
-import { lookup } from 'node:dns/promises'
 import { gateway, generateText, type LanguageModel, type LanguageModelUsage, stepCountIs } from 'ai'
 import type { WebSearchOptions } from 'eharness/web'
 import TurndownService from 'turndown'
 import type { ModelProvider } from '../contracts.ts'
-
-/** Resolve a host name to its addresses (`webFetch({ resolveHost })`). */
-export const resolveHost = async (host: string): Promise<string[]> =>
-  (await lookup(host, { all: true })).map((entry) => entry.address)
 
 const turndown = new TurndownService({
   headingStyle: 'atx',

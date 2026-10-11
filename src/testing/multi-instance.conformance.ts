@@ -24,6 +24,7 @@ import {
 import { assertTrue, uniqueSessionId } from './assert.ts'
 import { scriptedModel } from './scripted-model.ts'
 import { assertStoredSessionInvariants } from './session-invariants.ts'
+import { sleep } from './sleep.ts'
 import type { ConformanceCase } from './types.ts'
 
 /** The storage one instance of the suite talks to. */
@@ -58,7 +59,6 @@ export interface MultiInstanceConformanceOptions {
   latencyMs?: number
 }
 
-const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 /** Poll `condition` every few ms until it holds (rejects with `what` after `ms`). */

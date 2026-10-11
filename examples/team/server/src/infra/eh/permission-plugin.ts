@@ -1,10 +1,10 @@
 /**
  * Permissions with a mode per session (docs/specs/18-permissions-plugin.md §7, §12).
  *
- * `permissionsPlugin` takes one engine; the engine holds the Auto mode block counters, which are
+ * `permissions` takes one engine; the engine holds the Auto mode block counters, which are
  * per conversation (a pause in one chat must not pause another chat of the same agent, nor a
  * delegated task). So this plugin builds, in the session phase, one engine and one
- * `permissionsPlugin` per live session and installs that plugin's hooks as the session's hooks.
+ * `permissions` per live session and installs that plugin's hooks as the session's hooks.
  * The mode is not engine state: `mode(ctx)` is read at every decision (spec 18 §7 `mode`
  * function), so a mode switch takes effect at the next tool call and never rebuilds an agent.
  *
@@ -13,7 +13,7 @@
  */
 import { definePlugin, type HarnessContext, type HarnessPlugin } from 'eharness'
 import type { AutoEvent, PermissionEngine } from 'eharness/permissions'
-import { permissionsPlugin } from 'eharness/permissions'
+import { permissions } from 'eharness/permissions'
 import { EH_MODE, type TeamMode } from '../../domain/modes.ts'
 
 export interface SessionPermissionsOptions {
@@ -36,7 +36,7 @@ export function sessionPermissions(opts: SessionPermissionsOptions): HarnessPlug
       opts.registry.set(sessionId, engine)
       const unsubscribe = engine.subscribeAuto((event) => opts.onAuto?.(sessionId, event, engine))
       // the plan-exit tool belongs to plan mode, which the team app does not offer
-      const inner = permissionsPlugin({
+      const inner = permissions({
         engine,
         mode: (hookCtx) => EH_MODE[opts.mode(hookCtx)],
         planExitTool: false,

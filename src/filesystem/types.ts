@@ -124,7 +124,7 @@ export interface GrepHit {
  *
  * @example
  * ```ts
- * const fs: FileSystem = memoryFs({ '/README.md': '# Hello\n' })
+ * const fs: FileSystem = inMemoryFs({ seed: { '/README.md': '# Hello\n' } })
  * await fs.write('/a.md', 'x', { ifVersion: null }) // create only
  * ```
  * @see docs/specs/08-filesystem-plugin.md#1-contract
@@ -179,7 +179,7 @@ export interface FileSystem {
   /**
    * Optional (binary files): write raw bytes with the same `ifVersion` rules and results as
    * {@link FileSystem.write}; the version is computed from the bytes. Bytes that are valid UTF-8
-   * text are stored as a text file. `mediaType` (since 0.9) is the declared IANA media type: an
+   * text are stored as a text file. `mediaType` is the declared IANA media type: an
    * adapter that can keep it (a database column, object metadata) returns it as
    * `FileMeta.mediaType` / `BinaryFile.mediaType` afterwards, also for text (`text/csv`), until the
    * file is written again without one; adapters that cannot may ignore it (the plugin then
@@ -191,7 +191,7 @@ export interface FileSystem {
     opts?: { ifVersion?: string | null; mediaType?: string; author?: string },
   ): Promise<WriteResult>
   /**
-   * Optional (version history, since 0.10, spec 08 §14): the states of a file, newest first (the
+   * Optional (version history, spec 08 §14): the states of a file, newest first (the
    * first entry is the current state), one entry per content change (a write of the same content
    * adds none). `[]` for a path that never existed. Adapters that keep history may keep it after a
    * delete, so a deleted file can be restored. Without it an app cannot list versions.

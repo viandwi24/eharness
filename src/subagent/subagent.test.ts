@@ -9,7 +9,7 @@ import {
   type HarnessUIMessage,
   type StateAdapter,
 } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { sleep, until } from '../testing/test-utils.ts'
 import {
@@ -17,16 +17,16 @@ import {
   reconcileSubagentWaits,
   SUBAGENT_NO_USER,
   type SubagentApprovalRequest,
-  type SubagentsOptions,
+  type SubagentOptions,
   type SubagentTasks,
+  subagent,
   subagentChild,
-  subagents,
 } from './index.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
-type Storage = { messages: ReturnType<typeof memoryMessages>; state: StateAdapter }
-const shared = (): Storage => ({ messages: memoryMessages(), state: memoryState() })
+type Storage = { messages: ReturnType<typeof inMemoryMessages>; state: StateAdapter }
+const shared = (): Storage => ({ messages: inMemoryMessages(), state: inMemoryState() })
 
 // biome-ignore lint/suspicious/noExplicitAny: loosely typed agents in tests
 type Agent = HarnessAgent<any>
@@ -75,7 +75,7 @@ function childAgent(
 function parentAgent(
   storage: Storage,
   worker: Agent,
-  options: Partial<SubagentsOptions> & Pick<SubagentsOptions, 'approvals'>,
+  options: Partial<SubagentOptions> & Pick<SubagentOptions, 'approvals'>,
   steps: Parameters<typeof scriptedModel>[0] = [{ toolCalls: [spawn()] }, { text: 'parent done' }],
   extraPlugins: unknown[] = [],
 ): Agent {
@@ -86,7 +86,7 @@ function parentAgent(
     logger: silent,
     plugins: [
       ...extraPlugins,
-      subagents({ agents: { worker: { agent: worker, description: 'does work' } }, ...options }),
+      subagent({ agents: { worker: { agent: worker, description: 'does work' } }, ...options }),
     ] as never,
   }) as Agent
 }
@@ -210,7 +210,7 @@ describe("approvals: 'inline'", () => {
 
   test('requires an answer callback', () => {
     expect(() =>
-      subagents({ agents: {}, approvals: 'inline' } as unknown as SubagentsOptions),
+      subagent({ agents: {}, approvals: 'inline' } as unknown as SubagentOptions),
     ).toThrow(/answer/)
   })
 })
@@ -378,7 +378,7 @@ describe('failures, limits and abort', () => {
   })
 
   test("background is accepted with 'park' (durable, ADR-0043)", () => {
-    expect(() => subagents({ agents: {}, approvals: 'park', background: true })).not.toThrow()
+    expect(() => subagent({ agents: {}, approvals: 'park', background: true })).not.toThrow()
   })
 })
 
@@ -425,10 +425,8 @@ describe("approvals: 'park'", () => {
     const worker2 = childAgent(storage, {
       log,
       plugins: [subagentChild({ parent: () => holder2.main as Agent })],
-      steps: [
-        { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
-        { text: 'child report' },
-      ],
+      // a new process: its model's first call is the continuation after the approval
+      steps: [{ text: 'child report' }],
     })
     const main2 = parentAgent(storage, worker2, { approvals: 'park' }, [{ text: 'parent done' }])
     holder2.main = main2
@@ -469,10 +467,8 @@ describe("approvals: 'park'", () => {
     const worker = childAgent(storage, {
       log,
       plugins: [subagentChild({ parent: () => holder.main as Agent })],
-      steps: [
-        { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
-        { text: 'child report' },
-      ],
+      // a new process: its model's first call is the continuation after the approval
+      steps: [{ text: 'child report' }],
     })
     const main = parentAgent(storage, worker, { approvals: 'park' }, [{ text: 'parent done' }])
     holder.main = main
@@ -556,10 +552,7 @@ describe('reconcileSubagentWaits (crash between the child finishing and its hook
 
   test('resolves the wait from the finished child; the parent continues; idempotent', async () => {
     const storage = shared()
-    const childId = await crashed(storage, [
-      { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
-      { text: 'late report' },
-    ])
+    const childId = await crashed(storage, [{ text: 'late report' }]) // the bare agent's first call is the continuation
     const worker = childAgent(storage)
     const main = parentAgent(storage, worker, { approvals: 'park' }, [{ text: 'parent done' }])
     const session = main.session('p1')
@@ -604,10 +597,7 @@ describe('reconcileSubagentWaits (crash between the child finishing and its hook
 
   test('selfAgent: the wait is healed when the parent session opens', async () => {
     const storage = shared()
-    await crashed(storage, [
-      { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
-      { text: 'late report' },
-    ])
+    await crashed(storage, [{ text: 'late report' }]) // the bare agent's first call is the continuation
     const worker = childAgent(storage)
     const holder: { main?: Agent } = {}
     const main = parentAgent(
@@ -640,7 +630,7 @@ describe('background subagents: the subagentTasks service', () => {
           .subagentTasks
       },
     }
-    // no `requires`: this plugin is ordered before `subagents()`; the service is read lazily
+    // no `requires`: this plugin is ordered before `subagent()`; the service is read lazily
     const plugin = definePlugin({
       name: 'tap',
       session: (ctx) => {
@@ -729,7 +719,7 @@ describe('background subagents: the subagentTasks service', () => {
     await main.close()
   })
 
-  test('stop of an unknown id asks the child session to abort (requestAbort)', async () => {
+  test('stop of an unknown id asks the child session to abort (abort)', async () => {
     const storage = shared()
     const worker = childAgent(storage, { steps: [{ text: 'x' }] })
     const { capture, plugin } = taps()
@@ -756,7 +746,7 @@ describe('background subagents: the subagentTasks service', () => {
         storage,
         logger: silent,
         plugins: [
-          subagents({
+          subagent({
             agents: { worker: { agent: leaf, description: 'w' } },
             approvals: 'policy',
             background:

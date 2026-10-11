@@ -12,7 +12,7 @@ import { describeModel } from '../internal/model.ts'
 import { project } from '../messages/project.ts'
 import type { MessageRegistry } from '../messages/registry.ts'
 import type { ContextStats, HarnessUIMessage } from '../messages/types.ts'
-import { lookupModel } from '../models/catalog.ts'
+import { lookupModel } from './catalog.ts'
 
 /** A token counter: text → tokens. */
 export type CountTokens = (text: string) => number

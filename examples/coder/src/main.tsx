@@ -1,4 +1,7 @@
 #!/usr/bin/env bun
+import { readFile } from 'node:fs/promises'
+import { createInterface } from 'node:readline/promises'
+import { Command, CommanderError, InvalidArgumentError } from 'commander'
 /**
  * `coder`: a terminal coding agent built on eharness (docs/plans/P30-coder-example.md).
  *
@@ -8,10 +11,7 @@
  * array of `scriptedModel` steps (`eharness/testing`), that scripted model replaces the real one
  * for the main agent and every subagent. The e2e tests run the CLI this way, without a network.
  */
-import { readFile } from 'node:fs/promises'
-import { createInterface } from 'node:readline/promises'
-import { Command, CommanderError, InvalidArgumentError } from 'commander'
-import { version as eharnessVersion } from 'eharness'
+import { version as eharnessVersion, errorText } from 'eharness'
 import { killAllSandboxProcesses } from 'eharness/shell'
 import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { type CliFlags, loadConfig, trustProject } from './app/config.ts'
@@ -173,7 +173,7 @@ const program = new Command()
       try {
         config = await loadConfig(flags)
       } catch (error) {
-        process.stderr.write(`coder: ${error instanceof Error ? error.message : String(error)}\n`)
+        process.stderr.write(`coder: ${errorText(error)}\n`)
         process.exit(2)
       }
 
@@ -187,9 +187,7 @@ const program = new Command()
               await trustProject(config)
               config = await loadConfig(flags)
             } catch (error) {
-              process.stderr.write(
-                `coder: cannot trust the project: ${error instanceof Error ? error.message : String(error)}\n`,
-              )
+              process.stderr.write(`coder: cannot trust the project: ${errorText(error)}\n`)
             }
           }
         }
@@ -208,7 +206,7 @@ const program = new Command()
           model = scriptedModel(steps)
         } catch (error) {
           process.stderr.write(
-            `coder: cannot load CODER_SCRIPTED_MODEL ${scriptFile}: ${error instanceof Error ? error.message : String(error)}\n`,
+            `coder: cannot load CODER_SCRIPTED_MODEL ${scriptFile}: ${errorText(error)}\n`,
           )
           process.exit(2)
         }
@@ -248,6 +246,14 @@ const program = new Command()
         flushWarnings(config.warnings, shown)
         killAllSandboxProcesses('SIGKILL')
         process.exit(code)
+      }
+
+      // the interactive UI needs a terminal (raw mode); without one say so instead of crashing in Ink
+      if (!process.stdin.isTTY) {
+        process.stderr.write(
+          'coder: the interactive UI needs a terminal (stdin is not a TTY). Run it in a terminal, or pass a prompt with -p "<prompt>" for a one-shot run.\n',
+        )
+        process.exit(2)
       }
 
       const controller = await createController({

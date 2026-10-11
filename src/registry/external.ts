@@ -10,7 +10,7 @@
  * @see docs/decisions/0027-external-waits-park-at-the-tool-boundary.md
  */
 import { type FlexibleSchema, type JSONValue, type Tool, tool } from 'ai'
-import type { ToolRisk, WaitTimeoutResult } from '../messages/types.ts'
+import type { PendingState, ToolRisk, WaitTimeoutResult } from '../messages/types.ts'
 import type { HarnessContext } from '../plugin/types.ts'
 
 /** What `start` receives (spec 11 §4.2 rule 1). */
@@ -111,4 +111,33 @@ export function externalTool<INPUT, OUTPUT = unknown>(
 export function externalOf(tool: unknown): ExternalToolMeta | undefined {
   if (typeof tool !== 'object' || tool === null) return undefined
   return (tool as { [EXTERNAL_TOOL]?: ExternalToolMeta })[EXTERNAL_TOOL]
+}
+
+/** Environment of {@link armExternals}. */
+export interface ParkEnv {
+  /** `externalTool()` definitions of the turn, by tool name. */
+  externals: ReadonlyMap<string, { owner: string; meta: ExternalToolMeta }>
+  now?: () => number
+}
+
+/**
+ * Complete the external entries of a pending state that is about to be committed: `timeoutAt` and
+ * `onTimeout` from the tool's defaults, and `started: false` for tools with a `start` (it runs
+ * after the commit, spec 11 §4.2 rule 1) with `parkedAt`. Synchronous: no user code runs before the commit.
+ * Mutates `pending`.
+ */
+export function armExternals(pending: PendingState, env: ParkEnv): void {
+  const now = env.now ?? Date.now
+  for (const entry of pending.externals ?? []) {
+    const def = env.externals.get(entry.toolName)
+    const timeoutMs = def?.meta.timeoutMs
+    if (timeoutMs !== undefined && Number.isFinite(now() + timeoutMs)) {
+      entry.timeoutAt = now() + timeoutMs
+    }
+    if (def?.meta.onTimeout !== undefined) entry.onTimeout = structuredClone(def.meta.onTimeout)
+    if (def?.meta.start !== undefined) {
+      entry.started = false
+      entry.parkedAt = now()
+    }
+  }
 }

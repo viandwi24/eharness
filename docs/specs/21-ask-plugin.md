@@ -3,15 +3,15 @@
 Status: **Draft (0.7)**. Module: `src/ask/*`. Built only with the public core API (ADR-0008).
 Design principle: ADR-0034 (every module works in three deployment profiles).
 
-`askUser(options)` adds `ask_user_question`, a multiple-choice question tool. The model asks 1–4
+`ask(options)` adds `ask_user_question`, a multiple-choice question tool. The model asks 1–4
 questions with 2–4 options each; the answers come back as the tool result.
 
 ## 1. API
 
 ```ts
-import { askUser, formatAnswers, answerOutput, pendingQuestions, parseQuestions, ASK_TOOL } from 'eharness/ask'
+import { ask, answerOutput, pendingQuestions, ASK_TOOL } from 'eharness/ask'
 
-askUser({
+ask({
   toolName?: string                    // 'ask_user_question'
   maxQuestions?: number                // 4 (1..4)
   interactive?: boolean | ((ctx: HarnessContext) => boolean)   // true
@@ -22,15 +22,13 @@ interface Question { question: string; header: string /* ≤ 12 */; options: { l
 interface Answer { selected?: string[]; other?: string; notes?: string }
 type QuestionResult = { answers: Answer[] } | null        // null = dismissed
 
-formatAnswers(questions, result): string
-parseQuestions(input, { toolName?, maxQuestions? }): { questions } | { error }
 pendingQuestions(pending, { toolName?, maxQuestions?, storedInputs? }): PendingQuestion[]
 answerOutput(call: PendingQuestion, result: QuestionResult, note?): { toolCallId, output } | { toolCallId, errorText }
 ```
 
 ## 2. The tool
 
-- Input `{ questions: Question[] }`, validated by the zod schema above. The description tells the
+- Input `{ questions: Question[] }`, validated by a zod schema (1 to `maxQuestions` questions, `header` ≤ 12 characters, 2–4 options). The description (internal text) tells the
   model: when to ask, that "Other" and notes are always offered (it must not add "Other"), to put
   the recommended option first, and not to use the tool for approvals (the approval system does
   that).
@@ -50,7 +48,7 @@ developer runtime context.
 
 Fallback (`whenNoHuman`):
 
-- `'dismiss'` — the result is the dismissed text of `formatAnswers(q, null)`; the model proceeds
+- `'dismiss'` — the result is the dismissed text of §4; the model proceeds
   with its best judgment.
 - `'error'` — `ERROR: no user is available to answer questions. Decide yourself and state your assumption.`
 - function — returns the answers (or `null`); a throw becomes an `ERROR:` text.
@@ -66,6 +64,9 @@ The user answered:
 An unanswered question reads `(no answer)`. `null` reads `The user dismissed the questions without
 answering. Proceed with your best judgment or ask in plain text.` Changing any of this text is a
 minor change.
+
+The answer formatter and the input parser (`formatAnswers`, `parseQuestions`) are internal; the
+exported helpers below use them.
 
 ## 5. Pending helpers
 

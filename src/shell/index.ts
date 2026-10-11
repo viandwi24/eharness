@@ -3,15 +3,15 @@
  * background tasks, the `shellTasks` service) and the local sandbox (child processes, optional
  * OS isolation with Seatbelt / bubblewrap). Node-only (ADR-0036).
  *
+ * **Draft:** every symbol of this subpath is experimental and may change in a minor release
+ * (docs/engineering/api-stability.md).
+ *
  * @see docs/specs/19-shell-plugin.md
  */
 
 export {
   detectOsSandbox,
   type OsSandboxKind,
-  SANDBOX_HINT,
-  seatbeltProfile,
-  wrapCommand,
 } from './os-sandbox.ts'
 export {
   BASH_OUTPUT_TOOL,
@@ -30,7 +30,8 @@ export {
   type LocalSandboxOptions,
   localSandbox,
   type OsSandboxOptions,
+  SAFE_ENV_NAMES,
   type Sandbox,
   type SandboxState,
 } from './sandbox-local.ts'
-export { MAX_TASK_OUTPUT, type ShellTask, type ShellTaskStatus, type ShellTasks } from './tasks.ts'
+export type { ShellTask, ShellTaskStatus, ShellTasks } from './tasks.ts'

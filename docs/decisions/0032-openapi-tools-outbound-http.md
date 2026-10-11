@@ -45,3 +45,7 @@ helper. This is the first shipped plugin that performs outbound HTTP on its own.
   OAuth flows (the app's `headers()` owns tokens).
 - DNS-level SSRF (a trusted hostname resolving to an internal address) is outside the library's
   reach; a custom `fetch` can enforce network policy.
+
+## Amendment note (2026-10-11)
+
+Update (0.8, P39): the factory is `openApiSource()`. Responses are framed with `untrustedContent()` by default (`wrapUntrusted: false` keeps the parsed value); a successful JSON response is the compact JSON text inside the frame. The DNS-level gap named above is still the application's (a custom `fetch`); for the web tools, `eharness/web/node` offers a ready `resolveHost`.

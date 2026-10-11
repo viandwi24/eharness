@@ -3,18 +3,18 @@ import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { StateAdapter } from '../agent/session-types.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { MAX_CHILDREN, registerChild } from './family.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
 function shared() {
-  return { messages: memoryMessages(), state: memoryState() }
+  return { messages: inMemoryMessages(), state: inMemoryState() }
 }
 
 function makeAgent(
-  storage: { messages: ReturnType<typeof memoryMessages>; state: StateAdapter },
+  storage: { messages: ReturnType<typeof inMemoryMessages>; state: StateAdapter },
   extra: Record<string, unknown> = {},
 ) {
   return defineHarnessAgent({
@@ -156,9 +156,9 @@ describe('parent / child index', () => {
   })
 
   test('works without setIf (plain read-modify-write) and never creates a missing parent', async () => {
-    const inner = memoryState()
+    const inner = inMemoryState()
     const state: StateAdapter = { get: (id) => inner.get(id), set: (id, s) => inner.set(id, s) }
-    const storage = { messages: memoryMessages(), state }
+    const storage = { messages: inMemoryMessages(), state }
     const agent = makeAgent(storage)
     await agent.session('parent').send('hello').result
     await agent.session('child-1', { parent: parentOf(1) }).ready()
@@ -174,7 +174,7 @@ describe('parent / child index', () => {
   })
 
   test('a failing registration does not break the child', async () => {
-    const inner = memoryState()
+    const inner = inMemoryState()
     let fail = true
     const state: StateAdapter = {
       get: async (id) => {
@@ -184,7 +184,7 @@ describe('parent / child index', () => {
       set: (id, s) => inner.set(id, s),
       ...(inner.setIf === undefined ? {} : { setIf: inner.setIf.bind(inner) }),
     }
-    const storage = { messages: memoryMessages(), state }
+    const storage = { messages: inMemoryMessages(), state }
     const agent = makeAgent(storage)
     await inner.set('parent', { v: 1, rev: 1, core: {}, plugins: {} })
     const child = agent.session('child-1', { parent: parentOf(1) })

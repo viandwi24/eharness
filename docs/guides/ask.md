@@ -1,40 +1,45 @@
 # Ask the user (`eharness/ask`)
 
-`askUser()` gives the model `ask_user_question`: 1–4 multiple-choice questions, 2–4 options each,
+`ask()` gives the model `ask_user_question`: 1–4 multiple-choice questions, 2–4 options each,
 single or `multiSelect`; "Other" and notes are always offered by the UI. Contract:
 [spec 21](../specs/21-ask-plugin.md).
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { askUser } from 'eharness/ask'
+import { ask } from 'eharness/ask'
 
-const agent = defineHarnessAgent({ model, plugins: [askUser()] })
+const model = 'anthropic/claude-sonnet-4.5' // yours: any AI SDK LanguageModel or model id
+const agent = defineHarnessAgent({ model, plugins: [ask()] })
 ```
+
+Options: `toolName` (default `ask_user_question`), `maxQuestions` (default and maximum 4),
+`interactive` and `whenNoHuman` (below).
 
 ## Autonomous server (nobody to answer)
 
 ```ts
-askUser({ interactive: false })                                   // dismissed text; the model decides
-askUser({ interactive: false, whenNoHuman: 'error' })             // ERROR: no user is available…
-askUser({
+ask({ interactive: false })                                   // dismissed text; the model decides
+ask({ interactive: false, whenNoHuman: 'error' })             // ERROR: no user is available…
+ask({
   interactive: false,
   whenNoHuman: (questions) => ({                                  // a policy answer: first option
     answers: questions.map((q) => ({ selected: [q.options[0]!.label] })),
   }),
 })
-askUser({ interactive: (ctx) => ctx.runtime.human === true })      // per session
+ask({ interactive: (ctx) => ctx.runtime.human === true })      // per session
 ```
 
 The tool executes in the same step; the turn never stops.
 
 ## CLI and web: answer through the pending state
 
-Default `askUser()` is a client tool: the turn stops `tool-pending`. Read the questions, ask the
+Default `ask()` is a client tool: the turn stops `tool-pending`. Read the questions, ask the
 user, answer with `respond({ toolOutputs })`:
 
 ```ts
 import { answerOutput, pendingQuestions } from 'eharness/ask'
 
+// yours: session (agent.session(id)) and showDialog(questions) (your UI)
 const result = await session.send('Set up the project').result
 if (result.stop === 'tool-pending') {
   const calls = pendingQuestions(result.pending)            // [{ toolCallId, questions } | { toolCallId, error }]

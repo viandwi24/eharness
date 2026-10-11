@@ -9,16 +9,17 @@ import { uuidv7 } from '../messages/ids.ts'
 import { isKindMessage } from '../messages/kinds.ts'
 import { INTERRUPTED_UNKNOWN } from '../messages/texts.ts'
 import type { CompactionPayload, HarnessUIMessage } from '../messages/types.ts'
+import { defaultCountTokens, wireTokens } from '../models/tokens.ts'
 import { definePlugin } from '../plugin/define-plugin.ts'
+import { defaultMemoryState } from '../session/memory-storage.ts'
 import {
   chunkTypes,
   collect,
   normalizeVolatile,
   spyMessages,
   spyState,
-} from '../session/int-kit.ts'
-import { defaultMemoryState } from '../session/memory-storage.ts'
-import { memoryBudgetLedger } from '../storage/memory.ts'
+} from '../session/test-kit.ts'
+import { inMemoryBudgetLedger } from '../storage/memory.ts'
 import {
   type ScriptedCallOptions,
   type ScriptedStep,
@@ -26,7 +27,6 @@ import {
   scriptedModel,
 } from '../testing/scripted-model.ts'
 import { answer, estimatedInput, summarizerModel, summarizerPromptText } from './test-kit.ts'
-import { defaultCountTokens, wireTokens } from './tokens.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 
@@ -751,7 +751,7 @@ describe('summarizer usage and budgets (spec 06 §5.3, spec 12)', () => {
   })
 
   test('summarizer usage is recorded on budget.ledger (automatic and manual), once', async () => {
-    const adapter = memoryBudgetLedger()
+    const adapter = inMemoryBudgetLedger()
     const ledger = { adapter, scopes: () => ['user:ada'] }
     const steps = Array.from({ length: 6 }, (_, i) => answer(`A${i + 1}`))
     const { agent } = setup(steps, { models, budget: { ledger } })
@@ -935,7 +935,7 @@ describe('scenario 34: overflow recovery', () => {
     const { agent, model } = setup([{ text: 'partial', streamError: overflow() }])
     const result = await agent.session('s1').send('hi').result
     expect(result.stop).toBe('error')
-    expect(result.error?.code).toBeUndefined()
+    expect(result.error?.code).toBe('EH_PROVIDER')
     expect(model.calls).toHaveLength(1)
     const other = setup([
       {

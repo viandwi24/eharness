@@ -2,7 +2,9 @@
  * Cron and interval maths on `croner` (parsing and next-slot only: no timers, `paused: true`).
  * IANA timezones come from the JS runtime. Pure functions of the clock they are given.
  */
+
 import { Cron } from 'croner'
+import { errorText } from 'eharness'
 import type { ScheduleCalc } from '../app/ports.ts'
 import { DomainError, invalid } from '../domain/errors.ts'
 import { MIN_EVERY_MS, type RoutineSpec } from '../domain/routines.ts'
@@ -11,7 +13,7 @@ function cronOf(expr: string, tz: string): Cron {
   try {
     return new Cron(expr, { timezone: tz, paused: true })
   } catch (error) {
-    const why = error instanceof Error ? error.message : String(error)
+    const why = errorText(error)
     throw invalid(`invalid cron expression or timezone: ${why}`, 'INVALID_SCHEDULE')
   }
 }
@@ -30,10 +32,7 @@ export function croneSchedule(): ScheduleCalc {
         } catch (error) {
           if (error instanceof DomainError) throw error
           // croner reports a bad timezone only when it computes a date
-          throw invalid(
-            `invalid cron timezone or date: ${error instanceof Error ? error.message : String(error)}`,
-            'INVALID_SCHEDULE',
-          )
+          throw invalid(`invalid cron timezone or date: ${errorText(error)}`, 'INVALID_SCHEDULE')
         }
       }
     }

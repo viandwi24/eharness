@@ -11,7 +11,7 @@ import type {
   SessionStateSnapshot,
   StateAdapter,
 } from '../agent/session-types.ts'
-import { HarnessError, isHarnessError } from '../errors.ts'
+import { HarnessError, isHarnessError, storageError } from '../errors.ts'
 import type { MessageRegistry } from '../messages/registry.ts'
 import type { CompactionPayload, HarnessUIMessage } from '../messages/types.ts'
 import { isBoundary, rewindsIn } from './load-context.ts'
@@ -22,11 +22,6 @@ export const MAX_CHILDREN = 500
 const REGISTER_RETRIES = 12
 /** Messages copied per batch by a fork. */
 export const FORK_PAGE_SIZE = 200
-
-function storageError(what: string, cause: unknown): HarnessError {
-  if (isHarnessError(cause)) return cause
-  return new HarnessError('EH_STORAGE', `State storage failed (${what}).`, { cause })
-}
 
 /**
  * Append `entry` to `core.children` of the parent's stored state (a foreign write, spec 05 §13):
@@ -61,7 +56,7 @@ export async function registerChild(
       // lost the race: back off a little so concurrent children do not retry in lockstep
       await new Promise((resolve) => setTimeout(resolve, Math.random() * 4 * (attempt + 1)))
     } catch (error) {
-      throw storageError('register child', error)
+      throw storageError('State', 'register child', error)
     }
   }
   throw new HarnessError(

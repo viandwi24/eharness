@@ -1,18 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { denialOf } from './authorize.ts'
 import { readJsonBody } from './body.ts'
 import { isIdempotencyKey } from './chat.ts'
-import {
-  createHarnessHttp,
-  httpError,
-  openAccess,
-  sanitizeChatBody,
-  statusOfCode,
-} from './index.ts'
-import { classifyChatBody } from './sanitize.ts'
+import { httpError, statusOfCode } from './errors.ts'
+import { createHarnessHttp, openAccess } from './index.ts'
+import { classifyChatBody, sanitizeChatBody } from './sanitize.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
 const text = (id: string, t = 'hi') => ({ id, role: 'user', parts: [{ type: 'text', text: t }] })
@@ -60,6 +55,24 @@ describe('sanitizeChatBody', () => {
     expect(r.ok && r.body.messages[0]?.parts).toEqual([
       { type: 'file', url: 'data:x', mediaType: 'a/b', filename: 'f' },
     ])
+  })
+
+  test('file part urls: data only by default, http(s) or a predicate on request', () => {
+    const file = (url: string): unknown =>
+      body({
+        messages: [{ id: 'm', role: 'user', parts: [{ type: 'file', url, mediaType: 'a/b' }] }],
+      })
+    const remote = 'http://169.254.169.254/latest'
+    const refusedDefault = sanitizeChatBody(file(remote))
+    expect(!refusedDefault.ok && refusedDefault.details).toEqual({ reason: 'file-url' })
+    expect(sanitizeChatBody(file('data:text/plain;base64,aGk=')).ok).toBe(true)
+    expect(sanitizeChatBody(file(remote), { allowFileUrls: true }).ok).toBe(true)
+    expect(sanitizeChatBody(file('file:///etc/passwd'), { allowFileUrls: true }).ok).toBe(false)
+    const only = (u: URL): boolean => u.hostname === 'cdn.example.com'
+    expect(
+      sanitizeChatBody(file('https://cdn.example.com/a.png'), { allowFileUrls: only }).ok,
+    ).toBe(true)
+    expect(sanitizeChatBody(file(remote), { allowFileUrls: only }).ok).toBe(false)
   })
 
   const refused: Array<[string, unknown, Record<string, unknown>?, string?]> = [
@@ -315,9 +328,33 @@ describe('deny forms', () => {
     expect(denialOf({ deny: 404, code: 'C', message: 'M' })?.status).toBe(404)
     expect(denialOf({ deny: 500 })).toBeUndefined()
     expect(denialOf({ id: 'u' })).toBeUndefined()
-    expect(denialOf(undefined)).toBeUndefined()
-    expect(denialOf('user')).toBeUndefined()
-    expect(denialOf(null)).toBeUndefined()
+  })
+
+  test('fail closed: a result that is not an object is a 401', async () => {
+    for (const result of [undefined, null, 'user', 42, true, [], ['u']]) {
+      const denied = denialOf(result)
+      expect(denied?.status).toBe(401)
+      expect(await denied?.json()).toEqual({
+        error: { code: 'EH_HTTP_UNAUTHORIZED', message: 'Authentication is required.' },
+      })
+    }
+  })
+
+  test('createHarnessHttp answers 401 when authorize returns nothing, and runs the route for a principal', async () => {
+    const agent = defineHarnessAgent({
+      model: scriptedModel([]),
+      contextWindow: 100_000,
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
+      logger: silent,
+    })
+    const get = (authorize: () => unknown) =>
+      createHarnessHttp(agent, { authorize: authorize as never }).fetch(
+        new Request('http://x/health'),
+      )
+    for (const result of [undefined, null, 'user']) {
+      expect((await get(() => result)).status).toBe(401)
+    }
+    expect((await get(() => ({ id: 'u' }))).status).toBe(200)
   })
 })
 
@@ -334,7 +371,7 @@ describe('routing', () => {
     const agent = defineHarnessAgent({
       model: scriptedModel([]),
       contextWindow: 100_000,
-      storage: { messages: memoryMessages(), state: memoryState() },
+      storage: { messages: inMemoryMessages(), state: inMemoryState() },
       logger: silent,
     })
     return createHarnessHttp(agent, { authorize: openAccess, ...extra })

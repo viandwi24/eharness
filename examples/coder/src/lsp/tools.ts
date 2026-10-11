@@ -1,5 +1,7 @@
 /** The `lsp` agent tool: code intelligence from language servers, formatted as plain text. */
+
 import { tool } from 'ai'
+import { errorText } from 'eharness'
 import { z } from 'zod/v4'
 import type { LspLocation, LspManager } from './manager.ts'
 
@@ -108,7 +110,7 @@ function makeLspTool(manager: LspManager) {
         const { shown, note } = capped(locs, MAX_LOCATIONS, 'locations')
         return shown.map(formatLocation).join('\n') + note
       } catch (error) {
-        return `ERROR: ${error instanceof Error ? error.message : String(error)}`
+        return `ERROR: ${errorText(error)}`
       }
     },
   })

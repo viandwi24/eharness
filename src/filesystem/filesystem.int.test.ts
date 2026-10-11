@@ -15,14 +15,14 @@ import {
   isHarnessError,
   type StateAdapter,
 } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import {
   type ScriptedStep,
   type ScriptedStepInput,
   scriptedModel,
 } from '../testing/scripted-model.ts'
 import { classifyToolResult } from './classify.ts'
-import { memoryFs } from './memory.ts'
+import { inMemoryFs } from './memory.ts'
 import { filesystem } from './plugin.ts'
 import { GREP_PATTERN_RULE } from './text.ts'
 import type { FileSystem, FilesystemOptions } from './types.ts'
@@ -34,11 +34,11 @@ function setup(
   steps: ScriptedStepInput[],
   fsOptions: FilesystemOptions,
   config: Partial<HarnessAgentConfig> = {},
-  state: StateAdapter = memoryState(),
+  state: StateAdapter = inMemoryState(),
 ) {
   const model = scriptedModel(steps)
   const warnings: HarnessWarning[] = []
-  const messages = memoryMessages()
+  const messages = inMemoryMessages()
   const agent = defineHarnessAgent({
     model,
     contextWindow: 100_000,
@@ -87,7 +87,7 @@ const steps = (...calls: Array<ReturnType<typeof call>>): ScriptedStepInput[] =>
 
 describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
   test('edit requires a prior read; read shows numbered lines; edit writes and emits a change part', async () => {
-    const fs = memoryFs({ '/src/main.pine': 'plot(close)\nplot(open)\n' })
+    const fs = inMemoryFs({ seed: { '/src/main.pine': 'plot(close)\nplot(open)\n' } })
     const { agent } = setup(
       steps(
         call('edit_file', { path: '/src/main.pine', old_string: 'open', new_string: 'high' }),
@@ -118,7 +118,7 @@ describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
   })
 
   test('STALE: an external write between read and edit returns the new content; the retry succeeds', async () => {
-    const inner = memoryFs({ '/a.md': 'alpha\nbeta\n' })
+    const inner = inMemoryFs({ seed: { '/a.md': 'alpha\nbeta\n' } })
     let external: string | undefined
     // someone else edits the file right before the tool looks at it
     const fs: FileSystem = {
@@ -156,7 +156,7 @@ describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
   })
 
   test('CONFLICT: a concurrent write between the check and the write is detected via ifVersion', async () => {
-    const inner = memoryFs({ '/a.md': 'one' })
+    const inner = inMemoryFs({ seed: { '/a.md': 'one' } })
     let race = false
     const fs: FileSystem = {
       ...inner,
@@ -194,7 +194,7 @@ describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
   })
 
   test('write_file: create, overwrite only after reading, change parts for create and write', async () => {
-    const fs = memoryFs({ '/old.md': 'old' })
+    const fs = inMemoryFs({ seed: { '/old.md': 'old' } })
     const { agent } = setup(
       steps(
         call('write_file', { path: '/new.md', content: 'ø new' }),
@@ -228,7 +228,7 @@ describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
   })
 
   test('delete_file: policy, read-before-delete, change part with version null', async () => {
-    const fs = memoryFs({ '/a.md': 'a', '/keep.md': 'k', '/vendor/lib.md': 'v' })
+    const fs = inMemoryFs({ seed: { '/a.md': 'a', '/keep.md': 'k', '/vendor/lib.md': 'v' } })
     const { agent } = setup(
       steps(
         call('delete_file', { path: '/a.md' }),
@@ -256,7 +256,7 @@ describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
   })
 
   test('policy: allowed extensions and read-only prefixes', async () => {
-    const fs = memoryFs({ '/vendor/x.md': 'x' })
+    const fs = inMemoryFs({ seed: { '/vendor/x.md': 'x' } })
     const { agent } = setup(
       steps(
         call('write_file', { path: '/a.txt', content: 'x' }),
@@ -278,7 +278,7 @@ describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
   })
 
   test('edit_file errors: missing file, ambiguous match, replace_all', async () => {
-    const fs = memoryFs({ '/a.md': 'x\nx\n' })
+    const fs = inMemoryFs({ seed: { '/a.md': 'x\nx\n' } })
     const { agent } = setup(
       steps(
         call('edit_file', { path: '/nope.md', old_string: 'a', new_string: 'b' }),
@@ -299,7 +299,7 @@ describe('file tools: read-before-edit, STALE, CONFLICT (scenario 9)', () => {
 describe('read_file windows, list_files and grep', () => {
   test('offset/limit, continuation hint, maxReadChars, empty file, bad offset', async () => {
     const lines = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join('\n')
-    const fs = memoryFs({ '/long.md': lines, '/empty.md': '' })
+    const fs = inMemoryFs({ seed: { '/long.md': lines, '/empty.md': '' } })
     const { agent } = setup(
       steps(
         call('read_file', { path: '/long.md', offset: 28 }),
@@ -324,11 +324,13 @@ describe('read_file windows, list_files and grep', () => {
   })
 
   test('list_files: sorted with sizes, prefix, hidden and unlisted prefixes', async () => {
-    const fs = memoryFs({
-      '/src/b.md': 'ø',
-      '/src/a.md': 'a',
-      '/srcx/c.md': 'c',
-      '/private/key.md': 'k',
+    const fs = inMemoryFs({
+      seed: {
+        '/src/b.md': 'ø',
+        '/src/a.md': 'a',
+        '/srcx/c.md': 'c',
+        '/private/key.md': 'k',
+      },
     })
     const { agent } = setup(
       [
@@ -353,6 +355,29 @@ describe('read_file windows, list_files and grep', () => {
     ])
   })
 
+  test('hidden prefixes compare case-insensitively (NFC, trailing dots)', async () => {
+    const fs = inMemoryFs({ seed: { '/private/key.md': 'k', '/src/a.md': 'a' } })
+    const { agent } = setup(
+      [
+        {
+          toolCalls: [
+            call('list_files', { prefix: '/Private' }),
+            call('read_file', { path: '/PRIVATE./key.md' }),
+            call('list_files', {}),
+          ],
+        },
+        { text: 'done' },
+      ],
+      { fs, hiddenPrefixes: ['/private'] },
+    )
+    const result = await agent.session('s').send('go').result
+    expect(outputs(result)).toEqual([
+      'No files under /Private.',
+      'ERROR: file not found: /PRIVATE./key.md',
+      '/src/a.md (1 bytes)',
+    ])
+  })
+
   test('grep: hits, prefix, invalid pattern, hidden files, 50-hit cap (fast path and fallback)', async () => {
     const many = Array.from({ length: 60 }, (_, i) => `hit ${i}`).join('\n')
     const seed = {
@@ -362,7 +387,7 @@ describe('read_file windows, list_files and grep', () => {
       '/many.md': many,
     }
     for (const withGrep of [true, false]) {
-      const inner = memoryFs(seed)
+      const inner = inMemoryFs({ seed })
       const fs: FileSystem = withGrep ? inner : { ...inner, grep: undefined }
       const { agent } = setup(
         [
@@ -397,7 +422,7 @@ describe('grep: catastrophic patterns (ReDoS)', () => {
   test('nested quantifiers and backreferences are rejected fast; safe patterns still work', async () => {
     const line = `${'a'.repeat(40)}!`
     for (const withGrep of [true, false]) {
-      const inner = memoryFs({ '/a.txt': `${line}\nabab\nfoo bar\n` })
+      const inner = inMemoryFs({ seed: { '/a.txt': `${line}\nabab\nfoo bar\n` } })
       const fs: FileSystem = withGrep ? inner : { ...inner, grep: undefined }
       const { agent } = setup(
         [
@@ -440,7 +465,7 @@ describe('grep: catastrophic patterns (ReDoS)', () => {
 
   test('a catastrophic pattern returns within 100 ms', async () => {
     const tools = await import('./tools.ts')
-    const fs = memoryFs({ '/a.txt': `${'a'.repeat(5_000)}!\n` })
+    const fs = inMemoryFs({ seed: { '/a.txt': `${'a'.repeat(5_000)}!\n` } })
     const env = {
       fs,
       lastRead: { get: () => undefined, set() {}, delete() {} } as never,
@@ -464,7 +489,7 @@ describe('grep: catastrophic patterns (ReDoS)', () => {
 
 describe('grep fast path', () => {
   function spied(seed: Record<string, string>) {
-    const inner = memoryFs(seed)
+    const inner = inMemoryFs({ seed })
     const counts = { grep: 0, read: 0 }
     const fs: FileSystem = {
       ...inner,
@@ -507,10 +532,12 @@ describe('skills autoload and the hidden skills root (scenarios 8 and 9)', () =>
     `---\nname: ${name}\ndescription: ${description}\n---\n${body}\n`
 
   test('the skills root is hidden from every file tool by default; load_skill reads it', async () => {
-    const fs = memoryFs({
-      '/skills/pine/SKILL.md': skill('pine', 'Pine help.'),
-      '/skills/pine/ref.md': 'reference',
-      '/notes.md': 'n',
+    const fs = inMemoryFs({
+      seed: {
+        '/skills/pine/SKILL.md': skill('pine', 'Pine help.'),
+        '/skills/pine/ref.md': 'reference',
+        '/notes.md': 'n',
+      },
     })
     const { agent, model } = setup(
       [
@@ -549,7 +576,7 @@ describe('skills autoload and the hidden skills root (scenarios 8 and 9)', () =>
   })
 
   test("refresh 'turn': a SKILL.md written by the agent appears at the next turn, not mid-turn", async () => {
-    const fs = memoryFs({ '/skills/first/SKILL.md': skill('first', 'First skill.') })
+    const fs = inMemoryFs({ seed: { '/skills/first/SKILL.md': skill('first', 'First skill.') } })
     const { agent, model } = setup(
       [
         {
@@ -585,7 +612,7 @@ describe('skills autoload and the hidden skills root (scenarios 8 and 9)', () =>
   })
 
   test("refresh 'session' keeps the first listing", async () => {
-    const fs = memoryFs({ '/skills/first/SKILL.md': skill('first', 'First skill.') })
+    const fs = inMemoryFs({ seed: { '/skills/first/SKILL.md': skill('first', 'First skill.') } })
     const { agent, model } = setup([{ text: 'a' }, { text: 'b' }], {
       fs,
       skills: { root: '/skills' },
@@ -600,10 +627,12 @@ describe('skills autoload and the hidden skills root (scenarios 8 and 9)', () =>
   })
 
   test('static skills win over fs skills; invalid SKILL.md warns W_INVALID_SKILL; locate reaches skill.load', async () => {
-    const fs = memoryFs({
-      '/skills/pine/SKILL.md': skill('pine', 'Pine from fs.', 'fs body'),
-      '/skills/extra/SKILL.md': skill('extra', 'Extra from fs.'),
-      '/skills/broken/SKILL.md': '---\nname: broken\n',
+    const fs = inMemoryFs({
+      seed: {
+        '/skills/pine/SKILL.md': skill('pine', 'Pine from fs.', 'fs body'),
+        '/skills/extra/SKILL.md': skill('extra', 'Extra from fs.'),
+        '/skills/broken/SKILL.md': '---\nname: broken\n',
+      },
     })
     const seen: unknown[] = []
     const sandbox = definePlugin({
@@ -657,8 +686,8 @@ describe('skills autoload and the hidden skills root (scenarios 8 and 9)', () =>
 
 describe('services, state and resolver', () => {
   test('lastRead lives in plugin state and survives a restart (new agent, same adapters)', async () => {
-    const fs = memoryFs({ '/a.md': 'one' })
-    const state = memoryState()
+    const fs = inMemoryFs({ seed: { '/a.md': 'one' } })
+    const state = inMemoryState()
     const first = setup(steps(call('read_file', { path: '/a.md' })), { fs }, {}, state)
     await first.agent.session('s').send('read').result
     const snapshot = await state.get('s')
@@ -677,7 +706,7 @@ describe('services, state and resolver', () => {
   })
 
   test('ctx.services.fs inside another plugin (requires fs, scenario 10)', async () => {
-    const fs = memoryFs({ '/a.md': 'from fs' })
+    const fs = inMemoryFs({ seed: { '/a.md': 'from fs' } })
     const reader = definePlugin({
       name: 'reader',
       requires: ['fs'],
@@ -714,7 +743,7 @@ describe('services, state and resolver', () => {
       {
         fs: (ctx) => {
           calls.push(ctx.session.id)
-          const fs = memoryFs()
+          const fs = inMemoryFs()
           perSession.set(ctx.session.id, fs)
           return fs
         },
@@ -737,7 +766,7 @@ describe('services, state and resolver', () => {
 
   test('toolOutputs service: evicted outputs are readable, read-only and unlisted', async () => {
     const OUT = `/.eharness/tool-outputs/call_1-${(await contentVersion('call/1')).slice(0, 8)}.txt`
-    const fs = memoryFs({ '/a.md': 'a' })
+    const fs = inMemoryFs({ seed: { '/a.md': 'a' } })
     let stored = ''
     const producer = definePlugin({
       name: 'producer',
@@ -819,7 +848,7 @@ describe('services, state and resolver', () => {
     ]
     const { agent } = setup(
       steps,
-      { fs: memoryFs(), maxReadChars: 20_000 },
+      { fs: inMemoryFs(), maxReadChars: 20_000 },
       {
         tools: { produce },
         toolOutput: { perTool: { produce: 2_000 }, strategy: 'evict' },
@@ -847,7 +876,7 @@ describe('services, state and resolver', () => {
         { toolCalls: [call('read_file', { path: '/a.txt', offset: 1, charOffset: 1_000 })] },
         { text: 'done' },
       ],
-      { fs: memoryFs({ '/a.txt': `${line}\n` }) },
+      { fs: inMemoryFs({ seed: { '/a.txt': `${line}\n` } }) },
     )
     const result = await agent.session('s').send('go').result
     const [grep, read] = outputs(result) as string[]
@@ -860,10 +889,10 @@ describe('services, state and resolver', () => {
     expect(() =>
       defineHarnessAgent({
         model: scriptedModel([]),
-        plugins: [filesystem({ fs: memoryFs(), toolOutputs: false }), needs],
+        plugins: [filesystem({ fs: inMemoryFs(), toolOutputs: false }), needs],
       }),
     ).toThrow(expect.objectContaining({ code: 'EH_SERVICE_MISSING' }))
-    const fs = memoryFs()
+    const fs = inMemoryFs()
     let path = ''
     const paths: string[] = []
     const producer = definePlugin({
@@ -891,7 +920,7 @@ describe('services, state and resolver', () => {
 
   test('tools option selects the exposed tools', async () => {
     const { agent, model } = setup([{ text: 'ok' }], {
-      fs: memoryFs(),
+      fs: inMemoryFs(),
       tools: ['read_file', 'list_files'],
     })
     await agent.session('s').send('go').result
@@ -912,7 +941,7 @@ describe('filesystem() options validation', () => {
     }
   }
   test('rejects invalid options with EH_CONFIG_INVALID', () => {
-    const fs = memoryFs()
+    const fs = inMemoryFs()
     expect(invalid(undefined)).toBe(true)
     expect(invalid({ fs: {} })).toBe(true)
     expect(invalid({ fs, maxReadChars: 0 })).toBe(true)
@@ -934,7 +963,7 @@ describe('edit_file: multiple edits (R2)', () => {
   const seed = { '/a.ts': 'one\ntwo\nthree\ntwo\n' }
 
   test('applies all edits in order, one write, one change part', async () => {
-    const inner = memoryFs(seed)
+    const inner = inMemoryFs({ seed })
     let writes = 0
     const fs: FileSystem = {
       ...inner,
@@ -965,7 +994,7 @@ describe('edit_file: multiple edits (R2)', () => {
   })
 
   test('an ambiguous edit 2 writes nothing and names the edit', async () => {
-    const fs = memoryFs(seed)
+    const fs = inMemoryFs({ seed })
     const { agent } = setup(
       steps(
         call('read_file', { path: '/a.ts' }),
@@ -988,7 +1017,7 @@ describe('edit_file: multiple edits (R2)', () => {
   })
 
   test('read-before-edit and staleness are checked once for the whole call', async () => {
-    const inner = memoryFs(seed)
+    const inner = inMemoryFs({ seed })
     const { agent } = setup(
       steps(
         call('edit_file', { path: '/a.ts', edits: [{ old_string: 'one', new_string: '1' }] }),
@@ -1001,7 +1030,7 @@ describe('edit_file: multiple edits (R2)', () => {
   })
 
   test('stale file returns STALE and writes nothing', async () => {
-    const inner = memoryFs(seed)
+    const inner = inMemoryFs({ seed })
     let reads = 0
     const fs: FileSystem = {
       ...inner,
@@ -1047,7 +1076,7 @@ describe('edit_file: multiple edits (R2)', () => {
           edits: Array.from({ length: 51 }, () => ({ old_string: 'a', new_string: 'b' })),
         }),
       ),
-      { fs: memoryFs(seed) },
+      { fs: inMemoryFs({ seed }) },
     )
     const result = await agent.session('s').send('go').result
     expect(outputs(result)).toEqual([
@@ -1071,7 +1100,7 @@ describe('glob tool (R3)', () => {
   }
 
   test('matches, sorts by path without updatedAt, hides hidden prefixes and dotfiles', async () => {
-    const inner = memoryFs(seed)
+    const inner = inMemoryFs({ seed })
     const fs: FileSystem = {
       ...inner,
       list: async (prefix) => (await inner.list(prefix)).map(({ updatedAt: _u, ...meta }) => meta),
@@ -1105,7 +1134,7 @@ describe('glob tool (R3)', () => {
   })
 
   test('sorts newest first when every file has updatedAt', async () => {
-    const inner = memoryFs({ '/a.md': '1', '/b.md': '2', '/c.md': '3' })
+    const inner = inMemoryFs({ seed: { '/a.md': '1', '/b.md': '2', '/c.md': '3' } })
     const stamps: Record<string, number> = { '/a.md': 1, '/b.md': 3, '/c.md': 2 }
     const fs: FileSystem = {
       ...inner,
@@ -1121,7 +1150,7 @@ describe('glob tool (R3)', () => {
     const files: Record<string, string> = {}
     for (let i = 0; i < 230; i++) files[`/f/${String(i).padStart(3, '0')}.txt`] = 'x'
     const { agent } = setup(steps(call('glob', { pattern: 'f/*.txt' })), {
-      fs: memoryFs(files),
+      fs: inMemoryFs({ seed: files }),
     })
     const result = await agent.session('s').send('go').result
     const lines = (outputs(result)[0] as string).split('\n')
@@ -1130,7 +1159,7 @@ describe('glob tool (R3)', () => {
   })
 
   test('uses the adapter fast path when present, filtering hidden paths', async () => {
-    const inner = memoryFs(seed)
+    const inner = inMemoryFs({ seed })
     const seen: Array<{ pattern: string; prefix: string; limit: number }> = []
     const fs: FileSystem = {
       ...inner,
@@ -1157,7 +1186,7 @@ describe('glob tool (R3)', () => {
 
 describe('adapter errors (R13)', () => {
   const failing = (): FileSystem => ({
-    ...memoryFs({ '/big.bin': 'x' }),
+    ...inMemoryFs({ seed: { '/big.bin': 'x' } }),
     read: async (path) => {
       throw new Error(`Error: cannot read ${path}: binary file`)
     },

@@ -1,8 +1,10 @@
 /** Edit the prompt in `$VISUAL` / `$EDITOR` (Ctrl+G): temp file, foreground child, read back. */
+
 import { spawn } from 'node:child_process'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { errorText } from 'eharness'
 
 /** Runs the editor command with the terminal attached; resolves with its exit code. */
 export type SpawnEditor = (cmd: string, args: string[]) => Promise<number | null>
@@ -63,7 +65,7 @@ export async function editInExternalEditor(
     const edited = await readFile(file, 'utf8')
     return { ok: true, text: edited.replace(/\r\n/g, '\n').replace(/\n$/, '') }
   } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    return { ok: false, error: errorText(error) }
   } finally {
     if (dir) await rm(dir, { recursive: true, force: true }).catch(() => {})
   }

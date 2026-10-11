@@ -8,15 +8,16 @@ final report. Contract: [spec 20](../specs/20-subagent-plugin.md). Design:
 
 ```ts
 import { defineHarnessAgent } from 'eharness'
-import { subagents } from 'eharness/subagent'
+import { subagent } from 'eharness/subagent'
 
+// yours: model (LanguageModel), storage (StorageAdapters), read_file (a tool)
 const explorer = defineHarnessAgent({ model, storage, instructions: 'Read and report. Be brief.', tools: { read_file } })
 
 const main = defineHarnessAgent({
   model,
   storage, // the same storage: the child registers in the parent's state
   plugins: [
-    subagents({
+    subagent({
       agents: { explore: { agent: explorer, description: 'Reads the codebase and reports', maxTurns: 12 } },
       approvals: 'policy', // see "The three strategies"
     }),
@@ -46,7 +47,8 @@ A child can stop `tool-pending` (an approval, or a client tool such as `ask_user
 ### Inline
 
 ```ts
-subagents({
+// yours: agents (the catalog), ui.confirm (your prompt UI)
+subagent({
   agents,
   approvals: 'inline',
   answer: async (request, signal) => {
@@ -60,6 +62,10 @@ subagents({
 ### Park
 
 ```ts
+import type { HarnessAgent } from 'eharness'
+import { subagent, subagentChild } from 'eharness/subagent'
+
+// yours: model, storage, deploy (a tool)
 const holder: { main?: HarnessAgent } = {}
 const worker = defineHarnessAgent({
   model, storage,
@@ -69,7 +75,7 @@ const worker = defineHarnessAgent({
 })
 const main = (holder.main = defineHarnessAgent({
   model, storage,
-  plugins: [subagents({ agents: { worker: { agent: worker, description: '...' } }, approvals: 'park', parkTimeoutMs: 3_600_000 })],
+  plugins: [subagent({ agents: { worker: { agent: worker, description: '...' } }, approvals: 'park', parkTimeoutMs: 3_600_000 })],
 }))
 ```
 
@@ -84,7 +90,7 @@ const main = (holder.main = defineHarnessAgent({
    `subagentChild`) resolves the parent's wait with the final report and the parent continues by
    itself, in the same assistant message. A child error or abort resolves it with an `ERROR:` text.
 
-Rules: install `subagentChild()` (or `subagents({ parentAgent })`) on every instance that can
+Rules: install `subagentChild()` (or `subagent({ parentAgent })`) on every instance that can
 complete a child turn, use storage with `setIf` or a lock (as for any external wait), and set
 `parkTimeoutMs` so a forgotten approval does not park the parent forever. A restart between the park
 and the answer loses nothing. There is no live progress in this
@@ -95,7 +101,7 @@ stored; pass `onParentRun` to stream it to the user.
 parent's wait, the parent would stay parked until `parkTimeoutMs`.
 `reconcileSubagentWaits(parentSession, { openChild })` resolves such waits from the child's stored
 result (idempotent, safe to call from a timer or an admin endpoint). With
-`subagents({ approvals: 'park', selfAgent: () => parentAgent })` it also runs, detached and best
+`subagent({ approvals: 'park', selfAgent: () => parentAgent })` it also runs, detached and best
 effort, whenever a parent session opens. Spec 20 §3.4.
 
 ## Messaging and follow-ups (`send_message`)
@@ -115,13 +121,13 @@ child session id; a subagent addresses the root as `"main"`.
 - **One-shot types:** `agents: { explore: { agent, description, resumable: false } }`. They can
   receive messages while running; once finished they cannot be resumed.
 - **From a subagent:** install the plugin on the child agent too, usually with an empty catalog:
-  `subagents({ agents: {}, approvals: 'policy' })` (or your normal config; at `maxDepth` the child
+  `subagent({ agents: {}, approvals: 'policy' })` (or your normal config; at `maxDepth` the child
   loses `agent` but keeps `send_message`). `to: "main"` reaches the root's running turn at its next
   step, or wakes an idle root (observe the wake with `session.onRun()`).
 - **Users:** `services.subagentTasks.send('reviewer', 'also check the tests')` messages an agent as
   the user (plain user input, not an agent message).
-- **Safety:** agent messages are data from another agent: add `AGENT_MESSAGE_INSTRUCTIONS` to your
-  prompt (the tool description already says it). No agent message approves a permission or changes
+- **Safety:** agent messages are data from another agent; the plugin's tool description tells the
+  model so (the instruction text is internal, not exported). No agent message approves a permission or changes
   settings; approvals are answered only through your `answer` callback, policy or `respond()`.
 - **Limits:** 20 messages per minute per (sender, target), identical repeats within 10 s dropped,
   50 undelivered per target (`messageLimits`).
@@ -130,9 +136,9 @@ child session id; a subagent addresses the root as `"main"`.
   rebuilt from storage (see below).
 - Every session with the plugin gets a short roster reminder of addressable agents each step.
 
-### Background with `approvals: 'park'` ([ADR-0046](../decisions/0046-durable-background-subagents-in-park-mode.md))
+### Durable background with `approvals: 'park'` ([ADR-0046](../decisions/0046-durable-background-subagents-in-park-mode.md))
 
-`subagents({ approvals: 'park', background: { default: true }, selfAgent, ... })` runs delegations
+`subagent({ approvals: 'park', background: { default: true }, selfAgent: () => main, ... })` runs delegations
 in the background **durably**: the child's first turn goes through its durable inbox (so any
 instance can run it, also after a restart), the lead's call returns at once with `Started
 background subagent <child session id> "<name>" …`, and the lead stays free to chat. A new user
@@ -142,7 +148,7 @@ message no longer cancels the delegation (that happens only to foreground parks:
 - The child's approvals and questions stay its own pending state: answer them with
   `child.respond()` from any instance, as before.
 - When a turn of the child ends, its `turn.end` hook (child agent: `subagentChild({ parent })` or
-  `subagents({ parentAgent })`) injects an `eh.event` named `subagent` into the lead through
+  `subagent({ parentAgent })`) injects an `eh.event` named `subagent` into the lead through
   storage (`next-step` + `wake`): `Background subagent … finished.` plus the report, `data: {
   sessionId, agent, status, taskId, name? }`. A child that stops waiting for a person sends a
   status event (`status: 'waiting'`) without waking the lead.
@@ -166,7 +172,7 @@ sender and the child live in different instances. Requirements: share storage wi
 (without an inbox, delivery only works inside one process), pass `selfAgent: () => thisAgent` (the
 directory is rebuilt from the session's child index and the stored `agent` calls, so names survive
 restarts and other instances), and on a child agent that sends messages install
-`subagents({ agents: {}, approvals: 'park', parentAgent: () => main, selfAgent: () => worker })`
+`subagent({ agents: {}, approvals: 'park', parentAgent: () => main, selfAgent: () => worker })`
 (`parentAgent` resolves `main` and routes reports).
 
 - **Directory:** a session addresses **its own children** (by name or child session id) and `main`.
@@ -180,11 +186,18 @@ restarts and other instances), and on a child agent that sends messages install
 - **To `main`:** `parentAgent().session(rootId).enqueue(framed, { mode: 'queue' })`: the root
   answers in a turn of its own (immediately when idle, after the running turn or its parked
   approvals otherwise).
-- **`agent_stop`:** `requestAbort('stopped')` on the child (works across instances); a user stop
+- **`agent_stop`:** `abort('stopped')` on the child (works across instances); a user stop
   cannot be told from a model stop, so a stopped agent stays resumable.
 - Limits and framing are the same; throttling counters are per session object, not shared.
 
 ## Reading a full report (`agent_output`)
+
+A durable (`'park'`) background child (with `selfAgent`) is bounded: after `background.timeoutMs`
+(default 3 600 000, one hour; `Number.POSITIVE_INFINITY` = unbounded) it gets one "timed out"
+report and, with `stopOnTimeout` (default `true`), is aborted. A timer checks this every `min(60 s, timeoutMs / 4)`
+(`background.reconcileEveryMs`; `0` = only at open). Related knobs: `background.startGraceMs`
+(default 90 000: a child with no turn by then is reported "failed to start") and
+`background.waitingReminderMs` (default 900 000; `0` = never).
 
 A background report is cut at `maxReportChars` (default 16 000) and says so. The model reads the
 rest with `agent_output({ id: "agent-2", offset?, limit? })`: it works by task id, name or child
@@ -201,7 +214,7 @@ turns it off, `stopTool: { name }` renames it.
 
 ## Background children
 
-`background: true` (inline and policy only) adds `run_in_background`; `background: { default: true }` makes
+`background: true` adds `run_in_background` (with `'park'` the child starts durably, see above); `background: { default: true }` makes
 background the default when the model omits the field. The call returns at once; when
 the child finishes, the plugin injects an `eh.event` into the parent with `ctx.session.inject`
 (`deliver: 'next-step'`, `wake: true`): a running parent sees it at its next step, an idle one
@@ -214,10 +227,10 @@ session for a UI: `list()`, `get(id)` (task id `agent-1` or child session id), `
 live session; the durable records are the `data-subagent.run` part (`running`, written while the
 starting turn streams) and the `eh.event` report (`data.status` `completed` / `failed` /
 `stopped`). `stop()` aborts the child; for an id the process does not know it calls
-`requestAbort()` on the child session, which reaches a child running in another instance.
+`abort()` on the child session, which reaches a child running in another instance.
 
-**Moving a foreground child to the background.** `ctx.services.subagentTasks.moveToBackground()` (Claude
-Code's Ctrl+B) detaches the running foreground `agent` calls: each returns at once with "Subagent
+**Moving a foreground child to the background.** `ctx.services.subagentTasks.moveToBackground()` (like
+Claude Code's Ctrl+B) detaches the running foreground `agent` calls: each returns at once with "Subagent
 moved to the background as task agent-2 …", the child keeps running and reports through the same
 `eh.event` path as `run_in_background`. Needs `background`; a no-op for `'park'` (use the durable background start above).
 
@@ -242,6 +255,8 @@ something the plugin does not offer, this is the whole mechanism. Runnable:
 import { type LanguageModelUsage, readUIMessageStream, tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
 import { z } from 'zod/v4'
+
+// yours: model
 
 const researcher = defineHarnessAgent({
   id: 'researcher',

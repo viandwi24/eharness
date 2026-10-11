@@ -39,14 +39,20 @@ Code, Codex, OpenCode, Pi, …) behind one surface. eharness is for building **y
 
 - A **library** (`eharness` on npm), ESM-only, runs on Node ≥ 22 and Bun.
 - A **skeleton**: core runtime + contracts + small reference plugins (`filesystem` with a memory
-  adapter, `todos`, `memory`, `guard`, `group`, `permissions`, `subagent`, `ask`, `web`) + Node-only modules
-  (`filesystem/node`: real disk, mounts, workspace, checkpoint store; `shell`: bash over a local sandbox) + tool sources (MCP, OpenAPI) + memory storage
-  adapters (messages, state, inbox, budget ledger) + conformance test suites.
+  adapter, `todos`, `memory`, `guard`, `group`, `permissions`, `subagent`, `ask`, `web`) + Node-only
+  modules (`filesystem/node`: real disk, mounts, workspace, checkpoint store; `shell`: bash over a
+  local sandbox; `web/node`: a DNS resolver) + tool sources (MCP, OpenAPI) + memory storage adapters
+  (messages, state, inbox, budget ledger, stream log) + conformance test suites.
+- **Product building blocks**, optional and Draft: provider profiles and secrets (`providers`),
+  connectors with setup flows and OAuth (`connectors`), a session activity feed and attention queue
+  (`activity`), a fetch-style HTTP module for chat, sessions and the feed (`http`), and its browser
+  client with React bindings (`client`). Everything is built on the public API and takes your
+  storage, fetch and auth as injected ports.
 - **Idiomatic AI SDK**: the stream is the AI SDK UI message stream; messages are `UIMessage`;
   tools are `tool()`; models are `LanguageModel`.
 - **Adapter-driven where it matters**: message storage, session state, the optional durable
-  inbox, the optional budget ledger, filesystems and skill sources are small contracts the developer implements for their own
-  infrastructure.
+  inbox, the optional budget ledger, the optional stream log, filesystems and skill sources are
+  small contracts the developer implements for their own infrastructure.
 
 ## Deployment profiles
 
@@ -64,7 +70,8 @@ separate subpaths (ADR-0036).
 ## What eharness is not
 
 - Not a framework that owns your server, routes, auth, users or chat list. It only knows
-  `sessionId: string`.
+  `sessionId: string`. `eharness/http` is a `fetch(Request)` handler you mount, with one
+  `authorize` hook that you implement; it does not start a server or know your users.
 - Not a storage product. It ships memory adapters and examples; Postgres/JSON/S3 adapters are the
   developer's code (the contracts are two or three methods).
 - Not a pricing service. It computes cost estimates from prices the application supplies (a record,
@@ -102,11 +109,14 @@ separate subpaths (ADR-0036).
 | **Turn** | One run of the loop started by `send`, `respond`, `regenerate`, `edit` or a wake: writes one assistant message (possibly many steps). A `respond()` turn continues the pending message instead of creating a new one. |
 | **Step** | One model call inside a turn (one `streamText` call with one step). |
 | **Plugin** | A bundle of capabilities (tools, skills, instructions, hooks, services, data parts, message kinds) created by `definePlugin`. |
-| **Service** | A typed object a plugin provides to other plugins (e.g. `fs`). One provider per service name. |
+| **Service** | A typed object a plugin provides to other plugins (e.g. `fs`), read as `ctx.services`. One provider per service name. |
+| **Runtime** | Your application's per-request values (user, tenant, request id), passed as `agent.session(id, { runtime })` or `send(…, { runtime })` and read as `ctx.runtime`. Never persisted, never trusted from the model. |
+| **State** | JSON stored with the session through the `StateAdapter` (`ctx.state`), including the core's own bookkeeping (`state.core`: pending, active turn, usage, grants). Plugins keep theirs under their name. |
+| **Judge** | The shared LLM engine (`createJudge`) behind the approval guard (role `tighten`: may only deny or ask) and the permissions auto mode (role `decide`: may approve). |
 | **Adapter** | An implementation of a contract (`MessageAdapter`, `StateAdapter`, `FileSystem`, `SkillSource`). |
 | **Source / loader** | A dynamic provider of tools or skills, resolved at runtime. |
 | **Data part** | A typed custom `UIMessage` part (`data-<name>`), declared in a registry. |
-| **Message kind** | A custom *message* (not model-generated) stored as a `UIMessage` with one data part and `metadata.eharness.kind`, e.g. `eh.compaction`. |
+| **Message kind** (kind message) | A custom *message* (not model-generated) stored as a `UIMessage` with one data part and `metadata.eharness.kind`, e.g. `eh.compaction`. |
 | **Projection** | Converting stored `UIMessage`s into the `ModelMessage`s the model sees. |
 | **Boundary** | A message kind that starts the model context (the latest compaction marker). |
 | **Transient** | A data part sent to the client stream but never stored or projected. |
@@ -125,5 +135,6 @@ separate subpaths (ADR-0036).
 | **Wake** | Starting a no-input turn from background work with `inject(…, { wake: true })`. |
 | **Rewind** | An `eh.rewind` marker that hides a range of history (regenerate, edit) without deleting it. |
 | **Reminder** | Volatile text sent to the model as a `<system-reminder>` user message for one turn or step; never stored, keeps the cached prefix stable. |
-| **Commit point** | The moment in a turn after which it has side effects; failures before it persist nothing. |
+| **Commit point** | The moment in a turn after which it has side effects; failures before it persist nothing (spec 05 §3). A `run.toResponse()` answers a failure before it with an HTTP status. |
+| **Activity feed** | An ordered, durable log of session events (`turn-started`, `step-finished`, `pending-changed`, ...) written by the `activity()` plugin and read over SSE (`eharness/activity`). |
 | **Recovery** | Repairing a turn whose process died (`stop: 'interrupted'`), on the next operation. |

@@ -1,5 +1,5 @@
 /**
- * `nodeCheckpointStore(dir)`: a durable {@link CheckpointStore} over JSON files, one file per
+ * `nodeCheckpointStore({ dir })`: a durable {@link CheckpointStore} over JSON files, one file per
  * turn: `<dir>/<sessionId>/<turnKey>.json` (ids are URI-encoded).
  */
 import { mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
@@ -14,6 +14,8 @@ import { keyedMutex } from './mutex.ts'
 
 /** Options of {@link nodeCheckpointStore}. */
 export interface NodeCheckpointStoreOptions {
+  /** Directory of the checkpoint files (created on first save). */
+  dir: string
   /** Turns kept per session (the oldest are deleted on save). Default 50. */
   keepTurns?: number
 }
@@ -45,17 +47,21 @@ async function writeJson(file: string, value: unknown): Promise<void> {
  *
  * @example
  * ```ts
- * filesystem({ fs, checkpoints: nodeCheckpointStore('.agent/checkpoints') })
+ * filesystem({ fs, checkpoints: nodeCheckpointStore({ dir: '.agent/checkpoints' }) })
  * ```
  * @see docs/specs/08-filesystem-plugin.md#11-checkpoints
  */
-export function nodeCheckpointStore(
-  dir: string,
-  opts: NodeCheckpointStoreOptions = {},
-): CheckpointStore {
+export function nodeCheckpointStore(options: NodeCheckpointStoreOptions): CheckpointStore {
+  const { dir, ...opts } = options
   const keep = opts.keepTurns ?? DEFAULT_CHECKPOINT_KEEP_TURNS
   const exclusive = keyedMutex()
-  const sessionDir = (sessionId: string): string => join(dir, encodeURIComponent(sessionId))
+  // `encodeURIComponent` leaves '.' and '..' untouched: escape dot-only names so an id can never
+  // resolve to the store root or its parent (path traversal).
+  const safeName = (id: string): string => {
+    const enc = encodeURIComponent(id)
+    return /^\.*$/.test(enc) ? enc.replace(/\./g, '%2E') || '%00' : enc
+  }
+  const sessionDir = (sessionId: string): string => join(dir, safeName(sessionId))
   const fileOf = (sessionId: string, turnKey: string): string =>
     join(sessionDir(sessionId), `${encodeURIComponent(turnKey)}.json`)
 

@@ -1,8 +1,10 @@
 /** The `request_directory_access` tool: mount a directory outside the project (after approval). */
+
 import { realpath, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join, parse, relative, resolve } from 'node:path'
 import { tool } from 'ai'
+import { errorText } from 'eharness'
 import { z } from 'zod/v4'
 import type { Workspace } from '../contracts.ts'
 
@@ -55,7 +57,7 @@ function makeDirAccessTool(workspace: Workspace) {
             : ` (requested ${path}, which resolves through a symlink to ${real})`
         return `Mounted ${real}${note} at ${virtual} (writable). Use that prefix with the file tools.`
       } catch (error) {
-        return `ERROR: ${error instanceof Error ? error.message : String(error)}`
+        return `ERROR: ${errorText(error)}`
       }
     },
   })

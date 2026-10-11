@@ -4,22 +4,27 @@
  * @see docs/specs/01-agent-and-plugins.md#4-harnesscontext-sessionturnstep-context
  */
 import { HarnessError, type HarnessWarning } from '../errors.ts'
+import { observeForSession } from '../models/model-calls.ts'
 import type { HarnessContext, HarnessLogger, HarnessServices } from '../plugin/types.ts'
 import { createPluginWriter } from '../stream/writer.ts'
-import { observeForSession } from './model-calls.ts'
+import { safeLogData } from './log-safe.ts'
 import type { SessionRuntime } from './runtime.ts'
 
-/** Default logger: debug/info are no-ops, warn/error go to the console. */
+/**
+ * Default logger: debug/info are no-ops, warn/error go to the console. Errors in `data` are printed
+ * as `{ name, message, code, statusCode, cause }` only: provider errors carry request bodies,
+ * headers and URLs with keys, which must not reach a log aggregator.
+ */
 export const defaultLogger: HarnessLogger = {
   debug() {},
   info() {},
   warn(msg, data) {
     if (data === undefined) console.warn(msg)
-    else console.warn(msg, data)
+    else console.warn(msg, safeLogData(data))
   },
   error(msg, data) {
     if (data === undefined) console.error(msg)
-    else console.error(msg, data)
+    else console.error(msg, safeLogData(data))
   },
 }
 

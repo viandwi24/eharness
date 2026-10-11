@@ -9,7 +9,7 @@
  */
 import { tool } from 'ai'
 import { defineDataPart, defineHarnessAgent, definePlugin, type HarnessPlugin } from 'eharness'
-import { memoryState } from 'eharness/storage/memory'
+import { inMemoryState } from 'eharness/storage/memory'
 import { z } from 'zod/v4'
 import { exampleModel } from './shared/model.ts'
 
@@ -96,7 +96,7 @@ export function checklistLog(lines: string[]): HarnessPlugin<'checklist-log'> {
 
 if (import.meta.main) {
   const log: string[] = []
-  const state = memoryState()
+  const state = inMemoryState()
   const agent = defineHarnessAgent({
     model: exampleModel([
       {

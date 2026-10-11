@@ -81,4 +81,15 @@ describe('remote MCP helpers', () => {
     expect(tools.find((t) => t.name === 'search')?.annotations?.readOnlyHint).toBe(true)
     expect(server.closed).toBe(1)
   })
+
+  test('listRemoteMcpTools times out when the connection hangs, and validates timeoutMs', async () => {
+    const hang = () =>
+      Promise.resolve({ createMCPClient: () => new Promise<never>(() => undefined) })
+    await expect(
+      listRemoteMcpTools({ url: 'https://mcp.example.com/mcp', timeoutMs: 20 }, hang),
+    ).rejects.toMatchObject({ code: 'EH_MCP_TIMEOUT' })
+    await expect(
+      listRemoteMcpTools({ url: 'https://mcp.example.com/mcp', timeoutMs: 0 }, hang),
+    ).rejects.toMatchObject({ code: 'EH_CONFIG_INVALID' })
+  })
 })

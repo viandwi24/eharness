@@ -2,7 +2,9 @@
  * Shared pieces of background-subagent reports (internal): text helpers, the report event and its
  * idempotent delivery (spec 20 §3.6).
  */
+
 import type { HarnessSession } from '../index.ts'
+import { errorText } from '../index.ts'
 
 // biome-ignore lint/suspicious/noExplicitAny: a session of a loosely typed agent
 type AnySession = HarnessSession<any, any>
@@ -29,9 +31,6 @@ export function textOf(message: MessageLike | undefined, afterLastStep: boolean)
     .join('')
     .trim()
 }
-
-export const errText = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
 
 export function reportOf(text: string, max: number, hint?: string): string {
   return text.length > max
@@ -101,7 +100,7 @@ export async function deliverReport(
     }
   }
   log.warn('subagent: could not deliver the report of a background agent', {
-    error: errText(last),
+    error: errorText(last),
     key: event.key,
   })
   return false

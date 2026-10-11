@@ -7,18 +7,14 @@
 import type { LanguageModel, LanguageModelUsage, UIMessageChunk } from 'ai'
 import type { CompactionConfig } from '../agent/types.ts'
 import { HarnessError, isHarnessError } from '../errors.ts'
+import { hookFailed, hookTimeoutOf, runHook } from '../internal/hook-run.ts'
 import { describeModel } from '../internal/model.ts'
+import { observeSpan } from '../internal/observe.ts'
+import { errorText } from '../internal/util.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { project } from '../messages/project.ts'
 import type { CompactionPayload, ContextStats, HarnessUIMessage } from '../messages/types.ts'
-import { hookFailed } from '../registry/wrap.ts'
-import { observeForSession } from '../session/model-calls.ts'
-import type { SessionRuntime } from '../session/runtime.ts'
-import { type FlushEnv, runFlushStage } from './flush.ts'
-import { resolveSummarizerPrompt } from './prompt.ts'
-import { type PruneStats, pruneMessages, resolvePrune } from './prune.ts'
-import { KEEP_SHARE, planSplit } from './split.ts'
-import { SummarizeError, summarize } from './summarize.ts'
+import { observeForSession } from '../models/model-calls.ts'
 import {
   buildStats,
   type Calibration,
@@ -31,7 +27,13 @@ import {
   resolveWindow,
   wireTokens,
   withTokens,
-} from './tokens.ts'
+} from '../models/tokens.ts'
+import type { SessionRuntime } from '../session/runtime.ts'
+import { type FlushEnv, runFlushStage } from './flush.ts'
+import { resolveSummarizerPrompt } from './prompt.ts'
+import { type PruneStats, pruneMessages, resolvePrune } from './prune.ts'
+import { KEEP_SHARE, planSplit } from './split.ts'
+import { SummarizeError, summarize } from './summarize.ts'
 import { renderTranscriptEntries } from './transcript.ts'
 import { groupTurns, isBoundaryMessage, partialOf, payloadOf, trimToPartial } from './turns.ts'
 
@@ -344,6 +346,8 @@ export function createSessionCompaction(deps: {
       onError: (owner, error) => hookFailed(rt, 'compaction.prompt', owner, error),
       messages: plan.drop,
       instructions: request.instructions,
+      hookTimeoutMs: hookTimeoutOf(config),
+      signal: request.signal,
     })
     const summarizer = settings.model ?? config.model
     let summary: string
@@ -365,11 +369,10 @@ export function createSessionCompaction(deps: {
       const reason = error instanceof SummarizeError ? error.reason : undefined
       return {
         status: 'failed',
-        error: new HarnessError(
-          'EH_COMPACTION_FAILED',
-          `Compaction failed: ${error instanceof Error ? error.message : String(error)}`,
-          { cause: error, ...(reason === undefined ? {} : { details: { reason } }) },
-        ),
+        error: new HarnessError('EH_COMPACTION_FAILED', `Compaction failed: ${errorText(error)}`, {
+          cause: error,
+          ...(reason === undefined ? {} : { details: { reason } }),
+        }),
       }
     }
     if (isAborted(request.signal)) return { status: 'skipped', reason: 'aborted' }
@@ -437,7 +440,11 @@ export function createSessionCompaction(deps: {
     rt.events.emit({ type: 'message', message: structuredClone(saved) as never })
     for (const hook of rt.open?.hooks.list('compaction.after') ?? []) {
       try {
-        await hook.fn(rt.contextOf(hook.owner), { marker: structuredClone(saved) })
+        await runHook(() => hook.fn(rt.contextOf(hook.owner), { marker: structuredClone(saved) }), {
+          hook: 'compaction.after',
+          owner: hook.owner,
+          timeoutMs: hookTimeoutOf(config),
+        })
       } catch (error) {
         hookFailed(rt, 'compaction.after', hook.owner, error)
       }
@@ -472,7 +479,12 @@ export function createSessionCompaction(deps: {
       if (running) return { status: 'skipped', reason: 'running' }
       running = true
       try {
-        const outcome = await run(request)
+        const outcome = await observeSpan(
+          rt.agent.observe,
+          'compaction',
+          { sessionId: rt.id, turnId: request.turnId },
+          () => run(request),
+        )
         if (outcome.status === 'failed' && request.mode !== 'manual') {
           rt.warn(
             {

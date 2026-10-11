@@ -8,7 +8,7 @@ import { tool } from 'ai'
 import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { InboxItemInput } from '../agent/session-types.ts'
-import { memoryInbox } from '../storage/memory.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { sleep, until } from '../testing/test-utils.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
@@ -84,7 +84,7 @@ test('a durable steer held across its claim TTL is delivered once (claims are re
   const storage = {
     messages: defaultMemoryMessages(),
     state: defaultMemoryState(),
-    inbox: memoryInbox(),
+    inbox: inMemoryInbox(),
   }
   const { gated, started, release } = gateTool()
   const model = scriptedModel([gateCall, { text: 'done' }])
@@ -109,7 +109,7 @@ test('a durable steer held across its claim TTL is delivered once (claims are re
 test('a steer delivered but not saved when the process dies is applied by the next holder', async () => {
   const messages = defaultMemoryMessages()
   const state = defaultMemoryState()
-  const inbox = memoryInbox()
+  const inbox = inMemoryInbox()
   const dead = { v: false }
   const { gated, started, release } = gateTool()
   const modelA = scriptedModel([gateCall, { text: 'never finishes', delayMs: 5_000 }])
@@ -175,7 +175,7 @@ test('a steer delivered but not saved when the process dies is applied by the ne
 test('a queued item is not lost when the process dies after the commit-point state write', async () => {
   const messages = defaultMemoryMessages()
   const state = defaultMemoryState()
-  const inbox = memoryInbox()
+  const inbox = inMemoryInbox()
   const dead = { v: false }
   // dies right after the first state write that starts a turn (activeTurn), before the user
   // message is saved
@@ -224,7 +224,7 @@ for (let round = 0; round < 3; round++) {
   test(`two live holders apply queued items in id order (round ${round})`, async () => {
     const messages = defaultMemoryMessages()
     const state = defaultMemoryState()
-    const inbox = memoryInbox()
+    const inbox = inMemoryInbox()
     const delayA = { v: 0 }
     const model = scriptedModel(Array.from({ length: 10 }, (_, i) => ({ text: `r${i}` })))
     const make = (store: typeof messages) =>

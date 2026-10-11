@@ -3,6 +3,7 @@
  * `process.exitCode = 1` when a case fails. In a test file, register them instead:
  * `for (const c of cases) test(c.name, c.run)`.
  */
+import { errorText } from 'eharness'
 import type { ConformanceCase } from 'eharness/testing'
 
 export async function runCases(title: string, cases: ConformanceCase[]): Promise<boolean> {
@@ -14,7 +15,7 @@ export async function runCases(title: string, cases: ConformanceCase[]): Promise
       console.log(`  ✓ ${c.name}`)
     } catch (error) {
       failed++
-      console.log(`  ✗ ${c.name}\n    ${error instanceof Error ? error.message : String(error)}`)
+      console.log(`  ✗ ${c.name}\n    ${errorText(error)}`)
     }
   }
   console.log(`  ${cases.length - failed}/${cases.length} passed`)

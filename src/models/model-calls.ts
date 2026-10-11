@@ -5,15 +5,15 @@
  * @see docs/specs/12-models-and-cost.md#7-model-call-observation
  */
 import type { LanguageModel } from 'ai'
-import { costOf } from '../models/cost.ts'
+import { hookFailed, hookTimeoutOf, runHook } from '../internal/hook-run.ts'
+import type { SessionRuntime } from '../session/runtime.ts'
+import { costOf } from './cost.ts'
 import {
   type ModelCallEvent,
   type ModelCallKind,
   type ModelCallRecord,
   observeModel,
-} from '../models/observe.ts'
-import { hookFailed } from '../registry/wrap.ts'
-import type { SessionRuntime } from './runtime.ts'
+} from './observe.ts'
 
 /** Context of one observed call. */
 export interface ModelCallScope {
@@ -44,7 +44,11 @@ export function observeForSession(
     if (cost !== undefined) event.costUsd = cost
     for (const hook of hooks.list('model.call')) {
       try {
-        await hook.fn(rt.contextOf(hook.owner), structuredClone(event))
+        await runHook(() => hook.fn(rt.contextOf(hook.owner), structuredClone(event)), {
+          hook: 'model.call',
+          owner: hook.owner,
+          timeoutMs: hookTimeoutOf(rt.agent.config),
+        })
       } catch (error) {
         hookFailed(rt, 'model.call', hook.owner, error)
       }

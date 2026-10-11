@@ -2,11 +2,13 @@
  * The application controller: wires workspace, shell, permissions, agents and storage behind the
  * {@link CoderController} contract that the Ink UI and print mode consume.
  */
+
 import { spawnSync } from 'node:child_process'
 import { access, appendFile, mkdir } from 'node:fs/promises'
 import { isAbsolute, join, relative } from 'node:path'
 import type { FileUIPart, LanguageModel } from 'ai'
 import {
+  errorText,
   type HarnessRun,
   type HarnessSession,
   type ModelCatalog,
@@ -64,6 +66,7 @@ import {
   PROJECT_INSTRUCTIONS_OPTIONS,
 } from './memory-files.ts'
 import type { ModelState } from './model-switch.ts'
+import { createObserver } from './observe.ts'
 import { createOutputStyles } from './output-styles.ts'
 import { loadPreferences, savePreferences } from './preferences.ts'
 import { createCoderProviders, KEY_ENV } from './provider.ts'
@@ -147,8 +150,10 @@ export async function createController(opts: CreateControllerOptions): Promise<C
   const workspace = await createWorkspace(config)
   const osProblem = probeOsSandbox(startSettings.sandbox?.enabled === true)
   if (osProblem !== undefined) warn(osProblem)
-  const sandbox = localSandbox(config.root, {
+  const sandbox = localSandbox({
+    root: config.root,
     os: osOptions(startSettings.sandbox, osProblem === undefined),
+    env: devToolEnv(process.env),
   })
   const permissions = createPermissionEngine({
     config,
@@ -305,7 +310,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
     storage,
     sessionId: () => sessionId,
   })
-  const checkpointStore = nodeCheckpointStore(join(config.projectDataDir, 'checkpoints'))
+  const checkpointStore = nodeCheckpointStore({ dir: join(config.projectDataDir, 'checkpoints') })
   const checkpoints = createCheckpoints({
     store: checkpointStore,
     storage,
@@ -338,9 +343,11 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       .then(() => appendFile(warningLog, line))
       .catch(() => {})
   }
+  const observer = createObserver({ file: join(config.userDir, 'observe.log') })
   const instance = await claimInstance(config.projectDataDir)
   const agents: Promise<Agents> = createAgents({
     onWarning,
+    observe: observer.observe,
     ...(instance.instanceId === undefined ? {} : { instanceId: instance.instanceId }),
     config,
     workspace,
@@ -693,7 +700,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         proc = await sandbox.spawn({ command })
       } catch (error) {
         return {
-          output: `could not start the command: ${error instanceof Error ? error.message : String(error)}`,
+          output: `could not start the command: ${errorText(error)}`,
           exitCode: null,
         }
       }
@@ -740,7 +747,7 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         exitCode = aborted || stopReason !== undefined ? null : result.exitCode
       } catch (error) {
         if (!aborted && stopReason === undefined) {
-          output += `\n${error instanceof Error ? error.message : String(error)}`
+          output += `\n${errorText(error)}`
         }
       } finally {
         clearTimeout(timeout)
@@ -1124,4 +1131,17 @@ function probeOsSandbox(wanted: boolean): string | undefined {
     }
   }
   return undefined
+}
+
+/** Variables beyond the sandbox's safe allow-list that git, package managers and proxies need. */
+const DEV_TOOL_ENV =
+  /^(SSH_AUTH_SOCK|XDG_[A-Z_]+|GIT_[A-Z_]+|NVM_[A-Z_]+|BUN_INSTALL|COLORTERM|NO_COLOR|FORCE_COLOR|EDITOR|VISUAL|CI|NODE_ENV|npm_config_[a-z_]+|(?:HTTPS?|NO|ALL)_PROXY|(?:https?|no|all)_proxy)$/
+
+/** The dev-tool part of `env` (see {@link DEV_TOOL_ENV}); provider API keys are not included. */
+export function devToolEnv(env: Record<string, string | undefined>): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const [name, value] of Object.entries(env)) {
+    if (value !== undefined && DEV_TOOL_ENV.test(name)) out[name] = value
+  }
+  return out
 }

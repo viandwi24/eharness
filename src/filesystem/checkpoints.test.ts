@@ -7,10 +7,10 @@ import {
   type CheckpointStore,
   checkpointedFs,
   checkpointsSince,
-  memoryCheckpointStore,
+  inMemoryCheckpointStore,
   rewindFiles,
 } from './checkpoints.ts'
-import { memoryFs } from './memory.ts'
+import { inMemoryFs } from './memory.ts'
 import { nodeCheckpointStore } from './node/checkpoint-store.ts'
 import { diskFs } from './node/disk-fs.ts'
 import type { FileSystem } from './types.ts'
@@ -31,8 +31,8 @@ const T2 = '00000000-0000-7000-8000-000000000002'
 const T3 = '00000000-0000-7000-8000-000000000003'
 
 const stores: Array<[string, (opts?: { keepTurns?: number }) => Promise<CheckpointStore>]> = [
-  ['memoryCheckpointStore', async (o) => memoryCheckpointStore(o)],
-  ['nodeCheckpointStore', async (o) => nodeCheckpointStore(await temp(), o)],
+  ['inMemoryCheckpointStore', async (o) => inMemoryCheckpointStore(o)],
+  ['nodeCheckpointStore', async (o) => nodeCheckpointStore({ dir: await temp(), ...o })],
 ]
 
 for (const [name, make] of stores) {
@@ -82,13 +82,16 @@ for (const [name, make] of stores) {
 
 test('nodeCheckpointStore survives a restart (a new instance on the same directory)', async () => {
   const dir = await temp()
-  await nodeCheckpointStore(dir).save({ sessionId: 's', turnKey: T1, path: '/a' }, { content: 'x' })
-  expect((await nodeCheckpointStore(dir).list('s'))[0]?.before).toEqual({ content: 'x' })
+  await nodeCheckpointStore({ dir }).save(
+    { sessionId: 's', turnKey: T1, path: '/a' },
+    { content: 'x' },
+  )
+  expect((await nodeCheckpointStore({ dir }).list('s'))[0]?.before).toEqual({ content: 'x' })
 })
 
 const adapters: Array<[string, () => Promise<FileSystem>]> = [
-  ['memoryFs', async () => memoryFs()],
-  ['diskFs', async () => diskFs(await temp())],
+  ['inMemoryFs', async () => inMemoryFs()],
+  ['diskFs', async () => diskFs({ root: await temp() })],
 ]
 
 for (const [name, makeFs] of adapters) {
@@ -105,7 +108,7 @@ for (const [name, makeFs] of adapters) {
 
     test('records the content before the FIRST change per turn; rewind restores earliest', async () => {
       const fs = await makeFs()
-      const store = memoryCheckpointStore()
+      const store = inMemoryCheckpointStore()
       await fs.write('/keep.txt', 'k0')
       await fs.write('/edit.txt', 'e0')
       await fs.write('/gone.txt', 'g0')
@@ -140,7 +143,7 @@ for (const [name, makeFs] of adapters) {
 
     test('rewinding to a later turn leaves earlier turns alone; unchanged files are reported', async () => {
       const fs = await makeFs()
-      const store = memoryCheckpointStore()
+      const store = inMemoryCheckpointStore()
       await fs.write('/a.txt', 'a0')
       await fs.write('/b.txt', 'b0')
       await turn(fs, store, T1, async (r) => void (await r.write('/a.txt', 'a1')))
@@ -156,7 +159,7 @@ for (const [name, makeFs] of adapters) {
 
     test('a point between turns (no checkpoint of its own) selects later turns', async () => {
       const fs = await makeFs()
-      const store = memoryCheckpointStore()
+      const store = inMemoryCheckpointStore()
       await fs.write('/a.txt', 'a0')
       await turn(fs, store, T1, async (r) => void (await r.write('/a.txt', 'a1')))
       await turn(fs, store, T3, async (r) => void (await r.write('/a.txt', 'a3')))
@@ -166,7 +169,7 @@ for (const [name, makeFs] of adapters) {
 
     test('move records both ends; nothing is recorded outside a turn or for skipped paths', async () => {
       const fs = await makeFs()
-      const store = memoryCheckpointStore()
+      const store = inMemoryCheckpointStore()
       await fs.write('/from.txt', 'f')
       await turn(fs, store, undefined, async (r) => void (await r.write('/x.txt', 'x')))
       expect(await store.list('s')).toEqual([])
@@ -191,7 +194,7 @@ for (const [name, makeFs] of adapters) {
 
     test('concurrent first changes of the same path record the original content', async () => {
       const fs = await makeFs()
-      const store = memoryCheckpointStore()
+      const store = inMemoryCheckpointStore()
       await fs.write('/a.txt', 'a0')
       const r = checkpointedFs({ fs, store, sessionId: 's', turnKey: () => T1 })
       await Promise.all([r.write('/a.txt', 'a1'), r.write('/a.txt', 'a2'), r.delete('/a.txt')])
@@ -202,8 +205,8 @@ for (const [name, makeFs] of adapters) {
 
 describe('rewindFiles failures', () => {
   test('a path that cannot be restored is reported, the others are restored, records are kept', async () => {
-    const fs = memoryFs({ '/ok.txt': 'ok0', '/ro.txt': 'ro0' })
-    const store = memoryCheckpointStore()
+    const fs = inMemoryFs({ seed: { '/ok.txt': 'ok0', '/ro.txt': 'ro0' } })
+    const store = inMemoryCheckpointStore()
     const recording = checkpointedFs({ fs, store, sessionId: 's', turnKey: () => T1 })
     await recording.write('/ok.txt', 'ok1')
     await recording.write('/ro.txt', 'ro1')
@@ -222,8 +225,8 @@ describe('rewindFiles failures', () => {
   })
 
   test('keepRecords keeps the snapshots', async () => {
-    const fs = memoryFs({ '/a.txt': 'a0' })
-    const store = memoryCheckpointStore()
+    const fs = inMemoryFs({ seed: { '/a.txt': 'a0' } })
+    const store = inMemoryCheckpointStore()
     await checkpointedFs({ fs, store, sessionId: 's', turnKey: () => T1 }).write('/a.txt', 'a1')
     await rewindFiles({ fs, store, sessionId: 's', fromTurnKey: T1, keepRecords: true })
     expect(await store.list('s')).toHaveLength(1)
@@ -231,7 +234,7 @@ describe('rewindFiles failures', () => {
 
   test('an unreadable file (binary) is not recorded and the change still goes through', async () => {
     const errors: string[] = []
-    const fs = memoryFs({ '/a.txt': 'a0' })
+    const fs = inMemoryFs({ seed: { '/a.txt': 'a0' } })
     const broken: FileSystem = {
       ...fs,
       async read(path) {
@@ -239,7 +242,7 @@ describe('rewindFiles failures', () => {
         return fs.read(path)
       },
     }
-    const store = memoryCheckpointStore()
+    const store = inMemoryCheckpointStore()
     const r = checkpointedFs({
       fs: broken,
       store,

@@ -4,14 +4,14 @@
  */
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent, type HarnessAgentConfig } from '../index.ts'
-import { memoryMessages, memoryState } from '../storage/memory.ts'
+import { inMemoryMessages, inMemoryState } from '../storage/memory.ts'
 import {
   type ScriptedPrompt,
   type ScriptedStepInput,
   scriptedModel,
 } from '../testing/scripted-model.ts'
 import { bytesToBase64, detectMediaType, imageDimensions, looksBinary } from './media.ts'
-import { memoryFs } from './memory.ts'
+import { inMemoryFs } from './memory.ts'
 import { filesystem } from './plugin.ts'
 import { isFileMediaRef } from './tools.ts'
 import type { FileSystem, FilesystemOptions } from './types.ts'
@@ -38,7 +38,7 @@ function setup(
   fs: FileSystem,
   options: Partial<FilesystemOptions> = {},
   config: Partial<HarnessAgentConfig> = {},
-  storage = { messages: memoryMessages(), state: memoryState() },
+  storage = { messages: inMemoryMessages(), state: inMemoryState() },
 ) {
   const model = scriptedModel(steps)
   const agent = defineHarnessAgent({
@@ -116,9 +116,9 @@ describe('media helpers', () => {
   })
 })
 
-describe('memoryFs binary support', () => {
+describe('inMemoryFs binary support', () => {
   test('seed with bytes, readBytes/writeBytes, read throws for binary, grep skips it', async () => {
-    const fs = memoryFs({ '/a.png': png(2, 2), '/t.txt': 'needle\n' })
+    const fs = inMemoryFs({ seed: { '/a.png': png(2, 2), '/t.txt': 'needle\n' } })
     const entry = await fs.readBytes?.('/a.png')
     expect(entry?.meta.binary).toBe(true)
     expect(entry?.mediaType).toBe('image/png')
@@ -135,7 +135,7 @@ describe('memoryFs binary support', () => {
 describe('read_file on binary files', () => {
   test('an image is stored as a compact reference and the model receives the image', async () => {
     const image = png(640, 480, 5000)
-    const fs = memoryFs({ '/shots/a.png': image })
+    const fs = inMemoryFs({ seed: { '/shots/a.png': image } })
     const { agent, model } = setup(
       [{ toolCalls: [call('read_file', { path: '/shots/a.png' })] }, { text: 'seen' }],
       fs,
@@ -169,8 +169,8 @@ describe('read_file on binary files', () => {
 
   test('a reload projects the same model input; a changed file gives the text note', async () => {
     const image = png(8, 8, 100)
-    const fs = memoryFs({ '/a.png': image })
-    const storage = { messages: memoryMessages(), state: memoryState() }
+    const fs = inMemoryFs({ seed: { '/a.png': image } })
+    const storage = { messages: inMemoryMessages(), state: inMemoryState() }
     const first = setup(
       [{ toolCalls: [call('read_file', { path: '/a.png' })] }, { text: 'one' }],
       fs,
@@ -205,7 +205,7 @@ describe('read_file on binary files', () => {
   })
 
   test('pdf is off by default, sent as a file part with media.pdf', async () => {
-    const fs = memoryFs({ '/d.pdf': pdf() })
+    const fs = inMemoryFs({ seed: { '/d.pdf': pdf() } })
     const off = setup([{ toolCalls: [call('read_file', { path: '/d.pdf' })] }, { text: 'x' }], fs)
     const r1 = await off.agent.session('s').send('go').result
     expect(outputs(r1)).toEqual([
@@ -227,7 +227,7 @@ describe('read_file on binary files', () => {
 
   test('other binaries, disabled images and oversized images give ERROR: texts', async () => {
     const big = png(1, 1, 200)
-    const fs = memoryFs({ '/b.dat': blob(), '/a.png': png(1, 1), '/big.png': big })
+    const fs = inMemoryFs({ seed: { '/b.dat': blob(), '/a.png': png(1, 1), '/big.png': big } })
     const { agent } = setup(
       [
         {
@@ -259,7 +259,7 @@ describe('read_file on binary files', () => {
   })
 
   test('write_file / edit_file refuse binary files, delete_file needs a read, grep skips them', async () => {
-    const fs = memoryFs({ '/b.dat': blob(), '/t.txt': 'findme\n' })
+    const fs = inMemoryFs({ seed: { '/b.dat': blob(), '/t.txt': 'findme\n' } })
     const { agent } = setup(
       [
         {
@@ -297,7 +297,7 @@ describe('read_file on binary files', () => {
 describe('compaction.prune and binary outputs', () => {
   test('an old image output is replaced by the placeholder, the newest stays', async () => {
     const image = png(4, 4, 3000)
-    const fs = memoryFs({ '/a.png': image, '/b.png': png(5, 5, 3000) })
+    const fs = inMemoryFs({ seed: { '/a.png': image, '/b.png': png(5, 5, 3000) } })
     const turns: ScriptedStepInput[] = []
     for (const path of ['/a.png', '/b.png']) {
       turns.push({ toolCalls: [call('read_file', { path })] }, { text: `done ${path}` })
@@ -325,11 +325,11 @@ describe('compaction.prune and binary outputs', () => {
 
 describe('plugin options', () => {
   test('invalid media options fail at definition time', () => {
-    const fs = memoryFs()
+    const fs = inMemoryFs()
     expect(() => filesystem({ fs, media: { maxBytes: 0 } })).toThrow('media.maxBytes')
   })
   test('adapters without readBytes stay text only', async () => {
-    const inner = memoryFs({ '/t.txt': 'hello\n' })
+    const inner = inMemoryFs({ seed: { '/t.txt': 'hello\n' } })
     const fs: FileSystem = {
       read: inner.read,
       write: inner.write,

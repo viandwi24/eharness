@@ -79,7 +79,7 @@ export interface InboxBackoffOptions {
 
 /**
  * Poison-item limits of the durable inbox (`inbox.retry`, spec 05 §12 rules 11–13). Without it
- * an item is redelivered without limit (0.4).
+ * an item is redelivered without limit.
  *
  * @see docs/specs/05-session-and-storage.md#12-inbox
  */
@@ -89,6 +89,35 @@ export interface InboxRetryOptions {
   backoff?: InboxBackoffOptions
   /** Failures that go dead at once (reason `'non-retryable'`). Default: `code === 'EH_INVALID_INPUT'`. */
   nonRetryable?: (error: { code?: string; message: string }) => boolean
+}
+
+/**
+ * Limits of tool source listing (spec 02 §3.1).
+ *
+ * @see docs/specs/02-context-registry.md#3-tools
+ */
+export interface ToolSourcesConfig {
+  /** Default 30 000 — a `list()` that does not settle in this time fails (`W_TOOL_SOURCE_FAILED`). */
+  timeoutMs?: number
+  /**
+   * Default 5 000 — a failed source is not asked again for this long, doubling per consecutive
+   * failure up to 60 000. `0` retries at the next turn.
+   */
+  retryAfterMs?: number
+}
+
+/**
+ * Limits of awaited plugin hooks.
+ *
+ * @see docs/specs/01-agent-and-plugins.md#5-hooks
+ */
+export interface HooksConfig {
+  /**
+   * Default 30 000 — a hook the core awaits that does not settle within this time is treated as a
+   * throwing hook (`W_HOOK_TIMEOUT`; `input.submit` still blocks, `tool.approve` still denies).
+   * Aborting the turn also cuts running hooks short.
+   */
+  timeoutMs?: number
 }
 
 /**
@@ -208,7 +237,7 @@ export interface BudgetScopeStatus {
 /**
  * Cross-session spending ledger (spec 12 §4.1): the app's store of spent and reserved USD per
  * scope. Implementations must make `reserve` atomic over all scopes (all or nothing) and safe
- * under concurrent callers in many processes. eharness ships `memoryBudgetLedger()`
+ * under concurrent callers in many processes. eharness ships `inMemoryBudgetLedger()`
  * (`eharness/storage/memory`) and `budgetLedgerConformance` (`eharness/testing`).
  *
  * @see docs/specs/12-models-and-cost.md#41-budget-ledger-normative
@@ -284,8 +313,13 @@ export type ModelSettings = Pick<
   Pick<RequestOptions, 'maxRetries'> & {
     headers?: Record<string, string>
     providerOptions?: ProviderOptions
-    /** Per step. A number means `stepMs`. `totalMs` is rejected — use `loop.turnTimeoutMs`. */
-    timeout?: number | Omit<Exclude<TimeoutConfiguration<ToolSet>, number>, 'totalMs'>
+    /**
+     * Per step. A number means `stepMs`. `totalMs` is rejected — use `loop.turnTimeoutMs`.
+     * Default `{ firstChunkMs: 120_000, chunkMs: 120_000 }` (idle timeouts: a stream that goes
+     * silent fails the step instead of holding the session forever); keys you set override the
+     * default per key, `false` turns the default off.
+     */
+    timeout?: number | false | Omit<Exclude<TimeoutConfiguration<ToolSet>, number>, 'totalMs'>
     /** Retries of a step after streaming started (AI SDK `streamRetries`). */
     streamRetries?: number
   }
@@ -305,7 +339,12 @@ export interface ApprovalConfig {
    * @example { destructive: 'user-approval', unknown: 'user-approval' }
    */
   risk?: Partial<Record<ToolRisk | 'unknown', ToolApprovalStatus>>
-  /** Passed as `experimental_toolApprovalSecret`: HMAC-signs requests. */
+  /**
+   * Passed as `experimental_toolApprovalSecret`: HMAC-signs requests.
+   *
+   * @experimental Relies on the AI SDK option `experimental_toolApprovalSecret`; an upstream
+   * rename or removal changes this option (docs/engineering/api-stability.md).
+   */
   secret?: string
   /** What `send()`/`regenerate()`/`edit()` do while approvals are pending. Default `'deny'`. */
   onNewInput?: 'deny' | 'reject'
@@ -333,7 +372,7 @@ export interface InputFilesConfig {
   /** Maximum decoded size of a `data:` URL in bytes. Default 20 MB (20 971 520). */
   maxBytes?: number
   /**
-   * Resolve a stored file URL for the model (0.8.0, spec 03 §6). Called at projection time for
+   * Resolve a stored file URL for the model (spec 03 §6). Called at projection time for
    * every file part whose URL is not a `data:` URL, so apps keep references (a custom protocol
    * listed in `protocols`, e.g. `library://uploads/7`) in stored messages instead of inlined
    * base64. The stored message is never changed. Return `{ data }` (bytes or base64) or
@@ -406,7 +445,7 @@ export interface CompactionConfig {
    * within `withinSteps` model steps of the previous one ran (or was skipped as no-gain) and the
    * context is still above `summarizeAt` afterwards, the turn stops with `'context-thrash'`.
    * Pre-turn compactions do not start the window. Default `{ withinSteps: 2 }`; `false`
-   * keeps going (0.3 behaviour).
+   * keeps going (no thrash stop).
    */
   thrash?: { withinSteps?: number } | false
 }
@@ -496,7 +535,7 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * a live session claims inbox items when no notification arrived, `claimTtlMs` (default
    * `recovery.staleMs`) how long a claim hides an item, `collect` the default debounce of
    * `collect` inputs (also used without an inbox). `retry` limits poison items (default: none,
-   * unlimited redelivery as in 0.4) and `onDeadLetter` reports items that went dead (spec 05 §12
+   * unlimited redelivery) and `onDeadLetter` reports items that went dead (spec 05 §12
    * rules 11–15; a throwing callback is `W_HOOK_FAILED`).
    */
   inbox?: {
@@ -511,6 +550,10 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   /** Extra overflow detection for providers the built-in patterns miss. */
   isContextOverflow?: (error: unknown) => boolean
   loop?: LoopConfig
+  /** Plugin hook limits (spec 01 §5). */
+  hooks?: HooksConfig
+  /** Tool source listing limits (spec 02 §3). */
+  toolSources?: ToolSourcesConfig
   /** Passed to every `streamText` call. */
   settings?: ModelSettings
   approval?: ApprovalConfig
@@ -532,7 +575,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   repairToolCall?: ToolCallRepairFunction<ToolSet>
   /**
    * Crash recovery of turns interrupted by a dead process, and cross-process abort (spec 05 §9).
-   * Default `{ staleMs: 120_000, abortPollMs: 2_000 }`. `abortPollMs`: how often a running turn
+   * Default `{ staleMs: 120_000, abortPollMs: 2_000 }`. Keep `staleMs` ≥ 1 000 in production: the
+   * lock heartbeat writes every `staleMs / 4`, and a live turn older than `staleMs` may be taken over. `abortPollMs`: how often a running turn
    * reads the state for an abort request of another instance (`0` = never; needs
    * `StateAdapter.setIf`). `instanceId`: a **stable** id of this instance (default: random per
    * process). With a stable id a restarted process owns the turns its previous run left active:
@@ -541,6 +585,21 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    */
   recovery?: { staleMs?: number; abortPollMs?: number; instanceId?: string } | false
   telemetry?: TelemetryOptions
+  /**
+   * Operational signals for metrics and tracing (spec 10 §8): phase durations (`span` events: lock
+   * wait, `turn.prepare` hooks, compaction, state and message writes, model call per step, tool
+   * execution) and counters (hook failures and timeouts, dropped event readers, state write
+   * conflicts, tool-source backoff skips, every warning). Called synchronously and must be cheap;
+   * a throwing handler is ignored. Zero cost when unset. `telemetry` (above) stays the AI SDK
+   * pass-through for model-call spans.
+   */
+  observe?: (event: ObserveEvent) => void
+  /**
+   * The default warning handler (no `onWarning`) prints a code + key once per window and counts
+   * the suppressed repeats in the next report. `dedupeWindowMs` default 60 000 (`0` = print
+   * every occurrence, at most 86 400 000).
+   */
+  warnings?: { dedupeWindowMs?: number }
   /** Throw `EH_CONFIG_INVALID` instead of warning on API misuse. Default false. */
   strict?: boolean
   /**
@@ -548,8 +607,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    * fails AI SDK `UIMessage` validation is a programmer error (`EH_INVALID_MESSAGE`, nothing is
    * saved), and a turn end that leaves the session state inconsistent is reported as
    * `W_INVARIANT_VIOLATION`. `false`: the production policy (warn `W_INVALID_MESSAGE`, save anyway;
-   * a message that holds pending state is never dropped). Default: `true` when
-   * `NODE_ENV` is `test` or `development`, else `false`.
+   * a message that holds pending state is never dropped). Default `false`; it is never inferred
+   * from `NODE_ENV`: tests and development opt in explicitly.
    */
   debug?: { invariants?: boolean }
   logger?: HarnessLogger
@@ -662,3 +721,48 @@ export interface HarnessAgent<C = HarnessAgentConfig> {
   /** Type-only brand used by `InferHarnessUIMessage`. Undefined at runtime. */
   readonly '~types': { message: AgentMessageOf<C>; kinds: AgentKindTypes<C> }
 }
+
+/** Names of the timed phases reported as `span` events (see {@link HarnessAgentConfig.observe}). */
+export type ObserveSpanName =
+  | 'lock.wait'
+  | 'turn.prepare'
+  | 'compaction'
+  | 'state.write'
+  | 'message.write'
+  | 'model.call'
+  | 'tool.execute'
+
+/** Names of the counters reported as `count` events. */
+export type ObserveCountName =
+  | 'hook.failed'
+  | 'hook.timeout'
+  | 'events.overflow'
+  | 'state.conflict'
+  | 'tool-source.backoff'
+  | 'warning'
+
+/** Where an observed event happened; every field is present only when it applies. */
+export interface ObserveScope {
+  sessionId?: string | undefined
+  turnId?: string | undefined
+  /** Step index (`model.call`). */
+  step?: number | undefined
+  /** Tool name (`tool.execute`). */
+  tool?: string | undefined
+  /** Hook name (`turn.prepare`, `hook.failed`, `hook.timeout`). */
+  hook?: string | undefined
+  /** Plugin (or `app`) that owns the hook, tool source or tool. */
+  owner?: string | undefined
+  /** Tool source id (`tool-source.backoff`). */
+  source?: string | undefined
+  /** Warning code (`warning`) or error code. */
+  code?: string | undefined
+}
+
+/**
+ * One operational signal (spec 10 §8). `span`: a phase that took `durationMs` (`ok: false` when it
+ * threw). `count`: something happened once.
+ */
+export type ObserveEvent =
+  | ({ type: 'span'; name: ObserveSpanName; durationMs: number; ok: boolean } & ObserveScope)
+  | ({ type: 'count'; name: ObserveCountName } & ObserveScope)

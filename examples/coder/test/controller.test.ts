@@ -587,3 +587,32 @@ describe('context, usage and status', () => {
     ])
   })
 })
+
+describe('devToolEnv', () => {
+  test('keeps dev-tool variables and drops secrets and everything else', async () => {
+    const { devToolEnv } = await import('../src/app/controller.ts')
+    expect(
+      devToolEnv({
+        GIT_AUTHOR_NAME: 'a',
+        SSH_AUTH_SOCK: '/s',
+        XDG_CONFIG_HOME: '/x',
+        HTTPS_PROXY: 'p',
+        https_proxy: 'p',
+        npm_config_registry: 'r',
+        CI: '1',
+        OPENROUTER_API_KEY: 'secret',
+        AWS_SECRET_ACCESS_KEY: 'secret',
+        HOME: '/h',
+        NO_COLOR: undefined,
+      }),
+    ).toEqual({
+      GIT_AUTHOR_NAME: 'a',
+      SSH_AUTH_SOCK: '/s',
+      XDG_CONFIG_HOME: '/x',
+      HTTPS_PROXY: 'p',
+      https_proxy: 'p',
+      npm_config_registry: 'r',
+      CI: '1',
+    })
+  })
+})

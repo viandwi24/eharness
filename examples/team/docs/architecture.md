@@ -66,7 +66,7 @@ session from any instance; when its turn ends, the report wakes the lead as an e
 the chat opens the child session (the `data-subagent.run` marker carries its id) and its status
 follows the task row. `run_in_background: false` gives the foreground park below.
 
-**Park delegation.** The lead uses `subagents({ approvals: 'park' })`. When a role agent needs an
+**Park delegation.** The lead uses `subagent({ approvals: 'park' })`. When a role agent needs an
 approval, the lead's turn ends parked and the child waits in storage. The user answers on the
 board (`POST /attention/{id}/answer`) on any instance; the child continues and, when it ends, the lead
 resumes with the report. Nothing lives in process memory, which is why it survives restarts
@@ -200,7 +200,7 @@ connectors of an agent, the lead and the roster, `agentFor` / `openSession` use 
 chat, task and routine entry point awaits `prepare` first).
 
 **One secret system.** The server's AES-GCM box (`TEAM_SECRET_KEY`, previous keys for rotation) is
-the library's `SecretVault`. Provider profiles, connections (settings: API keys, header values),
+the library's `SecretVault`; `infra/eh/legacy-vault.ts` (`withLegacyVault`, kept in this example, not in the library) reads this app's older `v1:` blobs and `reseal()` migrates them to the current format. Provider profiles, connections (settings: API keys, header values),
 their OAuth credentials (tokens, client) and the OAuth app credentials an admin saves live in the
 same `config_profiles` table; connector rows are sealed by `sealedProfileStore` (one blob per row,
 bound to its kind and id), flow scratch is sealed with the same vault, and nothing is returned by

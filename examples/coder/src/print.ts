@@ -3,6 +3,7 @@
  * one-line notes on stderr), `json` prints one summary object, `stream-json` prints one JSON line
  * per UI message chunk. Approvals are never asked: the controller is built with the denying broker.
  */
+import { turnErrorText } from './app/turn-error.ts'
 import type { CoderController, PrintOptions } from './contracts.ts'
 
 interface Usage {
@@ -81,7 +82,7 @@ export async function runPrint(controller: CoderController, opts: PrintOptions):
   await Promise.all(consumers)
 
   if (result.error !== undefined) {
-    process.stderr.write(`coder: ${result.stop}: ${result.error.message}\n`)
+    process.stderr.write(`coder: ${result.stop}: ${turnErrorText(result.error)}\n`)
   } else if (result.stop !== 'complete') {
     process.stderr.write(`coder: turn ended with "${result.stop}"\n`)
   }

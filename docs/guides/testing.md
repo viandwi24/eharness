@@ -54,7 +54,7 @@ entry or to exercise Anthropic cache options.
 
 Useful assertions besides `run.result`: `session.messages()` (what was stored), the chunks of
 `run.stream` (what the UI got), `onWarning` (collect warnings into an array), and a
-`memoryState()` instance you pass in `storage` (read `state.get(sessionId)`).
+`inMemoryState()` (from `eharness/storage/memory`) instance you pass in `storage` (read `state.get(sessionId)`).
 
 ## Conformance suites
 
@@ -90,3 +90,31 @@ describe('my storage', () => {
 | `idGeneratorConformance(factory)` | a custom `generateId` (ids must sort by creation time) | `uuidv7`, `floor`, `count` |
 
 Cases use random session ids, so a factory may return adapters over one shared test database.
+
+`messageAdapterConformance` also checks concurrent writes: saves of one id from parallel callers
+must end with one row (`save` is an atomic upsert), disjoint concurrent batches must all be
+visible, and ids that share a millisecond prefix must list in a deterministic id order.
+
+## Session invariants in your own tests
+
+`debug: { invariants: true }` makes the core check the stored session after every turn
+(spec 05 §15) and report a problem as the `W_INVARIANT_VIOLATION` warning. It is explicit only: it
+is never switched on by `NODE_ENV` or a test runner. In your suite, enable it on the agents under
+test, collect warnings, and assert that none is an invariant violation (a throwing handler is
+swallowed by the core, which must never break a running session):
+
+```ts
+// yours: model
+const warnings: string[] = []
+const agent = defineHarnessAgent({
+  model,
+  debug: { invariants: true },
+  onWarning: (w) => warnings.push(w.code),
+})
+// ... run turns ...
+expect(warnings).not.toContain('W_INVARIANT_VIOLATION')
+```
+
+`assertStoredSessionInvariants(state, messages)` (from `eharness/testing`) runs the same check on
+a stored state snapshot and its messages. (The eharness repository itself does this in a Bun test preload; you do not need a
+preload for application tests.)

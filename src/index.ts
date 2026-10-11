@@ -70,16 +70,22 @@ export type {
   CompactionConfig,
   HarnessAgent,
   HarnessAgentConfig,
+  HooksConfig,
   InboxBackoffOptions,
   InboxRetryOptions,
   InputFilesConfig,
   LoopConfig,
   ModelSettings,
+  ObserveCountName,
+  ObserveEvent,
+  ObserveScope,
+  ObserveSpanName,
   ProgressConfig,
   PruneConfig,
   ResolveInputFile,
   ToolErrorTextFn,
   ToolOutputConfig,
+  ToolSourcesConfig,
 } from './agent/types.ts'
 export {
   HarnessError,
@@ -91,6 +97,55 @@ export {
   isHarnessError,
   type WarningCode,
 } from './errors.ts'
+export {
+  compileGitignorePattern,
+  compileGlobRegExp,
+  escapeRegExp,
+  expandBraces,
+  type GitignoreLine,
+  GLOB_MAX_BRACE_ALTERNATIVES,
+  GLOB_MAX_DOUBLE_STARS,
+  GLOB_MAX_STARS,
+  type GlobOptions,
+  type GlobRegExpResult,
+} from './internal/glob.ts'
+export {
+  collapseSegments,
+  foldSegment,
+  MAX_ROOTED_PATH_LENGTH,
+  normalizeRootedPath,
+} from './internal/path-segments.ts'
+export { isPrivateHost } from './internal/private-host.ts'
+export {
+  GREP_MAX_PATTERN,
+  GREP_PATTERN_RULE,
+  GREP_SCAN_CHARS,
+  isLiteralPattern,
+  statelessPattern,
+  unsafePatternReason,
+} from './internal/regex-safety.ts'
+export { errorText, isRecord } from './internal/util.ts'
+export {
+  createJudge,
+  DEFAULT_JUDGE_MAX_CALL_CHARS,
+  type Judge,
+  type JudgeCacheEntry,
+  type JudgeCall,
+  type JudgeCallRef,
+  type JudgeContext,
+  type JudgeCoordinator,
+  type JudgeLimits,
+  type JudgeOptions,
+  type JudgeOutcome,
+  type JudgeParticipant,
+  type JudgeResult,
+  type JudgeRole,
+  type JudgeStore,
+  type JudgeTightenAnswer,
+  JudgeUnavailableError,
+  type JudgeVerdict,
+  judgeCoordinator,
+} from './judge/index.ts'
 export { type DataChunk, type DataPartDef, defineDataPart } from './messages/data-parts.ts'
 export {
   neutralizeTags,
@@ -111,18 +166,12 @@ export {
   CLIENT_TOOL_TIMED_OUT,
   DENIED_NEW_INPUT,
   FILE_UNAVAILABLE,
-  FINAL_ANSWER_DESCRIPTION,
   FINAL_ANSWER_RECORDED,
   FLUSH_APPROVAL_DENIED,
   INTERRUPTED_CRASH,
   INTERRUPTED_TURN,
   INTERRUPTED_UNKNOWN,
-  MAX_STEPS_WRAP_UP,
   NOT_EXECUTED_NEW_INPUT,
-  OUTPUT_INSTRUCTION,
-  OUTPUT_RETRY,
-  PAGE_CONTEXT_PREAMBLE,
-  PROGRESS_NUDGE,
   TOOL_OUTPUT_PRUNED,
   TOOL_OUTPUT_TRUNCATED,
   WAIT_CANCELLED_NEW_INPUT,
@@ -220,6 +269,7 @@ export type {
   PageContextOptions,
 } from './registry/request-tools.ts'
 export { type ToolHints, type ToolTraits, toolTraits } from './registry/risk.ts'
+export { type ToolFieldOverrides, withToolExecute, withToolFields } from './registry/tool-copy.ts'
 export { defineToolSource } from './registry/tool-source.ts'
 export type { GuardTranscriptEntry } from './registry/transcript.ts'
 export type {

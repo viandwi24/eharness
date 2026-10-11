@@ -30,12 +30,15 @@
 		onSend,
 		onStop,
 		status,
+		stopping = false,
 		placeholder = 'Message the agent',
 		agentId
 	}: {
 		onSend: (message: PromptInputMessage) => void | Promise<void>;
 		onStop?: () => void;
 		status?: ChatStatus;
+		/** A stop was sent and is not confirmed yet: the stop button waits. */
+		stopping?: boolean;
 		placeholder?: string;
 		/** The agent of this DM chat: shows its permission mode switch (Shift+Tab cycles it). */
 		agentId?: string;
@@ -89,7 +92,7 @@
 			</PromptInputTools>
 			<div class="flex items-center gap-1.5">
 				{#if agentId}<ContextMeter {agentId} />{/if}
-				<PromptInputSubmit {status} {onStop} />
+				<PromptInputSubmit {status} {onStop} disabled={stopping} />
 			</div>
 		</PromptInputFooter>
 	{/snippet}

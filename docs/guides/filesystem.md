@@ -10,14 +10,15 @@ store for evicted tool outputs. Contract: spec 08. Runnable:
 ```ts
 import { defineHarnessAgent } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 
+// yours: model (an AI SDK LanguageModel or model id)
 const agent = defineHarnessAgent({
   model,
   contextWindow: 200_000,
   plugins: [
     filesystem({
-      fs: memoryFs({ '/README.md': '# Notes\n' }), // or (ctx) => fsFor(ctx.runtime.projectId)
+      fs: inMemoryFs({ seed: { '/README.md': '# Notes\n' } }), // or (ctx) => fsFor(ctx.runtime.projectId)
       readonlyPrefixes: ['/templates/'],
       hiddenPrefixes: ['/secrets/'],
       allowedExtensions: ['.md', '.txt'], // writes only; default any
@@ -43,7 +44,7 @@ tree per user, project or session.
 | `write_file` | `{ path, content }` | create, or overwrite a file read before |
 | `edit_file` | `{ path, old_string, new_string, replace_all? }` or `{ path, edits }` | smart replace in a file read before; `edits` applies up to 50 replacements in order, all or nothing (`ERROR: edit 3 of 5: …`) |
 | `delete_file` | `{ path }` | delete a file read before (not `isUndeletable` ones) |
-| `grep` | `{ pattern, prefix? }` | JavaScript regex per line, at most 50 hits |
+| `grep` | `{ pattern, prefix? }` | JavaScript regex per line, at most 50 hits; only a safe subset is accepted (one variable-width quantifier, no quantified groups, backreferences or lookarounds; the model gets an `ERROR: invalid pattern: …` to fix) |
 | `glob` | `{ pattern, path? }` | files by glob (`**`, `*`, `?`, `[abc]`, `{a,b}`), newest first when the adapter has `updatedAt`, at most 200; adapters may add a `glob` fast path |
 
 The rules that make them safe for a model:
@@ -75,12 +76,13 @@ tools can use:
 import { tool } from 'ai'
 import { defineHarnessAgent } from 'eharness'
 import { filesystem } from 'eharness/filesystem'
-import { memoryFs } from 'eharness/filesystem/memory'
+import { inMemoryFs } from 'eharness/filesystem/memory'
 import { z } from 'zod/v4'
 
+// model: yours
 defineHarnessAgent({
   model,
-  plugins: [filesystem({ fs: memoryFs() })],
+  plugins: [filesystem({ fs: inMemoryFs() })],
   tools: {
     export_notes: (ctx) =>
       tool({
@@ -104,12 +106,12 @@ defineHarnessAgent({
 
 With `skills: { root }`, every `<root>/<name>/SKILL.md` becomes a skill, and the skills root is
 hidden from the file tools (`hideSkillsRoot`, default `true`) so the model uses the skill tools
-instead. Without the plugin, `fsSkillSource(fs, { root, refresh })` is the same skill source on its
+instead. Without the plugin, `fsSkillSource({ fs, root, refresh })` is the same skill source on its
 own. See [skills](skills.md).
 
 ## Images and binary files
 
-With an adapter that has `readBytes` / `writeBytes` (`memoryFs`, `diskFs`, `mountFs`),
+With an adapter that has `readBytes` / `writeBytes` (`inMemoryFs`, `diskFs`, `mountFs`),
 `read_file` on a PNG, JPEG, GIF or WebP shows the image to the model, next to a line like
 `Image /shots/a.png (640x480, 18231 bytes, image/png)`. PDFs are off by default (not every
 provider takes them): `filesystem({ fs, media: { pdf: true } })`. Other binary files answer
@@ -117,7 +119,8 @@ provider takes them): `filesystem({ fs, media: { pdf: true } })`. Other binary f
 `grep` skips them.
 
 ```ts
-filesystem({ fs: memoryFs({ '/shots/a.png': pngBytes }), media: { images: true, maxBytes: 2_000_000 } })
+// pngBytes: yours, a Uint8Array
+filesystem({ fs: inMemoryFs({ seed: { '/shots/a.png': pngBytes } }), media: { images: true, maxBytes: 2_000_000 } })
 ```
 
 The stored message keeps only a small reference (`{ type: 'media-ref', path, version, … }`); the
@@ -134,17 +137,24 @@ instance. A custom `grep` can reuse `splitLines`, `statelessPattern` and `GREP_S
 
 ## Real directories: `eharness/filesystem/node`
 
-For an agent that works on files on disk (a CLI, a server with a checkout), `diskFs(root)` is a
-ready adapter. It refuses symlink escapes, hides `.git`, `node_modules` and the root `.gitignore`
-from listings (a documented subset of the syntax, no nested files), keeps file modes on write,
-lists binary files (and shows images to the model), rejects oversized text files with a readable error, and uses ripgrep for `grep` when it is
-on `PATH` (JavaScript otherwise). Node-only: the subpath imports `node:` built-ins.
+For an agent that works on files on disk (a CLI, a server with a checkout), `diskFs({ root })` is a
+ready adapter. Every path is resolved through symlinks and must stay inside the real root
+(`path outside the workspace: …` otherwise); file reads open the final component with `O_NOFOLLOW`
+(where the platform has it) and re-check containment after the open, so a symlink swapped in
+between the check and the read cannot escape. It hides `.git`, `node_modules` and the root
+`.gitignore` from listings (a documented subset of the syntax, no nested files), keeps file modes
+on write, lists binary files (and shows images to the model), rejects oversized text files with a
+readable error (`maxFileBytes`, default 2 MiB; `maxBinaryBytes`, default 10 MiB), and uses ripgrep
+for `grep` when it is on `PATH` (JavaScript otherwise, or always with `grep: 'js'`). Ripgrep is
+killed after `grepTimeoutMs` (default 30 s) or once it printed `grepMaxOutputBytes` (default
+64 MiB), and the search then falls back to JavaScript (`onGrepFallback(reason)` reports it).
+Node-only: the subpath imports `node:` built-ins.
 
 ```ts
 import { filesystem } from 'eharness/filesystem'
 import { diskFs, nodeWorkspace } from 'eharness/filesystem/node'
 
-filesystem({ fs: diskFs(process.cwd(), { ignore: { hidden: ['dist/'] } }) })
+filesystem({ fs: diskFs({ root: process.cwd(), ignore: { hidden: ['dist/'] } }) })
 
 // a project plus extra directories and a folder for evicted tool outputs
 const ws = await nodeWorkspace({
@@ -154,11 +164,15 @@ const ws = await nodeWorkspace({
 })
 filesystem({ fs: ws.fs })
 await ws.addDirectory('/home/me/another') // mounted at runtime, visible immediately
-ws.toReal('/@dirs/shared-lib/a.ts') // → real path, or null
+await ws.toReal('/@dirs/shared-lib/a.ts') // → real path, or null
 ```
 
-`mountFs(() => [{ virtual: '/', fs }, { virtual: '/docs/', fs: otherFs, readonly: true }])`
+`mountFs({ mounts: () => [{ virtual: '/', fs }, { virtual: '/docs/', fs: otherFs, readonly: true }] })`
 composes any adapters by longest prefix. A move across mounts is copy-then-delete, not atomic.
+
+`nodeRealpath(path)` (also from `eharness/filesystem/node`) resolves symlinks for paths that may
+not exist yet. Pass it as the `realpath` option of the permissions engine so path rules see the
+real file instead of a link ([permissions](permissions.md)).
 
 ## Undo the agent's edits: checkpoints
 
@@ -166,11 +180,13 @@ composes any adapters by longest prefix. A move across mounts is copy-then-delet
 Later, `rewindFiles` puts the files back:
 
 ```ts
+import { defineHarnessAgent } from 'eharness'
 import { checkpointsSince, filesystem, rewindFiles } from 'eharness/filesystem'
 import { diskFs, nodeCheckpointStore } from 'eharness/filesystem/node'
 
-const fs = diskFs(root)
-const store = nodeCheckpointStore('.agent/checkpoints') // JSON files; survives restarts
+// yours: model, root (project directory), sessionId and userMessage
+const fs = diskFs({ root })
+const store = nodeCheckpointStore({ dir: '.agent/checkpoints' }) // JSON files; survives restarts
 const agent = defineHarnessAgent({ model, plugins: [filesystem({ fs, checkpoints: store })] })
 
 // "rewind code to just before this message"
@@ -182,7 +198,7 @@ const { restored, deleted, failed } = await rewindFiles({ fs, store, sessionId, 
 Only changes made through the file tools (and other writers of the `fs` service) are tracked, not
 shell commands or edits made outside the agent. Turns without a user message (`respond`,
 `regenerate`, wake) are keyed by the turn id. Rewinding files does not touch the conversation;
-combine it with a session fork if you also want that. `memoryCheckpointStore()` is for tests; for
+combine it with a session fork if you also want that. `inMemoryCheckpointStore()` is for tests; for
 a web app with separate server processes implement the four-method `CheckpointStore` over your
 database.
 
@@ -198,14 +214,14 @@ model reads them before working there.
 import { filesystem, projectInstructions } from 'eharness/filesystem'
 
 plugins: [
-  filesystem({ fs: diskFs('/work/project') }),
+  filesystem({ fs: diskFs({ root: '/work/project' }) }),
   projectInstructions({ files: ['AGENTS.md', 'CLAUDE.md'], maxChars: 20_000 }), // optional
 ]
 // ctx.services.projectInstructions → { root, nested, nestedOmitted } for a /memory page
 ```
 
 Use `loadProjectInstructions(fs, opts)` to read the same information without a session, and
-`frame` / `nestedFrame` to change the wording. See spec 08 §13.
+`frame` / `nestedFrame` to change the wording (the default texts are internal). See spec 08 §13.
 
 ## Your own adapter
 
