@@ -39,6 +39,13 @@ export interface ModelInfo {
    */
   maxOutputTokens?: number
   pricing?: ModelPricing
+  /**
+   * Input modalities the model accepts (`text`, `image`, `pdf`, `audio`, `video`; models.dev and
+   * OpenRouter names, `file` counts as `pdf`). Absent = unknown: nothing is checked. With it, a
+   * turn whose new input carries a file of an unsupported modality is refused before anything is
+   * stored (`EH_INVALID_INPUT`, `details.reason: 'unsupported-modality'`; spec 12 §1.1).
+   */
+  inputModalities?: string[]
 }
 
 /**

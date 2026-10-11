@@ -31,6 +31,7 @@ import {
 } from './descriptions.ts'
 import { rebuildEntries } from './entries.ts'
 import { createEnv, type Env, type Scope } from './env.ts'
+import { FILES_FIELD } from './files.ts'
 import {
   AGENT_NAME_PATTERN,
   type AgentDirectory,
@@ -76,6 +77,8 @@ export {
   type SubagentChildInfo,
   type SubagentDataParts,
   type SubagentDefinition,
+  type SubagentFile,
+  type SubagentFilesOptions,
   type SubagentOptions,
   type SubagentProgress,
   type SubagentRunData,
@@ -292,6 +295,9 @@ export function subagent(options: SubagentOptions): HarnessPlugin<'subagent'> {
             .describe('The subagent type to use'),
           description: z.string().describe('A short (3-5 words) label for the task'),
           prompt: z.string().describe('The complete task for the subagent'),
+          ...(options.files === undefined
+            ? {}
+            : { files: z.array(z.string()).optional().describe(FILES_FIELD) }),
           ...(canBackground
             ? {
                 run_in_background: z

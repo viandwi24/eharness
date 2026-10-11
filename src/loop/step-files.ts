@@ -58,8 +58,13 @@ export function fileUrlOf(data: unknown): string | undefined {
 
 export function fileResolution(rt: SessionRuntime): {
   resolve?: NonNullable<InputFilesConfig['resolve']>
+  describe?: NonNullable<InputFilesConfig['describe']>
   sessionId: string
 } {
-  const resolve = rt.agent.config.inputFiles?.resolve
-  return { sessionId: rt.id, ...(resolve === undefined ? {} : { resolve }) }
+  const { resolve, describe } = rt.agent.config.inputFiles ?? {}
+  return {
+    sessionId: rt.id,
+    ...(resolve === undefined ? {} : { resolve }),
+    ...(describe === undefined ? {} : { describe }),
+  }
 }

@@ -441,6 +441,11 @@ normal outcome for the losing writer.
 **Later failure (`committed === true`):** the end path runs with `stop: 'error'`, saves the
 (possibly empty) assistant message, and additionally saves an `eh.notice` kind (level `error`,
 message from `describeError`) — both best effort, since the failure may be the storage itself.
+The empty assistant message is intended: the stream already announced its id (`start`), the
+`eh.notice` and a `regenerate()` chain to it, and projection drops empty messages (spec 03 §6 step 7).
+It has no parts, or only a `step-start`, so a UI must not render an assistant message without a
+visible part (a provider failure on the first step, for example an image sent to a model without
+image input, shows the notice alone).
 `activeTurn` is cleared if the state write succeeds; otherwise the next operation treats the turn
 as stale and recovers it (§9). A `respond` turn that fails after its pending state was consumed
 leaves its approved calls unexecuted; they are answered as interrupted (below and spec 03 §6),

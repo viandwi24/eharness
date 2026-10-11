@@ -31,6 +31,8 @@ export {
   type SubagentCatalog,
   type SubagentChildInfo,
   type SubagentDefinition,
+  type SubagentFile,
+  type SubagentFilesOptions,
   type SubagentOptions,
   type SubagentProgress,
   type SubagentReconcileEntry,

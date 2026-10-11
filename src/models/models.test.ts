@@ -190,3 +190,18 @@ describe('openRouterCatalog', () => {
     expect(openRouterCatalog({ data: 'x' })).toEqual({})
   })
 })
+
+describe('input modalities', () => {
+  test('modelsDevCatalog reads modalities.input, openRouterCatalog architecture.input_modalities', () => {
+    const dev = modelsDevCatalog({
+      p: { models: { m: { modalities: { input: ['Text', 'image', 7] } }, n: {} } },
+    })
+    expect(dev['p/m']?.inputModalities).toEqual(['text', 'image'])
+    expect(dev['p/n']?.inputModalities).toBeUndefined()
+    const or = openRouterCatalog({
+      data: [{ id: 'a/b', architecture: { input_modalities: ['text', 'file'] } }, { id: 'a/c' }],
+    })
+    expect(or['a/b']?.inputModalities).toEqual(['text', 'file'])
+    expect(or['a/c']?.inputModalities).toBeUndefined()
+  })
+})

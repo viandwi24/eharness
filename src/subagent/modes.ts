@@ -6,7 +6,7 @@
  *
  * @see docs/specs/20-subagent-plugin.md
  */
-import { type FlexibleSchema, type JSONValue, tool } from 'ai'
+import { type FileUIPart, type FlexibleSchema, type JSONValue, tool } from 'ai'
 import {
   errorText,
   externalTool,
@@ -31,6 +31,7 @@ import {
 import { addEntry, finishEntry, rebuildEntries, rebuildPark } from './entries.ts'
 import type { Reporter, Scope } from './env.ts'
 import { claimSlot, claimSpawn } from './env.ts'
+import { childInput, resolveChildFiles } from './files.ts'
 import { withChildLifecycle } from './lifecycle.ts'
 import { type AddUsage, type AgentEntry, type AgentSender, nameProblem } from './messaging.ts'
 import { type MessageLike, reportOf, stoppedText, textOf } from './report.ts'
@@ -148,6 +149,7 @@ function startBackground(
     agentName: string
     label: string
     prompt: string
+    files?: FileUIPart[]
     sessionId: string
     parentInfo: ParentInfo
     name: string | undefined
@@ -184,6 +186,7 @@ function launch(a: {
   label: string
   name?: string
   prompt: string
+  files?: FileUIPart[]
   sessionId: string
   parentInfo: ParentInfo
   /** Run marker (first start only). */
@@ -271,7 +274,7 @@ function launch(a: {
             { parent: parentInfo, ...env.directoryOptions(scope.dir) },
           ),
         )
-        const run = child.send(a.prompt, {
+        const run = child.send(childInput(a.prompt, a.files), {
           abortSignal: ac.signal,
           ...(def.maxTurns === undefined ? {} : { maxSteps: def.maxTurns }),
         }) as AnyRun
@@ -313,7 +316,7 @@ export function runTool(scope: Scope, description: string, inputSchema: unknown)
     description,
     inputSchema: inputSchema as FlexibleSchema<AgentInput>,
     async *execute(
-      { subagent_type, description: label, prompt, run_in_background, name },
+      { subagent_type, description: label, prompt, files: fileRefs, run_in_background, name },
       { toolCallId, abortSignal: toolSignal },
     ): AsyncGenerator<SubagentProgress | string, void, undefined> {
       const abortSignal = toolSignal ?? new AbortController().signal
@@ -327,6 +330,19 @@ export function runTool(scope: Scope, description: string, inputSchema: unknown)
       if (turn === undefined) {
         yield 'ERROR: subagents can only be started inside a turn.'
         return
+      }
+      let files: FileUIPart[] = []
+      if (options.files !== undefined) {
+        const resolved = await resolveChildFiles(options.files, fileRefs, {
+          parentSessionId: ctx.session.id,
+          agent: subagent_type,
+          signal: abortSignal,
+        })
+        if ('error' in resolved) {
+          yield resolved.error
+          return
+        }
+        files = resolved.files
       }
       const sessionId = env.childIdOf(ctx.session.id, toolCallId)
       if (options.maxChildren !== undefined) {
@@ -362,6 +378,7 @@ export function runTool(scope: Scope, description: string, inputSchema: unknown)
           agentName: subagent_type,
           label,
           prompt,
+          files,
           sessionId,
           parentInfo,
           name,
@@ -478,7 +495,7 @@ export function runTool(scope: Scope, description: string, inputSchema: unknown)
                 { parent: parentInfo, ...env.directoryOptions(scope.dir) },
               ),
             )
-            const run = child.send(prompt, {
+            const run = child.send(childInput(prompt, files), {
               abortSignal: childAc.signal,
               ...(def.maxTurns === undefined ? {} : { maxSteps: def.maxTurns }),
             }) as AnyRun
@@ -611,6 +628,7 @@ async function startDurable(a: {
   agentName: string
   label: string
   prompt: string
+  files: FileUIPart[]
   name: string | undefined
   parentInfo: ParentInfo
   base: { childSessionId: string; agent: string; description: string }
@@ -647,7 +665,10 @@ async function startDurable(a: {
     if (stored.length === 0) {
       const refused = await claimSlot(scope)
       if (refused !== undefined) return fail(refused)
-      await child.enqueue(a.prompt, { mode: 'queue', id: `${BACKGROUND_KEY}${a.toolCallId}` })
+      await child.enqueue(childInput(a.prompt, a.files), {
+        mode: 'queue',
+        id: `${BACKGROUND_KEY}${a.toolCallId}`,
+      })
     }
     keepOpen = true
   } catch (error) {
@@ -696,6 +717,16 @@ export function parkTool(
       }
       const turn = ctx.turn
       if (turn === undefined) return failNow('ERROR: subagents can only be started inside a turn.')
+      let files: FileUIPart[] = []
+      if (options.files !== undefined) {
+        const resolved = await resolveChildFiles(options.files, input.files, {
+          parentSessionId: ctx.session.id,
+          agent: subagent_type,
+          signal: event.abortSignal,
+        })
+        if ('error' in resolved) return failNow(resolved.error)
+        files = resolved.files
+      }
       const sessionId = env.childIdOf(ctx.session.id, event.toolCallId)
       const refused =
         options.maxChildren === undefined ? undefined : await claimSpawn(scope, sessionId)
@@ -738,6 +769,7 @@ export function parkTool(
           agentName: subagent_type,
           label,
           prompt,
+          files,
           name,
           parentInfo,
           base,
@@ -790,7 +822,7 @@ export function parkTool(
                 onTimeout: { output: text === '' ? '(the subagent returned no text)' : text },
               }
             }
-            const run = child.send(prompt, {
+            const run = child.send(childInput(prompt, files), {
               abortSignal: lease.ac.signal,
               ...(def.maxTurns === undefined ? {} : { maxSteps: def.maxTurns }),
             }) as AnyRun

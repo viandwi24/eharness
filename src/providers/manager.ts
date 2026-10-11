@@ -493,6 +493,9 @@ export function createProviderManager(options: ProviderManagerOptions): Provider
             ? { maxOutputTokens: extra.maxOutputTokens }
             : {}),
           ...(extra.pricing !== undefined ? { pricing: extra.pricing } : {}),
+          ...(extra.inputModalities !== undefined
+            ? { inputModalities: extra.inputModalities }
+            : {}),
         })
       : undefined
     return mergeInfo(catalogInfo(def, modelId), l, extraInfo)

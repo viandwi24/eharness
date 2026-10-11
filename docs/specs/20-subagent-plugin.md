@@ -27,6 +27,7 @@ subagent({
   maxChildren?: number                         // no cap; children one session may start in total (§2.3)
   childSession?: (info: SubagentChildInfo) => Omit<SessionOptions, 'parent'> | undefined  // §2.4
   parentSession?: (sessionId: string) => Omit<SessionOptions, 'parent'> | undefined       // §2.4
+  files?: { resolve(ref, ctx: { parentSessionId, agent, signal }): Promise<SubagentFile | { error: string }> | …; max?: number }  // §2.5
   // tools (one pattern: `false` removes the tool, `{ name }` renames it)
   messageTool?: boolean | { name?: string }    // true: send_message + the `name` field of `agent` (§5); false removes both
   outputTool?: boolean | { name?: string }     // agent_output (§5.7): on when background or messageTool is on; true / { name } forces it on
@@ -72,9 +73,9 @@ pattern, the wait id helper and the message instructions text are internal. The 
 
 ## 2. The tool
 
-Input `{ subagent_type, description, prompt, run_in_background? }`. `subagent_type` is an enum of the
+Input `{ subagent_type, description, prompt, files?, run_in_background? }`. `subagent_type` is an enum of the
 catalog keys, so an unknown type is an invalid tool call the model corrects. `run_in_background`
-exists only with `background`. The description lists the types (resolved once per session, so
+exists only with `background`, `files` only with the `files` option (§2.5). The description lists the types (resolved once per session, so
 the prompt-cache prefix is stable).
 
 - The child session id is deterministic (`childSessionId`). It is opened on `def.agent` with
@@ -219,6 +220,23 @@ the parent / root sessions opened from a child or by the plugin (`parentAgent`, 
 (`agent_output`, park status, directory rebuild, `pendingSubagentApprovals(session, agent)`) use
 `agent.peek()` (spec 05 §2.2): they never run `session.start` hooks of the session they read.
 `pendingSubagentApprovals` entries carry `agent`, `name`, `description` of the child when stored.
+
+### 2.5 Files for the child (`files`)
+
+The child starts with no context, so it never sees the attachments of the user's message. With
+`files: { resolve, max? }` the tool gets an optional `files: string[]` argument: references the model
+passes on exactly as it saw them (see `inputFiles.describe`, spec 03 §6, which tells the model the
+path of each attachment). Per call, before any child starts (so before a slot, a spawn claim or a
+name is taken): at most `max` (default 5) distinct non-empty references, each turned into a file by
+`resolve(ref, { parentSessionId, agent, signal })`, which returns `{ url, mediaType, filename? }` or
+`{ error }` (missing, too large, unsupported type: the app's rules). The files become `file`
+parts after the prompt text of the child's **first** user message (every mode: foreground,
+background, durable `'park'` start). `url` goes through the child's `inputFiles` like any input:
+its protocol must be allowed there and its `resolve` / `describe` apply, so a stored reference
+stays a reference in the child session. Any failure (too many files, `{ error }`, a throwing
+`resolve`) answers the tool call with a readable `ERROR: …` string and starts no child (hard
+rule 6). A resumed child (`send_message`) takes text only. Without the option the field does not
+exist.
 
 ## 3. `'park'` (profile c): nested approvals, ADR-0035
 
@@ -565,7 +583,7 @@ different mechanism, because a park child may run, wait or be answered in anothe
 
 ## 6. Model-visible texts (a change is a minor change)
 
-Tool description (see source `toolDescription`), `SUBAGENT_NO_USER`: "No user is available; this
+Tool description (see source `toolDescription`), the `files` field text (`FILES_FIELD`) and the `ERROR: …` strings of §2.5, `SUBAGENT_NO_USER`: "No user is available; this
 action is not allowed in autonomous mode.", `SUBAGENT_NO_CLIENT`: "No user is available to answer
 this call. Continue without it or choose another approach.", the final output forms of §2.1 and the
 background event text, the `Subagent moved to the background as task …` result and everything in §5 (tool description, result strings, the message instructions, the roster reminder), the `agent_output` description, result strings and the cut notice.

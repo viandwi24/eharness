@@ -52,6 +52,8 @@ export interface ProjectOptions {
   continuing?: string
   /** `config.inputFiles.resolve`: resolves stored file URLs for the model (spec 03 §6). */
   resolveFile?: NonNullable<InputFilesConfig['resolve']>
+  /** `config.inputFiles.describe`: a note after each referenced file of a user message (spec 03 §6). */
+  describeFile?: NonNullable<InputFilesConfig['describe']>
 }
 
 /**
@@ -114,9 +116,12 @@ export async function project(
     for (const piece of splitAtInput(message)) {
       // 6. convert
       const prepared = normalizeDeniedApprovals(normalizeRawInput(stripReasoningTiming(piece)))
-      const resolvedParts = await resolveFileParts(prepared.parts, options.resolveFile, {
-        sessionId: options.sessionId,
-      })
+      const resolvedParts = await resolveFileParts(
+        prepared.parts,
+        options.resolveFile,
+        { sessionId: options.sessionId },
+        prepared.role === 'user' ? options.describeFile : undefined,
+      )
       const converted = await convertToModelMessages(
         [resolvedParts === prepared.parts ? prepared : { ...prepared, parts: resolvedParts }],
         {

@@ -82,6 +82,8 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
     /** 0.8.0: resolve a stored file URL for the model at projection time (spec 03 §6). */
     resolve?: (url: string, ctx: { sessionId: string; mediaType: string; filename?: string }) =>
       Promise<{ mediaType?: string; data?: Uint8Array | string; url?: string } | null | undefined> | …
+    /** 0.9.0: text added after each non-data file of a user message for the model, e.g. its path (spec 03 §6). */
+    describe?: (file: { url: string; mediaType: string; filename?: string }) => string | undefined
   }
   /** Text of a thrown tool error in UI, storage and wire (default String(error), spec 10 §1.1). */
   toolErrorText?: (error: unknown, call: { toolName: string; toolCallId: string }) => string

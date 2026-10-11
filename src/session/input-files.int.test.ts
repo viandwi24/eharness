@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import { isHarnessError } from '../errors.ts'
+import type { ModelInfo } from '../models/types.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { spyMessages, spyState } from './test-kit.ts'
 
@@ -149,5 +150,87 @@ describe('R15: inputFiles.resolve', () => {
       expect(result.stop).toBe('complete')
       expect(JSON.stringify(model.prompts[0])).toContain('file unavailable')
     }
+  })
+})
+
+describe('inputFiles.describe', () => {
+  const config = {
+    protocols: ['data:', 'https:', 'library:'],
+    resolve: () => ({ data: 'aGk=' }),
+    describe: (f: { url: string; filename?: string }) =>
+      `[attachment ${f.filename ?? ''} path: ${f.url}]`,
+  }
+
+  test('a note with the reference follows each referenced file of the user message', async () => {
+    const model = scriptedModel([{ text: 'ok' }, { text: 'ok' }])
+    const { agent, messages } = setup({ model, inputFiles: config })
+    const session = agent.session('s1')
+    await session.send(withFile('library:///uploads/a.png')).result
+    const content = (model.prompts[0]?.find((m) => m.role === 'user')?.content ?? []) as Array<{
+      type: string
+      text?: string
+    }>
+    expect(content.map((p) => p.type)).toEqual(['text', 'file', 'text'])
+    expect(content[2]?.text).toBe('[attachment x.png path: library:///uploads/a.png]')
+    // storage keeps only the reference: no note, no bytes
+    const stored = JSON.stringify(await session.messages())
+    expect(stored).not.toContain('attachment x.png')
+    expect(stored).not.toContain('aGk=')
+    void messages
+  })
+
+  test('data URLs get no note, and without describe nothing is added', async () => {
+    const model = scriptedModel([{ text: 'ok' }])
+    const { agent } = setup({ model, inputFiles: config })
+    await agent.session('s1').send(withFile('data:image/png;base64,aGk=')).result
+    const content = (model.prompts[0]?.find((m) => m.role === 'user')?.content ?? []) as unknown[]
+    expect(content).toHaveLength(2)
+    const plain = scriptedModel([{ text: 'ok' }])
+    const other = setup({
+      model: plain,
+      inputFiles: { protocols: config.protocols, resolve: config.resolve },
+    })
+    await other.agent.session('s1').send(withFile('library:///uploads/a.png')).result
+    expect(plain.prompts[0]?.find((m) => m.role === 'user')?.content).toHaveLength(2)
+  })
+})
+
+describe('input modalities of the model catalog', () => {
+  const png = withFile('data:image/png;base64,aGk=')
+
+  test('an image for a text-only model is refused before anything is stored, with a readable error', async () => {
+    const model = scriptedModel([{ text: 'never' }])
+    const { agent, messages } = setup({
+      model,
+      models: { 'mock/scripted': { inputModalities: ['text'] } },
+    })
+    const result = await agent.session('s1').send(png).result
+    expect(result.stop).toBe('error')
+    expect(result.error?.code).toBe('EH_INVALID_INPUT')
+    expect(result.error?.message).toContain('does not accept image input')
+    expect(result.error?.message).toContain('mock/scripted')
+    expect(model.calls).toHaveLength(0)
+    expect(messages.saves).toHaveLength(0)
+  })
+
+  test('unknown or supported modalities and text files pass', async () => {
+    const catalogs: Array<Record<string, ModelInfo> | undefined> = [
+      undefined,
+      {},
+      { scripted: {} },
+      { 'mock/scripted': { inputModalities: ['text', 'image'] } },
+    ]
+    for (const models of catalogs) {
+      const model = scriptedModel([{ text: 'ok' }])
+      const { agent } = setup({ model, ...(models === undefined ? {} : { models }) })
+      expect((await agent.session('s1').send(png).result).stop).toBe('complete')
+    }
+    const model = scriptedModel([{ text: 'ok' }])
+    const { agent } = setup({ model, models: { scripted: { inputModalities: ['text'] } } })
+    const csv = {
+      text: 'look',
+      files: [{ type: 'file' as const, mediaType: 'text/csv', url: 'data:text/csv;base64,YSxi' }],
+    }
+    expect((await agent.session('s1').send(csv).result).stop).toBe('complete')
   })
 })

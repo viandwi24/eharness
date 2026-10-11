@@ -384,6 +384,14 @@ export interface InputFilesConfig {
     url: string,
     ctx: { sessionId: string; mediaType: string; filename?: string },
   ) => Promise<ResolveInputFile | null | undefined> | ResolveInputFile | null | undefined
+  /**
+   * Tell the model where a file lives (spec 03 §6). Called at projection time for every `file`
+   * part of a user message or steer whose URL is not a `data:` URL (a reference such as
+   * `library:///uploads/x.png`); a returned string is added as a text part right after the file,
+   * so the model can pass the reference on (for example to a subagent). `undefined` adds nothing.
+   * The stored message is never changed; token estimates do not call it.
+   */
+  describe?: (file: { url: string; mediaType: string; filename?: string }) => string | undefined
 }
 
 /** A file resolved by {@link InputFilesConfig.resolve}: exactly one of `data` and `url`. */

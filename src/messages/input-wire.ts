@@ -14,7 +14,11 @@ import type { InputPartData } from './types.ts'
  */
 export async function inputWireMessage(
   data: InputPartData,
-  files?: { resolve?: InputFilesConfig['resolve']; sessionId: string },
+  files?: {
+    resolve?: InputFilesConfig['resolve']
+    describe?: InputFilesConfig['describe']
+    sessionId: string
+  },
 ): Promise<ModelMessage[]> {
   const parts: Array<{ type: 'text'; text: string } | NonNullable<InputPartData['files']>[number]> =
     await resolveFileParts(
@@ -24,6 +28,7 @@ export async function inputWireMessage(
       }>,
       files?.resolve,
       { sessionId: files?.sessionId ?? '' },
+      files?.describe,
     )
   return convertToModelMessages([{ role: 'user', parts }])
 }

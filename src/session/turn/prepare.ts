@@ -1,11 +1,13 @@
 import type { ActiveTurn } from '../../agent/session-types.ts'
 import { HarnessError, isHarnessError, lockFailure } from '../../errors.ts'
 import { hookFailed, runHook } from '../../internal/hook-run.ts'
+import { describeModel } from '../../internal/model.ts'
 import { observeSpan } from '../../internal/observe.ts'
 import { mergeSettings } from '../../loop/step-settings.ts'
 import { createKindMessage } from '../../messages/kinds.ts'
 import { INPUT_CHECK_FAILED } from '../../messages/texts.ts'
 import type { HarnessUIMessage } from '../../messages/types.ts'
+import { lookupModel, unsupportedInputMessage } from '../../models/catalog.ts'
 import { DEFAULT_OUTPUT_TOOL, prepareTurnOutput, withOutputTool } from '../../output/turn.ts'
 import { resolveTurnRegistry } from '../../registry/turn.ts'
 import { buildUserMessage, type NormalizedInput, normalizeInput } from '../input.ts'
@@ -383,6 +385,28 @@ export async function prepare(t: TurnCtx): Promise<Prepared> {
     }
   }
   if (t.controller.signal.aborted) return { kind: 'aborted' }
+
+  // 9b. input modalities: a file the model cannot read fails here, before the commit point, with a
+  //     readable error instead of the provider's (spec 12 §1.1)
+  if (normalized !== undefined && t.config.models !== undefined) {
+    const files = normalized.parts.filter((p) => p.type === 'file') as Array<{
+      mediaType: string
+      filename?: string
+    }>
+    if (files.length > 0) {
+      const modelName = describeModel(t.info.model)
+      const refused = unsupportedInputMessage(
+        lookupModel(t.config.models, t.info.model),
+        modelName,
+        files,
+      )
+      if (refused !== undefined) {
+        throw new HarnessError('EH_INVALID_INPUT', refused.message, {
+          details: { reason: 'unsupported-modality', modality: refused.modality, model: modelName },
+        })
+      }
+    }
+  }
 
   // 10. ids with the floor: rewind < recovery notice < user < assistant; then `start` (a
   //     continuation keeps A's id and writes `start` after the commit point, with A')

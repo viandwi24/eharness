@@ -19,6 +19,7 @@ export interface ModelInfo {
   contextWindow?: number         // total window in tokens
   maxOutputTokens?: number
   pricing?: ModelPricing         // §2
+  inputModalities?: string[]     // §1.1: 'text' | 'image' | 'pdf' | 'audio' | 'video' (absent = unknown)
 }
 ```
 
@@ -42,6 +43,21 @@ cached by the application): keys are the OpenRouter ids; `context_length` → `c
 `top_provider.max_completion_tokens` → `maxOutputTokens`, `pricing.prompt` / `completion` /
 `input_cache_read` (USD per token, strings) → rates per 1M tokens. A negative price (variable
 pricing) leaves the model unpriced. Like `modelsDevCatalog` it is pure: no fetching or caching.
+
+### 1.1 Input modalities (0.9.0)
+
+`modelsDevCatalog` maps `modalities.input` and `openRouterCatalog` `architecture.input_modalities`
+(lower-cased; OpenRouter's `file` counts as `pdf`) to `inputModalities`; an app can set it by hand
+or through `ExtraModel`. When the catalog knows the model's modalities, the turn checks the file
+parts of its **new input** after `turn.prepare` (so a hook that switches the model counts) and
+before the commit point: a file of an `image/*`, `application/pdf`, `audio/*` or `video/*` type
+whose modality the model lacks fails the turn with `EH_INVALID_INPUT`, `details: { reason:
+'unsupported-modality', modality, model }` and the message `The model "<model>" does not accept
+<modality> input (it supports: …), so "<file>" cannot be sent. Remove the attachment or pick a
+model that accepts <modality> input.` Nothing is stored (spec 05 §3 early failure). Text-like files
+(`text/*`, `application/json`, …) are never checked; an unknown model or a catalog without
+`inputModalities` never blocks (the provider decides). Files of earlier turns are not re-checked:
+after a switch to a model without image input the provider's own error still applies to history.
 
 ## 2. Pricing
 

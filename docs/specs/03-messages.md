@@ -302,7 +302,11 @@ Details (normative for the implementation in `src/messages/project.ts`):
   `data:` URL with the resolved value (`{ data }` bytes / base64 become a `data:` URL, `{ url }` is
   used as is), keeping the AI SDK `FileUIPart` shape; `undefined` leaves the part, `null` or a
   throw replaces it with the `FILE_UNAVAILABLE` text. The same applies to files of
-  `data-eh.input` steers. Storage is never changed; token estimates and summarizer transcripts
+  `data-eh.input` steers. With `config.inputFiles.describe` (0.9.0) the text it returns for a
+  non-`data:` file of a **user** message (or steer) is added as a text part right after the file part
+  (resolved or not; not after a file turned into `FILE_UNAVAILABLE`), so the model learns the
+  reference (for example a path it can pass to a subagent, spec 20 §2.5); `undefined` or a throw
+  adds nothing. Storage is never changed; token estimates and summarizer transcripts
   (projections without `resolveFile`) do not call the resolver.
 - Kind messages whose kind is not registered, or whose projection returns `null` / an empty
   result, are dropped. `role: 'system'` messages are never projected (spec 02 §5).

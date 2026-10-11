@@ -37,8 +37,9 @@ export async function resolveFileParts<P extends PartLike>(
   parts: readonly P[],
   resolver: FileResolver | undefined,
   ctx: { sessionId: string },
+  describe?: InputFilesConfig['describe'],
 ): Promise<P[]> {
-  if (resolver === undefined) return parts as P[]
+  if (resolver === undefined && describe === undefined) return parts as P[]
   const out: P[] = []
   for (const part of parts) {
     if (
@@ -51,23 +52,29 @@ export async function resolveFileParts<P extends PartLike>(
       continue
     }
     const filename = typeof part.filename === 'string' ? part.filename : undefined
+    const file = {
+      url: part.url,
+      mediaType: part.mediaType,
+      ...(filename === undefined ? {} : { filename }),
+    }
     let resolved: ResolveInputFile | null | undefined
     try {
-      resolved = await resolver(part.url, {
-        sessionId: ctx.sessionId,
-        mediaType: part.mediaType,
-        ...(filename === undefined ? {} : { filename }),
-      })
+      resolved =
+        resolver === undefined
+          ? undefined
+          : await resolver(file.url, {
+              sessionId: ctx.sessionId,
+              mediaType: file.mediaType,
+              ...(filename === undefined ? {} : { filename }),
+            })
     } catch {
       resolved = null
     }
-    if (resolved === undefined) {
-      out.push(part)
-      continue
-    }
     const mediaType = resolved?.mediaType ?? part.mediaType
-    const url = resolved === null ? undefined : urlOfResolved(resolved, mediaType)
-    if (url === undefined) {
+    const url =
+      resolved === undefined || resolved === null ? undefined : urlOfResolved(resolved, mediaType)
+    if (resolved === undefined) out.push(part)
+    else if (url === undefined) {
       out.push({
         type: 'text',
         text: FILE_UNAVAILABLE.replace('{mediaType}', part.mediaType)
@@ -75,8 +82,14 @@ export async function resolveFileParts<P extends PartLike>(
           .replace(' ]', ']'),
       } as unknown as P)
       continue
+    } else out.push({ ...part, url, mediaType })
+    let note: string | undefined
+    try {
+      note = describe?.(file)
+    } catch {
+      note = undefined
     }
-    out.push({ ...part, url, mediaType })
+    if (note !== undefined && note !== '') out.push({ type: 'text', text: note } as unknown as P)
   }
   return out
 }

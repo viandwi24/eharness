@@ -44,6 +44,12 @@ export function lookupModel(
   return undefined
 }
 
+function modalitiesOf(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const list = value.filter((v): v is string => typeof v === 'string' && v !== '')
+  return list.length > 0 ? list.map((v) => v.toLowerCase()) : undefined
+}
+
 const num = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined
 
@@ -105,7 +111,11 @@ export function modelsDevCatalog(data: unknown): Record<string, ModelInfo> {
     if (models === null || typeof models !== 'object') continue
     for (const [modelId, raw] of Object.entries(models as Record<string, unknown>)) {
       if (raw === null || typeof raw !== 'object') continue
-      const m = raw as { limit?: Record<string, unknown>; cost?: unknown }
+      const m = raw as {
+        limit?: Record<string, unknown>
+        cost?: unknown
+        modalities?: { input?: unknown }
+      }
       const info: ModelInfo = {}
       const context = num(m.limit?.context)
       const output = num(m.limit?.output)
@@ -113,11 +123,47 @@ export function modelsDevCatalog(data: unknown): Record<string, ModelInfo> {
       if (output !== undefined && output > 0) info.maxOutputTokens = output
       const pricing = pricingOf(m.cost)
       if (pricing !== undefined) info.pricing = pricing
+      const modalities = modalitiesOf(m.modalities?.input)
+      if (modalities !== undefined) info.inputModalities = modalities
       catalog[`${providerId}/${modelId}`] = info
       if (!Object.hasOwn(catalog, modelId)) catalog[modelId] = info
     }
   }
   return catalog
+}
+
+/** Modality a file media type needs, or `undefined` when it is read as text or not checked. */
+function modalityOfMediaType(mediaType: string): 'image' | 'pdf' | 'audio' | 'video' | undefined {
+  const type = mediaType.toLowerCase().split(';')[0]?.trim() ?? ''
+  if (type.startsWith('image/')) return 'image'
+  if (type === 'application/pdf') return 'pdf'
+  if (type.startsWith('audio/')) return 'audio'
+  if (type.startsWith('video/')) return 'video'
+  return undefined
+}
+
+/**
+ * The first file of `files` whose modality the model does not accept, as a readable message, or
+ * `undefined` (accepted, or the model's modalities are unknown). Text-like files are never checked.
+ */
+export function unsupportedInputMessage(
+  info: ModelInfo | undefined,
+  modelName: string,
+  files: ReadonlyArray<{ mediaType: string; filename?: string }>,
+): { modality: string; message: string } | undefined {
+  const supported = info?.inputModalities
+  if (supported === undefined) return undefined
+  for (const file of files) {
+    const modality = modalityOfMediaType(file.mediaType)
+    if (modality === undefined) continue
+    if (supported.includes(modality) || (modality === 'pdf' && supported.includes('file'))) continue
+    const what = file.filename === undefined ? `a ${file.mediaType} file` : `"${file.filename}"`
+    return {
+      modality,
+      message: `The model "${modelName}" does not accept ${modality} input (it supports: ${supported.join(', ')}), so ${what} cannot be sent. Remove the attachment or pick a model that accepts ${modality} input.`,
+    }
+  }
+  return undefined
 }
 
 const perMillion = (perToken: number): number => Math.round(perToken * 1e12) / 1e6
@@ -167,6 +213,10 @@ export function openRouterCatalog(data: unknown): Record<string, ModelInfo> {
         ...(cacheRead !== undefined ? { cacheRead: perMillion(cacheRead) } : {}),
       }
     }
+    const modalities = modalitiesOf(
+      (raw.architecture as { input_modalities?: unknown } | null)?.input_modalities,
+    )
+    if (modalities !== undefined) info.inputModalities = modalities
     catalog[raw.id] = info
   }
   return catalog

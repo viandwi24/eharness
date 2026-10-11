@@ -41,6 +41,30 @@ export interface SubagentChildInfo {
   depth: number
 }
 
+/** A file handed to a child: the `FileUIPart` fields the child's first message carries. */
+export interface SubagentFile {
+  /** A URL or reference the child's `inputFiles` accepts (protocol allowed, resolved for its model). */
+  url: string
+  mediaType: string
+  filename?: string
+}
+
+/** The `files` argument of the `agent` tool (spec 20 §2.4). */
+export interface SubagentFilesOptions {
+  /**
+   * Turn one reference the model passed (a path or `library:` ref as shown in the conversation)
+   * into a file for the child, or refuse it with a readable `{ error }` (missing, too large,
+   * unsupported type). A throw becomes an error text too; the call then fails without starting a
+   * child.
+   */
+  resolve: (
+    ref: string,
+    ctx: { parentSessionId: string; agent: string; signal: AbortSignal },
+  ) => Promise<SubagentFile | { error: string }> | SubagentFile | { error: string }
+  /** Most files per call. Default 5. */
+  max?: number
+}
+
 /** Default cap of the report injected into the parent when a background child finishes. */
 export const AGENT_REPORT_MAX_CHARS = 16000
 
@@ -242,6 +266,11 @@ export interface SubagentOptions {
    * `agent_output`.
    */
   maxReportChars?: number
+  /**
+   * Offer a `files` argument on the `agent` tool: references the model passes on become file
+   * parts of the child's first user message. Off unless set (spec 20 §2.4).
+   */
+  files?: SubagentFilesOptions
   /** Throttling of `send_message` (spec 20 §5.4). */
   messageLimits?: SubagentMessageLimits
   /** `'park'`: timeout of the parent's wait in ms. Default none. */
@@ -309,6 +338,7 @@ export interface AgentInput {
   subagent_type: string
   description: string
   prompt: string
+  files?: string[]
   run_in_background?: boolean
   name?: string
 }
