@@ -17,6 +17,7 @@ export async function inputWireMessage(
   files?: {
     resolve?: InputFilesConfig['resolve']
     describe?: InputFilesConfig['describe']
+    refuse?: (file: { mediaType: string; filename?: string }) => string | undefined
     sessionId: string
   },
 ): Promise<ModelMessage[]> {
@@ -29,6 +30,7 @@ export async function inputWireMessage(
       files?.resolve,
       { sessionId: files?.sessionId ?? '' },
       files?.describe,
+      files?.refuse,
     )
   return convertToModelMessages([{ role: 'user', parts }])
 }

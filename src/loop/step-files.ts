@@ -1,9 +1,10 @@
 /**
  * File parts on the wire (internal): degrading expired file URLs and resolving input files.
  */
-import type { ModelMessage } from 'ai'
+import type { LanguageModel, ModelMessage } from 'ai'
 import type { InputFilesConfig } from '../agent/types.ts'
 import { FILE_UNAVAILABLE } from '../messages/texts.ts'
+import { fileRefuser } from '../models/catalog.ts'
 import type { SessionRuntime } from '../session/runtime.ts'
 
 /**
@@ -56,9 +57,13 @@ export function fileUrlOf(data: unknown): string | undefined {
   return undefined
 }
 
-export function fileResolution(rt: SessionRuntime): {
+export function fileResolution(
+  rt: SessionRuntime,
+  model?: LanguageModel,
+): {
   resolve?: NonNullable<InputFilesConfig['resolve']>
   describe?: NonNullable<InputFilesConfig['describe']>
+  refuse?: (file: { mediaType: string; filename?: string }) => string | undefined
   sessionId: string
 } {
   const { resolve, describe } = rt.agent.config.inputFiles ?? {}
@@ -66,5 +71,8 @@ export function fileResolution(rt: SessionRuntime): {
     sessionId: rt.id,
     ...(resolve === undefined ? {} : { resolve }),
     ...(describe === undefined ? {} : { describe }),
+    ...(model === undefined || rt.agent.config.models === undefined
+      ? {}
+      : { refuse: fileRefuser(rt.agent.config.models, () => model) }),
   }
 }

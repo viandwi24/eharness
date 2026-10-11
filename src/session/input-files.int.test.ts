@@ -1,9 +1,14 @@
 import { describe, expect, test } from 'bun:test'
+import { tool } from 'ai'
+import { z } from 'zod/v4'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
 import { isHarnessError } from '../errors.ts'
 import type { ModelInfo } from '../models/types.ts'
+import { inMemoryInbox } from '../storage/memory.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
+import { until } from '../testing/test-utils.ts'
+import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 import { spyMessages, spyState } from './test-kit.ts'
 
 const silent = { debug() {}, info() {}, warn() {}, error() {} }
@@ -232,5 +237,208 @@ describe('input modalities of the model catalog', () => {
       files: [{ type: 'file' as const, mediaType: 'text/csv', url: 'data:text/csv;base64,YSxi' }],
     }
     expect((await agent.session('s1').send(csv).result).stop).toBe('complete')
+  })
+})
+
+describe('files the current model cannot take (history, enqueue, steer)', () => {
+  const textOnly = { 'mock/scripted': { inputModalities: ['text'] } }
+  const png = withFile('data:image/png;base64,aGk=', 'what is this?')
+  const note = (id: string) =>
+    `[Attachment x.png (image/png) not shown: the model ${id} does not accept image input]`
+  const userContent = (prompt: unknown): Array<{ type: string; text?: string }> =>
+    ((prompt as Array<{ role: string; content: unknown }>).find((m) => m.role === 'user')
+      ?.content ?? []) as Array<{ type: string; text?: string }>
+
+  /** The image went in while the model took images; the session then runs on a text-only model. */
+  async function brokenHistory(files: Partial<HarnessAgentConfig> = {}, input = png) {
+    const storage = { messages: defaultMemoryMessages(), state: defaultMemoryState() }
+    const first = defineHarnessAgent({
+      model: scriptedModel([{ text: 'a picture' }]),
+      contextWindow: 100_000,
+      storage,
+      logger: silent,
+      ...files,
+    })
+    expect((await first.session('s1').send(input).result).stop).toBe('complete')
+    return storage
+  }
+
+  test('history: an old image becomes a note for a text-only model; storage stays intact', async () => {
+    const storage = await brokenHistory()
+    const model = scriptedModel([{ text: 'ok' }])
+    const agent = defineHarnessAgent({
+      model,
+      contextWindow: 100_000,
+      storage,
+      logger: silent,
+      models: textOnly,
+    })
+    const session = agent.session('s1')
+    const result = await session.send('and now?').result
+    expect(result.stop).toBe('complete')
+    const first = userContent(model.prompts[0])
+    expect(first.map((p) => p.type)).toEqual(['text', 'text'])
+    expect(first[1]?.text).toBe(note('mock/scripted'))
+    expect(JSON.stringify(model.prompts[0])).not.toContain('aGk=')
+    const stored = JSON.stringify(await session.messages())
+    expect(stored).toContain('data:image/png;base64,aGk=')
+    expect(stored).not.toContain('not shown')
+  })
+
+  test('history: unknown modalities and accepting models keep the file', async () => {
+    const catalogs: Array<Record<string, ModelInfo> | undefined> = [
+      undefined,
+      {},
+      { 'mock/scripted': { contextWindow: 1000 } },
+      { 'mock/scripted': { inputModalities: ['text', 'image'] } },
+    ]
+    for (const models of catalogs) {
+      const storage = await brokenHistory()
+      const model = scriptedModel([{ text: 'ok' }])
+      const agent = defineHarnessAgent({
+        model,
+        contextWindow: 100_000,
+        storage,
+        logger: silent,
+        ...(models === undefined ? {} : { models }),
+      })
+      await agent.session('s1').send('and now?').result
+      expect(userContent(model.prompts[0]).map((p) => p.type)).toEqual(['text', 'file'])
+    }
+  })
+
+  test('history: a library reference is replaced before it is resolved', async () => {
+    const inputFiles = {
+      protocols: ['data:', 'https:', 'library:'],
+      resolve: () => ({ data: new Uint8Array([104, 105]), mediaType: 'image/png' }),
+    }
+    const storage = await brokenHistory({ inputFiles }, withFile('library://uploads/7'))
+    const seen: string[] = []
+    const model = scriptedModel([{ text: 'ok' }])
+    const agent = defineHarnessAgent({
+      model,
+      contextWindow: 100_000,
+      storage,
+      logger: silent,
+      models: textOnly,
+      inputFiles: {
+        ...inputFiles,
+        resolve: (url) => {
+          seen.push(url)
+          return { data: 'aGk=' }
+        },
+      },
+    })
+    const result = await agent.session('s1').send('and now?').result
+    expect(result.stop).toBe('complete')
+    expect(seen).toEqual([])
+    expect(userContent(model.prompts[0])[1]?.text).toBe(note('mock/scripted'))
+  })
+
+  test('send() still refuses a new file (the caller reads the error)', async () => {
+    const { agent } = setup({ model: scriptedModel([{ text: 'x' }]), models: textOnly })
+    const result = await agent.session('s1').send(png).result
+    expect(result.error?.code).toBe('EH_INVALID_INPUT')
+  })
+
+  for (const durable of [false, true]) {
+    for (const mode of ['queue', 'collect'] as const) {
+      test(`enqueue(${mode}, ${durable ? 'durable' : 'local'}) keeps the text and shows the model a note`, async () => {
+        const model = scriptedModel([{ text: 'ok' }, { text: 'ok' }])
+        const storage = {
+          messages: defaultMemoryMessages(),
+          state: defaultMemoryState(),
+          ...(durable ? { inbox: inMemoryInbox() } : {}),
+        }
+        const agent = defineHarnessAgent({
+          model,
+          contextWindow: 100_000,
+          storage,
+          logger: silent,
+          models: textOnly,
+          inbox: { pollMs: 0 },
+        })
+        const session = agent.session('s1')
+        await session.enqueue(png, { mode })
+        await until('turn ran', () => model.prompts.length === 1)
+        const content = userContent(model.prompts[0])
+        expect(content[0]?.text).toBe('what is this?')
+        expect(content.at(-1)?.text).toBe(note('mock/scripted'))
+        expect(content.some((p) => p.type === 'file')).toBe(false)
+        // the next turn works too
+        const next = await session.send('and now?').result
+        expect(next.stop).toBe('complete')
+      })
+    }
+  }
+
+  test('steer: an image delivered at a step boundary reaches the model as a note', async () => {
+    const model = scriptedModel([
+      { toolCalls: [{ toolName: 'noop', input: {} }], delayMs: 20 },
+      { text: 'done' },
+    ])
+    const { agent } = setup({
+      model,
+      models: textOnly,
+      tools: {
+        noop: tool({ description: 'x', inputSchema: z.object({}), execute: async () => 'ok' }),
+      },
+    })
+    const session = agent.session('s1')
+    const main = session.send('go')
+    await new Promise((r) => setTimeout(r, 5))
+    const steer = session.send(png, { ifBusy: 'steer' })
+    expect(await steer.delivery).toBe('step')
+    expect((await main.result).stop).toBe('complete')
+    const wire = JSON.stringify(model.prompts[1])
+    expect(wire).toContain('what is this?')
+    expect(wire).toContain('not shown')
+    expect(wire).not.toContain('aGk=')
+  })
+})
+
+describe('text-like files are projected as text', () => {
+  const csv = (data: string, filename = 'sales.csv') => ({
+    text: 'sum it',
+    files: [{ type: 'file' as const, mediaType: 'text/csv', url: data, filename }],
+  })
+  const content = (prompt: unknown) =>
+    ((prompt as Array<{ role: string; content: unknown }>).find((m) => m.role === 'user')
+      ?.content ?? []) as Array<{ type: string; text?: string }>
+
+  test('a data URL becomes a text part with a header; storage keeps the file part', async () => {
+    const model = scriptedModel([{ text: 'ok' }, { text: 'ok' }])
+    const { agent } = setup({ model })
+    const session = agent.session('s1')
+    await session.send(csv(`data:text/csv;base64,${btoa('a,b\n1,2')}`)).result
+    await session.send('again').result
+    for (const prompt of model.prompts) {
+      const parts = content(prompt)
+      expect(parts.some((p) => p.type === 'file')).toBe(false)
+      expect(parts[1]?.text).toBe('[Attachment sales.csv (text/csv, 7 bytes)]\na,b\n1,2')
+    }
+    expect(JSON.stringify(await session.messages())).toContain('data:text/csv;base64,')
+  })
+
+  test('a library reference resolved to bytes is inlined; long text is cut with a note', async () => {
+    const model = scriptedModel([{ text: 'ok' }])
+    const { agent } = setup({
+      model,
+      inputFiles: {
+        protocols: ['data:', 'library:'],
+        resolve: () => ({ data: new TextEncoder().encode('x'.repeat(100_050)) }),
+      },
+    })
+    await agent.session('s1').send(csv('library://uploads/big.csv')).result
+    const text = content(model.prompts[0])[1]?.text ?? ''
+    expect(text.startsWith('[Attachment sales.csv (text/csv, 100050 bytes)]\nxxx')).toBe(true)
+    expect(text).toContain('[truncated: showing the first 100000 of 100050 characters]')
+  })
+
+  test('images stay file parts', async () => {
+    const model = scriptedModel([{ text: 'ok' }])
+    const { agent } = setup({ model })
+    await agent.session('s1').send(withFile('data:image/png;base64,aGk=')).result
+    expect(content(model.prompts[0]).map((p) => p.type)).toEqual(['text', 'file'])
   })
 })

@@ -20,7 +20,7 @@ export async function beginStep(st: StepsCtx): Promise<LoopResult | undefined> {
     if (st.inbox !== undefined) st.external.push(...(await st.inbox.take()))
     for (const item of st.external) {
       st.input.write({ type: 'data-eh.input', data: structuredClone(item.data) })
-      st.wire.push(...(await inputWireMessage(item.data, fileResolution(st.input.rt))))
+      st.wire.push(...(await inputWireMessage(item.data, fileResolution(st.input.rt, st.model))))
       st.input.delivered?.(item)
     }
     st.external = []

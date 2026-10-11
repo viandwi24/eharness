@@ -387,8 +387,15 @@ export async function prepare(t: TurnCtx): Promise<Prepared> {
   if (t.controller.signal.aborted) return { kind: 'aborted' }
 
   // 9b. input modalities: a file the model cannot read fails here, before the commit point, with a
-  //     readable error instead of the provider's (spec 12 §1.1)
-  if (normalized !== undefined && t.config.models !== undefined) {
+  //     readable error instead of the provider's (spec 12 §1.1). Input of the inbox (enqueue,
+  //     collect) and steers have no caller to read the error: they are accepted, and projection
+  //     shows the model a note.
+  if (
+    normalized !== undefined &&
+    t.config.models !== undefined &&
+    t.op.inbox === undefined &&
+    t.op.submitted === undefined
+  ) {
     const files = normalized.parts.filter((p) => p.type === 'file') as Array<{
       mediaType: string
       filename?: string

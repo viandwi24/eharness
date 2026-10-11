@@ -142,6 +142,21 @@ function modalityOfMediaType(mediaType: string): 'image' | 'pdf' | 'audio' | 'vi
   return undefined
 }
 
+/** The modality of `file` the model does not accept, or `undefined` (accepted or unknown). */
+function refusedModality(
+  info: ModelInfo | undefined,
+  file: { mediaType: string },
+): { modality: string; supported: string[] } | undefined {
+  const supported = info?.inputModalities
+  if (supported === undefined) return undefined
+  const modality = modalityOfMediaType(file.mediaType)
+  if (modality === undefined) return undefined
+  if (supported.includes(modality) || (modality === 'pdf' && supported.includes('file'))) {
+    return undefined
+  }
+  return { modality, supported }
+}
+
 /**
  * The first file of `files` whose modality the model does not accept, as a readable message, or
  * `undefined` (accepted, or the model's modalities are unknown). Text-like files are never checked.
@@ -151,12 +166,10 @@ export function unsupportedInputMessage(
   modelName: string,
   files: ReadonlyArray<{ mediaType: string; filename?: string }>,
 ): { modality: string; message: string } | undefined {
-  const supported = info?.inputModalities
-  if (supported === undefined) return undefined
   for (const file of files) {
-    const modality = modalityOfMediaType(file.mediaType)
-    if (modality === undefined) continue
-    if (supported.includes(modality) || (modality === 'pdf' && supported.includes('file'))) continue
+    const refused = refusedModality(info, file)
+    if (refused === undefined) continue
+    const { modality, supported } = refused
     const what = file.filename === undefined ? `a ${file.mediaType} file` : `"${file.filename}"`
     return {
       modality,
@@ -164,6 +177,36 @@ export function unsupportedInputMessage(
     }
   }
   return undefined
+}
+
+/**
+ * The text that stands in for a file the model does not accept (projection of history, replaced
+ * input of background paths), or `undefined` when the file is accepted or the modalities are
+ * unknown. Never stored.
+ */
+export function unsupportedFileNote(
+  info: ModelInfo | undefined,
+  modelName: string,
+  file: { mediaType: string; filename?: string },
+): string | undefined {
+  const refused = refusedModality(info, file)
+  if (refused === undefined) return undefined
+  const name = file.filename === undefined || file.filename === '' ? 'file' : file.filename
+  return `[Attachment ${name} (${file.mediaType}) not shown: the model ${modelName} does not accept ${refused.modality} input]`
+}
+
+/**
+ * A `refuse` function for projection: the note of a file the (current) model cannot take, from the
+ * catalog's `inputModalities`. `model` is read at every call (a turn can switch models).
+ */
+export function fileRefuser(
+  catalog: ModelCatalog,
+  model: () => LanguageModel,
+): (file: { mediaType: string; filename?: string }) => string | undefined {
+  return (file) => {
+    const current = model()
+    return unsupportedFileNote(lookupModel(catalog, current), describeModel(current), file)
+  }
 }
 
 const perMillion = (perToken: number): number => Math.round(perToken * 1e12) / 1e6

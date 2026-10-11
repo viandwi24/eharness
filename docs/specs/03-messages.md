@@ -308,6 +308,20 @@ Details (normative for the implementation in `src/messages/project.ts`):
   reference (for example a path it can pass to a subagent, spec 20 §2.5); `undefined` or a throw
   adds nothing. Storage is never changed; token estimates and summarizer transcripts
   (projections without `resolveFile`) do not call the resolver.
+- Text-like files (0.9.0): a `file` part of type `text/*`, `application/json`, `application/xml`,
+  `application/yaml` or `+json` / `+xml` whose bytes are known (a `data:` URL, or a resolved
+  `{ data }` / `data:` result) is projected as a **text** part
+  `[Attachment <name> (<type>, <n> bytes)]` + a newline + the decoded content, cut at 100 000
+  characters with a `[truncated: …]` line. Some upstreams reject file parts of such types
+  ("content type must be text or image_url"), which would fail every later turn. Storage keeps
+  the file part. A non-`data:` URL the resolver turns into a plain `{ url }` stays a file part.
+- Files the current model cannot take (0.9.0): with `ctx.refuseFile` (built from `config.models`,
+  spec 12 §1.1) a `file` part whose modality the **current** step model lacks (`inputModalities`
+  known; unknown never changes anything) is replaced by the text `[Attachment <name> (<mediaType>)
+  not shown: the model <id> does not accept <modality> input]` before it is resolved, for `data:`
+  URLs and references alike, in stored messages and `data-eh.input` steers. Storage is never
+  changed, so a session keeps working after a model switch and the file returns when a model that
+  accepts it is used. Projections without a model (token estimates) are unchanged.
 - Kind messages whose kind is not registered, or whose projection returns `null` / an empty
   result, are dropped. `role: 'system'` messages are never projected (spec 02 §5).
 - Step 3 answers `approval-requested` parts unless they belong to `ctx.pending` (same message id

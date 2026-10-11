@@ -56,8 +56,19 @@ whose modality the model lacks fails the turn with `EH_INVALID_INPUT`, `details:
 <modality> input (it supports: …), so "<file>" cannot be sent. Remove the attachment or pick a
 model that accepts <modality> input.` Nothing is stored (spec 05 §3 early failure). Text-like files
 (`text/*`, `application/json`, …) are never checked; an unknown model or a catalog without
-`inputModalities` never blocks (the provider decides). Files of earlier turns are not re-checked:
-after a switch to a model without image input the provider's own error still applies to history.
+`inputModalities` never blocks (the provider decides). The refusal applies to `send()` and
+`edit()`, where the caller reads the error. Input nobody waits on (`enqueue` incl. `collect`, and
+steers) is accepted and stored whole: the user's text is not lost and the model sees a note
+instead of the file. **History** is projected the same way: a stored file whose modality the
+current model lacks becomes `[Attachment <name> (<type>) not shown: the model <id> does not accept
+<modality> input]` (spec 03 §6), never stored, so a session survives a model switch and one
+unreadable image cannot fail every later turn.
+
+Known limit: a catalog entry is per model id, not per routed upstream (OpenRouter may route an
+image-capable model to a provider that rejects images). The library does not retry a failed
+provider call with degraded file parts; the failure is the turn's `EH_PROVIDER` error. Remove the
+file by switching models (history is then projected with notes) or `inputModalities` by hand
+(`ExtraModel`) for such a model.
 
 ## 2. Pricing
 

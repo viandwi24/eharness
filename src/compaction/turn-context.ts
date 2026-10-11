@@ -13,6 +13,7 @@ import { hookFailed } from '../internal/hook-run.ts'
 import { project } from '../messages/project.ts'
 import { sanitizeModelMessages } from '../messages/sanitize.ts'
 import type { ContextStats, HarnessUIMessage, PendingState } from '../messages/types.ts'
+import { fileRefuser } from '../models/catalog.ts'
 import { toolSetTokens, wireTokens } from '../models/tokens.ts'
 import type { TurnInfo } from '../plugin/types.ts'
 import { instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
@@ -178,6 +179,9 @@ export function createTurnCompaction(args: {
     ...(config.inputFiles?.describe === undefined
       ? {}
       : { describeFile: config.inputFiles.describe }),
+    ...(config.models === undefined
+      ? {}
+      : { refuseFile: fileRefuser(config.models, () => info.model) }),
   }
 
   async function fixed(): Promise<number> {

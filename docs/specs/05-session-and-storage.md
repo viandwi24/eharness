@@ -367,6 +367,12 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
      stored as is; `inputFiles.resolve(url, { sessionId, mediaType, filename })` turns it into
      `{ data | url, mediaType? }` for the model at projection time (spec 03 §6), so stored
      messages stay small;
+   - input modalities (0.9.0, spec 12 §1.1): a new file the model cannot read fails `send()` /
+     `edit()` with `EH_INVALID_INPUT` (`'unsupported-modality'`) before the commit point. Input
+     nobody waits on is **not refused**: items of the durable or local inbox (`enqueue`, incl.
+     `collect`) and steers (`ifBusy: 'steer'` delivered at a step boundary) keep their text, and
+     the file is stored; projection shows the model a note instead of the file (spec 03 §6), so
+     one image never breaks the session;
    - client `metadata.eharness` (including any `kind`) is discarded and rebuilt (`v`,
      `createdAt`, `turnId`); a client id is kept as `metadata.eharness.clientId`; other client
      metadata keys are dropped unless `acceptClientMetadata`.

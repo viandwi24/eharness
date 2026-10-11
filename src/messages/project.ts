@@ -54,6 +54,11 @@ export interface ProjectOptions {
   resolveFile?: NonNullable<InputFilesConfig['resolve']>
   /** `config.inputFiles.describe`: a note after each referenced file of a user message (spec 03 §6). */
   describeFile?: NonNullable<InputFilesConfig['describe']>
+  /**
+   * A text note for a file the current model cannot take (`ModelInfo.inputModalities`), or
+   * `undefined` to keep the file; the stored message is never changed (spec 03 §6).
+   */
+  refuseFile?: (file: { mediaType: string; filename?: string }) => string | undefined
 }
 
 /**
@@ -121,6 +126,7 @@ export async function project(
         options.resolveFile,
         { sessionId: options.sessionId },
         prepared.role === 'user' ? options.describeFile : undefined,
+        options.refuseFile,
       )
       const converted = await convertToModelMessages(
         [resolvedParts === prepared.parts ? prepared : { ...prepared, parts: resolvedParts }],

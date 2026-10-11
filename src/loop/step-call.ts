@@ -45,7 +45,7 @@ export async function streamStep(st: StepsCtx, req: StepRequest): Promise<StepRu
   const noteData = firstOfContinuation(st) ? (st.input.approvalNotes ?? []) : []
   const noteWire: ModelMessage[] = []
   for (const data of noteData)
-    noteWire.push(...(await inputWireMessage(data, fileResolution(st.input.rt))))
+    noteWire.push(...(await inputWireMessage(data, fileResolution(st.input.rt, st.model))))
   let notesWritten = noteData.length === 0
   const writeNotes = (): void => {
     if (notesWritten) return
