@@ -465,6 +465,9 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
   /** Chainable. Last chance to transform a message before MessageAdapter.save. Must keep id/role. */
   'message.beforeSave'?(ctx: HarnessContext<DP>, message: HarnessUIMessage): Awaitable<HarnessUIMessage | void>
 
+  /** Observe-only (0.8.0). After MessageAdapter.save succeeded: copies of the messages that call stored, id order (an upserted assistant message repeats). Awaited in plugin order; errors are W_HOOK_FAILED. */
+  'message.saved'?(ctx: HarnessContext<DP>, messages: HarnessUIMessage[]): Awaitable<void>
+
   /**
    * Chainable (0.4.0). Once per compaction, after the split, the skip rule and the budget check
    * decided that summarizing will happen, before the summarizer (spec 06 §5.2a). A `flush` gives

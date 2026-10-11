@@ -42,6 +42,7 @@ export const HOOK_NAMES: readonly HookName[] = [
   'tool.before',
   'tool.after',
   'message.beforeSave',
+  'message.saved',
   'compaction.before',
   'compaction.prompt',
   'compaction.after',

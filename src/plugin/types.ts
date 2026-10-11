@@ -457,6 +457,15 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
   ): Awaitable<HarnessUIMessage | void>
 
   /**
+   * Observe-only. Runs after `MessageAdapter.save` succeeded, with copies of the messages that
+   * call stored (user, assistant, kind messages, in id order; an upsert of the same assistant
+   * message repeats it). Awaited in plugin order; errors are `W_HOOK_FAILED` and never affect the
+   * save. For audit logs and activity feeds (`eharness/activity`): the stored state is visible to
+   * any reader when it fires.
+   */
+  'message.saved'?(ctx: HarnessContext<DP>, messages: HarnessUIMessage[]): Awaitable<void>
+
+  /**
    * Chainable (0.4.0). Runs once per compaction after the split and skip rule decided that
    * summarizing will happen, before the summarizer (spec 06 §5.2a). Return a `flush` to give the
    * agent one bounded, internal turn to save facts (e.g. into memory files) before history is

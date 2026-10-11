@@ -1,11 +1,11 @@
 /**
  * Import rules for `src/` (ADR-0008, ADR-0010, docs/engineering/conventions.md):
  *
- * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|permissions|providers|connectors|shell|subagent|web`) import core only through the relative
+ * 1. Subpath modules (`src/filesystem|storage|mcp|testing|todos|memory|guard|openapi|group|ask|activity|permissions|providers|connectors|shell|subagent|web`) import core only through the relative
  *    path to `src/index.ts`, never through other core files or the `eharness` self-reference.
  *    Non-test files never import another subpath; test files of a subpath may (e.g. a filesystem
  *    test running `fileSystemConformance` from `src/testing`), but still never core internals.
- *    Exception: the pairs in `allowedImports` (ADR-0049).
+ *    Exception: the pairs in `allowedImports` (ADR-0049; `testing` may import the types of `activity`, ADR-0058).
  * 2. Non-test files under `src/` never use `Bun.` or import `node:` built-ins, except the Node-only
  *    modules listed in `nodeOnly` (ADR-0036): they may import `node:` built-ins (never `Bun.`).
  *
@@ -28,6 +28,7 @@ const subpaths = [
   'openapi',
   'group',
   'ask',
+  'activity',
   'permissions',
   'providers',
   'connectors',
@@ -39,7 +40,10 @@ const subpaths = [
  * Documented exceptions (ADR-0049): `eharness/connectors` reuses the generic configuration
  * machinery of `eharness/providers` (forms, secret redaction, profiles) instead of copying it.
  */
-const allowedImports: Record<string, string[]> = { connectors: ['providers'] }
+const allowedImports: Record<string, string[]> = {
+  connectors: ['providers'],
+  testing: ['activity'],
+}
 /** Node-only modules (ADR-0036): `node:` built-ins allowed. */
 const nodeOnly = ['filesystem/node.ts', 'filesystem/node/', 'shell/']
 const coreIndex = join(src, 'index.ts')

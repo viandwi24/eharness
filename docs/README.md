@@ -43,6 +43,7 @@ Using eharness (not contributing)? Start with the [README](../README.md), the [g
 | 21 | [ask-plugin](specs/21-ask-plugin.md) | `eharness/ask`: `ask_user_question`, client tool or non-interactive fallback |
 | 22 | [web-plugin](specs/22-web-plugin.md) | `eharness/web`: `web_fetch` (SSRF guards, Markdown, framing) and `web_search` (provider-agnostic) |
 | 24 | [connectors](specs/24-connectors.md) | `eharness/connectors`: connector definitions, connections and enablement, setup flow engine, OAuth helpers, activation into plugins, sources and permission rules, built-in connectors |
+| 25 | [activity](specs/25-activity.md) | `eharness/activity`: `activity()` plugin, `ActivityStore` port, SSE helpers, attention queue (`listAttention`, `answerAttention`) |
 | 23 | [providers](specs/23-providers.md) | `eharness/providers`: provider definitions, profiles and store, manager (`resolve`, models, `catalog()`), form spec, secret redaction, cached catalog loader |
 
 ## Status vocabulary

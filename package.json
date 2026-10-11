@@ -71,6 +71,7 @@
   },
   "exports": {
     ".": "./dist/index.js",
+    "./activity": "./dist/activity/index.js",
     "./ask": "./dist/ask/index.js",
     "./connectors": "./dist/connectors/index.js",
     "./filesystem": "./dist/filesystem/index.js",

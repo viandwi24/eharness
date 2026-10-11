@@ -624,6 +624,14 @@ export function createSessionHandle(args: {
       if (rt.storedLastId === undefined || message.id > rt.storedLastId)
         rt.storedLastId = message.id
     }
+    // observe-only: the messages are stored now (spec 01 §5, `message.saved`)
+    for (const hook of rt.open?.hooks.list('message.saved') ?? []) {
+      try {
+        await hook.fn(rt.contextOf(hook.owner), structuredClone(out))
+      } catch (error) {
+        hookFailed(rt, 'message.saved', hook.owner, error)
+      }
+    }
     return out
   }
 

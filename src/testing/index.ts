@@ -7,6 +7,11 @@
  */
 
 export {
+  type ActivityStoreConformanceOptions,
+  type ActivityStoreUnderTest,
+  activityStoreConformance,
+} from './activity-store.conformance.ts'
+export {
   type BudgetLedgerConformanceOptions,
   budgetLedgerConformance,
 } from './budget-ledger.conformance.ts'

@@ -14,6 +14,7 @@ export default defineConfig({
     'openapi/index': 'src/openapi/index.ts',
     'group/index': 'src/group/index.ts',
     'memory/index': 'src/memory/index.ts',
+    'activity/index': 'src/activity/index.ts',
     'ask/index': 'src/ask/index.ts',
     'permissions/index': 'src/permissions/index.ts',
     'providers/index': 'src/providers/index.ts',

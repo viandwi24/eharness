@@ -74,6 +74,7 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/ask` | `src/ask/index.ts` | `askUser()`, `pendingQuestions()`, `answerOutput()`, `parseQuestions()`, `formatAnswers()`, `ASK_TOOL` (spec 21) |
 | `eharness/providers` | `src/providers/index.ts` | `createProviderManager()`, `defineProvider()`, `openRouterProvider()` / `gatewayProvider()` / `openAIProvider()` / `anthropicProvider()` / `openAICompatibleProvider()`, `formSpec()`, `redactSettings()`, `mergeSecretPatch()`, `memoryProfileStore()`, `fromEnv()`, `loadCachedJson()` (spec 23) |
 | `eharness/connectors` | `src/connectors/index.ts` | `createConnectorService()`, `defineConnector()`, `activateConnectors()`, `startFlow()` / `advanceFlow()` / `completeOAuth()`, OAuth helpers, `builtinConnectors()`, `remoteMcpConnector()`, `memoryConnectionStore()` (spec 24) |
+| `eharness/activity` | `src/activity/index.ts` | `activity()`, `memoryActivityStore()`, `handleActivityStream()`, `activityStream()`, `readActivityPage()`, `listAttention()`, `answerAttention()` (spec 25) |
 | `eharness/web` | `src/web/index.ts` | `webFetch()`, `webSearch()`, `htmlToText()`, `isPrivateHost()`, `matchHost()` (spec 22) |
 | `eharness/storage/memory` | `src/storage/memory.ts` | `memoryMessages()`, `memoryState()`, `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `src/mcp/index.ts` | `mcpServer()` (optional peer `@ai-sdk/mcp`) |
