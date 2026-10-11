@@ -239,6 +239,7 @@ describe('activity log plugin and routes', () => {
         },
       },
       tasks,
+      events: { append: () => undefined },
       agentOf: () => undefined,
       log: { warn: (m) => warnings.push(m) },
     })
@@ -267,6 +268,7 @@ describe('activity log plugin and routes', () => {
     const log = createActivityLog({
       store: real,
       tasks: sqliteTaskStore(conn.sqlite),
+      events: { append: () => undefined },
       agentOf: () => undefined,
       maxRows: 3,
       pruneEvery: 1,

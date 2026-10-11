@@ -65,7 +65,7 @@ The chunk shapes belong to the AI SDK (UI message stream protocol, header
 | `POST /agents/{id}/chat` | send, answer an approval, regenerate or edit. Body is a `useChat` request. `200` streams the turn; `202` means the message was steered into a turn on another instance; `409` busy (`ifBusy=reject`) |
 | `GET /agents/{id}/chat/stream?from=` | resume the running turn from chunk `from` (also `Last-Event-ID`); `204` when idle. Works across instances |
 | `POST /agents/{id}/chat/abort` | stop the turn on any instance; says `local`, `remote` or `idle` |
-| `GET /events/stream?after=` | SSE feed of changes (`message-added`, `task-changed`, `approval-needed`, `routine-fired`, `file-changed`, ...) with `seq` as the event id; JSON variant `GET /events?after=` |
+| `GET /events/stream?after=` | SSE feed of changes (`message-added`, `task-changed`, `pending-changed`, `approval-decided`, `routine-fired`, `file-changed`, ...; session events come from `eharness/activity`) with `seq` as the event id; JSON variant `GET /events?after=` |
 
 ### AI SDK client contract
 

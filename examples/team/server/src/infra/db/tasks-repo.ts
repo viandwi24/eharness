@@ -1,12 +1,11 @@
 /**
- * Task index and event feed on SQLite (plain SQL on the shared connection, like the eharness
+ * Task index on SQLite (and the read side of the app's feed: sidebar previews and unread counts) (plain SQL on the shared connection, like the eharness
  * adapters). The `taskIndex` plugin writes through the write half on whichever instance runs a
  * turn; every instance reads the same rows. Every statement is atomic, increments are done in
  * SQL (`cost_usd = cost_usd + ?`), so two instances never lose an update.
  */
 import type { Database } from 'bun:sqlite'
 import type { AgentActivity, TaskStore } from '../../app/ports.ts'
-import type { EventType, NewEvent, TeamEvent } from '../../domain/events.ts'
 import { newId } from '../../domain/ids.ts'
 import type { PendingKind, Task, TaskOrigin, TaskStatus } from '../../domain/tasks.ts'
 
@@ -44,24 +43,6 @@ const toTask = (r: TaskRow): Task => ({
   tokens: r.tokens,
 })
 
-interface EventRow {
-  seq: number
-  type: string
-  agent_id: string | null
-  session_id: string | null
-  payload: string
-  created_at: number
-}
-
-const toEvent = (r: EventRow): TeamEvent => ({
-  seq: r.seq,
-  type: r.type as EventType,
-  agentId: r.agent_id,
-  sessionId: r.session_id,
-  payload: JSON.parse(r.payload) as Record<string, unknown>,
-  createdAt: r.created_at,
-})
-
 export interface NewTask {
   agentId: string
   sessionId: string
@@ -89,20 +70,9 @@ export interface TaskWriter {
   getBySession(sessionId: string): Task | undefined
   /** Tasks that are not finished (the drift pass re-reads them). */
   active(): Task[]
-  appendEvent(event: NewEvent, now: number): number
-  /**
-   * Event retention: delete events older than `before` (ms) and, when more than `maxRows` remain,
-   * the oldest ones. Keeps the newest event (the head the cursors compare to) and the latest
-   * `message-added` of every agent (the sidebar preview). Records the high-water mark
-   * (`prunedThrough`). Safe to run from several instances. Returns the rows deleted.
-   */
-  pruneEvents(options: { before?: number; maxRows?: number }): number
 }
 
 export type SqliteTaskStore = TaskStore & TaskWriter
-
-/** `settings` key holding the highest event `seq` removed by retention. */
-const PRUNED_KEY = 'events-pruned-through'
 
 export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
   const taskBySession = sqlite.query<TaskRow, [string]>('SELECT * FROM tasks WHERE session_id = ?')
@@ -151,77 +121,6 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
         .all(dmSessionId)
         .map(toTask)
       return { owned, delegated }
-    },
-
-    events(after, limit) {
-      return sqlite
-        .query<EventRow, [number, number]>(
-          'SELECT seq, type, agent_id, session_id, payload, created_at FROM events WHERE seq > ? ORDER BY seq LIMIT ?',
-        )
-        .all(after, limit)
-        .map(toEvent)
-    },
-
-    lastSeq() {
-      return (
-        sqlite.query<{ seq: number | null }, []>('SELECT MAX(seq) AS seq FROM events').get()?.seq ??
-        0
-      )
-    },
-
-    prunedThrough() {
-      const row = sqlite
-        .query<{ value: string }, [string]>('SELECT value FROM settings WHERE key = ?')
-        .get(PRUNED_KEY)
-      return row === null ? 0 : Number(JSON.parse(row.value))
-    },
-
-    pruneEvents({ before, maxRows }) {
-      return sqlite
-        .transaction(() => {
-          const head =
-            sqlite.query<{ seq: number | null }, []>('SELECT MAX(seq) AS seq FROM events').get()
-              ?.seq ?? 0
-          let boundary = 0
-          if (before !== undefined) {
-            boundary =
-              sqlite
-                .query<{ seq: number | null }, [number]>(
-                  'SELECT MAX(seq) AS seq FROM events WHERE created_at < ?',
-                )
-                .get(before)?.seq ?? 0
-          }
-          if (maxRows !== undefined && maxRows >= 1) {
-            const cut = sqlite
-              .query<{ seq: number }, [number]>(
-                'SELECT seq FROM events ORDER BY seq DESC LIMIT 1 OFFSET ?',
-              )
-              .get(maxRows)
-            if (cut !== null) boundary = Math.max(boundary, cut.seq)
-          }
-          boundary = Math.min(boundary, head - 1)
-          if (boundary <= 0) return 0
-          const { changes } = sqlite
-            .query(
-              `DELETE FROM events WHERE seq <= ?
-                 AND seq NOT IN (SELECT MAX(seq) FROM events
-                                  WHERE type = 'message-added' AND agent_id IS NOT NULL
-                                  GROUP BY agent_id)`,
-            )
-            .run(boundary)
-          const known = sqlite
-            .query<{ value: string }, [string]>('SELECT value FROM settings WHERE key = ?')
-            .get(PRUNED_KEY)
-          const next = Math.max(boundary, known === null ? 0 : Number(JSON.parse(known.value)))
-          sqlite
-            .query(
-              `INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)
-               ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
-            )
-            .run(PRUNED_KEY, JSON.stringify(next), Date.now())
-          return changes
-        })
-        .immediate()
     },
 
     activity() {
@@ -323,21 +222,6 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
         )
         .all()
         .map(toTask)
-    },
-
-    appendEvent(event, now) {
-      const row = sqlite
-        .query<{ seq: number }, [string, string | null, string | null, string, number]>(
-          'INSERT INTO events (type, agent_id, session_id, payload, created_at) VALUES (?, ?, ?, ?, ?) RETURNING seq',
-        )
-        .get(
-          event.type,
-          event.agentId ?? null,
-          event.sessionId ?? null,
-          JSON.stringify(event.payload),
-          now,
-        )
-      return (row as { seq: number }).seq
     },
   }
 }

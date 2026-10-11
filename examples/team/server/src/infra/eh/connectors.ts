@@ -84,7 +84,7 @@ export interface ConnectorsOptions {
   fetch?: typeof fetch
   /** The OAuth callback URL of this server. */
   redirectUri: string
-  events?: { append(event: NewEvent): number }
+  events?: { append(event: NewEvent): void }
   /** Workspace default tool access (settings); default `auto`. Read on every `prepare`. */
   toolAccess?: () => ToolAccess
   /** Other instances' changes (`connectors-changed`) bump the revision. */

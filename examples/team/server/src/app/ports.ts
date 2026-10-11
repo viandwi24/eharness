@@ -230,14 +230,6 @@ export interface TaskStore {
   getBySession(sessionId: string): Task | undefined
   /** Tasks the agent runs (`owned`) and tasks it handed to others from its DM (`delegated`). */
   ofAgent(agentId: string, dmSessionId: string): { owned: Task[]; delegated: Task[] }
-  /** Events with `seq > after`, oldest first. */
-  events(after: number, limit: number): TeamEvent[]
-  lastSeq(): number
-  /**
-   * Highest `seq` removed by event retention (0 = never pruned). A client whose cursor is below it
-   * may have missed events and must refetch its state.
-   */
-  prunedThrough(): number
   /** Activity of every agent that has any, by agent id. */
   activity(): Map<string, AgentActivity>
   /** Everything up to the latest message event is read. Returns the marker. */
@@ -310,9 +302,22 @@ export interface ModelCallStore {
   get(id: string, filter: ModelCallFilter): ModelCallDetail | undefined
 }
 
-/** Appends to the event feed from use cases (routines, settings). */
+/** Appends app events to the feed from use cases (routines, settings). Never throws. */
 export interface EventAppender {
-  append(event: NewEvent): number
+  append(event: NewEvent): void
+}
+
+/**
+ * The event feed as the HTTP layer reads it (implemented on `eharness/activity`,
+ * `infra/eh/activity-feed.ts`): an SSE response and the JSON twin for polling clients.
+ */
+export interface ActivityFeedPort {
+  /** SSE stream; the cursor comes from `?after=` or `Last-Event-ID`, none = the current head. */
+  stream(request: Request): Response
+  page(query: {
+    after: number
+    limit: number
+  }): Promise<{ events: TeamEvent[]; lastSeq: number; resync?: true }>
 }
 
 /** Outcome of a conditional file change (`ifVersion`). */
@@ -488,10 +493,9 @@ export interface Deps {
   schedule: ScheduleCalc
   routineEngine: RoutineEngine
   events: EventAppender
+  feed: ActivityFeedPort
   modelCalls: ModelCallStore
   clock: Clock
   ids: IdGenerator
   workspaceId: string
-  /** How often the SSE feed polls the events table (ms). Default 500. */
-  eventsPollMs?: number
 }

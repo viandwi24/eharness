@@ -29,7 +29,8 @@ imports eharness only through public subpaths, never `src/`.
    runs on another instance the message goes through the durable inbox (`202`).
 3. The turn streams as a UI message stream. Chunks are also appended to the **stream log** in
    SQLite in batches, so another instance can resume it.
-4. Hooks (`taskIndex`, `routineOutcomes`) write `tasks` rows and `events` rows on whichever
+4. Hooks (`taskIndex`, `routineOutcomes`) write `tasks` rows and the app's `events` rows, and the
+   library's `activity()` plugin (`eharness/activity`) writes the session events, on whichever
    instance runs the turn. Messages are persisted by the storage adapter; they are the truth.
 5. Every instance tails `events`, so the sidebar and board of a client connected elsewhere update.
 
@@ -77,9 +78,39 @@ so the lead can follow up with a finished role agent from any instance. Role age
 which has no `session.start` hooks and resumes nothing
 ([ADR-0042](../../../docs/decisions/0042-peek-child-identity-spawn-cap.md)).
 
-**Events feed.** The `events` table (autoincrement `seq`) is written by hooks; `GET /events/stream`
-tails it (poll, 500 ms) and replays from a cursor. It is app infrastructure; a library-level feed
-is request R3. It is pruned by age and count (`TEAM_EVENTS_RETENTION_HOURS`, `TEAM_EVENTS_MAX_ROWS`; the head and the latest message of each agent stay). The high-water mark of pruned `seq` lives in the `settings` row `events-pruned-through`: a client whose cursor is below it receives `event: resync` (SSE) or `resync: true` (`GET /events`) and refetches its state.
+**Events feed.** The `events` table (autoincrement `seq`) is the library's `ActivityStore`
+(`infra/db/activity-store.ts`, checked by `activityStoreConformance`). Session events
+(`turn-started`, `pending-changed`, `approval-decided`, `attention-answered`, `session-recovered`,
+`child-reported`) come from the `activity()` plugin; the app appends its own types
+(`message-added`, `task-changed`, `providers-changed`, ...) through the same store.
+`GET /events/stream` is `handleActivityStream` (poll, 500 ms; boot event, keep-alive, resync) and
+`GET /events` is `readActivityPage`. It is pruned by age and count (`TEAM_EVENTS_RETENTION_HOURS`, `TEAM_EVENTS_MAX_ROWS`; the head and the latest message of each agent stay). The high-water mark of pruned `seq` lives in the `settings` row `events-pruned-through`: a client whose cursor is below it receives `event: resync` (SSE) or `resync: true` (`GET /events`) and refetches its state.
+
+**Attention queue.** `GET /approvals` is `listAttention` (the DM session of every agent that can hold
+something, the lead's children through the child index, the task rows still `needs_action` as a
+safety net) and `POST /approvals/{id}` is `answerAttention` on the session that owns the item
+(`infra/eh/team-service.ts` only maps the results: `already-answered` is `409 ALREADY_ANSWERED`,
+`not-found` is `404`, `recorded` / `resumed` are `202`).
+
+### Migration notes (activity feed and attention queue)
+
+The team example had hand-built versions of both; they now use `eharness/activity` (spec 25, ADR-0058):
+
+- Deleted: the events methods of the task store (`events`, `lastSeq`, `prunedThrough`,
+  `pruneEvents`, `appendEvent`), `listEvents`' retention logic, the SSE poll loop of the route,
+  the `turn-started` / `approval-needed` / `approval-decided` writers of `taskIndex`,
+  `viewsOf` / `waitsStill` / the settle-and-map code of `answer()` in `team-service.ts`.
+- Added: `infra/db/activity-store.ts` (SQLite `ActivityStore`), `infra/eh/activity-feed.ts` (the port
+  the HTTP layer calls, and the app-event appender), `activity()` on every agent
+  (`types: SESSION_EVENT_TYPES`, no `message-saved` rows).
+- Kept (app domain): `tasks` rows, `message-added` previews and unread counts (read straight from
+  the `events` table), the drift and background reconcile passes.
+- Wire changes: `approval-needed` is gone; `pending-changed` carries a snapshot
+  (`payload.waiting: [{ kind, id, toolCallId, toolName }]`, empty = nothing waits) and is emitted for
+  every session. `turn-started` is emitted for every session (the web filters DM chats by session
+  id) and has `source`. New: `attention-answered`, `session-recovered`, `child-reported`. A stream
+  cursor ahead of the head (a reset database) now gets `resync` too. HTTP bodies of `/events`,
+  `/approvals` are unchanged. The web treats `pending-changed` like the old `approval-needed`.
 
 **Model call log (Logs page).** The `activityLog` plugin (`infra/eh/activity-log.ts`) is registered on
 every agent and persists each `model.call` event

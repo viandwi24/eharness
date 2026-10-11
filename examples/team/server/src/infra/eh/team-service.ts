@@ -2,11 +2,12 @@
  * Cross-session reads and answers on eharness sessions (docs/plans/P32-team-example.md §5, §6.4,
  * §6.5, §8):
  *
- *  - `approvals()`: everything waiting for a person, across DM chats and delegated task sessions.
- *    Sources: the stored pending state of every agent's DM session, the children of the lead
- *    (`pendingSubagentApprovals`, which reads storage only, so it works on any instance) and the
- *    task rows still marked `needs_action` (drift safety net).
- *  - `answer()`: `respond()` on the right session from whichever instance got the request. A
+ *  - `approvals()`: everything waiting for a person, across DM chats and delegated task sessions:
+ *    the library's `listAttention` (eharness/activity) over the DM session of every agent that can
+ *    hold something (it walks the lead's children through the child index, storage only, so it
+ *    works on any instance) and the task rows still marked `needs_action` (drift safety net).
+ *  - `answer()`: the library's idempotent `answerAttention` on the session that owns the item, from
+ *    whichever instance got the request (the "already answered" mapping lives in the library). A
  *    child's answer continues the child here; when its turn ends the `subagents` hook resolves the
  *    lead's parked wait and the lead continues, in whichever instance that is.
  *  - `reconcile()`: boot / periodic repair: `reconcileSubagentWaits` for every parent that can
@@ -14,14 +15,19 @@
  *    comparing the task rows with the session state.
  */
 import { type HarnessSession, handleResumeRequest, isHarnessError } from 'eharness'
+import {
+  type ActivityStore,
+  type AttentionAnswer,
+  answerAttention,
+  listAttention,
+} from 'eharness/activity'
 import { ASK_TOOL, answerOutput, pendingQuestions } from 'eharness/ask'
 import {
   type BackgroundReconcileEntry,
-  pendingSubagentApprovals,
   reconcileBackgroundChildren,
   reconcileSubagentWaits,
 } from 'eharness/subagent'
-import type { AgentRepo, ChatMessage, TeamPort } from '../../app/ports.ts'
+import type { AgentRepo, ChatMessage, EventAppender, TeamPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import type { ApprovalOutcome, ApprovalRisk, ApprovalView } from '../../domain/approvals.ts'
 import { dmSessionId } from '../../domain/chat.ts'
@@ -56,13 +62,15 @@ export interface TeamService extends TeamPort {
 export interface TeamServiceDeps {
   agents: AgentRepo
   tasks: SqliteTaskStore
+  events: EventAppender
+  /** The shared feed (`attention-answered` events). */
+  activity: ActivityStore
   now?: () => number
   log?: { warn(message: string, data?: Record<string, unknown>): void }
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
-
-type PendingLike = Awaited<ReturnType<HarnessSession['stats']>>['pending']
+const alreadyAnswered = (): Error =>
+  conflict('This request was already answered or is no longer waiting.', ALREADY_ANSWERED)
 
 export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps): TeamService {
   const now = deps.now ?? (() => Date.now())
@@ -86,135 +94,84 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return m === null ? undefined : defById(m[1] as string)
   }
 
-  function viewsOf(
-    def: AgentDef,
-    sessionId: string,
-    parentSessionId: string | null,
-    pending: PendingLike,
-  ): ApprovalView[] {
-    if (pending === null) return []
-    const taskId = deps.tasks.getBySession(sessionId)?.id ?? null
-    const base = {
-      sessionId,
-      parentSessionId,
-      agentId: def.id,
-      agentName: def.name,
-      taskId,
-    }
-    const out: ApprovalView[] = []
-    // answered items of a parallel batch wait for the others: hidden here, counted
-    const answeredWaiting =
-      pending.approvals.filter((a) => a.answer !== undefined).length +
-      pending.clientTools.filter((c) => c.answer !== undefined).length
-    for (const a of pending.approvals) {
-      if (a.answer !== undefined) continue
-      out.push({
-        ...base,
-        id: a.approvalId,
-        kind: 'approval',
-        toolCallId: a.toolCallId,
-        toolName: a.toolName,
-        input: a.input ?? null,
-        risk: (a.risk as ApprovalRisk | undefined) ?? null,
-        questions: null,
-        answeredWaiting,
-      })
-    }
-    const questions = pendingQuestions(pending)
-    for (const q of questions) {
-      const call = pending.clientTools.find((c) => c.toolCallId === q.toolCallId)
-      if (call === undefined || call.result !== undefined || call.answer !== undefined) continue
-      out.push({
-        ...base,
-        id: q.toolCallId,
-        kind: 'question',
-        toolCallId: q.toolCallId,
-        toolName: ASK_TOOL,
-        input: call.input ?? null,
-        risk: null,
-        questions: q.questions ?? [],
-        answeredWaiting,
-      })
-    }
-    return out
+  /** The agent that runs a session: the child index / root info (slug), the task row, the DM id. */
+  const ownerOf = (item: {
+    agent?: string | undefined
+    sessionId: string
+  }): AgentDef | undefined => {
+    const bySlug = item.agent === undefined ? undefined : defBySlug(item.agent)
+    if (bySlug !== undefined) return bySlug
+    const task = deps.tasks.getBySession(item.sessionId)
+    return task === undefined ? dmOwner(item.sessionId) : defById(task.agentId)
   }
 
+  /** Everything waiting for a person: the library's attention queue, in the shape the web reads. */
   async function approvals(only: { sessionId?: string } = {}): Promise<ApprovalView[]> {
+    let roots: Array<{ sessionId: string; agent?: string }>
     if (only.sessionId !== undefined) {
-      const task = deps.tasks.getBySession(only.sessionId)
-      const def = task === undefined ? dmOwner(only.sessionId) : defById(task.agentId)
-      if (def === undefined) return []
-      const pending = await factory.peek(only.sessionId).pending()
-      return viewsOf(def, only.sessionId, task?.parentSessionId ?? null, pending)
-    }
-    const out: ApprovalView[] = []
-    const seen = new Set<string>()
-    const add = (views: ApprovalView[]): void => {
-      for (const v of views) {
-        const key = `${v.sessionId}|${v.id}`
-        if (seen.has(key)) continue
-        seen.add(key)
-        out.push(v)
+      const owner = ownerOf({ sessionId: only.sessionId })
+      if (owner === undefined) return []
+      roots = [{ sessionId: only.sessionId, agent: owner.slug }]
+    } else {
+      // an agent without any DM message cannot have a pending approval there (the lead may have
+      // children to walk before its first message was indexed, so it is always read)
+      const active = deps.tasks.activity()
+      roots = allAgents()
+        .filter((def) => def.role === 'lead' || active.has(def.id))
+        .map((def) => ({ sessionId: dmSessionId(def.id), agent: def.slug }))
+      // the index is a safety net for sessions the walk above does not reach (routine runs)
+      for (const task of deps.tasks.list({ status: 'needs_action', limit: 500 })) {
+        const def = defById(task.agentId)
+        if (def !== undefined) roots.push({ sessionId: task.sessionId, agent: def.slug })
       }
     }
-
-    // an agent without any DM message cannot have a pending approval there (the lead may have
-    // children to walk before its first message was indexed, so it is always read)
-    const active = deps.tasks.activity()
-    for (const def of allAgents()) {
-      if (def.role !== 'lead' && !active.has(def.id)) continue
-      const sessionId = dmSessionId(def.id)
-      // reads go through `peek`: listing never runs session.start hooks or resumes a parked lead
-      const session = factory.peek(sessionId)
-      add(viewsOf(def, sessionId, null, await session.pending()))
-      if (def.role === 'lead') {
-        const children = await pendingSubagentApprovals(session, (childId) => factory.peek(childId))
-        for (const found of children) {
-          // the child index carries the agent (catalog key = slug); the task row is the fallback
-          const task = deps.tasks.getBySession(found.sessionId)
-          const owner =
-            (found.agent === undefined ? undefined : defBySlug(found.agent)) ??
-            (task === undefined ? undefined : defById(task.agentId))
-          if (owner !== undefined) {
-            add(viewsOf(owner, found.sessionId, found.parentSessionId, found.pending))
-          }
+    // reads go through `peek`: listing never runs session.start hooks or resumes a parked lead
+    const items = await listAttention({
+      roots,
+      peek: (sessionId) => factory.peek(sessionId),
+      ...(only.sessionId === undefined ? {} : { maxDepth: 0 }),
+    })
+    const questions = new Map<string, ReturnType<typeof pendingQuestions>>()
+    const out: ApprovalView[] = []
+    for (const item of items) {
+      const owner = ownerOf(item)
+      if (owner === undefined) continue
+      const base = {
+        sessionId: item.sessionId,
+        parentSessionId: item.parentSessionId,
+        agentId: owner.id,
+        agentName: owner.name,
+        taskId: deps.tasks.getBySession(item.sessionId)?.id ?? null,
+        id: item.id,
+        toolCallId: item.toolCallId,
+        toolName: item.toolName,
+        input: item.input,
+        answeredWaiting: item.answeredWaiting,
+      }
+      if (item.kind === 'approval') {
+        out.push({
+          ...base,
+          kind: 'approval',
+          risk: (item.risk as ApprovalRisk | null) ?? null,
+          questions: null,
+        })
+      } else if (item.kind === 'client-tool' && item.toolName === ASK_TOOL) {
+        let found = questions.get(item.sessionId)
+        if (found === undefined) {
+          found = pendingQuestions(await factory.peek(item.sessionId).pending())
+          questions.set(item.sessionId, found)
+        }
+        const q = found.find((x) => x.toolCallId === item.id)
+        if (q !== undefined) {
+          out.push({ ...base, kind: 'question', risk: null, questions: q.questions ?? [] })
         }
       }
-    }
-    // the index is a safety net for sessions the walk above does not reach (routine runs)
-    for (const task of deps.tasks.list({ status: 'needs_action', limit: 500 })) {
-      const def = defById(task.agentId)
-      if (def === undefined) continue
-      add(
-        viewsOf(
-          def,
-          task.sessionId,
-          task.parentSessionId,
-          await factory.peek(task.sessionId).pending(),
-        ),
-      )
     }
     return out
   }
 
   async function taskMessages(task: Task, limit: number): Promise<ChatMessage[]> {
     return (await factory.peek(task.sessionId).messages({ limit })) as unknown as ChatMessage[]
-  }
-
-  /** The item still waits for an answer; polls briefly so a first answer in flight can finish. */
-  async function waitsStill(view: ApprovalView): Promise<boolean> {
-    for (let i = 0; i < 6; i++) {
-      const pending = await factory.peek(view.sessionId).pending()
-      const waiting =
-        pending !== null &&
-        (pending.approvals.some((a) => a.approvalId === view.id && a.answer === undefined) ||
-          pending.clientTools.some(
-            (c) => c.toolCallId === view.id && c.answer === undefined && c.result === undefined,
-          ))
-      if (!waiting) return false
-      await sleep(60)
-    }
-    return true
   }
 
   async function answer(
@@ -225,68 +182,62 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     const def = defById(view.agentId)
     if (def === undefined) throw notFound('agent', view.agentId)
     await factory.prepare(def)
-    const session = factory.openSession(def, view.sessionId)
-    let run: ReturnType<HarnessSession['respond']>
-    // items that still wait after this answer, as far as the stored state tells (a partial
-    // answer is recorded without running anything, so the run settles fast and tells for sure)
-    const before = await factory.peek(view.sessionId).pending()
-    const predicted =
-      before === null
-        ? 0
-        : Math.max(
-            0,
-            before.approvals.filter((a) => a.answer === undefined && a.granted !== true).length +
-              before.clientTools.filter((c) => c.answer === undefined && c.result === undefined)
-                .length +
-              (before.externals ?? []).filter((e) => e.result === undefined).length -
-              1,
-          )
-    try {
-      if (body.kind === 'approval') {
-        run = session.respond(
-          {
-            approvals: [
-              {
-                id: view.id,
-                approved: body.approved,
-                ...(body.reason === undefined ? {} : { reason: body.reason }),
-                ...(body.note === undefined ? {} : { note: body.note }),
-                ...(body.remember === undefined ? {} : { remember: body.remember }),
-                actor: { id: actor.id, ...(actor.name === undefined ? {} : { name: actor.name }) },
-              },
-            ],
-          },
-          body.endTurn === undefined ? {} : { endTurn: body.endTurn },
-        )
-      } else {
-        const pending = await factory.peek(view.sessionId).pending()
-        const question = pendingQuestions(pending).find((q) => q.toolCallId === view.id)
-        if (question === undefined)
-          throw conflict(`question ${view.id} is not pending any more`, ALREADY_ANSWERED)
-        const output = answerOutput(
-          question,
-          body.answers === null ? null : { answers: body.answers },
-        )
-        run = session.respond({ toolOutputs: [output] })
+    let answer: AttentionAnswer
+    if (body.kind === 'approval') {
+      answer = {
+        kind: 'approval',
+        approved: body.approved,
+        ...(body.reason === undefined ? {} : { reason: body.reason }),
+        ...(body.note === undefined ? {} : { note: body.note }),
+        ...(body.remember === undefined ? {} : { remember: body.remember }),
+        ...(body.endTurn === undefined ? {} : { endTurn: body.endTurn }),
       }
+    } else {
+      // the question was answered (or its message moved on) before this request got here
+      const pending = await factory.peek(view.sessionId).pending()
+      const question = pendingQuestions(pending).find((q) => q.toolCallId === view.id)
+      if (question === undefined) throw alreadyAnswered()
+      const output = answerOutput(
+        question,
+        body.answers === null ? null : { answers: body.answers },
+      )
+      answer = {
+        kind: 'client-tool',
+        ...('output' in output ? { output: output.output } : { errorText: output.errorText }),
+      }
+    }
+    let result: Awaited<ReturnType<typeof answerAttention>>
+    try {
+      result = await answerAttention(view.id, {
+        sessionId: view.sessionId,
+        answer,
+        open: (sessionId) => factory.openSession(def, sessionId),
+        peek: (sessionId) => factory.peek(sessionId),
+        actor: { id: actor.id, ...(actor.name === undefined ? {} : { name: actor.name }) },
+        store: deps.activity,
+        agentId: def.id,
+        log,
+      })
     } catch (error) {
-      // busy because the same item is being answered right now (a second tab, another
-      // instance): once the first answer consumed it, this one is just late
-      if (isHarnessError(error, 'EH_SESSION_BUSY') && !(await waitsStill(view))) {
-        throw conflict(
-          'This request was already answered or is no longer waiting.',
-          ALREADY_ANSWERED,
-        )
+      if (isHarnessError(error, 'EH_INVALID_INPUT')) throw invalid(error.message, error.code)
+      if (
+        isHarnessError(error) &&
+        error.code !== 'EH_SESSION_BUSY' &&
+        error.code !== 'EH_SESSION_CLOSED' &&
+        error.code !== 'EH_STORAGE'
+      ) {
+        throw conflict(error.message, error.code)
       }
       throw error
     }
-    // `respond` throws only busy / closed; a stale or invalid answer is an error stop of the run.
-    // Give it a moment to fail fast, then let the continuation run on in the background.
-    const result = run.result.catch(() => undefined)
+    if (result.status === 'already-answered') throw alreadyAnswered()
+    if (result.status === 'not-found') throw notFound('approval', view.id)
+    if (result.status === 'recorded')
+      return { status: 'recorded', remaining: result.remaining ?? 0 }
     // the continuation of a lead's own question / approval ended: reports that arrived meanwhile
     // (and have no held wake, e.g. stored before a restart) wake it now
     if (def.role === 'lead' && view.sessionId === dmSessionId(def.id)) {
-      void result.then(async (r) => {
+      void result.done?.then(async (r) => {
         if (r?.stop !== 'complete') return
         try {
           await wakeStranded(def, view.sessionId)
@@ -295,42 +246,6 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         }
       })
     }
-    const settled = await Promise.race([result, sleep(250).then(() => undefined)])
-    if (settled !== undefined && settled.stop === 'error') {
-      const message = settled.error?.message ?? 'the answer was rejected'
-      const code = settled.error?.code
-      const reason = (settled.error?.details as { reason?: string } | undefined)?.reason
-      // the item was answered (by another tab, the Auto classifier, another instance) or its
-      // message moved on: not a mistake of this request, the UI refreshes quietly
-      if (reason === 'unknown-id' || reason === 'stale' || reason === 'conflict') {
-        throw conflict(
-          'This request was already answered or is no longer waiting.',
-          ALREADY_ANSWERED,
-        )
-      }
-      if (code === 'EH_INVALID_INPUT') throw invalid(message, code)
-      // busy because the same item is being answered right now (a second tab, another
-      // instance): once the first answer consumed it, this one is just late
-      if (code === 'EH_SESSION_BUSY' && !(await waitsStill(view))) {
-        throw conflict(
-          'This request was already answered or is no longer waiting.',
-          ALREADY_ANSWERED,
-        )
-      }
-      throw conflict(message, code ?? 'ANSWER_REJECTED')
-    }
-    if (settled?.partial === true) {
-      const left = settled.pending
-      const remaining =
-        left === undefined
-          ? predicted
-          : left.approvals.filter((a) => a.answer === undefined && a.granted !== true).length +
-            left.clientTools.filter((c) => c.answer === undefined && c.result === undefined)
-              .length +
-            (left.externals ?? []).filter((e) => e.result === undefined).length
-      return { status: 'recorded', remaining }
-    }
-    if (settled === undefined && predicted > 0) return { status: 'recorded', remaining: predicted }
     return { status: 'resumed' }
   }
 
@@ -451,22 +366,20 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
             now: t,
             summary: next.summary,
           })
-          deps.tasks.appendEvent(
-            {
-              type: 'task-changed',
-              agentId: task.agentId,
-              sessionId: task.sessionId,
-              payload: {
-                taskId: task.id,
-                status: next.status,
-                pendingKind: null,
-                title: row?.title ?? task.title,
-                parentSessionId: task.parentSessionId,
-                reason: 'reconcile',
-              },
+          deps.events.append({
+            type: 'task-changed',
+            agentId: task.agentId,
+            sessionId: task.sessionId,
+            payload: {
+              taskId: task.id,
+              status: next.status,
+              pendingKind: null,
+              title: row?.title ?? task.title,
+              parentSessionId: task.parentSessionId,
+              reason: 'reconcile',
             },
-            t,
-          )
+            at: t,
+          })
         }
       } catch (error) {
         log.warn(`background reconcile of ${sessionId} failed: ${String(error)}`)
@@ -510,22 +423,20 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
         }
         if (next.status === task.status && next.pendingKind === task.pendingKind) continue
         const row = deps.tasks.update(task.sessionId, { ...next, now: t })
-        deps.tasks.appendEvent(
-          {
-            type: 'task-changed',
-            agentId: task.agentId,
-            sessionId: task.sessionId,
-            payload: {
-              taskId: task.id,
-              status: next.status,
-              pendingKind: next.pendingKind,
-              title: row?.title ?? task.title,
-              parentSessionId: task.parentSessionId,
-              reason: 'reconcile',
-            },
+        deps.events.append({
+          type: 'task-changed',
+          agentId: task.agentId,
+          sessionId: task.sessionId,
+          payload: {
+            taskId: task.id,
+            status: next.status,
+            pendingKind: next.pendingKind,
+            title: row?.title ?? task.title,
+            parentSessionId: task.parentSessionId,
+            reason: 'reconcile',
           },
-          t,
-        )
+          at: t,
+        })
         out.push({ taskId: task.id, sessionId: task.sessionId, from: task.status, to: next.status })
       } catch (error) {
         log.warn(`drift check of ${task.sessionId} failed: ${String(error)}`)

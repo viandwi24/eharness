@@ -9,8 +9,9 @@ describe('change feed', () => {
   test('one poller calls each handler for events of other instances only', async () => {
     const events: Array<{ seq: number; type: string; payload: Record<string, unknown> }> = []
     const feed = {
-      lastSeq: () => events.length,
-      events: (after: number, limit: number) => events.filter((e) => e.seq > after).slice(0, limit),
+      lastSeq: async () => events.length,
+      read: async (q: { after: number; limit: number }) =>
+        events.filter((e) => e.seq > q.after).slice(0, q.limit),
     }
     const changes = createChangeFeed({ feed, instance: 'me', pollMs: 5, warn: () => undefined })
     const seen: string[] = []

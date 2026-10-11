@@ -146,6 +146,17 @@ describe('live store: chat events', () => {
 });
 
 describe('live store: approvals that were decided elsewhere', () => {
+	test('pending-changed (the library feed event) refetches the approvals', async () => {
+		const { live, setApprovals } = setup();
+		setApprovals([]);
+		await live.loadApprovals();
+		expect(live.state.approvals).toEqual([]);
+		setApprovals([appr('1', 'dm:lead-id')]);
+		live.handleEvent({ ...ev('pending-changed', 'x', { waiting: [{ kind: 'approval', id: '1', toolName: 'pay' }], answered: [] }, 4), sessionId: 's-1' });
+		await new Promise((r) => setTimeout(r, 0));
+		expect(live.state.approvals.map((a) => a.id)).toEqual(['1']);
+	});
+
 	test('approval-decided removes the card at once (Auto classifier, another tab), others stay', async () => {
 		const { live, setApprovals } = setup();
 		setApprovals([appr('1', 'dm:lead-id'), appr('2', null)]);

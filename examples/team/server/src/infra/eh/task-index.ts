@@ -1,26 +1,31 @@
 /**
- * `taskIndex` plugin (docs/plans/P32-team-example.md §6.4): turn and approval hooks write the
- * `tasks` index (one row per task session) and the append-only `events` feed, on whichever
- * instance runs the turn. Nothing here is a source of truth: the sessions are, and the drift
- * pass (`team-service.ts`) repairs rows a crashed instance never closed.
+ * `taskIndex` plugin (docs/plans/P32-team-example.md §6.4): turn hooks write the `tasks` index
+ * (one row per task session) and the app's own feed events, on whichever instance runs the turn.
+ * Nothing here is a source of truth: the sessions are, and the drift pass (`team-service.ts`)
+ * repairs rows a crashed instance never closed.
+ *
+ * Session events (`turn-started`, `pending-changed`, `approval-decided`, ...) are NOT written
+ * here: the library's `activity()` plugin (`eharness/activity`) emits them into the same feed.
  *
  *  - `turn.start`   task session: row created / back to `running`; DM chat: `message-added` (user)
  *  - `turn.end`     task session: status from the stop reason (+ cost, summary, pending kind);
- *                   DM chat: `message-added` (assistant, preview for the sidebar);
- *                   `approval-needed` for every pending approval / question
- *  - `approval.decided`  `approval-decided` (user answers and denials)
+ *                   DM chat: `message-added` (assistant, preview for the sidebar)
  *  - `tool.after`   `agent-message` when an agent sent `send_message`
  *
  * A session is a DM chat when its id starts with `dm:`, a task when it has a `parent` (delegated
  * by the lead) or starts with `routine:` (M7). Hook errors are logged, never thrown.
  */
 import { definePlugin, type HarnessContext, type HarnessPlugin, type PendingState } from 'eharness'
+import type { EventAppender } from '../../app/ports.ts'
 import { isDmSession } from '../../domain/chat.ts'
+import type { NewEvent } from '../../domain/events.ts'
 import { previewOf, statusFromStop, titleFromText } from '../../domain/tasks.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 
 export interface TaskIndexOptions {
   store: TaskWriter
+  /** The feed the app's events go to. */
+  events: EventAppender
   /** The agent of a hook context (`ctx.agent.id` is the slug of the definition). */
   agentOf(slug: string): { id: string; name: string } | undefined
   now?: () => number
@@ -60,6 +65,7 @@ function pendingPreview(pending: PendingState | undefined): string {
 export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'> {
   const { store } = options
   const now = options.now ?? (() => Date.now())
+  const append = (event: NewEvent, at: number): void => options.events.append({ ...event, at })
 
   const guard =
     <A extends unknown[]>(name: string, fn: (ctx: HarnessContext, ...args: A) => void) =>
@@ -85,22 +91,9 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
           const agentId = agent?.id ?? ctx.agent.id
           const t = now()
           if (isDmSession(ctx.session.id) && !isTaskSession(ctx)) {
-            // every DM turn, also one the server started (a subagent report, a routine, a message
-            // from another agent): open chats attach to its stream right away
-            store.appendEvent(
-              {
-                type: 'turn-started',
-                agentId,
-                sessionId: ctx.session.id,
-                payload: {
-                  ...(ctx.turn === undefined ? {} : { turnId: ctx.turn.id, kind: ctx.turn.kind }),
-                },
-              },
-              t,
-            )
             const text = textOf(e.input)
             if (text !== '') {
-              store.appendEvent(
+              append(
                 {
                   type: 'message-added',
                   agentId,
@@ -128,7 +121,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
             now: t,
           })
           if (before === undefined || before.status !== 'running') {
-            store.appendEvent(
+            append(
               {
                 type: 'task-changed',
                 agentId,
@@ -165,7 +158,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
             const assistantText = textOf(e.messages.findLast((m) => m.role === 'assistant'))
 
             if (isDmSession(ctx.session.id) && !isTaskSession(ctx)) {
-              store.appendEvent(
+              append(
                 {
                   type: 'message-added',
                   agentId,
@@ -194,7 +187,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 addTokens: e.usage.totalTokens,
               })
               if (row !== undefined) {
-                store.appendEvent(
+                append(
                   {
                     type: 'task-changed',
                     agentId: row.agentId,
@@ -212,66 +205,6 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 )
               }
             }
-
-            if (e.stop === 'tool-pending' && e.pending !== undefined) {
-              for (const a of e.pending.approvals) {
-                store.appendEvent(
-                  {
-                    type: 'approval-needed',
-                    agentId,
-                    sessionId: ctx.session.id,
-                    payload: { kind: 'approval', id: a.approvalId, toolName: a.toolName },
-                  },
-                  t,
-                )
-              }
-              for (const c of e.pending.clientTools) {
-                if (c.result !== undefined) continue
-                store.appendEvent(
-                  {
-                    type: 'approval-needed',
-                    agentId,
-                    sessionId: ctx.session.id,
-                    payload: { kind: 'question', id: c.toolCallId, toolName: c.toolName },
-                  },
-                  t,
-                )
-              }
-            }
-          },
-        ),
-
-        'approval.decided': guard(
-          'approval.decided',
-          (
-            ctx,
-            d: {
-              toolName: string
-              approved: boolean
-              by: string
-              approvalId?: string
-              reason?: string
-              actor?: { id: string }
-            },
-          ) => {
-            if (d.by !== 'user' && d.approved) return
-            const agent = options.agentOf(ctx.agent.id)
-            store.appendEvent(
-              {
-                type: 'approval-decided',
-                agentId: agent?.id ?? ctx.agent.id,
-                sessionId: ctx.session.id,
-                payload: {
-                  toolName: d.toolName,
-                  approved: d.approved,
-                  by: d.by,
-                  ...(d.approvalId === undefined ? {} : { id: d.approvalId }),
-                  ...(d.actor === undefined ? {} : { actor: d.actor.id }),
-                  ...(d.reason === undefined ? {} : { reason: d.reason }),
-                },
-              },
-              now(),
-            )
           },
         ),
 
@@ -282,7 +215,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
             if (e.output.startsWith('ERROR') || e.output.startsWith('Not sent')) return
             const input = e.input as { to?: unknown; message?: unknown }
             const agent = options.agentOf(ctx.agent.id)
-            store.appendEvent(
+            append(
               {
                 type: 'agent-message',
                 agentId: agent?.id ?? ctx.agent.id,

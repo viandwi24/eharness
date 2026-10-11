@@ -32,6 +32,7 @@ import {
   type SessionLock,
   type SessionPeek,
 } from 'eharness'
+import { type ActivityStore, activity } from 'eharness/activity'
 import type { ActivatedConnectors, BuiltinInput } from 'eharness/connectors'
 import { filesystem } from 'eharness/filesystem'
 import {
@@ -43,8 +44,10 @@ import {
   type PermissionEngine,
 } from 'eharness/permissions'
 import { AGENT_MESSAGE_INSTRUCTIONS, subagents } from 'eharness/subagent'
+import type { EventAppender } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
+import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
 import {
   agentModeChoice,
   type ResolvedMode,
@@ -111,6 +114,10 @@ export interface AgentFactoryDeps {
   taskStore?: TaskWriter
   /** Model call log (the `model.call` hook and the Auto classifier calls); absent = not logged. */
   activityLog?: ActivityLog
+  /** The shared feed; absent = no session events. */
+  activityStore?: ActivityStore
+  /** App events (the `taskIndex` plugin's `message-added`, `task-changed`). */
+  events?: EventAppender
   /** Definition of a hook context's agent (`agent.id` is the slug). */
   agentBySlug?: (slug: string) => AgentDef | undefined
   limits?: TeamLimits
@@ -525,15 +532,28 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               },
             }),
           ]),
-      ...(deps.taskStore === undefined
+      ...(deps.taskStore === undefined || deps.events === undefined
         ? []
         : [
             taskIndex({
               store: deps.taskStore,
+              events: deps.events,
               agentOf: (slug) => {
                 const found = deps.agentBySlug?.(slug)
                 return found === undefined ? undefined : { id: found.id, name: found.name }
               },
+            }),
+          ]),
+      // session events of the feed (turn-started, pending-changed, approval-decided, ...): the
+      // library plugin writes them on whichever instance runs the turn
+      ...(deps.activityStore === undefined
+        ? []
+        : [
+            activity({
+              store: deps.activityStore,
+              agentOf: (slug) => deps.agentBySlug?.(slug)?.id,
+              types: SESSION_EVENT_TYPES,
+              messages: false,
             }),
           ]),
       // hook only: no tools, no instructions (prompt-cache prefix untouched)

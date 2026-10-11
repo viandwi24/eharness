@@ -30,6 +30,8 @@ import { seedAgents } from './app/seed.ts'
 import { newId } from './domain/ids.ts'
 import { areaOf } from './domain/library.ts'
 import { createApp } from './http/app.ts'
+import { BOOT_ID } from './http/boot.ts'
+import { sqliteActivityStore } from './infra/db/activity-store.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
@@ -38,6 +40,7 @@ import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
+import { createActivityFeed, createEventAppender } from './infra/eh/activity-feed.ts'
 import { type ActivityLog, createActivityLog } from './infra/eh/activity-log.ts'
 import {
   type AgentFactory,
@@ -163,9 +166,16 @@ export function compose(config: ServerConfig): Server {
   const agents = drizzleAgentRepo(conn.db)
 
   const tasks = sqliteTaskStore(conn.sqlite)
-  const events = {
-    append: (e: Parameters<typeof tasks.appendEvent>[0]) => tasks.appendEvent(e, Date.now()),
-  }
+  // the shared feed on eharness/activity: session events come from its `activity()` plugin, the
+  // app appends its own types (providers-changed, settings-changed, ...) through `events`
+  const activityStore = sqliteActivityStore(conn.sqlite)
+  const events = createEventAppender(activityStore)
+  const feed = createActivityFeed({
+    store: activityStore,
+    bootId: BOOT_ID,
+    ...(config.eventsPollMs === undefined ? {} : { pollMs: config.eventsPollMs }),
+    warn: (message) => console.warn(`team: ${message}`),
+  })
   // ONE vault, ONE profile table and ONE sealing path: provider profiles, connections, their
   // credentials and OAuth app credentials all go through `sealedProfileStore`. Rows written by
   // earlier versions (legacy `v1:` blobs) open through the vault's legacy reader and are
@@ -201,7 +211,7 @@ export function compose(config: ServerConfig): Server {
   )
   // one poller of the event feed for every kind of configuration change
   const changes = createChangeFeed({
-    feed: tasks,
+    feed: activityStore,
     instance,
     ...(config.changePollMs === undefined ? {} : { pollMs: config.changePollMs }),
   })
@@ -240,6 +250,7 @@ export function compose(config: ServerConfig): Server {
   const activityLog = createActivityLog({
     store: modelCalls,
     tasks,
+    events,
     agentOf: (slug) => agents.getBySlug(slug),
     ...(config.logs?.maxRows === undefined ? {} : { maxRows: config.logs.maxRows }),
     ...(config.logs?.retentionDays === undefined
@@ -251,14 +262,14 @@ export function compose(config: ServerConfig): Server {
   const eventsRetentionMs = (config.events?.retentionHours ?? 72) * 3_600_000
   const eventsMaxRows = config.events?.maxRows ?? 100_000
   const pruneEvents = (): void => {
-    try {
-      tasks.pruneEvents({
-        ...(eventsRetentionMs > 0 ? { before: Date.now() - eventsRetentionMs } : {}),
-        maxRows: eventsMaxRows,
+    activityStore
+      .prune({
+        ...(eventsRetentionMs > 0 ? { olderThan: Date.now() - eventsRetentionMs } : {}),
+        keepLast: eventsMaxRows,
+        // the last message of every agent survives retention: the sidebar preview
+        keepLatestOf: [{ type: 'message-added', by: 'agentId' }],
       })
-    } catch (error) {
-      console.warn(`team: pruning events failed: ${String(error)}`)
-    }
+      .catch((error) => console.warn(`team: pruning events failed: ${String(error)}`))
   }
   pruneEvents()
   const pruneEveryMs = config.events?.pruneEveryMs ?? 600_000
@@ -338,6 +349,8 @@ export function compose(config: ServerConfig): Server {
       }),
     taskStore: tasks,
     activityLog,
+    activityStore,
+    events,
     settings: () => {
       const s = settings.get()
       return { ...s, rev: s.updatedAt }
@@ -356,6 +369,8 @@ export function compose(config: ServerConfig): Server {
   const team = createTeamService(factory, {
     agents,
     tasks,
+    events,
+    activity: activityStore,
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const schedule = croneSchedule()
@@ -364,6 +379,7 @@ export function compose(config: ServerConfig): Server {
     routines: routineStore,
     schedule,
     tasks,
+    events,
     ...(config.routines === undefined ? {} : { config: config.routines }),
     log: { warn: (message) => console.warn(message) },
   })
@@ -390,11 +406,11 @@ export function compose(config: ServerConfig): Server {
     schedule,
     routineEngine: routines,
     events,
+    feed,
     modelCalls,
     clock: { now: () => Date.now() },
     ids: { next: () => newId() },
     workspaceId: WORKSPACE_ID,
-    ...(config.eventsPollMs === undefined ? {} : { eventsPollMs: config.eventsPollMs }),
   }
   if (config.seed !== false) seedAgents(deps)
 

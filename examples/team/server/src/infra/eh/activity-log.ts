@@ -26,10 +26,8 @@ import type { ModelCallWriter } from '../db/model-calls-repo.ts'
 
 export interface ActivityLogOptions {
   store: ModelCallWriter
-  tasks: {
-    getBySession(sessionId: string): { id: string } | undefined
-    appendEvent(event: NewEvent, now: number): number
-  }
+  tasks: { getBySession(sessionId: string): { id: string } | undefined }
+  events: { append(event: NewEvent): void }
   /** The agent of a hook context (`ctx.agent.id` is the slug of the definition). */
   agentOf(slug: string): { id: string } | undefined
   /** Keep at most this many rows. Default 5000. */
@@ -119,15 +117,13 @@ export function createActivityLog(options: ActivityLogOptions): ActivityLog {
         usageRaw: usage.raw,
       }
       options.store.insert(row, at)
-      options.tasks.appendEvent(
-        {
-          type: 'model-call',
-          agentId: row.agentId,
-          sessionId,
-          payload: { id: row.id, kind: row.kind, status: row.status, model: row.modelId },
-        },
+      options.events.append({
+        type: 'model-call',
+        agentId: row.agentId,
+        sessionId,
+        payload: { id: row.id, kind: row.kind, status: row.status, model: row.modelId },
         at,
-      )
+      })
       writes += 1
       if (writes % pruneEvery === 0 && at - lastPrune >= pruneMinMs) prune()
     } catch (error) {

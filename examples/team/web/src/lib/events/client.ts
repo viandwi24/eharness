@@ -5,7 +5,7 @@ import { createSseParser } from './sse';
 
 export type TeamEvent = {
 	seq: number;
-	type: 'message-added' | 'task-changed' | 'approval-needed' | 'approval-decided' | 'agent-message' | (string & {});
+	type: 'message-added' | 'task-changed' | 'pending-changed' | 'approval-decided' | 'agent-message' | (string & {});
 	agentId: string | null;
 	sessionId: string | null;
 	payload: Record<string, unknown>;

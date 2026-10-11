@@ -254,7 +254,7 @@ describe('delegation with park', () => {
     // wrong kind of body
     const feed = await events(b.app)
     const types = feed.map((e) => e.type)
-    expect(types).toContain('approval-needed')
+    expect(types).toContain('pending-changed')
     expect(types).toContain('approval-decided')
     const statuses = feed
       .filter((e) => e.type === 'task-changed')
@@ -502,10 +502,13 @@ describe('delegation with park', () => {
     // (the lead's own reconcile on open) can resolve its wait either
     const [waiting] = await tasks(raw.app, '?status=needs_action')
     // (the id comes from the feed: listing all approvals would open the lead DM)
-    const needed = (await events(raw.app)).find((e) => e.type === 'approval-needed')
-    expect(needed?.payload.toolName).toBe('delete_file')
+    const needed = (await events(raw.app)).find(
+      (e) => e.type === 'pending-changed' && (e.payload.waiting as unknown[]).length > 0,
+    )
+    const [item] = (needed?.payload.waiting ?? []) as Array<{ id: string; toolName: string }>
+    expect(item?.toolName).toBe('delete_file')
     await raw.app.request(
-      `/approvals/${needed?.payload.id}`,
+      `/approvals/${item?.id}`,
       post({ approved: true, sessionId: waiting?.sessionId }),
     )
     await until('child done', async () => (await tasks(raw.app))[0]?.status === 'done')
@@ -762,6 +765,8 @@ describe('events feed', () => {
     await (await a.app.request('/agents/lead/chat', post(userMessage('hello')))).text()
     await read((t) => t.includes('Streamed hello'))
     await reader.cancel()
+    expect(text.startsWith('retry: 3000\n: connected\nevent: boot\n')).toBe(true)
+    expect(text).toContain('event: turn-started')
     expect(text).toContain('event: message-added')
     expect(text).toMatch(/\nid: \d+\n/)
     expect(text).toContain('Streamed hello')

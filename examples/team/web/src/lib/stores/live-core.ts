@@ -166,7 +166,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			const p = e.payload;
 			// a stored message (turn step or end): context size and usage of the open chat moved
 			if (e.type === 'message-added') later('chat', bump('chat'));
-			if (e.type === 'task-changed' || e.type === 'approval-needed' || e.type === 'approval-decided') {
+			if (e.type === 'task-changed' || e.type === 'pending-changed' || e.type === 'approval-decided') {
 				gen.tasks++;
 				gen.approvals++;
 			}
@@ -184,7 +184,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 				}
 				later('tasks', core.loadTasks); // new task, or summary / cost changed
 				later('approvals', core.loadApprovals);
-			} else if (e.type === 'approval-needed' || e.type === 'approval-decided') {
+			} else if (e.type === 'pending-changed' || e.type === 'approval-decided') {
 				// decided (by a person in any tab, the Auto classifier, a remembered grant): the
 				// card goes at once, never offered again; the refetch below confirms
 				if (e.type === 'approval-decided' && typeof p.id === 'string') {

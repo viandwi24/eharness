@@ -6,11 +6,12 @@
  */
 
 export interface ChangeFeedSource {
-  lastSeq(): number
-  events(
-    after: number,
-    limit: number,
-  ): Array<{ seq: number; type: string; payload: Record<string, unknown> }>
+  lastSeq(): Promise<number>
+  read(query: {
+    after: number
+    limit: number
+    types?: readonly string[]
+  }): Promise<Array<{ seq: number; type: string; payload: Record<string, unknown> }>>
 }
 
 export interface ChangeFeed {
@@ -35,16 +36,20 @@ export function createChangeFeed(options: ChangeFeedOptions): ChangeFeed {
   let timer: ReturnType<typeof setInterval> | undefined
   const { feed } = options
   if (feed !== undefined && pollMs > 0) {
-    let after = feed.lastSeq()
+    // the head now: only changes after this instance started count
+    const head = feed.lastSeq()
+    head.catch(() => undefined)
+    let after: number | undefined
     let busy = false
     timer = setInterval(() => {
       if (busy) return
       busy = true
       void (async () => {
         try {
+          after ??= await head
           const changed = new Set<string>()
           for (;;) {
-            const batch = feed.events(after, 100)
+            const batch = await feed.read({ after, limit: 100, types: [...handlers.keys()] })
             if (batch.length === 0) break
             for (const e of batch) {
               after = e.seq

@@ -23,7 +23,7 @@
  * `failed`, `needs_action`) arrives from the `routineOutcomes` plugin on turn end; consecutive
  * failures pause the routine (`maxFailures`).
  */
-import type { AgentRepo, RoutineEngine, ScheduleCalc } from '../../app/ports.ts'
+import type { AgentRepo, EventAppender, RoutineEngine, ScheduleCalc } from '../../app/ports.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import type { EventType } from '../../domain/events.ts'
 import {
@@ -91,6 +91,7 @@ export interface RoutineServiceDeps {
   routines: SqliteRoutineStore
   schedule: ScheduleCalc
   tasks: TaskWriter
+  events: EventAppender
   config?: RoutineEngineConfig
   now?: () => number
   log?: { warn(message: string): void }
@@ -123,15 +124,13 @@ export function createRoutineService(
     payload: Record<string, unknown>,
     now: number,
   ): void => {
-    deps.tasks.appendEvent(
-      {
-        type,
-        agentId: routine.agentId,
-        sessionId,
-        payload: { routineId: routine.id, name: routine.name, ...payload },
-      },
-      now,
-    )
+    deps.events.append({
+      type,
+      agentId: routine.agentId,
+      sessionId,
+      payload: { routineId: routine.id, name: routine.name, ...payload },
+      at: now,
+    })
   }
 
   const emitRun = (routine: Routine, run: RoutineRun, now: number): void =>

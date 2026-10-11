@@ -271,10 +271,13 @@ describe('question pending while a background child reports', () => {
         expect(stats.running).toBe(false)
         expect(stats.pending).toBeNull()
         const types = feed.map((e) => e.type)
-        expect(types).toContain('approval-needed')
+        expect(types).toContain('pending-changed')
         expect(types).toContain('approval-decided')
         expect(
-          feed.filter((e) => e.type === 'approval-needed' && e.payload.kind === 'question'),
+          feed
+            .filter((e) => e.type === 'pending-changed')
+            .flatMap((e) => e.payload.waiting as Array<{ kind: string }>)
+            .filter((w) => w.kind === 'client-tool'),
         ).toHaveLength(1)
         const statuses = feed
           .filter((e) => e.type === 'task-changed')

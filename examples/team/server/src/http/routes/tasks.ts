@@ -1,5 +1,4 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
-import { streamSSE } from 'hono/streaming'
 import { answerApproval, listApprovals } from '../../app/approvals.ts'
 import { listEvents, markAgentRead } from '../../app/events.ts'
 import type { Deps } from '../../app/ports.ts'
@@ -12,7 +11,6 @@ import {
   messageTask,
   resumeTask,
 } from '../../app/tasks.ts'
-import { BOOT_ID } from '../boot.ts'
 import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
 import {
   AgentContextSchema,
@@ -189,7 +187,7 @@ const streamRoute = createRoute({
   tags: ['events'],
   summary: 'Live event feed (SSE)',
   description:
-    'Every instance tails the `events` table (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only).',
+    'The `eharness/activity` stream: every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only). Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 15 s.',
   security,
   request: {
     query: z.object({
@@ -288,130 +286,85 @@ const contextRoute = createRoute({
 })
 
 export function taskRoutes(deps: Deps): OpenAPIHono {
-  return new OpenAPIHono()
-    .openapi(tasksRoute, (c) => {
-      const { status, agentId, limit } = c.req.valid('query')
-      return c.json(
-        {
-          tasks: listTasks(deps, {
-            limit,
-            ...(status === undefined ? {} : { status }),
-            ...(agentId === undefined ? {} : { agentId }),
+  return (
+    new OpenAPIHono()
+      .openapi(tasksRoute, (c) => {
+        const { status, agentId, limit } = c.req.valid('query')
+        return c.json(
+          {
+            tasks: listTasks(deps, {
+              limit,
+              ...(status === undefined ? {} : { status }),
+              ...(agentId === undefined ? {} : { agentId }),
+            }),
+          },
+          200,
+        )
+      })
+      .openapi(taskRoute, async (c) => {
+        const detail = await getTask(deps, c.req.valid('param').id)
+        return c.json(detail as never, 200)
+      })
+      .openapi(taskStreamRoute, async (c) =>
+        raw(await resumeTask(deps, c.req.valid('param').id, c.req.raw)),
+      )
+      .openapi(approvalsRoute, async (c) => c.json({ approvals: await listApprovals(deps) }, 200))
+      .openapi(answerRoute, async (c) => {
+        const { id } = c.req.valid('param')
+        const body = c.req.valid('json')
+        const { view, outcome } = await answerApproval(
+          deps,
+          id,
+          'answers' in body
+            ? { kind: 'question', answers: body.answers }
+            : {
+                kind: 'approval',
+                approved: body.approved,
+                ...(body.reason === undefined ? {} : { reason: body.reason }),
+                ...(body.note === undefined ? {} : { note: body.note }),
+                ...(body.endTurn === undefined ? {} : { endTurn: body.endTurn }),
+                ...(body.remember === undefined ? {} : { remember: body.remember }),
+              },
+          body.sessionId,
+        )
+        return c.json(
+          {
+            accepted: true as const,
+            status: outcome.status,
+            remaining: outcome.status === 'recorded' ? outcome.remaining : 0,
+            id: view.id,
+            sessionId: view.sessionId,
+            agentId: view.agentId,
+          },
+          202,
+        )
+      })
+      .openapi(eventsRoute, async (c) => {
+        const { after, limit } = c.req.valid('query')
+        return c.json(await listEvents(deps, { after: Number(after ?? 0), limit }), 200)
+      })
+      // the library's SSE handler: initial flush, boot id, keep-alives, Last-Event-ID, resync
+      .openapi(streamRoute, (c) => raw(deps.feed.stream(c.req.raw)))
+      .openapi(sessionsRoute, async (c) =>
+        c.json((await agentSessions(deps, c.req.valid('param').id)) as never, 200),
+      )
+      .openapi(abortRoute, async (c) => {
+        const body = c.req.valid('json')
+        return c.json(await abortTask(deps, c.req.valid('param').id, body?.reason), 200)
+      })
+      .openapi(messageRoute, async (c) => {
+        const body = c.req.valid('json')
+        return c.json(
+          await messageTask(deps, c.req.valid('param').id, {
+            text: body.text,
+            ...(body.mode === undefined ? {} : { mode: body.mode }),
           }),
-        },
-        200,
+          202,
+        )
+      })
+      .openapi(contextRoute, async (c) =>
+        c.json((await agentContext(deps, c.req.valid('param').id)) as never, 200),
       )
-    })
-    .openapi(taskRoute, async (c) => {
-      const detail = await getTask(deps, c.req.valid('param').id)
-      return c.json(detail as never, 200)
-    })
-    .openapi(taskStreamRoute, async (c) =>
-      raw(await resumeTask(deps, c.req.valid('param').id, c.req.raw)),
-    )
-    .openapi(approvalsRoute, async (c) => c.json({ approvals: await listApprovals(deps) }, 200))
-    .openapi(answerRoute, async (c) => {
-      const { id } = c.req.valid('param')
-      const body = c.req.valid('json')
-      const { view, outcome } = await answerApproval(
-        deps,
-        id,
-        'answers' in body
-          ? { kind: 'question', answers: body.answers }
-          : {
-              kind: 'approval',
-              approved: body.approved,
-              ...(body.reason === undefined ? {} : { reason: body.reason }),
-              ...(body.note === undefined ? {} : { note: body.note }),
-              ...(body.endTurn === undefined ? {} : { endTurn: body.endTurn }),
-              ...(body.remember === undefined ? {} : { remember: body.remember }),
-            },
-        body.sessionId,
-      )
-      return c.json(
-        {
-          accepted: true as const,
-          status: outcome.status,
-          remaining: outcome.status === 'recorded' ? outcome.remaining : 0,
-          id: view.id,
-          sessionId: view.sessionId,
-          agentId: view.agentId,
-        },
-        202,
-      )
-    })
-    .openapi(eventsRoute, (c) => {
-      const { after, limit } = c.req.valid('query')
-      return c.json(listEvents(deps, { after: Number(after ?? 0), limit }), 200)
-    })
-    .openapi(streamRoute, (c) => {
-      const { after } = c.req.valid('query')
-      const header = c.req.header('last-event-id')
-      const explicit =
-        after ?? (header !== undefined && /^\d{1,15}$/.test(header) ? header : undefined)
-      let cursor = explicit === undefined ? deps.tasks.lastSeq() : Number(explicit)
-      const pollMs = deps.eventsPollMs ?? 500
-      return raw(
-        streamSSE(c, async (stream) => {
-          let quiet = 0
-          try {
-            // Flush the response at once (proxies and fetch() resolve only on the first bytes):
-            // a reconnect delay hint plus a comment, before the first poll.
-            await stream.write(
-              `retry: 3000\n: connected\nevent: boot\ndata: ${JSON.stringify({ boot: BOOT_ID })}\n\n`,
-            )
-            // a cursor below the retention mark missed events: tell the client to refetch, then
-            // continue from the mark (the events after it are replayed below)
-            const prunedThrough = deps.tasks.prunedThrough()
-            if (explicit !== undefined && cursor > 0 && cursor < prunedThrough) {
-              await stream.writeSSE({
-                event: 'resync',
-                data: JSON.stringify({ seq: prunedThrough }),
-              })
-              cursor = prunedThrough
-            }
-            while (!stream.aborted && !stream.closed) {
-              const { events } = listEvents(deps, { after: cursor, limit: 200 })
-              for (const event of events) {
-                await stream.writeSSE({
-                  id: String(event.seq),
-                  event: event.type,
-                  data: JSON.stringify(event),
-                })
-                cursor = event.seq
-              }
-              quiet = events.length === 0 ? quiet + pollMs : 0
-              if (quiet >= 15_000) {
-                await stream.write(': keep-alive\n\n')
-                quiet = 0
-              }
-              await stream.sleep(pollMs)
-            }
-          } catch {
-            // the client went away, or the server is closing: end the stream
-          }
-        }),
-      )
-    })
-    .openapi(sessionsRoute, async (c) =>
-      c.json((await agentSessions(deps, c.req.valid('param').id)) as never, 200),
-    )
-    .openapi(abortRoute, async (c) => {
-      const body = c.req.valid('json')
-      return c.json(await abortTask(deps, c.req.valid('param').id, body?.reason), 200)
-    })
-    .openapi(messageRoute, async (c) => {
-      const body = c.req.valid('json')
-      return c.json(
-        await messageTask(deps, c.req.valid('param').id, {
-          text: body.text,
-          ...(body.mode === undefined ? {} : { mode: body.mode }),
-        }),
-        202,
-      )
-    })
-    .openapi(contextRoute, async (c) =>
-      c.json((await agentContext(deps, c.req.valid('param').id)) as never, 200),
-    )
-    .openapi(readRoute, (c) => c.json(markAgentRead(deps, c.req.valid('param').id), 200))
+      .openapi(readRoute, (c) => c.json(markAgentRead(deps, c.req.valid('param').id), 200))
+  )
 }

@@ -170,7 +170,7 @@ export const EventSchema = z
   })
   .openapi('TeamEvent', {
     description:
-      '`message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page).',
+      'App events: `message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page) and the change events. Session events come from `eharness/activity` (spec 25): `turn-started` (turnId, kind, source; every turn of every session, also server-started ones), `pending-changed` (a snapshot: `waiting` = approvals / questions that wait for a person, `[]` when nothing does), `approval-decided` (id, approved, by), `attention-answered`, `session-recovered`, `child-reported`.',
   })
 
 export const EventListSchema = z

@@ -1580,7 +1580,7 @@ export interface paths {
         };
         /**
          * Live event feed (SSE)
-         * @description Every instance tails the `events` table (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only).
+         * @description The `eharness/activity` stream: every instance tails the shared events log (poll, 500 ms), so a client connected to instance B sees what instance A did. Starts after `after` (or `Last-Event-ID`); without either it starts at the current head (new events only). Frames: `retry` + `: connected` + `event: boot` at once; `resync` when the cursor is behind the retention mark or ahead of the head; `: keep-alive` every 15 s.
          */
         get: {
             parameters: {
@@ -5531,11 +5531,11 @@ export interface components {
              */
             resync?: true;
         };
-        /** @description `message-added` (agent, role, preview), `turn-started` (turnId, kind; every DM turn, also server-started ones), `task-changed` (taskId, status, pendingKind, title), `approval-needed` (id, kind, toolName), `approval-decided`, `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page). */
+        /** @description App events: `message-added` (agent, role, preview), `task-changed` (taskId, status, pendingKind, title), `agent-message` (from, to, preview), `model-call` (id, kind, status, model; one per logged provider call, for the Logs page) and the change events. Session events come from `eharness/activity` (spec 25): `turn-started` (turnId, kind, source; every turn of every session, also server-started ones), `pending-changed` (a snapshot: `waiting` = approvals / questions that wait for a person, `[]` when nothing does), `approval-decided` (id, approved, by), `attention-answered`, `session-recovered`, `child-reported`. */
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "turn-started" | "task-changed" | "approval-needed" | "approval-decided" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed";
+            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
             agentId: string | null;
             sessionId: string | null;
             payload: {
