@@ -49,7 +49,7 @@ import { recheckTask } from './app/deliverables.ts'
 import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
-import { ensureAllFirstThreads } from './app/threads.ts'
+import { createThread, ensureAllFirstThreads } from './app/threads.ts'
 import {
   cancelQueuedTask,
   completeTask,
@@ -61,6 +61,7 @@ import { areaOf } from './domain/library.ts'
 import { parseProgramSession } from './domain/programs.ts'
 import { parseRehearsalSession } from './domain/rehearsal.ts'
 import { hostTimezone } from './domain/settings.ts'
+import { legacyThreadSessionId, sortThreads } from './domain/threads.ts'
 import { createApp } from './http/app.ts'
 import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
@@ -529,6 +530,22 @@ export function compose(config: ServerConfig): Server {
     events,
     programs: { store: programStore, runner: programRunner },
     system: () => heartbeats,
+    // a routine in `dm` mode fires into a live thread of the agent, never an archived one
+    dmSession: (agentId) => {
+      const agent = agents.get(agentId)
+      const live = threadStore.list(agentId).filter((t) => t.archivedAt === null)
+      const open = sortThreads(live)[0]
+      if (open !== undefined) return open.sessionId
+      if (
+        agent === undefined ||
+        agent.archivedAt !== null ||
+        threadStore.list(agentId).length === 0
+      ) {
+        return legacyThreadSessionId(agentId)
+      }
+      // every thread is archived: open a new one rather than write into an archived chat
+      return createThread(deps, agentId, { title: 'Routines' }).sessionId
+    },
     ...(config.routines === undefined ? {} : { config: config.routines }),
     log: { warn: (message) => console.warn(message) },
   })

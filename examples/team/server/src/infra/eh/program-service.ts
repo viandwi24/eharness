@@ -20,13 +20,21 @@
  * and report apart on the board, and a task sent back gets a fresh session (the earlier ones stay
  * in the task's history).
  */
+import type { FileUIPart } from 'ai'
 import { errorText } from 'eharness'
 import { z } from 'zod'
 import { checkRun, finishRun } from '../../app/deliverables.ts'
 import type { AgentRepo, Deps, EventAppender, ProgramRunner } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
+import {
+  isAllowedMediaType,
+  libraryUrl,
+  MAX_UPLOAD_BYTES,
+  uploadPathOfUrl,
+} from '../../domain/chat.ts'
 import { allPass, fixUpPrompt } from '../../domain/deliverables.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
+import { UPLOADS_ROOT } from '../../domain/library.ts'
 import {
   PROGRAM_RUN_MAX_STEPS,
   type Program,
@@ -101,9 +109,14 @@ export function createProgramService(
   }
 
   /** Send the run prompt into the session; resolves with how the turn ended. */
-  function send(def: AgentDef, sessionId: string, prompt: string): Promise<string | undefined> {
+  function send(
+    def: AgentDef,
+    sessionId: string,
+    prompt: string,
+    files: FileUIPart[] = [],
+  ): Promise<string | undefined> {
     const session = factory.openSession(def, sessionId)
-    const run = session.send(prompt, {
+    const run = session.send(files.length === 0 ? prompt : { text: prompt, files }, {
       output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
       ifBusy: 'reject',
       maxSteps: PROGRAM_RUN_MAX_STEPS,
@@ -128,8 +141,14 @@ export function createProgramService(
     def: AgentDef,
     sessionId: string,
     prompt: string,
+    task?: Task,
   ): Promise<string | undefined> {
-    const stop = await send(def, sessionId, prompt)
+    const stop = await send(
+      def,
+      sessionId,
+      prompt,
+      task === undefined ? [] : await inputFiles(task),
+    )
     const app = deps.app?.()
     if (program.deliverables.length === 0 || app === undefined || stop !== 'complete') return stop
     const reported = (): boolean => {
@@ -154,6 +173,40 @@ export function createProgramService(
       log.warn(`deliverable checks of ${sessionId} failed: ${errorText(error)}`)
       return stop
     }
+  }
+
+  /**
+   * The image and PDF uploads among the task inputs, as file parts of the first message, so a
+   * worker that must see a photo sees it (the path stays in the prompt). Same rules as a chat
+   * attachment: under /uploads, allowed type, at most MAX_UPLOAD_BYTES. Text-like uploads and
+   * other library paths stay paths the worker reads with its tools. An input that fails a check is
+   * left as a path.
+   */
+  async function inputFiles(task: Task): Promise<FileUIPart[]> {
+    const uploads = deps.app?.()?.uploads
+    if (uploads === undefined) return []
+    const out: FileUIPart[] = []
+    for (const input of task.inputs) {
+      try {
+        if (!input.startsWith(`${UPLOADS_ROOT}/`)) continue
+        const path = uploadPathOfUrl(libraryUrl(input))
+        if (path === undefined) continue
+        const meta = await uploads.stat(path)
+        if (meta === undefined || meta.size > MAX_UPLOAD_BYTES) continue
+        const type = meta.mediaType.toLowerCase().split(';')[0]?.trim() ?? ''
+        if (!isAllowedMediaType(type)) continue
+        if (!type.startsWith('image/') && type !== 'application/pdf') continue
+        out.push({
+          type: 'file',
+          mediaType: meta.mediaType,
+          url: libraryUrl(path),
+          filename: path.split('/').pop() ?? path,
+        })
+      } catch (error) {
+        log.warn(`task input ${input} not attached: ${errorText(error)}`)
+      }
+    }
+    return out
   }
 
   /** A session of this id has run, or is running. */
@@ -183,7 +236,7 @@ export function createProgramService(
     if (row === undefined) return { sessionId: first, started: false, idle: true }
     announce(def, first, row, claimed === undefined)
 
-    const firstEnd = runChecked(program, def, first, promptOf(row, runAt))
+    const firstEnd = runChecked(program, def, first, promptOf(row, runAt), row)
     track(
       (async () => {
         let stop = await firstEnd
@@ -200,7 +253,7 @@ export function createProgramService(
           const next = deps.tasks.claimNext(def.id, sessionId, clock())
           if (next === undefined) break
           announce(def, sessionId, next, true)
-          stop = await runChecked(program, def, sessionId, promptOf(next, at))
+          stop = await runChecked(program, def, sessionId, promptOf(next, at), next)
           done++
         }
       })().catch((error: unknown) =>

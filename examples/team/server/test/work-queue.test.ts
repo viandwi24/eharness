@@ -648,6 +648,51 @@ describe('researcher worker program', () => {
   })
 })
 
+describe('task inputs that are uploads', () => {
+  test('an image input reaches the run as a file part; text uploads, missing files and other paths stay paths', async () => {
+    const { app, models } = fresh({
+      researcher: [finalReport({ status: 'done', summary: 'looked', outputs: [] })],
+    })
+    const up = async (name: string, type: string, content: BlobPart): Promise<string> => {
+      const form = new FormData()
+      form.set('file', new File([content], name, { type }))
+      const res = await app.request('/library/files', { method: 'POST', body: form })
+      expect(res.status).toBe(201)
+      return ((await res.json()) as { path: string }).path
+    }
+    const photo = await up('photo.png', 'image/png', new Uint8Array([137, 80, 78, 71, 1, 2, 3]))
+    const notes = await up('notes.csv', 'text/csv', 'a,b\n1,2\n')
+    const task = await queue(app, {
+      agentId: 'researcher',
+      title: 'Look at the photo',
+      inputs: [photo, notes, '/uploads/2020-01-01/missing.png', '/library/other.png'],
+    })
+    const worker = await createProgram(app, {
+      agentId: 'researcher',
+      name: 'Look',
+      authority: { read: ['/library/**'], write: ['/library/research/**'] },
+      worker: { maxTasks: 1 },
+    })
+    await runNow(app, worker.id)
+    await until('done', async () => settled(await getTask(app, task.id)))
+    const prompt = JSON.stringify(models.researcher?.prompts[0])
+    expect(prompt).toContain('image/png')
+    expect(prompt).not.toContain('text/csv')
+    // every input stays named in the prompt text
+    for (const path of [photo, notes, '/library/other.png']) expect(prompt).toContain(path)
+    // the stored user message keeps the reference, one file part
+    const res = await app.request(
+      `/sessions/${encodeURIComponent((await getTask(app, task.id)).sessionId as string)}/messages?limit=20`,
+    )
+    const body = (await res.json()) as {
+      messages: Array<{ parts: Array<Record<string, unknown>> }>
+    }
+    const files = body.messages.flatMap((m) => m.parts).filter((p) => p.type === 'file')
+    expect(files).toHaveLength(1)
+    expect(String(files[0]?.url).startsWith('library:///uploads/')).toBe(true)
+  })
+})
+
 describe('waiting for you', () => {
   test('a task whose run parked on a decision is in the Waiting column until it is decided', async () => {
     const { app, server } = fresh({

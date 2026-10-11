@@ -180,7 +180,7 @@ export interface SqliteLockOptions {
 export function sqliteLock(sqlite: Sqlite, options: SqliteLockOptions = {}): SessionLock {
   const leaseMs = options.leaseMs ?? 30_000
   const instance = options.owner ?? uuidv7()
-  /** Leases this process holds (a sibling agent object of the process must not be taken over). */
+  /** Leases this lock object holds: a live holder is never taken over by the same object. */
   const held = new Set<string>()
   return {
     async acquire(sessionId, { signal }) {

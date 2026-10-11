@@ -674,4 +674,46 @@ describe('unattended runs', () => {
     await outcomes.turnEnded({ sessionId: run.sessionId, stop: 'complete', needsPerson: false })
     expect((await runs(a.app, r.id))[0]?.status).toBe('succeeded')
   })
+  test('a DM routine fires into the newest live thread, never an archived one; with all archived it opens a new thread', async () => {
+    const a = instance(
+      tmp(),
+      { researcher: [{ text: 'a' }, { text: 'b' }, { text: 'c' }] },
+      { first: true },
+    )
+    const agentId = a.server.deps.agents.getBySlug('researcher')?.id as string
+    const r = await create(a.app, {
+      sessionMode: 'dm',
+      overlap: 'queue',
+      schedule: { kind: 'every', everyMs: 3_600_000 },
+    })
+    const fire = async (): Promise<string> => {
+      const res = await a.app.request(`/routines/${r.id}/run`, { method: 'POST' })
+      expect(res.status).toBeLessThan(300)
+      await sleep(5)
+      return ((await res.json()) as RoutineRun).sessionId
+    }
+    const threads = a.server.deps.threads
+    const post = (path: string) => a.app.request(path, { method: 'POST' })
+    // no thread rows yet: the legacy DM session
+    expect(await fire()).toBe(`dm:${agentId}`)
+    // the first thread is archived and a newer one exists: the routine follows the live one
+    const created = await a.app.request(
+      '/agents/researcher/threads',
+      json('POST', { title: 'Second' }),
+    )
+    expect(created.status).toBe(201)
+    const second = (await created.json()) as { id: string; sessionId: string }
+    const first = threads.list(agentId).find((t) => t.sessionId === `dm:${agentId}`)
+    expect(first).toBeDefined()
+    expect((await post(`/agents/researcher/threads/${first?.id}/archive`)).status).toBe(200)
+    expect(await fire()).toBe(second.sessionId)
+    // every thread archived: a new thread opens, the archived ones stay untouched
+    expect((await post(`/agents/researcher/threads/${second.id}/archive`)).status).toBe(200)
+    const third = await fire()
+    expect(third).not.toBe(second.sessionId)
+    expect(third).not.toBe(`dm:${agentId}`)
+    const row = threads.getBySession(third)
+    expect(row?.archivedAt).toBeNull()
+    expect(row?.title).toBe('Routines')
+  })
 })

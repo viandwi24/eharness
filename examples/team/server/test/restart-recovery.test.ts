@@ -67,7 +67,7 @@ describe('task status of interrupted work', () => {
 })
 
 describe('the lock of a restarted instance', () => {
-  test('is taken over for the same stable owner, never from a live sibling or another owner', async () => {
+  test('is taken over for the same stable owner, never from the live holder (same lock object) or another owner', async () => {
     const db = new Database(':memory:')
     db.run(
       'CREATE TABLE eh_locks (session_id TEXT PRIMARY KEY, owner TEXT NOT NULL, until INTEGER NOT NULL)',
@@ -75,7 +75,12 @@ describe('the lock of a restarted instance', () => {
     const signal = new AbortController().signal
     const first = sqliteLock(db, { owner: 'srv', takeOver: true, leaseMs: 60_000 })
     const release = await first.acquire('s', { signal })
-    // a sibling object of the same process (same owner prefix) must not take it
+    // the process has ONE lock object: the lease it still holds (`held`) is never taken over, so
+    // a second acquire on the same object is refused
+    expect(first.acquire('s', { signal })).rejects.toThrow('locked elsewhere')
+    // a different lock object with the same stable owner cannot tell a live holder from a dead
+    // previous run (the tracking is per object), so it takes the lease over: that is the restart
+    // case, and why the app builds exactly one lock object per process
     const sibling = sqliteLock(db, { owner: 'srv', takeOver: true, leaseMs: 60_000 })
     const siblingRelease = await sibling.acquire('s', { signal })
     expect(siblingRelease).toBeDefined()

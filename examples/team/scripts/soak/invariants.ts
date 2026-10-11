@@ -10,7 +10,7 @@ export interface SoakContext {
   queuedIds: string[]
   /** How many times the driver sent each task back (round = 1 + this). */
   sentBack: Record<string, number>
-  /** Id of the lead agent (its DM holds the digest). */
+  /** Id of the lead agent (the briefing is for the lead; kept for the drivers). */
   leadId: string
 }
 
@@ -168,35 +168,20 @@ export function checkInvariants(dbFile: string, ctx: SoakContext): Violation[] {
       bad('budget', `${open[0]?.n} expired budget reservations are still open`)
     }
 
-    // 6. at most one digest per local day
-    const digests = all(
-      db,
-      "SELECT parts FROM eh_messages WHERE session_id = ? AND parts LIKE '%daily-digest%'",
-      `dm:${ctx.leadId}`,
-    )
-    const keys = new Set<string>()
-    for (const row of digests) {
-      for (const part of JSON.parse(String(row.parts)) as Array<{
-        type?: string
-        data?: { name?: string; text?: string }
-      }>) {
-        if (part.type === 'data-eh.event' && part.data?.name === 'daily-digest') {
-          const text = part.data.text ?? ''
-          if (keys.has(text)) bad('digest-once', 'the same digest text is stored twice')
-          keys.add(text)
-        }
-      }
-    }
-    const perDay = new Map<string, number>()
+    // 6. at most one briefing per local day, and the digest is a page, never a chat message
     for (const row of all(
       db,
-      "SELECT created_at FROM eh_messages WHERE session_id = ? AND parts LIKE '%daily-digest%'",
-      `dm:${ctx.leadId}`,
+      'SELECT day, COUNT(*) AS n FROM briefings GROUP BY day HAVING COUNT(*) > 1',
     )) {
-      const day = new Date(Number(row.created_at)).toISOString().slice(0, 10)
-      perDay.set(day, (perDay.get(day) ?? 0) + 1)
+      bad('digest-once', `${row.n} briefings on ${row.day}`)
     }
-    for (const [day, n] of perDay) if (n > 1) bad('digest-once', `${n} digests on ${day}`)
+    const inChat = all(
+      db,
+      "SELECT COUNT(*) AS n FROM eh_messages WHERE parts LIKE '%daily-digest%'",
+    )
+    if (Number(inChat[0]?.n ?? 0) > 0) {
+      bad('digest-once', `${inChat[0]?.n} digests were written into a chat`)
+    }
 
     // 7. heartbeat history
     for (const row of all(

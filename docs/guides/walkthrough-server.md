@@ -421,10 +421,11 @@ The hooks, in the order a request meets them:
    allowed type, and answers with a readable `ERROR:` otherwise; no child starts). An employee's
    photo or PDF therefore reaches the specialist the lead delegates to, from the web today and from
    any later channel that stores the upload the same way. A resumed child (`send_message`) takes
-   text only. **Queued tasks** (`create_task`) already carry `inputs`: library paths, which an
-   upload is (`/uploads/…`); a worker reads text-like inputs with the library tools, but an image
-   or PDF input is not attached as a file part to the task run (open question: attach media inputs
-   to the first message of a task run).
+   text only. **Queued tasks** (`create_task`) carry `inputs`: library
+   paths, which an upload is (`/uploads/…`). The worker run (`program-service.ts`, `inputFiles`)
+   attaches each image or PDF upload among them as a file part of the run's first message (same
+   rules: under /uploads, allowed type, at most 10 MB; a failing input stays a path in the prompt).
+   Text-like inputs stay paths the worker reads with the library tools.
    **A model that cannot read the file is caught early.** When the catalog knows the model's input
    modalities (`modelsDevCatalog` / `openRouterCatalog` fill `inputModalities`), an image or PDF
    sent to a model without that input is refused before anything is stored with `EH_INVALID_INPUT`
@@ -1034,7 +1035,7 @@ the database and the logs.
 | `run-has-task` | A routine run is not final (`claimed`, `enqueued`), a scheduled run has no task row, or a succeeded run's task is not `done`. |
 | `decisions` | A decision is still open at the end, a decided one has no `decided_at`, or a session still waits (`pending`) with no decision to answer. |
 | `budget` | The workspace ledger differs from the sum of the logged model calls (cost is recorded once per step, also for a step that failed after streaming), or a reservation stayed open past its expiry (a killed process legitimately holds one until it expires). |
-| `digest-once` | The same digest was stored twice in a chat (digests from before phase M), or two share a day. Briefings are unique per day by a database constraint. |
+| `digest-once` | Two briefings share a day (the `briefings` day index forbids it; this is the second line of defence), or a `daily-digest` message was written into a chat (the digest is a page since phase M). |
 | `heartbeat` | A beat is still `running`, ends before it starts, repeats an id, or an `ok` beat has items. |
 | `orphans` | A run session has no task row or names a deleted program, a task has a missing parent session, or an undelivered inbox item is left on a run or heartbeat session. |
 
@@ -1081,6 +1082,11 @@ modes and connector switches stay under the old id. `migration 0020` only create
 thread with the newest activity. The chat itself is the library's `/sessions/{sessionId}/chat`: a
 `chat:` id without a thread row is a 404, an archived thread answers 409 `THREAD_ARCHIVED`.
 Threads are created only on demand.
+
+**Routines in `dm` mode.** A routine with `sessionMode: 'dm'` fires into the agent's newest live
+(non-archived) thread, resolved when the slot is claimed and stored on the run (`dmSession` in
+`main.ts`). An agent with no thread rows yet uses `dm:<agentId>`; an agent whose threads are all
+archived gets a new thread titled "Routines". It never writes into an archived thread.
 
 **Briefing page and bell.** `runDigest` stores a `briefings` row (markdown body plus items) and one
 `briefing` notification; `finishBeat` adds one `alert` notification per urgent finding

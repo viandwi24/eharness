@@ -411,7 +411,7 @@ Decided in phase K:
       stores and live; walkthrough section 27; API types regenerated.
 
 Decided in phase M: the thread session id of the first thread stays `dm:<agentId>` (data never moves);
-routines with `sessionMode: 'dm'` keep firing into it (also when archived). The thread list is
+routines with `sessionMode: 'dm'` fire into the agent's newest live thread (never an archived one; all archived: a new "Routines" thread). The thread list is
 ordered by last activity; an unnamed thread is named by its first user message. No hard delete:
 archive is the delete (plan P32 §5.1). A briefing's "Discuss in chat" goes to the lead; `agent` may
 name another one.

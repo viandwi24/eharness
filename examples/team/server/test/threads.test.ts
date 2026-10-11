@@ -310,8 +310,10 @@ describe('work started from a thread', () => {
       lead: [
         { toolCalls: [delegateBg] },
         { text: 'Delegated.' },
+        // the library wakes the parent twice, by design (spec 20): once when the child parks on
+        // the person's answer ("waiting"), once when it finishes (its report)
+        { text: 'It is waiting for the client.' },
         { text: 'Report received.' },
-        { text: 'Spare.' },
       ],
       researcher: [
         { toolCalls: [{ toolName: 'delete_file', input: { path: '/library/old.md' } }] },
@@ -361,6 +363,8 @@ describe('work started from a thread', () => {
     await until('lead woke in its thread', async () =>
       (await messagesOf(i, t.sessionId)).includes('Report received.'),
     )
+    expect(i.models.lead?.calls).toHaveLength(4)
+    expect(await messagesOf(i, t.sessionId)).toContain('It is waiting for the client.')
     expect(await messagesOf(i, other.sessionId)).not.toContain('Report received.')
     expect(await messagesOf(i, `dm:${i.leadId}`)).not.toContain('Report received.')
   })

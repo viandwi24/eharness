@@ -118,6 +118,11 @@ export interface RoutineServiceDeps {
    * this runner. Late-bound: it needs the app deps, which are built after the routine service.
    */
   system?: () => SystemRunner | undefined
+  /**
+   * The session a `sessionMode: 'dm'` routine fires into: a live chat thread of the agent (never an
+   * archived one, P40 phase M follow-up). Default: the legacy `dm:<agentId>` session.
+   */
+  dmSession?: (agentId: string) => string
   config?: RoutineEngineConfig
   now?: () => number
   log?: { warn(message: string): void }
@@ -144,6 +149,13 @@ export function createRoutineService(
   const lookaheadMs = deps.config?.lookaheadMs ?? tickMs
   const graceMs = deps.config?.graceMs ?? Math.max(2 * tickMs, 60_000)
   const recoverAfterMs = deps.config?.recoverAfterMs ?? 30_000
+  const sessionOf = (
+    routine: Parameters<typeof routineSessionId>[0],
+    scheduledAt: number,
+  ): string =>
+    routine.programId == null && routine.sessionMode === 'dm' && deps.dmSession !== undefined
+      ? deps.dmSession(routine.agentId)
+      : routineSessionId(routine, scheduledAt)
   const maxPerTick = deps.config?.maxPerTick ?? 50
 
   const emit = (
@@ -402,7 +414,7 @@ export function createRoutineService(
       fire: firing,
       status: firing ? 'claimed' : 'skipped',
       ...(skipReason === undefined ? {} : { reason: skipReason }),
-      sessionId: routineSessionId(row, slot),
+      sessionId: sessionOf(row, slot),
       now,
     })
     if (run === undefined) {
@@ -594,7 +606,7 @@ export function createRoutineService(
       const now = clock()
       const def = deps.agents.get(routine.agentId)
       if (def === undefined) throw notFound('agent', routine.agentId)
-      const sessionId = routineSessionId(routine, now)
+      const sessionId = sessionOf(routine, now)
       if (routine.overlap === 'skip') {
         const reason = await overlapReason(routine, { id: '', sessionId })
         if (reason !== undefined) throw conflict(reason, 'ROUTINE_BUSY')
