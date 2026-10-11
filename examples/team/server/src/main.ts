@@ -14,6 +14,7 @@
  *   TEAM_ALLOWED_ORIGINS extra browser origins allowed to send state-changing requests (the origins of TEAM_WEB_URL and TEAM_PUBLIC_URL always are; other `Origin`s get 403 FORBIDDEN_ORIGIN, the CSRF guard)
  *   TEAM_PUBLIC_URL   where this server is reached by the browser (OAuth callback `<url>/oauth/callback`; default http://localhost:PORT)
  *   TEAM_WEB_URL      where the web app lives (the OAuth callback redirects to `<url>/connectors`; default http://localhost:5173)
+ *   TEAM_WEB_DIR      serve the built web (web/build) from this server on one port; the API then lives under /api (Dockerfile)
  *   TEAM_<CONNECTOR>_CLIENT_ID / _CLIENT_SECRET   OAuth app of a curated connector (e.g. TEAM_GITHUB_CLIENT_ID); or save it in the web app
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
  *   TEAM_SEARCH_MODEL   model of web_search, same format
@@ -68,6 +69,7 @@ import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
 import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
 import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
+import { channelApprovalAnswerer, watchPendingChanges } from './infra/channels/attention.ts'
 import {
   type ChannelGateway,
   channelVaultFromEnv,
@@ -139,6 +141,7 @@ import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
 import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
 import { installJsonSchemaValidator } from './infra/json-schema.ts'
 import { croneSchedule } from './infra/schedule.ts'
+import { webStatic } from './infra/web-static.ts'
 
 export interface ServerConfig {
   dbFile: string
@@ -212,6 +215,8 @@ export interface ServerConfig {
     outbound?: { now?: () => number; sleep?: (ms: number) => Promise<void> }
     /** Purge of the channel log past its retention: every `purgeEveryMs` (default 1 h; 0 = boot only). */
     purgeEveryMs?: number
+    /** Retry timing of the outbox (tests shorten it). */
+    delivery?: { retryBaseMs?: number; retryMaxMs?: number; maxAttempts?: number }
   }
 }
 
@@ -262,7 +267,11 @@ export function compose(config: ServerConfig): Server {
   // the shared feed on eharness/activity: session events come from its `activity()` plugin, the
   // app appends its own types (providers-changed, settings-changed, ...) through `events`; the
   // routes that read it are the `activity` option of eharness/http (below)
-  const activityStore = sqliteActivityStore(conn.sqlite)
+  // the channels gateway is built later; it hears about pending items of channel sessions through the feed
+  let channelGateway: ChannelGateway | undefined
+  const activityStore = watchPendingChanges(sqliteActivityStore(conn.sqlite), (e) =>
+    channelGateway?.pendingChanged(e),
+  )
   const threadStore = sqliteThreadStore(conn.sqlite)
   const events = withThreadActivity(createEventAppender(activityStore), threadStore)
   // ONE vault, ONE profile table and ONE sealing path: provider profiles, connections, their
@@ -422,8 +431,7 @@ export function compose(config: ServerConfig): Server {
   // the same for the heartbeat tools (`team_status`) and the hook that records a beat
   let heartbeatIntake: HeartbeatIntake | undefined
   let workQueueIntake: WorkQueueIntake | undefined
-  // the channels gateway needs the app deps too
-  let channelGateway: ChannelGateway | undefined
+  // the channels gateway needs the app deps too (declared with the activity store above)
   // the fixture community source is a demo: it is only there when asked for
   const bigDataConfig: BigDataConfig = {
     ...config.bigData,
@@ -701,6 +709,15 @@ export function compose(config: ServerConfig): Server {
       ? {}
       : { typingEveryMs: config.channels.typingEveryMs }),
     ...(config.channels?.outbound === undefined ? {} : { outbound: config.channels.outbound }),
+    ...(config.channels?.delivery === undefined ? {} : { delivery: config.channels.delivery }),
+    // approvals of a channel turn can be answered from the chat, the same path as the web app
+    approvals: { answer: channelApprovalAnswerer({ factory, agents, store: activityStore }) },
+    webLink: ({ agentId, sessionId }) => {
+      const thread = threadStore.getBySession(sessionId)
+      return thread === undefined
+        ? undefined
+        : `${webUrl}/a/${agentId}?t=${encodeURIComponent(thread.id)}`
+    },
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const channels = channelGateway
@@ -906,6 +923,7 @@ if (import.meta.main) {
     console.error(errorText(error))
     process.exit(1)
   }
+  const web = process.env.TEAM_WEB_DIR ? webStatic(process.env.TEAM_WEB_DIR) : undefined
   // idleTimeout 0: Bun closes a connection after 10 s without bytes by default, which cuts chat
   // streams while a long tool runs (the activity stream has its own 8 s keep-alive)
   const http = Bun.serve({
@@ -922,11 +940,13 @@ if (import.meta.main) {
           { status: 403 },
         )
       }
-      return server.app.fetch(request, bunServer)
+      if (!web) return server.app.fetch(request, bunServer)
+      const api = web.apiRequest(request)
+      return api ? server.app.fetch(api, bunServer) : web.serve(request)
     },
   })
   console.log(
-    `team server on http://${listen.hostname}:${http.port} (docs at /docs, ${token ? 'token auth' : 'no TEAM_TOKEN: open, loopback only'})`,
+    `team server on http://${listen.hostname}:${http.port} (${web ? 'web at /, API and docs under /api' : 'docs at /docs'}, ${token ? 'token auth' : 'no TEAM_TOKEN: open, loopback only'})`,
   )
   let shuttingDown = false
   const shutdown = async (): Promise<void> => {

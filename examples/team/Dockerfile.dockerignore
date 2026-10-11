@@ -1,0 +1,27 @@
+# Build context is the repository root (docker build -f examples/team/Dockerfile .); BuildKit reads
+# this file because it sits next to the Dockerfile. Keep secrets, local data and build output out.
+.git
+**/node_modules
+**/.env
+**/.env.*
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.key
+dist
+docs
+.changeset
+.github
+
+# examples: only what the team image needs (the coder package.json is a workspace member)
+examples/*
+!examples/team
+!examples/coder
+examples/coder/*
+!examples/coder/package.json
+examples/team/server/data
+examples/team/server/test
+examples/team/web/build
+examples/team/web/.svelte-kit
+examples/team/evals
+examples/team/docs
