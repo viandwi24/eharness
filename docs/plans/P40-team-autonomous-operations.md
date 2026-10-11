@@ -90,6 +90,7 @@ one context. The client sees outputs (reports, drafts, findings) and a short lis
   - **Safety:** the bot never gets RBAC admin endpoints (no self-escalation); the long-lived
     secret stays in the server vault and is never visible to the model; every request carries
     `X-Agent-Id` / `X-Agent-Run` so company logs trace back to the agent run.
+- **Order:** A–E, then H (deliverables), I (stability), J (evals, when the client's examples exist), F, and G (company integration) last. Role templates are out of scope: roles depend on each client.
 - **Deferred:** memory consolidation ("dreaming"), skill evolution / auto-heal, voice, chat
   channels (Telegram/Slack as a UI). The Telegram *data source* comes through an MCP connector.
 
@@ -109,8 +110,11 @@ and decided before code (docs over presets: patterns become guides, not wrapper 
 | C | **Work queue** (queued tasks, assignment, worker pick-up program, Review column) | writer and researcher scenarios |
 | D | **Big-data toolkit**: collector interface + cursor, manifest helpers, `run_code`, chunked map/reduce with subagents; guide | auditor scenario on a scripted 5 000-message fixture |
 | E | **Heartbeat** + daily digest + program suggestions | |
+| H | **Deliverables contract** (system layer): a program lists required deliverables (path pattern, markdown with required sections or JSON with a schema); the server checks them at run end, gives the agent one fix-up turn with the exact errors (the real *Verify* step), then marks the run `partial` and opens a decision. Style and quality guidance stays in editable skills. | after C, E |
+| I | **Stability pass**: soak test (many program runs, several agents at once, kill/restart mid-run, injected provider errors 429/500/timeouts), end-to-end browser checks of every client flow | after H |
+| J | **Evals** (opt-in, real model, budget-capped, not in CI): fixed scenarios scored automatically (auditor recall/precision against the planted incidents, deliverable checks) and by a rubric judge; scores kept per run to compare prompt/skill/model changes. Needs the client's output examples as the answer key. | after the client provides examples |
 | F | Telegram source through an MCP connector (setup only) | after A–E work offline |
-| G | **Company system integration (agent = virtual user)**: a mock internal company API in the repo (OpenAPI 3.1; roles employee / leader / manager; illustrative modules from one client use case — any departments work — e.g. a *Clipper* module: upload video, submit social link, analytics by views and by uploader; *Video production* module: idea → draft → shoot → edit → YouTube upload) and the team agents connected to it as **bot users** — one service account and token per agent (`kind: bot`, least-privilege role, revocable), tools from `openApiSource` (include/exclude per agent, method risk feeding program authority, token injected by `headers()` from the vault, never visible to the model), read-only first. Shows that business logic is written once (the API) and reused by people and agents. | D11 |
+| G (last) | **Company system integration (agent = virtual user)**: a mock internal company API in the repo (OpenAPI 3.1; roles employee / leader / manager; illustrative modules from one client use case — any departments work — e.g. a *Clipper* module: upload video, submit social link, analytics by views and by uploader; *Video production* module: idea → draft → shoot → edit → YouTube upload) and the team agents connected to it as **bot users** — one service account and token per agent (`kind: bot`, least-privilege role, revocable), tools from `openApiSource` (include/exclude per agent, method risk feeding program authority, token injected by `headers()` from the vault, never visible to the model), read-only first. Shows that business logic is written once (the API) and reused by people and agents. | D11 |
 
 Every phase: offline scripted-model tests (team server tests), e2e in the browser on an isolated
 instance, docs (walkthrough + guide), no paid model calls in tests.
