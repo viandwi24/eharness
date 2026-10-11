@@ -37,16 +37,15 @@ export const apiBase: string = __PUBLIC_API_URL__ || '/api';
 
 /**
  * The `eharness/http` routes (chat, session reads, attention answers, activity feed): typed client
- * of the library. The token feeds its headers on every request; `/health` is never cached (it is
- * the restart probe).
+ * of the library. The token feeds its headers on every request (`undefined` is dropped); `/health`
+ * is never cached by the client (it is the restart probe).
  */
 export const harness = createHarnessClient({
 	baseUrl: apiBase,
-	headers: (): Record<string, string> => {
+	headers: () => {
 		const token = getToken();
-		return token ? { authorization: `Bearer ${token}` } : {};
-	},
-	fetch: ((input, init) => fetch(input, String(input).endsWith('/health') ? { ...init, cache: 'no-store' } : init)) as typeof fetch
+		return { authorization: token ? `Bearer ${token}` : undefined };
+	}
 });
 
 /**

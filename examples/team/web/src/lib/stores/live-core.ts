@@ -1,6 +1,7 @@
 import {
 	type ActivityRecord,
-	type AttentionItem,
+	ATTENTION_EVENTS,
+	type AttentionAnswerWire,
 	createAttentionList,
 	type FeedStatus,
 	type HarnessClient
@@ -34,6 +35,9 @@ export const emptyLiveState = (): LiveState => ({
 	viewing: null,
 	revs: { files: 0, routines: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
 });
+
+/** What the team posts to `POST /attention/{id}/answer`: the wire answers plus its question kind. */
+export type TeamAnswer = AttentionAnswerWire | { kind: 'question'; answers: Extract<ApprovalBody, { answers: unknown }>['answers'] };
 
 export type LiveDeps = {
 	/** The `eharness/http` client: attention answers. */
@@ -69,23 +73,17 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 
 	// The approvals inbox is the library's attention list (optimistic answers, generation guard,
 	// debounced refetch). The team reads `GET /approvals` (the enriched view: agent name, task,
-	// question texts) instead of `GET /attention`; the rows keep every `AttentionItem` key the list
-	// uses (`id`, `sessionId`) and add the app's fields.
-	const approvalsClient: HarnessClient = {
-		...deps.client,
-		attention: {
-			...deps.client.attention,
-			list: async () => ({ items: (await api.get('/approvals')).approvals as unknown as AttentionItem[] })
-		}
-	};
-	const attention = createAttentionList({
-		client: approvalsClient,
+	// question texts) and answers questions with its own `question` kind (`attention.parseAnswer`).
+	const attention = createAttentionList<Approval, TeamAnswer>({
+		client: deps.client,
+		list: async () => (await api.get('/approvals')).approvals,
+		events: [...ATTENTION_EVENTS, 'task-changed'],
 		debounceMs: debounce,
 		clock: { setTimeout: (fn, ms) => timer(fn, ms) },
 		onError: report
 	});
 	attention.subscribe((s) => {
-		state.approvals = [...s.items] as unknown as Approval[];
+		state.approvals = [...s.items];
 		state.approvalsLoaded = s.loaded;
 	});
 
@@ -206,7 +204,6 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 					});
 				}
 				later('tasks', core.loadTasks); // new task, or summary / cost changed
-				later('approvals', core.loadApprovals);
 			} else if (e.type === 'pending-changed' || e.type === 'approval-decided') {
 				later('tasks', core.loadTasks);
 			} else if (e.type === 'file-changed') {
@@ -253,8 +250,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		 * returns on failure, except when it was answered elsewhere. Rejects with the `HarnessHttpError`.
 		 */
 		async answer(a: Approval, body: ApprovalBody): Promise<void> {
-			const wire = ('answers' in body ? { kind: 'question', answers: body.answers } : { kind: 'approval', ...body }) as unknown as Parameters<typeof attention.answer>[1];
-			await attention.answer(a as unknown as AttentionItem, wire);
+			const wire: TeamAnswer = 'answers' in body ? { kind: 'question', answers: body.answers } : { kind: 'approval', ...body };
+			await attention.answer(a, wire);
 			later('tasks', core.loadTasks);
 		},
 

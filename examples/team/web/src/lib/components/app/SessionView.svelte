@@ -23,7 +23,8 @@
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openSession } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import { followTaskStream, isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
+	import { followSessionStream } from 'eharness/client';
+	import { isLive, mergeLive, pollDelay } from '#lib/tasks/follow.js';
 	import {
 		Conversation,
 		ConversationContent,
@@ -116,9 +117,7 @@
 		void (async () => {
 			try {
 				while (!ctl.signal.aborted) {
-					const result = await followTaskStream({
-						url: harness.url(`/sessions/${encodeURIComponent(sessionId)}/chat/stream`),
-						fetch: (url, init) => harness.request(url, init),
+					const result = await followSessionStream(harness, sessionId, {
 						signal: ctl.signal,
 						onMessage: (m) => {
 							streaming = true;

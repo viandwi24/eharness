@@ -539,7 +539,9 @@ if (import.meta.main) {
     process.exit(1)
   }
   const port = Number(process.env.PORT ?? 4000)
-  const http = Bun.serve({ port, fetch: server.app.fetch })
+  // idleTimeout 0: Bun closes a connection after 10 s without bytes by default, which cuts chat
+  // streams while a long tool runs (the activity stream has its own 8 s keep-alive)
+  const http = Bun.serve({ port, idleTimeout: 0, fetch: server.app.fetch })
   console.log(
     `team server on http://localhost:${http.port} (docs at /docs, ${token ? 'token auth' : 'OPEN: no TEAM_TOKEN set'})`,
   )
