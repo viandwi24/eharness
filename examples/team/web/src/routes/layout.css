@@ -344,3 +344,14 @@
 		background-origin: border-box;
 	}
 }
+
+/* svelte-streamdown ships a global `[data-expanded='true']` rule (fullscreen tables) that also hits
+   svelte-sonner's toasts, which carry the same attribute while expanded: a toast then covered the
+   whole viewport. Restore the toast's own positioning. */
+[data-sonner-toast][data-expanded='true'] {
+	position: absolute;
+	top: auto;
+	left: auto;
+	margin: 0;
+	z-index: var(--z-index);
+}

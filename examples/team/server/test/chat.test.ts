@@ -537,7 +537,7 @@ describe('chat: requests and uploads', () => {
     expect((await libraryFs(a.server.conn.sqlite).read(file.path))?.content).toBe('a,b\n1,2\n')
   })
 
-  test('image, pdf and csv uploads reach the model as bytes, persist as references and survive a reload', async () => {
+  test('image and pdf uploads reach the model as bytes, a csv as text; all persist as references and survive a reload', async () => {
     const a = single([{ text: 'seen' }])
     const { app, model } = a
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3])
@@ -562,7 +562,8 @@ describe('chat: requests and uploads', () => {
     expect(chat.status).toBe(200)
     await chat.text()
 
-    // the model wire: one file part per attachment, with the media type and the resolved bytes
+    // the model wire: binary attachments are file parts with the resolved bytes; a text-like one
+    // (csv) is inlined as a text part with a header line, so text-only providers can read it
     const wire = model.prompts[0] as Array<{ role: string; content: unknown }>
     const filesOnWire = wire
       .filter((m) => m.role === 'user')
@@ -575,14 +576,18 @@ describe('chat: requests and uploads', () => {
     expect(filesOnWire.map((c) => [c.filename, c.mediaType])).toEqual([
       ['circle.png', 'image/png'],
       ['doc.pdf', 'application/pdf'],
-      ['sales.csv', 'text/csv'],
     ])
     const b64 = (b: Uint8Array) => Buffer.from(b).toString('base64')
     expect(filesOnWire.map((c) => c.data)).toEqual([
       { type: 'data', data: b64(png) },
       { type: 'data', data: b64(pdf) },
-      { type: 'data', data: b64(new TextEncoder().encode('a,b\n1,2\n')) },
     ])
+    const textOnWire = wire
+      .filter((m) => m.role === 'user')
+      .flatMap((m) => m.content as Array<Record<string, unknown>>)
+      .filter((c) => c.type === 'text')
+      .map((c) => String(c.text))
+    expect(textOnWire.some((t) => t.includes('sales.csv') && t.includes('a,b\n1,2'))).toBe(true)
 
     // a reload reads the same file parts back, still as references (no base64 in storage)
     const user = (await stored(app)).find((m) => m.role === 'user')

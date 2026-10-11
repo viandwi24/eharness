@@ -1,4 +1,5 @@
-export type GeneralInput = { budget: string; spawnCap: string; timezone?: string };
+/** `<input type="number">` bound with Svelte yields a number (or null when empty), so accept those too. */
+export type GeneralInput = { budget: string | number | null; spawnCap: string | number | null; timezone?: string };
 export type GeneralParsed = { budgetUsd: number | null; spawnCap: number; timezone?: string };
 
 function isTimezone(tz: string): boolean {
@@ -13,12 +14,12 @@ function isTimezone(tz: string): boolean {
 /** Validate the General form's text inputs. Errors are keyed by the API field name. */
 export function validateGeneral(input: GeneralInput): { ok: true; value: GeneralParsed } | { ok: false; errors: Record<string, string> } {
 	const errors: Record<string, string> = {};
-	const b = input.budget.trim();
+	const b = String(input.budget ?? '').trim();
 	const budgetUsd = b === '' ? null : Number(b);
 	if (budgetUsd !== null && (!Number.isFinite(budgetUsd) || budgetUsd < 0)) {
 		errors.budgetUsd = 'Enter a positive amount, or leave empty for no limit';
 	}
-	const c = input.spawnCap.trim();
+	const c = String(input.spawnCap ?? '').trim();
 	const spawnCap = Number(c);
 	if (c === '' || !Number.isInteger(spawnCap) || spawnCap < 1 || spawnCap > 32) {
 		errors.spawnCap = 'Enter a whole number from 1 to 32';

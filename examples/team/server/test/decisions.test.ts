@@ -11,7 +11,12 @@ import { join } from 'node:path'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
 import type { Decision } from '../src/domain/decisions.ts'
-import { authorityLines, mergeAuthority, programOfProposal } from '../src/domain/decisions.ts'
+import {
+  authorityLines,
+  followUpText,
+  mergeAuthority,
+  programOfProposal,
+} from '../src/domain/decisions.ts'
 import type { Program } from '../src/domain/programs.ts'
 import { outsideAuthorityReason, programRunPrompt } from '../src/domain/programs.ts'
 import { libraryFs } from '../src/infra/eh/library-fs.ts'
@@ -403,6 +408,33 @@ describe('proposals', () => {
 })
 
 describe('escalation', () => {
+  test('the answer to a report-made decision tells the agent not to ask again', () => {
+    for (const decision of ['approved', 'rejected'] as const) {
+      const text = followUpText({ title: 'T' }, { decision, note: 'n' })
+      expect(text).toContain("do not report 'needs_decision' about this again")
+    }
+  })
+
+  test('the continuation of a parked run keeps the program step limit, not the agent default', async () => {
+    // more steps after the answer than the agent default (a chunked job is many small steps)
+    const steps: ScriptedStepInput[] = [
+      call('escalate', { title: 'Go?', question: 'Start the long job?' }),
+      ...Array.from({ length: 45 }, (_, i) =>
+        call('write_file', { path: `/library/reports/step-${i}.md`, content: `step ${i}` }),
+      ),
+      finalReport({ status: 'done', summary: 'long job finished', outputs: [] }),
+    ]
+    const { app } = fresh({ researcher: steps })
+    const p = await createProgram(app)
+    await runNow(app, p.id)
+    const d = await firstOpen(app, 'escalation')
+    expect((await approve(app, d.id, { note: 'go' })).status).toBe(200)
+    await until('the run ends', async () => ended((await runs(app, p.id))[0]), 20_000)
+    const [run] = await runs(app, p.id)
+    expect(run).toMatchObject({ status: 'done' })
+    expect(run?.report?.summary).toBe('long job finished')
+  })
+
   test('parks the run on an external wait; approving resumes the SAME session with the decision as the tool output', async () => {
     const { app, server, models } = fresh({
       researcher: [

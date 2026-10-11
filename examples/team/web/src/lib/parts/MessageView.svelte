@@ -8,7 +8,7 @@
 	import FilePart from './FilePart.svelte';
 	import InputPart from './InputPart.svelte';
 	import NoticePart from './NoticePart.svelte';
-	import { hasVisibleParts, messageKind, type PartView, viewModel } from './map.js';
+	import { hasVisibleParts, messageKind, type PartView, viewModel, wasStopped } from './map.js';
 	import ReasoningPart from './ReasoningPart.svelte';
 	import SourcePart from './SourcePart.svelte';
 	import SubagentPart from './SubagentPart.svelte';
@@ -31,7 +31,8 @@
 		onApproval,
 		canAnswer,
 		onOpenSession,
-		scratch = false
+		scratch = false,
+		live = true
 	}: {
 		message: UIMessage;
 		/** Author of an assistant message (multi-agent header). `id` seeds the avatar. */
@@ -44,9 +45,11 @@
 		onOpenSession?: (sessionId: string) => void;
 		/** The message is from a test run: its files live in a scratch area, not in the library. */
 		scratch?: boolean;
+		/** Something may still stream into this message; false for settled history. */
+		live?: boolean;
 	} = $props();
 
-	const views = $derived(viewModel(message));
+	const views = $derived(viewModel(message, live));
 	const kind = $derived(messageKind(message));
 
 	// Consecutive files / sources / plain tool calls collapse into one block.
@@ -69,6 +72,7 @@
 	});
 
 	const visible = $derived(hasVisibleParts(views));
+	const stopped = $derived(!live && wasStopped(message));
 
 	// One file card per path and message: under the last tool group that wrote it, labelled with
 	// the first action (a file created and then edited is "Created").
@@ -130,6 +134,7 @@
 					{@render part(b.view)}
 				{/if}
 			{/each}
+			{#if stopped}<div class="text-xs text-muted-foreground">Stopped before it finished</div>{/if}
 		</MessageContent>
 	</Message>
 {/if}

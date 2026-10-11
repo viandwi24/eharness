@@ -327,6 +327,7 @@
 									message={m}
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 									showHeader={head}
+									live={busy && i === messages.length - 1}
 									onApproval={(a) => void answerInline(a)}
 									{canAnswer}
 									onOpenSession={(sid) => void openSession(sid)}
@@ -466,7 +467,7 @@
 	{/if}
 	{#if wide && panelOpen && thread}
 		<!-- Second column of the same surface: the floating session card scrolls on its own. -->
-		<aside class="hidden w-[352px] shrink-0 overflow-y-auto p-3 lg:block" aria-label="Agent session">
+		<aside class="hidden w-[352px] shrink-0 overflow-y-auto p-3 min-[1200px]:block" aria-label="Agent session">
 			<SessionContext {agentId} {thread} elevation="flat" class="border-border bg-background shadow-sm" onClose={onTogglePanel} />
 		</aside>
 	{/if}

@@ -274,6 +274,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', logRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)
-  app.get('/docs', Scalar({ url: '/openapi.json', pageTitle: OPENAPI_INFO.title }))
+  // relative: behind the web server the app is mounted under `/api`, so `/api/docs` must read `/api/openapi.json`
+  app.get('/docs', Scalar({ url: 'openapi.json', pageTitle: OPENAPI_INFO.title }))
   return app
 }

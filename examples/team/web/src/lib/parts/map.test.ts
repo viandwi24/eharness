@@ -1,7 +1,7 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 import type { UIMessage } from 'ai';
-import { hasVisibleParts, messageKind, startsAuthorRun, toolTitle, viewModel } from './map.ts';
+import { hasVisibleParts, messageKind, startsAuthorRun, toolTitle, viewModel, wasStopped } from './map.ts';
 
 const msg = (parts: unknown[], extra: Partial<UIMessage> = {}): UIMessage =>
 	({ id: 'm1', role: 'assistant', parts, ...extra }) as UIMessage;
@@ -21,6 +21,12 @@ describe('viewModel', () => {
 		expect(v[0]).toMatchObject({ durationMs: 2300, streaming: false });
 		expect(v[1]).toMatchObject({ streaming: true });
 		expect(v[2]).toMatchObject({ streaming: true });
+	});
+
+	test('parts of settled history never shimmer (an aborted turn stores state streaming)', () => {
+		const v = viewModel(msg([{ type: 'reasoning', text: '...', state: 'streaming' }, { type: 'text', text: 'hi', state: 'streaming' }]), false);
+		expect(v[0]).toMatchObject({ streaming: false });
+		expect(v[1]).toMatchObject({ streaming: false });
 	});
 
 	test.each([
@@ -144,4 +150,12 @@ describe('viewModel: server parts the page must survive', () => {
 		expect(hasVisibleParts(views)).toBe(true);
 		expect(hasVisibleParts(viewModel(msg([{ type: 'data-future.thing' }, { type: 'data-todos.list', data: {} }])))).toBe(false);
 	});
+});
+
+test('wasStopped reads the turn stop reason of an assistant message', () => {
+	const m = (role: 'user' | 'assistant', stop?: string) => msg([], { role, metadata: { eharness: { stop } } });
+	expect(wasStopped(m('assistant', 'aborted'))).toBe(true);
+	expect(wasStopped(m('assistant', 'complete'))).toBe(false);
+	expect(wasStopped(m('user', 'aborted'))).toBe(false);
+	expect(wasStopped(msg([]))).toBe(false);
 });

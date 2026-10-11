@@ -175,8 +175,12 @@ function toolName(part: AnyPart): string {
 	return part.type === 'dynamic-tool' ? String(part.toolName ?? 'tool') : part.type.slice('tool-'.length);
 }
 
-/** Map one stored or streaming UIMessage to renderable views, in part order. */
-export function viewModel(message: UIMessage): PartView[] {
+/**
+ * Map one stored or streaming UIMessage to renderable views, in part order. `live` is false for a
+ * message nothing is streaming into: an aborted turn stores parts still marked `state: 'streaming'`,
+ * which must not shimmer "Thinking…" forever.
+ */
+export function viewModel(message: UIMessage, live = true): PartView[] {
 	const parts = message.parts as unknown as AnyPart[];
 	const out: PartView[] = [];
 
@@ -199,12 +203,12 @@ export function viewModel(message: UIMessage): PartView[] {
 		const type = part.type;
 
 		if (type === 'text') {
-			out.push({ kind: 'text', key, text: String(part.text ?? ''), streaming: part.state === 'streaming' });
+			out.push({ kind: 'text', key, text: String(part.text ?? ''), streaming: live && part.state === 'streaming' });
 		} else if (type === 'reasoning') {
 			const meta = isRecord(part.providerMetadata) ? part.providerMetadata : undefined;
 			const eh = meta && isRecord(meta.eharness) ? meta.eharness : undefined;
 			const durationMs = eh && typeof eh.durationMs === 'number' ? eh.durationMs : undefined;
-			out.push({ kind: 'reasoning', key, text: String(part.text ?? ''), streaming: part.state === 'streaming', durationMs });
+			out.push({ kind: 'reasoning', key, text: String(part.text ?? ''), streaming: live && part.state === 'streaming', durationMs });
 		} else if (type === 'dynamic-tool' || type.startsWith('tool-')) {
 			const name = toolName(part);
 			const state = part.state as ToolViewState;
@@ -303,6 +307,13 @@ export function hasVisibleParts(views: PartView[]): boolean {
 export function messageKind(message: UIMessage): string | undefined {
 	const meta = message.metadata as { eharness?: { kind?: unknown } } | undefined;
 	return typeof meta?.eharness?.kind === 'string' ? meta.eharness.kind : undefined;
+}
+
+/** Whether the turn that wrote this assistant message was stopped (Stop button, shutdown): the text may end mid-sentence. */
+export function wasStopped(message: UIMessage): boolean {
+	if (message.role !== 'assistant') return false;
+	const meta = message.metadata as { eharness?: { stop?: unknown } } | undefined;
+	return meta?.eharness?.stop === 'aborted';
 }
 
 /**

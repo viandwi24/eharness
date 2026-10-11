@@ -275,6 +275,15 @@ const PAIRING_TTL_MS = 24 * 3_600_000
 /** Chunk size of a reply queued while its connection is down (under every platform limit we know). */
 const FALLBACK_TEXT_LENGTH = 4000
 
+/** What a chat sees when a turn ends without an answer (by stop reason). */
+const FAILURE_NOTICE: Record<string, string> = {
+  error:
+    'Sorry, I could not answer that: something went wrong while I was working on it. Please try again; if it keeps happening, ask a teammate to check this conversation in the web app.',
+  'cost-cap': 'I cannot answer right now: my spending limit is used up.',
+  'max-steps':
+    'I ran out of steps before I could finish that. Please ask again, or split it into smaller parts.',
+}
+
 const clip = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text
 
@@ -1479,13 +1488,17 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }
     // the turn is over: its announcements no longer belong to a running turn
     if (parked !== undefined) approvals.consume(end.sessionId)
-    if (end.stop !== 'complete') return
+    const failure = FAILURE_NOTICE[end.stop]
+    if (end.stop !== 'complete' && failure === undefined) return
     if (trigger === undefined) return // not a turn the channel started (a person in the web app)
     if (config === undefined) return
     const scope = resolveScope(config, row.ref)
     if (scope.delivery !== 'final_text') return
-    const text = finalAssistantText(end.messages)
+    // a failed turn must not leave the person waiting in silence: one short, generic notice
+    // (never the provider error text, which can carry platform or account details)
+    const text = end.stop === 'complete' ? finalAssistantText(end.messages) : (failure as string)
     if (text === '') return
+    if (end.stop !== 'complete' && scope.wake === 'always') return // never noise in an always-on room
     if (scope.wake === 'always' && text === NO_REPLY) return
     try {
       // persist before sending: a crash after this point loses nothing (the outbox is flushed on boot)

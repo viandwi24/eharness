@@ -59,7 +59,7 @@
 					aria-current={active ? 'page' : undefined}
 					class={cn(
 						'relative flex items-center justify-center rounded-xl text-muted-foreground transition-colors outline-none hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring',
-						bar ? 'h-11 flex-1 flex-col gap-0.5 rounded-lg text-[10px]' : 'size-10',
+						bar ? 'h-11 min-w-16 flex-1 flex-col gap-0.5 rounded-lg text-[10px]' : 'size-10',
 						active && 'bg-accent text-foreground'
 					)}
 				>
@@ -82,7 +82,7 @@
 {/snippet}
 
 {#if bar}
-	<nav class="flex shrink-0 items-center gap-1 border-t border-border bg-sidebar px-2 py-1.5" aria-label="Main">
+	<nav class="flex shrink-0 items-center gap-1 overflow-x-auto border-t border-border bg-sidebar px-2 py-1.5" aria-label="Main">
 		{#each [...main, settings] as s (s.id)}{@render item(s)}{/each}
 	</nav>
 {:else}

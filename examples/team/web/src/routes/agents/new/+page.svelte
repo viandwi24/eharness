@@ -5,7 +5,8 @@
 
 	// Old deep link: the form is a dialog now.
 	onMount(() => {
-		openNewAgent();
-		void goto('/', { replaceState: true });
+		// Open the dialog after the redirect landed: opened first, the navigation left it stuck "open"
+		// without showing, and every New agent button stayed dead until a reload.
+		void goto('/', { replaceState: true }).then(() => openNewAgent());
 	});
 </script>

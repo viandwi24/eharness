@@ -70,6 +70,8 @@ function instance(
     delivery?: { retryBaseMs?: number; retryMaxMs?: number; maxAttempts?: number }
     /** Outbound queue sleeps at most a few ms (internal retries would take seconds otherwise). */
     fastSleep?: boolean
+    /** Model catalog (`inputModalities`) of the agents. */
+    catalog?: ModelConfig['catalog']
   } = {},
 ): Instance {
   const dir = options.dir ?? mkdtempSync(join(tmpdir(), 'team-p41-'))
@@ -79,6 +81,7 @@ function instance(
   const config: ModelConfig = {
     provider: 'scripted',
     defaultModel: 'none',
+    ...(options.catalog === undefined ? {} : { catalog: options.catalog }),
     resolve: (id) => {
       const slug = (id ?? '').replace('m-', '')
       let model = models[slug]
@@ -419,6 +422,26 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
     ).toBe(long.replace(/\s+/g, ' ').trim())
   })
 
+  test('a turn that fails tells the chat in one generic line instead of leaving it in silence', async () => {
+    const i = instance({
+      lead: [
+        () => {
+          throw new Error('provider exploded: key sk-secret-123 account 99')
+        },
+        textStep('Back again.'),
+      ],
+    })
+    const mock = await connect(i)
+    await mock.say({ from: ana, text: '@team_bot go', id: 'w1', mentionSelf: true })
+    await until('the notice', () => mock.sent.length === 1)
+    const notice = mock.sent[0]?.message
+    expect(notice?.text).toContain('could not answer')
+    expect(notice?.text).not.toContain('sk-secret')
+    expect(notice?.replyTo).toBe('w1')
+    await mock.say({ from: ana, text: '@team_bot again', id: 'w2', mentionSelf: true })
+    await until('the next answer', () => mock.sent.some((s) => s.message.text === 'Back again.'))
+  })
+
   test('an image attachment reaches the agent as a file part; an unsupported one is a note', async () => {
     const i = instance({ lead: [textStep('I see it.')] })
     const mock = await connect(i)
@@ -442,6 +465,26 @@ describe('U3: a group wakes the agent with context and replies in place', () => 
       .query<{ path: string }, []>("SELECT path FROM library_files WHERE path LIKE '/uploads/%'")
       .all()
     expect(stored.length).toBe(1)
+  })
+
+  test('an image for a text-only model keeps the text; the model sees a note and later turns work', async () => {
+    const i = instance(
+      { lead: [textStep('Got the text.'), textStep('Second.')] },
+      { catalog: () => ({ inputModalities: ['text'] }) },
+    )
+    const mock = await connect(i)
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3])
+    await mock.say({
+      from: ana,
+      text: '@team_bot look',
+      id: 'n1',
+      mentionSelf: true,
+      attachments: [{ name: 'shot.png', mediaType: 'image/png', bytes: png }],
+    })
+    await until('reply', () => mock.sent.some((s) => s.message.text === 'Got the text.'))
+    expect(wire(i.models.lead as ScriptedModel)).toContain('does not accept image input')
+    await mock.say({ from: ana, text: '@team_bot and now?', id: 'n2', mentionSelf: true })
+    await until('second reply', () => mock.sent.some((s) => s.message.text === 'Second.'))
   })
 
   test('message_tool delivery posts nothing by itself; NO_REPLY is honoured only for wake always', async () => {

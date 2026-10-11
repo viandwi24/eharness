@@ -350,6 +350,36 @@ describe('the run end', () => {
     expect(decisionsOf(server, after).filter((d) => d.status === 'open')).toEqual([])
   })
 
+  test('a run that parked on a decision is checked when the answer lets it finish', async () => {
+    const thin = '# Weekly brief\n\n## Summary\nAll quiet this week, nothing else.\n'
+    const { server, app } = fresh({
+      writer: [
+        call('escalate', { title: 'Which tone?', question: 'Formal or casual?' }),
+        writeReport(thin), // after the answer: the file lacks "Findings"
+        () => report('done', [reportPath()]),
+        writeReport(GOOD_MD), // the fix-up turn
+        () => report('done', [reportPath()]),
+      ],
+    })
+    const program = await createProgram(app, { deliverables: [REPORT_MD] })
+    const parked = await runTask(server, program.id)
+    expect(parked.deliverables).toBeNull()
+    const [open] = decisionsOf(server, parked).filter((d) => d.status === 'open')
+    const res = await app.request(
+      `/decisions/${open?.id}/approve`,
+      json('POST', { note: 'Casual.' }),
+    )
+    expect(res.status).toBe(200)
+    await server.decisions.idle()
+    const after = server.deps.tasks.getBySession(parked.sessionId) as Task
+    // checked after the resume, and the fix-up turn ran (attempts 2) although the run had parked
+    expect(after.deliverables).toMatchObject({ status: 'pass', attempts: 2 })
+    expect(after.report?.status).toBe('done')
+    expect(await messageTexts(app, after.sessionId)).toContain(
+      'Verify: the server checked your deliverables',
+    )
+  })
+
   test('a JSON deliverable that does not match its schema fails with the exact path', async () => {
     const jsonPath = (): string => `/library/reports/data-${today()}.json`
     const spec: Deliverable = {

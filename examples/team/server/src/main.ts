@@ -535,6 +535,8 @@ export function compose(config: ServerConfig): Server {
     afterRun: async (sessionId) => {
       const task = tasks.getBySession(sessionId)
       if (task?.deliverables?.status === 'fail') await recheckTask(deps, task.id)
+      // a run that parked before it reported was never checked: check it now (with the fix-up turn)
+      else await programRunner.verifyResumed(sessionId)
     },
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })

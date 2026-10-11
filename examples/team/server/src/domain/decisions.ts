@@ -274,6 +274,10 @@ export function followUpText(decision: Pick<Decision, 'title'>, answer: Decision
     answer.decision === 'rejected'
       ? 'Do not do what was asked. Finish what is inside your authority and report.'
       : 'Continue the work with this decision and end with your final report.',
+    // without this a run whose blocker stays (a deliverable it cannot write) reports
+    // needs_decision again and opens the same decision after every answer
+    "The client has decided: do not report 'needs_decision' about this again. Use 'done' or " +
+      "'partial' and say what is missing.",
   ].join('\n')
 }
 

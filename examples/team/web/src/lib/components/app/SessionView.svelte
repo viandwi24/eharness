@@ -293,6 +293,7 @@
 									message={m}
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
 									showHeader={head}
+									live={running && i === messages.length - 1}
 									onApproval={answerFromPart}
 									canAnswer={(id) => approvals.some((x) => x.id === id)}
 									onOpenSession={(sid) => void openSession(sid)}

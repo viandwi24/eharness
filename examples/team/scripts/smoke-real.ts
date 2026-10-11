@@ -1,7 +1,7 @@
 /**
  * Optional real-model smoke (costs money): one chat turn with the Lead that delegates a tiny
  * research task to a role agent and reports back. Needs OPENROUTER_API_KEY (environment or the
- * repo root `.env`; never printed). Model: `TEAM_MODEL` (default of the server).
+ * repo root `.env`; never printed). Model: `TEAM_MODEL` (default of the server), cap: `TEAM_BUDGET_USD`, port: `SMOKE_PORT` (default 4103).
  * Run: bun examples/team/scripts/smoke-real.ts
  */
 import { existsSync, readFileSync } from 'node:fs'
@@ -36,9 +36,13 @@ function loadKey(): string {
 
 const key = loadKey()
 const work = new Workdir()
-const server = await startInstance('smoke', 4103, work, [], {
+// `startInstance` is hermetic (no inherited TEAM_* variable), so the model and the budget cap are
+// passed explicitly; SMOKE_PORT moves the server off 4103
+const server = await startInstance('smoke', Number(process.env.SMOKE_PORT ?? 4103), work, [], {
   OPENROUTER_API_KEY: key,
   TEAM_SCRIPTED_MODEL: '',
+  ...(process.env.TEAM_MODEL ? { TEAM_MODEL: process.env.TEAM_MODEL } : {}),
+  ...(process.env.TEAM_BUDGET_USD ? { TEAM_BUDGET_USD: process.env.TEAM_BUDGET_USD } : {}),
 })
 let code = 0
 try {
@@ -66,8 +70,9 @@ try {
       console.log(`approving ${item.toolName} of ${item.agentName} (smoke run: auto-approve)`)
       const answer = await answerItem(server, item, { approved: true })
       const body = await answer.text()
-      if (answer.status !== 202) throw new Error(`approval ${item.id}: ${answer.status} ${body}`)
-      console.log(`  -> ${body}`)
+      if (answer.status !== 202 && answer.status !== 200)
+        throw new Error(`approval ${item.id}: ${answer.status} ${body}`)
+      console.log(`  -> ${answer.status} ${body}`)
     }
     const all = await tasks(server)
     const open = all.some((t) => t.status === 'running' || t.status === 'needs_action')

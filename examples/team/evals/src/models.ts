@@ -40,26 +40,41 @@ export function flatCatalog(rates: Rates): ModelCatalog {
   })
 }
 
-/** Looks the model up in a models.dev document (any provider, by `id` or `provider/id`). */
+/**
+ * Looks the model up in a models.dev document. Prefers the entry under the provider named by the
+ * id prefix (`deepseek/x` under `openrouter` first, then any provider holding the exact id), then
+ * a bare-name match. Free tiers (0/0 prices) are skipped: they would make the budget a no-op.
+ */
 export function ratesFromModelsDev(doc: unknown, id: string): Rates | undefined {
   const bare = id.includes('/') ? id.slice(id.indexOf('/') + 1) : id
-  for (const provider of Object.values(
+  const providers = Object.entries(
     (doc ?? {}) as Record<string, { models?: Record<string, ModelsDevModel> }>,
-  )) {
-    for (const [key, m] of Object.entries(provider?.models ?? {})) {
-      if (key !== id && key !== bare) continue
-      const c = m?.cost
-      if (typeof c?.input === 'number' && typeof c?.output === 'number') {
-        const context = m?.limit?.context
-        return {
-          input: c.input,
-          output: c.output,
-          ...(typeof context === 'number' ? { context } : {}),
-        }
-      }
+  )
+  const toRates = (m: ModelsDevModel | undefined): Rates | undefined => {
+    const c = m?.cost
+    if (typeof c?.input !== 'number' || typeof c?.output !== 'number') return undefined
+    if (c.input <= 0 && c.output <= 0) return undefined
+    const context = m?.limit?.context
+    return {
+      input: c.input,
+      output: c.output,
+      ...(typeof context === 'number' ? { context } : {}),
     }
   }
-  return undefined
+  const pick = (provider: string | undefined, key: string): Rates | undefined => {
+    for (const [name, p] of providers) {
+      if (provider !== undefined && name !== provider) continue
+      const found = toRates(p?.models?.[key])
+      if (found !== undefined) return found
+    }
+    return undefined
+  }
+  return (
+    pick('openrouter', id) ??
+    pick(undefined, id) ??
+    pick('openrouter', bare) ??
+    pick(undefined, bare)
+  )
 }
 
 export async function resolveRates(

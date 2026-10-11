@@ -430,7 +430,11 @@ The hooks, in the order a request meets them:
    modalities (`modelsDevCatalog` / `openRouterCatalog` fill `inputModalities`), an image or PDF
    sent to a model without that input is refused before anything is stored with `EH_INVALID_INPUT`
    (`reason: 'unsupported-modality'`) and a message that names the model and the fix (pick a model
-   with image input). An unknown model is never blocked: the provider's own error is the notice.
+   with image input). Input nobody waits on (a channel message through `enqueue` + `collect`, a steer)
+   is accepted instead: the text is kept and the model sees a note in place of the file. The same
+   note replaces such a file in the history of a session after a model switch (storage keeps the
+   file), so one image never breaks the following turns. An unknown model is never blocked: the
+   provider's own error is the notice.
    **A failed provider call** leaves an empty assistant message next to the `eh.notice` on purpose
    (spec 05 §3: the stream already announced its id); a UI should skip assistant messages without a
    visible part.
@@ -545,7 +549,9 @@ authority, but the permission plugin does the refusing:
    factory for a *gate* of the session id (`gateOf` in `agent-factory.ts`). A program session gets
    an engine in **`dontAsk`** with the allow rules derived from the authority (`programRules`:
    `Read(glob)`, `Edit(glob)`, tool names, every tool of a granted connector) and the program's
-   `forbidden` list added to the **deny rules** (spec 18: deny wins in every mode).
+   `forbidden` list added to the **deny rules** (spec 18: deny wins in every mode). A glob ending
+   in `/**` also grants the directory itself (a gitignore-style `dir/**` does not match `dir`), so
+   `list_files`, `glob` and `grep` on a granted directory work.
 2. `dontAsk` alone is not a closed world: reads, `agent` and `safe` tools are approved by their
    kind, so a run could read any library file. The gate adds the closed-world check with the
    library's `matchRule` (allow polarity): a call is approved only when an allow rule of the
@@ -624,7 +630,10 @@ works in any instance and after a restart (the state is in storage), retries `EH
 moment (the turn that parked is still ending), and continues the **same** assistant message: the
 parked tool part becomes `output-available` with the decision. A program run continues with its
 report spec passed again (`output` is not carried over a `tool-pending` stop, spec 05 section 3.3),
-so the resumed run still ends with a typed report on the same task. `resolveWait` answering
+so the resumed run still ends with a typed report on the same task, and with the program step limit
+(`maxSteps`: a new turn would otherwise get the agent default and cut a long run short). When the
+resumed run ends its deliverables are checked, with the same fix-up turn as a run that never
+parked (`programs.verifyResumed`). `resolveWait` answering
 `not-pending` (the run was stopped, deleted) makes the decision `expired`, `409 DECISION_EXPIRED`.
 Don't return a `correlationId` from `start`: the child side of the subagent plugin reads the
 correlation id of *any* external wait as a child session id when a session opens.

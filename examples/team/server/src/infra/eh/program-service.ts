@@ -38,6 +38,7 @@ import { UPLOADS_ROOT } from '../../domain/library.ts'
 import {
   PROGRAM_RUN_MAX_STEPS,
   type Program,
+  parseProgramSession,
   programRunPrompt,
   programSessionId,
 } from '../../domain/programs.ts'
@@ -75,6 +76,12 @@ export interface ProgramServiceDeps {
 }
 
 export interface ProgramService extends ProgramRunner {
+  /**
+   * A run that parked on a decision (`escalate`, `request_authority`) and finished in the turn the
+   * answer continued: its deliverables are checked now, with the same fix-up turn, unless they
+   * were checked already. Resolves when the checks (and the fix-up turn) are done.
+   */
+  verifyResumed(sessionId: string): Promise<void>
   /** Runs started by this process that have not ended (tests wait for them). */
   idle(): Promise<void>
 }
@@ -149,6 +156,19 @@ export function createProgramService(
       prompt,
       task === undefined ? [] : await inputFiles(task),
     )
+    return verify(program, def, sessionId, stop)
+  }
+
+  /**
+   * The deliverable checks after a turn (see `runChecked`). Shared by a run that ended in its own
+   * turn and by a run that parked on a decision and ended in the turn the answer continued.
+   */
+  async function verify(
+    program: Program,
+    def: AgentDef,
+    sessionId: string,
+    stop: string | undefined,
+  ): Promise<string | undefined> {
     const app = deps.app?.()
     if (program.deliverables.length === 0 || app === undefined || stop !== 'complete') return stop
     const reported = (): boolean => {
@@ -293,6 +313,17 @@ export function createProgramService(
       if (before === undefined) announce(def, sessionId, row, true)
       track(runChecked(program, def, sessionId, prompt))
       return { sessionId, started: true }
+    },
+
+    async verifyResumed(sessionId) {
+      const parsed = parseProgramSession(sessionId)
+      const task = deps.tasks.getBySession(sessionId)
+      // not a program run, or already checked (a failing check is re-checked by the decision)
+      if (parsed === undefined || task === undefined || task.deliverables != null) return
+      const program = deps.app?.()?.programs.get(parsed.programId)
+      const def = program === undefined ? undefined : deps.agents.get(program.agentId)
+      if (program === undefined || def === undefined) return
+      await verify(program, def, sessionId, 'complete')
     },
 
     async idle() {

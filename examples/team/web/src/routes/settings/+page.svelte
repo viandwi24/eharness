@@ -66,8 +66,8 @@
 		!!settings &&
 			(mode !== settingsModeOf(settings.defaultPermissionMode) ||
 				toolAccess !== settings.toolAccess ||
-				budget.trim() !== (settings.budgetUsd === null ? '' : String(settings.budgetUsd)) ||
-				spawnCap.trim() !== String(settings.spawnCap) ||
+				String(budget ?? '').trim() !== (settings.budgetUsd === null ? '' : String(settings.budgetUsd)) ||
+				String(spawnCap ?? '').trim() !== String(settings.spawnCap) ||
 				timezone.trim() !== settings.timezone ||
 				model !== settings.defaultModel ||
 				profile !== settings.defaultProfile)

@@ -123,8 +123,9 @@ export class AgentChat {
 		}
 		const body: unknown = await res.json().catch(() => undefined);
 		if (!res.ok) throw new Error(uploadErrorText(res.status, body, name));
-		const r = body as { url: string; mediaType: string; name: string };
-		return { type: 'file', url: r.url, mediaType: r.mediaType || file.mediaType, filename: r.name || name };
+		const r = body as { url: string; mediaType: string };
+		// show the name the person picked, not the stored `<id>-<name>` (the model gets the path next to it)
+		return { type: 'file', url: r.url, mediaType: r.mediaType || file.mediaType, filename: name };
 	}
 }
 

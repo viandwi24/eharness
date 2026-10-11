@@ -47,6 +47,14 @@ export function webStatic(dir: string): WebStatic {
           })
         }
       }
+      // a missing asset (`/_app/...`, `/favicon.ico`) is a 404, never the app shell: a stale tab asking
+      // for a chunk of an older build must not receive HTML where it expects JavaScript
+      if (pathname.startsWith('/_app/') || /\.[a-z0-9]{2,5}$/i.test(pathname)) {
+        return Response.json(
+          { error: { code: 'NOT_FOUND', message: 'not found' } },
+          { status: 404 },
+        )
+      }
       return new Response(Bun.file(index), {
         headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-cache' },
       })

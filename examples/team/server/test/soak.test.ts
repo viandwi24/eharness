@@ -42,6 +42,16 @@ describe('the invariant checker', () => {
     expect(checkInvariants(file, ctx(leadId))).toEqual([])
   })
 
+  test('a decided decision made from a report has no wait and is consistent', async () => {
+    const { file, leadId } = await freshDb()
+    const db = new Database(file)
+    db.run(
+      "INSERT INTO decisions (id, kind, status, title, agent_id, payload, decided_at, created_at) VALUES ('d1', 'escalation', 'approved', 'q', 'a', '{\"source\":\"report\"}', 2, 1)",
+    )
+    db.close()
+    expect(checkInvariants(file, ctx(leadId))).toEqual([])
+  })
+
   test('it names every kind of inconsistency', async () => {
     const { file, leadId } = await freshDb()
     const db = new Database(file)

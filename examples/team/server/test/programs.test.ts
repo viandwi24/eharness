@@ -5,10 +5,12 @@
  * is denied), budgets through the ledger, and the schedule trigger on the routine scheduler.
  * Scripted models only; ticks are driven by hand (`tickMs: 0`).
  */
+
 import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { matchRule } from 'eharness/permissions'
 import { type ScriptedModel, type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { updateAgent } from '../src/app/agents.ts'
 import type { Program } from '../src/domain/programs.ts'
@@ -221,8 +223,24 @@ describe('program domain', () => {
     expect(rules.allow).toContain('Read(/library/in/**)')
     expect(rules.allow).toContain('Edit(/library/out/**)')
     expect(rules.allow).toContain('Read(/library/out/**)') // a write glob is readable
+    // listing the directory itself is covered by `dir/**` (a gitignore glob does not match `dir`)
+    expect(rules.allow).toContain('Read(/library/in)')
+    expect(rules.allow).toContain('Read(/library/out)')
     expect(rules.allow).toContain('todo_write') // base tools
     expect(rules.deny).toEqual(['Edit(/library/reports/locked/**)'])
+  })
+
+  test('a granted directory can be listed, globbed and grepped, siblings stay out', () => {
+    const rules = programRules(program)
+    const roots = { roots: [{ virtual: '/', real: '/' }], polarity: 'allow' as const }
+    const allowed = (toolName: string, input: Record<string, unknown>): boolean =>
+      rules.allow.some((r) => matchRule(r, { toolName, input }, roots))
+    expect(allowed('list_files', { prefix: '/library/in' })).toBe(true)
+    expect(allowed('glob', { pattern: '**/*', path: '/library/in' })).toBe(true)
+    expect(allowed('grep', { pattern: 'x', prefix: '/library/in' })).toBe(true)
+    expect(allowed('read_file', { path: '/library/in/a.md' })).toBe(true)
+    expect(allowed('list_files', { prefix: '/library/inbox' })).toBe(false)
+    expect(allowed('list_files', { prefix: '/library' })).toBe(false)
   })
 
   test('session ids, day scope and the run prompt', () => {
@@ -264,6 +282,7 @@ describe('program domain', () => {
       status: 'failed',
       failed: true,
     })
+    expect(programRunOutcome('cost-cap', undefined).summary).toContain('raise the budget')
     expect(programRunOutcome('output-invalid', undefined).summary).toContain('final report')
     expect(programRunOutcome('complete', undefined)).toMatchObject({
       status: 'done',

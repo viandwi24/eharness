@@ -9,7 +9,8 @@
 	let innerWidth = $state(1280);
 	let panelOpen = $state(readPref(PANEL_OPEN_KEY) !== '0'); // desktop: second column, remembered
 	let popoverOpen = $state(false); // below lg: popover on the header button
-	const wide = $derived(innerWidth >= 1024);
+	// a column only where the chat keeps a readable width next to the rail, the agent list and the 352px panel
+	const wide = $derived(innerWidth >= 1200);
 	const open = $derived(wide ? panelOpen : popoverOpen);
 
 	function toggle(): void {

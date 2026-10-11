@@ -21,3 +21,8 @@ test('validateGeneral checks the team timezone only when given', () => {
 		if (!r.ok) expect(Object.keys(r.errors)).toEqual(['timezone']);
 	}
 });
+
+test('validateGeneral accepts the numbers a bound number input produces', () => {
+	expect(validateGeneral({ budget: 8, spawnCap: 4 })).toEqual({ ok: true, value: { budgetUsd: 8, spawnCap: 4 } });
+	expect(validateGeneral({ budget: null, spawnCap: 4 })).toEqual({ ok: true, value: { budgetUsd: null, spawnCap: 4 } });
+});

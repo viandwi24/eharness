@@ -18,7 +18,7 @@ import { errorText } from 'eharness'
 import type { AgentRepo, DecisionResolver } from '../../app/ports.ts'
 import { followUpText } from '../../domain/decisions.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
-import { parseProgramSession } from '../../domain/programs.ts'
+import { PROGRAM_RUN_MAX_STEPS, parseProgramSession } from '../../domain/programs.ts'
 import type { AgentFactory } from './agent-factory.ts'
 import { BEAT_SCHEMA } from './heartbeat-service.ts'
 import { REPORT_SCHEMA } from './program-service.ts'
@@ -67,6 +67,9 @@ export function createDecisionService(
       ? {}
       : {
           output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
+          // the continuation is a new turn: without this it gets the agent's default step limit
+          // and a long (chunked) run that parked once is cut off early
+          maxSteps: PROGRAM_RUN_MAX_STEPS,
         }
   }
 

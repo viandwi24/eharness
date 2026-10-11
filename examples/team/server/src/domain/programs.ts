@@ -275,6 +275,18 @@ export interface ProgramRules {
 const globRule = (kind: 'Read' | 'Edit', glob: string): string => `${kind}(${glob.trim()})`
 
 /**
+ * Read rules of a path glob. A gitignore-style `dir/**` does not match `dir` itself, so listing,
+ * globbing, grepping or reading the directory (`list_files`, `glob`, `grep` with a prefix) would be
+ * refused although everything below it is granted. A trailing `/**` therefore also grants the
+ * directory path (a pattern matching a directory covers what is below it, so nothing widens).
+ */
+const readRules = (glob: string): string[] => {
+  const g = glob.trim()
+  const dir = g.endsWith('/**') ? g.slice(0, -3) : ''
+  return dir.length > 1 ? [globRule('Read', g), globRule('Read', dir)] : [globRule('Read', g)]
+}
+
+/**
  * The rules of a run, derived from the program (decision D3). `allow`: the authority (tools and
  * rules, every tool of a connector, `Read(glob)` for read, `Edit(glob)` for write) and the base
  * tools. `deny`: `forbidden`. Writing a path also needs reading it (editing reads the file first),
@@ -299,8 +311,8 @@ export function programRules(
       ...(program.worker == null ? [] : WORKER_TOOLS),
       ...a.tools,
       ...connectorTools,
-      ...a.read.map((g) => globRule('Read', g)),
-      ...a.write.map((g) => globRule('Read', g)),
+      ...a.read.flatMap(readRules),
+      ...a.write.flatMap(readRules),
       ...a.write.map((g) => globRule('Edit', g)),
     ]),
     deny: cleanList(program.forbidden),
@@ -414,7 +426,10 @@ export function programRunOutcome(
   if (stop === 'aborted') return { status: 'stopped', summary: null, failed: false }
   if (stop === 'interrupted') return { status: 'interrupted', summary: null, failed: true }
   const why: Record<string, string> = {
-    'cost-cap': 'Stopped: the budget of this run (or program) was used up before it reported.',
+    'cost-cap':
+      'Stopped: the budget of this run (or program) was used up before it reported. ' +
+      'A model call reserves its worst-case cost before it runs, so a very small budget can ' +
+      'stop a run before its first call: raise the budget.',
     'output-invalid': 'Stopped: the run did not produce a valid final report.',
     'max-steps': 'Stopped: the run used all its steps before it reported.',
     stuck: 'Stopped: the run was repeating itself.',

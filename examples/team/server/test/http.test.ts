@@ -141,7 +141,8 @@ describe('system routes', () => {
     expect(doc.components.securitySchemes.Bearer).toBeDefined()
     const docs = await app.request('/docs')
     expect(docs.status).toBe(200)
-    expect(await docs.text()).toContain('/openapi.json')
+    // relative to the docs page, so it also works when mounted under /api (Docker)
+    expect(await docs.text()).toContain('"url": "openapi.json"')
   })
 
   test('bearer token: required when TEAM_TOKEN is set, health and docs stay open', async () => {

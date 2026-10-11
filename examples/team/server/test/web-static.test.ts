@@ -35,6 +35,15 @@ describe('web static (single-port deployment)', () => {
     expect(await (await web.serve(new Request('http://x/'))).text()).toContain('index')
   })
 
+  test('a missing asset is a 404, not the app shell', async () => {
+    for (const path of ['/_app/immutable/old-chunk.js', '/favicon.ico', '/a/b/c.map']) {
+      expect((await web.serve(new Request(`http://x${path}`))).status).toBe(404)
+    }
+    expect(
+      (await web.serve(new Request('http://x/a/01a12cad-fd98-7074-8671-c0e78dc9a901'))).status,
+    ).toBe(200)
+  })
+
   test('paths never leave the build folder', async () => {
     for (const path of ['/../secret.txt', '/..%2fsecret.txt', '/%2e%2e/secret.txt']) {
       expect(await (await web.serve(new Request(`http://x${path}`))).text()).not.toContain('secret')
