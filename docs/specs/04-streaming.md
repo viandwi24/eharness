@@ -420,5 +420,8 @@ the stored message are the record, spec 04 §5).
 Rules: (1) `accepted` never rejects and resolves once; (2) a blocked or aborted turn is accepted
 (`200`); (3) `toResponse()` is unchanged (an in-stream error for those failures; in-process busy
 of `handleChatRequest` is still a 409); (4) the unread stream of a rejected run is cancelled.
+(5) a run that waits before it starts (queued, `ifBusy: 'wait'`, held behind an inbox drain) carries
+the `accepted` of the turn it becomes, so a lock held elsewhere is a `409` for it too, not a `200`
+with an in-stream error.
 Oversized bodies (413) are the HTTP framework's concern: the core has no body limit besides
 `inputFiles.maxBytes`, which is `EH_INVALID_INPUT` (400).

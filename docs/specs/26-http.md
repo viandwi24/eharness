@@ -98,7 +98,10 @@ is read** and before any session is opened, and returns a principal `P` or a den
 key). It must not throw for a denial; a throw is an error (§3). `sessionId` is the `:id` of session
 routes, `attentionId` the `:id` of the answer route. `chat.authorizeKind({ principal, kind, sessionId,
 request })` runs after the chat body was classified (`send`, `respond`, `regenerate`, `edit`) and may
-return a denial.
+return a denial. `chat.validate({ body, kind, principal, request })` runs right after sanitising
+(§5.2), before the session is opened: attachment allowlists, quotas. It returns nothing (continue),
+a denial, or `{ body }` to continue with a normalised body (not sanitised again); a thrown
+`HarnessError` / `onError`-mapped error is an error answer (§3).
 
 ## 5. Chat
 
@@ -131,8 +134,8 @@ Errors are values (`{ ok: false, code, message, details? }`). Rules:
 
 ### 5.3 Pipeline
 
-`authorize` → content type and body (§5.1) → sanitize (§5.2) → `authorizeKind` → idempotency key →
-stale-answer check → busy policy → `handleChatRequest(session, body, options)` →
+`authorize` → content type and body (§5.1) → sanitize (§5.2) → `authorizeKind` → `validate` → idempotency key →
+stale-answer check → remote-busy check → busy policy → `handleChatRequest(session, body, options)` →
 `await run.toHttpResponse()`. Stream responses carry `x-eharness-turn-id`, `x-eharness-session-id`,
 `cache-control: no-cache, no-transform` and `x-accel-buffering: no`.
 
@@ -146,6 +149,11 @@ stale-answer check → busy policy → `handleChatRequest(session, body, options
 - **Stale answer.** A `respond` whose approval ids / tool call ids are all answered or no longer
   pending is `409 EH_HTTP_ALREADY_ANSWERED` (`details.ids`) and starts no turn. A partially stale
   answer proceeds (stale ids are ignored by the core).
+- **Remote busy.** A turn of **another instance** (`peek.busy().scope === 'remote'`) is `409
+  EH_SESSION_BUSY` for every operation that cannot join it: `respond`, `regenerate`, `edit` and a
+  send with `reject`; `steer` and `wait` are decided by the policy below. A pre-commit failure the
+  core only sees later (a `SessionLock` held elsewhere) is the same `409` (spec 04 §7.1, also for a
+  send held behind an inbox drain), never a `200` with an in-stream error.
 - **Busy policy** (send only; `respond`, `regenerate`, `edit` always `409` when busy). `?ifBusy=`
   must be in `chat.ifBusy` (default `['reject']`), else `400`; absent means `chat.defaultIfBusy`
   (default `reject`). `reject`: `409 EH_SESSION_BUSY`. `wait`: core `ifBusy: 'wait'`. `steer`: a turn
@@ -166,10 +174,10 @@ interface HarnessHttpOptions<P> {
   peek?(id, ctx): MaybePromise<SessionPeek>
   basePath?: string; maxBodyBytes?: number; headers?: HeadersInit
   chat?: { ifBusy?; defaultIfBusy?; clientTools?: false | ClientToolsOptions; pageContext?: false | PageContextOptions
-           actorOf?(principal): ApprovalActor | undefined; authorizeKind?; sendOptions?(ctx); maxParts?; maxTextBytes? }
+           actorOf?(principal): ApprovalActor | undefined; authorizeKind?; validate?; sendOptions?(ctx); maxParts?; maxTextBytes? }
   sessions?: { list({ principal, request, query: { cursor?, limit } }): { sessions, next? }; describe?(id, { principal, request }) }
-  attention?: { roots({ principal, request }); peek: AttentionPeekFn; open(id, { principal, request }); canAnswer?; parseAnswer?
-                waits?; maxDepth?; store?; agentId?; allowRemember?: boolean; maxNoteChars?: number }
+  attention?: { roots({ principal, request }); peek: AttentionPeekFn; open(id, { principal, request }); canAnswer?; parseAnswer?; decorate?; onSettled?
+                waits?; maxDepth?; store?; agentId?: string | ((sessionId) => string | undefined); allowRemember?: boolean; maxNoteChars?: number }
   activity?: { store: ActivityStore; bootId: string; filter(principal): ((r: ActivityRecord) => boolean) | 'all'; pollMs?; keepAliveMs?; retryMs? }
   onError?; onFailure?
 }
@@ -178,7 +186,10 @@ interface HarnessHttpOptions<P> {
 ## 7. Attention routes
 
 - `GET /attention`: `listAttention` from `attention.roots(...)` (decided by the server) with
-  `attention.peek`. The client never names roots.
+  `attention.peek`. The client never names roots. `attention.decorate(item, { principal, request })`
+  enriches each item (called once per item, concurrently): a returned record is sent as
+  `item.extra` (JSON values; wire type `AttentionItemWire = AttentionItem & { extra? }`), `null`
+  hides the item, `undefined` adds nothing.
 - `POST /attention/:id/answer` body `{ sessionId, answer }`. `authorize` runs with `attentionId`; then
   `canAnswer({ principal, request, sessionId, attentionId })`. The default allows a `sessionId` that
   is one of the roots or a descendant (walks `peek(sessionId).parentInfo()` up, depth 8; it does not
@@ -187,10 +198,16 @@ interface HarnessHttpOptions<P> {
 - The answer is whitelisted: `{ kind: 'approval', approved, reason?, note?, remember? }` or `{ kind:
   'client-tool' | 'wait', output }` / `{ …, errorText }`. `note` at most `maxNoteChars` (2000);
   `remember` is `400` unless `allowRemember: true`; `endTurn` is never read. `parseAnswer({ item?,
-  body })` replaces the whitelist for app-specific shapes (`item` is the pending item when found).
+  body, defaultParse })` replaces the whitelist for app-specific shapes (`item` is the pending item
+  when found); it may return `undefined`, or return `defaultParse()` (throws `EH_INVALID_INPUT`),
+  to fall back to the whitelist with `maxNoteChars` / `allowRemember` for the answers it does not
+  know.
 - Then `answerAttention(id, { sessionId, answer, open, peek, actor, store, agentId })`: `200
   AnswerResponse` (`resumed`, `recorded` with `remaining`, `already-answered`); `not-found` is `404`;
-  a wrong kind is `400`; a busy session with a waiting item is `409`.
+  a wrong kind is `400`; a busy session with a waiting item is `409`. `agentId` (the agent id of the `attention-answered`
+  event) is a string or `(sessionId) => string | undefined`. After a `resumed` answer the response
+  is sent at once and, when its continuation ends, `onSettled({ id, sessionId, kind, result,
+  principal })` runs (`result` is the `TurnResult`; an error of the hook goes to `onFailure`).
 
 ## 8. Activity routes
 

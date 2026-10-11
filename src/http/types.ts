@@ -14,11 +14,13 @@ import type {
 } from '../activity/index.ts'
 import type {
   ApprovalActor,
+  ChatRequestBody,
   ChatRequestOptions,
   ClientToolsOptions,
   HarnessSession,
   PageContextOptions,
   SessionPeek,
+  TurnResult,
 } from '../index.ts'
 import type { Authorize, HttpDeny } from './authorize.ts'
 import type { ChatKind } from './sanitize.ts'
@@ -54,6 +56,18 @@ export interface HttpChatOptions<P> {
     sessionId: string
     request: Request
   }) => MaybePromise<undefined | HttpDeny>
+  /**
+   * Checks the body after it was sanitised and classified (attachment allowlists, quotas), before
+   * the session is opened. Return a denial to refuse (`EH_INVALID_INPUT` and friends are thrown
+   * as `HarnessError`), `{ body }` to continue with a normalised body (it is NOT sanitised again:
+   * keep to the shape you were given), or nothing to continue.
+   */
+  validate?: (call: {
+    body: ChatRequestBody
+    kind: ChatKind
+    principal: P
+    request: Request
+  }) => MaybePromise<undefined | HttpDeny | { body: ChatRequestBody }>
   /** Server-side `SendOptions` of every turn (`runtime`, `model`, ...). Never read from the body. */
   sendOptions?: (
     ctx: SessionCtx<P>,
@@ -114,14 +128,47 @@ export interface HttpAttentionOptions<P> {
     sessionId: string
     attentionId: string
   }): MaybePromise<boolean | HttpDeny>
-  /** Parse an app-specific answer body into an answer. Throw `EH_INVALID_INPUT` to refuse. */
-  parseAnswer?(call: { item?: AttentionTarget; body: unknown }): AttentionAnswer
+  /**
+   * Parse an app-specific answer body into an answer. Throw `EH_INVALID_INPUT` to refuse. Return
+   * `undefined` (or call `defaultParse()`, which throws `EH_INVALID_INPUT` for a bad answer) to use
+   * the built-in whitelist, with `maxNoteChars` and `allowRemember`.
+   */
+  parseAnswer?(call: {
+    item?: AttentionTarget
+    body: unknown
+    /** The built-in whitelist applied to `body.answer`. */
+    defaultParse(): AttentionAnswer
+  }): MaybePromise<AttentionAnswer | undefined>
+  /**
+   * Enrich an item of `GET /attention`: the returned record is sent as `item.extra` (JSON values
+   * only). `null` hides the item (an app that cannot place it), `undefined` adds nothing. Called
+   * once per item, concurrently.
+   */
+  decorate?(
+    item: AttentionItem,
+    call: { principal: P; request: Request },
+  ): MaybePromise<Record<string, import('ai').JSONValue> | null | undefined>
+  /**
+   * The continuation an answer started has ended (`resumed` answers only). Runs after the answer
+   * was sent; an error goes to `onFailure`. `result` is `undefined` when the run left no result.
+   */
+  onSettled?(call: {
+    id: string
+    sessionId: string
+    kind: AttentionItem['kind']
+    result: TurnResult<unknown> | undefined
+    principal: P
+  }): MaybePromise<void>
   /** Include external waits; see `listAttention`. */
   waits?: ListAttentionOptions['waits']
   maxDepth?: number
   /** Emits `attention-answered` when set. */
   store?: ActivityStore
-  agentId?: string
+  /**
+   * The agent id recorded in `attention-answered` events: a fixed id, or a function of the session
+   * (multi-agent apps).
+   */
+  agentId?: string | ((sessionId: string) => string | undefined)
   /** Accept `remember` on approval answers. Default `false`. */
   allowRemember?: boolean
   /** Characters of an approval note. Default 2000. */

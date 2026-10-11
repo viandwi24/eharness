@@ -837,3 +837,256 @@ describe('sessions list and describe', () => {
     await agent.close()
   })
 })
+
+describe('turn of another instance (lock)', () => {
+  /** A cross-instance lock shared by the two agents of a test. */
+  function sharedLock() {
+    const held = new Set<string>()
+    return {
+      async acquire(id: string) {
+        if (held.has(id)) throw new Error('held')
+        held.add(id)
+        return async () => {
+          held.delete(id)
+        }
+      },
+    }
+  }
+
+  test('send (reject), respond, regenerate and edit are 409 EH_SESSION_BUSY, not an in-stream error', async () => {
+    const w = world()
+    const lock = sharedLock()
+    const g = gate()
+    const a = agentOf(w, {
+      model: scriptedModel([gatedCall, { text: 'done' }]),
+      tools: { gated: g.gated },
+    })
+    const b = agentOf(w, { model: scriptedModel([]), tools: { gated: g.gated } })
+    const httpB = createHarnessHttp(b, {
+      authorize: openAccess,
+      session: (id) => b.session(id, { lock }),
+    })
+    const run = a.session('s1', { lock }).send('go')
+    await g.started
+    const send = await chat(httpB, 's1', 'again')
+    expect(send.status).toBe(409)
+    expect(((await send.json()) as { error: { code: string } }).error.code).toBe('EH_SESSION_BUSY')
+    const asRespond = await httpB.fetch(
+      post('/sessions/s1/chat', {
+        id: 's1',
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            parts: [
+              {
+                type: 'tool-gated',
+                toolCallId: 'c1',
+                state: 'output-available',
+                input: {},
+                output: 'x',
+              },
+            ],
+          },
+        ],
+      }),
+    )
+    expect(asRespond.status).toBe(409)
+    const regen = await httpB.fetch(
+      post('/sessions/s1/chat', { id: 's1', trigger: 'regenerate-message', messages: [] }),
+    )
+    expect(regen.status).toBe(409)
+    const edit = await httpB.fetch(
+      post('/sessions/s1/chat', {
+        id: 's1',
+        messageId: 'u1',
+        messages: [{ id: 'u2', role: 'user', parts: [{ type: 'text', text: 'edited' }] }],
+      }),
+    )
+    expect(edit.status).toBe(409)
+    g.release()
+    await run.result
+    await a.close()
+    await b.close()
+  })
+})
+
+describe('turn of another instance (no lock)', () => {
+  test('reject, respond, regenerate and edit are 409 EH_SESSION_BUSY from the peek of the other instance', async () => {
+    const w = world()
+    const g = gate()
+    const a = agentOf(w, {
+      model: scriptedModel([gatedCall, { text: 'done' }]),
+      tools: { gated: g.gated },
+    })
+    const b = agentOf(w, { model: scriptedModel([]), tools: { gated: g.gated } })
+    const httpB = createHarnessHttp(b, { authorize: openAccess })
+    const run = a.session('s1').send('go')
+    await g.started
+    const codes: string[] = []
+    const bodies = [
+      userBody('s1', 'again'),
+      {
+        id: 's1',
+        messages: [
+          {
+            id: 'm1',
+            role: 'assistant',
+            parts: [
+              {
+                type: 'tool-gated',
+                toolCallId: 'c1',
+                state: 'output-available',
+                input: {},
+                output: 'x',
+              },
+            ],
+          },
+        ],
+      },
+      { id: 's1', trigger: 'regenerate-message', messages: [] },
+      {
+        id: 's1',
+        messageId: 'u1',
+        messages: [{ id: 'u2', role: 'user', parts: [{ type: 'text', text: 'edited' }] }],
+      },
+    ]
+    for (const body of bodies) {
+      const res = await httpB.fetch(post('/sessions/s1/chat', body))
+      expect(res.status).toBe(409)
+      codes.push(((await res.json()) as { error: { code: string } }).error.code)
+    }
+    expect(codes).toEqual(Array(4).fill('EH_SESSION_BUSY'))
+    g.release()
+    await run.result
+    await a.close()
+    await b.close()
+  })
+})
+
+describe('hooks: chat.validate, attention.decorate / parseAnswer / agentId / onSettled', () => {
+  test('chat.validate runs on the sanitised body: it can deny, or replace the body', async () => {
+    const model = scriptedModel([{ text: 'ok' }])
+    const agent = agentOf(world(), { model })
+    const seen: Array<{ kind: string; parts: number }> = []
+    const http = createHarnessHttp(agent, {
+      authorize: openAccess,
+      chat: {
+        validate: ({ body, kind }) => {
+          const text = JSON.stringify(body)
+          seen.push({ kind, parts: body.messages.at(-1)?.parts.length ?? 0 })
+          if (text.includes('forbidden')) return { deny: 403, message: 'nope' }
+          if (text.includes('rewrite-me')) {
+            return {
+              body: {
+                ...body,
+                messages: [
+                  { id: 'u9', role: 'user', parts: [{ type: 'text', text: 'rewritten' }] },
+                ],
+              },
+            }
+          }
+          return undefined
+        },
+      },
+    })
+    const denied = await chat(http, 's1', 'forbidden')
+    expect(denied.status).toBe(403)
+    expect(await messagesOf(http, 's1')).toHaveLength(0)
+    const res = await chat(http, 's1', 'rewrite-me')
+    expect(res.status).toBe(200)
+    await res.text()
+    expect(JSON.stringify(await messagesOf(http, 's1'))).toContain('rewritten')
+    expect(JSON.stringify(await messagesOf(http, 's1'))).not.toContain('rewrite-me')
+    expect(seen.map((s) => s.kind)).toEqual(['send', 'send'])
+    await agent.close()
+  })
+
+  test('decorate adds extra (or hides an item), parseAnswer falls through to the whitelist, agentId is a function, onSettled fires after the continuation', async () => {
+    const w = world()
+    const log: string[] = []
+    const agent = agentOf(w, {
+      model: scriptedModel([
+        { toolCalls: [{ toolName: 'danger', input: { what: 'rm' } }] },
+        { text: 'all done' },
+      ]),
+      tools: {
+        danger: tool({
+          description: 'danger',
+          inputSchema: z.object({ what: z.string() }),
+          execute: async ({ what }) => {
+            log.push(what)
+            return `did ${what}`
+          },
+        }),
+      },
+      approval: { policy: { danger: 'user-approval' } },
+    })
+    expect((await agent.session('r1').send('go').result).stop).toBe('tool-pending')
+    const settled: Array<{ id: string; sessionId: string; stop?: string }> = []
+    const parsed: string[] = []
+    let hide = false
+    const http = createHarnessHttp(agent, {
+      authorize: openAccess,
+      attention: {
+        roots: () => ['r1'],
+        peek: (id) => agent.peek(id),
+        open: (id) => agent.session(id) as never,
+        store: w.store,
+        agentId: (sessionId) => `agent-of-${sessionId}`,
+        maxNoteChars: 5,
+        decorate: (item) => (hide ? null : { label: `tool ${item.toolName}`, n: 1 }),
+        parseAnswer: ({ body, defaultParse }) => {
+          const answer = (body as { answer?: { kind?: string } }).answer
+          parsed.push(String(answer?.kind))
+          if (answer?.kind === 'custom') return { kind: 'approval', approved: true }
+          return defaultParse()
+        },
+        onSettled: ({ id, sessionId, result }) => {
+          settled.push({ id, sessionId, ...(result === undefined ? {} : { stop: result.stop }) })
+        },
+      },
+    })
+    const listed = (await (await http.fetch(get('/attention'))).json()) as {
+      items: Array<{ id: string; sessionId: string; extra?: Record<string, unknown> }>
+    }
+    expect(listed.items).toHaveLength(1)
+    const item = listed.items[0] as { id: string; sessionId: string; extra?: unknown }
+    expect(item.extra).toEqual({ label: 'tool danger', n: 1 })
+    hide = true
+    expect(((await (await http.fetch(get('/attention'))).json()) as { items: [] }).items).toEqual(
+      [],
+    )
+    hide = false
+
+    const path = `/attention/${item.id}/answer`
+    // the default whitelist still applies through defaultParse: maxNoteChars and allowRemember
+    const longNote = await http.fetch(
+      post(path, {
+        sessionId: item.sessionId,
+        answer: { kind: 'approval', approved: true, note: 'too long' },
+      }),
+    )
+    expect(longNote.status).toBe(400)
+    const remember = await http.fetch(
+      post(path, {
+        sessionId: item.sessionId,
+        answer: { kind: 'approval', approved: true, remember: 'session' },
+      }),
+    )
+    expect(remember.status).toBe(400)
+    expect(log).toEqual([])
+    const ok = await http.fetch(
+      post(path, { sessionId: item.sessionId, answer: { kind: 'custom' } }),
+    )
+    expect(ok.status).toBe(200)
+    expect(((await ok.json()) as { status: string }).status).toBe('resumed')
+    await until('settled', () => settled.length === 1)
+    expect(settled[0]).toEqual({ id: item.id, sessionId: 'r1', stop: 'complete' })
+    expect(log).toEqual(['rm'])
+    expect(parsed).toEqual(['approval', 'approval', 'custom'])
+    const events = await w.store.read({ after: 0, limit: 50, types: ['attention-answered'] })
+    expect(events.at(-1)?.agentId).toBe('agent-of-r1')
+    await agent.close()
+  })
+})

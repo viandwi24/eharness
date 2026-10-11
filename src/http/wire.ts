@@ -119,9 +119,12 @@ export interface InterruptResult {
   target: 'local' | 'remote' | 'idle' | 'unsupported'
 }
 
+/** An attention item as sent: `extra` is what `attention.decorate` added (app-defined JSON). */
+export type AttentionItemWire = AttentionItem & { extra?: Record<string, JSONValue> }
+
 /** `GET /attention`. */
 export interface AttentionListResponse {
-  items: AttentionItem[]
+  items: AttentionItemWire[]
 }
 
 /** The answers the wire accepts (`endTurn` is never read from the wire). */

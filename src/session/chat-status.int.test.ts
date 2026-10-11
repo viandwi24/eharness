@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { defineHarnessAgent } from '../agent/define-agent.ts'
 import type { HarnessAgentConfig } from '../agent/types.ts'
+import { memoryInbox } from '../storage/memory.ts'
 import { handleChatRequest } from '../stream/chat-request.ts'
 import { scriptedModel } from '../testing/scripted-model.ts'
 import { spyMessages, spyState } from './int-kit.ts'
@@ -91,6 +92,28 @@ describe('R14: busy() and HTTP status of pre-start failures', () => {
     const response = await run.toHttpResponse()
     expect(response.status).toBe(409)
     expect((await response.json()).error.code).toBe('EH_SESSION_BUSY')
+    expect(storage.messages.saves).toHaveLength(0)
+  })
+
+  test('a lock held elsewhere answers 409 also when an inbox gates the send (deferred run)', async () => {
+    const storage = { ...shared(), inbox: memoryInbox() }
+    const agent = defineHarnessAgent({
+      contextWindow: 100_000,
+      storage,
+      logger: silent,
+      model: scriptedModel([{ text: 'x' }]),
+    })
+    const session = agent.session('s1', {
+      lock: {
+        acquire: async () => {
+          throw new Error('locked elsewhere')
+        },
+      },
+    })
+    const run = handleChatRequest(session, body('hi'))
+    expect(await run.accepted).toMatchObject({ code: 'EH_SESSION_BUSY' })
+    const response = await run.toHttpResponse()
+    expect(response.status).toBe(409)
     expect(storage.messages.saves).toHaveLength(0)
   })
 

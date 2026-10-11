@@ -4,41 +4,46 @@
  * @see docs/specs/26-http.md#9-attention-routes
  */
 import { type AttentionAnswer, answerAttention, listAttention } from '../activity/index.ts'
+import { HarnessError } from '../index.ts'
 import { denialOf } from './authorize.ts'
 import { readJsonBody } from './body.ts'
 import { httpError, jsonResponse } from './errors.ts'
 import type { AttentionTarget, HttpAttentionOptions, HttpCall, HttpEnv } from './types.ts'
-import type { AnswerResponse, AttentionListResponse } from './wire.ts'
+import type { AnswerResponse, AttentionItemWire, AttentionListResponse } from './wire.ts'
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const invalid = (message: string, reason: string): Response =>
-  httpError('EH_INVALID_INPUT', message, { reason })
+const invalid = (
+  message: string,
+  reason: string,
+): { problem: { message: string; reason: string } } => ({
+  problem: { message, reason },
+})
 
 /** The answer of a wire body, whitelisted (`endTurn` is never read). `string` = the problem. */
 function parseWireAnswer<P>(
   raw: unknown,
   options: HttpAttentionOptions<P>,
-): AttentionAnswer | { problem: Response } {
-  if (!isRecord(raw)) return { problem: invalid('answer must be an object.', 'answer') }
+): AttentionAnswer | { problem: { message: string; reason: string } } {
+  if (!isRecord(raw)) return invalid('answer must be an object.', 'answer')
   if (raw.kind === 'approval') {
     if (typeof raw.approved !== 'boolean') {
-      return { problem: invalid('approved must be a boolean.', 'approved') }
+      return invalid('approved must be a boolean.', 'approved')
     }
     if (raw.reason !== undefined && (typeof raw.reason !== 'string' || raw.reason.length > 2000)) {
-      return { problem: invalid('reason must be a string of at most 2000 characters.', 'reason') }
+      return invalid('reason must be a string of at most 2000 characters.', 'reason')
     }
     const maxNote = options.maxNoteChars ?? 2000
     if (raw.note !== undefined && (typeof raw.note !== 'string' || raw.note.length > maxNote)) {
-      return { problem: invalid(`note must be a string of at most ${maxNote} characters.`, 'note') }
+      return invalid(`note must be a string of at most ${maxNote} characters.`, 'note')
     }
     if (raw.remember !== undefined) {
       if (options.allowRemember !== true) {
-        return { problem: invalid('remember is not accepted.', 'remember-not-allowed') }
+        return invalid('remember is not accepted.', 'remember-not-allowed')
       }
       if (raw.remember !== 'once' && raw.remember !== 'session') {
-        return { problem: invalid('remember must be once or session.', 'remember') }
+        return invalid('remember must be once or session.', 'remember')
       }
     }
     return {
@@ -53,9 +58,9 @@ function parseWireAnswer<P>(
     if (typeof raw.errorText === 'string')
       return { kind: raw.kind, errorText: raw.errorText } as AttentionAnswer
     if ('output' in raw) return { kind: raw.kind, output: raw.output } as AttentionAnswer
-    return { problem: invalid('Give output or errorText.', 'answer') }
+    return invalid('Give output or errorText.', 'answer')
   }
-  return { problem: invalid('Unknown answer kind.', 'kind') }
+  return invalid('Unknown answer kind.', 'kind')
 }
 
 export async function handleAttentionList<P>(
@@ -71,7 +76,19 @@ export async function handleAttentionList<P>(
     ...(attention.waits === undefined ? {} : { waits: attention.waits }),
     ...(attention.maxDepth === undefined ? {} : { maxDepth: attention.maxDepth }),
   })
-  const body: AttentionListResponse = { items }
+  const who = { principal: call.principal, request: call.request }
+  const decorate = attention.decorate
+  const out: AttentionItemWire[] = []
+  if (decorate === undefined) out.push(...items)
+  else {
+    const extras = await Promise.all(items.map((item) => decorate(item, who)))
+    items.forEach((item, i) => {
+      const extra = extras[i]
+      if (extra === null) return
+      out.push(extra === undefined ? item : { ...item, extra })
+    })
+  }
+  const body: AttentionListResponse = { items: out }
   return jsonResponse(body)
 }
 
@@ -127,18 +144,30 @@ export async function handleAttentionAnswer<P>(
   const peek = await attention.peek(sessionId, { parentSessionId: null })
   if (peek === undefined) return httpError('EH_HTTP_NOT_FOUND', 'No such attention item.')
 
-  let answer: AttentionAnswer
+  const defaultParse = (): AttentionAnswer => {
+    const parsed = parseWireAnswer(body.answer, attention)
+    if ('problem' in parsed) {
+      throw new HarnessError('EH_INVALID_INPUT', parsed.problem.message, {
+        details: { reason: parsed.problem.reason },
+      })
+    }
+    return parsed
+  }
+  let answer: AttentionAnswer | undefined
   if (attention.parseAnswer !== undefined) {
     const pending = await peek.pending()
     const item = locate(pending, id, sessionId)
-    answer = attention.parseAnswer({ ...(item === undefined ? {} : { item }), body })
-  } else {
-    const parsed = parseWireAnswer(body.answer, attention)
-    if ('problem' in parsed) return parsed.problem
-    answer = parsed
+    answer = await attention.parseAnswer({
+      ...(item === undefined ? {} : { item }),
+      body,
+      defaultParse,
+    })
   }
+  answer ??= defaultParse()
 
   const actor = env.options.chat?.actorOf?.(call.principal)
+  const agentId =
+    typeof attention.agentId === 'function' ? attention.agentId(sessionId) : attention.agentId
   const result = await answerAttention(id, {
     sessionId,
     answer,
@@ -146,10 +175,23 @@ export async function handleAttentionAnswer<P>(
     peek: () => peek,
     ...(actor === undefined ? {} : { actor }),
     ...(attention.store === undefined ? {} : { store: attention.store }),
-    ...(attention.agentId === undefined ? {} : { agentId: attention.agentId }),
+    ...(agentId === undefined ? {} : { agentId }),
   })
   if (result.status === 'not-found')
     return httpError('EH_HTTP_NOT_FOUND', 'No such attention item.')
+  if (
+    result.status === 'resumed' &&
+    attention.onSettled !== undefined &&
+    result.done !== undefined
+  ) {
+    const onSettled = attention.onSettled
+    const kind = result.kind ?? 'approval'
+    void result.done
+      .then((turn) => onSettled({ id, sessionId, kind, result: turn, principal: call.principal }))
+      .catch((error: unknown) =>
+        env.options.onFailure?.(error, { request: call.request, action: call.action }),
+      )
+  }
   const out: AnswerResponse = {
     status: result.status,
     id: result.id,

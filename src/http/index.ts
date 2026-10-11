@@ -41,6 +41,7 @@ export type {
   AnswerRequest,
   AnswerResponse,
   AttentionAnswerWire,
+  AttentionItemWire,
   AttentionListResponse,
   ChatQueued,
   HealthResponse,

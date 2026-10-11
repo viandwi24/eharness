@@ -87,7 +87,7 @@ export async function handleChat<P>(env: HttpEnv<P>, call: HttpCall<P>): Promise
     pageContext: chat.pageContext !== undefined && chat.pageContext !== false,
   })
   if (!clean.ok) return httpError(clean.code, clean.message, clean.details)
-  const { body } = clean
+  let { body } = clean
   const kind: ChatKind = classifyChatBody(body)
 
   const url = new URL(request.url)
@@ -125,11 +125,35 @@ export async function handleChat<P>(env: HttpEnv<P>, call: HttpCall<P>): Promise
     if (denied !== undefined) return denied
   }
 
+  if (chat.validate !== undefined) {
+    const verdict = await chat.validate({ body, kind, principal: call.principal, request })
+    if (verdict !== undefined) {
+      const denied = denialOf(verdict)
+      if (denied !== undefined) return denied
+      if (!(verdict instanceof Response) && 'body' in verdict) body = verdict.body
+    }
+  }
+
   const ctx: SessionCtx<P> = { principal: call.principal, request, action: call.action }
   const session = await env.session?.(sessionId, ctx)
   if (session === undefined) return httpError('EH_HTTP_NOT_FOUND', 'Not found.')
   const peek = await env.peek?.(sessionId, ctx)
   const last = body.messages.at(-1)
+
+  // a turn of ANOTHER instance: only a steer may join it (below); everything else is a 409 here,
+  // whatever the core would do (spec 26 §5.3)
+  if (peek !== undefined && !(kind === 'send' && (policy === 'steer' || policy === 'wait'))) {
+    const busy = await peek.busy()
+    if (busy !== null && busy.scope === 'remote') {
+      return httpError(
+        'EH_SESSION_BUSY',
+        'A turn of this session is running on another instance.',
+        {
+          ...(busy.turnId === undefined ? {} : { turnId: busy.turnId }),
+        },
+      )
+    }
+  }
 
   // a stale answer (answered in another tab, by a classifier, or consumed already) is a 409, not a turn
   if (kind === 'respond' && peek !== undefined) {

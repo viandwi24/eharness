@@ -66,6 +66,11 @@ export function createDeferredRun(args: {
   const result = new Promise<TurnResult<UIMessage>>((resolve) => {
     resolveResult = resolve
   })
+  // the turn's own pre-commit verdict (a lock held elsewhere, bad input): `toHttpResponse()` needs it
+  let resolveAccepted!: (error: TurnResult<UIMessage>['error'] | undefined) => void
+  const accepted = new Promise<TurnResult<UIMessage>['error'] | undefined>((resolve) => {
+    resolveAccepted = resolve
+  })
   let real: HarnessRun<UIMessage> | undefined
   let settled = false
 
@@ -88,6 +93,7 @@ export function createDeferredRun(args: {
     messageId,
     stream,
     result,
+    accepted,
     abort: (reason) => {
       if (real !== undefined) real.abort(reason)
       else if (!settled) args.onAbort()
@@ -103,6 +109,7 @@ export function createDeferredRun(args: {
       resolveSource(started.stream as ReadableStream<UIMessageChunk>)
       void started.messageId.then(resolveMessageId)
       void started.result.then(resolveResult)
+      void started.accepted.then(resolveAccepted, () => resolveAccepted(undefined))
     },
     drop() {
       if (settled) return
@@ -118,6 +125,7 @@ export function createDeferredRun(args: {
         }),
       )
       resolveMessageId(id)
+      resolveAccepted(undefined)
       resolveResult({
         turnId: args.turnId,
         kind: args.kind,

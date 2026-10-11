@@ -52,6 +52,17 @@ had already fixed once (trusting client metadata, `actor` from the body, answere
 10. **Imports:** `src/http` imports core through `src/index.ts` and `eharness/activity` (an
     `allowedImports` pair, like ADR-0049); `eharness/testing` may import `http` for `httpConformance`.
 
+15. **App hooks instead of wrapping the module (amendment).** Migrating the team example showed
+    what an app otherwise works around by cloning requests or wrapping `open` / `respond`:
+    `chat.validate` (after sanitising; may deny or return a normalised body), `attention.decorate`
+    (`item.extra`, `null` hides; the wire stays generic), `parseAnswer` receiving `defaultParse`
+    (or returning `undefined`) so the whitelist limits keep working, `attention.agentId` as a
+    function of the session, and `attention.onSettled` after the continuation of an answer. A turn
+    of another instance is a `409 EH_SESSION_BUSY` for send-with-reject / respond / regenerate / edit
+    (checked from `peek.busy()`); a lock held elsewhere on a send held behind an inbox drain is the
+    same `409`, which needed the core fix that a deferred run forwards the `accepted` of the turn it
+    becomes (spec 04 §7.1 rule 5).
+
 ### `eharness/client` (spec 27, same release)
 
 11. **Runtime imports only `ai`.** Everything from `src/http` and `src/activity` is `import type`
