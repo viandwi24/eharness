@@ -24,6 +24,7 @@ const program: Program = {
 	budget: { perRunUsd: 2, perDayUsd: null },
 	trigger: { kind: 'schedule', spec: { kind: 'cron', expr: '0 9 * * 1-5', tz: 'UTC' } },
 	report: 'digest',
+	worker: null,
 	status: 'active',
 	createdBy: 'client',
 	createdAt: 0,
@@ -62,6 +63,18 @@ describe('program form', () => {
 		const body = bodyFromForm({ ...emptyProgramForm(), name: 'x', brief: 'y' });
 		expect(body.trigger).toEqual({ kind: 'manual' });
 		expect(body.budget).toEqual({ perRunUsd: null, perDayUsd: null });
+	});
+
+	test('a worker program: the queue option round-trips and is validated', () => {
+		const worker = { ...program, worker: { maxTasks: 5 } };
+		const form = formFromProgram(worker, 'UTC');
+		expect(form).toMatchObject({ worker: true, maxTasks: '5' });
+		expect(bodyFromForm(form).worker).toEqual({ maxTasks: 5 });
+		expect(bodyFromForm(formFromProgram(program, 'UTC')).worker).toBeNull();
+		const bad = { ...emptyProgramForm(), name: 'n', brief: 'b', worker: true, maxTasks: '0' };
+		expect(Object.keys(validateProgramForm(bad))).toEqual(['maxTasks']);
+		expect(validateProgramForm({ ...bad, maxTasks: '4' })).toEqual({});
+		expect(validateProgramForm({ ...bad, worker: false, maxTasks: 'x' })).toEqual({});
 	});
 
 	test('validation: name, brief, path globs and budgets', () => {

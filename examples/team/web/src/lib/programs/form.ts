@@ -24,6 +24,10 @@ export type ProgramForm = {
 	triggerKind: 'manual' | 'schedule';
 	schedule: ScheduleForm;
 	report: ProgramReportMode;
+	/** Worker program: each run takes queued tasks of the agent (the work queue). */
+	worker: boolean;
+	/** Tasks per run, as typed. */
+	maxTasks: string;
 };
 
 export const REPORT_OPTIONS: { value: ProgramReportMode; label: string; hint: string }[] = [
@@ -46,7 +50,9 @@ export const emptyProgramForm = (): ProgramForm => ({
 	perDayUsd: '',
 	triggerKind: 'manual',
 	schedule: defaultScheduleForm(),
-	report: 'task'
+	report: 'task',
+	worker: false,
+	maxTasks: '3'
 });
 
 /** One entry per non-empty line, trimmed, without duplicates. */
@@ -63,7 +69,7 @@ export function parseUsd(text: string): number | null | 'invalid' {
 }
 
 /** The fields of a program the form edits: a stored program or a proposed one. */
-export type ProgramShape = Pick<Program, 'name' | 'brief' | 'authority' | 'gates' | 'forbidden' | 'escalation' | 'budget' | 'trigger' | 'report'>;
+export type ProgramShape = Pick<Program, 'name' | 'brief' | 'authority' | 'gates' | 'forbidden' | 'escalation' | 'budget' | 'trigger' | 'report'> & { worker?: Program['worker'] };
 
 export function formFromProgram(p: ProgramShape, fallbackTz?: string): ProgramForm {
 	return {
@@ -80,7 +86,9 @@ export function formFromProgram(p: ProgramShape, fallbackTz?: string): ProgramFo
 		perDayUsd: p.budget.perDayUsd === null ? '' : String(p.budget.perDayUsd),
 		triggerKind: p.trigger.kind,
 		schedule: p.trigger.kind === 'schedule' ? parseSpec(p.trigger.spec, fallbackTz) : defaultScheduleForm(fallbackTz),
-		report: p.report
+		report: p.report,
+		worker: p.worker != null,
+		maxTasks: String(p.worker?.maxTasks ?? 3)
 	};
 }
 
@@ -92,6 +100,10 @@ export function validateProgramForm(f: ProgramForm): Record<string, string> {
 	for (const [field, label] of [['read', 'Read'], ['write', 'Write']] as const) {
 		const bad = splitLines(f[field]).find((g) => !g.startsWith('/') || g.includes('..'));
 		if (bad !== undefined) errors[field] = `${label} paths are library globs starting with /, like /library/reports/** (not "${bad}").`;
+	}
+	if (f.worker) {
+		const n = Number(f.maxTasks);
+		if (!Number.isInteger(n) || n < 1 || n > 20) errors.maxTasks = 'Enter a whole number from 1 to 20.';
 	}
 	if (parseUsd(f.perRunUsd) === 'invalid') errors.perRunUsd = 'Enter an amount above 0, or leave it empty.';
 	if (parseUsd(f.perDayUsd) === 'invalid') errors.perDayUsd = 'Enter an amount above 0, or leave it empty.';
@@ -116,7 +128,8 @@ export function bodyFromForm(f: ProgramForm): Omit<ProgramCreate, 'agentId'> {
 		escalation: f.escalation.trim(),
 		budget: { perRunUsd: perRun === 'invalid' ? null : perRun, perDayUsd: perDay === 'invalid' ? null : perDay },
 		trigger: f.triggerKind === 'manual' ? { kind: 'manual' } : { kind: 'schedule', spec: buildSpec(f.schedule) },
-		report: f.report
+		report: f.report,
+		worker: f.worker ? { maxTasks: Math.min(20, Math.max(1, Math.trunc(Number(f.maxTasks)) || 3)) } : null
 	};
 }
 

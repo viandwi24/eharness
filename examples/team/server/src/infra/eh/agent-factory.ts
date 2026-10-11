@@ -56,6 +56,7 @@ import type { EventAppender, ProgramStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
+import { HEARTBEAT_ALLOWED, heartbeatRefusal } from '../../domain/heartbeat.ts'
 import {
   agentModeChoice,
   type ResolvedMode,
@@ -72,7 +73,7 @@ import {
   programRunScope,
 } from '../../domain/programs.ts'
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
-import { profileOfSession } from '../../domain/run-profiles.ts'
+import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
@@ -83,6 +84,7 @@ import { chatTools } from './chat-tools-plugin.ts'
 import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
 import { type DecisionIntake, decisions } from './decisions-plugin.ts'
+import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -98,6 +100,7 @@ import {
 } from './storage.ts'
 import { sqliteStreamLog } from './stream-log.ts'
 import { taskIndex } from './task-index.ts'
+import { type WorkQueueIntake, workQueue } from './work-queue-plugin.ts'
 
 /** Limits of delegation (plan decision D4: multi-agent runs cost many times a chat). */
 export interface TeamLimits {
@@ -166,6 +169,13 @@ export interface AgentFactoryDeps {
    * deps); absent = no decision tools.
    */
   decisions?: () => DecisionIntake | undefined
+  /**
+   * The heartbeat (`heartbeat-plugin.ts`): `team_status` and the hook that records a beat. Late-bound
+   * like `decisions`; absent = no heartbeat tools.
+   */
+  heartbeat?: () => HeartbeatIntake | undefined
+  /** The work queue intake (`work-queue-plugin.ts`): `create_task`, `list_tasks`, `update_task`, `complete_task`. */
+  workQueue?: () => WorkQueueIntake | undefined
   /** The big-data toolkit (`infra/bigdata`): sources and `run_code` limits. Needs `programs`. */
   bigData?: BigDataConfig
   /** Definition by id: a child's parent session `dm:<agentId>` names its agent. */
@@ -579,6 +589,21 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
      */
     const gateOf = (sessionId: string): ProgramGate | undefined => {
       if (profileOfSession(sessionId).permissions !== 'program-authority') return undefined
+      if (originOfSession(sessionId) === 'heartbeat') {
+        // the heartbeat is read-only and has one fixed authority (`HEARTBEAT_ALLOWED`)
+        const match = {
+          roots: [{ virtual: '/', real: '/' }],
+          toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
+        }
+        return {
+          rules: { allow: [...HEARTBEAT_ALLOWED], deny: [] },
+          refuse: (call) =>
+            HEARTBEAT_ALLOWED.some((rule) => matchRule(rule, call, { ...match, polarity: 'allow' }))
+              ? undefined
+              : heartbeatRefusal(call.toolName),
+          askedReason: heartbeatRefusal,
+        }
+      }
       const parsed = parseProgramSession(sessionId)
       if (parsed === undefined) return undefined
       const tools = Object.entries(out.toolNameMap).map(([name, origin]) => ({
@@ -654,6 +679,15 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               agentOf: (slug) => deps.agentBySlug?.(slug),
             }),
           ]),
+      ...(deps.workQueue === undefined
+        ? []
+        : [
+            workQueue({
+              intake: deps.workQueue,
+              agentOf: (slug) => deps.agentBySlug?.(slug),
+            }),
+          ]),
+      ...(deps.heartbeat === undefined ? [] : [heartbeat({ intake: deps.heartbeat })]),
       sessionPermissions({
         createEngine,
         gate: gateOf,

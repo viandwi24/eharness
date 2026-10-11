@@ -8,7 +8,20 @@ import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
 import type { AgentActivity, TaskStore } from '../../app/ports.ts'
 import { parseReport } from '../../domain/programs.ts'
-import type { PendingKind, Task, TaskOrigin, TaskReport, TaskStatus } from '../../domain/tasks.ts'
+import type {
+  PendingKind,
+  Task,
+  TaskOrigin,
+  TaskPriority,
+  TaskReport,
+  TaskStatus,
+} from '../../domain/tasks.ts'
+import {
+  briefWithFeedback,
+  isQueuedSession,
+  PRIORITY_RANK,
+  queuedSessionId,
+} from '../../domain/work-queue.ts'
 
 interface TaskRow {
   id: string
@@ -26,6 +39,14 @@ interface TaskRow {
   cost_usd: number
   tokens: number
   report: string | null
+  brief: string | null
+  inputs: string
+  priority: string
+  due_at: number | null
+  created_by: string | null
+  accepted_at: number | null
+  round: number
+  history: string
 }
 
 const parseJson = (text: string | null): unknown => {
@@ -35,6 +56,11 @@ const parseJson = (text: string | null): unknown => {
   } catch {
     return undefined
   }
+}
+
+const strings = (text: string): string[] => {
+  const v = parseJson(text)
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : []
 }
 
 const toTask = (r: TaskRow): Task => ({
@@ -53,6 +79,14 @@ const toTask = (r: TaskRow): Task => ({
   costUsd: r.cost_usd,
   tokens: r.tokens,
   report: parseReport(parseJson(r.report)) ?? null,
+  brief: r.brief,
+  inputs: strings(r.inputs),
+  priority: r.priority as TaskPriority,
+  dueAt: r.due_at,
+  createdBy: r.created_by,
+  acceptedAt: r.accepted_at,
+  round: r.round,
+  history: strings(r.history),
 })
 
 export interface NewTask {
@@ -82,9 +116,14 @@ export interface TaskWriter {
   /** Set status and counters; `undefined` when the session has no row. */
   update(sessionId: string, update: TaskUpdate): Task | undefined
   getBySession(sessionId: string): Task | undefined
-  /** Tasks that are not finished (the drift pass re-reads them). */
+  /** Tasks that have a session and are not finished (the drift pass re-reads them). */
   active(): Task[]
 }
+
+/** The queue order: priority, then the nearest due date, then the oldest (ids sort by creation). */
+const QUEUE_ORDER = `CASE priority ${Object.entries(PRIORITY_RANK)
+  .map(([name, rank]) => `WHEN '${name}' THEN ${rank}`)
+  .join(' ')} ELSE 1 END DESC, due_at IS NULL, due_at, id`
 
 export type SqliteTaskStore = TaskStore & TaskWriter
 
@@ -124,8 +163,9 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
     ofProgram(programId, limit) {
       return sqlite
         .query<TaskRow, [string, number]>(
-          // session ids are `program:<id>:<runAt>`; the id has no `%` or `_` of its own (UUID)
-          "SELECT * FROM tasks WHERE session_id LIKE 'program:' || ? || ':%' ORDER BY started_at DESC, id DESC LIMIT ?",
+          // session ids are `program:<id>:<runAt>`; the id has no `%` or `_` of its own (UUID).
+          // A task sent back waits `queued` and is not a run until a worker takes it again.
+          "SELECT * FROM tasks WHERE session_id LIKE 'program:' || ? || ':%' AND state != 'queued' ORDER BY started_at DESC, id DESC LIMIT ?",
         )
         .all(programId, limit)
         .map(toTask)
@@ -241,10 +281,146 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
       return row === null ? undefined : toTask(row)
     },
 
+    enqueue(t) {
+      const id = uuidv7()
+      sqlite
+        .query(
+          `INSERT INTO tasks (id, agent_id, session_id, parent_session_id, origin, title, state, pending_kind,
+                              started_at, ended_at, summary, last_activity_at, cost_usd, tokens,
+                              brief, inputs, priority, due_at, created_by, round, history)
+           VALUES (?, ?, ?, NULL, 'program', ?, 'queued', NULL, ?, NULL, NULL, ?, 0, 0, ?, ?, ?, ?, ?, 1, '[]')`,
+        )
+        .run(
+          id,
+          t.agentId,
+          queuedSessionId(id),
+          t.title,
+          t.now,
+          t.now,
+          t.brief,
+          JSON.stringify(t.inputs),
+          t.priority,
+          t.dueAt,
+          t.createdBy,
+        )
+      return toTask(taskById.get(id) as TaskRow)
+    },
+
+    patchQueued(id, p, now) {
+      const sets: string[] = []
+      const params: Array<string | number | null> = []
+      const set = (column: string, value: string | number | null): void => {
+        sets.push(`${column} = ?`)
+        params.push(value)
+      }
+      if (p.agentId !== undefined) set('agent_id', p.agentId)
+      if (p.title !== undefined) set('title', p.title)
+      if (p.brief !== undefined) set('brief', p.brief)
+      if (p.inputs !== undefined) set('inputs', JSON.stringify(p.inputs))
+      if (p.priority !== undefined) set('priority', p.priority)
+      if (p.dueAt !== undefined) set('due_at', p.dueAt)
+      set('last_activity_at', now)
+      const res = sqlite
+        .query(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ? AND state = 'queued'`)
+        .run(...params, id)
+      return res.changes === 0 ? undefined : toTask(taskById.get(id) as TaskRow)
+    },
+
+    cancelQueued(id, now) {
+      const res = sqlite
+        .query(
+          `UPDATE tasks SET state = 'stopped', summary = 'Cancelled before it started',
+                  ended_at = ?, last_activity_at = ? WHERE id = ? AND state = 'queued'`,
+        )
+        .run(now, now, id)
+      return res.changes === 0 ? undefined : toTask(taskById.get(id) as TaskRow)
+    },
+
+    claimNext(agentId, sessionId, now) {
+      return sqlite
+        .transaction((): Task | undefined => {
+          const row = sqlite
+            .query<TaskRow, [string]>(
+              `SELECT * FROM tasks WHERE state = 'queued' AND agent_id = ? ORDER BY ${QUEUE_ORDER} LIMIT 1`,
+            )
+            .get(agentId)
+          if (row === null) return undefined
+          const history = isQueuedSession(row.session_id)
+            ? strings(row.history)
+            : [...strings(row.history), row.session_id]
+          const res = sqlite
+            .query(
+              `UPDATE tasks SET state = 'running', session_id = ?, history = ?, started_at = ?,
+                      ended_at = NULL, last_activity_at = ?, summary = NULL, report = NULL,
+                      pending_kind = NULL, accepted_at = NULL
+                WHERE id = ? AND state = 'queued'`,
+            )
+            .run(sessionId, JSON.stringify(history), now, now, row.id)
+          return res.changes === 0 ? undefined : toTask(taskById.get(row.id) as TaskRow)
+        })
+        .immediate()
+    },
+
+    accept(id, now) {
+      const row = taskById.get(id)
+      if (row === null) return undefined
+      const res = sqlite
+        .query(
+          `UPDATE tasks SET accepted_at = ?, last_activity_at = ?
+            WHERE id = ? AND state = 'done' AND created_by IS NOT NULL AND accepted_at IS NULL`,
+        )
+        .run(now, now, id)
+      return res.changes === 0 ? undefined : toTask(taskById.get(id) as TaskRow)
+    },
+
+    sendBack(id, note, now) {
+      return sqlite
+        .transaction((): Task | undefined => {
+          const row = taskById.get(id)
+          if (row === null) return undefined
+          const task = toTask(row)
+          // finished work waiting for review, or a work item that ended without finishing (try again)
+          const retry = ['failed', 'stopped', 'interrupted', 'timed_out'].includes(task.status)
+          const review = task.status === 'done' && task.acceptedAt === null
+          if (task.createdBy === null || !(review || retry)) return undefined
+          const round = task.round + 1
+          const res = sqlite
+            .query(
+              `UPDATE tasks SET state = 'queued', brief = ?, round = ?, report = NULL, summary = NULL,
+                      ended_at = NULL, pending_kind = NULL, last_activity_at = ?
+                WHERE id = ? AND state = ? AND accepted_at IS NULL`,
+            )
+            .run(briefWithFeedback(task.brief, round, note), round, now, id, task.status)
+          return res.changes === 0 ? undefined : toTask(taskById.get(id) as TaskRow)
+        })
+        .immediate()
+    },
+
+    queued(agentId) {
+      return sqlite
+        .query<TaskRow, [string]>(
+          `SELECT * FROM tasks WHERE state = 'queued' AND agent_id = ? ORDER BY ${QUEUE_ORDER}`,
+        )
+        .all(agentId)
+        .map(toTask)
+    },
+
+    complete(sessionId, report, now) {
+      const res = sqlite
+        .query(
+          `UPDATE tasks SET report = ?, summary = ?, last_activity_at = ?
+            WHERE session_id = ? AND created_by IS NOT NULL AND state IN ('running', 'needs_action')`,
+        )
+        .run(JSON.stringify(report), report.summary.slice(0, 500), now, sessionId)
+      if (res.changes === 0) return undefined
+      const row = taskBySession.get(sessionId)
+      return row === null ? undefined : toTask(row)
+    },
+
     active() {
       return sqlite
         .query<TaskRow, []>(
-          "SELECT * FROM tasks WHERE state IN ('needs_action', 'running') ORDER BY started_at",
+          "SELECT * FROM tasks WHERE state IN ('needs_action', 'running') AND session_id NOT LIKE 'queued:%' ORDER BY started_at",
         )
         .all()
         .map(toTask)

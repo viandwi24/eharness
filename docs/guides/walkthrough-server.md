@@ -698,6 +698,133 @@ remaining chunks. `bigdata.test.ts` covers the fixture, ingest, manifest and the
 worth. *Without the authority check on `reads`:* a read-only program's code could copy any library
 file into its reports.
 
+## 21. Work queue: tasks that wait for a worker
+
+**What.** The board can hold work that has not started. A **queued task** is a row of the task
+board with an owner agent, a brief (markdown), inputs (library paths), a priority, an optional due
+date and who wrote it (`client` or an agent id), but no session yet. A **worker program** takes
+queued tasks, works each in a session of its own and moves it to **Review**, where the client
+accepts it or sends it back with a note. Board columns: Queued, Running, Waiting for you, Review,
+Done / Failed. This is how the writer drafts a script per video and the researcher works through
+research items without anyone starting each one.
+
+**Where.** [`domain/work-queue.ts`](../../examples/team/server/src/domain/work-queue.ts) (validation,
+feedback text, the run prompt of a task), [`domain/tasks.ts`](../../examples/team/server/src/domain/tasks.ts)
+(`queued` status, `boardColumn`, `inReview`), [`app/work-queue.ts`](../../examples/team/server/src/app/work-queue.ts)
+(use cases), [`infra/db/tasks-repo.ts`](../../examples/team/server/src/infra/db/tasks-repo.ts)
+(atomic claim), [`infra/eh/work-queue-plugin.ts`](../../examples/team/server/src/infra/eh/work-queue-plugin.ts)
+(tools) and [`infra/eh/program-service.ts`](../../examples/team/server/src/infra/eh/program-service.ts)
+(the worker run). Migration `0017` adds the task columns and `programs.worker`.
+
+1. **A task before its session.** `tasks.session_id` is unique and required, so a queued task holds
+   the placeholder `queued:<id>`; claiming replaces it with the real session id. Tasks that did
+   not come through the queue have `createdBy = null` and never wait in Review.
+2. **Making them.** The client uses the *New task* dialog (`POST /tasks`). A manager agent uses
+   `create_task`, `list_tasks` and `update_task` (re-prioritise, reassign, rewrite, cancel, only
+   while queued). The lead has them in its DM chat and the heartbeat; a program run is offered a
+   manager tool only when its authority names it (the permission engine of a run is closed-world
+   anyway). `LEAD_PLAYBOOK` tells the lead to read the board before it queues anything.
+3. **The worker program.** `worker: { maxTasks }` on a program (the *Work queue* box of the program
+   form). Each run claims the next queued task of its agent (priority, nearest due date, oldest) in
+   **code**, not by asking the model, and runs it; then the next, up to `maxTasks`. A run with
+   nothing queued does nothing (a scheduled slot is skipped with "no queued tasks"; *Run now*
+   answers `idle: true`). The program is the standing instruction ("write the script of the task you
+   are given"); the task is the work. Schedules are ordinary program triggers.
+4. **One session per task.** The first task of a run has the session of the run
+   (`program:<id>:<runAt>`), the next ones the same shape a millisecond later, so authority, budget
+   (per task, plus the program's day scope), run history and the routine's run row work unchanged.
+   Each task keeps its own chat, report and cost on the board. The alternative (one session for
+   the whole run, working the tasks in turn) makes one chat and one report cover several items,
+   fills the context with unrelated work, and cannot tell which task a failure belongs to.
+5. **Atomic claim.** `claimNext` selects and updates in one `BEGIN IMMEDIATE` transaction guarded by
+   `state = 'queued'`, so two runs (two programs, two instances) never take the same task. The
+   next task is claimed only when the previous one ended, so a run that stops holds nothing back.
+6. **Finishing.** The worker calls `complete_task({ summary, outputs })`: every output must exist
+   in the library (the tool answers with the missing paths otherwise), then gives its final report.
+   A `done` or `partial` report on a work item the client has not accepted is **Review**.
+   *Accept* sets `acceptedAt`. *Send back* (`POST /tasks/{id}/send-back`, a note is required)
+   queues it again: the note is appended to the brief under "Feedback from the client (round N)",
+   and the next run revises it in a fresh session (the earlier ones stay in `history`). The same
+   call retries a work item that failed or was stopped.
+7. **Waiting for you.** A task is in that column when an approval or question waits, or when an
+   open decision names its session (a run parked on `escalate` still shows `running`). The web
+   joins the task list with the open decisions it already holds.
+
+**Test it.** [`work-queue.test.ts`](../../examples/team/server/test/work-queue.test.ts): the writer
+drafts a script per queued title, each task goes to Review, a note sends one back and the next run
+revises it; the manager queues tasks from its DM; the researcher takes research items one run at a
+time; an escalation shows as Waiting for you; two worker runs at once and two database handles
+never take the same task; a scheduled worker skips an empty queue.
+
+*Without the claim transaction:* two workers can start the same task twice and pay for it twice.
+*Without Review:* "done" is the agent's word, and the client finds out when the video is wrong.
+
+## 22. Heartbeat and daily digest
+
+The ambient layer (P40 phase E): an agent that keeps an eye on the team without talking, and one
+short message a day. Code: [`domain/heartbeat.ts`](../../examples/team/server/src/domain/heartbeat.ts)
+(pure rules), [`app/heartbeat.ts`](../../examples/team/server/src/app/heartbeat.ts) (use cases),
+[`infra/eh/heartbeat-service.ts`](../../examples/team/server/src/infra/eh/heartbeat-service.ts) and
+[`heartbeat-plugin.ts`](../../examples/team/server/src/infra/eh/heartbeat-plugin.ts).
+
+**One session, one profile.** A beat is a turn of the rolling session `heartbeat:<agentId>` (the run
+profile row that already existed). Compaction keeps it small. It is unattended and read-only: the
+permission gate has one fixed authority (base tools, `team_status`, `propose_plan`, `escalate`,
+`list_tasks`, `Read(/library/**)`); anything else is refused with a reason the model reads. It does
+not feed memory and it is not a task on the board.
+
+**Woken by a routine.** Each enabled heartbeat owns a routine row whose `program_id` is
+`sys:heartbeat:<agentId>` (the digest: `sys:digest`, a cron at the digest time). They are not listed
+as routines and emit no routine events; the routine service hands their fire to the heartbeat
+runner. So claiming, recovery of a claimed-but-unstarted fire and "a second instance cannot fire the
+same slot" come for free, and the beat id is the slot, so a recovered fire is the same beat. Config,
+beat history, fingerprints and the digest buffer are JSON rows in the existing `settings` table
+(`heartbeat:<agentId>:config|state`, `digest:config|state`): no migration.
+
+**Cheap by construction.** Before any model call a beat can be skipped, and the skip is recorded
+(identical skips collapse into one history row): the agent's heartbeat is off, outside the active
+hours (HH:MM window in an IANA timezone, may wrap midnight), the checklist
+`/memories/agents/<id>/HEARTBEAT.md` is empty (only headings, comments, bare list markers), the
+previous beat still runs, or it parked on an `escalate` and waits for the client. Default: on for
+the lead only, every 30 minutes, 08:00-20:00 UTC.
+
+**The server observes, the model judges.** `team_status` returns what `observe()` computes
+deterministically: stuck, failed and long-waiting tasks, open decisions older than a day, programs
+that fail or paused themselves, failing routines, connectors that need sign-in, the budget (80 % /
+95 %), and program suggestions. A finding carries a fingerprint; ones already reported inside the
+window (24 h, 14 days for suggestions) are not listed again, so a persisting problem returns once a
+day. A suggestion needs at least three similar requests in 14 days (word-overlap clusters over the
+client's DM messages and the tasks the client made), and none if a program or open proposal already
+covers it. Only then may the model call `propose_plan`; nothing is created without the client.
+
+**Silent by default.** The beat ends with a structured result
+`{ status: 'ok' | 'attention', items: [{ kind, title, detail, links, urgent, fingerprint }] }`
+(`SendOptions.output`). It is recorded by the `turn.end` hook, not by awaiting the run, so a beat
+that parked on `escalate` and continued after the decision (in any instance) is recorded the same
+way (the decision service passes the same output spec when it resumes a `heartbeat:` session). `ok`:
+nothing is shown. New items go to the digest buffer; urgent ones also go to the lead's DM at once as
+one short message. That message is an `eh.event` injected into `dm:<leadId>` (`session.inject`, no
+model call; the lead reads it as context next turn, so the client can ask "tell me more").
+
+**The digest** (`runDigest`) is built from data, once a day at a configurable time (default 18:00 in
+the lead's heartbeat timezone): program runs since the last digest (`report: 'digest'` programs with
+summary and outputs, `task` programs as a count, `silent` none), open decisions, tasks waiting for
+you or in Review, the heartbeat items of the day, and the cost from the model call log (with the
+heartbeat's share). Idempotent per local day; a quiet day sends nothing.
+
+**Web.** Agent dialog, Heartbeat tab: on/off, interval, active hours, timezone, the checklist editor
+(the memory file), "Run a beat now", the recent beats (ok, attention, skipped, failed with their
+items), and for the lead the digest settings.
+
+**Test it.** [`heartbeat.test.ts`](../../examples/team/server/test/heartbeat.test.ts): empty checklist
+and outside hours make no model call; ok shows nothing; attention fills the buffer and urgent reaches
+the DM once; the same findings are deduplicated; overlap and a parked beat skip; the gate refuses
+writes; three similar requests, not two; the digest contents and its idempotence; the routine fires,
+a claimed fire is recovered once, a beat the server died in is closed.
+
+*Without the checklist rule:* a heartbeat on every agent pays a model call every half hour to say
+nothing. *Without fingerprints:* the same stuck task is reported every beat.
+
 ## What to change when you copy it
 
 | In the example | In your harness |

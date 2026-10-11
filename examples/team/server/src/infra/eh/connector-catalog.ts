@@ -32,6 +32,7 @@ import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
+import { WORK_QUEUE_TOOLS } from './work-queue-plugin.ts'
 
 /** Memory tools are file writes by definition: the agent owns its memory, so they never ask. */
 export const MEMORY_TOOL_KINDS = {
@@ -56,7 +57,14 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
 } {
   return {
     // asking the client for a decision never needs a permission of its own (decisions-plugin.ts)
-    allow: [...def.rules.allow, ...MEMORY_ALLOW, 'write_file', 'edit_file', ...DECISION_TOOLS],
+    allow: [
+      ...def.rules.allow,
+      ...MEMORY_ALLOW,
+      'write_file',
+      'edit_file',
+      ...DECISION_TOOLS,
+      ...WORK_QUEUE_TOOLS,
+    ],
     ask: [...def.rules.ask],
     deny: [...def.rules.deny],
   }

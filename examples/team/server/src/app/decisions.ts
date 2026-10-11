@@ -397,7 +397,11 @@ async function approveProposal(
       next =
         deps.decisions.setOutcome(
           d.id,
-          { decision: 'approved', programId: created.id, runSessionId: run.sessionId },
+          {
+            decision: 'approved',
+            programId: created.id,
+            ...(run.sessionId === null ? {} : { runSessionId: run.sessionId }),
+          },
           created.id,
         ) ?? next
     } catch {

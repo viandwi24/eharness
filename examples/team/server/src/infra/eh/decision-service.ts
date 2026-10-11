@@ -20,6 +20,7 @@ import { followUpText } from '../../domain/decisions.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import { parseProgramSession } from '../../domain/programs.ts'
 import type { AgentFactory } from './agent-factory.ts'
+import { BEAT_SCHEMA } from './heartbeat-service.ts'
 import { REPORT_SCHEMA } from './program-service.ts'
 
 export interface DecisionService extends DecisionResolver {
@@ -53,13 +54,17 @@ export function createDecisionService(
     inflight.add(watched)
     void watched.finally(() => inflight.delete(watched))
   }
-  /** A program run continues with its report spec; every other session just continues. */
-  const options = (sessionId: string) =>
-    parseProgramSession(sessionId) === undefined
+  /** A program run continues with its report spec, a heartbeat with its result spec. */
+  const options = (sessionId: string) => {
+    if (sessionId.startsWith('heartbeat:')) {
+      return { output: { schema: BEAT_SCHEMA, description: 'The result of this heartbeat.' } }
+    }
+    return parseProgramSession(sessionId) === undefined
       ? {}
       : {
           output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
         }
+  }
 
   return {
     async resume(decision, answer) {

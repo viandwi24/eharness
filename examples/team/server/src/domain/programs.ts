@@ -38,6 +38,27 @@ export interface ProgramBudget {
   perDayUsd: number | null
 }
 
+/** A worker program works through the queued tasks of its agent, one session per task (D6). */
+export interface WorkerSpec {
+  /** Tasks one run takes at most. */
+  maxTasks: number
+}
+export const MAX_TASKS_PER_RUN = 20
+export const DEFAULT_TASKS_PER_RUN = 3
+
+export function checkWorker(worker: Partial<WorkerSpec> | null | undefined): void {
+  if (worker == null) return
+  const n = worker.maxTasks
+  if (n !== undefined && (!Number.isInteger(n) || n < 1 || n > MAX_TASKS_PER_RUN)) {
+    throw invalid(`worker.maxTasks must be 1-${MAX_TASKS_PER_RUN}`, 'INVALID_PROGRAM')
+  }
+}
+
+export const normalizeWorker = (
+  worker: Partial<WorkerSpec> | null | undefined,
+): WorkerSpec | null =>
+  worker == null ? null : { maxTasks: worker.maxTasks ?? DEFAULT_TASKS_PER_RUN }
+
 export type ProgramTrigger = { kind: 'manual' } | { kind: 'schedule'; spec: RoutineSpec }
 
 export interface Program {
@@ -56,6 +77,8 @@ export interface Program {
   budget: ProgramBudget
   trigger: ProgramTrigger
   report: ProgramReportMode
+  /** Set: each run takes queued tasks of the agent (the work queue); null: one run, the brief. */
+  worker: WorkerSpec | null
   status: ProgramStatus
   /** `client` (the web / API) or the id of the agent that proposed it. */
   createdBy: string
@@ -76,6 +99,7 @@ export interface ProgramDraft {
   budget?: Partial<ProgramBudget> | undefined
   trigger?: ProgramTrigger | undefined
   report?: ProgramReportMode | undefined
+  worker?: Partial<WorkerSpec> | null | undefined
   status?: ProgramStatus | undefined
 }
 
@@ -135,7 +159,9 @@ export function checkProgramFields(f: {
   trigger?: ProgramTrigger | undefined
   report?: string | undefined
   status?: string | undefined
+  worker?: Partial<WorkerSpec> | null | undefined
 }): void {
+  checkWorker(f.worker)
   if (f.name !== undefined && (f.name.trim() === '' || f.name.length > 120)) {
     throw invalid('name must be 1-120 characters', 'INVALID_PROGRAM')
   }
@@ -218,6 +244,9 @@ export const PROGRAM_BASE_TOOLS = [
   'request_authority',
 ] as const
 
+/** Tools of the work queue every worker program may use (`infra/eh/work-queue-plugin.ts`). */
+export const WORKER_TOOLS = ['complete_task'] as const
+
 /** A tool the agent has, with the connector and connections it comes from. */
 export interface ToolSourceInfo {
   name: string
@@ -241,7 +270,7 @@ const globRule = (kind: 'Read' | 'Edit', glob: string): string => `${kind}(${glo
  * so a write glob is readable too.
  */
 export function programRules(
-  program: Pick<Program, 'authority' | 'forbidden'>,
+  program: Pick<Program, 'authority' | 'forbidden'> & { worker?: WorkerSpec | null },
   tools: readonly ToolSourceInfo[] = [],
 ): ProgramRules {
   const a = program.authority
@@ -255,6 +284,8 @@ export function programRules(
   return {
     allow: cleanList([
       ...PROGRAM_BASE_TOOLS,
+      // a worker program is given its work: reporting a task done is part of it
+      ...(program.worker == null ? [] : WORKER_TOOLS),
       ...a.tools,
       ...connectorTools,
       ...a.read.map((g) => globRule('Read', g)),

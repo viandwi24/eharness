@@ -89,10 +89,11 @@ describe('live store', () => {
 		live.handleEvent(ev('routine-fired', 'lead-id'));
 		live.handleEvent(ev('program-changed', 'lead-id', { programId: 'p1', change: 'paused' }));
 		live.handleEvent(ev('settings-changed', 'lead-id'));
+		live.handleEvent(ev('heartbeat-changed', 'lead-id', { change: 'beat' }));
 		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
 		live.handleEvent(ev('providers-changed', 'lead-id', { profileId: 'openrouter', action: 'put' }));
 		live.handleEvent(ev('connectors-changed', 'lead-id', { instance: 'x' }));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1 });
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, heartbeat: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1 });
 		// a stored message moves the context size of the open chat
 		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant' }));
 		expect(live.state.revs.chat).toBe(1);

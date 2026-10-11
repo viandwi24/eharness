@@ -9,17 +9,28 @@ import {
   listTasks,
   messageTask,
 } from '../../app/tasks.ts'
+import {
+  acceptTask,
+  cancelQueuedTask,
+  createTask,
+  sendBackTask,
+  updateQueuedTask,
+} from '../../app/work-queue.ts'
 import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
 import {
   AgentContextSchema,
   AgentSessionsSchema,
   ApprovalListSchema,
   ReadMarkerSchema,
+  TaskCreateSchema,
   TaskDetailSchema,
   TaskIdParam,
   TaskListSchema,
   TaskMessageBodySchema,
   TaskMessageResultSchema,
+  TaskPatchSchema,
+  TaskSchema,
+  TaskSendBackSchema,
   TaskStatusSchema,
 } from '../schemas/tasks.ts'
 
@@ -61,6 +72,91 @@ const taskRoute = createRoute({
   responses: {
     200: { description: 'The task', content: json(TaskDetailSchema) },
     404: jsonError('Unknown task'),
+    ...errorResponses,
+  },
+})
+
+const createTaskRoute = createRoute({
+  method: 'post',
+  path: '/tasks',
+  tags: ['tasks'],
+  summary: 'Queue a task for an agent (the work queue)',
+  description:
+    'Creates a task that has no session yet (`status: queued`) with an owner, a brief, inputs (library paths), a priority and an optional due date. A worker program of that agent picks it up (priority, then due date, then age). Managers do the same with the `create_task` tool.',
+  security,
+  request: { body: { required: true, content: json(TaskCreateSchema) } },
+  responses: {
+    201: { description: 'Queued', content: json(TaskSchema) },
+    404: jsonError('Unknown agent'),
+    409: jsonError('The agent is archived'),
+    ...errorResponses,
+  },
+})
+
+const patchTaskRoute = createRoute({
+  method: 'patch',
+  path: '/tasks/{id}',
+  tags: ['tasks'],
+  summary: 'Change a queued task',
+  description:
+    'Re-prioritise, reassign, rewrite or set a due date. `409 TASK_NOT_QUEUED` once a worker took it.',
+  security,
+  request: { params: TaskIdParam, body: { required: true, content: json(TaskPatchSchema) } },
+  responses: {
+    200: { description: 'The task', content: json(TaskSchema) },
+    404: jsonError('Unknown task or agent'),
+    409: jsonError('`TASK_NOT_QUEUED`'),
+    ...errorResponses,
+  },
+})
+
+const cancelTaskRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/cancel',
+  tags: ['tasks'],
+  summary: 'Cancel a queued task',
+  description:
+    'The task ends `stopped`. A task that already runs is stopped from its session instead.',
+  security,
+  request: { params: TaskIdParam },
+  responses: {
+    200: { description: 'The task', content: json(TaskSchema) },
+    404: jsonError('Unknown task'),
+    409: jsonError('`TASK_NOT_QUEUED`'),
+    ...errorResponses,
+  },
+})
+
+const acceptTaskRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/accept',
+  tags: ['tasks'],
+  summary: 'Accept finished work in Review',
+  description:
+    'Review = a done work item (it came through the queue) whose report status is `done` or `partial` and that was not accepted yet.',
+  security,
+  request: { params: TaskIdParam },
+  responses: {
+    200: { description: 'The task', content: json(TaskSchema) },
+    404: jsonError('Unknown task'),
+    409: jsonError('`TASK_NOT_IN_REVIEW`'),
+    ...errorResponses,
+  },
+})
+
+const sendBackRoute = createRoute({
+  method: 'post',
+  path: '/tasks/{id}/send-back',
+  tags: ['tasks'],
+  summary: 'Send finished work back with a note',
+  description:
+    'The task is queued again with the note appended to its brief (`round` + 1); the next worker run revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.',
+  security,
+  request: { params: TaskIdParam, body: { required: true, content: json(TaskSendBackSchema) } },
+  responses: {
+    200: { description: 'The task, queued again', content: json(TaskSchema) },
+    404: jsonError('Unknown task'),
+    409: jsonError('`TASK_NOT_IN_REVIEW`'),
     ...errorResponses,
   },
 })
@@ -161,6 +257,24 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
       const detail = await getTask(deps, c.req.valid('param').id)
       return c.json(detail as never, 200)
     })
+    .openapi(createTaskRoute, (c) =>
+      c.json(createTask(deps, c.req.valid('json') as never) as never, 201),
+    )
+    .openapi(patchTaskRoute, (c) =>
+      c.json(
+        updateQueuedTask(deps, c.req.valid('param').id, c.req.valid('json') as never) as never,
+        200,
+      ),
+    )
+    .openapi(cancelTaskRoute, (c) =>
+      c.json(cancelQueuedTask(deps, c.req.valid('param').id) as never, 200),
+    )
+    .openapi(acceptTaskRoute, (c) =>
+      c.json(acceptTask(deps, c.req.valid('param').id) as never, 200),
+    )
+    .openapi(sendBackRoute, (c) =>
+      c.json(sendBackTask(deps, c.req.valid('param').id, c.req.valid('json').note) as never, 200),
+    )
     .openapi(approvalsRoute, async (c) => c.json({ approvals: await listApprovals(deps) }, 200))
     .openapi(sessionsRoute, async (c) =>
       c.json((await agentSessions(deps, c.req.valid('param').id)) as never, 200),

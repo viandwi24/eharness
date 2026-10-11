@@ -43,9 +43,18 @@ import {
   createProposal,
   createReportEscalation,
 } from './app/decisions.ts'
+import { ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
+import {
+  cancelQueuedTask,
+  completeTask,
+  createTask,
+  listBoard,
+  updateQueuedTask,
+} from './app/work-queue.ts'
 import { areaOf } from './domain/library.ts'
+import { parseProgramSession } from './domain/programs.ts'
 import { createApp } from './http/app.ts'
 import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
@@ -56,6 +65,7 @@ import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
 import { drizzleDecisionStore } from './infra/db/decisions-repo.ts'
+import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
@@ -80,6 +90,8 @@ import { createDecisionService, type DecisionService } from './infra/eh/decision
 import type { DecisionIntake } from './infra/eh/decisions-plugin.ts'
 import { createEventAppender } from './infra/eh/event-appender.ts'
 import { createTeamHttp } from './infra/eh/harness-http.ts'
+import type { HeartbeatIntake } from './infra/eh/heartbeat-plugin.ts'
+import { createHeartbeatService, type HeartbeatService } from './infra/eh/heartbeat-service.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
 import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
@@ -98,7 +110,7 @@ import {
   type RoutineService,
 } from './infra/eh/routine-service.ts'
 import { teamVaultFromEnv } from './infra/eh/secret-vault.ts'
-import { setBudgetLimit, sqliteLock } from './infra/eh/storage.ts'
+import { setBudgetLimit, sqliteBudgetLedger, sqliteLock } from './infra/eh/storage.ts'
 import {
   createTeamService,
   type ReconcileReport,
@@ -106,6 +118,7 @@ import {
 } from './infra/eh/team-service.ts'
 import { sqliteUploadStore } from './infra/eh/upload-store.ts'
 import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
+import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
 import { croneSchedule } from './infra/schedule.ts'
 
 export interface ServerConfig {
@@ -181,6 +194,8 @@ export interface Server {
   programs: ProgramService
   /** Resumes the sessions parked on a decision (`infra/eh/decision-service.ts`). */
   decisions: DecisionService
+  /** Heartbeat beats and the daily digest (`infra/eh/heartbeat-service.ts`). */
+  heartbeats: HeartbeatService
   /** Operational counters of the runtime (`config.observe`): failed spans, hook timeouts, ... */
   metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
@@ -365,6 +380,9 @@ export function compose(config: ServerConfig): Server {
   const decisionStore = drizzleDecisionStore(conn.db)
   // the decision tools of the agents need the app deps, which are built after the factory
   let decisionIntake: DecisionIntake | undefined
+  // the same for the heartbeat tools (`team_status`) and the hook that records a beat
+  let heartbeatIntake: HeartbeatIntake | undefined
+  let workQueueIntake: WorkQueueIntake | undefined
   // the fixture community source is a demo: it is only there when asked for
   const bigDataConfig: BigDataConfig = {
     ...config.bigData,
@@ -392,6 +410,8 @@ export function compose(config: ServerConfig): Server {
     programs: programStore,
     bigData: bigDataConfig,
     decisions: () => decisionIntake,
+    heartbeat: () => heartbeatIntake,
+    workQueue: () => workQueueIntake,
     chatTools: chatToolsStore,
     // Auto blocked / paused / resumed: the web shows "auto paused" from this event
     onAutoEvent: ({ sessionId, agentId, event, state, mode }) =>
@@ -447,6 +467,22 @@ export function compose(config: ServerConfig): Server {
     agents,
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
+  const heartbeatStore = sqliteHeartbeatStore(conn.sqlite)
+  const budgetLedger = sqliteBudgetLedger(conn.sqlite)
+  const heartbeats = createHeartbeatService(factory, {
+    deps: () => deps,
+    agents,
+    events,
+    store: heartbeatStore,
+    budget: async () => {
+      const checked = await budgetLedger.check?.([`workspace:${WORKSPACE_ID}`])
+      const scope = checked?.scopes[0]
+      return scope === undefined
+        ? null
+        : { spentUsd: scope.spentUsd, limitUsd: scope.limitUsd ?? null }
+    },
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
   routines = createRoutineService(factory, {
     agents,
     routines: routineStore,
@@ -454,6 +490,7 @@ export function compose(config: ServerConfig): Server {
     tasks,
     events,
     programs: { store: programStore, runner: programRunner },
+    system: () => heartbeats,
     ...(config.routines === undefined ? {} : { config: config.routines }),
     log: { warn: (message) => console.warn(message) },
   })
@@ -483,6 +520,7 @@ export function compose(config: ServerConfig): Server {
     programRunner,
     decisions: decisionStore,
     decisionResolver: decisionService,
+    heartbeat: heartbeats.ports,
     events,
     modelCalls,
     clock: { now: () => Date.now() },
@@ -495,7 +533,29 @@ export function compose(config: ServerConfig): Server {
     amend: (input) => createAmendment(deps, input),
     reportNeedsDecision: (input) => void createReportEscalation(deps, input),
   }
+  workQueueIntake = {
+    create: (input) => createTask(deps, input),
+    list: (query) => listBoard(deps, query),
+    update: (id, patch) => updateQueuedTask(deps, id, patch),
+    cancel: (id) => cancelQueuedTask(deps, id),
+    authorizes: (sessionId, toolName) => {
+      const parsed = parseProgramSession(sessionId)
+      const program = parsed === undefined ? undefined : programStore.get(parsed.programId)
+      // a worker program is given its work: reporting a task done is part of it
+      if (toolName === 'complete_task' && program?.worker != null) return true
+      return program?.authority.tools.includes(toolName) ?? false
+    },
+    complete: (sessionId, input) => completeTask(deps, sessionId, input),
+  }
+  heartbeatIntake = {
+    status: async (agentId) => (await teamStatus(deps, agentId)).text,
+    ended: async (end) => {
+      await finishBeat(deps, { ...end, at: Date.now() })
+    },
+  }
   if (config.seed !== false) seedAgents(deps)
+  // every agent with a heartbeat (the lead by default) has its routine, and the lead the digest
+  ensureHeartbeats(deps)
 
   // one repair pass at a time per instance; safe to run on several instances at once
   let repairing: Promise<ReconcileReport> | undefined
@@ -567,6 +627,7 @@ export function compose(config: ServerConfig): Server {
     routines,
     programs: programRunner,
     decisions: decisionService,
+    heartbeats,
     activityLog,
     metrics: observer.snapshot,
     providers,

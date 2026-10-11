@@ -35,6 +35,7 @@
 	import ChatComposer from './ChatComposer.svelte';
 	import { CONTINUE_TEXT } from 'eharness/client';
 	import PendingCard from './PendingCard.svelte';
+	import TaskInfo from './TaskInfo.svelte';
 
 	/**
 	 * Watch (and steer) the session of a delegated task, like the coder's agent page: the full
@@ -259,6 +260,8 @@
 		</div>
 	</header>
 
+	{#if task}<TaskInfo {task} />{/if}
+
 	<!-- Same anatomy as ChatPane: scroller to the bottom, pending cards and composer float as a dock. -->
 	<div class="relative flex min-h-0 flex-1 flex-col">
 		<div class="flex min-h-0 flex-1 flex-col">
@@ -290,8 +293,8 @@
 						{:else}
 							<Empty.Root class="border-0 py-16">
 								<Empty.Header>
-									<Empty.Title>No messages yet</Empty.Title>
-									<Empty.Description>This task has not produced anything yet.</Empty.Description>
+									<Empty.Title>{task?.status === 'queued' ? 'Waiting in the queue' : 'No messages yet'}</Empty.Title>
+									<Empty.Description>{task?.status === 'queued' ? 'A worker program of this agent starts it, highest priority first.' : 'This task has not produced anything yet.'}</Empty.Description>
 								</Empty.Header>
 							</Empty.Root>
 						{/each}
@@ -304,7 +307,7 @@
 			</Conversation>
 		</div>
 
-		{#if task}
+		{#if task && task.status !== 'queued'}
 			<div
 				class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-popover from-50% via-popover/80 to-transparent pt-12"
 				bind:clientHeight={dockHeight}

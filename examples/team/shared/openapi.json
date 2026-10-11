@@ -47,6 +47,10 @@
       "description": "The Decision Center: proposals (a plan or a program), escalations (a parked run asks) and amendments (a run asks for more authority), decided by the client."
     },
     {
+      "name": "heartbeat",
+      "description": "The ambient monitor of an agent (silent unless something needs the client) and the daily digest of what ran, what waits and what it cost."
+    },
+    {
       "name": "tasks",
       "description": "Delegated work across agents (the board)."
     },
@@ -1710,6 +1714,7 @@
               "routine-changed",
               "program-changed",
               "decision-changed",
+              "heartbeat-changed",
               "settings-changed",
               "mode-changed",
               "model-call",
@@ -1875,6 +1880,54 @@
           },
           "report": {
             "$ref": "#/components/schemas/TaskReport"
+          },
+          "brief": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Work queue: what to do, in markdown (send-back notes are appended). null for tasks that did not come from the queue."
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Library paths the task starts from."
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TaskPriority"
+          },
+          "dueAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "createdBy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`client` or the id of the agent that queued it; null = not a work item (no Review step)."
+          },
+          "acceptedAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "When the client accepted the finished work. A done work item with a `done` or `partial` report and no `acceptedAt` is in Review."
+          },
+          "round": {
+            "type": "integer",
+            "description": "1, +1 every time the work was sent back."
+          },
+          "history": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Sessions of earlier rounds."
           }
         },
         "required": [
@@ -1892,12 +1945,21 @@
           "lastActivityAt",
           "costUsd",
           "tokens",
-          "report"
+          "report",
+          "brief",
+          "inputs",
+          "priority",
+          "dueAt",
+          "createdBy",
+          "acceptedAt",
+          "round",
+          "history"
         ]
       },
       "TaskStatus": {
         "type": "string",
         "enum": [
+          "queued",
           "needs_action",
           "running",
           "done",
@@ -1906,7 +1968,7 @@
           "interrupted",
           "timed_out"
         ],
-        "description": "`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
+        "description": "`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
       },
       "TaskReport": {
         "type": [
@@ -1943,6 +2005,15 @@
           "outputs"
         ],
         "description": "The final report of a program run; null for other tasks and while it runs."
+      },
+      "TaskPriority": {
+        "type": "string",
+        "enum": [
+          "low",
+          "normal",
+          "high",
+          "urgent"
+        ]
       },
       "TaskDetail": {
         "type": "object",
@@ -2097,6 +2168,102 @@
           "header",
           "options",
           "multiSelect"
+        ]
+      },
+      "TaskCreate": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Owner: agent id or slug."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "brief": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 50,
+            "description": "Library paths (start with /)."
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TaskPriority"
+          },
+          "dueAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "Epoch milliseconds."
+          }
+        },
+        "required": [
+          "agentId",
+          "title"
+        ]
+      },
+      "TaskPatch": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Reassign (agent id or slug)."
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "brief": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 50
+          },
+          "priority": {
+            "$ref": "#/components/schemas/TaskPriority"
+          },
+          "dueAt": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "exclusiveMinimum": 0
+          }
+        }
+      },
+      "TaskSendBack": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000,
+            "description": "What to change. Appended to the brief."
+          }
+        },
+        "required": [
+          "note"
         ]
       },
       "ApprovalList": {
@@ -5259,6 +5426,9 @@
             ],
             "description": "`digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history."
           },
+          "worker": {
+            "$ref": "#/components/schemas/ProgramWorker"
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -5295,6 +5465,7 @@
           "budget",
           "trigger",
           "report",
+          "worker",
           "status",
           "createdBy",
           "createdAt",
@@ -5415,6 +5586,24 @@
           }
         ],
         "description": "`manual`: runs only on \"run now\". `schedule`: the routine scheduler fires it (same claim, overlap, recovery and failure rules as routines)."
+      },
+      "ProgramWorker": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "maxTasks": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Queued tasks one run takes at most; each runs in a session of its own."
+          }
+        },
+        "required": [
+          "maxTasks"
+        ],
+        "description": "Makes the program a worker program (the work queue): each run claims the next queued tasks of its agent (priority, then due date, then age), one session per task, and finishing moves a task to Review."
       },
       "ProgramTriggerState": {
         "type": [
@@ -5593,6 +5782,20 @@
               "silent"
             ],
             "description": "`digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history."
+          },
+          "worker": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "maxTasks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "description": "Queued tasks one run takes at most; each runs in a session of its own."
+              }
+            }
           }
         },
         "required": [
@@ -5714,6 +5917,20 @@
             ],
             "description": "`digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history."
           },
+          "worker": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "maxTasks": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 20,
+                "description": "Queued tasks one run takes at most; each runs in a session of its own."
+              }
+            }
+          },
           "version": {
             "type": "integer",
             "description": "The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`."
@@ -5724,8 +5941,12 @@
         "type": "object",
         "properties": {
           "sessionId": {
-            "type": "string",
-            "example": "program:0198…:1760000000000"
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "program:0198…:1760000000000",
+            "description": "null for a worker program with nothing queued (`idle`)."
           },
           "taskId": {
             "type": [
@@ -5735,13 +5956,18 @@
           },
           "started": {
             "type": "boolean",
-            "description": "false: that run existed already."
+            "description": "false: that run existed already, or nothing was queued."
+          },
+          "idle": {
+            "type": "boolean",
+            "description": "true: a worker program found no queued task for its agent."
           }
         },
         "required": [
           "sessionId",
           "taskId",
-          "started"
+          "started",
+          "idle"
         ]
       },
       "ProgramRuns": {
@@ -6418,6 +6644,345 @@
           "note": {
             "type": "string",
             "maxLength": 4000
+          }
+        }
+      },
+      "Heartbeat": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "config": {
+            "$ref": "#/components/schemas/HeartbeatConfig"
+          },
+          "stored": {
+            "type": "boolean",
+            "description": "false while nothing was ever set: the config is the default of the role."
+          },
+          "checklist": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "A memory file of the agent."
+              },
+              "exists": {
+                "type": "boolean"
+              },
+              "empty": {
+                "type": "boolean",
+                "description": "Only headings and comments: the beat is skipped, no model call."
+              }
+            },
+            "required": [
+              "path",
+              "exists",
+              "empty"
+            ]
+          },
+          "trigger": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": [
+                  "active",
+                  "paused"
+                ]
+              },
+              "nextFireAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "lastFireAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "nextFireAt",
+              "lastFireAt"
+            ]
+          },
+          "beats": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeatRecord"
+            },
+            "description": "Newest first (the last 50)."
+          },
+          "digest": {
+            "$ref": "#/components/schemas/DigestView"
+          }
+        },
+        "required": [
+          "agentId",
+          "config",
+          "stored",
+          "checklist",
+          "trigger",
+          "beats",
+          "digest"
+        ]
+      },
+      "HeartbeatConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "everyMinutes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1440
+          },
+          "activeFrom": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "description": "Start of the active hours, in `timezone`."
+          },
+          "activeTo": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "description": "End of the active hours (exclusive); a window may wrap midnight."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "IANA timezone."
+          }
+        },
+        "required": [
+          "enabled",
+          "everyMinutes",
+          "activeFrom",
+          "activeTo",
+          "timezone"
+        ]
+      },
+      "BeatRecord": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The routine slot of the beat."
+          },
+          "at": {
+            "type": "integer"
+          },
+          "endedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "ok",
+              "attention",
+              "skipped",
+              "failed"
+            ]
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Why it was skipped or failed."
+          },
+          "count": {
+            "type": "integer",
+            "description": "Identical skips in a row, collapsed."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BeatItem"
+            },
+            "description": "What it reported (new items only)."
+          },
+          "duplicates": {
+            "type": "integer",
+            "description": "Findings already reported inside the window."
+          }
+        },
+        "required": [
+          "id",
+          "at",
+          "endedAt",
+          "status",
+          "reason",
+          "count",
+          "items",
+          "duplicates"
+        ]
+      },
+      "BeatItem": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "links": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "urgent": {
+            "type": "boolean"
+          },
+          "fingerprint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "title",
+          "detail",
+          "links",
+          "urgent",
+          "fingerprint"
+        ]
+      },
+      "DigestView": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/DigestConfig"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "effectiveTimezone": {
+                "type": "string",
+                "description": "The timezone in effect."
+              },
+              "buffered": {
+                "type": "integer",
+                "description": "Items waiting for the next digest."
+              },
+              "lastSentAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "effectiveTimezone",
+              "buffered",
+              "lastSentAt"
+            ]
+          }
+        ]
+      },
+      "DigestConfig": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "time": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "IANA timezone; null = the timezone of the lead heartbeat."
+          }
+        },
+        "required": [
+          "enabled",
+          "time",
+          "timezone"
+        ]
+      },
+      "HeartbeatPatch": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "everyMinutes": {
+            "type": "integer",
+            "minimum": 5,
+            "maximum": 1440
+          },
+          "activeFrom": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "description": "Start of the active hours, in `timezone`."
+          },
+          "activeTo": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$",
+            "description": "End of the active hours (exclusive); a window may wrap midnight."
+          },
+          "timezone": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "IANA timezone."
+          },
+          "createChecklist": {
+            "type": "boolean",
+            "description": "Create `HEARTBEAT.md` with a template when the agent has none yet."
+          }
+        }
+      },
+      "BeatRun": {
+        "type": "object",
+        "properties": {
+          "started": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why nothing started."
+          }
+        },
+        "required": [
+          "started"
+        ]
+      },
+      "DigestPatch": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "time": {
+            "type": "string",
+            "pattern": "^([01]\\d|2[0-3]):[0-5]\\d$"
+          },
+          "timezone": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "IANA timezone; null = the timezone of the lead heartbeat."
           }
         }
       },
@@ -8651,6 +9216,80 @@
             }
           }
         }
+      },
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Queue a task for an agent (the work queue)",
+        "description": "Creates a task that has no session yet (`status: queued`) with an owner, a brief, inputs (library paths), a priority and an optional due date. A worker program of that agent picks it up (priority, then due date, then age). Managers do the same with the `create_task` tool.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The agent is archived",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/tasks/{id}": {
@@ -8711,6 +9350,344 @@
           },
           "404": {
             "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Change a queued task",
+        "description": "Re-prioritise, reassign, rewrite or set a due date. `409 TASK_NOT_QUEUED` once a worker took it.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task or agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TASK_NOT_QUEUED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/cancel": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Cancel a queued task",
+        "description": "The task ends `stopped`. A task that already runs is stopped from its session instead.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TASK_NOT_QUEUED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/accept": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Accept finished work in Review",
+        "description": "Review = a done work item (it came through the queue) whose report status is `done` or `partial` and that was not accepted yet.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TASK_NOT_IN_REVIEW`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tasks/{id}/send-back": {
+      "post": {
+        "tags": [
+          "tasks"
+        ],
+        "summary": "Send finished work back with a note",
+        "description": "The task is queued again with the note appended to its brief (`round` + 1); the next worker run revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Task id."
+            },
+            "required": true,
+            "description": "Task id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskSendBack"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The task, queued again",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`TASK_NOT_IN_REVIEW`",
             "content": {
               "application/json": {
                 "schema": {
@@ -13216,6 +14193,333 @@
           },
           "409": {
             "description": "`DECISION_CLOSED` or `DECISION_EXPIRED`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/heartbeat": {
+      "get": {
+        "tags": [
+          "heartbeat"
+        ],
+        "summary": "Heartbeat of an agent",
+        "description": "The ambient monitor of an agent: its configuration (on for the lead by default), the state of its checklist (`HEARTBEAT.md` in its memory), the routine that wakes it and the last beats (ok, attention, skipped, failed). Also the daily digest settings.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The heartbeat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Heartbeat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "heartbeat"
+        ],
+        "summary": "Configure the heartbeat of an agent",
+        "description": "Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. The checklist is the memory file `HEARTBEAT.md` (edit it through `/memory`); `createChecklist` writes a template when there is none.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/HeartbeatPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The heartbeat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Heartbeat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The agent is archived",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/heartbeat/run": {
+      "post": {
+        "tags": [
+          "heartbeat"
+        ],
+        "summary": "Run a beat now",
+        "description": "Fires one beat outside the schedule. The same rules apply: outside the active hours, with an empty checklist or while the previous beat runs it is skipped (`started: false` with the reason) and costs no model call.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Started, or skipped with a reason",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BeatRun"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/digest": {
+      "get": {
+        "tags": [
+          "heartbeat"
+        ],
+        "summary": "Daily digest settings",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The digest settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DigestView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "heartbeat"
+        ],
+        "summary": "Change the daily digest",
+        "description": "Once a day at `time` (default 18:00, in `timezone` or the lead heartbeat timezone) the lead DM gets what ran, what waits, what the heartbeat noticed and the cost. A quiet day sends nothing.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DigestPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The digest settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DigestView"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
             "content": {
               "application/json": {
                 "schema": {

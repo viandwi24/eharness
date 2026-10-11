@@ -4,6 +4,9 @@
 	import CheckCircleIcon from 'phosphor-svelte/lib/CheckCircle';
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotch';
 	import HandPalmIcon from 'phosphor-svelte/lib/HandPalm';
+	import EyeIcon from 'phosphor-svelte/lib/Eye';
+	import PlusIcon from 'phosphor-svelte/lib/Plus';
+	import TrayIcon from 'phosphor-svelte/lib/Tray';
 	import KanbanIcon from 'phosphor-svelte/lib/Kanban';
 	import ListBulletsIcon from 'phosphor-svelte/lib/ListBullets';
 	import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlass';
@@ -21,9 +24,10 @@
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import * as Table from '#lib/components/ui/table/index.js';
 	import * as ToggleGroup from '#lib/components/ui/toggle-group/index.js';
-	import { badgeFor, groupBoard, type Column } from '#lib/board/board.js';
+	import { badgeOf, COLUMNS, groupBoard, type Column } from '#lib/board/board.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
+	import { openNewTask } from '#lib/stores/dialogs.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { formatUsd, timeAgo } from '#lib/time.js';
 
@@ -41,18 +45,22 @@
 	const matches = (t: Task): boolean =>
 		!q || t.title.toLowerCase().includes(q) || agentName(t.agentId).toLowerCase().includes(q) || (t.summary ?? '').toLowerCase().includes(q);
 
-	const board = $derived(groupBoard(live.state.tasks.filter(matches), { agentId: agentFilter || null }));
-	const needsCount = $derived(board.needs.length);
+	// a run parked on an open decision shows `running`: the decision makes it "Waiting for you"
+	const waiting = $derived(new Set(live.state.decisions.flatMap((d) => (d.sessionId ? [d.sessionId] : []))));
+	const board = $derived(groupBoard(live.state.tasks.filter(matches), { agentId: agentFilter || null, waiting }));
+	const needsCount = $derived(board.waiting.length);
 	const loaded = $derived(live.state.tasksLoaded);
-	const total = $derived(board.needs.length + board.running.length + board.done.length);
+	const total = $derived(COLUMNS.reduce((n, c) => n + board[c].length, 0));
 
 	const columns: { id: Column; title: string; icon: typeof HandPalmIcon; empty: string }[] = [
-		{ id: 'needs', title: 'Needs action', icon: HandPalmIcon, empty: 'Nothing is waiting for you.' },
+		{ id: 'queued', title: 'Queued', icon: TrayIcon, empty: 'No task is waiting for a worker.' },
 		{ id: 'running', title: 'Running', icon: CircleNotchIcon, empty: 'No task is running.' },
-		{ id: 'done', title: 'Done', icon: CheckCircleIcon, empty: 'Finished tasks show up here.' }
+		{ id: 'waiting', title: 'Waiting for you', icon: HandPalmIcon, empty: 'Nothing is waiting for you.' },
+		{ id: 'review', title: 'Review', icon: EyeIcon, empty: 'Finished work to accept shows up here.' },
+		{ id: 'done', title: 'Done / Failed', icon: CheckCircleIcon, empty: 'Finished tasks show up here.' }
 	];
 
-	const listRows = $derived([...board.needs, ...board.running, ...board.done]);
+	const listRows = $derived(COLUMNS.flatMap((c) => board[c]));
 
 	onMount(() => {
 		try {
@@ -62,6 +70,7 @@
 			// storage unavailable: keep the default
 		}
 		void live.loadTasks();
+		void live.loadDecisions();
 		void agentsStore.load();
 	});
 
@@ -78,8 +87,7 @@
 		agentFilter = '';
 		query = '';
 	}
-	const statusBadge = (t: Task): { label: string; variant: ReturnType<typeof badgeFor>['variant'] } =>
-		t.status === 'needs_action' ? { label: 'Waiting for you', variant: 'warning' } : badgeFor(t.status, t.summary);
+	const statusBadge = (t: Task): ReturnType<typeof badgeOf> => badgeOf(t, waiting);
 </script>
 
 {#snippet filters(cls: string)}
@@ -107,11 +115,14 @@
 <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 	<PageHeader
 		title="Tasks"
-		description={loaded ? `${needsCount} need action · ${board.running.length} running · ${board.done.length} done` : undefined}
+		description={loaded ? `${board.queued.length} queued · ${board.running.length} running · ${needsCount} waiting for you · ${board.review.length} to review` : undefined}
 	>
-		{#snippet actions()}{@render filters('hidden md:flex')}{/snippet}
+		{#snippet actions()}{@render filters('hidden md:flex')}<Button size="sm" onclick={() => openNewTask()}><PlusIcon /> New task</Button>{/snippet}
 	</PageHeader>
-	<div class="border-b border-border px-3 py-2 md:hidden">{@render filters('')}</div>
+	<div class="flex items-center gap-2 border-b border-border px-3 py-2 md:hidden">
+		<div class="min-w-0 flex-1">{@render filters('')}</div>
+		<Button size="icon-sm" aria-label="New task" onclick={() => openNewTask()}><PlusIcon /></Button>
+	</div>
 
 	<div class="min-h-0 flex-1 overflow-y-auto p-3 md:p-4 {view === 'board' ? 'lg:overflow-hidden' : ''}">
 		{#if loaded && filtering && total === 0}
@@ -124,7 +135,7 @@
 				<Empty.Content><Button size="sm" variant="outline" onclick={clear}>Clear filters</Button></Empty.Content>
 			</Empty.Root>
 		{:else if view === 'board'}
-			<div class="grid gap-3 lg:h-full lg:grid-cols-3 lg:gap-4">
+			<div class="grid gap-3 lg:h-full lg:auto-cols-[minmax(230px,1fr)] lg:grid-flow-col lg:gap-4 lg:overflow-x-auto">
 				{#each columns as col (col.id)}
 					{@const all = board[col.id]}
 					{@const items = col.id === 'done' ? all.slice(0, doneShown) : all}
@@ -133,13 +144,13 @@
 						title={col.title}
 						meta={String(count)}
 						aria-label="{col.title}, {count}"
-						class="w-full lg:min-h-0 lg:overflow-y-auto {col.id === 'needs' && count > 0 ? 'border-[color-mix(in_srgb,var(--warning)_30%,var(--popover))]' : ''}"
+						class="w-full lg:min-h-0 lg:overflow-y-auto {col.id === 'waiting' && count > 0 ? 'border-[color-mix(in_srgb,var(--warning)_30%,var(--popover))]' : ''}"
 					>
 						{#if !loaded}
 							{#each [0, 1] as n (n)}<Skeleton class="h-[72px] w-full rounded-xl" />{/each}
 						{:else}
 							{#each items as t (t.id)}
-								<TaskCard task={t} onOpen={openTask} highlight={col.id === 'needs'} />
+								<TaskCard task={t} onOpen={openTask} highlight={col.id === 'waiting'} {waiting} />
 							{/each}
 							{#if col.id === 'done' && all.length > doneShown}
 								<Button variant="ghost" size="sm" class="w-full text-muted-foreground" onclick={() => (doneShown += PAGE)}>
@@ -165,7 +176,7 @@
 						<Empty.Header>
 							<Empty.Media variant="icon"><CheckCircleIcon /></Empty.Media>
 							<Empty.Title>No tasks yet</Empty.Title>
-							<Empty.Description>Tasks appear here when an agent delegates work or a routine runs.</Empty.Description>
+							<Empty.Description>Queue a task for an agent, or tasks appear here when an agent delegates work or a routine runs.</Empty.Description>
 						</Empty.Header>
 					</Empty.Root>
 				{:else}

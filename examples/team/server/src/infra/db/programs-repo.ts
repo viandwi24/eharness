@@ -23,6 +23,7 @@ const toProgram = (row: Row): Program => ({
       ? { kind: 'schedule', spec: row.trigger.spec as unknown as RoutineSpec }
       : { kind: 'manual' },
   report: row.report as ProgramReportMode,
+  worker: row.worker,
   status: row.status as ProgramStatus,
   createdBy: row.createdBy,
   createdAt: row.createdAt,

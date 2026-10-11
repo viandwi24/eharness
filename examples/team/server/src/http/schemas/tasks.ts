@@ -1,13 +1,15 @@
 import { z } from '@hono/zod-openapi'
-import { EVENT_TYPES, TASK_STATUSES } from '../../app/catalog.ts'
+import { EVENT_TYPES, TASK_PRIORITIES, TASK_STATUSES } from '../../app/catalog.ts'
 import { ChatStatsSchema, UiMessageSchema } from './chat.ts'
 import { LibraryEntrySchema, MemoryFileInfoSchema } from './library.ts'
 import { RoutineSchema } from './routines.ts'
 
 export const TaskStatusSchema = z.enum(TASK_STATUSES).openapi('TaskStatus', {
   description:
-    '`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
+    '`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
 })
+
+export const TaskPrioritySchema = z.enum(TASK_PRIORITIES).openapi('TaskPriority')
 
 export const TaskReportSchema = z
   .object({
@@ -44,6 +46,23 @@ export const TaskSchema = z
     report: TaskReportSchema.nullable().openapi({
       description: 'The final report of a program run; null for other tasks and while it runs.',
     }),
+    brief: z.string().nullable().openapi({
+      description:
+        'Work queue: what to do, in markdown (send-back notes are appended). null for tasks that did not come from the queue.',
+    }),
+    inputs: z.array(z.string()).openapi({ description: 'Library paths the task starts from.' }),
+    priority: TaskPrioritySchema,
+    dueAt: z.number().int().nullable(),
+    createdBy: z.string().nullable().openapi({
+      description:
+        '`client` or the id of the agent that queued it; null = not a work item (no Review step).',
+    }),
+    acceptedAt: z.number().int().nullable().openapi({
+      description:
+        'When the client accepted the finished work. A done work item with a `done` or `partial` report and no `acceptedAt` is in Review.',
+    }),
+    round: z.number().int().openapi({ description: '1, +1 every time the work was sent back.' }),
+    history: z.array(z.string()).openapi({ description: 'Sessions of earlier rounds.' }),
   })
   .openapi('Task')
 
@@ -204,3 +223,43 @@ export const AgentContextSchema = z
     files: z.array(LibraryEntrySchema),
   })
   .openapi('AgentContext')
+
+const paths = z.array(z.string().min(1).max(500)).max(50)
+
+export const TaskCreateSchema = z
+  .object({
+    agentId: z.string().min(1).openapi({ description: 'Owner: agent id or slug.' }),
+    title: z.string().min(1).max(200),
+    brief: z.string().max(20_000).optional(),
+    inputs: paths.optional().openapi({ description: 'Library paths (start with /).' }),
+    priority: TaskPrioritySchema.optional(),
+    dueAt: z
+      .number()
+      .int()
+      .positive()
+      .nullable()
+      .optional()
+      .openapi({ description: 'Epoch milliseconds.' }),
+  })
+  .openapi('TaskCreate')
+
+export const TaskPatchSchema = z
+  .object({
+    agentId: z.string().min(1).optional().openapi({ description: 'Reassign (agent id or slug).' }),
+    title: z.string().min(1).max(200).optional(),
+    brief: z.string().max(20_000).optional(),
+    inputs: paths.optional(),
+    priority: TaskPrioritySchema.optional(),
+    dueAt: z.number().int().positive().nullable().optional(),
+  })
+  .openapi('TaskPatch')
+
+export const TaskSendBackSchema = z
+  .object({
+    note: z
+      .string()
+      .min(1)
+      .max(4000)
+      .openapi({ description: 'What to change. Appended to the brief.' }),
+  })
+  .openapi('TaskSendBack')

@@ -4,20 +4,19 @@
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Card } from '#lib/components/ui/card/index.js';
-	import { badgeFor } from '#lib/board/board.js';
+	import { badgeOf, type WaitingSessions } from '#lib/board/board.js';
+	import { dueLabel, priorityLabel } from '#lib/tasks/queue.js';
 	import { formatUsd, timeAgo } from '#lib/time.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 
-	let { task, onOpen, highlight = false }: { task: Task; onOpen: (id: string) => void; highlight?: boolean } = $props();
+	let { task, onOpen, highlight = false, waiting = new Set<string>() }: { task: Task; onOpen: (id: string) => void; highlight?: boolean; waiting?: WaitingSessions } = $props();
 
 	const agent = $derived(agentsStore.find(task.agentId));
 	const badge = $derived.by(() => {
-		if (task.status === 'needs_action') {
-			return { label: 'Waiting for you', variant: 'warning' as const };
-		}
-		const b = badgeFor(task.status, task.summary);
+		const b = badgeOf(task, waiting);
 		return { label: b.label[0].toUpperCase() + b.label.slice(1), variant: b.variant };
 	});
+	const due = $derived(task.status === 'queued' ? dueLabel(task.dueAt) : null);
 </script>
 
 <Card
@@ -45,6 +44,8 @@
 		<Badge variant={badge.variant} class="h-5 px-1.5 text-[11px]">
 			{#if task.status === 'running'}<CircleNotchIcon class="animate-spin" />{/if}{badge.label}
 		</Badge>
+		{#if task.status === 'queued' && task.priority !== 'normal'}<span class="shrink-0 {task.priority === 'urgent' || task.priority === 'high' ? 'text-warning-text' : ''}">{priorityLabel(task.priority)}</span>{/if}
+		{#if due}<span class="shrink-0 {due.late ? 'text-destructive-text' : ''}">{due.text}</span>{/if}
 		<span class="min-w-0 flex-1 truncate">{agent?.name ?? task.agentId}</span>
 		{#if task.costUsd > 0}<span class="shrink-0 font-mono">{formatUsd(task.costUsd)}</span>{/if}
 		<span class="shrink-0">{timeAgo(task.lastActivityAt)}</span>

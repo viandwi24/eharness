@@ -9,6 +9,7 @@
 	import * as Tabs from '#lib/components/ui/tabs/index.js';
 	import AgentEditor from './AgentEditor.svelte';
 	import AgentConnectors from './AgentConnectors.svelte';
+	import HeartbeatPanel from './HeartbeatPanel.svelte';
 	import MemoryEditor from './MemoryEditor.svelte';
 
 	const FORM_ID = 'agent-dialog-form';
@@ -19,7 +20,7 @@
 	let valid = $state(false);
 	// Bumped on every open so the editor remounts with fresh form state.
 	let session = $state(0);
-	let tab = $state<'settings' | 'memory' | 'connectors'>('settings');
+	let tab = $state<'settings' | 'memory' | 'connectors' | 'heartbeat'>('settings');
 
 	const editing = $derived(agentDialog.mode === 'edit');
 
@@ -60,6 +61,7 @@
 					<Tabs.Trigger value="settings">Settings</Tabs.Trigger>
 					<Tabs.Trigger value="memory">Memory</Tabs.Trigger>
 					<Tabs.Trigger value="connectors">Connectors</Tabs.Trigger>
+					<Tabs.Trigger value="heartbeat">Heartbeat</Tabs.Trigger>
 				</Tabs.List>
 			{/if}
 			<!-- Both panes stay mounted (the form keeps its edits while the memory tab is open). -->
@@ -85,6 +87,11 @@
 				<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4" hidden={tab !== 'connectors'}>
 					{#key session}
 						<AgentConnectors agentId={agent.id} compact />
+					{/key}
+				</div>
+				<div class="min-h-0 flex-1 overflow-y-auto px-5 py-4" hidden={tab !== 'heartbeat'}>
+					{#key session}
+						<HeartbeatPanel agentId={agent.id} isLead={agent.role === 'lead'} />
 					{/key}
 				</div>
 			{/if}

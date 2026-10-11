@@ -9,6 +9,7 @@ import {
   checkProgramFields,
   cleanList,
   normalizeAuthority,
+  normalizeWorker,
   type Program,
   type ProgramDraft,
   type ProgramTrigger,
@@ -121,6 +122,7 @@ export function createProgram(
     },
     trigger,
     report: draft.report ?? 'task',
+    worker: normalizeWorker(draft.worker),
     status: draft.status ?? 'active',
     createdBy: draft.createdBy ?? 'client',
     now,
@@ -155,6 +157,7 @@ export function updateProgram(deps: Deps, id: string, update: ProgramUpdate): Pr
     ...(update.budget === undefined ? {} : { budget: { ...current.budget, ...update.budget } }),
     ...(update.trigger === undefined ? {} : { trigger: update.trigger }),
     ...(update.report === undefined ? {} : { report: update.report }),
+    ...(update.worker === undefined ? {} : { worker: normalizeWorker(update.worker) }),
   }
   if (update.status !== undefined && update.status !== current.status) {
     throw invalid('use pause and resume to change the status', 'INVALID_PROGRAM')
@@ -232,7 +235,7 @@ export function programRuns(deps: Deps, id: string, limit = 50): Task[] {
 export async function runProgramNow(
   deps: Deps,
   id: string,
-): Promise<{ sessionId: string; taskId: string | null; started: boolean }> {
+): Promise<{ sessionId: string | null; taskId: string | null; started: boolean; idle: boolean }> {
   const program = getProgram(deps, id)
   const agent = getAgent(deps, program.agentId)
   if (agent.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
@@ -245,9 +248,11 @@ export async function runProgramNow(
     })
   }
   const started = await deps.programRunner.start(program, { runAt: deps.clock.now() })
+  if (started.idle === true) return { sessionId: null, taskId: null, started: false, idle: true }
   return {
     sessionId: started.sessionId,
     taskId: deps.tasks.getBySession(started.sessionId)?.id ?? null,
     started: started.started,
+    idle: false,
   }
 }

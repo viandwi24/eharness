@@ -15,6 +15,7 @@ import { connectorRoutes } from './routes/connectors.ts'
 import { decisionRoutes } from './routes/decisions.ts'
 import { type HarnessFetch, harnessRoutes } from './routes/harness.ts'
 import { healthRoutes } from './routes/health.ts'
+import { heartbeatRoutes } from './routes/heartbeat.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
@@ -80,6 +81,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
       name: 'decisions',
       description:
         'The Decision Center: proposals (a plan or a program), escalations (a parked run asks) and amendments (a run asks for more authority), decided by the client.',
+    },
+    {
+      name: 'heartbeat',
+      description:
+        'The ambient monitor of an agent (silent unless something needs the client) and the daily digest of what ran, what waits and what it cost.',
     },
     { name: 'tasks', description: 'Delegated work across agents (the board).' },
     {
@@ -243,6 +249,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', routineRoutes(options.deps))
   app.route('/', programRoutes(options.deps))
   app.route('/', decisionRoutes(options.deps))
+  app.route('/', heartbeatRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)

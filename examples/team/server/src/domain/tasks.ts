@@ -1,5 +1,6 @@
 /** Tasks and the board: status is derived from session facts (plan §6.4). Pure. */
 export const TASK_STATUSES = [
+  'queued',
   'needs_action',
   'running',
   'done',
@@ -9,6 +10,8 @@ export const TASK_STATUSES = [
   'timed_out',
 ] as const
 export type TaskStatus = (typeof TASK_STATUSES)[number]
+export const TASK_PRIORITIES = ['low', 'normal', 'high', 'urgent'] as const
+export type TaskPriority = (typeof TASK_PRIORITIES)[number]
 export type TaskOrigin = 'user' | 'lead' | 'routine' | 'program'
 export type PendingKind = 'approval' | 'question'
 
@@ -39,8 +42,57 @@ export interface Task {
   tokens: number
   /** The structured final report of a program run (`domain/programs.ts`); null for other tasks. */
   report: TaskReport | null
+  /**
+   * The work queue (P40 D6). A task made through the queue (the client or an agent made it before
+   * its session exists) has a `createdBy`; tasks that just happened (delegations, routine runs,
+   * program runs) have none and never wait in Review.
+   */
+  brief: string | null
+  /** Library paths the task starts from. */
+  inputs: string[]
+  priority: TaskPriority
+  dueAt: number | null
+  /** `client` or the id of the agent that queued it; null when the task did not come from the queue. */
+  createdBy: string | null
+  /** When the client accepted the finished work; null until then. */
+  acceptedAt: number | null
+  /** 1 for the first run, +1 for every time the client sent the work back. */
+  round: number
+  /** Sessions of earlier rounds (their chats stay readable). */
+  history: string[]
 }
 
+/** The board of the web app: where a task is shown. */
+export const BOARD_COLUMNS = ['queued', 'running', 'waiting', 'review', 'done'] as const
+export type BoardColumn = (typeof BOARD_COLUMNS)[number]
+
+/** A task that went through the work queue. */
+export const isWorkItem = (t: Pick<Task, 'createdBy'>): boolean => t.createdBy !== null
+
+/** A finished work item whose report says the work is there and that the client has not accepted yet. */
+export function inReview(t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'>): boolean {
+  return (
+    t.status === 'done' &&
+    isWorkItem(t) &&
+    t.acceptedAt === null &&
+    (t.report?.status === 'done' || t.report?.status === 'partial')
+  )
+}
+
+/**
+ * The board column of a task. `waiting` (Waiting for you): an approval or question waits for a
+ * person, or the session parked on an open decision of the Decision Center (a parked run shows
+ * `running`, the decision is what tells it is the client's turn).
+ */
+export function boardColumn(
+  t: Pick<Task, 'status' | 'createdBy' | 'acceptedAt' | 'report'>,
+  openDecision: boolean,
+): BoardColumn {
+  if (t.status === 'queued') return 'queued'
+  if (t.status === 'needs_action' || (t.status === 'running' && openDecision)) return 'waiting'
+  if (t.status === 'running') return 'running'
+  return inReview(t) ? 'review' : 'done'
+}
 export const isTerminal = (status: TaskStatus): boolean =>
   status === 'done' || status === 'failed' || status === 'stopped' || status === 'interrupted'
 

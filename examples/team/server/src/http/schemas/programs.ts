@@ -50,6 +50,17 @@ const ReportSchema = z.enum(['digest', 'task', 'silent']).openapi({
     '`digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history.',
 })
 
+export const ProgramWorkerSchema = z
+  .object({
+    maxTasks: z.number().int().min(1).max(20).openapi({
+      description: 'Queued tasks one run takes at most; each runs in a session of its own.',
+    }),
+  })
+  .openapi('ProgramWorker', {
+    description:
+      'Makes the program a worker program (the work queue): each run claims the next queued tasks of its agent (priority, then due date, then age), one session per task, and finishing moves a task to Review.',
+  })
+
 export const ProgramTriggerStateSchema = z
   .object({
     status: z.enum(['active', 'paused']),
@@ -85,6 +96,7 @@ export const ProgramSchema = z
     budget: ProgramBudgetSchema,
     trigger: ProgramTriggerSchema,
     report: ReportSchema,
+    worker: ProgramWorkerSchema.nullable(),
     status: z.enum(['active', 'paused']),
     createdBy: z.string().openapi({ description: '`client`, or the id of the proposing agent.' }),
     createdAt: z.number().int(),
@@ -117,6 +129,7 @@ export const ProgramCreateSchema = z
     budget: ProgramBudgetSchema.partial().optional(),
     trigger: ProgramTriggerSchema.optional(),
     report: ReportSchema.optional(),
+    worker: ProgramWorkerSchema.partial().nullable().optional(),
   })
   .openapi('ProgramCreate')
 
@@ -131,6 +144,7 @@ export const ProgramPatchSchema = z
     budget: ProgramBudgetSchema.partial().optional(),
     trigger: ProgramTriggerSchema.optional(),
     report: ReportSchema.optional(),
+    worker: ProgramWorkerSchema.partial().nullable().optional(),
     version: z
       .number()
       .int()
@@ -143,9 +157,17 @@ export const ProgramPatchSchema = z
 
 export const ProgramRunStartedSchema = z
   .object({
-    sessionId: z.string().openapi({ example: 'program:0198…:1760000000000' }),
+    sessionId: z.string().nullable().openapi({
+      example: 'program:0198…:1760000000000',
+      description: 'null for a worker program with nothing queued (`idle`).',
+    }),
     taskId: z.string().nullable(),
-    started: z.boolean().openapi({ description: 'false: that run existed already.' }),
+    started: z
+      .boolean()
+      .openapi({ description: 'false: that run existed already, or nothing was queued.' }),
+    idle: z
+      .boolean()
+      .openapi({ description: 'true: a worker program found no queued task for its agent.' }),
   })
   .openapi('ProgramRunStarted')
 

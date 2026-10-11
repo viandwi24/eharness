@@ -34,6 +34,7 @@ import type {
 } from '../../app/ports.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import type { EventType } from '../../domain/events.ts'
+import { parseSystemKey } from '../../domain/heartbeat.ts'
 import { parseProgramSession } from '../../domain/programs.ts'
 import {
   fireId,
@@ -47,6 +48,7 @@ import {
 import type { SqliteRoutineStore } from '../db/routines-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
+import type { SystemRunner } from './heartbeat-service.ts'
 
 export interface RoutineEngineConfig {
   /** Ticker interval (ms). Default 15 000; 0 = no timer (tests call `tick()`). */
@@ -111,6 +113,11 @@ export interface RoutineServiceDeps {
    * program run (a task session with a structured report) instead of enqueueing a prompt.
    */
   programs?: { store: Pick<ProgramStore, 'get'>; runner: ProgramRunner }
+  /**
+   * The heartbeat and the daily digest (`sys:` routines, `domain/heartbeat.ts`): their fire goes to
+   * this runner. Late-bound: it needs the app deps, which are built after the routine service.
+   */
+  system?: () => SystemRunner | undefined
   config?: RoutineEngineConfig
   now?: () => number
   log?: { warn(message: string): void }
@@ -231,6 +238,9 @@ export function createRoutineService(
           return after
         }
       }
+      if (parseSystemKey(routine.programId) !== undefined) {
+        return await dispatchSystem(routine, run, now)
+      }
       if (routine.programId != null) return await dispatchProgram(routine, run, now)
       await factory.prepare(def)
       const session = factory.openSession(def, run.sessionId)
@@ -282,6 +292,13 @@ export function createRoutineService(
       return after
     }
     const started = await programs.runner.start(program, { runAt: run.scheduledAt })
+    if (started.idle === true) {
+      // a worker program with nothing queued: not a run, nothing to report
+      store.markSkipped(run.id, 'no queued tasks', now)
+      const after = store.getRun(run.id) as RoutineRun
+      emitRun(routine, after, now)
+      return after
+    }
     store.markEnqueued(run.id, {
       inboxId: `direct:${started.sessionId}`,
       firedAt: now,
@@ -290,6 +307,44 @@ export function createRoutineService(
     const after = store.getRun(run.id) as RoutineRun
     emitRun(routine, after, now)
     return after
+  }
+
+  /**
+   * A fire of the heartbeat or the digest: the runner decides (a skip costs no model call). The
+   * routine run is finished here, because the beat itself ends in its own session; its outcome is
+   * the beat history. These runs are internal: they never appear in a `TickReport`.
+   */
+  async function dispatchSystem(
+    routine: Routine,
+    run: RoutineRun,
+    now: number,
+  ): Promise<RoutineRun> {
+    const system = deps.system?.()
+    const key = parseSystemKey(routine.programId)
+    if (system === undefined || key === undefined) {
+      store.finishRun(run.id, { status: 'failed', reason: 'no heartbeat runner' }, now)
+      return store.getRun(run.id) as RoutineRun
+    }
+    try {
+      if (key.kind === 'heartbeat') {
+        const out = await system.heartbeat(key.agentId, { slot: run.scheduledAt })
+        if (!out.started) {
+          store.markSkipped(run.id, out.reason ?? 'skipped', now)
+          return store.getRun(run.id) as RoutineRun
+        }
+      } else {
+        const out = await system.digest({ slot: run.scheduledAt })
+        if (out === 'duplicate' || out === 'off') {
+          store.markSkipped(run.id, out === 'off' ? 'the digest is off' : 'already sent today', now)
+          return store.getRun(run.id) as RoutineRun
+        }
+      }
+      store.markEnqueued(run.id, { inboxId: `direct:${routine.programId}`, firedAt: now })
+      store.finishRun(run.id, { status: 'succeeded' }, now)
+    } catch (error) {
+      store.finishRun(run.id, { status: 'failed', reason: errorText(error) }, now)
+    }
+    return store.getRun(run.id) as RoutineRun
   }
 
   async function processDue(row: Routine, now: number, report: TickReport): Promise<void> {
@@ -363,6 +418,7 @@ export function createRoutineService(
       return
     }
     const done = await dispatch(row, run, now, { checkOverlap: true })
+    if (parseSystemKey(row.programId) !== undefined) return
     if (done.status === 'skipped') {
       report.skipped.push({ routineId: row.id, scheduledAt: slot, reason: done.reason ?? '' })
     } else {

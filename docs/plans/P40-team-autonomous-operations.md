@@ -1,6 +1,6 @@
 # P40 — Team example: autonomous operations (manager, programs, decision center, big-data work)
 
-Status: in progress (phases A, B and D done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
+Status: in progress (phases A, B, C, D and E done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -190,6 +190,67 @@ Decided in phase B:
 - The task of a run parked on a decision shows `running` (the board does not know about decisions
   yet: phase C adds "Waiting for you" from the open decisions of the session).
 
+## Phase C checklist (work queue)
+
+- [x] Queued tasks: `queued` status, task columns (`brief`, `inputs`, `priority`, `due_at`,
+      `created_by`, `accepted_at`, `round`, `history`) and `programs.worker`, migration `0017`.
+- [x] Use cases (`app/work-queue.ts`) and API: `POST /tasks`, `PATCH /tasks/{id}`,
+      `POST /tasks/{id}/cancel|accept|send-back`; board columns Queued, Running, Waiting for you
+      (needs_action or an open decision of the session), Review, Done / Failed.
+- [x] Manager tools `create_task`, `list_tasks`, `update_task` (the lead in DM and heartbeat; a
+      program run only when its authority names them) and the worker tool `complete_task`
+      (`infra/eh/work-queue-plugin.ts`).
+- [x] Worker programs: each run claims the next queued tasks of its agent in code (atomic), one
+      session per task; empty queue = skipped slot / `idle`.
+- [x] Review: Accept, Send back with a note (re-queued, note appended to the brief, next run
+      revises in a fresh session), retry of a failed work item.
+- [x] Web: five-column board, New task dialog, task detail (brief, inputs, report, outputs, Review
+      and queue actions), *Work queue* option of the program form.
+- [x] Tests: `server/test/work-queue.test.ts`, web `lib/board`, `lib/tasks/queue`,
+      `lib/programs/form`; walkthrough section 21.
+
+Decided in phase C:
+
+- **One session per task, not one per run.** The run claims and starts tasks one by one; each has
+  its own chat, report, cost and failure. Session ids stay `program:<id>:<ms>` (the first task has
+  the run's id, the next ones a millisecond later), so authority, budget, history and the
+  routine's run row needed no change. A task sent back gets a new session; the old ones are listed
+  in `history`.
+- **Claiming is code, not a tool.** The brief listed a `next_task` tool. With one session per task
+  the run already holds exactly one task, and a model that picks its own work can pick twice or
+  skip; the atomic `claimNext` runs in the program service instead. A model-level `next_task` would
+  need a second way to bind a task to a run session; not built.
+- Review applies to **work items only** (tasks made through the queue). Scheduled program runs
+  and delegations do not wait for acceptance: they would clutter Review with every run.
+- A worker program is always allowed `complete_task`; manager tools need to be named in a program's
+  authority (`tools`). `list_tasks` is read-only but follows the same rule.
+- Only queued tasks can be edited or cancelled; a running task is stopped from its session.
+- Run history of a program leaves out tasks that are queued again (they are not a run until a
+  worker takes them).
+
+## Phase E checklist (heartbeat and daily digest)
+
+- [x] Heartbeat per agent (on for the lead by default): rolling session `heartbeat:<agentId>`,
+      woken by a `sys:` routine every N minutes inside the active hours (HH:MM, IANA timezone);
+      skipped (recorded, no model call) when off, outside hours, checklist empty, a beat runs or
+      waits for a decision.
+- [x] Run profile `heartbeat`: unattended, one fixed read-only authority; `propose_plan`,
+      `escalate` (resumes with its result spec), `list_tasks`.
+- [x] `team_status`: deterministic findings (stuck, failed, waiting, old decisions, failing or
+      auto-paused programs, failing routines, connectors needing sign-in, budget, program
+      suggestions at >= 3 similar requests in 14 days).
+- [x] Silent by default: structured result, fingerprint dedupe (24 h; 14 days for suggestions),
+      digest buffer, urgent items to the lead DM as one `eh.event`.
+- [x] Daily digest built from data (program runs, decisions, Waiting/Review, heartbeat items, cost),
+      idempotent per local day, quiet day sends nothing.
+- [x] API `/agents/{id}/heartbeat` (+ `/run`), `/digest`; web Heartbeat tab; no migration (settings rows).
+- [x] Tests `server/test/heartbeat.test.ts`, `web/src/lib/heartbeat/model.test.ts`; walkthrough section 22.
+
+Decided in phase E: system routines reuse `routines.program_id` with a `sys:` key (not listed, no
+events, not in `TickReport`); the urgent/digest message is an `eh.event` in the lead DM; a beat is
+recorded by the `turn.end` hook; "similar" is word-overlap clustering (Jaccard 0.5 on crude stems),
+deliberately conservative.
+
 ## Phase D checklist (big-data toolkit)
 
 - [x] Collector interface and cursor (`domain/collectors.ts`; the cursor is a library file
@@ -258,11 +319,11 @@ Decided in phase D:
   An app that parks on its own external waits in a session that has the subagent plugin must not
   return `correlationId` from `start` (worked around: the decision id rides in `payload`). Worth a
   sentence in spec 11 section 4.2 or spec 20, or a `payload.kind` check in the reconcile.
-- Phase C: show "Waiting for you" for tasks whose session has an open decision (`decisions` with
+- Phase C (done): show "Waiting for you" for tasks whose session has an open decision (`decisions` with
   `sessionId` and `status = 'open'`); `GET /decisions?status=open` plus the `decision-changed` event
   are enough. A worker that picks queued tasks should get `escalate` the same way program runs do
   (`decisions-plugin.ts` decides by `profileOfSession` origin).
-- Phase E: `propose_plan` is already offered to origin `heartbeat`; its sessions are not built yet.
+- Phase E (done): heartbeat sessions exist; `propose_plan` and `escalate` work from them.
   The heartbeat's `escalate` has no program: the decision has `programId: null`.
 - Library (optional, not blocking): the OS sandbox of `localSandbox` restricts writes and the
   network but not reads of the host file system, so `run_code` code can read files outside its

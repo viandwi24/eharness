@@ -10,6 +10,7 @@
 	import AgentListPanel from '#lib/components/app/AgentListPanel.svelte';
 	import AppRail from '#lib/components/app/AppRail.svelte';
 	import { hasSubSidebar } from '#lib/nav/sections.js';
+	import NewTaskDialog from '#lib/components/app/NewTaskDialog.svelte';
 	import ProgramDialog from '#lib/components/app/ProgramDialog.svelte';
 	import RoutineDialog from '#lib/components/app/RoutineDialog.svelte';
 	import ReconnectingBar from '#lib/components/app/ReconnectingBar.svelte';
@@ -70,4 +71,5 @@
 	<AgentDialog />
 	<RoutineDialog />
 	<ProgramDialog />
+	<NewTaskDialog />
 	<Toaster />

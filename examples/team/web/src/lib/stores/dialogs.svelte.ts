@@ -72,3 +72,15 @@ export function openEditProgram(programId: string): void {
 export function closeProgramDialog(): void {
 	programDialog.open = false;
 }
+
+/** The new-task dialog (the work queue): optionally for a preset agent. */
+export const taskDialog = $state<{ open: boolean; agentId: string | null }>({ open: false, agentId: null });
+
+export function openNewTask(agentId: string | null = null): void {
+	taskDialog.agentId = agentId;
+	taskDialog.open = true;
+}
+
+export function closeTaskDialog(): void {
+	taskDialog.open = false;
+}

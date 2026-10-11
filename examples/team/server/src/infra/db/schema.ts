@@ -147,6 +147,18 @@ export const tasks = sqliteTable(
     tokens: integer('tokens').notNull().default(0),
     /** The structured final report of a program run (`{ status, summary, outputs, notes? }`); null otherwise. */
     report: json<{ status: string; summary: string; outputs: string[]; notes?: string }>('report'),
+    /** The work queue (P40 D6): the task as the client or the manager wrote it; null for tasks that just happened. */
+    brief: text('brief'),
+    inputs: json<string[]>('inputs').notNull().default([]),
+    /** `low` | `normal` | `high` | `urgent` */
+    priority: text('priority').notNull().default('normal'),
+    dueAt: integer('due_at'),
+    /** `client` or an agent id; null = not a work item. */
+    createdBy: text('created_by'),
+    acceptedAt: integer('accepted_at'),
+    round: integer('round').notNull().default(1),
+    /** Sessions of earlier rounds. */
+    history: json<string[]>('history').notNull().default([]),
   },
   (t) => [
     index('tasks_state').on(t.status),
@@ -300,6 +312,8 @@ export const programs = sqliteTable(
     ).notNull(),
     /** `digest` | `task` | `silent` */
     report: text('report').notNull().default('task'),
+    /** Worker program: `{ maxTasks }` queued tasks per run (P40 D6); null = an ordinary program. */
+    worker: json<{ maxTasks: number }>('worker'),
     /** `active` | `paused` */
     status: text('status').notNull().default('active'),
     /** `client`, or the id of the agent that proposed it. */

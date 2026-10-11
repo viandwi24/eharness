@@ -1,7 +1,8 @@
 /** Task board and agent session use cases. */
 import { dmSessionId } from '../domain/chat.ts'
-import { invalid, notFound } from '../domain/errors.ts'
+import { conflict, invalid, notFound } from '../domain/errors.ts'
 import type { Task, TaskStatus } from '../domain/tasks.ts'
+import { isQueuedSession } from '../domain/work-queue.ts'
 import { getAgent } from './agents.ts'
 import { withCreator } from './library.ts'
 import { listMemory } from './memory.ts'
@@ -30,7 +31,7 @@ export async function getTask(
   const task = deps.tasks.get(id)
   if (task === undefined) throw notFound('task', id)
   const [messages, approvals] = await Promise.all([
-    deps.team.taskMessages(task, 200),
+    isQueuedSession(task.sessionId) ? Promise.resolve([]) : deps.team.taskMessages(task, 200),
     taskApprovals(deps, task),
   ])
   return { task, messages, approvals }
@@ -81,6 +82,9 @@ export async function messageTask(
   body: { text: string; mode?: 'steer' | 'queue' },
 ) {
   const task = taskOrThrow(deps, id)
+  if (task.status === 'queued') {
+    throw conflict('a queued task has no session yet: change its brief instead', 'TASK_QUEUED')
+  }
   const text = body.text.trim()
   if (text === '' || text.length > MAX_TASK_MESSAGE_CHARS) {
     throw invalid(`text must be 1-${MAX_TASK_MESSAGE_CHARS} characters`, 'INVALID_MESSAGE')

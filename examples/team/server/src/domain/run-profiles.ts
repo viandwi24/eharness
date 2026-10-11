@@ -12,7 +12,7 @@
  *   dm:<leadId>:agent:<call>           a child session: work the lead handed to a role agent
  *   routine:<routineId>:<slot>         a scheduled prompt (task mode)
  *   program:<programId>:<runAt>        a run of a program (a standing order, `domain/programs.ts`)
- *   heartbeat:<agentId>                the ambient monitor of an agent (P40 phase E; not built yet)
+ *   heartbeat:<agentId>                the ambient monitor of an agent (P40 phase E, `domain/heartbeat.ts`)
  */
 import type { TaskOrigin } from './tasks.ts'
 

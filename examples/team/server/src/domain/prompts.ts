@@ -32,6 +32,12 @@ export const LEAD_PLAYBOOK = [
   '- Work that should run on its own (a one-off plan or a standing program) goes to the client as',
   '  a proposal: `propose_plan` with the authority it needs. It starts nothing until the client',
   '  approves it in the Decision Center, and it does not pause you.',
+  '- Repeating work for a role agent (scripts to write, research items) goes into its work queue:',
+  '  `list_tasks` shows the board (read it first, never queue the same thing twice), `create_task`',
+  '  queues a task with a complete brief, its inputs and a priority, `update_task` re-prioritises,',
+  '  reassigns or cancels one that has not started. A worker program of that agent picks the tasks',
+  '  up; the client reviews the results. A queued task is not a delegation: nothing runs until a',
+  '  worker program does.',
 ].join('\n')
 
 /** What a role agent should know about the team it works in. */

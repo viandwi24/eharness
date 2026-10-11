@@ -26,6 +26,12 @@ import type {
   DecisionStatus,
 } from '../domain/decisions.ts'
 import type { NewEvent } from '../domain/events.ts'
+import type {
+  DigestConfig,
+  DigestState,
+  HeartbeatConfig,
+  HeartbeatState,
+} from '../domain/heartbeat.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
 import type {
   ModelCallDetail,
@@ -46,7 +52,7 @@ import type {
 } from '../domain/providers.ts'
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
-import type { Task, TaskStatus } from '../domain/tasks.ts'
+import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
 
 export interface Clock {
   now(): number
@@ -212,6 +218,47 @@ export interface TaskStore {
   activity(): Map<string, AgentActivity>
   /** Everything up to the latest message event is read. Returns the marker. */
   markRead(agentId: string): number
+
+  // --- the work queue (P40 D6) -------------------------------------------------------------
+  /** A queued task: a row with an owner, a brief and no session yet. */
+  enqueue(task: {
+    agentId: string
+    title: string
+    brief: string | null
+    inputs: string[]
+    priority: TaskPriority
+    dueAt: number | null
+    createdBy: string
+    now: number
+  }): Task
+  /** Change a task that is still queued; undefined when it is not (any more). */
+  patchQueued(
+    id: string,
+    patch: {
+      agentId?: string
+      title?: string
+      brief?: string | null
+      inputs?: string[]
+      priority?: TaskPriority
+      dueAt?: number | null
+    },
+    now: number,
+  ): Task | undefined
+  /** Queued -> stopped; undefined when it is not queued. */
+  cancelQueued(id: string, now: number): Task | undefined
+  /**
+   * Take the next queued task of the agent (priority, nearest due date, oldest) and give it the
+   * session. One atomic step: two callers never get the same task. undefined: nothing queued.
+   */
+  claimNext(agentId: string, sessionId: string, now: number): Task | undefined
+  /** The client accepts finished work in Review; undefined when it is not in Review. */
+  accept(id: string, now: number): Task | undefined
+  /** The client sends it back: queued again, the note appended to the brief. */
+  sendBack(id: string, note: string, now: number): Task | undefined
+  /** Queued tasks of an agent in queue order. */
+  queued(agentId: string): Task[]
+  /** `complete_task`: the outputs and summary of the work item running in `sessionId`. */
+  complete(sessionId: string, report: TaskReport, now: number): Task | undefined
 }
 
 /** A program to store; the store sets the timestamps and the version. */
@@ -240,7 +287,38 @@ export interface ProgramRunner {
   start(
     program: Program,
     options: { runAt: number },
-  ): Promise<{ sessionId: string; started: boolean }>
+  ): Promise<{ sessionId: string; started: boolean; idle?: boolean }>
+}
+
+/** Heartbeat configuration, beat history and the digest buffer (`infra/db/heartbeat-repo.ts`). */
+export interface HeartbeatStore {
+  /** The stored configuration of an agent; undefined = never set (the default of its role). */
+  config(agentId: string): HeartbeatConfig | undefined
+  setConfig(agentId: string, config: HeartbeatConfig, now: number): void
+  state(agentId: string): HeartbeatState
+  /** Read-modify-write under one transaction. */
+  updateState(
+    agentId: string,
+    fn: (state: HeartbeatState) => HeartbeatState,
+    now: number,
+  ): HeartbeatState
+  digestConfig(): DigestConfig
+  setDigestConfig(config: DigestConfig, now: number): void
+  digest(): DigestState
+  updateDigest(fn: (state: DigestState) => DigestState, now: number): DigestState
+}
+
+/** What the heartbeat and the digest need besides the stores (`app/heartbeat.ts`). */
+export interface HeartbeatPorts {
+  store: HeartbeatStore
+  /** Spend and limit of the workspace budget this month (the shared ledger). */
+  budget(): Promise<{ spentUsd: number; limitUsd: number | null } | null>
+  /** The messages of a session of the client (DM requests), newest `limit`, chronological. */
+  requests(sessionId: string, limit: number): Promise<Array<{ text: string; at: number }>>
+  /** Fire one beat now (the web's "Run now"); a skip says why and costs no model call. */
+  run(agentId: string, at: number): Promise<{ started: boolean; reason?: string }>
+  /** Put a message in the client's DM with the lead (an `eh.event`, no model call). */
+  notify(input: { name: string; text: string; key: string; at: number }): Promise<void>
 }
 
 /** A decision to store (always `open`). */
@@ -530,6 +608,7 @@ export interface Deps {
   programRunner: ProgramRunner
   decisions: DecisionStore
   decisionResolver: DecisionResolver
+  heartbeat: HeartbeatPorts
   events: EventAppender
   modelCalls: ModelCallStore
   clock: Clock

@@ -16,6 +16,7 @@ export const APP_EVENT_TYPES = [
   'routine-changed',
   'program-changed',
   'decision-changed',
+  'heartbeat-changed',
   'settings-changed',
   'mode-changed',
   'model-call',

@@ -1557,7 +1557,70 @@ export interface paths {
             };
         };
         put?: never;
-        post?: never;
+        /**
+         * Queue a task for an agent (the work queue)
+         * @description Creates a task that has no session yet (`status: queued`) with an owner, a brief, inputs (library paths), a priority and an optional due date. A worker program of that agent picks it up (priority, then due date, then age). Managers do the same with the `create_task` tool.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TaskCreate"];
+                };
+            };
+            responses: {
+                /** @description Queued */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The agent is archived */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -1624,6 +1687,310 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change a queued task
+         * @description Re-prioritise, reassign, rewrite or set a due date. `409 TASK_NOT_QUEUED` once a worker took it.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TaskPatch"];
+                };
+            };
+            responses: {
+                /** @description The task */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task or agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TASK_NOT_QUEUED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/tasks/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a queued task
+         * @description The task ends `stopped`. A task that already runs is stopped from its session instead.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The task */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TASK_NOT_QUEUED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept finished work in Review
+         * @description Review = a done work item (it came through the queue) whose report status is `done` or `partial` and that was not accepted yet.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The task */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TASK_NOT_IN_REVIEW` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/tasks/{id}/send-back": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send finished work back with a note
+         * @description The task is queued again with the note appended to its brief (`round` + 1); the next worker run revises it in a new session (the earlier ones stay in `history`). Also retries a work item that failed, stopped or was interrupted.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Task id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["TaskSendBack"];
+                };
+            };
+            responses: {
+                /** @description The task, queued again */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Task"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown task */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `TASK_NOT_IN_REVIEW` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -5696,6 +6063,309 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/heartbeat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Heartbeat of an agent
+         * @description The ambient monitor of an agent: its configuration (on for the lead by default), the state of its checklist (`HEARTBEAT.md` in its memory), the routine that wakes it and the last beats (ok, attention, skipped, failed). Also the daily digest settings.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The heartbeat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Heartbeat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Configure the heartbeat of an agent
+         * @description Turn it on or off, set the interval (5 minutes to 24 hours), the active hours and their timezone. The routine that wakes it follows. The checklist is the memory file `HEARTBEAT.md` (edit it through `/memory`); `createChecklist` writes a template when there is none.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HeartbeatPatch"];
+                };
+            };
+            responses: {
+                /** @description The heartbeat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Heartbeat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The agent is archived */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/agents/{id}/heartbeat/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run a beat now
+         * @description Fires one beat outside the schedule. The same rules apply: outside the active hours, with an empty checklist or while the previous beat runs it is skipped (`started: false` with the reason) and costs no model call.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Started, or skipped with a reason */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BeatRun"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/digest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Daily digest settings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The digest settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DigestView"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Change the daily digest
+         * @description Once a day at `time` (default 18:00, in `timezone` or the lead heartbeat timezone) the lead DM gets what ran, what waits, what the heartbeat noticed and the cost. A quiet day sends nothing.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["DigestPatch"];
+                };
+            };
+            responses: {
+                /** @description The digest settings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DigestView"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
     "/logs": {
         parameters: {
             query?: never;
@@ -6428,7 +7098,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "decision-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
+            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "decision-changed" | "heartbeat-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -6474,12 +7144,26 @@ export interface components {
             costUsd: number;
             tokens: number;
             report: components["schemas"]["TaskReport"];
+            /** @description Work queue: what to do, in markdown (send-back notes are appended). null for tasks that did not come from the queue. */
+            brief: string | null;
+            /** @description Library paths the task starts from. */
+            inputs: string[];
+            priority: components["schemas"]["TaskPriority"];
+            dueAt: number | null;
+            /** @description `client` or the id of the agent that queued it; null = not a work item (no Review step). */
+            createdBy: string | null;
+            /** @description When the client accepted the finished work. A done work item with a `done` or `partial` report and no `acceptedAt` is in Review. */
+            acceptedAt: number | null;
+            /** @description 1, +1 every time the work was sent back. */
+            round: number;
+            /** @description Sessions of earlier rounds. */
+            history: string[];
         };
         /**
-         * @description `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
+         * @description `queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
          * @enum {string}
          */
-        TaskStatus: "needs_action" | "running" | "done" | "failed" | "stopped" | "interrupted" | "timed_out";
+        TaskStatus: "queued" | "needs_action" | "running" | "done" | "failed" | "stopped" | "interrupted" | "timed_out";
         /** @description The final report of a program run; null for other tasks and while it runs. */
         TaskReport: {
             /** @enum {string} */
@@ -6489,6 +7173,8 @@ export interface components {
             outputs: string[];
             notes?: string;
         } | null;
+        /** @enum {string} */
+        TaskPriority: "low" | "normal" | "high" | "urgent";
         TaskDetail: {
             task: components["schemas"]["Task"];
             /** @description The stored messages of the task session (newest 200). */
@@ -6523,6 +7209,30 @@ export interface components {
                 description?: string;
             }[];
             multiSelect: boolean;
+        };
+        TaskCreate: {
+            /** @description Owner: agent id or slug. */
+            agentId: string;
+            title: string;
+            brief?: string;
+            /** @description Library paths (start with /). */
+            inputs?: string[];
+            priority?: components["schemas"]["TaskPriority"];
+            /** @description Epoch milliseconds. */
+            dueAt?: number | null;
+        };
+        TaskPatch: {
+            /** @description Reassign (agent id or slug). */
+            agentId?: string;
+            title?: string;
+            brief?: string;
+            inputs?: string[];
+            priority?: components["schemas"]["TaskPriority"];
+            dueAt?: number | null;
+        };
+        TaskSendBack: {
+            /** @description What to change. Appended to the brief. */
+            note: string;
         };
         ApprovalList: {
             approvals: components["schemas"]["Approval"][];
@@ -7429,6 +8139,7 @@ export interface components {
              * @enum {string}
              */
             report: "digest" | "task" | "silent";
+            worker: components["schemas"]["ProgramWorker"];
             /** @enum {string} */
             status: "active" | "paused";
             /** @description `client`, or the id of the proposing agent. */
@@ -7463,6 +8174,11 @@ export interface components {
             kind: "schedule";
             spec: components["schemas"]["RoutineSpec"];
         };
+        /** @description Makes the program a worker program (the work queue): each run claims the next queued tasks of its agent (priority, then due date, then age), one session per task, and finishing moves a task to Review. */
+        ProgramWorker: {
+            /** @description Queued tasks one run takes at most; each runs in a session of its own. */
+            maxTasks: number;
+        } | null;
         /** @description The routine that owns the schedule trigger (it pauses itself after repeated failures). */
         ProgramTriggerState: {
             /** @enum {string} */
@@ -7504,6 +8220,10 @@ export interface components {
              * @enum {string}
              */
             report?: "digest" | "task" | "silent";
+            worker?: {
+                /** @description Queued tasks one run takes at most; each runs in a session of its own. */
+                maxTasks?: number;
+            } | null;
         };
         ProgramPatch: {
             name?: string;
@@ -7533,15 +8253,24 @@ export interface components {
              * @enum {string}
              */
             report?: "digest" | "task" | "silent";
+            worker?: {
+                /** @description Queued tasks one run takes at most; each runs in a session of its own. */
+                maxTasks?: number;
+            } | null;
             /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
             version?: number;
         };
         ProgramRunStarted: {
-            /** @example program:0198…:1760000000000 */
-            sessionId: string;
+            /**
+             * @description null for a worker program with nothing queued (`idle`).
+             * @example program:0198…:1760000000000
+             */
+            sessionId: string | null;
             taskId: string | null;
-            /** @description false: that run existed already. */
+            /** @description false: that run existed already, or nothing was queued. */
             started: boolean;
+            /** @description true: a worker program found no queued task for its agent. */
+            idle: boolean;
         };
         ProgramRuns: {
             /** @description Task sessions of the program, newest first. */
@@ -7711,6 +8440,98 @@ export interface components {
         };
         DecisionReject: {
             note?: string;
+        };
+        Heartbeat: {
+            agentId: string;
+            config: components["schemas"]["HeartbeatConfig"];
+            /** @description false while nothing was ever set: the config is the default of the role. */
+            stored: boolean;
+            checklist: {
+                /** @description A memory file of the agent. */
+                path: string;
+                exists: boolean;
+                /** @description Only headings and comments: the beat is skipped, no model call. */
+                empty: boolean;
+            };
+            trigger: {
+                /** @enum {string} */
+                status: "active" | "paused";
+                nextFireAt: number | null;
+                lastFireAt: number | null;
+            } | null;
+            /** @description Newest first (the last 50). */
+            beats: components["schemas"]["BeatRecord"][];
+            digest: components["schemas"]["DigestView"];
+        };
+        HeartbeatConfig: {
+            enabled: boolean;
+            everyMinutes: number;
+            /** @description Start of the active hours, in `timezone`. */
+            activeFrom: string;
+            /** @description End of the active hours (exclusive); a window may wrap midnight. */
+            activeTo: string;
+            /** @description IANA timezone. */
+            timezone: string;
+        };
+        BeatRecord: {
+            /** @description The routine slot of the beat. */
+            id: string;
+            at: number;
+            endedAt: number | null;
+            /** @enum {string} */
+            status: "running" | "ok" | "attention" | "skipped" | "failed";
+            /** @description Why it was skipped or failed. */
+            reason: string | null;
+            /** @description Identical skips in a row, collapsed. */
+            count: number;
+            /** @description What it reported (new items only). */
+            items: components["schemas"]["BeatItem"][];
+            /** @description Findings already reported inside the window. */
+            duplicates: number;
+        };
+        BeatItem: {
+            kind: string;
+            title: string;
+            detail: string;
+            links: string[];
+            urgent: boolean;
+            fingerprint: string;
+        };
+        DigestView: components["schemas"]["DigestConfig"] & {
+            /** @description The timezone in effect. */
+            effectiveTimezone: string;
+            /** @description Items waiting for the next digest. */
+            buffered: number;
+            lastSentAt: number | null;
+        };
+        DigestConfig: {
+            enabled: boolean;
+            time: string;
+            /** @description IANA timezone; null = the timezone of the lead heartbeat. */
+            timezone: string | null;
+        };
+        HeartbeatPatch: {
+            enabled?: boolean;
+            everyMinutes?: number;
+            /** @description Start of the active hours, in `timezone`. */
+            activeFrom?: string;
+            /** @description End of the active hours (exclusive); a window may wrap midnight. */
+            activeTo?: string;
+            /** @description IANA timezone. */
+            timezone?: string;
+            /** @description Create `HEARTBEAT.md` with a template when the agent has none yet. */
+            createChecklist?: boolean;
+        };
+        BeatRun: {
+            started: boolean;
+            /** @description Why nothing started. */
+            reason?: string;
+        };
+        DigestPatch: {
+            enabled?: boolean;
+            time?: string;
+            /** @description IANA timezone; null = the timezone of the lead heartbeat. */
+            timezone?: string | null;
         };
         ModelCallList: {
             items: components["schemas"]["ModelCallSummary"][];

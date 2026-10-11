@@ -1,7 +1,7 @@
 /** Pure helpers of the subagent card: the child session id and the live status. */
 import type { SubagentStatus } from './map.js';
 
-type TaskLike = { status: 'needs_action' | 'running' | 'done' | 'failed' | 'stopped' | 'interrupted' | 'timed_out'; summary?: string | null };
+type TaskLike = { status: 'queued' | 'needs_action' | 'running' | 'done' | 'failed' | 'stopped' | 'interrupted' | 'timed_out'; summary?: string | null };
 type TaskRow = TaskLike & { sessionId: string };
 
 /**

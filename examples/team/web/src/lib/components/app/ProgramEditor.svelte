@@ -131,6 +131,24 @@
 		</label>
 	</fieldset>
 
+	<fieldset class="flex flex-col gap-2 rounded-lg border border-border p-3">
+		<legend class="px-1 font-medium">Work queue</legend>
+		<label class="flex items-start gap-2">
+			<input type="checkbox" bind:checked={form.worker} class="mt-0.5" />
+			<span>
+				Work through the queued tasks of this agent
+				<span class="block text-xs text-muted-foreground">Each run takes the next queued tasks (highest priority, then the nearest due date) and works each in a session of its own. The brief above is the standing instruction; the task says what to make. A run with nothing queued does nothing. Finished work comes to you in Review.</span>
+			</span>
+		</label>
+		{#if form.worker}
+			<label class="flex flex-col gap-1 sm:w-48">
+				<span class="text-xs text-muted-foreground">Tasks per run</span>
+				<Input bind:value={form.maxTasks} inputmode="numeric" aria-invalid={!!errors.maxTasks} />
+				{#if errors.maxTasks}<span class="text-xs text-destructive-text">{errors.maxTasks}</span>{/if}
+			</label>
+		{/if}
+	</fieldset>
+
 	<fieldset class="flex flex-col gap-2">
 		<legend class="mb-1 font-medium">Budget</legend>
 		<div class="grid gap-3 sm:grid-cols-2">
