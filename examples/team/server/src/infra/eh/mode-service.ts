@@ -4,7 +4,6 @@
  */
 import type { ModePort, ModeState } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import { dmSessionId } from '../../domain/chat.ts'
 import { agentModeChoice, allowedModes, teamModeOf } from '../../domain/modes.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
@@ -16,8 +15,7 @@ export function createModeService(
     workspaceDefault: () => string
   },
 ): ModePort {
-  const stateOf = (agent: AgentDef): ModeState => {
-    const sessionId = dmSessionId(agent.id)
+  const stateOf = (agent: AgentDef, sessionId: string): ModeState => {
     const resolved = factory.modes.resolve(agent, sessionId)
     const { paused, consecutive, total } = factory.modes.autoState(sessionId)
     return {
@@ -32,12 +30,11 @@ export function createModeService(
   }
   return {
     get: stateOf,
-    set(agent, mode, now) {
-      const sessionId = dmSessionId(agent.id)
+    set(agent, sessionId, mode, now) {
       deps.store.set(sessionId, mode, now)
       // picking Auto again resumes a paused classifier (spec 18 §12)
       if (mode === 'auto') factory.modes.resumeAuto(sessionId)
-      return stateOf(agent)
+      return stateOf(agent, sessionId)
     },
   }
 }

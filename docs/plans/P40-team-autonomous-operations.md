@@ -1,6 +1,6 @@
 # P40 — Team example: autonomous operations (manager, programs, decision center, big-data work)
 
-Status: in progress (phases A, B, C, D, E, H, I and K done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
+Status: in progress (phases A, B, C, D, E, H, I, K and M done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -114,7 +114,7 @@ and decided before code (docs over presets: patterns become guides, not wrapper 
 | I | **Stability pass**: soak test (many program runs, several agents at once, kill/restart mid-run, injected provider errors 429/500/timeouts), end-to-end browser checks of every client flow | after H. **built** (walkthrough section 26) |
 | J | **Evals** (developer tool, a CLI such as `bun run eval <scenario>`, no web page; opt-in, real model, budget-capped, not in CI; generic scenario format: fixture data + program config + deterministic checks + rubric): fixed scenarios scored automatically (auditor recall/precision against the planted incidents, deliverable checks) and by a rubric judge; scores kept per run to compare prompt/skill/model changes. Needs the client's output examples as the answer key. | **built** (framework + 3 illustrative scenarios); real runs await the client's examples and an approved budget |
 | K | **Rehearsal (test run)** for clients, generic for any program: run a program on sample data in a safe mode (writes go to a scratch area, external writes such as company API calls or posts are disabled or simulated), show the deliverables, decisions it would raise and cost before activating; save rehearsals as the program's test cases and re-run them after edits. | after H, J. **built** (walkthrough section 25) |
-| M | **Chat threads per agent, all equal** (pattern of ChatGPT / Claude Cowork / Devin): "New chat", rename, archive/delete for any thread (`chat:<agentId>:<threadId>`; the existing `dm:<agentId>` becomes the first thread with no special status). System news leaves the chat: the **daily digest becomes a Briefing page** (one entry per day + one bell notification; later deliverable to channels), **urgent heartbeat alerts go to the bell** (later channels), reports of work started from a thread return to that thread, work not started from a chat shows on the board. The lead can read briefings with a tool from any thread. **Following up**: every run is already its own session (open it from the board, a notification or a briefing and use its follow-up box: same session, same context); a briefing or an alert has **"Discuss in chat"**, which creates a new lead thread seeded with that item as context — threads are created on demand, never automatically per event. Continuity across threads comes from memory, not chat history. Generic, example only. | after I, K |
+| M | **Chat threads per agent, all equal** (pattern of ChatGPT / Claude Cowork / Devin): "New chat", rename, archive/delete for any thread (`chat:<agentId>:<threadId>`; the existing `dm:<agentId>` becomes the first thread with no special status). System news leaves the chat: the **daily digest becomes a Briefing page** (one entry per day + one bell notification; later deliverable to channels), **urgent heartbeat alerts go to the bell** (later channels), reports of work started from a thread return to that thread, work not started from a chat shows on the board. The lead can read briefings with a tool from any thread. **Following up**: every run is already its own session (open it from the board, a notification or a briefing and use its follow-up box: same session, same context); a briefing or an alert has **"Discuss in chat"**, which creates a new lead thread seeded with that item as context — threads are created on demand, never automatically per event. Continuity across threads comes from memory, not chat history. Generic, example only. | after I, K. **built** (walkthrough section 27) |
 | F | ~~Telegram source~~ — **deferred**: decided together with the messaging/channels design (data source vs outbound tools vs live chat) | later |
 | G | **Docs only for now** ([docs/examples/integrate-team-to-your-system.md](../examples/integrate-team-to-your-system.md)); no implementation until a client integrates. Original scope: **Company system integration (agent = virtual user)**: a mock internal company API in the repo (OpenAPI 3.1; roles employee / leader / manager; illustrative modules from one client use case — any departments work — e.g. a *Clipper* module: upload video, submit social link, analytics by views and by uploader; *Video production* module: idea → draft → shoot → edit → YouTube upload) and the team agents connected to it as **bot users** — one service account and token per agent (`kind: bot`, least-privilege role, revocable), tools from `openApiSource` (include/exclude per agent, method risk feeding program authority, token injected by `headers()` from the vault, never visible to the model), read-only first. Shows that business logic is written once (the API) and reused by people and agents. | D11 |
 
@@ -389,6 +389,32 @@ Decided in phase K:
 - Not built: rehearsing an unsaved draft from the editor (the editor offers Test run for the saved
   program), binary sample uploads (text files only), a live view of the files while it runs (they
   appear when it ends; simulated actions and would-ask decisions appear as they happen).
+
+## Phase M checklist (chat threads, briefing, bell)
+
+- [x] Threads per agent, all equal: table `chat_threads` (migration 0020), session ids `dm:<agentId>`
+      (the migrated first thread) and `chat:<agentId>:<threadId>`; new / rename / archive / restore;
+      per-chat routes take `?thread=`; an archived thread is read-only.
+- [x] Migration of the single DM: first read and boot create the first thread row for the existing
+      `dm:<agentId>` session, no data moves (test replays a pre-0020 database).
+- [x] `source` (`web` | `channel`) and `sourceLabel` on a thread, source badge in the list; channels
+      themselves are not built (P41).
+- [x] Daily digest = Briefing page (`briefings`, one per day) + one bell notification; urgent
+      heartbeat findings = bell alerts (`notifications`); nothing is written into a chat. The lead has
+      `read_briefings` in any thread.
+- [x] Delegation from a thread reports back to that thread (child sessions hang under the thread;
+      attention roots, recovery and wake-ups walk every thread).
+- [x] Follow-ups: runs keep their own session (follow-up box); "Discuss in chat" on a briefing item,
+      an alert or a run opens a NEW lead thread seeded with an `eh.event` (never automatic).
+- [x] Web: thread bar, `?t=`, Briefing page, bell with alerts, empty assistant messages hidden.
+- [x] Tests `server/test/threads.test.ts`, `heartbeat.test.ts`, web `threads`/`briefings` models,
+      stores and live; walkthrough section 27; API types regenerated.
+
+Decided in phase M: the thread session id of the first thread stays `dm:<agentId>` (data never moves);
+routines with `sessionMode: 'dm'` keep firing into it (also when archived). The thread list is
+ordered by last activity; an unnamed thread is named by its first user message. No hard delete:
+archive is the delete (plan P32 §5.1). A briefing's "Discuss in chat" goes to the lead; `agent` may
+name another one.
 
 ## Acceptance criteria
 

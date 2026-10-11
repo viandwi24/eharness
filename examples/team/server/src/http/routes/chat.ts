@@ -7,7 +7,7 @@ import {
   ChatToolsSchema,
   CompactResultSchema,
 } from '../schemas/chat.ts'
-import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
+import { errorResponses, IdParam, jsonError, ThreadQuery } from '../schemas/common.ts'
 
 const security = [{ Bearer: [] }]
 const json = <T extends z.ZodType>(schema: T) => ({ 'application/json': { schema } })
@@ -18,7 +18,7 @@ const compactRoute = createRoute({
   tags: ['chats'],
   summary: 'Summarise the older part of the chat now',
   security,
-  request: { params: IdParam },
+  request: { params: IdParam, query: ThreadQuery },
   responses: {
     200: { description: 'The summary, or nothing to compact', content: json(CompactResultSchema) },
     404: jsonError('Unknown agent'),
@@ -33,7 +33,7 @@ const statsRoute = createRoute({
   tags: ['chats'],
   summary: 'Context size, usage, active turn and pending approvals',
   security,
-  request: { params: IdParam },
+  request: { params: IdParam, query: ThreadQuery },
   responses: {
     200: { description: 'Session statistics', content: json(ChatStatsSchema) },
     404: jsonError('Unknown agent'),
@@ -49,7 +49,7 @@ const toolsGetRoute = createRoute({
   description:
     "The agent's enabled connections (and web search), each with whether this chat offers it. A new chat offers all of them.",
   security,
-  request: { params: IdParam },
+  request: { params: IdParam, query: ThreadQuery },
   responses: {
     200: { description: 'The connectors and their switches', content: json(ChatToolsSchema) },
     404: jsonError('Unknown agent'),
@@ -65,7 +65,11 @@ const toolsPutRoute = createRoute({
   description:
     'Replaces the list of switched-off connections (400 `UNKNOWN_CONNECTION` for an id that is not a connector of this agent). Takes effect at the next model step (a running turn included). The tool definitions and their order do not change (prompt cache): switched-off tools are only not offered. Permissions and pinned asks of the tools that stay on are unchanged.',
   security,
-  request: { params: IdParam, body: { required: true, content: json(ChatToolsPutSchema) } },
+  request: {
+    params: IdParam,
+    query: ThreadQuery,
+    body: { required: true, content: json(ChatToolsPutSchema) },
+  },
   responses: {
     200: { description: 'The new state', content: json(ChatToolsSchema) },
     404: jsonError('Unknown agent'),
@@ -77,14 +81,24 @@ const toolsPutRoute = createRoute({
 export function chatRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(compactRoute, async (c) => {
-      const result = await compactChat(deps, c.req.valid('param').id)
+      const result = await compactChat(deps, c.req.valid('param').id, c.req.valid('query').thread)
       return c.json(result as never, 200)
     })
     .openapi(toolsGetRoute, async (c) =>
-      c.json(await getChatTools(deps, c.req.valid('param').id), 200),
+      c.json(await getChatTools(deps, c.req.valid('param').id, c.req.valid('query').thread), 200),
     )
     .openapi(toolsPutRoute, async (c) =>
-      c.json(await setChatTools(deps, c.req.valid('param').id, c.req.valid('json').off), 200),
+      c.json(
+        await setChatTools(
+          deps,
+          c.req.valid('param').id,
+          c.req.valid('json').off,
+          c.req.valid('query').thread,
+        ),
+        200,
+      ),
     )
-    .openapi(statsRoute, async (c) => c.json(await chatStats(deps, c.req.valid('param').id), 200))
+    .openapi(statsRoute, async (c) =>
+      c.json(await chatStats(deps, c.req.valid('param').id, c.req.valid('query').thread), 200),
+    )
 }

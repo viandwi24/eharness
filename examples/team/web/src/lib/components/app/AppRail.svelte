@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import NewspaperIcon from 'phosphor-svelte/lib/Newspaper';
 	import ChatsCircleIcon from 'phosphor-svelte/lib/ChatsCircle';
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
@@ -28,6 +29,7 @@
 	const ICONS: Record<SectionId, Component> = {
 		agents: ChatsCircleIcon,
 		tasks: ListChecksIcon,
+		briefings: NewspaperIcon,
 		decisions: GavelIcon,
 		programs: StrategyIcon,
 		routines: ClockIcon,
@@ -39,6 +41,7 @@
 	const current = $derived(sectionOf(page.url.pathname));
 	const unread = $derived(Object.values(agentsStore.state.activity).reduce((n, a) => n + (a?.unread ? 1 : 0), 0));
 	const decisionCount = $derived(live.state.decisions.length);
+	const briefingCount = $derived(live.state.notifications.filter((n) => n.kind === 'briefing').length);
 	const main = SECTIONS.filter((s) => s.id !== 'settings');
 	const settings = SECTIONS.find((s) => s.id === 'settings')!;
 </script>
@@ -64,6 +67,9 @@
 					{#if bar}<span>{s.label}</span>{/if}
 					{#if s.id === 'decisions' && decisionCount > 0}
 						<Badge shape="number" variant="warning" class="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 text-[10px]" aria-label="{decisionCount} decisions waiting">{decisionCount}</Badge>
+					{/if}
+					{#if s.id === 'briefings' && briefingCount > 0}
+						<span class="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" aria-label="New briefing"></span>
 					{/if}
 					{#if s.id === 'agents' && unread > 0}
 						<span class="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" aria-label="{unread} unread chats"></span>

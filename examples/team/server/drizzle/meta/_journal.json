@@ -141,6 +141,13 @@
       "when": 1791742767305,
       "tag": "0019_reflective_bishop",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1791746457365,
+      "tag": "0020_glossy_tarantula",
+      "breakpoints": true
     }
   ]
 }

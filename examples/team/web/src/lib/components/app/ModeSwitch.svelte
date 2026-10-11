@@ -7,17 +7,19 @@
 	import { cycleMode, modeInfo, teamModes, type TeamMode } from '#lib/modes.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { modesStore } from '#lib/stores/modes.svelte.js';
+	import { modeKey } from '#lib/stores/modes-core.js';
 
-	/** The permission mode of the agent's DM chat: Manual / Auto / Bypass (Shift+Tab cycles). */
-	let { agentId }: { agentId: string } = $props();
+	/** The permission mode of this chat thread: Manual / Auto / Bypass (Shift+Tab cycles). */
+	let { agentId, threadId }: { agentId: string; threadId?: string } = $props();
 
-	const st = $derived(modesStore.state.byAgent[agentId]);
+	const st = $derived(modesStore.state.byAgent[modeKey(agentId, threadId)]);
 
 	// Load for this agent, and again when a `mode-changed` event arrives (any tab; Auto paused).
 	$effect(() => {
 		void live.state.revs.modes;
 		const id = agentId;
-		untrack(() => void modesStore.load(id));
+		const thread = threadId;
+		untrack(() => void modesStore.load(id, thread));
 	});
 
 	async function pick(mode: TeamMode): Promise<void> {
@@ -29,7 +31,7 @@
 
 	async function apply(mode: TeamMode): Promise<void> {
 		try {
-			await modesStore.set(agentId, mode);
+			await modesStore.set(agentId, mode, threadId);
 		} catch (e) {
 			toast.error(e instanceof Error ? e.message : 'Could not change the mode');
 		}

@@ -27,6 +27,7 @@ import { webFetch, webSearch } from 'eharness/web'
 import { nodeResolveHost } from 'eharness/web/node'
 import { z } from 'zod'
 import type { AgentDef } from '../../domain/agents.ts'
+import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
@@ -65,6 +66,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
       'edit_file',
       ...DECISION_TOOLS,
       ...WORK_QUEUE_TOOLS,
+      // reading the Briefing page is read-only
+      READ_BRIEFINGS_TOOL,
     ],
     ask: [...def.rules.ask],
     deny: [...def.rules.deny],

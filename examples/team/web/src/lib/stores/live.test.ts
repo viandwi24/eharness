@@ -18,12 +18,14 @@ function setup(visible = true) {
 	const answers: Answered[] = [];
 	let approvals: Approval[] = [];
 	let decisions: unknown[] = [];
+	let notifications: unknown[] = [];
 	const api = {
 		get: async (path: string) => {
 			if (path === '/approvals') return { approvals };
 			if (path === '/tasks') return { tasks: [] as Task[] };
 			if (path === '/decisions') return { decisions: decisions, open: decisions.length };
 			if (path === '/agents') return { agents: [] };
+			if (path === '/notifications') return { notifications, open: notifications.length };
 			throw new Error(path);
 		},
 		post: async (path: string, o?: { params?: { id: string } }) => {
@@ -36,7 +38,7 @@ function setup(visible = true) {
 	agents.state.activity['lead-id'] = { preview: null, lastMessageAt: null, unread: 0 };
 	const client = clientOf(async (_id, body) => (answers.push(body), { status: 'recorded' }));
 	const live = createLiveCore(api, agents, emptyLiveState(), { client, isVisible: () => visible, setTimeout: (fn) => fn() });
-	return { live, agents, posts, answers, setApprovals: (a: Approval[]) => (approvals = a), setDecisions: (d: unknown[]) => (decisions = d) };
+	return { live, agents, posts, answers, setApprovals: (a: Approval[]) => (approvals = a), setDecisions: (d: unknown[]) => (decisions = d), setNotifications: (n: unknown[]) => (notifications = n) };
 }
 
 const appr = (id: string, parent: string | null): Approval =>
@@ -93,7 +95,7 @@ describe('live store', () => {
 		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
 		live.handleEvent(ev('providers-changed', 'lead-id', { profileId: 'openrouter', action: 'put' }));
 		live.handleEvent(ev('connectors-changed', 'lead-id', { instance: 'x' }));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, heartbeat: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1 });
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, heartbeat: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1, threads: 0, briefings: 0 });
 		// a stored message moves the context size of the open chat
 		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant' }));
 		expect(live.state.revs.chat).toBe(1);
@@ -256,5 +258,43 @@ describe('live store: inline answers stay in their own session', () => {
 		// decided: gone from the list, so the inline card is not offered any more
 		live.handleEvent({ ...ev('approval-decided', 'lead-id', { id: 'own' }, 9), sessionId: 'dm:lead-id' });
 		expect(live.ownApproval('lead', 'own')).toBeUndefined();
+	});
+});
+
+describe('live store: threads and the bell', () => {
+	test('inline items follow the thread: own questions and children of that thread only', async () => {
+		const { live, setApprovals } = setup();
+		const q1 = { ...appr('q1', null), sessionId: 'chat:lead-id:t1', kind: 'question' } as Approval;
+		const q2 = { ...appr('q2', null), sessionId: 'chat:lead-id:t2', kind: 'question' } as Approval;
+		const c1 = { ...appr('c1', 'chat:lead-id:t1'), sessionId: 'chat:lead-id:t1:agent:x' } as Approval;
+		const c2 = { ...appr('c2', 'chat:lead-id:t2'), sessionId: 'chat:lead-id:t2:agent:x' } as Approval;
+		setApprovals([q1, q2, c1, c2]);
+		await live.loadApprovals();
+		expect(live.chatPending('lead', 'chat:lead-id:t1').map((a) => a.id)).toEqual(['q1', 'c1']);
+		expect(live.chatPending('lead', 'chat:lead-id:t2').map((a) => a.id)).toEqual(['q2', 'c2']);
+		// without a thread: everything of the agent
+		expect(live.chatPending('lead').map((a) => a.id).sort()).toEqual(['c1', 'c2', 'q1', 'q2']);
+		const own = { ...appr('own', null), sessionId: 'chat:lead-id:t1' } as Approval;
+		setApprovals([own]);
+		await live.loadApprovals();
+		expect(live.ownApproval('lead', 'own', 'chat:lead-id:t1')?.id).toBe('own');
+		expect(live.ownApproval('lead', 'own', 'chat:lead-id:t2')).toBeUndefined();
+	});
+
+	test('notification and briefing events refetch the bell; thread events bump the list revision', async () => {
+		const { live, setNotifications } = setup();
+		setNotifications([{ id: 'n1', kind: 'alert', title: 'Budget', body: '', link: null, agentId: null, createdAt: 1, dismissedAt: null }]);
+		live.handleEvent(ev('notification-changed', 'lead-id'));
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(live.state.notifications.map((n) => n.id)).toEqual(['n1']);
+		const before = live.state.revs.threads;
+		live.handleEvent(ev('thread-changed', 'lead-id'));
+		await Promise.resolve();
+		expect(live.state.revs.threads).toBe(before + 1);
+		const briefings = live.state.revs.briefings;
+		live.handleEvent(ev('briefing-added', 'lead-id'));
+		await Promise.resolve();
+		expect(live.state.revs.briefings).toBe(briefings + 1);
 	});
 });

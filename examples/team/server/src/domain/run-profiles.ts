@@ -8,8 +8,10 @@
  *
  * The origin comes from the session id (`originOfSession`); the id shapes are:
  *
- *   dm:<agentId>                       a person chats with an agent
+ *   dm:<agentId>                       a person chats with an agent (the first chat thread)
+ *   chat:<agentId>:<threadId>          any other chat thread of an agent (`domain/threads.ts`)
  *   dm:<leadId>:agent:<call>           a child session: work the lead handed to a role agent
+ *                                      (`chat:<leadId>:<threadId>:agent:<call>` from a thread)
  *   routine:<routineId>:<slot>         a scheduled prompt (task mode)
  *   program:<programId>:<runAt>        a run of a program (a standing order, `domain/programs.ts`)
  *   heartbeat:<agentId>                the ambient monitor of an agent (P40 phase E, `domain/heartbeat.ts`)
@@ -119,7 +121,8 @@ export function originOfSession(sessionId: string, hasParent = false): RunOrigin
   if (sessionId.startsWith('program:')) return 'program'
   if (sessionId.startsWith('heartbeat:')) return 'heartbeat'
   if (sessionId.startsWith('rehearsal:')) return 'rehearsal'
-  if (hasParent || /^dm:[^:]+:/.test(sessionId)) return 'lead'
+  if (hasParent || /^dm:[^:]+:/.test(sessionId) || /^chat:[^:]+:[^:]+:/.test(sessionId))
+    return 'lead'
   return 'dm'
 }
 

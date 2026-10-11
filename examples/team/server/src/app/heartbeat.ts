@@ -39,13 +39,14 @@ import {
   type RequestText,
   splitNew,
   statusText,
-  urgentText,
 } from '../domain/heartbeat.ts'
 import { parseProgramSession } from '../domain/programs.ts'
 import type { RoutineSpec } from '../domain/routines.ts'
 import { boardColumn, type Task } from '../domain/tasks.ts'
 import { getAgent } from './agents.ts'
+import { postAlerts, postBriefing } from './briefings.ts'
 import type { Deps } from './ports.ts'
+import { threadSessionsOf } from './threads.ts'
 
 const HOUR = 3_600_000
 /** A beat recorded as running this long ago, with no turn in sight, is a dead one. */
@@ -281,8 +282,10 @@ export function ensureHeartbeats(deps: Deps): void {
 async function collectRequests(deps: Deps, now: number): Promise<RequestText[]> {
   const out: RequestText[] = []
   for (const agent of deps.agents.list()) {
-    const messages = await deps.heartbeat.requests(`dm:${agent.id}`, 100)
-    for (const m of messages) out.push({ source: 'dm', text: m.text, at: m.at })
+    for (const sessionId of threadSessionsOf(deps, agent.id)) {
+      const messages = await deps.heartbeat.requests(sessionId, 100)
+      for (const m of messages) out.push({ source: 'dm', text: m.text, at: m.at })
+    }
   }
   for (const t of deps.tasks.list({ limit: 300 })) {
     // delegations of the lead repeat what the client said in the DM: only what the client made
@@ -521,12 +524,8 @@ export async function finishBeat(deps: Deps, end: BeatEnd): Promise<BeatRecord |
     )
     const urgent = fresh.filter((i) => i.urgent)
     if (urgent.length > 0) {
-      await deps.heartbeat.notify({
-        name: 'heartbeat.urgent',
-        text: urgentText(urgent),
-        key: `heartbeat-urgent:${record?.id ?? at}`,
-        at,
-      })
+      // urgent findings go to the bell, one alert each: no chat message, no interruption
+      postAlerts(deps, { agentId, beatId: record?.id ?? String(at), items: urgent, at })
     }
   }
   changed(deps, agentId, 'beat')
@@ -574,7 +573,6 @@ export async function runDigest(deps: Deps, at = deps.clock.now()): Promise<Dige
     const why = waitingOf(t)
     return why === undefined ? [] : [{ id: t.id, title: t.title, why }]
   })
-  const l = lead(deps)
   const cost = (sessionId?: string): number =>
     deps.modelCalls.stats({
       from: since,
@@ -592,14 +590,8 @@ export async function runDigest(deps: Deps, at = deps.clock.now()): Promise<Dige
     costUsd: Math.max(0, cost() - deps.rehearsals.spentBetween(since, at)),
     heartbeatCostUsd: deps.agents.list().reduce((sum, a) => sum + cost(`heartbeat:${a.id}`), 0),
   })
-  if (!digest.empty && l !== undefined) {
-    await deps.heartbeat.notify({
-      name: 'daily-digest',
-      text: digest.text,
-      key: `digest:${day}`,
-      at,
-    })
-  }
+  // the digest is a page (one briefing per day) plus one bell notification, not a chat message
+  if (!digest.empty) postBriefing(deps, { day, body: digest.text, items: digest.items, at })
   deps.heartbeat.store.updateDigest(
     (d): DigestState => ({
       lastSentAt: at,

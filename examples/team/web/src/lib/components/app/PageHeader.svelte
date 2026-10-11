@@ -16,6 +16,7 @@
 	 * `title` is the h1; `description` a one-line subtitle; `breadcrumb` the ancestors that lead to it;
 	 * `actions` (or plain children, for older callers) sit on the right, before the approvals bell.
 	 * `backHref` is where the mobile back arrow goes (default: the agent list).
+ * On narrow screens the actions wrap onto a second row instead of squeezing the title away.
 	 */
 	let {
 		title,
@@ -35,12 +36,12 @@
 </script>
 
 <ShellHeader>
-	<header class="flex h-14 shrink-0 items-center gap-2 px-3">
+	<header class="flex min-h-14 shrink-0 flex-wrap items-center gap-2 px-3 py-2 md:h-14 md:flex-nowrap md:py-0">
 		<Button href={backHref} variant="ghost" size="icon-sm" class="md:hidden" aria-label="Back">
 			<CaretLeftIcon class="size-4" />
 		</Button>
 		<SidebarToggle whenCollapsed />
-		<div class="flex min-w-0 flex-1 flex-col justify-center">
+		<div class="flex min-w-36 flex-1 flex-col justify-center">
 			{#if breadcrumb?.length}
 				<Breadcrumb.Root>
 					<Breadcrumb.List class="flex-nowrap gap-1.5 text-sm sm:gap-1.5">
@@ -60,7 +61,7 @@
 			{/if}
 			{#if description}<p class="truncate text-xs leading-4 text-muted-foreground">{description}</p>{/if}
 		</div>
-		<div class="flex shrink-0 items-center gap-2">
+		<div class="flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2 max-md:ml-auto">
 			{@render actions?.()}
 			{@render children?.()}
 		</div>

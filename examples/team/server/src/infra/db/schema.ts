@@ -115,6 +115,77 @@ export const sessionModes = sqliteTable('session_modes', {
  * connection ids. No row = nothing off. The tool definitions never change; the agent hides the
  * tools of these connections per step (`activeTools`).
  */
+/**
+ * Chat threads (`domain/threads.ts`, P40 phase M): the name of a session of a conversation with an
+ * agent. The session id of the first thread is the old `dm:<agentId>`; the others are
+ * `chat:<agentId>:<id>`. `source` / `source_label` let channel conversations share the list later.
+ */
+export const chatThreads = sqliteTable(
+  'chat_threads',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    title: text('title'),
+    source: text('source').notNull().default('web'),
+    sourceLabel: text('source_label'),
+    seed: json<{ kind: string; ref: string; title: string }>('seed'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    lastMessageAt: integer('last_message_at'),
+    preview: text('preview'),
+    archivedAt: integer('archived_at'),
+  },
+  (t) => [
+    uniqueIndex('chat_threads_session').on(t.sessionId),
+    index('chat_threads_agent').on(t.agentId, t.updatedAt),
+  ],
+)
+
+/**
+ * What the system tells the client outside any chat: urgent heartbeat alerts and "briefing ready"
+ * (`app/notifications.ts`). The bell lists the ones not dismissed. `key` makes a notification
+ * idempotent (a retried beat or digest adds nothing twice).
+ */
+export const notifications = sqliteTable(
+  'notifications',
+  {
+    id: text('id').primaryKey(),
+    kind: text('kind').notNull(),
+    key: text('key').notNull(),
+    title: text('title').notNull(),
+    body: text('body').notNull().default(''),
+    /** App path the notification opens (`/tasks/<id>`, `/briefings?id=...`). */
+    link: text('link'),
+    agentId: text('agent_id'),
+    createdAt: integer('created_at').notNull(),
+    dismissedAt: integer('dismissed_at'),
+  },
+  (t) => [
+    uniqueIndex('notifications_key').on(t.key),
+    index('notifications_open').on(t.dismissedAt, t.createdAt),
+  ],
+)
+
+/** The daily digest as a page: one row per local day (`app/briefings.ts`). */
+export const briefings = sqliteTable(
+  'briefings',
+  {
+    id: text('id').primaryKey(),
+    day: text('day').notNull(),
+    title: text('title').notNull(),
+    /** The digest as markdown (what the lead reads with `read_briefings`). */
+    body: text('body').notNull(),
+    /** The same content as items, for the page and "Discuss in chat". */
+    items:
+      json<Array<{ kind: string; title: string; detail: string; link: string | null }>>(
+        'items',
+      ).notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [uniqueIndex('briefings_day').on(t.day)],
+)
+
 export const chatToolOverrides = sqliteTable('chat_tool_overrides', {
   sessionId: text('session_id').primaryKey(),
   off: json<string[]>('off').notNull(),

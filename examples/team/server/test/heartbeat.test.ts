@@ -191,7 +191,15 @@ async function beatEnds(i: Instance, n = 1) {
 }
 const callsOf = (i: Instance) => i.models.lead?.calls.length ?? 0
 
-/** The `eh.event` messages the lead's DM holds. */
+/** The bell: notifications not dismissed yet (`GET /notifications`). */
+async function notifications(
+  i: Instance,
+): Promise<Array<{ id: string; kind: string; title: string; link: string | null }>> {
+  const res = await i.app.request('/notifications')
+  return ((await res.json()) as { notifications: never[] }).notifications
+}
+
+/** The `eh.event` messages the lead's first thread holds. */
 async function dmEvents(i: Instance): Promise<Array<{ name: string; text: string }>> {
   const res = await i.app.request(`/sessions/dm:${i.leadId}/messages?limit=100`)
   expect(res.status).toBe(200)
@@ -723,7 +731,7 @@ describe('a beat', () => {
     expect(HEARTBEAT_ALLOWED).not.toContain('escalate')
   })
 
-  test('attention: new items go to the digest buffer, urgent ones to the DM, once', async () => {
+  test('attention: new items go to the digest buffer, urgent ones to the bell, once', async () => {
     const items = [
       {
         kind: 'program.failing',
@@ -753,17 +761,16 @@ describe('a beat', () => {
     const v = await view(i.app, i.leadId)
     expect(v.beats[0]?.status).toBe('attention')
     expect(v.beats[0]?.items.map((x) => x.title)).toEqual(['Audit run failed', 'Budget 96% used'])
-    // both wait for the digest; only the urgent one reached the DM, as one short message
+    // both wait for the digest; only the urgent one reached the bell, as one alert (P40 phase M)
     expect(digestBuffer(i.server.deps).buffer.map((e) => e.item.title)).toEqual([
       'Audit run failed',
       'Budget 96% used',
     ])
     expect(v.digest.buffered).toBe(2)
-    const dm = await dmEvents(i)
-    expect(dm).toHaveLength(1)
-    expect(dm[0]?.name).toBe('heartbeat.urgent')
-    expect(dm[0]?.text).toContain('Budget 96% used')
-    expect(dm[0]?.text).not.toContain('Audit run failed')
+    expect(await dmEvents(i)).toEqual([]) // nothing is written into a chat any more
+    const bell = await notifications(i)
+    expect(bell).toHaveLength(1)
+    expect(bell[0]).toMatchObject({ kind: 'alert', title: 'Budget 96% used', link: '/settings' })
 
     // the same findings again: ok, counted as duplicates, nothing new anywhere
     await fire(i)
@@ -771,7 +778,7 @@ describe('a beat', () => {
     const again = await view(i.app, i.leadId)
     expect(again.beats[0]).toMatchObject({ status: 'ok', items: [], duplicates: 2 })
     expect(digestBuffer(i.server.deps).buffer).toHaveLength(2)
-    expect(await dmEvents(i)).toHaveLength(1)
+    expect(await notifications(i)).toHaveLength(1)
   })
 
   test('overlap: a running beat is not started twice', async () => {
@@ -980,10 +987,17 @@ describe('the daily digest', () => {
     await beatEnds(i)
 
     expect(await i.server.heartbeats.digest({ slot: Date.now() + 1000 })).toBe('sent')
-    const dm = await dmEvents(i)
-    const digest = dm.find((e) => e.name === 'daily-digest')
-    expect(digest).toBeDefined()
-    const text = digest?.text ?? ''
+    expect(await dmEvents(i)).toEqual([]) // the digest is a page, not a chat message
+    const page = (await (await i.app.request('/briefings')).json()) as {
+      briefings: Array<{ id: string; body: string; items: Array<{ kind: string }> }>
+    }
+    expect(page.briefings).toHaveLength(1)
+    expect(page.briefings[0]?.items.map((x) => x.kind)).toEqual(
+      expect.arrayContaining(['run', 'decision', 'noticed']),
+    )
+    const bell = await notifications(i)
+    expect(bell.filter((n) => n.kind === 'briefing')).toHaveLength(1)
+    const text = page.briefings[0]?.body ?? ''
     expect(text).toContain('**Video scripts**: done — Wrote 3 scripts')
     expect(text).toContain('/library/reports/a.md')
     expect(text).toContain('Approve the audit plan')
@@ -994,13 +1008,14 @@ describe('the daily digest', () => {
     // the buffer is consumed, and a recovered fire the same day sends nothing twice
     expect(digestBuffer(i.server.deps).buffer).toEqual([])
     expect(await i.server.heartbeats.digest({ slot: Date.now() + 2000 })).toBe('duplicate')
-    expect((await dmEvents(i)).filter((e) => e.name === 'daily-digest')).toHaveLength(1)
+    expect((await (await i.app.request('/briefings')).json()).briefings).toHaveLength(1)
   })
 
   test('a quiet day sends nothing; turning it off sends nothing', async () => {
     const i = instance({})
     expect(await i.server.heartbeats.digest({ slot: ++slot })).toBe('empty')
-    expect(await dmEvents(i)).toEqual([])
+    expect((await (await i.app.request('/briefings')).json()).briefings).toEqual([])
+    expect(await notifications(i)).toEqual([])
     await i.app.request('/digest', json('PATCH', { enabled: false }))
     expect(await i.server.heartbeats.digest({ slot: ++slot })).toBe('off')
   })

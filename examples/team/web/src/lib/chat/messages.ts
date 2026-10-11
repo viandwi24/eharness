@@ -16,3 +16,17 @@ export function uniqueById<M extends Pick<UIMessage, 'id'>>(messages: readonly M
 	});
 	return out;
 }
+
+/**
+ * An assistant message with nothing to show: no parts, or only step markers and empty text. A
+ * provider failure stores one on purpose (spec 05 §3) next to the `eh.notice`; the chat hides it.
+ */
+export function isEmptyAssistant(message: Pick<UIMessage, 'role' | 'parts'>): boolean {
+	if (message.role !== 'assistant') return false;
+	return message.parts.every((p) => p.type === 'step-start' || (p.type === 'text' && p.text.trim() === ''));
+}
+
+/** `messages` without the empty assistant messages. Returns the same array when there are none. */
+export function withoutEmptyAssistant<M extends Pick<UIMessage, 'role' | 'parts'>>(messages: readonly M[]): readonly M[] {
+	return messages.some(isEmptyAssistant) ? messages.filter((m) => !isEmptyAssistant(m)) : messages;
+}

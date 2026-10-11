@@ -1,12 +1,16 @@
 /** Chat conventions and upload policy (docs/plans/P32-team-example.md §5.2). Pure. */
 import { invalid } from './errors.ts'
 import { UPLOADS_ROOT } from './library.ts'
+import { isThreadSession } from './threads.ts'
 
-/** The DM chat of an agent is one eharness session. */
+/** The first chat thread of an agent (the session that existed before threads). */
 export const dmSessionId = (agentId: string): string => `dm:${agentId}`
 
-/** A DM id has no further `:`; a delegated child session is `dm:<lead>:agent:<call>`. */
-export const isDmSession = (sessionId: string): boolean => /^dm:[^:]+$/.test(sessionId)
+/**
+ * The session of a chat thread itself: `dm:<agentId>` (the thread of before threads existed) or
+ * `chat:<agentId>:<threadId>`. A delegated child session (`<chat session>:agent:<call>`) is not one.
+ */
+export const isDmSession = (sessionId: string): boolean => isThreadSession(sessionId)
 
 /** Largest file a chat message may carry (library upload and data URLs). */
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024

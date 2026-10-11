@@ -10,6 +10,7 @@ import {
 import { conflict, invalid } from '../domain/errors.ts'
 import { getAgent } from './agents.ts'
 import type { Actor, ChatMessage, ChatStats, Deps, StoredUpload } from './ports.ts'
+import { threadSessionOf } from './threads.ts'
 
 /** The single user of v1 (plan §6.7). */
 export const OWNER: Actor = { id: 'owner' }
@@ -82,21 +83,26 @@ export async function checkChatBody(deps: Deps, body: unknown): Promise<unknown>
   return { ...body, messages: [...messages.slice(0, -1), await checkFiles(deps, last)] }
 }
 
-export function compactChat(deps: Deps, agentId: string) {
-  return deps.chat.compact(liveAgent(deps, agentId))
+/** `threadId` names a chat thread of the agent; without it the thread with the newest activity. */
+export function compactChat(deps: Deps, agentId: string, threadId?: string) {
+  const agent = liveAgent(deps, agentId)
+  return deps.chat.compact(agent, threadSessionOf(deps, agent, threadId))
 }
 
-export function getChatTools(deps: Deps, agentId: string) {
-  return deps.chatTools.get(anyAgent(deps, agentId))
+export function getChatTools(deps: Deps, agentId: string, threadId?: string) {
+  const agent = anyAgent(deps, agentId)
+  return deps.chatTools.get(agent, threadSessionOf(deps, agent, threadId))
 }
 
 /** Switch connectors off (or back on) for this chat; the next model step sees the change. */
-export function setChatTools(deps: Deps, agentId: string, off: string[]) {
-  return deps.chatTools.set(liveAgent(deps, agentId), off, deps.clock.now())
+export function setChatTools(deps: Deps, agentId: string, off: string[], threadId?: string) {
+  const agent = liveAgent(deps, agentId)
+  return deps.chatTools.set(agent, threadSessionOf(deps, agent, threadId), off, deps.clock.now())
 }
 
-export function chatStats(deps: Deps, agentId: string): Promise<ChatStats> {
-  return deps.chat.stats(anyAgent(deps, agentId))
+export function chatStats(deps: Deps, agentId: string, threadId?: string): Promise<ChatStats> {
+  const agent = anyAgent(deps, agentId)
+  return deps.chat.stats(agent, threadSessionOf(deps, agent, threadId))
 }
 
 /** Store an uploaded file in the library's uploads folder. */

@@ -5,9 +5,10 @@
  *
  * What is the app's, not the library's:
  *  - the principal is the single OWNER; `authorize` is the bearer check (`app/auth.ts`);
- *  - a session id is `dm:<agentId>` (or `dm:<slug>`) or the session of a task row: both resolve to
- *    the agent that runs them (`resolve`);
- *  - a DM of an archived agent is read-only; task sessions take messages through
+ *  - a session id is a chat thread (`chat:<agentId>:<threadId>` of a thread row, or the first
+ *    thread's `dm:<agentId>` / `dm:<slug>`) or the session of a task row: all resolve to the agent
+ *    that runs them (`resolve`);
+ *  - a thread of an archived agent, or an archived thread, is read-only; task sessions take messages through
  *    `POST /tasks/{id}/messages` (the inbox), not through the chat route;
  *  - question answers (`ask_user_question`) are turned into the tool output with `answerOutput`;
  *  - `DomainError` keeps its status and code (`onError`).
@@ -22,11 +23,12 @@ import { createHarnessHttp, type HarnessHttp } from 'eharness/http'
 import { checkBearer } from '../../app/auth.ts'
 import { OWNER } from '../../app/chat.ts'
 import { DomainError } from '../../app/errors.ts'
-import type { Actor, AgentRepo, TaskStore } from '../../app/ports.ts'
+import type { Actor, AgentRepo, TaskStore, ThreadStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { MAX_NOTE_CHARS } from '../../domain/approvals.ts'
 import { dmSessionId, isDmSession } from '../../domain/chat.ts'
 import { notFound } from '../../domain/errors.ts'
+import { parseChatSession } from '../../domain/threads.ts'
 import type { AgentFactory } from './agent-factory.ts'
 import type { TeamService } from './team-service.ts'
 
@@ -34,6 +36,8 @@ export interface TeamHttpOptions {
   factory: AgentFactory
   agents: AgentRepo
   tasks: TaskStore
+  /** Chat threads: a `chat:` session exists only for a thread that has a row. */
+  threads: ThreadStore
   team: TeamService
   /** The shared event store: the `activity` routes read it, answers append `attention-answered`. */
   activity: ActivityStore
@@ -66,6 +70,13 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
 
   /** The agent that runs a session, and the canonical id (`dm:<slug>` is accepted for `dm:<id>`). */
   const resolve = (sessionId: string): { def: AgentDef; id: string } | undefined => {
+    const chat = parseChatSession(sessionId)
+    if (chat !== undefined && !chat.child && chat.threadId !== null) {
+      // a `chat:` id of a thread that was never created is not a session
+      const thread = options.threads.getBySession(sessionId)
+      const def = thread === undefined ? undefined : agents.get(thread.agentId)
+      return def === undefined ? undefined : { def, id: sessionId }
+    }
     if (isDmSession(sessionId)) {
       const key = sessionId.slice('dm:'.length)
       const def = agents.get(key) ?? agents.getBySlug(key)
@@ -148,9 +159,13 @@ export function createTeamHttp(options: TeamHttpOptions): HarnessHttp {
             'A task session takes messages through POST /tasks/{id}/messages.',
           )
         }
-        const def = resolve(sessionId)?.def
+        const found = resolve(sessionId)
+        const def = found?.def
         if (def?.archivedAt !== null && def !== undefined) {
           return json(409, 'AGENT_ARCHIVED', `agent is archived: ${def.slug}`)
+        }
+        if (found !== undefined && options.threads.getBySession(found.id)?.archivedAt != null) {
+          return json(409, 'THREAD_ARCHIVED', 'this chat is archived: restore it to continue')
         }
         return undefined
       },

@@ -412,10 +412,27 @@ The hooks, in the order a request meets them:
    model as bytes (`inputFiles.resolve` turns the stored `library:` reference into data at
    projection time) and a reload shows the same file parts; the web fetches the bytes with the
    token for the thumbnail (`<img>` cannot send the bearer header). Limits: 10 MB and the media
-   type allowlist, with a readable `400`. A model without vision is not detected up front: the
-   provider's own error comes back as the turn's notice. Attachments belong to the chat message
-   only: a delegation (`agent` tool) carries a text prompt, so a child never sees them, and the
-   model is not told the upload path (open question: expose the path to the model).
+   type allowlist, with a readable `400`.
+   **The model can name and pass on an attachment.** `inputFiles.describe` adds a short note after
+   each uploaded file of a user message (`[Attachment photo.png (image/png) at path
+   "/uploads/…"…]`, projection only, never stored), and the lead's `subagent({ files: { resolve } })`
+   gives the `agent` tool a `files` argument: the path becomes a file part of the role agent's
+   first message (`resolveDelegatedFile` checks that it is an existing upload, at most 10 MB and an
+   allowed type, and answers with a readable `ERROR:` otherwise; no child starts). An employee's
+   photo or PDF therefore reaches the specialist the lead delegates to, from the web today and from
+   any later channel that stores the upload the same way. A resumed child (`send_message`) takes
+   text only. **Queued tasks** (`create_task`) already carry `inputs`: library paths, which an
+   upload is (`/uploads/…`); a worker reads text-like inputs with the library tools, but an image
+   or PDF input is not attached as a file part to the task run (open question: attach media inputs
+   to the first message of a task run).
+   **A model that cannot read the file is caught early.** When the catalog knows the model's input
+   modalities (`modelsDevCatalog` / `openRouterCatalog` fill `inputModalities`), an image or PDF
+   sent to a model without that input is refused before anything is stored with `EH_INVALID_INPUT`
+   (`reason: 'unsupported-modality'`) and a message that names the model and the fix (pick a model
+   with image input). An unknown model is never blocked: the provider's own error is the notice.
+   **A failed provider call** leaves an empty assistant message next to the `eh.notice` on purpose
+   (spec 05 §3: the stream already announced its id); a UI should skip assistant messages without a
+   visible part.
 5. **`session` and `peek`** map a session id to the agent that runs it.
    `peek` is a pure read with no `session.start` hooks, and must go through the agent that runs the
    session so `busy()` can tell a turn of this process from another instance's. *If reads open real
@@ -810,15 +827,16 @@ covers it. Only then may the model call `propose_plan`; nothing is created witho
 **Silent by default.** The beat ends with a structured result
 `{ status: 'ok' | 'attention', items: [{ kind, title, detail, links, urgent, fingerprint }] }`
 (`SendOptions.output`). It is recorded by the `turn.end` hook, not by awaiting the run. `ok`:
-nothing is shown. New items go to the digest buffer; urgent ones also go to the lead's DM at once as
-one short message. That message is an `eh.event` injected into `dm:<leadId>` (`session.inject`, no
-model call; the lead reads it as context next turn, so the client can ask "tell me more").
+nothing is shown. New items go to the digest buffer; urgent ones go to the notification bell at once,
+one alert each (`postAlerts`, section 27). Nothing is written into a chat: system news leaves the
+conversation (phase M).
 
 **The digest** (`runDigest`) is built from data, once a day at a configurable time (default 18:00 in
 the team timezone, or the digest's own): program runs since the last digest (`report: 'digest'` programs with
 summary and outputs, `task` programs as a count, `silent` none), open decisions, tasks waiting for
 you or in Review, the heartbeat items of the day, and the cost from the model call log (with the
-heartbeat's share). Idempotent per local day; a quiet day sends nothing.
+heartbeat's share). Idempotent per local day; a quiet day adds nothing. The digest is stored as a
+briefing (a page, one per day) with one bell notification (section 27).
 
 **Web.** Agent dialog, Heartbeat tab: on/off, interval, active hours, timezone, the checklist editor
 (the memory file), "Run a beat now", the recent beats (ok, attention, skipped, failed with their
@@ -1016,7 +1034,7 @@ the database and the logs.
 | `run-has-task` | A routine run is not final (`claimed`, `enqueued`), a scheduled run has no task row, or a succeeded run's task is not `done`. |
 | `decisions` | A decision is still open at the end, a decided one has no `decided_at`, or a session still waits (`pending`) with no decision to answer. |
 | `budget` | The workspace ledger differs from the sum of the logged model calls (cost is recorded once per step, also for a step that failed after streaming), or a reservation stayed open past its expiry (a killed process legitimately holds one until it expires). |
-| `digest-once` | The same digest was stored twice, or two digests share a day. |
+| `digest-once` | The same digest was stored twice in a chat (digests from before phase M), or two share a day. Briefings are unique per day by a database constraint. |
 | `heartbeat` | A beat is still `running`, ends before it starts, repeats an id, or an `ok` beat has items. |
 | `orphans` | A run session has no task row or names a deleted program, a task has a missing parent session, or an undelivered inbox item is left on a run or heartbeat session. |
 
@@ -1038,6 +1056,53 @@ parks a run, Decide, the same run resumes; a queued task goes to Review, Send ba
 the revision comes back; the heartbeat finds something and the digest (set to the next minute in
 the team timezone, so this flow takes about a minute) carries it. There is no browser
 automation dependency in the repository, so this is the API the pages call, not their DOM.
+
+## 27. Chat threads, the Briefing page and the bell (phase M)
+
+**Threads.** An agent has any number of chat threads, all equal (no pinned "main" chat). A thread
+is one eharness session plus a row in `chat_threads` (`domain/threads.ts`, `app/threads.ts`):
+title (null until the first message names it), `source` (`web`, later `channel`) and
+`sourceLabel` (for example a group name) so channel conversations can share the same list with a
+badge, an optional `seed` (what "Discuss in chat" was opened about), archive flag, last activity and
+preview (kept current by wrapping the event appender, `infra/eh/thread-activity.ts`). Session ids:
+`dm:<agentId>` for the thread that existed before threads, `chat:<agentId>:<threadId>` for every
+other. A delegation from a thread has the child session `<thread session>:agent:<call>`, so the
+report returns to the thread that started it and attention roots, recovery and wake-ups walk
+every thread (`team-service.ts`). One helper, `parseChatSession`, replaces the old `dm:` regexes.
+
+**Migration without moving data.** The first read of an agent with no thread row (and the boot
+pass `ensureAllFirstThreads`) creates one row for its existing `dm:<agentId>` session: history,
+modes and connector switches stay under the old id. `migration 0020` only creates the tables.
+`test/threads.test.ts` replays this on a database from before the phase.
+
+**API.** `GET/POST /agents/{id}/threads`, `PATCH /agents/{id}/threads/{threadId}` (rename),
+`POST .../archive|restore`, `POST /threads/discuss`. Per-chat routes (`/agents/{id}/stats`,
+`compact`, `context`, `sessions`, `mode`, `chat/tools`) take `?thread=<id>`; without it they use the
+thread with the newest activity. The chat itself is the library's `/sessions/{sessionId}/chat`: a
+`chat:` id without a thread row is a 404, an archived thread answers 409 `THREAD_ARCHIVED`.
+Threads are created only on demand.
+
+**Briefing page and bell.** `runDigest` stores a `briefings` row (markdown body plus items) and one
+`briefing` notification; `finishBeat` adds one `alert` notification per urgent finding
+(`app/briefings.ts`, tables `briefings`, `notifications`, both idempotent by key). `GET /briefings`,
+`GET /notifications`, `POST /notifications/{id}/dismiss`, `POST /notifications/dismiss-all`. The
+lead reads briefings from any thread with the read-only tool `read_briefings`
+(`heartbeat-plugin.ts`, allowed without approval like the other app tools).
+
+**Following up.** A program or task run is already its own session: open it from the board, a
+notification or a briefing and use its follow-up box (`POST /tasks/{id}/messages`, same session and
+context). "Discuss in chat" on a briefing (or one of its items), an alert or a run
+(`discussInChat`) creates a NEW thread on the lead, seeded with that context as one `eh.event`
+message (no model call). Continuity across threads comes from memory, not chat history.
+
+**Web.** A thread bar above the chat (switcher with archived section, New chat, rename, archive),
+`?t=` in the URL (thread id or session id), a Briefing page in the rail, alerts with "Discuss in
+chat" and Dismiss in the bell, empty assistant messages hidden.
+
+**Test it.** `server/test/threads.test.ts` (CRUD, migration, delegation back to its thread,
+briefing, alerts, `read_briefings`, discuss seeding), `heartbeat.test.ts`, and the web unit tests
+`lib/threads/model.test.ts`, `lib/briefings/model.test.ts`, `lib/stores/threads.test.ts`,
+`lib/stores/live.test.ts`.
 
 ## What to change when you copy it
 

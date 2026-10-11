@@ -11,7 +11,7 @@
 	 * Context usage of the agent's DM chat in the composer: a donut and the percentage; hover or click
 	 * opens the breakdown (context, compaction, usage and cost). Refreshes when a message is stored.
 	 */
-	let { agentId }: { agentId: string } = $props();
+	let { agentId, threadId }: { agentId: string; threadId?: string } = $props();
 
 	let stats = $state<ChatStats | null>(null);
 	let tasks = $state<{ owned: Task[]; delegated: Task[] }>({ owned: [], delegated: [] });
@@ -22,13 +22,14 @@
 
 	$effect(() => {
 		const agent = id;
+		const thread = threadId;
 		void live.state.revs.chat;
-		if (agent !== loaded) {
-			loaded = agent;
+		if (`${agent}#${thread}` !== loaded) {
+			loaded = `${agent}#${thread}`;
 			stats = null;
 		}
 		const mine = ++seq;
-		api.get('/agents/{id}/stats', { params: { id: agent } }).then(
+		api.get('/agents/{id}/stats', { params: { id: agent }, query: thread ? { thread } : {} }).then(
 			(s) => {
 				if (mine === seq) stats = s;
 			},
@@ -40,7 +41,8 @@
 	$effect(() => {
 		if (!open) return;
 		const agent = id;
-		api.get('/agents/{id}/sessions', { params: { id: agent } }).then(
+		const thread = threadId;
+		api.get('/agents/{id}/sessions', { params: { id: agent }, query: thread ? { thread } : {} }).then(
 			(r) => (tasks = { owned: r.tasks, delegated: r.delegated }),
 			() => {}
 		);

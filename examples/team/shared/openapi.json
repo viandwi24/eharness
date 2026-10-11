@@ -16,7 +16,15 @@
     },
     {
       "name": "chats",
-      "description": "Sessions (`eharness/http`): the DM chat `dm:<agentId>` and task sessions: stream, resume, interrupt, history. Plus compact, stats and the tools menu of an agent."
+      "description": "Sessions (`eharness/http`): chat thread sessions (`chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent) and task sessions: stream, resume, interrupt, history. Plus compact, stats and the tools menu of a thread."
+    },
+    {
+      "name": "threads",
+      "description": "Chat threads per agent, all equal: new chat, rename, archive, and \"Discuss in chat\" (a new thread seeded with a briefing item, an alert or a run)."
+    },
+    {
+      "name": "briefings",
+      "description": "The daily digest as a page (one briefing per day) and the bell: urgent alerts and \"briefing ready\"."
     },
     {
       "name": "library",
@@ -1108,6 +1116,347 @@
           "usage"
         ]
       },
+      "ThreadList": {
+        "type": "object",
+        "properties": {
+          "threads": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Thread"
+            }
+          }
+        },
+        "required": [
+          "threads"
+        ]
+      },
+      "Thread": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "sessionId": {
+            "type": "string",
+            "example": "chat:0198…:0198…",
+            "description": "The eharness session of the thread: `chat:<agentId>:<id>`, or `dm:<agentId>` for the thread that existed before threads did. Use it with `/sessions/{id}/…`."
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Null until named: the first message names an unnamed thread."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "web",
+              "channel"
+            ],
+            "description": "Where the conversation lives. `channel` is reserved for messaging channels."
+          },
+          "sourceLabel": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Display label of the source, for example the name of a group."
+          },
+          "seed": {
+            "$ref": "#/components/schemas/ThreadSeed"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "lastMessageAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "preview": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "archivedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "sessionId",
+          "title",
+          "source",
+          "sourceLabel",
+          "seed",
+          "createdAt",
+          "updatedAt",
+          "lastMessageAt",
+          "preview",
+          "archivedAt"
+        ]
+      },
+      "ThreadSeed": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "briefing",
+              "alert",
+              "run"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "description": "Id of the briefing, notification or task."
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref",
+          "title"
+        ],
+        "description": "What a \"Discuss in chat\" thread was opened about."
+      },
+      "ThreadCreate": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "ThreadPatch": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        },
+        "required": [
+          "title"
+        ]
+      },
+      "Discuss": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "briefing",
+              "alert",
+              "run"
+            ]
+          },
+          "ref": {
+            "type": "string",
+            "description": "Briefing id, alert (notification) id or task id."
+          },
+          "item": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "With a briefing: the index of one item of it."
+          },
+          "agent": {
+            "type": "string",
+            "description": "Agent id or slug; default the lead."
+          }
+        },
+        "required": [
+          "kind",
+          "ref"
+        ]
+      },
+      "BriefingList": {
+        "type": "object",
+        "properties": {
+          "briefings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Briefing"
+            }
+          }
+        },
+        "required": [
+          "briefings"
+        ]
+      },
+      "Briefing": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "day": {
+            "type": "string",
+            "example": "2026-10-12",
+            "description": "Local day (digest timezone)."
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string",
+            "description": "The digest as markdown."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BriefingItem"
+            }
+          },
+          "createdAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "day",
+          "title",
+          "body",
+          "items",
+          "createdAt"
+        ]
+      },
+      "BriefingItem": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "run",
+              "decision",
+              "waiting",
+              "noticed",
+              "cost"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "detail": {
+            "type": "string"
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "kind",
+          "title",
+          "detail",
+          "link"
+        ]
+      },
+      "NotificationList": {
+        "type": "object",
+        "properties": {
+          "notifications": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Notification"
+            }
+          },
+          "open": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "notifications",
+          "open"
+        ]
+      },
+      "Notification": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "alert",
+              "briefing"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "App path it opens."
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "dismissedAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "title",
+          "body",
+          "link",
+          "agentId",
+          "createdAt",
+          "dismissedAt"
+        ]
+      },
+      "Dismissed": {
+        "type": "object",
+        "properties": {
+          "dismissed": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dismissed"
+        ]
+      },
       "SessionSnapshot": {
         "type": "object",
         "properties": {
@@ -1724,6 +2073,9 @@
               "model-call",
               "providers-changed",
               "connectors-changed",
+              "thread-changed",
+              "notification-changed",
+              "briefing-added",
               "turn-started",
               "pending-changed",
               "approval-decided",
@@ -8797,7 +9149,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Permission mode of the agent's DM chat",
+        "summary": "Permission mode of a chat thread of the agent",
         "security": [
           {
             "Bearer": []
@@ -8815,6 +9167,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "responses": {
@@ -8864,7 +9226,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "Pick the permission mode of the agent's DM chat",
+        "summary": "Pick the permission mode of a chat thread of the agent",
         "description": "Takes effect at the next tool call, a running turn included. Delegated tasks started by this chat inherit it, unless their own agent is stricter. Emits a `mode-changed` event.",
         "security": [
           {
@@ -8883,6 +9245,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "requestBody": {
@@ -8972,6 +9344,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "responses": {
@@ -9052,6 +9434,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "responses": {
@@ -9120,6 +9512,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "requestBody": {
@@ -9209,6 +9611,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "responses": {
@@ -9255,6 +9667,872 @@
         }
       }
     },
+    "/agents/{id}/threads": {
+      "get": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Chat threads of an agent",
+        "description": "All threads are equal. Newest activity first, archived ones last (with `archived=true`). An agent that has none yet gets one for its existing single DM (`dm:<agentId>`): the history stays where it is.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Include archived threads (listed last)."
+            },
+            "required": false,
+            "description": "Include archived threads (listed last).",
+            "name": "archived",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Threads",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ThreadList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "New chat",
+        "description": "Creates an empty thread; its session starts with the first message. Threads are created on demand, never by an event.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thread"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/threads/{threadId}": {
+      "patch": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Rename a thread",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "threadId",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ThreadPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thread"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/threads/{threadId}/archive": {
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Archive a thread",
+        "description": "Hides it from the list; its history stays readable and a thread that is archived takes no new messages (409 `THREAD_ARCHIVED`) until it is restored.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "threadId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thread"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}/threads/{threadId}/restore": {
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Restore an archived thread",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "threadId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thread"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent or thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/threads/discuss": {
+      "post": {
+        "tags": [
+          "threads"
+        ],
+        "summary": "Discuss in chat",
+        "description": "Opens a NEW thread on the lead (or `agent`) seeded with the context of a briefing (or one of its items), an alert or a run: one context message, no model call. The client then asks what they want to know.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Discuss"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The new thread",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Thread"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown briefing, alert, run or agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "No lead agent, or an archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/briefings": {
+      "get": {
+        "tags": [
+          "briefings"
+        ],
+        "summary": "Briefings (the daily digest), newest day first",
+        "description": "The digest is a page, not a chat message: one entry per local day, built from data. A quiet day has none.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Briefings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BriefingList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/briefings/{id}": {
+      "get": {
+        "tags": [
+          "briefings"
+        ],
+        "summary": "A briefing",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The briefing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Briefing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown briefing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/briefings/{id}/seen": {
+      "post": {
+        "tags": [
+          "briefings"
+        ],
+        "summary": "Mark a briefing as seen (clears its bell notification)",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The briefing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Briefing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown briefing",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "tags": [
+          "briefings"
+        ],
+        "summary": "The bell: alerts and \"briefing ready\"",
+        "description": "Urgent heartbeat findings (one alert each) and one notification per briefing. Not the things that wait for a decision or an answer: those are `/decisions` and `/approvals`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Include dismissed ones."
+            },
+            "required": false,
+            "description": "Include dismissed ones.",
+            "name": "all",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notifications, newest first",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NotificationList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/dismiss-all": {
+      "post": {
+        "tags": [
+          "briefings"
+        ],
+        "summary": "Dismiss every notification",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "How many were dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Dismissed"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/{id}/dismiss": {
+      "post": {
+        "tags": [
+          "briefings"
+        ],
+        "summary": "Dismiss a notification",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "example": "0198f0a2-0000-7000-8000-000000000000",
+              "description": "Agent id or slug."
+            },
+            "required": true,
+            "description": "Agent id or slug.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The notification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Notification"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown notification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/sessions/{id}": {
       "get": {
         "tags": [
@@ -9273,10 +10551,10 @@
               "type": "string",
               "minLength": 1,
               "example": "dm:0198f0a2-0000-7000-8000-000000000000",
-              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+              "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task."
             },
             "required": true,
-            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task.",
             "name": "id",
             "in": "path"
           }
@@ -9343,10 +10621,10 @@
               "type": "string",
               "minLength": 1,
               "example": "dm:0198f0a2-0000-7000-8000-000000000000",
-              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+              "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task."
             },
             "required": true,
-            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task.",
             "name": "id",
             "in": "path"
           },
@@ -9436,10 +10714,10 @@
               "type": "string",
               "minLength": 1,
               "example": "dm:0198f0a2-0000-7000-8000-000000000000",
-              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+              "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task."
             },
             "required": true,
-            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task.",
             "name": "id",
             "in": "path"
           },
@@ -9562,10 +10840,10 @@
               "type": "string",
               "minLength": 1,
               "example": "dm:0198f0a2-0000-7000-8000-000000000000",
-              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+              "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task."
             },
             "required": true,
-            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task.",
             "name": "id",
             "in": "path"
           },
@@ -9648,10 +10926,10 @@
               "type": "string",
               "minLength": 1,
               "example": "dm:0198f0a2-0000-7000-8000-000000000000",
-              "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task."
+              "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task."
             },
             "required": true,
-            "description": "Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.",
+            "description": "Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task.",
             "name": "id",
             "in": "path"
           }
@@ -10749,7 +12027,7 @@
         "tags": [
           "agents"
         ],
-        "summary": "The DM chat and the tasks of an agent",
+        "summary": "The chat thread and the tasks of an agent",
         "security": [
           {
             "Bearer": []
@@ -10767,6 +12045,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "responses": {
@@ -10899,7 +12187,7 @@
           "agents"
         ],
         "summary": "Everything the right panel of an agent shows",
-        "description": "Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.",
+        "description": "For one chat thread (`thread`, default the newest). Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.",
         "security": [
           {
             "Bearer": []
@@ -10917,6 +12205,16 @@
             "description": "Agent id or slug.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity."
+            },
+            "required": false,
+            "description": "Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.",
+            "name": "thread",
+            "in": "query"
           }
         ],
         "responses": {
@@ -16329,7 +17627,7 @@
           "heartbeat"
         ],
         "summary": "Change the daily digest",
-        "description": "Once a day at `time` (default 18:00, in `timezone` or the team timezone) the lead DM gets what ran, what waits, what the heartbeat noticed and the cost. A quiet day sends nothing.",
+        "description": "Once a day at `time` (default 18:00, in `timezone` or the team timezone) the Briefing page gets an entry (and the bell one notification) with what ran, what waits, what the heartbeat noticed and the cost. A quiet day adds nothing.",
         "security": [
           {
             "Bearer": []

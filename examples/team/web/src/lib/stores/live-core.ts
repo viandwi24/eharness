@@ -6,7 +6,8 @@ import {
 	type FeedStatus,
 	type HarnessClient
 } from 'eharness/client';
-import type { Approval, ApiClient, ApprovalBody, Task } from '../api/client';
+import type { Approval, ApiClient, ApprovalBody, Notification, Task } from '../api/client';
+import { belongsToThread, chatSessionAgent } from '../threads/model';
 import { upsertTask } from '../board/board';
 import type { Decision } from '../decisions/model';
 import { applyActivity } from './activity';
@@ -20,13 +21,16 @@ export type LiveState = {
 	decisionsLoaded: boolean;
 	tasks: Task[];
 	tasksLoaded: boolean;
+	/** The bell: urgent alerts and "briefing ready" (not dismissed). */
+	notifications: Notification[];
+	notificationsLoaded: boolean;
 	connection: FeedStatus;
 	/** The events stream dropped and is being re-established (a server restart, the network). */
 	reconnecting: boolean;
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
 	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
-	revs: { files: number; routines: number; programs: number; heartbeat: number; decisions: number; settings: number; modes: number; chat: number; providers: number; connectors: number };
+	revs: { files: number; routines: number; programs: number; heartbeat: number; decisions: number; settings: number; modes: number; chat: number; providers: number; connectors: number; threads: number; briefings: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
@@ -36,10 +40,12 @@ export const emptyLiveState = (): LiveState => ({
 	decisionsLoaded: false,
 	tasks: [],
 	tasksLoaded: false,
+	notifications: [],
+	notificationsLoaded: false,
 	connection: 'idle',
 	reconnecting: false,
 	viewing: null,
-	revs: { files: 0, routines: 0, programs: 0, heartbeat: 0, decisions: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
+	revs: { files: 0, routines: 0, programs: 0, heartbeat: 0, decisions: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0, threads: 0, briefings: 0 }
 });
 
 /** What the team posts to `POST /attention/{id}/answer`: the wire answers plus its question kind. */
@@ -125,6 +131,19 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		}
 	}
 
+	let notificationsReq = 0;
+	async function fetchNotifications(): Promise<void> {
+		const mine = ++notificationsReq;
+		try {
+			const r = await api.get('/notifications', { query: { limit: 50 } });
+			if (mine !== notificationsReq) return;
+			state.notifications = r.notifications;
+			state.notificationsLoaded = true;
+		} catch (e) {
+			report(e);
+		}
+	}
+
 	const bump = (k: keyof LiveState['revs']) => async (): Promise<void> => {
 		state.revs[k]++;
 	};
@@ -133,6 +152,12 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 	const modelCallListeners = new Set<(e: ActivityRecord) => void>();
 	const resyncListeners = new Set<() => void>();
 	const busyProbes = new Set<() => boolean>();
+
+	/** Id, slug and the given key of an agent: any of them may name it. */
+	const agentIds = (agentId: string): string[] => {
+		const agent = agents.find(agentId);
+		return [agent?.id, agentId].filter((x): x is string => !!x);
+	};
 
 	const core = {
 		state,
@@ -154,6 +179,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		loadTasks: fetchTasks,
 
 		loadDecisions: fetchDecisions,
+
+		loadNotifications: fetchNotifications,
 
 		/** Something runs that should show up live: a task, or a chat probe (`addBusyProbe`). Drives the restart pings. */
 		isBusy(): boolean {
@@ -182,7 +209,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 					report(error);
 				}
 			}
-			await Promise.all([core.loadApprovals(), core.loadTasks(), core.loadDecisions(), agents.load()]);
+			await Promise.all([core.loadApprovals(), core.loadTasks(), core.loadDecisions(), core.loadNotifications(), agents.load()]);
 		},
 
 		handleEvent(e: ActivityRecord): void {
@@ -209,7 +236,10 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			if (effect.markRead) void core.markRead(effect.markRead, true);
 			const p = e.payload;
 			// a stored message (turn step or end): context size and usage of the open chat moved
-			if (e.type === 'message-added') later('chat', bump('chat'));
+			if (e.type === 'message-added') {
+				later('chat', bump('chat'));
+				later('threads', bump('threads')); // last activity and preview of a thread moved
+			}
 			attention.handleActivity(e); // pending-changed, approval-decided, turn-ended, ...: the list refetches
 			if (e.type === 'task-changed' || e.type === 'pending-changed' || e.type === 'approval-decided') tasksGen++;
 			if (e.type === 'task-changed') {
@@ -243,6 +273,12 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 				later('decisions-rev', bump('decisions'));
 				// an answer resumes a parked run: its task changes too
 				later('tasks', core.loadTasks);
+			} else if (e.type === 'thread-changed') {
+				// a chat was created, renamed, archived or restored (any tab, a discussion opened elsewhere)
+				later('threads', bump('threads'));
+			} else if (e.type === 'notification-changed' || e.type === 'briefing-added') {
+				later('notifications', core.loadNotifications);
+				if (e.type === 'briefing-added') later('briefings', bump('briefings'));
 			} else if (e.type === 'providers-changed') {
 				// a profile was added, edited or removed (any tab or instance): lists refetch
 				later('providers', bump('providers'));
@@ -288,37 +324,36 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		},
 
 		/**
-		 * What this agent's chat must show inline: its own questions (`ask_user_question`; its own
-		 * tool approvals render inside the message) plus every approval or question of the child
-		 * sessions it delegated to — like the coder's prompt labelled "from <agent>".
+		 * What one chat thread must show inline: its own questions (`ask_user_question`; its own tool
+		 * approvals render inside the message) plus every approval or question of the child sessions it
+		 * delegated to — like the coder's prompt labelled "from <agent>". `sessionId` is the thread's
+		 * session; without it, every thread of the agent.
 		 */
-		chatPending(agentId: string): Approval[] {
-			const agent = agents.find(agentId);
-			const ids = [agent?.id, agent?.slug, agentId].filter((x): x is string => !!x);
-			const own = (a: Approval): boolean => ids.some((id) => a.sessionId === `dm:${id}`);
-			return [
-				...state.approvals.filter((a) => own(a) && a.kind === 'question'),
-				...core.childApprovals(agentId)
-			];
+		chatPending(agentId: string, sessionId?: string): Approval[] {
+			const ids = agentIds(agentId);
+			const own = (a: Approval): boolean => (sessionId ? a.sessionId === sessionId : ids.includes(chatSessionAgent(a.sessionId) ?? ''));
+			return [...state.approvals.filter((a) => own(a) && a.kind === 'question'), ...core.childApprovals(agentId, sessionId)];
 		},
 
 		/**
-		 * The approval of this agent's OWN DM session with that id (what an inline card of its
-		 * message may answer). A child's approval is never answered from the lead's message.
+		 * The approval of this thread's OWN session with that id (what an inline card of its message
+		 * may answer). A child's approval is never answered from the lead's message.
 		 */
-		ownApproval(agentId: string, approvalId: string): Approval | undefined {
-			const agent = agents.find(agentId);
-			const ids = [agent?.id, agent?.slug, agentId].filter((x): x is string => !!x);
-			return state.approvals.find((a) => a.id === approvalId && a.kind === 'approval' && ids.some((id) => a.sessionId === `dm:${id}`));
+		ownApproval(agentId: string, approvalId: string, sessionId?: string): Approval | undefined {
+			const ids = agentIds(agentId);
+			return state.approvals.find(
+				(a) => a.id === approvalId && a.kind === 'approval' && (sessionId ? a.sessionId === sessionId : ids.includes(chatSessionAgent(a.sessionId) ?? ''))
+			);
 		},
 
-		/** Approvals waiting in child sessions of this agent's delegations (lead hint). */
-		childApprovals(agentId: string): Approval[] {
-			const agent = agents.find(agentId);
-			const ids = [agent?.id, agent?.slug, agentId].filter((x): x is string => !!x);
-			return state.approvals.filter(
-				(a) => a.parentSessionId !== null && ids.some((id) => a.parentSessionId === `dm:${id}` || a.parentSessionId?.startsWith(`dm:${id}:`))
-			);
+		/** Approvals waiting in child sessions of this thread's delegations (lead hint). */
+		childApprovals(agentId: string, sessionId?: string): Approval[] {
+			const ids = agentIds(agentId);
+			return state.approvals.filter((a) => {
+				const parent = a.parentSessionId;
+				if (parent === null) return false;
+				return sessionId ? belongsToThread(parent, sessionId) : ids.includes(chatSessionAgent(parent.replace(/:agent:.*$/, '')) ?? '');
+			});
 		}
 	};
 	return core;

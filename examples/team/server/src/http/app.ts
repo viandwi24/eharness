@@ -10,6 +10,7 @@ import { checkBearer, originAllowed } from '../app/auth.ts'
 import { DomainError } from '../app/errors.ts'
 import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
+import { briefingRoutes } from './routes/briefings.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { connectorRoutes } from './routes/connectors.ts'
 import { decisionRoutes } from './routes/decisions.ts'
@@ -25,6 +26,7 @@ import { rehearsalRoutes } from './routes/rehearsals.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { settingsRoutes } from './routes/settings.ts'
 import { taskRoutes } from './routes/tasks.ts'
+import { threadRoutes } from './routes/threads.ts'
 import { uploadRoutes } from './routes/uploads.ts'
 
 export interface AppOptions {
@@ -59,7 +61,17 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
     {
       name: 'chats',
       description:
-        'Sessions (`eharness/http`): the DM chat `dm:<agentId>` and task sessions: stream, resume, interrupt, history. Plus compact, stats and the tools menu of an agent.',
+        'Sessions (`eharness/http`): chat thread sessions (`chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent) and task sessions: stream, resume, interrupt, history. Plus compact, stats and the tools menu of a thread.',
+    },
+    {
+      name: 'threads',
+      description:
+        'Chat threads per agent, all equal: new chat, rename, archive, and "Discuss in chat" (a new thread seeded with a briefing item, an alert or a run).',
+    },
+    {
+      name: 'briefings',
+      description:
+        'The daily digest as a page (one briefing per day) and the bell: urgent alerts and "briefing ready".',
     },
     { name: 'library', description: 'Shared files: agent artifacts, uploads, version history.' },
     { name: 'memory', description: 'Workspace and per-agent memory files.' },
@@ -245,6 +257,8 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', agentRoutes(options.deps))
   app.route('/', modeRoutes(options.deps))
   app.route('/', chatRoutes(options.deps))
+  app.route('/', threadRoutes(options.deps))
+  app.route('/', briefingRoutes(options.deps))
   app.route('/', harnessRoutes(options.harness))
   app.route('/', uploadRoutes(options.deps))
   app.route('/', taskRoutes(options.deps))

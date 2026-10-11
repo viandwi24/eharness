@@ -269,13 +269,16 @@ try {
       },
       150_000,
     )
-    const dm = await get<{ messages: Array<{ parts: Array<Record<string, unknown>> }> }>(
-      '/sessions/dm:lead/messages?limit=100',
-    )
-    const text = JSON.stringify(dm.messages)
+    // the digest is a Briefing page plus one bell notification, never a chat message
+    const page = await get<{ briefings: Array<{ body: string }> }>('/briefings')
     check(
-      text.includes('daily-digest') && text.includes('The audit program has no owner'),
-      'the digest is not in the lead DM',
+      page.briefings.some((b) => b.body.includes('The audit program has no owner')),
+      'the digest is not on the Briefing page',
+    )
+    const bell = await get<{ notifications: Array<{ kind: string }> }>('/notifications')
+    check(
+      bell.notifications.some((n) => n.kind === 'briefing'),
+      'the bell has no "briefing ready" notification',
     )
     const after = await get<{ digest: { buffered: number } }>(`/agents/${lead.id}/heartbeat`)
     check(after.digest.buffered === 0, 'the buffer was not emptied')

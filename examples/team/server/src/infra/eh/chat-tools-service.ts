@@ -5,7 +5,6 @@
  */
 import type { ChatToolsPort } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import { dmSessionId } from '../../domain/chat.ts'
 import { invalid } from '../../domain/errors.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 
@@ -34,8 +33,8 @@ export function createChatToolsService(deps: {
       (c) =>
         c.enabled && c.status !== 'disabled' && (c.source !== 'builtin' || c.connectorId === 'web'),
     )
-  const get = async (agent: AgentDef) => {
-    const off = new Set(deps.store.off(dmSessionId(agent.id)))
+  const get = async (agent: AgentDef, sessionId: string) => {
+    const off = new Set(deps.store.off(sessionId))
     const rows = await switchable(agent)
     const connectors = rows.map((c) => ({
       connectionId: c.connectionId,
@@ -56,14 +55,14 @@ export function createChatToolsService(deps: {
   }
   return {
     get,
-    async set(agent, off, now) {
+    async set(agent, sessionId, off, now) {
       const known = new Set((await switchable(agent)).map((c) => c.connectionId))
       const unknown = off.filter((id) => !known.has(id))
       if (unknown.length > 0) {
         throw invalid(`not a connector of this agent: ${unknown.join(', ')}`, 'UNKNOWN_CONNECTION')
       }
-      deps.store.setOff(dmSessionId(agent.id), off, now)
-      return get(agent)
+      deps.store.setOff(sessionId, off, now)
+      return get(agent, sessionId)
     },
   }
 }

@@ -19,7 +19,7 @@
 	 * A switch applies to THIS chat only; the tools of a switched-off connector are not offered to the
 	 * model from the next step on. Pinned asks and permissions do not change.
 	 */
-	let { agentId }: { agentId: string } = $props();
+	let { agentId, threadId }: { agentId: string; threadId?: string } = $props();
 
 	let tools = $state<ChatTools | undefined>(undefined);
 	let open = $state(false);
@@ -28,7 +28,7 @@
 
 	async function load(): Promise<void> {
 		try {
-			tools = await api.get('/agents/{id}/chat/tools', { params: { id: agentId } });
+			tools = await api.get('/agents/{id}/chat/tools', { params: { id: agentId }, query: threadId ? { thread: threadId } : {} });
 			error = '';
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Could not load the connectors';
@@ -37,6 +37,7 @@
 
 	$effect(() => {
 		void agentId;
+		void threadId;
 		void live.state.revs.connectors; // a connection or an enablement changed
 		untrack(() => void load());
 	});
@@ -55,7 +56,7 @@
 		tools = applySwitch(before, c.connectionId, on); // optimistic
 		busy = true;
 		try {
-			tools = await api.put('/agents/{id}/chat/tools', { params: { id: agentId }, body: { off } });
+			tools = await api.put('/agents/{id}/chat/tools', { params: { id: agentId }, query: threadId ? { thread: threadId } : {}, body: { off } });
 		} catch (e) {
 			tools = before;
 			toast.error(e instanceof Error ? e.message : 'Could not change the connectors of this chat');

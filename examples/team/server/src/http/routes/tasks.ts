@@ -17,7 +17,7 @@ import {
   sendBackTask,
   updateQueuedTask,
 } from '../../app/work-queue.ts'
-import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
+import { errorResponses, IdParam, jsonError, ThreadQuery } from '../schemas/common.ts'
 import {
   AgentContextSchema,
   AgentSessionsSchema,
@@ -196,9 +196,9 @@ const sessionsRoute = createRoute({
   method: 'get',
   path: '/agents/{id}/sessions',
   tags: ['agents'],
-  summary: 'The DM chat and the tasks of an agent',
+  summary: 'The chat thread and the tasks of an agent',
   security,
-  request: { params: IdParam },
+  request: { params: IdParam, query: ThreadQuery },
   responses: {
     200: { description: 'DM state, owned and delegated tasks', content: json(AgentSessionsSchema) },
     404: jsonError('Unknown agent'),
@@ -245,9 +245,9 @@ const contextRoute = createRoute({
   tags: ['agents'],
   summary: 'Everything the right panel of an agent shows',
   description:
-    'Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.',
+    'For one chat thread (`thread`, default the newest). Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.',
   security,
-  request: { params: IdParam },
+  request: { params: IdParam, query: ThreadQuery },
   responses: {
     200: { description: 'Context', content: json(AgentContextSchema) },
     404: jsonError('Unknown agent'),
@@ -297,7 +297,10 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
     )
     .openapi(approvalsRoute, async (c) => c.json({ approvals: await listApprovals(deps) }, 200))
     .openapi(sessionsRoute, async (c) =>
-      c.json((await agentSessions(deps, c.req.valid('param').id)) as never, 200),
+      c.json(
+        (await agentSessions(deps, c.req.valid('param').id, c.req.valid('query').thread)) as never,
+        200,
+      ),
     )
     .openapi(messageRoute, async (c) => {
       const body = c.req.valid('json')
@@ -310,7 +313,10 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
       )
     })
     .openapi(contextRoute, async (c) =>
-      c.json((await agentContext(deps, c.req.valid('param').id)) as never, 200),
+      c.json(
+        (await agentContext(deps, c.req.valid('param').id, c.req.valid('query').thread)) as never,
+        200,
+      ),
     )
     .openapi(readRoute, (c) => c.json(markAgentRead(deps, c.req.valid('param').id), 200))
 }

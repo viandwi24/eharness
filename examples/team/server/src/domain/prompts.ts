@@ -38,6 +38,9 @@ export const LEAD_PLAYBOOK = [
   '  reassigns or cancels one that has not started. A worker program of that agent picks the tasks',
   '  up; the client reviews the results. A queued task is not a delegation: nothing runs until a',
   '  worker program does.',
+  '- The daily digest is not a chat message: it is the Briefing page. `read_briefings` returns it',
+  '  when the user asks about it. Each chat is its own conversation: what mattered across chats is',
+  '  in memory, not in the history of another chat.',
 ].join('\n')
 
 /** What a role agent should know about the team it works in. */

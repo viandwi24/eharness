@@ -21,7 +21,6 @@ import type {
   HeartbeatPorts,
   HeartbeatStore,
 } from '../../app/ports.ts'
-import { previewOf } from '../../domain/tasks.ts'
 import type { AgentFactory } from './agent-factory.ts'
 
 /** The rolling session of an agent's heartbeat. */
@@ -101,7 +100,6 @@ export function createHeartbeatService(
 ): HeartbeatService {
   const log = options.log ?? { warn() {} }
   const inflight = new Set<Promise<unknown>>()
-  const lead = () => options.agents.list().find((a) => a.role === 'lead')
 
   const ports: HeartbeatPorts = {
     store: options.store,
@@ -123,26 +121,6 @@ export function createHeartbeatService(
         out.push({ text, at: meta?.createdAt ?? 0 })
       }
       return out
-    },
-
-    async notify({ name, text, key, at }) {
-      const def = lead()
-      if (def === undefined) return
-      await factory.prepare(def)
-      const sessionId = `dm:${def.id}`
-      const session = factory.openSession(def, sessionId)
-      await (
-        session as unknown as {
-          inject(kind: string, data: unknown, opts?: { key?: string }): Promise<unknown>
-        }
-      ).inject('eh.event', { name, text }, { key })
-      options.events.append({
-        type: 'message-added',
-        agentId: def.id,
-        sessionId,
-        payload: { role: 'assistant', preview: previewOf(text.replace(/\*\*/g, '')) },
-        at,
-      })
     },
   }
 

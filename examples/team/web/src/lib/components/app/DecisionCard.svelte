@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chatHref } from '#lib/threads/model.js';
 	import { goto } from '$app/navigation';
 	import CheckIcon from 'phosphor-svelte/lib/Check';
 	import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimple';
@@ -32,8 +33,9 @@
 	/** The DM chat a proposal came from, or the task session of a run. */
 	async function openSource(): Promise<void> {
 		if (!decision.sessionId) return;
-		if (decision.sessionId.startsWith('dm:')) {
-			void goto(`/a/${decision.agentId}`);
+		const chat = chatHref(decision.sessionId);
+		if (chat) {
+			void goto(chat);
 			return;
 		}
 		if (!(await openSession(decision.sessionId))) toast.error('That session is not on the board any more');
@@ -74,7 +76,7 @@
 				<span>{agent?.name ?? 'An agent'} asks</span>
 				{#if decision.sessionId}
 					<button type="button" class="underline underline-offset-4 outline-none hover:text-foreground focus-visible:text-foreground" onclick={() => void openSource()}>
-						{decision.sessionId.startsWith('dm:') ? 'Open the chat' : 'Open the run'}
+						{chatHref(decision.sessionId) ? 'Open the chat' : 'Open the run'}
 					</button>
 				{/if}
 				{#if decision.programId}

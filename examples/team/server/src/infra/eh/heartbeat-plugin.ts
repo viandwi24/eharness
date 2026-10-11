@@ -13,6 +13,7 @@
 import { tool } from 'ai'
 import { definePlugin, errorText, type HarnessContext, type HarnessPlugin } from 'eharness'
 import { z } from 'zod'
+import { READ_BRIEFINGS_DESCRIPTION, READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { TEAM_STATUS_TOOL } from '../../domain/heartbeat.ts'
 import { originOfSession } from '../../domain/run-profiles.ts'
 
@@ -20,6 +21,10 @@ import { originOfSession } from '../../domain/run-profiles.ts'
 export interface HeartbeatIntake {
   status(agentId: string): Promise<string>
   ended(end: { agentId: string; stop: string; output: unknown }): Promise<void>
+  /** The agent (slug) may read the briefings: the lead, in a chat thread. */
+  canReadBriefings(agentSlug: string): boolean
+  /** The latest briefings, or the one of a day, as text. */
+  briefings(query: { limit?: number; day?: string }): string
 }
 
 export interface HeartbeatPluginOptions {
@@ -39,13 +44,43 @@ export function heartbeat(options: HeartbeatPluginOptions): HarnessPlugin<'heart
     session: (rawCtx) => {
       const ctx = rawCtx as HarnessContext
       const sessionId = ctx.session.id
-      if (originOfSession(sessionId) !== 'heartbeat') return {}
-      const agentId = sessionId.slice('heartbeat:'.length)
+      const origin = originOfSession(sessionId)
       const intake = () => {
         const found = options.intake()
         if (found === undefined) throw new Error('the heartbeat is not ready')
         return found
       }
+      // the lead reads the briefings from any chat thread (the digest is a page, not a message)
+      if (origin === 'dm') {
+        if (options.intake()?.canReadBriefings(ctx.agent.id) !== true) return {}
+        return {
+          tools: {
+            [READ_BRIEFINGS_TOOL]: tool({
+              description: READ_BRIEFINGS_DESCRIPTION,
+              inputSchema: z.object({
+                days: z.number().int().min(1).max(7).optional(),
+                day: z
+                  .string()
+                  .regex(/^\d{4}-\d{2}-\d{2}$/)
+                  .optional(),
+              }),
+              metadata: { risk: 'read', idempotent: true },
+              execute: async (input): Promise<string> => {
+                try {
+                  return intake().briefings({
+                    ...(input.days === undefined ? {} : { limit: input.days }),
+                    ...(input.day === undefined ? {} : { day: input.day }),
+                  })
+                } catch (error) {
+                  return `ERROR: could not read the briefings: ${errorText(error)}`
+                }
+              },
+            }),
+          } as never,
+        }
+      }
+      if (origin !== 'heartbeat') return {}
+      const agentId = sessionId.slice('heartbeat:'.length)
       return {
         tools: {
           [TEAM_STATUS_TOOL]: tool({

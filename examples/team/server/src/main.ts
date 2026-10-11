@@ -37,6 +37,7 @@ import type { OpenAPIHono } from '@hono/zod-openapi'
 import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
 import { hostAllowed, type ListenConfig, listenConfig, originOf } from './app/auth.ts'
+import { briefingsText } from './app/briefings.ts'
 import { checkChatBody } from './app/chat.ts'
 import {
   createAmendment,
@@ -48,6 +49,7 @@ import { recheckTask } from './app/deliverables.ts'
 import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
+import { ensureAllFirstThreads } from './app/threads.ts'
 import {
   cancelQueuedTask,
   completeTask,
@@ -72,12 +74,14 @@ import { drizzleDecisionStore } from './infra/db/decisions-repo.ts'
 import { sqliteHeartbeatStore } from './infra/db/heartbeat-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
+import { sqliteBriefingStore, sqliteNotificationStore } from './infra/db/notifications-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
 import { sqliteProgramTestStore, sqliteRehearsalStore } from './infra/db/rehearsal-repo.ts'
 import { pruneTables, type TableRetention } from './infra/db/retention.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
+import { sqliteThreadStore } from './infra/db/threads-repo.ts'
 import { type ActivityLog, createActivityLog } from './infra/eh/activity-log.ts'
 import {
   type AgentFactory,
@@ -122,6 +126,7 @@ import {
   type ReconcileReport,
   type TeamService,
 } from './infra/eh/team-service.ts'
+import { withThreadActivity } from './infra/eh/thread-activity.ts'
 import { sqliteUploadStore } from './infra/eh/upload-store.ts'
 import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
 import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
@@ -236,7 +241,8 @@ export function compose(config: ServerConfig): Server {
   // app appends its own types (providers-changed, settings-changed, ...) through `events`; the
   // routes that read it are the `activity` option of eharness/http (below)
   const activityStore = sqliteActivityStore(conn.sqlite)
-  const events = createEventAppender(activityStore)
+  const threadStore = sqliteThreadStore(conn.sqlite)
+  const events = withThreadActivity(createEventAppender(activityStore), threadStore)
   // ONE vault, ONE profile table and ONE sealing path: provider profiles, connections, their
   // credentials and OAuth app credentials all go through `sealedProfileStore`. Rows written by
   // earlier versions (legacy `v1:` blobs) open through the vault's legacy reader and are
@@ -463,6 +469,7 @@ export function compose(config: ServerConfig): Server {
   const team = createTeamService(factory, {
     agents,
     tasks,
+    threads: threadStore,
     events,
     activity: activityStore,
     log: { warn: (message) => console.warn(`team: ${message}`) },
@@ -528,6 +535,9 @@ export function compose(config: ServerConfig): Server {
   const deps: Deps = {
     agents,
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
+    threads: threadStore,
+    notifications: sqliteNotificationStore(conn.sqlite),
+    briefings: sqliteBriefingStore(conn.sqlite),
     chatTools: createChatToolsService({
       store: chatToolsStore,
       agentConnectors: (agent) => connectors.agentConnectors(agent),
@@ -586,8 +596,12 @@ export function compose(config: ServerConfig): Server {
     ended: async (end) => {
       await finishBeat(deps, { ...end, at: Date.now() })
     },
+    canReadBriefings: (slug) => agents.getBySlug(slug)?.role === 'lead',
+    briefings: (query) => briefingsText(deps, query),
   }
   if (config.seed !== false) seedAgents(deps)
+  // agents from before threads keep their single DM as their first thread
+  ensureAllFirstThreads(deps)
   // every agent with a heartbeat (the lead by default) has its routine, and the lead the digest
   ensureHeartbeats(deps)
 
@@ -654,6 +668,7 @@ export function compose(config: ServerConfig): Server {
     factory,
     agents,
     tasks,
+    threads: threadStore,
     team,
     activity: activityStore,
     token: config.token,

@@ -22,6 +22,9 @@ export const APP_EVENT_TYPES = [
   'model-call',
   'providers-changed',
   'connectors-changed',
+  'thread-changed',
+  'notification-changed',
+  'briefing-added',
 ] as const
 
 /**

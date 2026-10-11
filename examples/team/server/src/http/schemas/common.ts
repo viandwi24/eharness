@@ -27,6 +27,14 @@ export const jsonError = (description: string) => ({
   content: { 'application/json': { schema: ErrorSchema } },
 })
 
+/** Which chat thread of the agent a per-chat route is about (default: the newest thread). */
+export const ThreadQuery = z.object({
+  thread: z.string().optional().openapi({
+    description:
+      'Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity.',
+  }),
+})
+
 export const IdParam = z.object({
   id: z
     .string()

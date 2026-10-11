@@ -32,7 +32,8 @@
 		status,
 		stopping = false,
 		placeholder = 'Message the agent',
-		agentId
+		agentId,
+		threadId
 	}: {
 		onSend: (message: PromptInputMessage) => void | Promise<void>;
 		onStop?: () => void;
@@ -42,6 +43,8 @@
 		placeholder?: string;
 		/** The agent of this DM chat: shows its permission mode switch (Shift+Tab cycles it). */
 		agentId?: string;
+		/** The chat thread: its own mode, connectors and context meter. */
+		threadId?: string;
 	} = $props();
 
 	let modeSwitch = $state<ModeSwitch | undefined>();
@@ -87,11 +90,11 @@
 				<PromptInputButton aria-label="Attach files" title="Attach files" onclick={openFileDialog}>
 					<PaperclipIcon class="size-4" />
 				</PromptInputButton>
-				{#if agentId}<ChatToolsMenu {agentId} />{/if}
-				{#if agentId}<ModeSwitch bind:this={modeSwitch} {agentId} />{/if}
+				{#if agentId}<ChatToolsMenu {agentId} {threadId} />{/if}
+				{#if agentId}<ModeSwitch bind:this={modeSwitch} {agentId} {threadId} />{/if}
 			</PromptInputTools>
 			<div class="flex items-center gap-1.5">
-				{#if agentId}<ContextMeter {agentId} />{/if}
+				{#if agentId}<ContextMeter {agentId} {threadId} />{/if}
 				<PromptInputSubmit {status} {onStop} disabled={stopping} />
 			</div>
 		</PromptInputFooter>

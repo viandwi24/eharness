@@ -1,5 +1,4 @@
 /** Task board and agent session use cases. */
-import { dmSessionId } from '../domain/chat.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
 import type { Task, TaskStatus } from '../domain/tasks.ts'
 import { isQueuedSession } from '../domain/work-queue.ts'
@@ -7,6 +6,7 @@ import { getAgent } from './agents.ts'
 import { withCreator } from './library.ts'
 import { listMemory } from './memory.ts'
 import type { ChatMessage, Deps } from './ports.ts'
+import { threadSessionOf } from './threads.ts'
 
 export function listTasks(
   deps: Deps,
@@ -43,9 +43,9 @@ async function taskApprovals(deps: Deps, task: Task) {
 }
 
 /** The DM chat and the tasks of an agent (owned, and handed to others from its DM). */
-export async function agentSessions(deps: Deps, idOrSlug: string) {
+export async function agentSessions(deps: Deps, idOrSlug: string, threadId?: string) {
   const agent = getAgent(deps, idOrSlug)
-  const dm = dmSessionId(agent.id)
+  const dm = threadSessionOf(deps, agent, threadId)
   const { owned, delegated } = deps.tasks.ofAgent(agent.id, dm)
   const activity = deps.tasks.activity().get(agent.id)
   const pending = (await deps.team.approvals()).filter((a) => a.sessionId === dm).length
@@ -95,13 +95,14 @@ export async function messageTask(
 }
 
 /** Everything the right panel of an agent needs in one call. */
-export async function agentContext(deps: Deps, idOrSlug: string) {
+export async function agentContext(deps: Deps, idOrSlug: string, threadId?: string) {
   const agent = getAgent(deps, idOrSlug)
+  const session = threadSessionOf(deps, agent, threadId)
   const [chat, memoryWorkspace] = await Promise.all([
-    deps.chat.context(agent),
+    deps.chat.context(agent, session),
     Promise.resolve(listMemory(deps, 'workspace')),
   ])
-  const { owned, delegated } = deps.tasks.ofAgent(agent.id, dmSessionId(agent.id))
+  const { owned, delegated } = deps.tasks.ofAgent(agent.id, session)
   const active = (t: Task) => t.status === 'running' || t.status === 'needs_action'
   return {
     agent: { id: agent.id, slug: agent.slug, name: agent.name, role: agent.role },

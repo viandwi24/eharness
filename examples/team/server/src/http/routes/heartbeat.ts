@@ -83,7 +83,7 @@ const digestPatch = createRoute({
   tags: ['heartbeat'],
   summary: 'Change the daily digest',
   description:
-    'Once a day at `time` (default 18:00, in `timezone` or the team timezone) the lead DM gets what ran, what waits, what the heartbeat noticed and the cost. A quiet day sends nothing.',
+    'Once a day at `time` (default 18:00, in `timezone` or the team timezone) the Briefing page gets an entry (and the bell one notification) with what ran, what waits, what the heartbeat noticed and the cost. A quiet day adds nothing.',
   security,
   request: { body: { required: true, content: json(DigestPatchSchema) } },
   responses: {

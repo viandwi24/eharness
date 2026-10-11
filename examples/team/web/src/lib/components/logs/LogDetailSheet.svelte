@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { chatHref } from '#lib/threads/model.js';
 	import Surface from '#lib/components/app/Surface.svelte';
 	import ArrowLeftIcon from 'phosphor-svelte/lib/ArrowLeft';
 	import ArrowRightIcon from 'phosphor-svelte/lib/ArrowRight';
@@ -152,8 +153,8 @@
 							<dd class="flex min-w-0 items-center gap-2">
 								{#if detail.taskId}
 									<button type="button" class="whitespace-nowrap underline underline-offset-2 hover:text-foreground" onclick={() => openTask(detail.taskId!)}>Open task</button>
-								{:else if detail.sessionId && detail.agentId && detail.sessionId.startsWith('dm:')}
-									<a href="/a/{detail.agentId}" class="whitespace-nowrap underline underline-offset-2 hover:text-foreground">Open chat</a>
+								{:else if detail.sessionId && chatHref(detail.sessionId)}
+									<a href={chatHref(detail.sessionId)} class="whitespace-nowrap underline underline-offset-2 hover:text-foreground">Open chat</a>
 								{/if}
 								{#if detail.sessionId}<span class="min-w-0 truncate font-mono text-xs text-muted-foreground" title={detail.sessionId}>{detail.sessionId}</span>{:else}—{/if}
 							</dd>

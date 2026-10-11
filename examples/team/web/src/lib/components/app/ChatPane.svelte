@@ -28,7 +28,11 @@
 	import { api } from '#lib/api/index.js';
 	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
 	import { startsAuthorRun } from '#lib/parts/map.js';
-	import { uniqueById } from '#lib/chat/messages.js';
+	import { uniqueById, withoutEmptyAssistant } from '#lib/chat/messages.js';
+	import { goto } from '$app/navigation';
+	import ThreadBar from './ThreadBar.svelte';
+	import { threadsStore } from '#lib/stores/threads.svelte.js';
+	import { pickThread, threadHref } from '#lib/threads/model.js';
 	import { tick } from 'svelte';
 	import PendingCard from './PendingCard.svelte';
 	import { toast } from 'svelte-sonner';
@@ -48,25 +52,39 @@
 	 */
 	let {
 		agentId,
+		threadParam = null,
 		panelOpen = true,
 		wide = true,
 		popoverOpen = $bindable(false),
 		onTogglePanel
-	}: { agentId: string; panelOpen?: boolean; wide?: boolean; popoverOpen?: boolean; onTogglePanel: () => void } = $props();
+	}: { agentId: string; threadParam?: string | null; panelOpen?: boolean; wide?: boolean; popoverOpen?: boolean; onTogglePanel: () => void } = $props();
 
 	const agent = $derived(agentsStore.find(agentId));
-	// One cached chat per agent (history, stream and pagination survive switching agents). Creating it is
-	// pure; the network load starts in the effect below.
-	const ac = $derived(agentChat(agentId));
+	// The thread shown: the one the link names (`?t=`, by id or session id), else the newest. All threads
+	// of an agent are equal; the list lives in the thread bar.
+	const allThreads = $derived(threadsStore.threadsOf(agentId));
+	const open = $derived(allThreads.filter((t) => t.archivedAt === null));
+	const thread = $derived(pickThread(threadParam ? allThreads : open, threadParam));
+	// a link without a thread settles on the one it resolved to, so new activity elsewhere does not switch the chat
 	$effect(() => {
-		void ac.init();
+		if (!threadParam && thread) void goto(threadHref(agentId, thread.id), { replaceState: true });
 	});
-	const chat = $derived(ac.chat);
-	// One entry per id at the render boundary: a duplicate key would crash the whole page.
+	const sessionId = $derived(thread?.sessionId ?? '');
+	// One cached chat per thread (history, stream and pagination survive switching). Creating it is
+	// pure; the network load starts in the effect below.
+	const ac = $derived(thread ? agentChat(agentId, thread.sessionId) : undefined);
+	$effect(() => {
+		void ac?.init();
+	});
+	const chat = $derived(ac?.chat);
+	// One entry per id at the render boundary: a duplicate key would crash the whole page. An empty
+	// assistant message (a provider failure stores one on purpose, next to the notice) is not shown.
 	const messages = $derived(
-		uniqueById(chat.messages, (id) => {
-			if (import.meta.env.DEV) console.warn(`[chat] duplicate message id ${id} in the chat list; keeping the newest copy`);
-		})
+		withoutEmptyAssistant(
+			uniqueById(chat?.messages ?? [], (id) => {
+				if (import.meta.env.DEV) console.warn(`[chat] duplicate message id ${id} in the chat list; keeping the newest copy`);
+			})
+		)
 	);
 
 	/**
@@ -77,10 +95,10 @@
 	 */
 	async function answerInline(a: { id: string; approved: boolean; reason?: string; note?: string; remember?: 'session' }): Promise<void> {
 		const { id, ...body } = a;
-		const item = live.ownApproval(agentId, id);
+		const item = live.ownApproval(agentId, id, sessionId);
 		if (!item) {
 			void live.loadApprovals();
-			void ac.refetch();
+			void ac?.refetch();
 			return;
 		}
 		try {
@@ -88,27 +106,27 @@
 		} catch (e) {
 			const text = answerFailureText(e);
 			if (text) toast.error(text);
-			else void ac.refetch();
+			else void ac?.refetch();
 			return;
 		}
 		await followAfterAnswer();
 	}
 	/** An inline approval is offered only while the server lists it as waiting. */
-	const canAnswer = (approvalId: string): boolean => !live.state.approvalsLoaded || live.ownApproval(agentId, approvalId) !== undefined;
+	const canAnswer = (approvalId: string): boolean => !live.state.approvalsLoaded || live.ownApproval(agentId, approvalId, sessionId) !== undefined;
 
 	async function send(m: PromptInputMessage): Promise<void> {
 		const text = m.text.trim();
 		if (!text && m.files.length === 0) return;
 		let files;
 		try {
-			files = await Promise.all(m.files.map((f) => ac.upload(f)));
+			files = await Promise.all(m.files.map((f) => ac!.upload(f)));
 		} catch (e) {
 			// Throwing keeps the text and attachments in the composer for a retry.
 			toast.error(e instanceof Error ? e.message : 'Upload failed');
 			throw e;
 		}
 		// Not awaited: the composer must clear now, not when the stream ends. Errors reach `onError`.
-		void ac.send(text, files);
+		void ac?.send(text, files);
 	}
 
 	// Scroll-up pagination: load the next older page near the top and keep the viewport anchored.
@@ -118,7 +136,7 @@
 	let busyOlder = false;
 	async function maybeLoadOlder(): Promise<void> {
 		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
-		if (!vp || busyOlder || !ac.hasOlder || ac.loadingOlder) return;
+		if (!ac || !vp || busyOlder || !ac.hasOlder || ac.loadingOlder) return;
 		if (vp.scrollHeight > vp.clientHeight && vp.scrollTop > 160) return;
 		busyOlder = true;
 		try {
@@ -142,7 +160,7 @@
 	});
 	// Short history that does not fill the viewport: keep loading until it does (or there is no more).
 	$effect(() => {
-		if (ac.loaded && ac.hasOlder && chat.messages.length) void tick().then(maybeLoadOlder);
+		if (ac?.loaded && ac.hasOlder && chat?.messages.length) void tick().then(maybeLoadOlder);
 	});
 	// Opening the chat marks it read; the live store keeps it read while it stays visible.
 	$effect(() => {
@@ -154,10 +172,10 @@
 		};
 	});
 	// Questions of this chat and approvals of the role agents it delegated to, answered inline.
-	const inline = $derived(live.chatPending(agentId));
+	const inline = $derived(live.chatPending(agentId, sessionId || undefined));
 	let pendingIdx = $state(0);
 	// After an inline answer the turn continues on the server: follow it into this chat.
-	const followAfterAnswer = (): void => void ac.follow();
+	const followAfterAnswer = (): void => void ac?.follow();
 	$effect(() => {
 		if (!agentsStore.find(agentId)) void agentsStore.get(agentId).catch(() => {});
 	});
@@ -165,11 +183,11 @@
 	let compacting = $state(false);
 	/** Summarise the older part of the chat now (`POST /agents/{id}/compact`). */
 	async function compact(): Promise<void> {
-		if (!agent || compacting) return;
+		if (!agent || !thread || compacting) return;
 		compacting = true;
 		try {
-			const r = await api.post('/agents/{id}/compact', { params: { id: agent.id } });
-			if (r.compacted) await ac.refetch(); // the divider in the chat is the confirmation
+			const r = await api.post('/agents/{id}/compact', { params: { id: agent.id }, query: { thread: thread.id } });
+			if (r.compacted) await ac?.refetch(); // the divider in the chat is the confirmation
 			else toast('Nothing to compact yet', { description: 'The conversation is still short; recent turns are always kept as they are.' });
 		} catch (e) {
 			const busyCode = (e as { code?: unknown } | null)?.code === 'EH_SESSION_BUSY';
@@ -189,12 +207,12 @@
 		return out;
 	});
 	// the stored error code of the last turn (`TurnResult.error.code`): a hint for the ones with a fix
-	const turnErrorHint = $derived(errorHint(lastTurnErrorCode(chat.messages)));
-	const busy = $derived(chat.status === 'submitted' || chat.status === 'streaming');
+	const turnErrorHint = $derived(errorHint(lastTurnErrorCode(chat?.messages ?? [])));
+	const busy = $derived(chat?.status === 'submitted' || chat?.status === 'streaming');
 	// A turn the server no longer runs (it was killed, the connection went silent): resync.
 	$effect(() => {
 		// `stopping` too: a stop the server has not confirmed is settled by `checkStalled`
-		if (!busy && !ac.following && !ac.stopping) return;
+		if (!ac || (!busy && !ac.following && !ac.stopping)) return;
 		const timer = setInterval(() => void ac.checkStalled(), 4000);
 		return () => clearInterval(timer);
 	});
@@ -281,20 +299,22 @@
 							{/snippet}
 						</Popover.Trigger>
 						<Popover.Content elevation="floating" align="end" class="max-h-[min(80svh,40rem)] w-[min(92vw,22rem)] overflow-y-auto p-0" aria-label="Agent session">
-							<SessionContext {agentId} elevation="flat" class="max-w-none border-0 shadow-none" onClose={() => (popoverOpen = false)} />
+							{#if thread}<SessionContext {agentId} {thread} elevation="flat" class="max-w-none border-0 shadow-none" onClose={() => (popoverOpen = false)} />{/if}
 						</Popover.Content>
 					</Popover.Root>
 				{/if}
 			</div>
 		</header>
 </ShellHeader>
+	<ThreadBar {agentId} current={thread} />
 
 	<!-- The conversation fills the pane to the bottom; the pending card and the composer float over
 	     it (dock), and the content is padded by the dock's height so the last message stays visible. -->
 	<div class="flex min-h-0 flex-1">
+	{#if ac && chat && thread}
 	<div class="relative flex min-h-0 min-w-0 flex-1 flex-col">
 		<div bind:this={root} class="flex min-h-0 flex-1 flex-col">
-			{#key agentId}
+			{#key sessionId}
 				<Conversation class="min-h-0 flex-1">
 					<ConversationContent class="mx-auto w-full max-w-3xl gap-5 px-4 pt-6" style={`padding-bottom: ${dockHeight + 24}px`}>
 						{#if ac.loadingOlder}
@@ -419,21 +439,35 @@
 				{:else if ac.notice}
 					<div class="mb-2 text-center text-xs text-muted-foreground" role="status">{ac.notice}</div>
 				{/if}
+				{#if thread.archivedAt !== null}
+					<div class="flex items-center justify-between gap-2 rounded-lg border border-border bg-popover px-3 py-2 text-sm" role="status" data-testid="thread-archived">
+						<span>This chat is archived.</span>
+						<Button size="xs" variant="outline" onclick={() => void threadsStore.restore(agentId, thread.id)}>Restore</Button>
+					</div>
+				{:else}
 				<ChatComposer
 					{agentId}
+					threadId={thread.id}
 					onSend={send}
 					onStop={() => void ac.stop()}
 					status={chat.status}
 					stopping={ac.stopping}
 					placeholder={agent ? `Message ${agent.name}` : 'Message the agent'}
 				/>
+				{/if}
 			</div>
 		</div>
 	</div>
-	{#if wide && panelOpen}
+	{:else}
+		<div class="flex min-w-0 flex-1 flex-col gap-6 px-4 pt-8" aria-busy="true" aria-label="Loading chats">
+			<Skeleton class="ml-auto h-9 w-2/5 rounded-xl" />
+			<div class="flex flex-col gap-2"><Skeleton class="h-3.5 w-1/3" /><Skeleton class="h-3.5 w-4/5" /></div>
+		</div>
+	{/if}
+	{#if wide && panelOpen && thread}
 		<!-- Second column of the same surface: the floating session card scrolls on its own. -->
 		<aside class="hidden w-[352px] shrink-0 overflow-y-auto p-3 lg:block" aria-label="Agent session">
-			<SessionContext {agentId} elevation="flat" class="border-border bg-background shadow-sm" onClose={onTogglePanel} />
+			<SessionContext {agentId} {thread} elevation="flat" class="border-border bg-background shadow-sm" onClose={onTogglePanel} />
 		</aside>
 	{/if}
 	</div>

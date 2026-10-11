@@ -1,10 +1,11 @@
 // Main navigation of the app shell (icon rail on desktop, bottom bar on mobile). Pure.
 
-export type SectionId = 'agents' | 'tasks' | 'decisions' | 'programs' | 'routines' | 'files' | 'connectors' | 'logs' | 'settings';
+export type SectionId = 'agents' | 'tasks' | 'briefings' | 'decisions' | 'programs' | 'routines' | 'files' | 'connectors' | 'logs' | 'settings';
 
 export const SECTIONS: { id: SectionId; href: string; label: string }[] = [
 	{ id: 'agents', href: '/', label: 'Agents' },
 	{ id: 'tasks', href: '/tasks', label: 'Tasks' },
+	{ id: 'briefings', href: '/briefings', label: 'Briefing' },
 	{ id: 'decisions', href: '/decisions', label: 'Decisions' },
 	{ id: 'programs', href: '/programs', label: 'Programs' },
 	{ id: 'routines', href: '/routines', label: 'Routines' },

@@ -343,10 +343,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Permission mode of the agent's DM chat */
+        /** Permission mode of a chat thread of the agent */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -395,12 +398,15 @@ export interface paths {
             };
         };
         /**
-         * Pick the permission mode of the agent's DM chat
+         * Pick the permission mode of a chat thread of the agent
          * @description Takes effect at the next tool call, a running turn included. Delegated tasks started by this chat inherit it, unless their own agent is stricter. Emits a `mode-changed` event.
          */
         put: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -480,7 +486,10 @@ export interface paths {
         /** Summarise the older part of the chat now */
         post: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -556,7 +565,10 @@ export interface paths {
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -610,7 +622,10 @@ export interface paths {
          */
         put: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -688,7 +703,10 @@ export interface paths {
         /** Context size, usage, active turn and pending approvals */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -744,6 +762,803 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/agents/{id}/threads": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chat threads of an agent
+         * @description All threads are equal. Newest activity first, archived ones last (with `archived=true`). An agent that has none yet gets one for its existing single DM (`dm:<agentId>`): the history stays where it is.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Include archived threads (listed last). */
+                    archived?: "true" | "false";
+                };
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Threads */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ThreadList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or thread */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * New chat
+         * @description Creates an empty thread; its session starts with the first message. Threads are created on demand, never by an event.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ThreadCreate"];
+                };
+            };
+            responses: {
+                /** @description The thread */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Thread"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or thread */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/threads/{threadId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Rename a thread */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                    threadId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ThreadPatch"];
+                };
+            };
+            responses: {
+                /** @description The thread */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Thread"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or thread */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/agents/{id}/threads/{threadId}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive a thread
+         * @description Hides it from the list; its history stays readable and a thread that is archived takes no new messages (409 `THREAD_ARCHIVED`) until it is restored.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                    threadId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The thread */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Thread"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or thread */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/agents/{id}/threads/{threadId}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore an archived thread */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                    threadId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The thread */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Thread"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent or thread */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/threads/discuss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discuss in chat
+         * @description Opens a NEW thread on the lead (or `agent`) seeded with the context of a briefing (or one of its items), an alert or a run: one context message, no model call. The client then asks what they want to know.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["Discuss"];
+                };
+            };
+            responses: {
+                /** @description The new thread */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Thread"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown briefing, alert, run or agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description No lead agent, or an archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/briefings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Briefings (the daily digest), newest day first
+         * @description The digest is a page, not a chat message: one entry per local day, built from data. A quiet day has none.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Briefings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["BriefingList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/briefings/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A briefing */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The briefing */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Briefing"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown briefing */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/briefings/{id}/seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark a briefing as seen (clears its bell notification) */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The briefing */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Briefing"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown briefing */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The bell: alerts and "briefing ready"
+         * @description Urgent heartbeat findings (one alert each) and one notification per briefing. Not the things that wait for a decision or an answer: those are `/decisions` and `/approvals`.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Include dismissed ones. */
+                    all?: "true" | "false";
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Notifications, newest first */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["NotificationList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/dismiss-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss every notification */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description How many were dismissed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Dismissed"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/{id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Dismiss a notification */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Agent id or slug. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The notification */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Notification"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown notification */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/sessions/{id}": {
         parameters: {
             query?: never;
@@ -760,7 +1575,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    /** @description Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task. */
                     id: string;
                 };
                 cookie?: never;
@@ -834,7 +1649,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    /** @description Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task. */
                     id: string;
                 };
                 cookie?: never;
@@ -917,7 +1732,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    /** @description Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task. */
                     id: string;
                 };
                 cookie?: never;
@@ -1018,7 +1833,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    /** @description Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task. */
                     id: string;
                 };
                 cookie?: never;
@@ -1096,7 +1911,7 @@ export interface paths {
                 query?: never;
                 header?: never;
                 path: {
-                    /** @description Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task. */
+                    /** @description Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task. */
                     id: string;
                 };
                 cookie?: never;
@@ -2130,10 +2945,13 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The DM chat and the tasks of an agent */
+        /** The chat thread and the tasks of an agent */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -2271,11 +3089,14 @@ export interface paths {
         };
         /**
          * Everything the right panel of an agent shows
-         * @description Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.
+         * @description For one chat thread (`thread`, default the newest). Session stats and usage, the tools the model sees, memory file lists (workspace and agent), routines, current tasks and the latest files the agent wrote.
          */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Thread id (`GET /agents/{id}/threads`); without it the thread with the newest activity. */
+                    thread?: string;
+                };
                 header?: never;
                 path: {
                     /** @description Agent id or slug. */
@@ -7128,7 +7949,7 @@ export interface paths {
         head?: never;
         /**
          * Change the daily digest
-         * @description Once a day at `time` (default 18:00, in `timezone` or the team timezone) the lead DM gets what ran, what waits, what the heartbeat noticed and the cost. A quiet day sends nothing.
+         * @description Once a day at `time` (default 18:00, in `timezone` or the team timezone) the Briefing page gets an entry (and the bell one notification) with what ran, what waits, what the heartbeat noticed and the cost. A quiet day adds nothing.
          */
         patch: {
             parameters: {
@@ -7733,6 +8554,99 @@ export interface components {
                 turns: number;
             };
         };
+        ThreadList: {
+            threads: components["schemas"]["Thread"][];
+        };
+        Thread: {
+            id: string;
+            agentId: string;
+            /**
+             * @description The eharness session of the thread: `chat:<agentId>:<id>`, or `dm:<agentId>` for the thread that existed before threads did. Use it with `/sessions/{id}/…`.
+             * @example chat:0198…:0198…
+             */
+            sessionId: string;
+            /** @description Null until named: the first message names an unnamed thread. */
+            title: string | null;
+            /**
+             * @description Where the conversation lives. `channel` is reserved for messaging channels.
+             * @enum {string}
+             */
+            source: "web" | "channel";
+            /** @description Display label of the source, for example the name of a group. */
+            sourceLabel: string | null;
+            seed: components["schemas"]["ThreadSeed"];
+            createdAt: number;
+            updatedAt: number;
+            lastMessageAt: number | null;
+            preview: string | null;
+            archivedAt: number | null;
+        };
+        /** @description What a "Discuss in chat" thread was opened about. */
+        ThreadSeed: {
+            /** @enum {string} */
+            kind: "briefing" | "alert" | "run";
+            /** @description Id of the briefing, notification or task. */
+            ref: string;
+            title: string;
+        } | null;
+        ThreadCreate: {
+            title?: string;
+        };
+        ThreadPatch: {
+            title: string;
+        };
+        Discuss: {
+            /** @enum {string} */
+            kind: "briefing" | "alert" | "run";
+            /** @description Briefing id, alert (notification) id or task id. */
+            ref: string;
+            /** @description With a briefing: the index of one item of it. */
+            item?: number;
+            /** @description Agent id or slug; default the lead. */
+            agent?: string;
+        };
+        BriefingList: {
+            briefings: components["schemas"]["Briefing"][];
+        };
+        Briefing: {
+            id: string;
+            /**
+             * @description Local day (digest timezone).
+             * @example 2026-10-12
+             */
+            day: string;
+            title: string;
+            /** @description The digest as markdown. */
+            body: string;
+            items: components["schemas"]["BriefingItem"][];
+            createdAt: number;
+        };
+        BriefingItem: {
+            /** @enum {string} */
+            kind: "run" | "decision" | "waiting" | "noticed" | "cost";
+            title: string;
+            detail: string;
+            link: string | null;
+        };
+        NotificationList: {
+            notifications: components["schemas"]["Notification"][];
+            open: number;
+        };
+        Notification: {
+            id: string;
+            /** @enum {string} */
+            kind: "alert" | "briefing";
+            title: string;
+            body: string;
+            /** @description App path it opens. */
+            link: string | null;
+            agentId: string | null;
+            createdAt: number;
+            dismissedAt: number | null;
+        };
+        Dismissed: {
+            dismissed: number;
+        };
         /** @description The stored state of a session (`eharness/http`). */
         SessionSnapshot: {
             id: string;
@@ -7906,7 +8820,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "decision-changed" | "heartbeat-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
+            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "decision-changed" | "heartbeat-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "thread-changed" | "notification-changed" | "briefing-added" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
             agentId: string | null;
             sessionId: string | null;
             payload: {

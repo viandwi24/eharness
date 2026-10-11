@@ -1,7 +1,7 @@
 import { createRoute, OpenAPIHono, type z } from '@hono/zod-openapi'
 import { getMode, setMode } from '../../app/modes.ts'
 import type { Deps } from '../../app/ports.ts'
-import { errorResponses, IdParam, jsonError } from '../schemas/common.ts'
+import { errorResponses, IdParam, jsonError, ThreadQuery } from '../schemas/common.ts'
 import { ModePutSchema, ModeStateSchema } from '../schemas/modes.ts'
 
 const security = [{ Bearer: [] }]
@@ -11,9 +11,9 @@ const get = createRoute({
   method: 'get',
   path: '/agents/{id}/mode',
   tags: ['agents'],
-  summary: "Permission mode of the agent's DM chat",
+  summary: 'Permission mode of a chat thread of the agent',
   security,
-  request: { params: IdParam },
+  request: { params: IdParam, query: ThreadQuery },
   responses: {
     200: {
       description: 'The effective mode and the modes available',
@@ -28,11 +28,15 @@ const put = createRoute({
   method: 'put',
   path: '/agents/{id}/mode',
   tags: ['agents'],
-  summary: "Pick the permission mode of the agent's DM chat",
+  summary: 'Pick the permission mode of a chat thread of the agent',
   description:
     'Takes effect at the next tool call, a running turn included. Delegated tasks started by this chat inherit it, unless their own agent is stricter. Emits a `mode-changed` event.',
   security,
-  request: { params: IdParam, body: { required: true, content: json(ModePutSchema) } },
+  request: {
+    params: IdParam,
+    query: ThreadQuery,
+    body: { required: true, content: json(ModePutSchema) },
+  },
   responses: {
     200: { description: 'The new state', content: json(ModeStateSchema) },
     404: jsonError('Unknown agent'),
@@ -43,8 +47,18 @@ const put = createRoute({
 
 export function modeRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
-    .openapi(get, (c) => c.json(getMode(deps, c.req.valid('param').id), 200))
+    .openapi(get, (c) =>
+      c.json(getMode(deps, c.req.valid('param').id, c.req.valid('query').thread), 200),
+    )
     .openapi(put, (c) =>
-      c.json(setMode(deps, c.req.valid('param').id, c.req.valid('json').mode), 200),
+      c.json(
+        setMode(
+          deps,
+          c.req.valid('param').id,
+          c.req.valid('json').mode,
+          c.req.valid('query').thread,
+        ),
+        200,
+      ),
     )
 }

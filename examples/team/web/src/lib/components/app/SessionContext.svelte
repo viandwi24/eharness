@@ -43,13 +43,14 @@
 	 */
 	let {
 		agentId,
+		thread,
 		onClose,
 		elevation = 'raised',
 		class: className
-	}: { agentId: string; onClose?: () => void; elevation?: Elevation; class?: string } = $props();
+	}: { agentId: string; thread: { id: string; sessionId: string }; onClose?: () => void; elevation?: Elevation; class?: string } = $props();
 
 	const agent = $derived(agentsStore.find(agentId));
-	const messages = $derived(agentChat(agentId).chat.messages);
+	const messages = $derived(agentChat(agentId, thread.sessionId).chat.messages);
 
 	// Reload on agent change and whenever the board moves (task events refresh `live.state.tasks`).
 	let sessions = $state<AgentSessions | null>(null);
@@ -58,13 +59,14 @@
 	let sessionsAgent: string | undefined;
 	$effect(() => {
 		const id = agentId;
+		const tid = thread.id;
 		void stamp;
-		if (id !== sessionsAgent) {
-			sessionsAgent = id;
+		if (`${id}#${tid}` !== sessionsAgent) {
+			sessionsAgent = `${id}#${tid}`;
 			sessions = null;
 		}
 		const mine = ++seq;
-		api.get('/agents/{id}/sessions', { params: { id } }).then(
+		api.get('/agents/{id}/sessions', { params: { id }, query: { thread: tid } }).then(
 			(r) => {
 				if (mine === seq) sessions = r;
 			},
@@ -80,15 +82,16 @@
 	let ctxAgent: string | undefined;
 	$effect(() => {
 		const id = agentId;
+		const tid = thread.id;
 		void live.state.revs.files;
 		void live.state.revs.routines;
 		void live.state.revs.chat;
-		if (id !== ctxAgent) {
-			ctxAgent = id;
+		if (`${id}#${tid}` !== ctxAgent) {
+			ctxAgent = `${id}#${tid}`;
 			context = null;
 		}
 		const mine = ++cseq;
-		api.get('/agents/{id}/context', { params: { id } }).then(
+		api.get('/agents/{id}/context', { params: { id }, query: { thread: tid } }).then(
 			(c) => {
 				if (mine === cseq) context = c;
 			},
@@ -345,7 +348,7 @@
 		<button type="button" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring" onclick={() => openEditAgent(agentId, 'memory')} disabled={!agent}>
 			Agent memory
 		</button>
-		<a href="/logs?sessionId={encodeURIComponent(`dm:${agentId}`)}" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
+		<a href="/logs?sessionId={encodeURIComponent(thread.sessionId)}" class="rounded underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-ring">
 			Model calls
 		</a>
 	</nav>

@@ -54,7 +54,13 @@ import {
 import { subagent } from 'eharness/subagent'
 import type { EventAppender, ProgramStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
+import {
+  isAllowedMediaType,
+  LIBRARY_URL_PREFIX,
+  libraryUrl,
+  MAX_UPLOAD_BYTES,
+  uploadPathOfUrl,
+} from '../../domain/chat.ts'
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
 import { HEARTBEAT_ALLOWED, heartbeatRefusal } from '../../domain/heartbeat.ts'
 import {
@@ -76,6 +82,7 @@ import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
 import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
+import { parseChatSession } from '../../domain/threads.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
@@ -406,6 +413,46 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     return { data: file.bytes, mediaType: file.mediaType ?? ctx.mediaType }
   }
 
+  // The model reads an attachment as `[Attachment …: path <path>]` next to the file (`inputFiles.describe`)
+  // and passes that path to `agent({ files })`; this turns it back into a checked file reference.
+  const describeUpload = (file: { url: string; mediaType: string; filename?: string }) => {
+    if (!file.url.startsWith(LIBRARY_URL_PREFIX)) return undefined
+    let path: string | undefined
+    try {
+      path = uploadPathOfUrl(file.url)
+    } catch {
+      return undefined
+    }
+    return path === undefined
+      ? undefined
+      : `[Attachment ${file.filename ?? ''} (${file.mediaType}) at path "${path}". To hand it to another agent, pass this path in the \`files\` argument of the agent tool.]`
+  }
+  const resolveDelegatedFile = async (ref: string) => {
+    let path: string | undefined
+    try {
+      path = uploadPathOfUrl(ref.startsWith('/') ? libraryUrl(ref) : ref)
+    } catch {
+      path = undefined
+    }
+    if (path === undefined) {
+      return {
+        error: `the file "${ref}" is not an uploaded file; pass the path shown next to the attachment (under /uploads).`,
+      }
+    }
+    const file = await uploads.readBytes?.(path)
+    if (file === null || file === undefined) return { error: `the file "${path}" does not exist.` }
+    if (file.bytes.byteLength > MAX_UPLOAD_BYTES) {
+      return {
+        error: `the file "${path}" is ${file.bytes.byteLength} bytes; the limit is ${MAX_UPLOAD_BYTES}.`,
+      }
+    }
+    const mediaType = file.mediaType ?? 'application/octet-stream'
+    if (!isAllowedMediaType(mediaType)) {
+      return { error: `the file "${path}" has the unsupported type ${mediaType}.` }
+    }
+    return { url: libraryUrl(path), mediaType, filename: path.split('/').pop() ?? path }
+  }
+
   // children and re-opened parents get the app's lock and runtime (spec 20, ADR-0042)
   const childSessionOptions = (info: { agent: string }) => {
     const child = deps.agentBySlug?.(info.agent)
@@ -415,7 +462,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     }
   }
   const parentSessionOptions = (sessionId: string) => {
-    const owner = /^dm:([^:]+)/.exec(sessionId)?.[1]
+    const owner = parseChatSession(sessionId)?.agentId
     return { lock, runtime: { workspaceId, ...(owner === undefined ? {} : { agentId: owner }) } }
   }
 
@@ -444,7 +491,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
   /** The mode a delegating session runs in: its own pick, its agent's mode, the workspace default. */
   function rootMode(sessionId: string, settings: ReturnType<typeof currentSettings>): TeamMode {
-    const owner = /^dm:([^:]+)$/.exec(sessionId)?.[1]
+    const chat = parseChatSession(sessionId)
+    const owner = chat !== undefined && !chat.child ? chat.agentId : undefined
     const def = owner === undefined ? undefined : deps.agentById?.(owner)
     if (def === undefined) return teamModeOf(settings.defaultPermissionMode)
     return resolveSessionMode(def, sessionId, undefined, settings).mode
@@ -521,6 +569,8 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             ]),
         ),
       approvals: 'park',
+      // the user's uploads can be handed to the role agent that works on them
+      files: { resolve: resolveDelegatedFile },
       // durable background delegation (ADR-0046): the lead stays free to chat while the
       // role agents work; their reports arrive as events and wake it
       background: {
@@ -849,6 +899,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         protocols: ['data:', 'https:', 'library:'],
         maxBytes: MAX_UPLOAD_BYTES,
         resolve: resolveUpload,
+        describe: describeUpload,
       },
       ...(deps.tuning?.streams ? { streams: deps.tuning.streams } : {}),
       ...(deps.tuning?.inbox ? { inbox: deps.tuning.inbox } : {}),

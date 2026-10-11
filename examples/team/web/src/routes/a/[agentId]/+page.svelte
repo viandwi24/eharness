@@ -4,6 +4,8 @@
 	import { PANEL_OPEN_KEY, readPref, writePref } from '#lib/stores/prefs.js';
 
 	const agentId = $derived(page.params.agentId ?? '');
+	// `?t=` names the chat thread (its id or session id); without it the newest one opens
+	const threadParam = $derived(page.url.searchParams.get('t'));
 	let innerWidth = $state(1280);
 	let panelOpen = $state(readPref(PANEL_OPEN_KEY) !== '0'); // desktop: second column, remembered
 	let popoverOpen = $state(false); // below lg: popover on the header button
@@ -28,4 +30,4 @@
 
 <svelte:window bind:innerWidth {onkeydown} />
 
-<ChatPane {agentId} panelOpen={open} {wide} bind:popoverOpen onTogglePanel={toggle} />
+<ChatPane {agentId} {threadParam} panelOpen={open} {wide} bind:popoverOpen onTogglePanel={toggle} />

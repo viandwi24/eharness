@@ -1,12 +1,11 @@
 /**
  * Chat reads and maintenance that are not part of `eharness/http`: compact, stats and context of
- * the DM session `dm:<agentId>`. The chat itself (send, respond, resume, interrupt, messages) is
+ * a chat thread session (`domain/threads.ts`). The chat itself (send, respond, resume, interrupt, messages) is
  * the library's HTTP module (`infra/eh/harness-http.ts`).
  */
 import type { HarnessSession, HarnessUIMessage } from 'eharness'
 import type { ChatMessage, ChatPort, ChatStats, Deps } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
-import { dmSessionId } from '../../domain/chat.ts'
 import type { AgentFactory } from './agent-factory.ts'
 
 const asMessage = (m: HarnessUIMessage): ChatMessage => m as unknown as ChatMessage
@@ -16,9 +15,9 @@ export function createChatService(
   deps: Pick<Deps, 'workspaceId'>,
 ): ChatPort {
   /** Connectors are activated asynchronously (`factory.prepare`); the agent itself is synchronous. */
-  const sessionFor = async (def: AgentDef): Promise<HarnessSession> => {
+  const sessionFor = async (def: AgentDef, sessionId: string): Promise<HarnessSession> => {
     await factory.prepare(def)
-    return factory.agentFor(def).session(dmSessionId(def.id), {
+    return factory.agentFor(def).session(sessionId, {
       lock: factory.lock,
       runtime: { workspaceId: deps.workspaceId, agentId: def.id },
     }) as HarnessSession
@@ -45,15 +44,24 @@ export function createChatService(
   }
 
   return {
-    async compact(def) {
-      const message = await (await sessionFor(def)).compact()
+    async compact(def, sessionId) {
+      const message = await (await sessionFor(def, sessionId)).compact()
       return { compacted: message !== null, message: message === null ? null : asMessage(message) }
     },
 
-    stats: async (def) => statsOf(await sessionFor(def), modelOf(def)),
+    stats: async (def, sessionId) => statsOf(await sessionFor(def, sessionId), modelOf(def)),
 
-    async context(def) {
-      const session = await sessionFor(def)
+    async seed(def, sessionId, { name, text, key }) {
+      const session = await sessionFor(def, sessionId)
+      await (
+        session as unknown as {
+          inject(kind: string, data: unknown, opts?: { key?: string }): Promise<unknown>
+        }
+      ).inject('eh.event', { name, text }, { key })
+    },
+
+    async context(def, sessionId) {
+      const session = await sessionFor(def, sessionId)
       const [stats, tools] = await Promise.all([statsOf(session, modelOf(def)), session.tools()])
       return {
         stats,

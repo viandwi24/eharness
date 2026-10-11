@@ -12,6 +12,7 @@
  * The daily digest (`buildDigest`) is built from data, not by a model, so it is cheap and reliable.
  */
 
+import type { BriefingItem } from './briefings.ts'
 import type { Decision } from './decisions.ts'
 import { invalid } from './errors.ts'
 import { agentMemory } from './memory.ts'
@@ -673,7 +674,7 @@ export function beatPrompt(input: {
     '   cannot act on, still goes in the result as an item; routine and healthy things do not.',
     '4. Mark an item urgent only when waiting for the daily digest would cost something (a program',
     '   paused itself, a limit is about to stop all work, data may be lost). Urgent items reach',
-    '   the lead DM at once; you never wait for an answer, so do not ask questions.',
+    '   the client bell at once; you never wait for an answer, so do not ask questions.',
     '5. A finding of kind program.suggestion may become one propose_plan call (a standing program',
     '   with the least authority that works). Never more than one proposal per beat, and never',
     '   anything for a finding of another kind.',
@@ -751,6 +752,8 @@ export interface DigestInput {
 
 export interface Digest {
   text: string
+  /** The same content as items (the Briefing page and "Discuss in chat"). */
+  items: BriefingItem[]
   /** Nothing ran, nothing waits, nothing was found and nothing was spent. */
   empty: boolean
 }
@@ -772,6 +775,7 @@ export function buildDigest(input: DigestInput): Digest {
     input.items.length === 0 &&
     input.costUsd === 0
   const out: string[] = ['**Daily digest**', '']
+  const items: BriefingItem[] = []
 
   out.push('### What ran')
   if (shown.length === 0) out.push('No program runs.')
@@ -779,21 +783,48 @@ export function buildDigest(input: DigestInput): Digest {
     const rep = r.task.report
     const status = rep?.status ?? r.task.status
     out.push(`- **${r.programName}**: ${status}${rep === null ? '' : ` — ${oneLine(rep.summary)}`}`)
+    items.push({
+      kind: 'run',
+      title: r.programName,
+      detail: `${status}${rep === null ? '' : ` — ${oneLine(rep.summary)}`}${(rep?.outputs.length ?? 0) === 0 ? '' : `. Outputs: ${rep?.outputs.slice(0, 5).join(', ')}`}`,
+      link: `/tasks/${r.task.id}`,
+    })
     for (const o of rep?.outputs.slice(0, 5) ?? []) out.push(`  - ${o}`)
   }
   if (onBoard > 0) out.push(`- ${onBoard} more run(s) are on the board (/tasks).`)
 
   out.push('', '### Waiting for you')
   if (input.decisions.length === 0 && input.waiting.length === 0) out.push('Nothing.')
-  for (const d of input.decisions)
+  for (const d of input.decisions) {
     out.push(`- Decision (${d.kind}): ${oneLine(d.title)} (/decisions)`)
-  for (const w of input.waiting) out.push(`- ${oneLine(w.title)} — ${w.why} (/tasks/${w.id})`)
+    items.push({
+      kind: 'decision',
+      title: oneLine(d.title, 120),
+      detail: `Open ${d.kind} decision`,
+      link: '/decisions',
+    })
+  }
+  for (const w of input.waiting) {
+    out.push(`- ${oneLine(w.title)} — ${w.why} (/tasks/${w.id})`)
+    items.push({
+      kind: 'waiting',
+      title: oneLine(w.title, 120),
+      detail: w.why,
+      link: `/tasks/${w.id}`,
+    })
+  }
 
   if (input.items.length > 0) {
     out.push('', '### Noticed by the heartbeat')
     for (const e of input.items) {
       const links = e.item.links.length === 0 ? '' : ` (${e.item.links.join(', ')})`
       out.push(`- **${oneLine(e.item.title, 120)}**: ${oneLine(e.item.detail)}${links}`)
+      items.push({
+        kind: 'noticed',
+        title: oneLine(e.item.title, 120),
+        detail: oneLine(e.item.detail),
+        link: e.item.links[0] ?? null,
+      })
     }
   }
 
@@ -803,7 +834,7 @@ export function buildDigest(input: DigestInput): Digest {
       input.heartbeatCostUsd > 0 ? `, of which the heartbeat ${usd(input.heartbeatCostUsd)}` : ''
     }.`,
   )
-  return { text: out.join('\n'), empty }
+  return { text: out.join('\n'), items, empty }
 }
 
 const hoursLabel = (ms: number): string => `${Math.max(1, Math.round(ms / 3_600_000))} h`

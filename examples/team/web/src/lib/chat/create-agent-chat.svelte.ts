@@ -1,4 +1,4 @@
-// Per-agent chat: `@ai-sdk/svelte` `Chat` plus `createChatSession` of `eharness/client` (history
+// Per-thread chat: `@ai-sdk/svelte` `Chat` plus `createChatSession` of `eharness/client` (history
 // paging, re-attach to a running turn, steering, recovery), mirrored into Svelte state. The
 // library owns the logic; this class adds reactivity and the library uploads.
 // `Chat` has no `resume` option (that is React's `useChat`), so resuming is `session.follow()`.
@@ -13,6 +13,8 @@ export type Notify = (level: 'info' | 'error', text: string) => void;
 
 export type CreateAgentChatOptions = {
 	agentId: string;
+	/** The chat thread's session (`dm:<agentId>` or `chat:<agentId>:<threadId>`). */
+	sessionId: string;
 	/** Initial messages, when the caller already has them. Otherwise `init()` loads them. */
 	messages?: UIMessage[];
 	/** Toasts. */
@@ -27,13 +29,15 @@ export class AgentChat {
 	readonly chat: Chat<UIMessage>;
 	readonly session: ChatSession<UIMessage>;
 	readonly agentId: string;
+	readonly sessionId: string;
 	#s = $state.raw<ChatSessionState>(INITIAL);
 
 	constructor(options: CreateAgentChatOptions) {
 		this.agentId = options.agentId;
+		this.sessionId = options.sessionId;
 		this.session = createChatSession<UIMessage>({
 			client: harness,
-			sessionId: `dm:${options.agentId}`, // the DM session of the agent
+			sessionId: options.sessionId, // the session of one chat thread
 			...(options.messages ? { messages: options.messages } : {}),
 			...(options.pageSize ? { pageSize: options.pageSize } : {}),
 			transportOptions: { ifBusy: 'steer' }, // a message sent while a turn runs joins it

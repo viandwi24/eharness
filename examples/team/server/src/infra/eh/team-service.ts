@@ -22,12 +22,18 @@ import {
   reconcileBackgroundChildren,
   reconcileSubagentWaits,
 } from 'eharness/subagent'
-import type { AgentRepo, ChatMessage, EventAppender, TeamPort } from '../../app/ports.ts'
+import type {
+  AgentRepo,
+  ChatMessage,
+  EventAppender,
+  TeamPort,
+  ThreadStore,
+} from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import type { ApprovalRisk, ApprovalView, QuestionView } from '../../domain/approvals.ts'
-import { dmSessionId } from '../../domain/chat.ts'
 import { notFound } from '../../domain/errors.ts'
 import { deriveTaskStatus, type Task } from '../../domain/tasks.ts'
+import { isThreadSession, legacyThreadSessionId, parseChatSession } from '../../domain/threads.ts'
 import type { SqliteTaskStore } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
 
@@ -76,6 +82,8 @@ export type AttentionExtra = {
 export interface TeamServiceDeps {
   agents: AgentRepo
   tasks: SqliteTaskStore
+  /** Chat threads: every thread session of an agent is a root, a parent of delegations, a recovery candidate. */
+  threads: ThreadStore
   events: EventAppender
   /** The shared feed. */
   activity: ActivityStore
@@ -99,11 +107,16 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     return factory.openSession(def, task.sessionId)
   }
 
-  /** `dm:<agentId>` of a session id that starts with it (the DM itself or a child of the lead). */
+  /** The agent of a chat thread session or of a child of one (`dm:<id>…` or `chat:<id>:<thread>…`). */
   const dmOwner = (sessionId: string): AgentDef | undefined => {
-    const m = /^dm:([^:]+)/.exec(sessionId)
-    return m === null ? undefined : defById(m[1] as string)
+    const chat = parseChatSession(sessionId)
+    return chat === undefined ? undefined : defById(chat.agentId)
   }
+
+  /** Every thread session of an agent, archived ones included (they may still wait for an answer). */
+  const threadSessions = (def: AgentDef): string[] => [
+    ...new Set([legacyThreadSessionId(def.id), ...deps.threads.sessionsOf(def.id)]),
+  ]
 
   /** The agent that runs a session: the child index / root info (slug), the task row, the DM id. */
   const ownerOf = (item: {
@@ -123,7 +136,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     const active = deps.tasks.activity()
     const roots = allAgents()
       .filter((def) => def.role === 'lead' || active.has(def.id))
-      .map((def) => ({ sessionId: dmSessionId(def.id), agent: def.slug }))
+      .flatMap((def) => threadSessions(def).map((sessionId) => ({ sessionId, agent: def.slug })))
     // the index is a safety net for sessions the walk above does not reach (routine runs)
     for (const task of deps.tasks.list({ status: 'needs_action', limit: 500 })) {
       const def = defById(task.agentId)
@@ -194,7 +207,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
 
   async function afterLeadAnswer(sessionId: string): Promise<void> {
     const def = dmOwner(sessionId)
-    if (def?.role !== 'lead' || sessionId !== dmSessionId(def.id)) return
+    if (def?.role !== 'lead' || !isThreadSession(sessionId)) return
     try {
       await wakeStranded(def, sessionId)
     } catch (error) {
@@ -206,7 +219,8 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     const out: ReconcileReport['waits'] = []
     const parents = new Map<string, AgentDef>()
     for (const def of allAgents()) {
-      if (def.role === 'lead') parents.set(dmSessionId(def.id), def)
+      if (def.role === 'lead')
+        for (const sessionId of threadSessions(def)) parents.set(sessionId, def)
     }
     for (const task of deps.tasks.active()) {
       if (task.parentSessionId === null) continue
@@ -239,7 +253,8 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
   function parentSessions(): Map<string, AgentDef> {
     const parents = new Map<string, AgentDef>()
     for (const def of allAgents()) {
-      if (def.role === 'lead') parents.set(dmSessionId(def.id), def)
+      if (def.role === 'lead')
+        for (const sessionId of threadSessions(def)) parents.set(sessionId, def)
     }
     for (const task of deps.tasks.active()) {
       if (task.parentSessionId === null) continue
@@ -258,7 +273,7 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     const out: ReconcileReport['recovered'] = []
     const candidates = new Map<string, AgentDef>()
     for (const def of allAgents()) {
-      candidates.set(dmSessionId(def.id), def)
+      for (const sessionId of threadSessions(def)) candidates.set(sessionId, def)
       // the rolling session of a heartbeat has no task row: it is recovered like a chat
       candidates.set(`heartbeat:${def.id}`, def)
     }
@@ -452,7 +467,9 @@ export function createTeamService(factory: AgentFactory, deps: TeamServiceDeps):
     for (const def of allAgents()) {
       if (def.role !== 'lead') continue
       try {
-        out.push(...(await wakeStranded(def, dmSessionId(def.id))))
+        for (const sessionId of threadSessions(def)) {
+          out.push(...(await wakeStranded(def, sessionId)))
+        }
       } catch (error) {
         log.warn(`stranded reports of ${def.id} could not be woken: ${String(error)}`)
       }

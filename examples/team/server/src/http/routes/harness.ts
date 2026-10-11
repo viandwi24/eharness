@@ -34,7 +34,7 @@ const SessionId = z.object({
       param: { name: 'id', in: 'path' },
       example: 'dm:0198f0a2-0000-7000-8000-000000000000',
       description:
-        'Session id: `dm:<agentId>` (the DM chat of an agent; `dm:<slug>` works too) or the `sessionId` of a task.',
+        'Session id: the `sessionId` of a chat thread (`GET /agents/{id}/threads`: `chat:<agentId>:<threadId>`, or `dm:<agentId>` for the first thread of an old agent; `dm:<slug>` works too) or of a task.',
     }),
 })
 const afterQuery = z

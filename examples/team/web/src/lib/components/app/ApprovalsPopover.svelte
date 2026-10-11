@@ -4,7 +4,12 @@
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
 	import { goto } from '$app/navigation';
-	import type { Approval } from '#lib/api/client.js';
+	import type { Approval, Notification } from '#lib/api/client.js';
+	import { api } from '#lib/api/index.js';
+	import { toast } from 'svelte-sonner';
+	import { notificationLink } from '#lib/briefings/model.js';
+	import { threadsStore } from '#lib/stores/threads.svelte.js';
+	import { chatHref, threadHref } from '#lib/threads/model.js';
 	import { decisionText } from '#lib/decisions/model.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
@@ -12,7 +17,7 @@
 
 	/** Where the list opens from the bell (the rail opens it to the right). */
 	let { side = 'top', align = 'end' }: { side?: 'top' | 'right' | 'bottom' | 'left'; align?: 'start' | 'center' | 'end' } = $props();
-	const count = $derived(live.state.approvals.length + live.state.decisions.length);
+	const count = $derived(live.state.approvals.length + live.state.decisions.length + live.state.notifications.length);
 	let open = $state(false);
 
 	/** Where the request is answered: the task view of a task, the agent's DM chat otherwise. */
@@ -25,11 +30,43 @@
 		open = false;
 		void goto('/decisions');
 	}
+	async function dismiss(n: Notification): Promise<void> {
+		try {
+			await api.post('/notifications/{id}/dismiss', { params: { id: n.id } });
+			await live.loadNotifications();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not dismiss');
+		}
+	}
+	async function dismissAll(): Promise<void> {
+		try {
+			await api.post('/notifications/dismiss-all');
+			await live.loadNotifications();
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not dismiss');
+		}
+	}
+	/** An alert opens its link; a briefing opens the Briefing page (which clears it). */
+	function openNotification(n: Notification): void {
+		open = false;
+		const link = notificationLink(n);
+		if (link) void goto(link);
+	}
+	/** A NEW chat with the lead, seeded with the alert. */
+	async function discuss(n: Notification): Promise<void> {
+		try {
+			const t = await threadsStore.discuss({ kind: 'alert', ref: n.id });
+			open = false;
+			await goto(threadHref(t.agentId, t.id));
+		} catch (e) {
+			toast.error(e instanceof Error ? e.message : 'Could not open a chat');
+		}
+	}
 	/** Notifications only link: the answer is given inline in the session's chat. */
 	function go(a: Approval): void {
 		open = false;
 		if (a.taskId) openTask(a.taskId);
-		else void goto(`/a/${a.agentId}`);
+		else void goto(chatHref(a.parentSessionId ?? a.sessionId) ?? `/a/${a.agentId}`);
 	}
 </script>
 
@@ -56,7 +93,22 @@
 				{text(a)}
 			</button>
 		{/each}
-		{#if live.state.approvals.length + live.state.decisions.length === 0}
+		{#each live.state.notifications as n (n.id)}
+			<div class="flex flex-col gap-1 rounded-md px-2 py-2 text-sm hover:bg-accent" data-testid="notification-{n.kind}">
+				<button type="button" class="text-left focus-visible:outline-2 focus-visible:outline-ring" onclick={() => openNotification(n)}>
+					<span class="font-medium">{n.title}</span>
+					{#if n.body}<span class="block text-muted-foreground">{n.body}</span>{/if}
+				</button>
+				<div class="flex gap-1">
+					{#if n.kind === 'alert'}<Button size="xs" variant="outline" onclick={() => void discuss(n)}>Discuss in chat</Button>{/if}
+					<Button size="xs" variant="ghost" onclick={() => void dismiss(n)}>Dismiss</Button>
+				</div>
+			</div>
+		{/each}
+		{#if live.state.notifications.length > 1}
+			<Button size="xs" variant="ghost" class="self-end" onclick={() => void dismissAll()}>Dismiss all</Button>
+		{/if}
+		{#if count === 0}
 			<p class="px-1 py-4 text-center text-sm text-muted-foreground">Nothing waiting.</p>
 		{/if}
 	</Popover.Content>

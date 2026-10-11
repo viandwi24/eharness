@@ -6,6 +6,8 @@
 	import ChatCircleIcon from 'phosphor-svelte/lib/ChatCircle';
 	import WarningCircleIcon from 'phosphor-svelte/lib/WarningCircle';
 	import { goto } from '$app/navigation';
+	import { threadsStore } from '#lib/stores/threads.svelte.js';
+	import { threadHref } from '#lib/threads/model.js';
 	import { Skeleton } from '#lib/components/ui/skeleton/index.js';
 	import * as Empty from '#lib/components/ui/empty/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
@@ -240,18 +242,24 @@
 								{...props}
 								size="icon-sm"
 								variant="ghost"
-								aria-label="Open agent chat"
-								onclick={() => {
-									const to = agent?.slug ?? task.agentId;
-									onClose?.();
-									void goto(`/a/${to}`);
+								aria-label="Discuss in chat"
+								data-testid="discuss-run"
+								onclick={async () => {
+									// a NEW chat with the lead, seeded with this run; the run keeps its own session
+									try {
+										const t = await threadsStore.discuss({ kind: 'run', ref: task.id });
+										onClose?.();
+										void goto(threadHref(t.agentId, t.id));
+									} catch (e) {
+										toast.error(e instanceof Error ? e.message : 'Could not open a chat');
+									}
 								}}
 							>
 								<ChatCircleIcon class="size-4" />
 							</Button>
 						{/snippet}
 					</Tooltip.Trigger>
-					<Tooltip.Content>Open agent chat</Tooltip.Content>
+					<Tooltip.Content>Discuss in a new chat</Tooltip.Content>
 				</Tooltip.Root>
 			{/if}
 			{#if onClose}

@@ -1,6 +1,7 @@
 /** Ports the use cases depend on; `infra/` implements them. */
 import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalView } from '../domain/approvals.ts'
+import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
 import type {
   AgentConnectors,
   AgentConnectorView,
@@ -55,6 +56,7 @@ import type { Rehearsal, RehearsalSample, TestCase, TestResult } from '../domain
 import type { Routine, RoutineRun, RoutineSpec } from '../domain/routines.ts'
 import type { SettingsPatch, WorkspaceSettings } from '../domain/settings.ts'
 import type { Task, TaskPriority, TaskReport, TaskStatus } from '../domain/tasks.ts'
+import type { Thread, ThreadSeed, ThreadSource } from '../domain/threads.ts'
 
 export interface Clock {
   now(): number
@@ -142,10 +144,19 @@ export interface ChatStats {
 /** The DM chat of an agent, on eharness sessions (implemented in `infra/eh/chat-service.ts`). */
 export interface ChatPort {
   /** `message` is the summary kind message, or null when there was nothing to compact. */
-  compact(agent: AgentDef): Promise<{ compacted: boolean; message: ChatMessage | null }>
-  stats(agent: AgentDef): Promise<ChatStats>
+  compact(
+    agent: AgentDef,
+    sessionId: string,
+  ): Promise<{ compacted: boolean; message: ChatMessage | null }>
+  stats(agent: AgentDef, sessionId: string): Promise<ChatStats>
   /** Stats plus the tools the model sees in the next request (opens the session). */
-  context(agent: AgentDef): Promise<{ stats: ChatStats; tools: ToolInfo[] }>
+  context(agent: AgentDef, sessionId: string): Promise<{ stats: ChatStats; tools: ToolInfo[] }>
+  /** Put a context message (an `eh.event`, no model call) at the start of a thread's session. */
+  seed(
+    agent: AgentDef,
+    sessionId: string,
+    event: { name: string; text: string; key: string },
+  ): Promise<void>
 }
 
 /** A connector of the agent as the composer tools menu shows it. */
@@ -171,9 +182,9 @@ export interface ChatToolsState {
 
 /** Per-chat connector switches (the composer tools menu). */
 export interface ChatToolsPort {
-  get(agent: AgentDef): Promise<ChatToolsState>
+  get(agent: AgentDef, sessionId: string): Promise<ChatToolsState>
   /** Replace the connections switched off in this chat. */
-  set(agent: AgentDef, off: string[], now: number): Promise<ChatToolsState>
+  set(agent: AgentDef, sessionId: string, off: string[], now: number): Promise<ChatToolsState>
 }
 
 export interface ToolInfo {
@@ -366,6 +377,67 @@ export interface HeartbeatStore {
   updateDigest(fn: (state: DigestState) => DigestState, now: number): DigestState
 }
 
+/** Chat threads (`infra/db/threads-repo.ts`, `domain/threads.ts`). */
+export interface ThreadStore {
+  get(id: string): Thread | undefined
+  getBySession(sessionId: string): Thread | undefined
+  /** All threads of an agent, archived ones included, newest activity first. */
+  list(agentId: string): Thread[]
+  /** Session ids of every thread of an agent (archived included). */
+  sessionsOf(agentId: string): string[]
+  /** The sessions of every thread that is not archived. */
+  allSessions(): Array<{ agentId: string; sessionId: string }>
+  /** Idempotent on `sessionId`: an existing row is returned unchanged. */
+  insert(thread: {
+    id: string
+    agentId: string
+    sessionId: string
+    title: string | null
+    source: ThreadSource
+    sourceLabel: string | null
+    seed: ThreadSeed | null
+    now: number
+  }): Thread
+  patch(
+    id: string,
+    patch: { title?: string | null; archivedAt?: number | null },
+    now: number,
+  ): Thread | undefined
+  /** A message of a thread: its activity, preview and (for an unnamed thread) a title from it. */
+  touch(sessionId: string, info: { at: number; preview: string | null; title: string | null }): void
+}
+
+export interface NotificationStore {
+  get(id: string): Notification | undefined
+  byKey(key: string): Notification | undefined
+  /** Newest first. */
+  list(query: { open: boolean; limit: number }): Notification[]
+  countOpen(): number
+  /** undefined when a notification with this `key` exists already. */
+  insert(n: {
+    id: string
+    kind: NotificationKind
+    key: string
+    title: string
+    body: string
+    link: string | null
+    agentId: string | null
+    createdAt: number
+  }): Notification | undefined
+  dismiss(id: string, now: number): Notification | undefined
+  dismissAll(now: number): number
+  dismissByKeyPrefix(prefix: string, now: number): number
+}
+
+export interface BriefingStore {
+  get(id: string): Briefing | undefined
+  getByDay(day: string): Briefing | undefined
+  /** Newest day first. */
+  list(limit: number): Briefing[]
+  /** undefined when that day has one already. */
+  insert(b: Briefing): Briefing | undefined
+}
+
 /** What the heartbeat and the digest need besides the stores (`app/heartbeat.ts`). */
 export interface HeartbeatPorts {
   store: HeartbeatStore
@@ -375,8 +447,6 @@ export interface HeartbeatPorts {
   requests(sessionId: string, limit: number): Promise<Array<{ text: string; at: number }>>
   /** Fire one beat now (the web's "Run now"); a skip says why and costs no model call. */
   run(agentId: string, at: number): Promise<{ started: boolean; reason?: string }>
-  /** Put a message in the client's DM with the lead (an `eh.event`, no model call). */
-  notify(input: { name: string; text: string; key: string; at: number }): Promise<void>
 }
 
 /** A decision to store (always `open`). */
@@ -467,9 +537,9 @@ export interface ModeState {
 
 /** Per-session permission modes (`infra/eh/mode-service.ts`). */
 export interface ModePort {
-  get(agent: AgentDef): ModeState
-  /** Store a pick for the agent's DM chat; the caller validated it against `available`. */
-  set(agent: AgentDef, mode: TeamMode, now: number): ModeState
+  get(agent: AgentDef, sessionId: string): ModeState
+  /** Store a pick for a chat thread; the caller validated it against `available`. */
+  set(agent: AgentDef, sessionId: string, mode: TeamMode, now: number): ModeState
 }
 
 /** Read side of the model call log (written by the `activityLog` plugin). */
@@ -649,6 +719,9 @@ export interface Deps {
   agents: AgentRepo
   chat: ChatPort
   chatTools: ChatToolsPort
+  threads: ThreadStore
+  notifications: NotificationStore
+  briefings: BriefingStore
   uploads: UploadStore
   tasks: TaskStore
   team: TeamPort
