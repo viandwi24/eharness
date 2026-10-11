@@ -3,15 +3,18 @@
 	import ChatsCircleIcon from 'phosphor-svelte/lib/ChatsCircle';
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
+	import GavelIcon from 'phosphor-svelte/lib/Gavel';
 	import GearIcon from 'phosphor-svelte/lib/Gear';
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
 	import PulseIcon from 'phosphor-svelte/lib/Pulse';
 	import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 	import type { Component } from 'svelte';
+	import { Badge } from '#lib/components/ui/badge/index.js';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { SECTIONS, sectionOf, type SectionId } from '#lib/nav/sections.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
+	import { live } from '#lib/stores/live.svelte.js';
 	import { cn } from '#lib/utils.js';
 	import ApprovalsPopover from './ApprovalsPopover.svelte';
 	import ThemeToggle from './ThemeToggle.svelte';
@@ -25,6 +28,7 @@
 	const ICONS: Record<SectionId, Component> = {
 		agents: ChatsCircleIcon,
 		tasks: ListChecksIcon,
+		decisions: GavelIcon,
 		programs: StrategyIcon,
 		routines: ClockIcon,
 		files: FolderOpenIcon,
@@ -34,6 +38,7 @@
 	};
 	const current = $derived(sectionOf(page.url.pathname));
 	const unread = $derived(Object.values(agentsStore.state.activity).reduce((n, a) => n + (a?.unread ? 1 : 0), 0));
+	const decisionCount = $derived(live.state.decisions.length);
 	const main = SECTIONS.filter((s) => s.id !== 'settings');
 	const settings = SECTIONS.find((s) => s.id === 'settings')!;
 </script>
@@ -57,6 +62,9 @@
 				>
 					<Icon class="size-5" weight={active ? 'fill' : 'regular'} />
 					{#if bar}<span>{s.label}</span>{/if}
+					{#if s.id === 'decisions' && decisionCount > 0}
+						<Badge shape="number" variant="warning" class="absolute top-0.5 right-0.5 h-4 min-w-4 px-1 text-[10px]" aria-label="{decisionCount} decisions waiting">{decisionCount}</Badge>
+					{/if}
 					{#if s.id === 'agents' && unread > 0}
 						<span class="absolute top-1.5 right-1.5 size-2 rounded-full bg-brand" aria-label="{unread} unread chats"></span>
 					{/if}

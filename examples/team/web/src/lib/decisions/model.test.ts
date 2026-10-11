@@ -1,0 +1,73 @@
+import { describe, expect, test } from 'bun:test';
+import { emptyProgramForm } from '../programs/form';
+import { authorityLines, decisionText, type Decision, editBody, grantLines, groupDecisions, optionsOf, outcomeLine, statusBadge, triggerLine } from './model';
+
+const authority = { tools: ['web_fetch'], connectors: ['github'], read: ['/library/in/**'], write: ['/library/out/**'] };
+const program = {
+	agentId: 'a',
+	name: 'Scripts',
+	brief: 'b',
+	authority,
+	gates: [],
+	escalation: '',
+	forbidden: [],
+	budget: { perRunUsd: 2, perDayUsd: null },
+	trigger: { kind: 'manual' as const },
+	report: 'task' as const
+};
+const base = { id: 'd', status: 'open' as const, title: 'T', body: '', agentId: 'a', sessionId: 's', programId: null, waitId: null, decidedBy: null, decidedAt: null, decisionNote: null, outcome: null, createdAt: 1 };
+const proposal = (runOnce: boolean): Decision => ({ ...base, kind: 'proposal', payload: { program, runOnce } });
+const escalation = (options: string[] = []): Decision => ({ ...base, kind: 'escalation', payload: { question: 'q', options, source: 'agent' } });
+const amendment: Decision = { ...base, kind: 'amendment', payload: { authority, why: 'w' } };
+
+describe('decision model', () => {
+	test('groups by kind with runs waiting first, empty groups left out', () => {
+		const groups = groupDecisions([proposal(false), amendment, escalation(), escalation(['x'])]);
+		expect(groups.map((g) => [g.kind, g.items.length])).toEqual([['escalation', 2], ['amendment', 1], ['proposal', 1]]);
+		expect(groupDecisions([proposal(true)]).map((g) => g.kind)).toEqual(['proposal']);
+		expect(groupDecisions([])).toEqual([]);
+	});
+
+	test('the authority a decision grants is a clear list; an escalation grants nothing', () => {
+		expect(authorityLines(authority)).toEqual(['Use web_fetch', 'Every tool of connector github', 'Read /library/in/**', 'Read and write /library/out/**']);
+		expect(grantLines(proposal(false))).toHaveLength(4);
+		expect(grantLines(amendment)).toHaveLength(4);
+		expect(grantLines(escalation())).toEqual([]);
+	});
+
+	test('when a proposal runs, and what the cards say', () => {
+		expect(triggerLine({ program, runOnce: true })).toBe('Runs once, right after you approve');
+		expect(triggerLine({ program, runOnce: false })).toBe('Runs when you run it');
+		const scheduled = { ...program, trigger: { kind: 'schedule' as const, spec: { kind: 'every' as const, everyMs: 3_600_000 } } };
+		expect(triggerLine({ program: scheduled, runOnce: false })).toMatch(/^Runs /);
+		expect(decisionText(proposal(false), 'Lead')).toBe('Lead proposes: T');
+		expect(decisionText(amendment, 'Writer')).toBe('Writer asks for more authority: T');
+		expect(decisionText(escalation(), 'Writer')).toBe('Writer needs a decision: T');
+	});
+
+	test('options come from escalations only', () => {
+		expect(optionsOf(escalation(['A', 'B']))).toEqual(['A', 'B']);
+		expect(optionsOf(escalation())).toEqual([]);
+		expect(optionsOf(amendment)).toEqual([]);
+	});
+
+	test('status badges and outcome lines', () => {
+		expect(statusBadge({ status: 'open' }).label).toBe('Waiting for you');
+		expect(statusBadge({ status: 'expired' }).variant).toBe('destructive');
+		expect(outcomeLine(proposal(true))).toBe('');
+		const approved = { ...proposal(true), status: 'approved' as const, outcome: { decision: 'approved', programId: 'p', runSessionId: 'r' } };
+		expect(outcomeLine(approved)).toContain('a run started');
+		expect(outcomeLine({ ...approved, outcome: { decision: 'approved', programId: 'p' } })).toBe('Approved: the program was created.');
+		expect(outcomeLine({ ...escalation(['A']), status: 'approved', outcome: { decision: 'A' } })).toBe('Answered "A": the run continued.');
+		expect(outcomeLine({ ...amendment, status: 'rejected' })).toContain('without it');
+		expect(outcomeLine({ ...proposal(false), status: 'rejected' })).toContain('nothing was created');
+	});
+
+	test('edit and approve sends the program fields of the form and the run-once switch', () => {
+		const form = { ...emptyProgramForm(), name: ' N ', brief: ' B ', write: '/library/a/**\n/library/a/**' };
+		const edit = editBody(form, true);
+		expect(edit.runOnce).toBe(true);
+		expect(edit.program).toMatchObject({ name: 'N', brief: 'B', authority: { write: ['/library/a/**'], read: [], tools: [], connectors: [] }, trigger: { kind: 'manual' } });
+		expect(edit.program).not.toHaveProperty('agentId');
+	});
+});

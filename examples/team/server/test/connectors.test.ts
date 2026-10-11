@@ -239,9 +239,12 @@ describe('migration of the tool checklist and MCP servers', () => {
     )
     expect(before).not.toBe('[]')
 
-    // reader: read files, memory, todos; as a role agent it also has the child side `send_message`
+    // reader: read files, memory, todos; as a role agent it also has the child side `send_message`,
+    // and in a chat `propose_plan` (the Decision Center; not a connector, always there)
     const reader = await offeredTools(server, 'reader', model)
-    expect(reader).toEqual([...READ, ...MEMORY, 'todo_write', 'send_message'].sort())
+    expect(reader).toEqual(
+      [...READ, ...MEMORY, 'todo_write', 'send_message', 'propose_plan'].sort(),
+    )
     const readerOut = server.connectors.activated('id-reader')
     // the library is read only: edit tools are off
     expect(readerOut?.rules.deny).toEqual(expect.arrayContaining(WRITE))

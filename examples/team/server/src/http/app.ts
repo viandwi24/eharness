@@ -12,6 +12,7 @@ import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { connectorRoutes } from './routes/connectors.ts'
+import { decisionRoutes } from './routes/decisions.ts'
 import { type HarnessFetch, harnessRoutes } from './routes/harness.ts'
 import { healthRoutes } from './routes/health.ts'
 import { libraryRoutes } from './routes/library.ts'
@@ -74,6 +75,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
       name: 'programs',
       description:
         'Standing orders: what an agent does on its own (brief, enforced authority, gates, budget, trigger), with run history.',
+    },
+    {
+      name: 'decisions',
+      description:
+        'The Decision Center: proposals (a plan or a program), escalations (a parked run asks) and amendments (a run asks for more authority), decided by the client.',
     },
     { name: 'tasks', description: 'Delegated work across agents (the board).' },
     {
@@ -236,6 +242,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', connectorRoutes(options.deps))
   app.route('/', routineRoutes(options.deps))
   app.route('/', programRoutes(options.deps))
+  app.route('/', decisionRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)

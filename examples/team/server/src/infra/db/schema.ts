@@ -311,6 +311,44 @@ export const programs = sqliteTable(
   (t) => [index('programs_agent').on(t.agentId)],
 )
 
+/**
+ * The Decision Center (P40 decision D5): proposals, escalations and amendments only the client can
+ * settle. An escalation or an amendment names the external wait (`wait_id`) its session is parked
+ * on; deciding it resolves that wait. Tool approvals are not rows here (they stay in the chat).
+ */
+export const decisions = sqliteTable(
+  'decisions',
+  {
+    id: text('id').primaryKey(),
+    /** `proposal` | `escalation` | `amendment` */
+    kind: text('kind').notNull(),
+    /** `open` | `approved` | `rejected` | `expired` */
+    status: text('status').notNull().default('open'),
+    title: text('title').notNull(),
+    /** Markdown: goal, plan steps, why, evidence links. */
+    body: text('body').notNull().default(''),
+    /** The agent that asks (the owner of the source session). */
+    agentId: text('agent_id').notNull(),
+    sessionId: text('session_id'),
+    programId: text('program_id'),
+    /** Kind-specific JSON (`domain/decisions.ts`). */
+    payload: json<Record<string, unknown>>('payload').notNull(),
+    /** The external wait a parked session waits on (unique: one decision per wait). */
+    waitId: text('wait_id'),
+    decidedBy: text('decided_by'),
+    decidedAt: integer('decided_at'),
+    decisionNote: text('decision_note'),
+    outcome: json<Record<string, unknown>>('outcome'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    index('decisions_status').on(t.status, t.createdAt),
+    index('decisions_agent').on(t.agentId),
+    index('decisions_session').on(t.sessionId),
+    uniqueIndex('decisions_wait').on(t.waitId),
+  ],
+)
+
 /** History of fires; the unique `(routine_id, scheduled_at)` makes a slot fire at most once. */
 export const routineRuns = sqliteTable(
   'routine_runs',

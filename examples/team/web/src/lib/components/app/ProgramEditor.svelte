@@ -7,12 +7,14 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { CONFLICT_TEXT, isVersionConflict } from '#lib/conflict.js';
-	import { bodyFromForm, emptyProgramForm, formFromProgram, REPORT_OPTIONS, validateProgramForm, type Program, type ProgramForm } from '#lib/programs/form.js';
+	import { bodyFromForm, emptyProgramForm, formFromProgram, REPORT_OPTIONS, validateProgramForm, type Program, type ProgramForm, type ProgramShape } from '#lib/programs/form.js';
 	import ScheduleFields from './ScheduleFields.svelte';
 
 	let {
 		agentId = '',
 		program,
+		proposed,
+		onApply,
 		formId = 'program-form',
 		saving = $bindable(false),
 		valid = $bindable(false),
@@ -21,6 +23,9 @@
 		/** Preset agent for a new program; with none the form shows an agent picker. */
 		agentId?: string;
 		program?: Program | undefined;
+		/** A program an agent proposed (Decision Center): the form edits it and hands the result to `onApply` instead of saving. */
+		proposed?: ProgramShape | undefined;
+		onApply?: (form: ProgramForm) => void;
 		formId?: string;
 		saving?: boolean;
 		valid?: boolean;
@@ -28,7 +33,7 @@
 	} = $props();
 
 	// svelte-ignore state_referenced_locally
-	let form = $state<ProgramForm>(program ? formFromProgram(program) : emptyProgramForm());
+	let form = $state<ProgramForm>(program ? formFromProgram(program) : proposed ? formFromProgram(proposed) : emptyProgramForm());
 	// svelte-ignore state_referenced_locally
 	let pickedAgent = $state(program?.agentId ?? agentId);
 	let errors = $state<Record<string, string>>({});
@@ -36,7 +41,7 @@
 
 	onMount(() => void agentsStore.load());
 	$effect(() => {
-		valid = !!form.name.trim() && !!form.brief.trim() && !!pickedAgent;
+		valid = !!form.name.trim() && !!form.brief.trim() && (!!pickedAgent || !!proposed);
 	});
 
 	async function submit(e: SubmitEvent): Promise<void> {
@@ -49,6 +54,10 @@
 			body = bodyFromForm(form);
 		} catch (err) {
 			errors = { schedule: err instanceof Error ? err.message : String(err) };
+			return;
+		}
+		if (onApply) {
+			onApply(form);
 			return;
 		}
 		saving = true;
@@ -76,7 +85,7 @@
 {/snippet}
 
 <form id={formId} class="flex flex-col gap-4 text-sm" onsubmit={submit}>
-	{#if !program}
+	{#if !program && !proposed}
 		<label class="flex flex-col gap-1">
 			<span class="font-medium">Agent</span>
 			<NativeSelect bind:value={pickedAgent} aria-invalid={!!errors.agentId}>

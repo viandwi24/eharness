@@ -17,6 +17,7 @@
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
  *   TEAM_SEARCH_MODEL   model of web_search, same format
  *   TEAM_INSTANCE_ID  stable id of this instance (default team-<PORT>): a restarted instance recovers its own interrupted turns at boot
+ *   TEAM_DEMO_COLLECTOR   1 = register the fixture community source (`ingest_source` of the Data work connector; 5 000 deterministic messages)
  *   TEAM_DEBUG_INVARIANTS   1 = debug.invariants on every agent (tests set it; a broken session invariant fails the turn)
  *   TEAM_BUDGET_USD   monthly USD limit of the workspace ledger (unset = tracked, not limited)
  *   TEAM_SPAWN_CAP    children the lead runs at once (default 4; the settings row overrides it)
@@ -36,16 +37,25 @@ import { errorText, type ModelCatalog, uuidv7 } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
 import { hostAllowed, type ListenConfig, listenConfig, originOf } from './app/auth.ts'
 import { checkChatBody } from './app/chat.ts'
+import {
+  createAmendment,
+  createEscalation,
+  createProposal,
+  createReportEscalation,
+} from './app/decisions.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
 import { areaOf } from './domain/library.ts'
 import { createApp } from './http/app.ts'
 import { MAX_REQUEST_BYTES } from './http/body-limit.ts'
 import { BOOT_ID } from './http/boot.ts'
+import { type BigDataConfig, communityFixture } from './infra/bigdata/index.ts'
+import { seedBuiltinSkills } from './infra/bigdata/skills.ts'
 import { sqliteActivityStore } from './infra/db/activity-store.ts'
 import { drizzleAgentRepo } from './infra/db/agents-repo.ts'
 import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
+import { drizzleDecisionStore } from './infra/db/decisions-repo.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
 import { drizzleProgramStore } from './infra/db/programs-repo.ts'
@@ -66,6 +76,8 @@ import { createChatToolsService } from './infra/eh/chat-tools-service.ts'
 import type { CatalogOptions } from './infra/eh/connector-catalog.ts'
 import { type ConnectorsRuntime, createConnectors, SEALED_KINDS } from './infra/eh/connectors.ts'
 import { backfillCustomSlugs, migrateLegacyAgents } from './infra/eh/connectors-migration.ts'
+import { createDecisionService, type DecisionService } from './infra/eh/decision-service.ts'
+import type { DecisionIntake } from './infra/eh/decisions-plugin.ts'
 import { createEventAppender } from './infra/eh/event-appender.ts'
 import { createTeamHttp } from './infra/eh/harness-http.ts'
 import type { LibraryChange } from './infra/eh/library-fs.ts'
@@ -134,6 +146,8 @@ export interface ServerConfig {
   tuning?: AgentFactoryDeps['tuning']
   /** Delegation limits (spawn cap, child steps, park timeout). */
   limits?: TeamLimits
+  /** The big-data toolkit: data sources of `ingest_source`, limits of `run_code` (`infra/bigdata`). */
+  bigData?: BigDataConfig
   /** Monthly USD limit of the workspace ledger scope. */
   budgetUsd?: number
   /** Model call log retention: rows kept (default 5000) and days kept (default 7). */
@@ -165,6 +179,8 @@ export interface Server {
   routines: RoutineService
   /** Program runs (`infra/eh/program-service.ts`). */
   programs: ProgramService
+  /** Resumes the sessions parked on a decision (`infra/eh/decision-service.ts`). */
+  decisions: DecisionService
   /** Operational counters of the runtime (`config.observe`): failed spans, hook timeouts, ... */
   metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
@@ -346,6 +362,16 @@ export function compose(config: ServerConfig): Server {
   connectorsRef = connectors
   const routineStore = sqliteRoutineStore(conn.sqlite)
   const programStore = drizzleProgramStore(conn.db)
+  const decisionStore = drizzleDecisionStore(conn.db)
+  // the decision tools of the agents need the app deps, which are built after the factory
+  let decisionIntake: DecisionIntake | undefined
+  // the fixture community source is a demo: it is only there when asked for
+  const bigDataConfig: BigDataConfig = {
+    ...config.bigData,
+    collectors:
+      config.bigData?.collectors ??
+      ((config.env ?? process.env).TEAM_DEMO_COLLECTOR === '1' ? [communityFixture()] : []),
+  }
   const sessionModes = sqliteSessionModes(conn.sqlite)
   const chatToolsStore = sqliteChatTools(conn.sqlite)
   let routines: RoutineService | undefined
@@ -364,6 +390,8 @@ export function compose(config: ServerConfig): Server {
     ...(config.classifier === undefined ? {} : { classifier: config.classifier }),
     sessionModes,
     programs: programStore,
+    bigData: bigDataConfig,
+    decisions: () => decisionIntake,
     chatTools: chatToolsStore,
     // Auto blocked / paused / resumed: the web shows "auto paused" from this event
     onAutoEvent: ({ sessionId, agentId, event, state, mode }) =>
@@ -415,6 +443,10 @@ export function compose(config: ServerConfig): Server {
     events,
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
+  const decisionService = createDecisionService(factory, {
+    agents,
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
   routines = createRoutineService(factory, {
     agents,
     routines: routineStore,
@@ -449,11 +481,19 @@ export function compose(config: ServerConfig): Server {
     routineEngine: routines,
     programs: programStore,
     programRunner,
+    decisions: decisionStore,
+    decisionResolver: decisionService,
     events,
     modelCalls,
     clock: { now: () => Date.now() },
     ids: { next: () => uuidv7() },
     workspaceId: WORKSPACE_ID,
+  }
+  decisionIntake = {
+    propose: (input) => createProposal(deps, input),
+    escalate: (input) => createEscalation(deps, input),
+    amend: (input) => createAmendment(deps, input),
+    reportNeedsDecision: (input) => void createReportEscalation(deps, input),
   }
   if (config.seed !== false) seedAgents(deps)
 
@@ -485,6 +525,7 @@ export function compose(config: ServerConfig): Server {
       connections: connectors.stores.connections,
       changed: () => connectors.profileChanged('connection'),
     })
+    if (config.seed !== false) await seedBuiltinSkills(conn.sqlite)
     await factory.prepare()
   })
   connectorsReady.catch(() => undefined)
@@ -525,6 +566,7 @@ export function compose(config: ServerConfig): Server {
     team,
     routines,
     programs: programRunner,
+    decisions: decisionService,
     activityLog,
     metrics: observer.snapshot,
     providers,

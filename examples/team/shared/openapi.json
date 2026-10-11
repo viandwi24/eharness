@@ -43,6 +43,10 @@
       "description": "Standing orders: what an agent does on its own (brief, enforced authority, gates, budget, trigger), with run history."
     },
     {
+      "name": "decisions",
+      "description": "The Decision Center: proposals (a plan or a program), escalations (a parked run asks) and amendments (a run asks for more authority), decided by the client."
+    },
+    {
       "name": "tasks",
       "description": "Delegated work across agents (the board)."
     },
@@ -1705,6 +1709,7 @@
               "routine-fired",
               "routine-changed",
               "program-changed",
+              "decision-changed",
               "settings-changed",
               "mode-changed",
               "model-call",
@@ -5753,6 +5758,668 @@
         "required": [
           "runs"
         ]
+      },
+      "DecisionList": {
+        "type": "object",
+        "properties": {
+          "decisions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Decision"
+            }
+          },
+          "open": {
+            "type": "integer",
+            "description": "All open decisions (the badge), whatever the filter."
+          }
+        },
+        "required": [
+          "decisions",
+          "open"
+        ]
+      },
+      "Decision": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/DecisionStatus"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string",
+                "description": "Markdown: goal, plan steps, why, evidence links."
+              },
+              "agentId": {
+                "type": "string",
+                "description": "The agent that asks."
+              },
+              "sessionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The session it came from."
+              },
+              "programId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "waitId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The external wait the session is parked on."
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "decisionNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/DecisionOutcome"
+              },
+              "createdAt": {
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "proposal"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/ProposalPayload"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "title",
+              "body",
+              "agentId",
+              "sessionId",
+              "programId",
+              "waitId",
+              "decidedBy",
+              "decidedAt",
+              "decisionNote",
+              "outcome",
+              "createdAt",
+              "kind",
+              "payload"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/DecisionStatus"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string",
+                "description": "Markdown: goal, plan steps, why, evidence links."
+              },
+              "agentId": {
+                "type": "string",
+                "description": "The agent that asks."
+              },
+              "sessionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The session it came from."
+              },
+              "programId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "waitId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The external wait the session is parked on."
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "decisionNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/DecisionOutcome"
+              },
+              "createdAt": {
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "escalation"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/EscalationPayload"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "title",
+              "body",
+              "agentId",
+              "sessionId",
+              "programId",
+              "waitId",
+              "decidedBy",
+              "decidedAt",
+              "decisionNote",
+              "outcome",
+              "createdAt",
+              "kind",
+              "payload"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "$ref": "#/components/schemas/DecisionStatus"
+              },
+              "title": {
+                "type": "string"
+              },
+              "body": {
+                "type": "string",
+                "description": "Markdown: goal, plan steps, why, evidence links."
+              },
+              "agentId": {
+                "type": "string",
+                "description": "The agent that asks."
+              },
+              "sessionId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The session it came from."
+              },
+              "programId": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "waitId": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "The external wait the session is parked on."
+              },
+              "decidedBy": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "decidedAt": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "decisionNote": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/DecisionOutcome"
+              },
+              "createdAt": {
+                "type": "integer"
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "amendment"
+                ]
+              },
+              "payload": {
+                "$ref": "#/components/schemas/AmendmentPayload"
+              }
+            },
+            "required": [
+              "id",
+              "status",
+              "title",
+              "body",
+              "agentId",
+              "sessionId",
+              "programId",
+              "waitId",
+              "decidedBy",
+              "decidedAt",
+              "decisionNote",
+              "outcome",
+              "createdAt",
+              "kind",
+              "payload"
+            ]
+          }
+        ]
+      },
+      "DecisionStatus": {
+        "type": "string",
+        "enum": [
+          "open",
+          "approved",
+          "rejected",
+          "expired"
+        ]
+      },
+      "DecisionOutcome": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "decision": {
+            "type": "string",
+            "description": "`approved`, `rejected` or the option picked."
+          },
+          "programId": {
+            "type": "string"
+          },
+          "runSessionId": {
+            "type": "string",
+            "description": "Session of the one-off run an approved proposal started."
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "ProposalPayload": {
+        "type": "object",
+        "properties": {
+          "program": {
+            "$ref": "#/components/schemas/ProposedProgram"
+          },
+          "runOnce": {
+            "type": "boolean",
+            "description": "true: a one-off plan (created with a manual trigger and run once on approval). false: a standing program, created as proposed."
+          }
+        },
+        "required": [
+          "program",
+          "runOnce"
+        ]
+      },
+      "ProposedProgram": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "description": "The agent that will run the program."
+          },
+          "name": {
+            "type": "string"
+          },
+          "brief": {
+            "type": "string"
+          },
+          "authority": {
+            "$ref": "#/components/schemas/ProgramAuthority"
+          },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "escalation": {
+            "type": "string"
+          },
+          "forbidden": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "budget": {
+            "$ref": "#/components/schemas/ProgramBudget"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/ProgramTrigger"
+          },
+          "report": {
+            "type": "string",
+            "enum": [
+              "digest",
+              "task",
+              "silent"
+            ]
+          }
+        },
+        "required": [
+          "agentId",
+          "name",
+          "brief",
+          "authority",
+          "gates",
+          "escalation",
+          "forbidden",
+          "budget",
+          "trigger",
+          "report"
+        ]
+      },
+      "EscalationPayload": {
+        "type": "object",
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Answers to pick from; empty: approve or reject."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "report"
+            ],
+            "description": "`agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`."
+          }
+        },
+        "required": [
+          "question",
+          "options",
+          "source"
+        ]
+      },
+      "AmendmentPayload": {
+        "type": "object",
+        "properties": {
+          "authority": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProgramAuthority"
+              },
+              {
+                "description": "The authority to add to the program (the client may narrow it)."
+              }
+            ]
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "why"
+        ]
+      },
+      "DecisionKind": {
+        "type": "string",
+        "enum": [
+          "proposal",
+          "escalation",
+          "amendment"
+        ]
+      },
+      "DecisionApprove": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 4000,
+            "description": "Shown to the agent as the note of the answer."
+          },
+          "choice": {
+            "type": "string",
+            "description": "Escalation with options: the option picked (the answer the agent gets)."
+          },
+          "edit": {
+            "type": "object",
+            "properties": {
+              "program": {
+                "$ref": "#/components/schemas/ProposalEdit"
+              },
+              "runOnce": {
+                "type": "boolean"
+              }
+            },
+            "description": "Proposal: what the client changed before approving; absent fields stay as proposed."
+          },
+          "authority": {
+            "type": "object",
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine."
+              },
+              "connectors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Connector or connection ids: every tool of them is allowed."
+              },
+              "read": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may read (`/library/data/**`)."
+              },
+              "write": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may write (`/library/reports/**`); they are readable too."
+              }
+            },
+            "description": "Amendment: grant this instead of what was asked (narrower)."
+          }
+        }
+      },
+      "ProposalEdit": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "brief": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "authority": {
+            "type": "object",
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine."
+              },
+              "connectors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Connector or connection ids: every tool of them is allowed."
+              },
+              "read": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may read (`/library/data/**`)."
+              },
+              "write": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may write (`/library/reports/**`); they are readable too."
+              }
+            }
+          },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "escalation": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "forbidden": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "perRunUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "One run stops (`cost-cap`) when it has spent this much. null = no limit."
+              },
+              "perDayUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+              }
+            }
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/ProgramTrigger"
+          },
+          "report": {
+            "type": "string",
+            "enum": [
+              "digest",
+              "task",
+              "silent"
+            ]
+          }
+        }
+      },
+      "DecisionReject": {
+        "type": "object",
+        "properties": {
+          "note": {
+            "type": "string",
+            "maxLength": 4000
+          }
+        }
       },
       "ModelCallList": {
         "type": "object",
@@ -11762,7 +12429,7 @@
           "programs"
         ],
         "summary": "Edit a program",
-        "description": "A run already in progress keeps the authority it started with; the next run uses the new one. Changing the trigger moves the schedule.",
+        "description": "The authority is read on every tool call: an edit applies to a run in progress from its next call (a widening approved in the Decision Center reaches the run that asked), and to every later run. Changing the trigger moves the schedule.",
         "security": [
           {
             "Bearer": []
@@ -12208,6 +12875,347 @@
           },
           "404": {
             "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/decisions": {
+      "get": {
+        "tags": [
+          "decisions"
+        ],
+        "summary": "List decisions",
+        "description": "The Decision Center: proposals, escalations and amendments that only the client can settle, newest first. Tool approvals are not here: they are answered inline in the chat of their session.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "$ref": "#/components/schemas/DecisionStatus"
+            },
+            "required": false,
+            "name": "status",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "$ref": "#/components/schemas/DecisionKind"
+            },
+            "required": false,
+            "name": "kind",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "Agent id or slug."
+            },
+            "required": false,
+            "description": "Agent id or slug.",
+            "name": "agentId",
+            "in": "query"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Decisions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecisionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/decisions/{id}": {
+      "get": {
+        "tags": [
+          "decisions"
+        ],
+        "summary": "A decision",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Decision id."
+            },
+            "required": true,
+            "description": "Decision id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/decisions/{id}/approve": {
+      "post": {
+        "tags": [
+          "decisions"
+        ],
+        "summary": "Approve a decision",
+        "description": "Proposal: creates the program with the authority of the proposal (`edit` changes it first; a one-off plan also runs once). Escalation: resumes the parked session with `{ decision, note }` as the tool output (`choice` picks an option). Amendment: adds the authority to the program, then resumes the run. The first answer wins (`409 DECISION_CLOSED`); a run that no longer waits makes the decision `expired` (`409 DECISION_EXPIRED`).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Decision id."
+            },
+            "required": true,
+            "description": "Decision id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionApprove"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The decision, decided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`DECISION_CLOSED`, `DECISION_EXPIRED`, `PROGRAM_DELETED` or an archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/decisions/{id}/reject": {
+      "post": {
+        "tags": [
+          "decisions"
+        ],
+        "summary": "Reject a decision",
+        "description": "Escalation and amendment: resumes the parked session with `{ decision: \"rejected\", note }`; the agent continues without what it asked for. Proposal: nothing is created.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Decision id."
+            },
+            "required": true,
+            "description": "Decision id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecisionReject"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The decision, decided",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Decision"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown decision",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`DECISION_CLOSED` or `DECISION_EXPIRED`",
             "content": {
               "application/json": {
                 "schema": {

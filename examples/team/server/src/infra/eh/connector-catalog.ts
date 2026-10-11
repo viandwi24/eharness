@@ -28,6 +28,8 @@ import { nodeResolveHost } from 'eharness/web/node'
 import { z } from 'zod'
 import type { AgentDef } from '../../domain/agents.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
+import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
+import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
 
@@ -53,7 +55,8 @@ export function appRulesOf(def: Pick<AgentDef, 'rules'>): {
   deny: string[]
 } {
   return {
-    allow: [...def.rules.allow, ...MEMORY_ALLOW, 'write_file', 'edit_file'],
+    // asking the client for a decision never needs a permission of its own (decisions-plugin.ts)
+    allow: [...def.rules.allow, ...MEMORY_ALLOW, 'write_file', 'edit_file', ...DECISION_TOOLS],
     ask: [...def.rules.ask],
     deny: [...def.rules.deny],
   }
@@ -65,6 +68,8 @@ export const GITHUB_MCP_URL = 'https://api.githubcopilot.com/mcp/'
 export interface CatalogHooks {
   /** The subagents plugin of a lead (delegation and messaging); undefined for other agents. */
   team?: (agent: AgentDef, input: BuiltinInput) => ConnectorActivation
+  /** The big-data toolkit plugin (`infra/bigdata`); undefined = the connector offers nothing. */
+  bigdata?: BigDataHook
 }
 
 export interface CatalogOptions {
@@ -396,5 +401,10 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
   })
   const listTools = options.listTools ?? listRemoteMcpTools
   const defer = options.defer ?? ((): boolean => true)
-  return [...builtins, github(listTools, defer), customMcp(listTools, defer)]
+  return [
+    ...builtins,
+    bigDataConnector(() => options.hooks.bigdata),
+    github(listTools, defer),
+    customMcp(listTools, defer),
+  ]
 }

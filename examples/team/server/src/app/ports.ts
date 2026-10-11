@@ -18,6 +18,13 @@ import type {
   FlowResult,
   FlowStartInput,
 } from '../domain/connectors.ts'
+import type {
+  Decision,
+  DecisionAnswer,
+  DecisionKind,
+  DecisionOutcome,
+  DecisionStatus,
+} from '../domain/decisions.ts'
 import type { NewEvent } from '../domain/events.ts'
 import type { LibraryFileMeta, LibraryVersion } from '../domain/library.ts'
 import type {
@@ -234,6 +241,58 @@ export interface ProgramRunner {
     program: Program,
     options: { runAt: number },
   ): Promise<{ sessionId: string; started: boolean }>
+}
+
+/** A decision to store (always `open`). */
+export type NewDecision = Pick<
+  Decision,
+  'id' | 'kind' | 'title' | 'body' | 'agentId' | 'sessionId' | 'programId' | 'waitId' | 'createdAt'
+> & { payload: Decision['payload'] }
+
+/** What deciding writes. */
+export interface DecisionPatch {
+  status: Exclude<DecisionStatus, 'open'>
+  decidedBy: string
+  decidedAt: number
+  note: string
+  outcome?: DecisionOutcome | undefined
+  /** The payload as approved (a proposal the client edited). */
+  payload?: Decision['payload'] | undefined
+  programId?: string | null | undefined
+}
+
+export interface DecisionStore {
+  get(id: string): Decision | undefined
+  getByWait(waitId: string): Decision | undefined
+  /** Newest first. */
+  list(query: {
+    status?: DecisionStatus
+    kind?: DecisionKind
+    agentId?: string
+    sessionId?: string
+    limit: number
+  }): Decision[]
+  countOpen(): number
+  insert(decision: NewDecision): Decision
+  /** Compare-and-set on `open`: undefined when the decision was decided meanwhile (the first answer wins). */
+  decide(id: string, patch: DecisionPatch): Decision | undefined
+  /** Back to `open` (a decision whose effect failed). */
+  reopen(id: string): Decision | undefined
+  setOutcome(id: string, outcome: DecisionOutcome, programId?: string): Decision | undefined
+}
+
+/**
+ * Hands the answer to the session a decision came from (`infra/eh/decision-service.ts`): resolves
+ * the external wait it is parked on (it resumes in whichever instance), or, for a decision made
+ * from a final report, sends the answer as a new message.
+ */
+export interface DecisionResolver {
+  /**
+   * `resumed`: the session continues; `recorded`: the answer is stored and the session continues
+   * when its other waits are answered; `gone`: the session no longer waits (stopped, timed out,
+   * deleted).
+   */
+  resume(decision: Decision, answer: DecisionAnswer): Promise<'resumed' | 'recorded' | 'gone'>
 }
 
 /** Cross-session reads on eharness sessions (answers are the library's `attention` routes) (implemented in `infra/eh/team-service.ts`). */
@@ -469,6 +528,8 @@ export interface Deps {
   routineEngine: RoutineEngine
   programs: ProgramStore
   programRunner: ProgramRunner
+  decisions: DecisionStore
+  decisionResolver: DecisionResolver
   events: EventAppender
   modelCalls: ModelCallStore
   clock: Clock

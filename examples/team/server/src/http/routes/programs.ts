@@ -83,7 +83,7 @@ const patchRoute = createRoute({
   tags: ['programs'],
   summary: 'Edit a program',
   description:
-    'A run already in progress keeps the authority it started with; the next run uses the new one. Changing the trigger moves the schedule.',
+    'The authority is read on every tool call: an edit applies to a run in progress from its next call (a widening approved in the Decision Center reaches the run that asked), and to every later run. Changing the trigger moves the schedule.',
   security,
   request: { ...params, body: { required: true, content: json(ProgramPatchSchema) } },
   responses: {

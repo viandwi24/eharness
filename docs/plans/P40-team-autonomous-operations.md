@@ -1,6 +1,6 @@
 # P40 — Team example: autonomous operations (manager, programs, decision center, big-data work)
 
-Status: in progress (phase A done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
+Status: in progress (phases A, B and D done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -150,13 +150,88 @@ Decided in phase A:
 - Gates are text in the run prompt for now; tools pinned to ask (third-party connector writes) are
   refused in a run, which is the first kind of gate the engine knows.
 
+## Phase B checklist (Decision Center)
+
+- [x] Domain (`domain/decisions.ts`), `decisions` table + migration `0016`, drizzle repo
+      (compare-and-set on `open`), use cases (`app/decisions.ts`).
+- [x] Agent tools (`infra/eh/decisions-plugin.ts`, risk `write`, allowed by app rules): `propose_plan`
+      (DM chats and heartbeat, not parked), `escalate` (program and routine runs, heartbeat) and
+      `request_authority` (program runs), the last two as `externalTool()`s that park the run.
+- [x] Resume through `session.resolveWait` (`infra/eh/decision-service.ts`), same session, decision
+      as the tool output, program runs keep their report spec; works after a restart.
+- [x] Program gate reads the program on every call (`gate.sync`), so an approved amendment reaches
+      the parked run; refusal text and run prompt point to `request_authority` / `escalate`.
+- [x] A `needs_decision` report becomes an escalation (answer sent as a new message).
+- [x] API `/decisions` (list, get, approve with edit, reject), `decision-changed` events, OpenAPI.
+- [x] Web: Decisions page (grouped cards, markdown, authority list, budget, Approve, Edit and
+      approve, Reject with note, option buttons), rail badge, bell line that only links.
+- [x] Tests (`server/test/decisions.test.ts`, web `lib/decisions/model.test.ts`, live store);
+      walkthrough section 19.
+
+Decided in phase B:
+
+- `propose_plan` is flat (name, brief, authority, schedule, ... beside `title` and `body`); `agent`
+  names the runner (the manager proposes programs for workers). `runOnce` makes the program manual
+  and runs it at approval; the client can switch it while editing.
+- One decision per wait id (unique index): a redispatched `start` after a crash reuses the row.
+- Tools by origin: `dm` and `heartbeat` get `propose_plan`; `program`, `routine` and `heartbeat`
+  get `escalate`; `program` gets `request_authority`. Delegated children of the lead get none (their
+  parent is parked on them; they ask through the lead).
+- An editing client can narrow an amendment (`authority` in the approve body); the program gets the
+  union of its authority and what was granted.
+- No timeout on a decision. `expired` means the run no longer waited when the client answered.
+- The program authority is now read per tool call, so an edit also applies to a run in progress
+  (it used to be frozen at session open).
+- The task of a run parked on a decision shows `running` (the board does not know about decisions
+  yet: phase C adds "Waiting for you" from the open decisions of the session).
+
+## Phase D checklist (big-data toolkit)
+
+- [x] Collector interface and cursor (`domain/collectors.ts`; the cursor is a library file
+      `/library/data/<source>/_cursor.json`), ingest into hourly JSONL files, idempotent and
+      at-least-once (`infra/bigdata/ingest.ts`).
+- [x] Fixture collector: a deterministic 5 000-item community day with planted incidents and a
+      `truth()` list (`infra/bigdata/fixture-collector.ts`); registered by `TEAM_DEMO_COLLECTOR=1`
+      or `ServerConfig.bigData.collectors`.
+- [x] `ingest_source` tool, limited by the program's write authority on the source directory.
+- [x] `run_code` (`infra/bigdata/code-sandbox.ts`): Bun subprocess through `localSandbox` with the
+      OS sandbox (no network), authority-checked copy in and out, limits, error strings.
+- [x] Manifest (`domain/manifest.ts`) and tools `manifest_create|next|mark|status`: findings must
+      exist and parse before a chunk is done, compare-and-set marks, 3 attempts, resume.
+- [x] The `chunked-audit` skill, seeded into `/skills` (`domain/builtin-skills.ts`).
+- [x] The **Data work** connector (`bigdata`, off by default) and its hook; program runs may take
+      150 steps (`PROGRAM_RUN_MAX_STEPS`).
+- [x] Tests: `server/test/bigdata.test.ts` (fixture, ingest, manifest, sandbox, no-program tools),
+      `server/test/bigdata-audit.test.ts` (5 000-message auditor in chunks, the model's view
+      measured, kill and restart resumes from the manifest, authority limits, ingest program).
+- [x] Docs: walkthrough section 20, guide `docs/guides/chunked-work.md`.
+
+Decided in phase D:
+
+- Paths: D7's `/data`, `/work` and `/reports` are library paths, so `/library/data/...`,
+  `/library/work/<run>/...` and `/library/reports/<program>/<date>.md` (the authority globs of phase
+  A are library paths as the file tools see them).
+- Ingest is a tool of a program run, not a separate scheduler: a program already has authority,
+  schedule and run history, and the call returns one summary line. The function is independent of
+  the tool, so a timer can call it later.
+- The cursor is a library file, not a table: no migration, visible and versioned, and the write
+  authority on the source directory covers it.
+- `run_code` copies in only what the program may read and back only what it may write; a failed or
+  timed-out run saves nothing. Without an OS sandbox it falls back to the same limits with a
+  stripped environment and a soft network guard (`requireOsSandbox` refuses instead).
+- A chunk is done only when its findings file exists and is valid JSON (so "done" means "saved").
+- Program runs get `maxSteps: 150`: a chunked job is many small steps.
+- Not built: parallel subagents are described in the skill (cap 3) but the tests drive a single
+  worker; Python in `run_code` (D8 says later); an `escalate` call in the auditor test (phase B owns
+  and tests the tool; the skill tells the agent to call it once after the report).
+
 ## Acceptance criteria
 
 - [ ] The acceptance scenario runs end to end on an isolated instance with scripted models: the
       manager proposes a plan, the client approves once, writer/researcher/auditor programs run
       and produce files, an escalation parks and resumes, the digest arrives.
-- [ ] Auditor processes a 5 000-message fixture in chunks, survives a kill/restart mid-run
-      (resumes from the manifest) and produces one merged report.
+- [x] Auditor processes a 5 000-message fixture in chunks, survives a kill/restart mid-run
+      (resumes from the manifest) and produces one merged report (phase D).
 - [ ] Approved authority is enforced: an out-of-scope tool call is refused by the permission
       engine and turns into an amendment, not a silent failure.
 - [ ] Team server + web tests, typecheck, lint green; walkthrough updated.
@@ -171,5 +246,21 @@ Decided in phase A:
   restartable run with a typed result cannot ride the inbox. A way to attach a serializable output
   spec (for example a named spec the agent registers) to an enqueued input would let program runs
   be resumed by another instance. Worked around in phase A with a direct `session.send`.
-- Phase B: the escalation tool must park the run on an external wait; today a run that needs
-  authority only reports `needs_decision`.
+- Phase B (done): the escalation tool parks the run on an external wait.
+- Library (documentation gap, not blocking): the child side of the subagent plugin
+  (`reconcileSubagentWaits`, run when a session opens) treats the `correlationId` of ANY external
+  wait as the id of a child session and tries to settle it (`subagent: reconciling a wait failed`).
+  An app that parks on its own external waits in a session that has the subagent plugin must not
+  return `correlationId` from `start` (worked around: the decision id rides in `payload`). Worth a
+  sentence in spec 11 section 4.2 or spec 20, or a `payload.kind` check in the reconcile.
+- Phase C: show "Waiting for you" for tasks whose session has an open decision (`decisions` with
+  `sessionId` and `status = 'open'`); `GET /decisions?status=open` plus the `decision-changed` event
+  are enough. A worker that picks queued tasks should get `escalate` the same way program runs do
+  (`decisions-plugin.ts` decides by `profileOfSession` origin).
+- Phase E: `propose_plan` is already offered to origin `heartbeat`; its sessions are not built yet.
+  The heartbeat's `escalate` has no program: the decision has `programId: null`.
+- Library (optional, not blocking): the OS sandbox of `localSandbox` restricts writes and the
+  network but not reads of the host file system, so `run_code` code can read files outside its
+  scratch directory (the server database, key files). An `os.denyRead` list (paths the sandboxed
+  process may not read, with a safe default for the home directory) would close it. Worked around by
+  documenting the limit and by stripping the environment; use a container for hostile code.

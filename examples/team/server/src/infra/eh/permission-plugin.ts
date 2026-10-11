@@ -27,6 +27,11 @@ export interface SessionGate {
   refuse(call: { toolName: string; input: unknown }): string | undefined
   /** Reason of a call the engine would have asked about (an `alwaysAsk` tool, a protected path). */
   askedReason(toolName: string): string
+  /**
+   * Called before every decision of the session: bring the engine's rules up to date with the
+   * authority (a program that was widened while the session was parked or running).
+   */
+  sync?(engine: PermissionEngine): Promise<void>
 }
 
 export interface SessionPermissionsOptions<G extends SessionGate = SessionGate> {
@@ -70,7 +75,7 @@ export function sessionPermissions<G extends SessionGate = SessionGate>(
           ? contribution?.hooks
           : ({
               ...contribution.hooks,
-              'tool.approve': gatedApprove(contribution.hooks, gate),
+              'tool.approve': gatedApprove(contribution.hooks, gate, engine),
             } as typeof contribution.hooks)
       return {
         ...(hooks === undefined ? {} : { hooks }),
@@ -98,9 +103,14 @@ type ApproveHook = (
  * (deny rules, `dontAsk`). Most restrictive wins, as in the core's chain (spec 11 §3); the
  * reasons are the program's, so the agent learns what to do instead.
  */
-function gatedApprove(hooks: { 'tool.approve'?: unknown }, gate: SessionGate): ApproveHook {
+function gatedApprove(
+  hooks: { 'tool.approve'?: unknown },
+  gate: SessionGate,
+  engine: PermissionEngine,
+): ApproveHook {
   const engineHook = hooks['tool.approve'] as ApproveHook
   return async (ctx, e) => {
+    await gate.sync?.(engine)
     const refusal = gate.refuse({ toolName: e.toolName, input: e.input })
     if (refusal !== undefined) return { type: 'denied', reason: refusal }
     const verdict = await engineHook(ctx, e)

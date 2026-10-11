@@ -526,15 +526,17 @@ authority, but the permission plugin does the refusing:
    authority matches it. The plugin's `tool.approve` hook runs the gate first, then the engine's
    own verdict; most restrictive wins, like the core's chain (spec 11 section 3).
 3. A refusal is a **denial with a reason the model reads** ("Outside the authority of program ...
-   Do not retry; report what you could not do with status `needs_decision`"), never an
+   Do not retry; call `request_authority`, or finish inside your authority", section 19), never an
    approval request: a background run has nobody to ask. A forbidden call says "Forbidden by
    program ... matches the rule ...". The connectors' own *ask* rules are dropped for a run (the
    client granted these tools to the program); tools **pinned to ask** (writes of third-party
    connectors) stay pinned and are refused: they are gates. A deleted program leaves a session
    that can be read but not act (empty authority).
 
-The authority is read when the session is opened: a run in progress keeps the authority it started
-with, the next run uses the edited one.
+The authority is read from the program on every tool call (`gate.sync` adds rules the program
+gained since the session opened to the live engine, `refuse` reads it fresh), not frozen when the
+session opens: an edit applies to a run in progress from its next call, and an amendment approved
+in the Decision Center (section 19) reaches the run that asked, also after a restart.
 
 **Budget** goes through the ledger of section 12: the session's `budget.ledger.scopes` adds
 `program-run:<sessionId>` (limit `perRunUsd`) and `program:<programId>:<YYYY-MM-DD>` (limit
@@ -569,6 +571,132 @@ PROGRAM_BUSY`); the run history of a program is its tasks.
 authority would only be "not allowed by mode", with the generic reason; the agent could not tell
 that it should report instead of retrying. *Without `dontAsk`:* the first out-of-authority write of
 a 3 a.m. run parks on an approval nobody answers.
+
+## 19. Decision Center: proposals, escalations and amendments
+
+**What.** Some things only the client can settle. They live in one table, `decisions`
+([`domain/decisions.ts`](../../examples/team/server/src/domain/decisions.ts),
+[`app/decisions.ts`](../../examples/team/server/src/app/decisions.ts)), three kinds:
+
+| Kind | Who creates it | Parks the session | Approving does |
+|---|---|---|---|
+| `proposal` | `propose_plan` (DM chats, heartbeat) | no | creates the program with exactly the proposed authority (the client may edit it first); a one-off (`runOnce`) is created with a manual trigger and run once |
+| `escalation` | `escalate` (program and routine runs, heartbeat) | yes | resumes the same session with `{ decision, note }` as the tool output (`decision` is `approved`, `rejected` or the option picked) |
+| `amendment` | `request_authority` (program runs) | yes | adds the authority to the program, then resumes the run like an escalation |
+
+Tool approvals are **not** decisions: they stay inline in the chat of their session (P40 D2).
+
+**The park is eharness' external wait** (spec 11 section 4.2), nothing app-specific.
+[`escalate` and `request_authority`](../../examples/team/server/src/infra/eh/decisions-plugin.ts)
+are `externalTool()`s: tools without `execute`. At step end the turn stops `tool-pending` and the
+pending state (with the wait id `w_<toolCallId>`) is committed to the session's stored state, so
+the park holds no process. Only then does the tool's `start` run (inside the turn): it stores the
+decision row with `wait_id` (idempotent by wait id: a redispatch after a crash finds the row).
+Deciding goes through [`decision-service.ts`](../../examples/team/server/src/infra/eh/decision-service.ts):
+`factory.openSession(agent, sessionId).resolveWait(waitId, { output: { decision, note } })`. That
+works in any instance and after a restart (the state is in storage), retries `EH_SESSION_BUSY` for a
+moment (the turn that parked is still ending), and continues the **same** assistant message: the
+parked tool part becomes `output-available` with the decision. A program run continues with its
+report spec passed again (`output` is not carried over a `tool-pending` stop, spec 05 section 3.3),
+so the resumed run still ends with a typed report on the same task. `resolveWait` answering
+`not-pending` (the run was stopped, deleted) makes the decision `expired`, `409 DECISION_EXPIRED`.
+Don't return a `correlationId` from `start`: the child side of the subagent plugin reads the
+correlation id of *any* external wait as a child session id when a session opens.
+
+**Deciding is a compare-and-set** on `status = 'open'` (the first answer wins, `409
+DECISION_CLOSED`), then the effect; a failed effect opens the decision again, so nothing is half
+decided. An approved proposal records the program it created (`programId`) and the run it started
+(`outcome.runSessionId`).
+
+**Amendments reach the running session.** The gate of section 18 reads the program on every call,
+so widening the program is enough: the resumed run (this process or a restarted one) can use the new
+authority on its next tool call. The refusal text and the run prompt tell the agent to call
+`request_authority` (name what and why) instead of failing.
+
+**A report that says `needs_decision`** and was not preceded by an escalation becomes an escalation
+automatically (the `decisions` plugin's `turn.end` hook; one open decision per session). It has no
+wait: the answer is sent to the finished session as a new message (`session.send`) and the run
+continues from there.
+
+**API and UI.** `GET /decisions` (filters: status, kind, agentId), `GET /decisions/{id}`, `POST
+/decisions/{id}/approve` (`note`, `choice`, `edit` for a proposal, a narrower `authority` for an
+amendment) and `/reject` (`note`); every change is a `decision-changed` event (with the open
+count). The web has a Decisions page (cards grouped by kind: the asking agent, the source chat or
+run, the plan as markdown, the authority it grants as a list, budget, Approve, Edit and approve,
+Reject with a note, option buttons), a badge on the rail, and a general line per open decision in
+the notification bell that only links to the page.
+
+*Without the park:* a run that needs a decision would have to fail or guess, and the client's
+answer would start a new run with none of the context. *Without deciding in storage:* the answer
+could only reach a run in the process that asked.
+
+## 20. Big data: chunked work
+
+**What.** A program that audits thousands of messages a day cannot read them: the context would
+fill after a few hundred. The team example gives the agent a small toolkit and a pattern (the
+generic version is [chunked work](chunked-work.md)); the pieces are in
+[`infra/bigdata`](../../examples/team/server/src/infra/bigdata) and the pure parts in
+[`domain/collectors.ts`](../../examples/team/server/src/domain/collectors.ts) and
+[`domain/manifest.ts`](../../examples/team/server/src/domain/manifest.ts).
+
+1. **Ingest, no model.** A `Collector { id, poll(cursor) -> { items, cursor } }` is the only thing a
+   source implements (a Telegram or Slack MCP source later; today a seeded fixture of a 5 000-message
+   community day). `ingestSource` pulls pages and appends them to the library as
+   `/library/data/<source>/<channel>/<YYYY-MM-DD>/<HH>.jsonl`, then moves the cursor, which is a
+   library file (`_cursor.json`, versioned like any file). It is at-least-once and idempotent: files
+   are stored before the cursor moves, and an item whose id is already in the file is not added again,
+   so a crash between the two repeats a page without duplicates. *Where it runs:* as the tool
+   `ingest_source`, in a program run whose authority names it and the write path of the source. The
+   alternative, a scheduled non-model job, would need its own scheduler, its own authority and its
+   own run history; a program already has all three, the call costs a few tokens (the result is one
+   summary line) and the same function can be wired to a timer later.
+2. **`run_code`.** Sandboxed JavaScript for everything that touches many items. The run gets a
+   private scratch directory that holds only the library paths the model listed in `reads` **and the
+   program may read** (checked with the same `matchRule` the engine uses, so `forbidden` and
+   amendments apply); the code reads and writes them through small globals (`readJsonl`,
+   `readJsonlDir`, `writeJson`, `chunkBySize`, `print`, ...). After a successful run, the files it
+   created or changed go back to the library **only where the program may write**; the rest are
+   reported as "NOT saved". A failed or timed-out run saves nothing. The result is stdout (capped at
+   12 KB, the run is stopped past it) plus a list of what was saved.
+   [`code-sandbox.ts`](../../examples/team/server/src/infra/bigdata/code-sandbox.ts) runs Bun through
+   `eharness/shell`'s `localSandbox({ os: { enabled: true, network: false } })`: Seatbelt on macOS,
+   bubblewrap on Linux. Without the platform tool it falls back to the same limits, a stripped
+   environment and a soft network guard (or refuses, with `requireOsSandbox`). Limits: 30 s (at most
+   120), CPU time (`ulimit -t`), file size (`ulimit -f`), 600 files and 32 MB in, 400 files and 16 MB
+   out, capped output. Memory is not limited, and the library's OS sandbox restricts writes and the
+   network, not reads of the host: for hostile code use a container.
+3. **Manifest.** `/library/work/<run>/manifest.json` lists the chunks and their status. Tools:
+   `manifest_create` (from a list or a directory of chunk files), `manifest_next`, `manifest_mark`,
+   `manifest_status`. A chunk can be marked `done` only when its findings file exists and is valid
+   JSON, so "done" always means "saved". Marks are compare-and-set on the file version, so parallel
+   subagents can mark at once. `failed` counts an attempt (3 at most). A run that stops resumes:
+   the next run calls `manifest_status`, sees the same manifest (the run id is per job and day) and
+   carries on with the chunks that are not done.
+4. **The skill.** [`chunked-audit`](../../examples/team/server/src/domain/builtin-skills.ts) is a
+   library skill (`/skills/chunked-audit/SKILL.md`, seeded once, editable) that teaches the order:
+   resume first, pre-filter with code, one small chunk at a time, findings per chunk, reduce with
+   code, one report, escalate what is severe (`escalate`, section 19). An agent gets it through its
+   `skills` list.
+
+**Wiring.** The tools are the **Data work** connector (id `bigdata`, off for everyone until an agent
+or program switches it on; `connectors: ['bigdata']` in a program's authority grants all its
+tools). It is activated through a hook like the Team connector, so the plugin sees the program of
+the session on every call. A session that is not a program run has no authority and the tools say
+so. A program run may now take up to 150 steps (`PROGRAM_RUN_MAX_STEPS`): a chunked job is many
+small steps, a chat turn's 25 are not enough.
+
+**Test it.** [`bigdata-audit.test.ts`](../../examples/team/server/test/bigdata-audit.test.ts) runs the
+auditor on the 5 000-message fixture with a scripted model that plays the auditor: it finds every
+planted incident (spam bursts, a join raid, a moderator deleting and bullying one member, a role
+given to a brand-new account), and the test measures what the model was shown (the biggest tool
+result is under 16 KB, the model saw under 10% of the messages). A second test kills the run after
+six chunks, restarts the server on the same database and checks the next run reads only the
+remaining chunks. `bigdata.test.ts` covers the fixture, ingest, manifest and the sandbox.
+
+*Without the manifest:* a run that stops starts over, and pays for the same chunks again.
+*Without `run_code`:* the model is the filter, and thousands of lines cost more than the answer is
+worth. *Without the authority check on `reads`:* a read-only program's code could copy any library
+file into its reports.
 
 ## What to change when you copy it
 

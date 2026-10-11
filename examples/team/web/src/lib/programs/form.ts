@@ -62,7 +62,10 @@ export function parseUsd(text: string): number | null | 'invalid' {
 	return Number.isFinite(n) && n > 0 ? n : 'invalid';
 }
 
-export function formFromProgram(p: Program, fallbackTz?: string): ProgramForm {
+/** The fields of a program the form edits: a stored program or a proposed one. */
+export type ProgramShape = Pick<Program, 'name' | 'brief' | 'authority' | 'gates' | 'forbidden' | 'escalation' | 'budget' | 'trigger' | 'report'>;
+
+export function formFromProgram(p: ProgramShape, fallbackTz?: string): ProgramForm {
 	return {
 		name: p.name,
 		brief: p.brief,

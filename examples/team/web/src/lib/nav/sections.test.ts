@@ -8,6 +8,7 @@ describe('sections', () => {
 		expect(sectionOf('/agents/new')).toBe('agents');
 		expect(sectionOf('/tasks')).toBe('tasks');
 		expect(sectionOf('/tasks/abc')).toBe('tasks');
+		expect(sectionOf('/decisions')).toBe('decisions');
 		expect(sectionOf('/programs')).toBe('programs');
 		expect(sectionOf('/connectors')).toBe('connectors');
 		expect(sectionOf('/logs')).toBe('logs');

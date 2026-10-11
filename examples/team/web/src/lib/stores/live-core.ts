@@ -8,12 +8,16 @@ import {
 } from 'eharness/client';
 import type { Approval, ApiClient, ApprovalBody, Task } from '../api/client';
 import { upsertTask } from '../board/board';
+import type { Decision } from '../decisions/model';
 import { applyActivity } from './activity';
 import type { AgentsStore } from './agents-core';
 
 export type LiveState = {
 	approvals: Approval[];
 	approvalsLoaded: boolean;
+	/** Open decisions of the Decision Center (proposals, questions, requests for authority). */
+	decisions: Decision[];
+	decisionsLoaded: boolean;
 	tasks: Task[];
 	tasksLoaded: boolean;
 	connection: FeedStatus;
@@ -22,18 +26,20 @@ export type LiveState = {
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
 	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
-	revs: { files: number; routines: number; programs: number; settings: number; modes: number; chat: number; providers: number; connectors: number };
+	revs: { files: number; routines: number; programs: number; decisions: number; settings: number; modes: number; chat: number; providers: number; connectors: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
 	approvals: [],
 	approvalsLoaded: false,
+	decisions: [],
+	decisionsLoaded: false,
 	tasks: [],
 	tasksLoaded: false,
 	connection: 'idle',
 	reconnecting: false,
 	viewing: null,
-	revs: { files: 0, routines: 0, programs: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
+	revs: { files: 0, routines: 0, programs: 0, decisions: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
 });
 
 /** What the team posts to `POST /attention/{id}/answer`: the wire answers plus its question kind. */
@@ -106,6 +112,19 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		}
 	}
 
+	let decisionsReq = 0;
+	async function fetchDecisions(): Promise<void> {
+		const mine = ++decisionsReq;
+		try {
+			const list = (await api.get('/decisions', { query: { status: 'open', limit: 200 } })).decisions;
+			if (mine !== decisionsReq) return; // a newer request writes
+			state.decisions = list;
+			state.decisionsLoaded = true;
+		} catch (e) {
+			report(e);
+		}
+	}
+
 	const bump = (k: keyof LiveState['revs']) => async (): Promise<void> => {
 		state.revs[k]++;
 	};
@@ -134,6 +153,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 
 		loadTasks: fetchTasks,
 
+		loadDecisions: fetchDecisions,
+
 		/** Something runs that should show up live: a task, or a chat probe (`addBusyProbe`). Drives the restart pings. */
 		isBusy(): boolean {
 			if (state.tasks.some((t) => t.status === 'running')) return true;
@@ -153,7 +174,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		},
 
 		async resync(): Promise<void> {
-			for (const k of Object.keys(state.revs) as (keyof LiveState['revs'])[]) state.revs[k]++; // files, routines, programs, settings, modes, chat, providers, connectors
+			for (const k of Object.keys(state.revs) as (keyof LiveState['revs'])[]) state.revs[k]++; // files, routines, programs, decisions, settings, modes, chat, providers, connectors
 			for (const fn of resyncListeners) {
 				try {
 					fn();
@@ -161,7 +182,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 					report(error);
 				}
 			}
-			await Promise.all([core.loadApprovals(), core.loadTasks(), agents.load()]);
+			await Promise.all([core.loadApprovals(), core.loadTasks(), core.loadDecisions(), agents.load()]);
 		},
 
 		handleEvent(e: ActivityRecord): void {
@@ -213,6 +234,12 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 				if (e.type === 'routine-fired') later('tasks', core.loadTasks);
 			} else if (e.type === 'program-changed') {
 				later('programs', bump('programs'));
+			} else if (e.type === 'decision-changed') {
+				// a decision was created or decided (any tab, an agent, another instance): the badge, the bell and the page refetch
+				later('decisions', core.loadDecisions);
+				later('decisions-rev', bump('decisions'));
+				// an answer resumes a parked run: its task changes too
+				later('tasks', core.loadTasks);
 			} else if (e.type === 'providers-changed') {
 				// a profile was added, edited or removed (any tab or instance): lists refetch
 				later('providers', bump('providers'));

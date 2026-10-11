@@ -8,7 +8,7 @@
  * Connectors decide the tools (`activateConnectors`, spec 24): the built-ins in their fixed order
  * (files, memory, planning, web, ask, team), then the other connectors by id; the plugin order is
  * identical for every session of an agent (prompt-cache prefix, `toolOrder`):
- * connectors -> chatTools -> permissions -> child side of subagents -> routine outcomes -> taskIndex ->
+ * connectors -> chatTools -> decisions -> permissions -> child side of subagents -> routine outcomes -> taskIndex ->
  * activity (session events) -> activityLog (hook only).
  * Activation is asynchronous: `prepare` runs it, `agentFor` (synchronous) uses its result. Static instructions come first; the volatile parts (date, roster)
  * live in the turn reminder, never in `instructions` (spec 02 §5).
@@ -74,6 +74,7 @@ import {
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import { profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
+import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
@@ -81,6 +82,7 @@ import type { ActivityLog } from './activity-log.ts'
 import { chatTools } from './chat-tools-plugin.ts'
 import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
+import { type DecisionIntake, decisions } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import type { ModelConfig } from './provider.ts'
@@ -158,6 +160,14 @@ export interface AgentFactoryDeps {
    * no program sessions.
    */
   programs?: Pick<ProgramStore, 'get'>
+  /**
+   * The Decision Center intake (`decisions-plugin.ts`): `propose_plan`, `escalate`,
+   * `request_authority` and the needs_decision report hook. Late-bound (built after the app
+   * deps); absent = no decision tools.
+   */
+  decisions?: () => DecisionIntake | undefined
+  /** The big-data toolkit (`infra/bigdata`): sources and `run_code` limits. Needs `programs`. */
+  bigData?: BigDataConfig
   /** Definition by id: a child's parent session `dm:<agentId>` names its agent. */
   agentById?: (id: string) => AgentDef | undefined
   /**
@@ -511,6 +521,15 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     })
   }
   if (deps.connectors.hooks.team === undefined) deps.connectors.hooks.team = teamPlugin
+  // the big-data toolkit (run_code, ingest_source, manifests) works under a program's authority
+  if (deps.connectors.hooks.bigdata === undefined && deps.programs !== undefined) {
+    deps.connectors.hooks.bigdata = createBigDataHook({
+      sqlite,
+      programs: deps.programs,
+      onFileChange: deps.onFileChange,
+      config: deps.bigData,
+    })
+  }
 
   function build(
     def: AgentDef,
@@ -551,27 +570,38 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       })
     }
 
-    /** The authority of a program run, closed world (see `ProgramGate`); undefined for other sessions. */
+    /**
+     * The authority of a program run, closed world (see `ProgramGate`); undefined for other
+     * sessions. The rules are read from the program on every tool call (`sync`), not frozen when
+     * the session opens: an approved amendment (`request_authority`) widens the program and the
+     * run that was parked at the time can use it as soon as it resumes, in this process or after a
+     * restart.
+     */
     const gateOf = (sessionId: string): ProgramGate | undefined => {
       if (profileOfSession(sessionId).permissions !== 'program-authority') return undefined
       const parsed = parseProgramSession(sessionId)
       if (parsed === undefined) return undefined
-      const program = deps.programs?.get(parsed.programId)
       const tools = Object.entries(out.toolNameMap).map(([name, origin]) => ({
         name,
         connectorId: origin.connectorId,
         connectionIds: origin.connectionIds,
       }))
-      // a deleted program leaves nothing granted: its session can still be read, never act
-      const rules = program === undefined ? { allow: [], deny: [] } : programRules(program, tools)
-      const name = program?.name ?? parsed.programId
       const match = {
         roots: [{ virtual: '/', real: '/' }],
         toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
       }
+      // a deleted program leaves nothing granted: its session can still be read, never act
+      const current = (): { name: string; rules: { allow: string[]; deny: string[] } } => {
+        const program = deps.programs?.get(parsed.programId)
+        return {
+          name: program?.name ?? parsed.programId,
+          rules: program === undefined ? { allow: [], deny: [] } : programRules(program, tools),
+        }
+      }
       return {
-        rules,
+        rules: current().rules,
         refuse(call) {
+          const { name, rules } = current()
           for (const rule of rules.deny) {
             if (matchRule(rule, call, { ...match, polarity: 'restrict' })) {
               return forbiddenReason(name, call.toolName, rule)
@@ -582,7 +612,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           )
           return granted ? undefined : outsideAuthorityReason(name, call.toolName)
         },
-        askedReason: (toolName) => outsideAuthorityReason(name, toolName),
+        askedReason: (toolName) => outsideAuthorityReason(current().name, toolName),
+        // the engine learns rules the program gained since the session opened (session scope)
+        async sync(engine) {
+          const { rules } = current()
+          for (const rule of rules.allow) await engine.addRule('allow', rule, 'session')
+          for (const rule of rules.deny) await engine.addRule('deny', rule, 'session')
+        },
       }
     }
 
@@ -608,6 +644,14 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             chatTools({
               off: (sessionId) => new Set(deps.chatTools?.off(sessionId) ?? []),
               origins: out.toolNameMap,
+            }),
+          ]),
+      ...(deps.decisions === undefined
+        ? []
+        : [
+            decisions({
+              intake: deps.decisions,
+              agentOf: (slug) => deps.agentBySlug?.(slug),
             }),
           ]),
       sessionPermissions({

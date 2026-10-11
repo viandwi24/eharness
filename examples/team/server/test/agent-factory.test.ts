@@ -60,7 +60,8 @@ describe('agent factory', () => {
 
     const file = server.conn.sqlite
       .query<{ path: string; created_by_agent_id: string }, []>(
-        'SELECT path, created_by_agent_id FROM library_files ORDER BY path',
+        // the built-in skills (seeded at boot) are not what this turn wrote
+        "SELECT path, created_by_agent_id FROM library_files WHERE path NOT LIKE '/skills/%' ORDER BY path",
       )
       .all()
     expect(file.map((f) => f.path)).toEqual([

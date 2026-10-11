@@ -5031,7 +5031,7 @@ export interface paths {
         head?: never;
         /**
          * Edit a program
-         * @description A run already in progress keeps the authority it started with; the next run uses the new one. Changing the trigger moves the schedule.
+         * @description The authority is read on every tool call: an edit applies to a run in progress from its next call (a widening approved in the Decision Center reaches the run that asked), and to every later run. Changing the trigger moves the schedule.
          */
         patch: {
             parameters: {
@@ -5388,6 +5388,308 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/decisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List decisions
+         * @description The Decision Center: proposals, escalations and amendments that only the client can settle, newest first. Tool approvals are not here: they are answered inline in the chat of their session.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    status?: components["schemas"]["DecisionStatus"];
+                    kind?: components["schemas"]["DecisionKind"];
+                    /** @description Agent id or slug. */
+                    agentId?: string;
+                    limit?: number;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Decisions */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["DecisionList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/decisions/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A decision */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Decision id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The decision */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Decision"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown decision */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/decisions/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a decision
+         * @description Proposal: creates the program with the authority of the proposal (`edit` changes it first; a one-off plan also runs once). Escalation: resumes the parked session with `{ decision, note }` as the tool output (`choice` picks an option). Amendment: adds the authority to the program, then resumes the run. The first answer wins (`409 DECISION_CLOSED`); a run that no longer waits makes the decision `expired` (`409 DECISION_EXPIRED`).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Decision id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DecisionApprove"];
+                };
+            };
+            responses: {
+                /** @description The decision, decided */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Decision"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown decision */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `DECISION_CLOSED`, `DECISION_EXPIRED`, `PROGRAM_DELETED` or an archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/decisions/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject a decision
+         * @description Escalation and amendment: resumes the parked session with `{ decision: "rejected", note }`; the agent continues without what it asked for. Proposal: nothing is created.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Decision id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: {
+                content: {
+                    "application/json": components["schemas"]["DecisionReject"];
+                };
+            };
+            responses: {
+                /** @description The decision, decided */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Decision"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown decision */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `DECISION_CLOSED` or `DECISION_EXPIRED` */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -6126,7 +6428,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
+            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "decision-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -7244,6 +7546,171 @@ export interface components {
         ProgramRuns: {
             /** @description Task sessions of the program, newest first. */
             runs: components["schemas"]["Task"][];
+        };
+        DecisionList: {
+            decisions: components["schemas"]["Decision"][];
+            /** @description All open decisions (the badge), whatever the filter. */
+            open: number;
+        };
+        Decision: {
+            id: string;
+            status: components["schemas"]["DecisionStatus"];
+            title: string;
+            /** @description Markdown: goal, plan steps, why, evidence links. */
+            body: string;
+            /** @description The agent that asks. */
+            agentId: string;
+            /** @description The session it came from. */
+            sessionId: string | null;
+            programId: string | null;
+            /** @description The external wait the session is parked on. */
+            waitId: string | null;
+            decidedBy: string | null;
+            decidedAt: number | null;
+            decisionNote: string | null;
+            outcome: components["schemas"]["DecisionOutcome"];
+            createdAt: number;
+            /** @enum {string} */
+            kind: "proposal";
+            payload: components["schemas"]["ProposalPayload"];
+        } | {
+            id: string;
+            status: components["schemas"]["DecisionStatus"];
+            title: string;
+            /** @description Markdown: goal, plan steps, why, evidence links. */
+            body: string;
+            /** @description The agent that asks. */
+            agentId: string;
+            /** @description The session it came from. */
+            sessionId: string | null;
+            programId: string | null;
+            /** @description The external wait the session is parked on. */
+            waitId: string | null;
+            decidedBy: string | null;
+            decidedAt: number | null;
+            decisionNote: string | null;
+            outcome: components["schemas"]["DecisionOutcome"];
+            createdAt: number;
+            /** @enum {string} */
+            kind: "escalation";
+            payload: components["schemas"]["EscalationPayload"];
+        } | {
+            id: string;
+            status: components["schemas"]["DecisionStatus"];
+            title: string;
+            /** @description Markdown: goal, plan steps, why, evidence links. */
+            body: string;
+            /** @description The agent that asks. */
+            agentId: string;
+            /** @description The session it came from. */
+            sessionId: string | null;
+            programId: string | null;
+            /** @description The external wait the session is parked on. */
+            waitId: string | null;
+            decidedBy: string | null;
+            decidedAt: number | null;
+            decisionNote: string | null;
+            outcome: components["schemas"]["DecisionOutcome"];
+            createdAt: number;
+            /** @enum {string} */
+            kind: "amendment";
+            payload: components["schemas"]["AmendmentPayload"];
+        };
+        /** @enum {string} */
+        DecisionStatus: "open" | "approved" | "rejected" | "expired";
+        DecisionOutcome: {
+            /** @description `approved`, `rejected` or the option picked. */
+            decision: string;
+            programId?: string;
+            /** @description Session of the one-off run an approved proposal started. */
+            runSessionId?: string;
+        } | null;
+        ProposalPayload: {
+            program: components["schemas"]["ProposedProgram"];
+            /** @description true: a one-off plan (created with a manual trigger and run once on approval). false: a standing program, created as proposed. */
+            runOnce: boolean;
+        };
+        ProposedProgram: {
+            /** @description The agent that will run the program. */
+            agentId: string;
+            name: string;
+            brief: string;
+            authority: components["schemas"]["ProgramAuthority"];
+            gates: string[];
+            escalation: string;
+            forbidden: string[];
+            budget: components["schemas"]["ProgramBudget"];
+            trigger: components["schemas"]["ProgramTrigger"];
+            /** @enum {string} */
+            report: "digest" | "task" | "silent";
+        };
+        EscalationPayload: {
+            question: string;
+            /** @description Answers to pick from; empty: approve or reject. */
+            options: string[];
+            /**
+             * @description `agent`: it called `escalate` (its run is parked); `report`: its final report said `needs_decision`.
+             * @enum {string}
+             */
+            source: "agent" | "report";
+        };
+        AmendmentPayload: {
+            authority: components["schemas"]["ProgramAuthority"] & unknown;
+            why: string;
+        };
+        /** @enum {string} */
+        DecisionKind: "proposal" | "escalation" | "amendment";
+        DecisionApprove: {
+            /** @description Shown to the agent as the note of the answer. */
+            note?: string;
+            /** @description Escalation with options: the option picked (the answer the agent gets). */
+            choice?: string;
+            /** @description Proposal: what the client changed before approving; absent fields stay as proposed. */
+            edit?: {
+                program?: components["schemas"]["ProposalEdit"];
+                runOnce?: boolean;
+            };
+            /** @description Amendment: grant this instead of what was asked (narrower). */
+            authority?: {
+                /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
+                tools?: string[];
+                /** @description Connector or connection ids: every tool of them is allowed. */
+                connectors?: string[];
+                /** @description Library path globs the run may read (`/library/data/**`). */
+                read?: string[];
+                /** @description Library path globs the run may write (`/library/reports/**`); they are readable too. */
+                write?: string[];
+            };
+        };
+        ProposalEdit: {
+            agentId?: string;
+            name?: string;
+            brief?: string;
+            authority?: {
+                /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
+                tools?: string[];
+                /** @description Connector or connection ids: every tool of them is allowed. */
+                connectors?: string[];
+                /** @description Library path globs the run may read (`/library/data/**`). */
+                read?: string[];
+                /** @description Library path globs the run may write (`/library/reports/**`); they are readable too. */
+                write?: string[];
+            };
+            gates?: string[];
+            escalation?: string;
+            forbidden?: string[];
+            budget?: {
+                /** @description One run stops (`cost-cap`) when it has spent this much. null = no limit. */
+                perRunUsd?: number | null;
+                /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
+                perDayUsd?: number | null;
+            };
+            trigger?: components["schemas"]["ProgramTrigger"];
+            /** @enum {string} */
+            report?: "digest" | "task" | "silent";
+        };
+        DecisionReject: {
+            note?: string;
         };
         ModelCallList: {
             items: components["schemas"]["ModelCallSummary"][];

@@ -16,7 +16,12 @@ import { errorText } from 'eharness'
 import { z } from 'zod'
 import type { AgentRepo, EventAppender, ProgramRunner } from '../../app/ports.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
-import { type Program, programRunPrompt, programSessionId } from '../../domain/programs.ts'
+import {
+  PROGRAM_RUN_MAX_STEPS,
+  type Program,
+  programRunPrompt,
+  programSessionId,
+} from '../../domain/programs.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 import type { AgentFactory } from './agent-factory.ts'
 
@@ -105,6 +110,7 @@ export function createProgramService(
       const run = session.send(prompt, {
         output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
         ifBusy: 'reject',
+        maxSteps: PROGRAM_RUN_MAX_STEPS,
       })
       const watched = run.result.then(
         () => undefined,

@@ -246,7 +246,7 @@ describe('program domain', () => {
     ]) {
       expect(prompt).toContain(part)
     }
-    expect(outsideAuthorityReason('P', 'delete_file')).toContain('needs_decision')
+    expect(outsideAuthorityReason('P', 'delete_file')).toContain('request_authority')
   })
 
   test('the outcome of a turn: a failed report or a missing one is a failed run', () => {

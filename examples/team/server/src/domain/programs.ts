@@ -47,7 +47,7 @@ export interface Program {
   /** What to do and the steps to do it. */
   brief: string
   authority: ProgramAuthority
-  /** Actions that still need the client's decision (text; phase B turns them into decisions). */
+  /** Actions that still need the client's decision (text; the agent asks with `escalate`). */
   gates: string[]
   /** When to stop and ask instead of pressing on. */
   escalation: string
@@ -213,6 +213,9 @@ export const PROGRAM_BASE_TOOLS = [
   'read_skill_file',
   'search_skills',
   'todo_write',
+  // asking the client for a decision or for more authority is never outside the authority
+  'escalate',
+  'request_authority',
 ] as const
 
 /** A tool the agent has, with the connector and connections it comes from. */
@@ -266,9 +269,11 @@ export function programRules(
 export function outsideAuthorityReason(programName: string, toolName: string): string {
   return (
     `Outside the authority of program "${programName}": ${toolName} (with this input) is not ` +
-    'granted to this run. This is an unattended run: nobody can approve it now. Do not retry the ' +
-    'same call. Finish the work that is inside your authority, and report what you could not do ' +
-    "(status 'needs_decision', say which tool or path you need and why)."
+    'granted to this run, and nobody can approve a single call now. Do not retry the same call. ' +
+    'If you need it to finish the brief, call request_authority (name the tool, connector or ' +
+    'path and why): your run pauses until the client decides, then continues here. If it is ' +
+    'rejected, finish the work that is inside your authority and report what you could not do ' +
+    "(status 'needs_decision')."
   )
 }
 
@@ -284,6 +289,11 @@ export function forbiddenReason(programName: string, toolName: string, rule: str
 
 export const REPORT_STATUSES = ['done', 'partial', 'failed', 'needs_decision'] as const
 export const MAX_ATTEMPTS = 3
+/**
+ * Model steps one program run may take. A run is a standing order, not a chat: a chunked job
+ * (read a chunk, write findings, mark it) needs many more steps than a role agent's chat turn.
+ */
+export const PROGRAM_RUN_MAX_STEPS = 150
 
 const bullets = (items: readonly string[], none: string): string =>
   items.length === 0 ? none : items.map((i) => `- ${i}`).join('\n')
@@ -312,12 +322,12 @@ export function programRunPrompt(program: Program): string {
     '## Forbidden (denied in every case)',
     bullets(program.forbidden, '- nothing named beyond the authority'),
     '',
-    '## Gates (these still need the client; do not do them, report them as needing a decision)',
+    '## Gates (these still need the client: do not do them before the client agrees; call escalate)',
     bullets(program.gates, '- none named'),
     '',
-    '## Escalation (stop and report instead of pressing on)',
+    '## Escalation (stop and ask instead of pressing on: call escalate)',
     program.escalation.trim() === ''
-      ? 'When something looks wrong or unsafe, stop and report.'
+      ? 'When something looks wrong or unsafe, stop and escalate.'
       : program.escalation.trim(),
     '',
     '## How to run',
@@ -327,6 +337,11 @@ export function programRunPrompt(program: Program): string {
     '   confirm every step happened. If a check fails, retry once with an adjusted approach.',
     `3. Report. At most ${MAX_ATTEMPTS} attempts in total. If it still fails, stop and report the failure with a`,
     '   diagnosis (what you tried, what happened, what you think is wrong). Never fail silently.',
+    '',
+    'Asking the client: `escalate` pauses your run until the client answers a question or a gate',
+    '(the answer comes back as the tool result, { decision, note }); `request_authority` asks for',
+    'a tool, connector or path outside your authority. Use them instead of failing or guessing.',
+    'If you still end with something undecided, report needs_decision.',
     '',
     'End the run with the final_answer tool: status (done, partial, failed or needs_decision),',
     'a short summary, outputs (library paths of what you produced) and optional notes.',

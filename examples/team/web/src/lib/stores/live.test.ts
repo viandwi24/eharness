@@ -17,10 +17,12 @@ function setup(visible = true) {
 	const posts: string[] = [];
 	const answers: Answered[] = [];
 	let approvals: Approval[] = [];
+	let decisions: unknown[] = [];
 	const api = {
 		get: async (path: string) => {
 			if (path === '/approvals') return { approvals };
 			if (path === '/tasks') return { tasks: [] as Task[] };
+			if (path === '/decisions') return { decisions: decisions, open: decisions.length };
 			if (path === '/agents') return { agents: [] };
 			throw new Error(path);
 		},
@@ -34,7 +36,7 @@ function setup(visible = true) {
 	agents.state.activity['lead-id'] = { preview: null, lastMessageAt: null, unread: 0 };
 	const client = clientOf(async (_id, body) => (answers.push(body), { status: 'recorded' }));
 	const live = createLiveCore(api, agents, emptyLiveState(), { client, isVisible: () => visible, setTimeout: (fn) => fn() });
-	return { live, agents, posts, answers, setApprovals: (a: Approval[]) => (approvals = a) };
+	return { live, agents, posts, answers, setApprovals: (a: Approval[]) => (approvals = a), setDecisions: (d: unknown[]) => (decisions = d) };
 }
 
 const appr = (id: string, parent: string | null): Approval =>
@@ -90,10 +92,28 @@ describe('live store', () => {
 		live.handleEvent(ev('mode-changed', 'lead-id', { mode: 'auto' }));
 		live.handleEvent(ev('providers-changed', 'lead-id', { profileId: 'openrouter', action: 'put' }));
 		live.handleEvent(ev('connectors-changed', 'lead-id', { instance: 'x' }));
-		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1 });
+		expect(live.state.revs).toEqual({ files: 1, routines: 2, programs: 1, decisions: 0, settings: 1, modes: 1, chat: 0, providers: 1, connectors: 1 });
 		// a stored message moves the context size of the open chat
 		live.handleEvent(ev('message-added', 'lead-id', { role: 'assistant' }));
 		expect(live.state.revs.chat).toBe(1);
+	});
+});
+
+describe('live store: decisions', () => {
+	test('a decision-changed event refetches the open decisions and moves the page revision', async () => {
+		const { live, setDecisions } = setup();
+		expect(live.state.decisions).toEqual([]);
+		setDecisions([{ id: 'd1', kind: 'proposal', status: 'open', title: 'Plan' }]);
+		live.handleEvent(ev('decision-changed', 'lead-id', { decisionId: 'd1', change: 'created', open: 1 }));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(live.state.decisions.map((d) => d.id)).toEqual(['d1']);
+		expect(live.state.decisionsLoaded).toBe(true);
+		expect(live.state.revs.decisions).toBe(1);
+		// decided elsewhere: it leaves the list
+		setDecisions([]);
+		live.handleEvent(ev('decision-changed', 'lead-id', { decisionId: 'd1', change: 'decided', open: 0 }, 2));
+		await new Promise((r) => setTimeout(r, 0));
+		expect(live.state.decisions).toEqual([]);
 	});
 });
 
