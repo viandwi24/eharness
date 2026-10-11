@@ -56,7 +56,10 @@ The public catalogs are cached in `catalog_cache`.
 **DM sessions and task sessions.** Each agent has one DM session `dm:<agentId>`. Delegated work
 runs in a **child session** (`<leadSession>:agent:<toolCallId>`), so a task has its own history and
 its approvals do not block the DM. Routines run in the agent's DM or in their own session
-(`routine:<id>:<slot>`), per routine.
+(`routine:<id>:<slot>`), per routine. **Program runs** (`program:<programId>:<runAt>`, standing
+orders with enforced authority and a structured final report) are task sessions of origin
+`program`; what differs between these kinds of session is one policy table
+(`domain/run-profiles.ts`). See the walkthrough, section 18.
 
 **Background delegation (default).** The lead's `subagents` also has `background: { default: true }`
 ([ADR-0046](../../../docs/decisions/0046-durable-background-subagents-in-park-mode.md)): the `agent`

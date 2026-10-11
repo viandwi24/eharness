@@ -58,6 +58,9 @@ export const RoutineSchema = z
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
     version: z.number().int(),
+    programId: z.string().nullable().openapi({
+      description: 'Set when a program owns this routine (the schedule of the program).',
+    }),
   })
   .openapi('Routine')
 

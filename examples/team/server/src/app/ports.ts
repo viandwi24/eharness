@@ -28,6 +28,7 @@ import type {
   ModelCallStats,
 } from '../domain/model-calls.ts'
 import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
+import type { Program } from '../domain/programs.ts'
 import type {
   ModelView,
   ProfileCreate,
@@ -196,12 +197,43 @@ export interface TaskStore {
   list(query: { status?: TaskStatus; agentId?: string; limit: number }): Task[]
   get(id: string): Task | undefined
   getBySession(sessionId: string): Task | undefined
+  /** The runs of a program (task sessions `program:<id>:<runAt>`), newest first. */
+  ofProgram(programId: string, limit: number): Task[]
   /** Tasks the agent runs (`owned`) and tasks it handed to others from its DM (`delegated`). */
   ofAgent(agentId: string, dmSessionId: string): { owned: Task[]; delegated: Task[] }
   /** Activity of every agent that has any, by agent id. */
   activity(): Map<string, AgentActivity>
   /** Everything up to the latest message event is read. Returns the marker. */
   markRead(agentId: string): number
+}
+
+/** A program to store; the store sets the timestamps and the version. */
+export type NewProgram = Omit<Program, 'createdAt' | 'updatedAt' | 'version'> & { now: number }
+
+/** Fields `update` may change (anything absent stays). */
+export type ProgramPatch = Partial<
+  Omit<Program, 'id' | 'agentId' | 'createdBy' | 'createdAt' | 'updatedAt' | 'version'>
+>
+
+export interface ProgramStore {
+  list(query: { agentId?: string }): Program[]
+  get(id: string): Program | undefined
+  insert(program: NewProgram): Program
+  update(id: string, patch: ProgramPatch, now: number): Program | undefined
+  delete(id: string): boolean
+}
+
+/** Starts program runs (`infra/eh/program-service.ts`). */
+export interface ProgramRunner {
+  /**
+   * Start the run of `runAt`: the task session `program:<id>:<runAt>` gets the run prompt and a
+   * structured-output spec. Returns once the turn is started (not finished). `started: false`
+   * when that run exists already (a recovered fire, a double click).
+   */
+  start(
+    program: Program,
+    options: { runAt: number },
+  ): Promise<{ sessionId: string; started: boolean }>
 }
 
 /** Cross-session reads on eharness sessions (answers are the library's `attention` routes) (implemented in `infra/eh/team-service.ts`). */
@@ -305,6 +337,8 @@ export interface NewRoutine {
   maxFires: number | null
   endAt: number | null
   nextFireAt: number | null
+  /** The program this routine is the schedule of (not listed as a routine). */
+  programId?: string | null
   now: number
 }
 
@@ -329,7 +363,9 @@ export type RoutinePatch = Partial<
 >
 
 export interface RoutineStore {
-  list(query: { agentId?: string }): Routine[]
+  /** Without `programId` the routines of programs are left out; with it only that program's. */
+  list(query: { agentId?: string; programId?: string }): Routine[]
+  getByProgram(programId: string): Routine | undefined
   get(id: string): Routine | undefined
   insert(routine: NewRoutine): Routine
   update(id: string, patch: RoutinePatch, now: number): Routine | undefined
@@ -431,6 +467,8 @@ export interface Deps {
   routines: RoutineStore
   schedule: ScheduleCalc
   routineEngine: RoutineEngine
+  programs: ProgramStore
+  programRunner: ProgramRunner
   events: EventAppender
   modelCalls: ModelCallStore
   clock: Clock

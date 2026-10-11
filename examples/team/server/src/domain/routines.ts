@@ -51,6 +51,8 @@ export interface Routine {
   updatedAt: number
   /** Bumped by every edit through the API; editors send it back to detect a concurrent edit. */
   version: number
+  /** The program this routine is the schedule of; its fires start program runs. */
+  programId: string | null
 }
 
 export const RUN_STATUSES = [
@@ -90,6 +92,8 @@ export interface RoutineDraft {
   maxFailures?: number | undefined
   maxFires?: number | null | undefined
   endAt?: number | null | undefined
+  /** Set by the program use cases: this routine is a program's schedule. */
+  programId?: string | null | undefined
 }
 
 export const DEFAULT_MAX_FAILURES = 3
@@ -103,10 +107,14 @@ export const fireId = (routineId: string, scheduledAt: number): string =>
 
 /** Session of a fire: the agent's DM, or one session per fire (`routine:<id>:<scheduledAt>`). */
 export const routineSessionId = (
-  routine: Pick<Routine, 'id' | 'agentId' | 'sessionMode'>,
+  routine: Pick<Routine, 'id' | 'agentId' | 'sessionMode'> & { programId?: string | null },
   scheduledAt: number,
 ): string =>
-  routine.sessionMode === 'dm' ? `dm:${routine.agentId}` : `routine:${routine.id}:${scheduledAt}`
+  routine.programId != null
+    ? `program:${routine.programId}:${scheduledAt}`
+    : routine.sessionMode === 'dm'
+      ? `dm:${routine.agentId}`
+      : `routine:${routine.id}:${scheduledAt}`
 
 /** `routine:<id>:<scheduledAt>` -> its parts. */
 export function parseRoutineSession(

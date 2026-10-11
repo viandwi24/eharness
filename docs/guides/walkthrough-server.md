@@ -498,6 +498,78 @@ tests run with `debug: { invariants: true }` (`TEAM_DEBUG_INVARIANTS=1`, set by
 `server/bunfig.toml`'s preload): the core never infers it from `NODE_ENV`, so a test setup that
 relied on it must say so.
 
+## 18. Programs: standing orders with enforced authority
+
+**What.** A *program* ([`domain/programs.ts`](../../examples/team/server/src/domain/programs.ts))
+is what a client tells an agent once: a brief, the **authority** it may use (tools or permission
+rules, connectors, library paths to read and write), `forbidden` rules, `gates` (what still needs a
+person), a budget (per run, per day), a trigger (manual or a schedule) and where the result goes.
+Every run is a task session `program:<programId>:<runAt>` owned by the program's agent, indexed by
+the same `taskIndex` plugin as every other task (origin `program`), so it shows on the board.
+The session is the only building block: DM chats, delegated tasks, routine runs and program runs
+differ in policy only, and that policy is one table, the
+[run profiles](../../examples/team/server/src/domain/run-profiles.ts) (permission source, whether it
+is unattended, where the result goes, which budget scopes it spends from), read from the id of the
+session.
+
+**Authority is enforced by the engine, not by the prompt.** The run prompt tells the agent its
+authority, but the permission plugin does the refusing:
+
+1. [`sessionPermissions`](../../examples/team/server/src/infra/eh/permission-plugin.ts) asks the
+   factory for a *gate* of the session id (`gateOf` in `agent-factory.ts`). A program session gets
+   an engine in **`dontAsk`** with the allow rules derived from the authority (`programRules`:
+   `Read(glob)`, `Edit(glob)`, tool names, every tool of a granted connector) and the program's
+   `forbidden` list added to the **deny rules** (spec 18: deny wins in every mode).
+2. `dontAsk` alone is not a closed world: reads, `agent` and `safe` tools are approved by their
+   kind, so a run could read any library file. The gate adds the closed-world check with the
+   library's `matchRule` (allow polarity): a call is approved only when an allow rule of the
+   authority matches it. The plugin's `tool.approve` hook runs the gate first, then the engine's
+   own verdict; most restrictive wins, like the core's chain (spec 11 section 3).
+3. A refusal is a **denial with a reason the model reads** ("Outside the authority of program ...
+   Do not retry; report what you could not do with status `needs_decision`"), never an
+   approval request: a background run has nobody to ask. A forbidden call says "Forbidden by
+   program ... matches the rule ...". The connectors' own *ask* rules are dropped for a run (the
+   client granted these tools to the program); tools **pinned to ask** (writes of third-party
+   connectors) stay pinned and are refused: they are gates. A deleted program leaves a session
+   that can be read but not act (empty authority).
+
+The authority is read when the session is opened: a run in progress keeps the authority it started
+with, the next run uses the edited one.
+
+**Budget** goes through the ledger of section 12: the session's `budget.ledger.scopes` adds
+`program-run:<sessionId>` (limit `perRunUsd`) and `program:<programId>:<YYYY-MM-DD>` (limit
+`perDayUsd`). The core reserves on every step, and a refused reservation ends the run with
+`cost-cap` before the next model call; the task shows it as failed with the reason. (A per-run
+`maxSessionUsd` is an option of the agent, not of a session; the ledger scope is the per-session
+mechanism.)
+
+**The run** starts with a turn whose text is the brief, the authority, the gates, the escalation
+and the **Execute, Verify, Report** rule (retry once with an adjusted approach, at most 3 attempts,
+then report the failure with a diagnosis; never fail silently). The turn carries
+`SendOptions.output`, so the run ends with a typed report
+`{ status: done | partial | failed | needs_decision, summary, outputs: string[], notes? }`.
+The `taskIndex` plugin reads `TurnResult.output` on `turn.end` and stores it on the task row
+(`summary` = the report summary; a `failed` report, `output-invalid` or `cost-cap` make the task
+`failed`). Why not the durable inbox the routines use: an inbox item cannot carry `output` (the
+spec is not serializable), so
+[`program-service.ts`](../../examples/team/server/src/infra/eh/program-service.ts) calls
+`session.send`. The cost: a process that dies mid-run leaves an `interrupted` task (crash recovery
+and the drift pass handle it) instead of another instance resuming it.
+
+**Schedule trigger = a routine.** A program with a schedule owns one `routines` row
+(`routines.program_id`, hidden from the Routines page). The routine service keeps its claim,
+overlap, missed-slot, recovery and failure rules; the only change is `dispatch`: for a program's
+routine it calls the program runner instead of `session.enqueue`, and `routineSessionId` is
+`program:<id>:<slot>`. The outcome of a run (including a `failed` report) reaches the routine
+run through the same `routineOutcomes` plugin, so repeated failures pause the schedule. Pausing the
+program pauses the routine. **Run now** starts a run directly (one at a time per program, `409
+PROGRAM_BUSY`); the run history of a program is its tasks.
+
+*Without the gate:* a program run in `dontAsk` could read everything and an MCP tool outside the
+authority would only be "not allowed by mode", with the generic reason; the agent could not tell
+that it should report instead of retrying. *Without `dontAsk`:* the first out-of-authority write of
+a 3 a.m. run parks on an approval nobody answers.
+
 ## What to change when you copy it
 
 | In the example | In your harness |

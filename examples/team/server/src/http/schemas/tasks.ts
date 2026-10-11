@@ -9,6 +9,19 @@ export const TaskStatusSchema = z.enum(TASK_STATUSES).openapi('TaskStatus', {
     '`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
 })
 
+export const TaskReportSchema = z
+  .object({
+    status: z.enum(['done', 'partial', 'failed', 'needs_decision']),
+    summary: z.string(),
+    outputs: z
+      .array(z.string())
+      .openapi({ description: 'Library paths of what the run produced.' }),
+    notes: z.string().optional(),
+  })
+  .openapi('TaskReport', {
+    description: 'The structured final report a program run ends with (`SendOptions.output`).',
+  })
+
 export const TaskSchema = z
   .object({
     id: z.string(),
@@ -18,7 +31,7 @@ export const TaskSchema = z
       .string()
       .nullable()
       .openapi({ description: 'The session that delegated the task (the lead DM), if any.' }),
-    origin: z.enum(['user', 'lead', 'routine']),
+    origin: z.enum(['user', 'lead', 'routine', 'program']),
     title: z.string(),
     status: TaskStatusSchema,
     pendingKind: z.enum(['approval', 'question']).nullable(),
@@ -28,6 +41,9 @@ export const TaskSchema = z
     lastActivityAt: z.number().int(),
     costUsd: z.number(),
     tokens: z.number().int(),
+    report: TaskReportSchema.nullable().openapi({
+      description: 'The final report of a program run; null for other tasks and while it runs.',
+    }),
   })
   .openapi('Task')
 

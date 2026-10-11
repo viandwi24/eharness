@@ -48,6 +48,7 @@ export function createRoutine(deps: Deps, draft: RoutineDraft): Routine {
     maxFailures: draft.maxFailures ?? DEFAULT_MAX_FAILURES,
     maxFires: draft.maxFires ?? null,
     endAt: draft.endAt ?? null,
+    programId: draft.programId ?? null,
     nextFireAt: firstSlot(deps, draft.schedule, now),
     now,
   })

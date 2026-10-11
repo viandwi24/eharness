@@ -4784,6 +4784,616 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/programs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List programs */
+        get: {
+            parameters: {
+                query?: {
+                    /** @description Only this agent (id or slug). */
+                    agentId?: string;
+                };
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Programs */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /**
+         * Create a program
+         * @description A standing order for an agent: brief, authority, gates, escalation, forbidden, budget, trigger and report. Each run is a task session `program:<id>:<runAt>` that follows Execute, Verify, Report and ends with a structured report. The authority is enforced by the permission engine for the run: allowed tools and paths run without approval, `forbidden` is denied, everything else is refused (nobody is there to ask).
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProgramCreate"];
+                };
+            };
+            responses: {
+                /** @description Created */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Program"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent or a schedule without a next slot */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A program */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The program */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Program"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /**
+         * Delete a program
+         * @description Removes the program and its schedule. The task sessions of its past runs stay on the board.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The deleted program */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Program"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Edit a program
+         * @description A run already in progress keeps the authority it started with; the next run uses the new one. Changing the trigger moves the schedule.
+         */
+        patch: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProgramPatch"];
+                };
+            };
+            responses: {
+                /** @description The program */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Program"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Version conflict or a schedule without a next slot */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/programs/{id}/pause": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Pause a program
+         * @description Stops the schedule trigger. A run in progress finishes.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The program */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Program"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Resume a program
+         * @description Recomputes the next slot from now: nothing missed while paused fires.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The program */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Program"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Archived agent or a finished schedule */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run now
+         * @description Starts a run now (the schedule is untouched). Returns when the run has started, not when it ends: follow the task session. `409 PROGRAM_BUSY` while another run of the program is going.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Started */
+                202: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramRunStarted"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description `PROGRAM_BUSY` or archived agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/programs/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Run history, newest first
+         * @description The task sessions of the program, each with its structured report once the run ended.
+         */
+        get: {
+            parameters: {
+                query?: {
+                    limit?: number;
+                };
+                header?: never;
+                path: {
+                    /** @description Program id. */
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Runs */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramRuns"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown program */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/logs": {
         parameters: {
             query?: never;
@@ -5516,7 +6126,7 @@ export interface components {
         TeamEvent: {
             seq: number;
             /** @enum {string} */
-            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
+            type: "message-added" | "task-changed" | "agent-message" | "file-changed" | "agent-changed" | "routine-fired" | "routine-changed" | "program-changed" | "settings-changed" | "mode-changed" | "model-call" | "providers-changed" | "connectors-changed" | "turn-started" | "pending-changed" | "approval-decided" | "attention-answered" | "session-recovered" | "child-reported";
             agentId: string | null;
             sessionId: string | null;
             payload: {
@@ -5549,7 +6159,7 @@ export interface components {
             /** @description The session that delegated the task (the lead DM), if any. */
             parentSessionId: string | null;
             /** @enum {string} */
-            origin: "user" | "lead" | "routine";
+            origin: "user" | "lead" | "routine" | "program";
             title: string;
             status: components["schemas"]["TaskStatus"];
             /** @enum {string|null} */
@@ -5561,12 +6171,22 @@ export interface components {
             lastActivityAt: number;
             costUsd: number;
             tokens: number;
+            report: components["schemas"]["TaskReport"];
         };
         /**
          * @description `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
          * @enum {string}
          */
         TaskStatus: "needs_action" | "running" | "done" | "failed" | "stopped" | "interrupted" | "timed_out";
+        /** @description The final report of a program run; null for other tasks and while it runs. */
+        TaskReport: {
+            /** @enum {string} */
+            status: "done" | "partial" | "failed" | "needs_decision";
+            summary: string;
+            /** @description Library paths of what the run produced. */
+            outputs: string[];
+            notes?: string;
+        } | null;
         TaskDetail: {
             task: components["schemas"]["Task"];
             /** @description The stored messages of the task session (newest 200). */
@@ -5706,6 +6326,8 @@ export interface components {
             createdAt: number;
             updatedAt: number;
             version: number;
+            /** @description Set when a program owns this routine (the schedule of the program). */
+            programId: string | null;
         };
         /** @description `cron` (5 or 6 fields, IANA timezone, croner syntax), `every` (interval in ms, at least 10 s) or `at` (one shot). */
         RoutineSpec: {
@@ -6483,6 +7105,145 @@ export interface components {
         };
         RoutineRuns: {
             runs: components["schemas"]["RoutineRun"][];
+        };
+        ProgramList: {
+            programs: components["schemas"]["Program"][];
+        };
+        Program: {
+            id: string;
+            agentId: string;
+            name: string;
+            brief: string;
+            authority: components["schemas"]["ProgramAuthority"];
+            /** @description Actions that still need the client (told to the agent; decisions come in a later phase). */
+            gates: string[];
+            escalation: string;
+            /** @description Rules or tool names denied in every case (deny rules of the permission engine). */
+            forbidden: string[];
+            budget: components["schemas"]["ProgramBudget"];
+            trigger: components["schemas"]["ProgramTrigger"];
+            /**
+             * @description `digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history.
+             * @enum {string}
+             */
+            report: "digest" | "task" | "silent";
+            /** @enum {string} */
+            status: "active" | "paused";
+            /** @description `client`, or the id of the proposing agent. */
+            createdBy: string;
+            createdAt: number;
+            updatedAt: number;
+            version: number;
+            triggerState: components["schemas"]["ProgramTriggerState"];
+        };
+        ProgramAuthority: {
+            /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
+            tools: string[];
+            /** @description Connector or connection ids: every tool of them is allowed. */
+            connectors: string[];
+            /** @description Library path globs the run may read (`/library/data/**`). */
+            read: string[];
+            /** @description Library path globs the run may write (`/library/reports/**`); they are readable too. */
+            write: string[];
+        };
+        ProgramBudget: {
+            /** @description One run stops (`cost-cap`) when it has spent this much. null = no limit. */
+            perRunUsd: number | null;
+            /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
+            perDayUsd: number | null;
+        };
+        /** @description `manual`: runs only on "run now". `schedule`: the routine scheduler fires it (same claim, overlap, recovery and failure rules as routines). */
+        ProgramTrigger: {
+            /** @enum {string} */
+            kind: "manual";
+        } | {
+            /** @enum {string} */
+            kind: "schedule";
+            spec: components["schemas"]["RoutineSpec"];
+        };
+        /** @description The routine that owns the schedule trigger (it pauses itself after repeated failures). */
+        ProgramTriggerState: {
+            /** @enum {string} */
+            status: "active" | "paused";
+            /** @enum {string|null} */
+            pausedReason: "manual" | "max-failures" | "max-fires" | "ended" | "completed" | "agent-archived" | null;
+            nextFireAt: number | null;
+            lastFireAt: number | null;
+            lastStatus: string | null;
+            failures: number;
+        } | null;
+        ProgramCreate: {
+            /** @description Agent id or slug. */
+            agentId: string;
+            name: string;
+            brief: string;
+            authority?: {
+                /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
+                tools?: string[];
+                /** @description Connector or connection ids: every tool of them is allowed. */
+                connectors?: string[];
+                /** @description Library path globs the run may read (`/library/data/**`). */
+                read?: string[];
+                /** @description Library path globs the run may write (`/library/reports/**`); they are readable too. */
+                write?: string[];
+            };
+            gates?: string[];
+            escalation?: string;
+            forbidden?: string[];
+            budget?: {
+                /** @description One run stops (`cost-cap`) when it has spent this much. null = no limit. */
+                perRunUsd?: number | null;
+                /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
+                perDayUsd?: number | null;
+            };
+            trigger?: components["schemas"]["ProgramTrigger"];
+            /**
+             * @description `digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history.
+             * @enum {string}
+             */
+            report?: "digest" | "task" | "silent";
+        };
+        ProgramPatch: {
+            name?: string;
+            brief?: string;
+            authority?: {
+                /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
+                tools?: string[];
+                /** @description Connector or connection ids: every tool of them is allowed. */
+                connectors?: string[];
+                /** @description Library path globs the run may read (`/library/data/**`). */
+                read?: string[];
+                /** @description Library path globs the run may write (`/library/reports/**`); they are readable too. */
+                write?: string[];
+            };
+            gates?: string[];
+            escalation?: string;
+            forbidden?: string[];
+            budget?: {
+                /** @description One run stops (`cost-cap`) when it has spent this much. null = no limit. */
+                perRunUsd?: number | null;
+                /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
+                perDayUsd?: number | null;
+            };
+            trigger?: components["schemas"]["ProgramTrigger"];
+            /**
+             * @description `digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history.
+             * @enum {string}
+             */
+            report?: "digest" | "task" | "silent";
+            /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
+            version?: number;
+        };
+        ProgramRunStarted: {
+            /** @example program:0198…:1760000000000 */
+            sessionId: string;
+            taskId: string | null;
+            /** @description false: that run existed already. */
+            started: boolean;
+        };
+        ProgramRuns: {
+            /** @description Task sessions of the program, newest first. */
+            runs: components["schemas"]["Task"][];
         };
         ModelCallList: {
             items: components["schemas"]["ModelCallSummary"][];

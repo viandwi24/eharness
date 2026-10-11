@@ -1,6 +1,6 @@
 # P40 — Team example: autonomous operations (manager, programs, decision center, big-data work)
 
-Status: todo · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
+Status: in progress (phase A done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -115,6 +115,41 @@ and decided before code (docs over presets: patterns become guides, not wrapper 
 Every phase: offline scripted-model tests (team server tests), e2e in the browser on an isolated
 instance, docs (walkthrough + guide), no paid model calls in tests.
 
+## Phase A checklist (run profiles + programs)
+
+- [x] Run profiles table (`domain/run-profiles.ts`): origin of a session id to policy (permission
+      source, unattended, memory, result target, task origin, budget scopes). Read by `taskIndex`
+      (task origin) and the agent factory (permission gate, ledger scopes).
+- [x] Programs: domain (`domain/programs.ts`), `programs` table + migration `0015`, drizzle repo,
+      use cases (`app/programs.ts`), REST routes + OpenAPI (`/programs`, pause, resume, run, runs).
+- [x] Program runs: task sessions `program:<id>:<runAt>`, task origin `program`, on the board, run
+      history = tasks of the program, "run now".
+- [x] Schedule trigger through the routine scheduler (a program owns a routine,
+      `routines.program_id`).
+- [x] Enforced authority: session gate + `dontAsk` engine + deny rules from `forbidden`; budget via
+      ledger scopes `program-run:<session>` and `program:<id>:<YYYY-MM-DD>`.
+- [x] Run contract (Execute, Verify, Report, 3 attempts) and the structured report stored on the
+      task row (`tasks.report`).
+- [x] Web: Programs page (list, create/edit dialog with authority, gates, forbidden, budget, trigger,
+      report; pause, resume, run now; run history with reports).
+- [x] Tests (server `test/programs.test.ts`, web `lib/programs/form.test.ts`); walkthrough section 18.
+
+Decided in phase A:
+
+- Authority paths are library paths as the file tools see them (`/library/reports/**`); a write
+  glob is readable too; `Edit(glob)` covers deleting inside it.
+- Per-run budget is a ledger scope with `perRunUsd` as its limit, because `budget.maxSessionUsd`
+  is an agent option, not a session one. A deleted program leaves its sessions with an empty
+  authority.
+- A program run is started with `session.send(..., { output })`, not the durable inbox (an inbox
+  item cannot carry an output spec). A fire that is claimed but not started is recovered by the
+  routine recovery (deterministic session id); a run that dies mid-turn is `interrupted`.
+- A failed report, `output-invalid` and `cost-cap` are failed runs and count toward pausing the
+  schedule (`maxFailures`); `partial` and `needs_decision` are `done` tasks with that report
+  status (phase B turns `needs_decision` into a decision).
+- Gates are text in the run prompt for now; tools pinned to ask (third-party connector writes) are
+  refused in a run, which is the first kind of gate the engine knows.
+
 ## Acceptance criteria
 
 - [ ] The acceptance scenario runs end to end on an isolated instance with scripted models: the
@@ -132,4 +167,9 @@ instance, docs (walkthrough + guide), no paid model calls in tests.
 
 ## Requests to other phases
 
-(empty)
+- Library (optional, not blocking): inbox items cannot carry `SendOptions.output`, so a durable,
+  restartable run with a typed result cannot ride the inbox. A way to attach a serializable output
+  spec (for example a named spec the agent registers) to an enqueued input would let program runs
+  be resumed by another instance. Worked around in phase A with a direct `session.send`.
+- Phase B: the escalation tool must park the run on an external wait; today a run that needs
+  authority only reports `needs_decision`.

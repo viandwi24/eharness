@@ -22,7 +22,7 @@ export type LiveState = {
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
 	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
-	revs: { files: number; routines: number; settings: number; modes: number; chat: number; providers: number; connectors: number };
+	revs: { files: number; routines: number; programs: number; settings: number; modes: number; chat: number; providers: number; connectors: number };
 };
 
 export const emptyLiveState = (): LiveState => ({
@@ -33,7 +33,7 @@ export const emptyLiveState = (): LiveState => ({
 	connection: 'idle',
 	reconnecting: false,
 	viewing: null,
-	revs: { files: 0, routines: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
+	revs: { files: 0, routines: 0, programs: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0 }
 });
 
 /** What the team posts to `POST /attention/{id}/answer`: the wire answers plus its question kind. */
@@ -153,7 +153,7 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 		},
 
 		async resync(): Promise<void> {
-			for (const k of Object.keys(state.revs) as (keyof LiveState['revs'])[]) state.revs[k]++; // files, routines, settings, modes, chat, providers, connectors
+			for (const k of Object.keys(state.revs) as (keyof LiveState['revs'])[]) state.revs[k]++; // files, routines, programs, settings, modes, chat, providers, connectors
 			for (const fn of resyncListeners) {
 				try {
 					fn();
@@ -211,6 +211,8 @@ export function createLiveCore(api: ApiClient, agents: AgentsStore, state: LiveS
 			} else if (e.type === 'routine-fired' || e.type === 'routine-changed') {
 				later('routines', bump('routines'));
 				if (e.type === 'routine-fired') later('tasks', core.loadTasks);
+			} else if (e.type === 'program-changed') {
+				later('programs', bump('programs'));
 			} else if (e.type === 'providers-changed') {
 				// a profile was added, edited or removed (any tab or instance): lists refetch
 				later('providers', bump('providers'));

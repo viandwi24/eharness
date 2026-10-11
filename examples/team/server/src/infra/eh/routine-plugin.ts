@@ -5,6 +5,7 @@
  * by the `inboxId` of the user message the inbox item became. Never throws into the turn.
  */
 import { definePlugin, errorText, type HarnessPlugin } from 'eharness'
+import { parseReport } from '../../domain/programs.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
 
 interface InputLike {
@@ -27,6 +28,8 @@ export function routineOutcomes(options: {
           ctx,
           e: {
             stop: string
+            /** The validated structured output of a turn that asked for one (program runs). */
+            output?: unknown
             /** `code` is always set (`HarnessErrorCode`, `EH_RUN_FAILED` when nothing more is known). */
             error?: { code: string; message: string }
             pending?: {
@@ -41,6 +44,7 @@ export function routineOutcomes(options: {
             e.pending !== undefined &&
             (e.pending.approvals.length > 0 ||
               e.pending.clientTools.some((c) => c.result === undefined))
+          const report = parseReport(e.output)
           // not awaited: matching a DM fire may wait a moment for its run row
           void options.outcomes
             .turnEnded({
@@ -51,6 +55,9 @@ export function routineOutcomes(options: {
                 ? {}
                 : { errorMessage: e.error.message, errorCode: e.error.code }),
               needsPerson,
+              ...(report === undefined
+                ? {}
+                : { reportStatus: report.status, reportSummary: report.summary }),
             })
             .catch((error) => {
               ctx.log.warn(`routineOutcomes failed: ${errorText(error)}`)

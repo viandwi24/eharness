@@ -24,9 +24,17 @@
  * failures pause the routine (`maxFailures`).
  */
 import { errorText } from 'eharness'
-import type { AgentRepo, EventAppender, RoutineEngine, ScheduleCalc } from '../../app/ports.ts'
+import type {
+  AgentRepo,
+  EventAppender,
+  ProgramRunner,
+  ProgramStore,
+  RoutineEngine,
+  ScheduleCalc,
+} from '../../app/ports.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import type { EventType } from '../../domain/events.ts'
+import { parseProgramSession } from '../../domain/programs.ts'
 import {
   fireId,
   type PausedReason,
@@ -74,6 +82,9 @@ export interface TurnOutcome {
   errorCode?: string
   /** Approvals or questions wait for a person. */
   needsPerson: boolean
+  /** Program runs: the status of the structured final report, when the turn produced one. */
+  reportStatus?: string
+  reportSummary?: string
 }
 
 export interface RoutineOutcomes {
@@ -95,6 +106,11 @@ export interface RoutineServiceDeps {
   schedule: ScheduleCalc
   tasks: TaskWriter
   events: EventAppender
+  /**
+   * Programs: a routine with a `programId` is the schedule of a program, and its fire starts a
+   * program run (a task session with a structured report) instead of enqueueing a prompt.
+   */
+  programs?: { store: Pick<ProgramStore, 'get'>; runner: ProgramRunner }
   config?: RoutineEngineConfig
   now?: () => number
   log?: { warn(message: string): void }
@@ -215,6 +231,7 @@ export function createRoutineService(
           return after
         }
       }
+      if (routine.programId != null) return await dispatchProgram(routine, run, now)
       await factory.prepare(def)
       const session = factory.openSession(def, run.sessionId)
       const ahead = run.scheduledAt > now && run.trigger === 'schedule'
@@ -234,6 +251,45 @@ export function createRoutineService(
     } catch (error) {
       return fail(`enqueue failed: ${errorText(error)}`)
     }
+  }
+
+  /**
+   * A fire of a program's routine: the run is the task session `program:<id>:<slot>`. The turn
+   * carries a structured-output spec, which the durable inbox cannot hold, so the program runner
+   * sends it directly; the deterministic session id keeps a recovered fire from running twice.
+   */
+  async function dispatchProgram(
+    routine: Routine,
+    run: RoutineRun,
+    now: number,
+  ): Promise<RoutineRun> {
+    const programs = deps.programs
+    const program = programs?.store.get(routine.programId as string)
+    if (programs === undefined || program === undefined) {
+      const done = store.finishRun(
+        run.id,
+        { status: 'failed', reason: 'the program was deleted' },
+        now,
+      )
+      const after = done?.run ?? (store.getRun(run.id) as RoutineRun)
+      emitRun(routine, after, now)
+      return after
+    }
+    if (program.status !== 'active') {
+      store.markSkipped(run.id, 'the program is paused', now)
+      const after = store.getRun(run.id) as RoutineRun
+      emitRun(routine, after, now)
+      return after
+    }
+    const started = await programs.runner.start(program, { runAt: run.scheduledAt })
+    store.markEnqueued(run.id, {
+      inboxId: `direct:${started.sessionId}`,
+      firedAt: now,
+      ...(started.started ? {} : { reason: 'duplicate start' }),
+    })
+    const after = store.getRun(run.id) as RoutineRun
+    emitRun(routine, after, now)
+    return after
   }
 
   async function processDue(row: Routine, now: number, report: TickReport): Promise<void> {
@@ -372,9 +428,15 @@ export function createRoutineService(
     async turnEnded(e) {
       if (stopped) return // the database may be closing
       const parsed = parseRoutineSession(e.sessionId)
+      const program = parseProgramSession(e.sessionId)
       let runs: RoutineRun[] = []
       if (parsed !== undefined) {
         const run = store.getRunBySlot(parsed.routineId, parsed.scheduledAt)
+        if (run !== undefined) runs = [run]
+      } else if (program !== undefined) {
+        // a scheduled run has a row of the program's routine; a manual run has none
+        const owner = store.getByProgram(program.programId)
+        const run = owner === undefined ? undefined : store.getRunBySlot(owner.id, program.runAt)
         if (run !== undefined) runs = [run]
       } else if (e.inboxId !== undefined) {
         // the run row learns its inbox id right after `enqueue` returns: a very fast turn can end first
@@ -415,7 +477,14 @@ export function createRoutineService(
         } else if (e.stop === 'aborted') {
           outcome = { status: 'failed', reason: 'aborted', countFailure: false }
         } else if (NORMAL_STOPS.has(e.stop)) {
-          outcome = { status: 'succeeded' }
+          // a program run that reports failure is a failed run (it counts toward pausing)
+          outcome =
+            e.reportStatus === 'failed'
+              ? {
+                  status: 'failed',
+                  reason: `report: ${e.reportSummary ?? 'the run reported failure'}`,
+                }
+              : { status: 'succeeded' }
         } else if (e.errorCode === 'EH_LOCK_UNAVAILABLE') {
           // the lock service was down, not the routine: the run fails but does not count toward
           // pausing it (the next slot tries again)

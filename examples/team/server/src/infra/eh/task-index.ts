@@ -13,7 +13,10 @@
  *  - `tool.after`   `agent-message` when an agent sent `send_message`
  *
  * A session is a DM chat when its id starts with `dm:`, a task when it has a `parent` (delegated
- * by the lead) or starts with `routine:` (M7). Hook errors are logged, never thrown.
+ * by the lead) or its run profile (`domain/run-profiles.ts`) says it is tracked as a task: routine
+ * runs (`routine:`) and program runs (`program:`). A program run ends with a structured report
+ * (`TurnResult.output`): the row keeps it, and a failed or unreported run is `failed`. Hook errors
+ * are logged, never thrown.
  */
 import {
   definePlugin,
@@ -25,6 +28,8 @@ import {
 import type { EventAppender } from '../../app/ports.ts'
 import { isDmSession } from '../../domain/chat.ts'
 import type { NewEvent } from '../../domain/events.ts'
+import { parseReport, programRunOutcome } from '../../domain/programs.ts'
+import { profileOfSession } from '../../domain/run-profiles.ts'
 import { previewOf, statusFromStop, titleFromText } from '../../domain/tasks.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
 
@@ -84,7 +89,9 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
     }
 
   const isTaskSession = (ctx: HarnessContext): boolean =>
-    ctx.session.parent !== undefined || ctx.session.id.startsWith('routine:')
+    ctx.session.parent !== undefined || profileOfSession(ctx.session.id).task !== null
+  const taskOrigin = (ctx: HarnessContext) =>
+    profileOfSession(ctx.session.id, ctx.session.parent !== undefined).task?.origin ?? 'lead'
 
   return definePlugin({
     name: 'task-index',
@@ -115,7 +122,7 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
             agentId,
             sessionId: ctx.session.id,
             parentSessionId: ctx.session.parent?.sessionId ?? null,
-            origin: ctx.session.id.startsWith('routine:') ? 'routine' : 'lead',
+            origin: taskOrigin(ctx),
             title: titleFromText(unframe(textOf(e.input))),
             startedAt: t,
           })
@@ -154,6 +161,8 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
               error?: { code: string; message: string }
               pending?: PendingState
               messages: Message[]
+              /** The validated structured output of a turn that asked for one (program runs). */
+              output?: unknown
               messageId?: string
               usage: { totalTokens: number; costUsd?: number }
             },
@@ -180,7 +189,10 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 t,
               )
             } else if (isTaskSession(ctx)) {
-              const status = statusFromStop(e.stop)
+              const isProgram = taskOrigin(ctx) === 'program'
+              const report = isProgram ? parseReport(e.output) : undefined
+              const program = isProgram ? programRunOutcome(e.stop, report) : undefined
+              const status = program?.status ?? statusFromStop(e.stop)
               const kind = status === 'needs_action' ? pendingKinds(e.pending) : null
               // a `tool-pending` turn that waits on an external wait only (the task's own park)
               // is still running work, not a thing for a person
@@ -189,15 +201,18 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 status: effective,
                 pendingKind: kind,
                 now: t,
+                ...(report === undefined ? {} : { report }),
                 summary:
-                  e.error?.code === 'EH_PROVIDER_AUTH'
-                    ? 'The model provider rejected the API key. Set it in Settings > Providers.'
-                    : e.stop === 'error' && e.error !== undefined
-                      ? // a failed run says why (a later turn's summary replaces an older one)
-                        previewOf(`${e.error.code}: ${e.error.message}`, 500)
-                      : assistantText === ''
-                        ? null
-                        : previewOf(assistantText, 500),
+                  program?.summary != null && e.error === undefined
+                    ? previewOf(program.summary, 500)
+                    : e.error?.code === 'EH_PROVIDER_AUTH'
+                      ? 'The model provider rejected the API key. Set it in Settings > Providers.'
+                      : e.stop === 'error' && e.error !== undefined
+                        ? // a failed run says why (a later turn's summary replaces an older one)
+                          previewOf(`${e.error.code}: ${e.error.message}`, 500)
+                        : assistantText === ''
+                          ? null
+                          : previewOf(assistantText, 500),
                 addCostUsd: e.usage.costUsd ?? 0,
                 addTokens: e.usage.totalTokens,
               })

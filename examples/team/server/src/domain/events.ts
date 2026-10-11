@@ -14,6 +14,7 @@ export const APP_EVENT_TYPES = [
   'agent-changed',
   'routine-fired',
   'routine-changed',
+  'program-changed',
   'settings-changed',
   'mode-changed',
   'model-call',

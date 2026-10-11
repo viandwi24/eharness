@@ -47,11 +47,12 @@ import {
   type AutoEvent,
   type AutoState,
   createPermissionEngine,
+  matchRule,
   modelClassifier,
   type PermissionEngine,
 } from 'eharness/permissions'
 import { subagent } from 'eharness/subagent'
-import type { EventAppender } from '../../app/ports.ts'
+import type { EventAppender, ProgramStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
 import { MAX_UPLOAD_BYTES, uploadPathOfUrl } from '../../domain/chat.ts'
 import { SESSION_EVENT_TYPES } from '../../domain/events.ts'
@@ -62,7 +63,16 @@ import {
   type TeamMode,
   teamModeOf,
 } from '../../domain/modes.ts'
+import {
+  forbiddenReason,
+  outsideAuthorityReason,
+  parseProgramSession,
+  programDayScope,
+  programRules,
+  programRunScope,
+} from '../../domain/programs.ts'
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
+import { profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
@@ -72,7 +82,7 @@ import { chatTools } from './chat-tools-plugin.ts'
 import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
-import { sessionPermissions } from './permission-plugin.ts'
+import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
 import type { ModelConfig } from './provider.ts'
 import { routineOutcomes } from './routine-plugin.ts'
 import type { RoutineOutcomes } from './routine-service.ts'
@@ -142,6 +152,12 @@ export interface AgentFactoryDeps {
   sessionModes?: Pick<SessionModeStore, 'get'>
   /** Connections people switched off per chat (the composer tools menu); absent = none. */
   chatTools?: Pick<ChatToolsStore, 'off'>
+  /**
+   * Programs (`domain/programs.ts`): a session `program:<id>:<runAt>` runs under the authority of
+   * its program (the permission gate of the session) and spends from its budget scopes. Absent =
+   * no program sessions.
+   */
+  programs?: Pick<ProgramStore, 'get'>
   /** Definition by id: a child's parent session `dm:<agentId>` names its agent. */
   agentById?: (id: string) => AgentDef | undefined
   /**
@@ -283,6 +299,12 @@ const TEAM_PREAMBLE = [
   '/memories (see the memory tools). Say what you did and where you saved files.',
 ].join(' ')
 
+/**
+ * The gate of a program run: the rules the engine gets (`rules`) and the closed-world check of
+ * the session (`SessionGate`).
+ */
+export type ProgramGate = SessionGate & { rules: { allow: string[]; deny: string[] } }
+
 export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
   const { sqlite } = deps
   const storage = createStorage(sqlite)
@@ -314,6 +336,28 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       rev: 0,
     }
   setBudgetLimit(sqlite, workspaceScope(workspaceId), currentSettings().budgetUsd)
+  /**
+   * Extra ledger scopes of a program run (the run profile says `budget: 'program'`): the run itself
+   * (`perRunUsd`: a refused reservation ends the run with `cost-cap`) and the program's UTC day
+   * (`perDayUsd`, scope `program:<id>:<YYYY-MM-DD>`). The limits are set from the program on
+   * every turn, so an edit applies to the next turn.
+   */
+  const programScopes = (sessionId: string): string[] => {
+    if (profileOfSession(sessionId).budget !== 'program') return []
+    const parsed = parseProgramSession(sessionId)
+    const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
+    if (program === undefined) return []
+    const out: string[] = []
+    if (program.budget.perRunUsd !== null) {
+      const scope = programRunScope(sessionId)
+      setBudgetLimit(sqlite, scope, program.budget.perRunUsd)
+      out.push(scope)
+    }
+    const day = programDayScope(program.id, Date.now())
+    setBudgetLimit(sqlite, day, program.budget.perDayUsd)
+    out.push(day)
+    return out
+  }
   // `library://` references of uploads stay references in stored messages; they become bytes only
   // when the request to the model is built (`inputFiles.resolve`, spec 03 §6)
   const uploads = libraryFs(sqlite)
@@ -478,7 +522,23 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
 
     // one engine per live session (Auto mode counters are per conversation); the mode is read
     // per tool call, never baked into the engine (`permission-plugin.ts`)
-    const createEngine = (sessionId: string): PermissionEngine => {
+    const createEngine = (sessionId: string, gate?: ProgramGate): PermissionEngine => {
+      if (gate !== undefined) {
+        // a program run (D3): the authority approves, `forbidden` and the connectors' own deny
+        // rules deny, nothing asks (`dontAsk`). The connectors' ask rules are left out on purpose:
+        // the client granted these tools to the program; tools pinned to always ask (writes of
+        // third-party connectors) stay so and are refused, they are gates.
+        return createPermissionEngine({
+          roots: () => [{ virtual: '/', real: '/' }],
+          mode: 'dontAsk',
+          rules: {
+            allow: gate.rules.allow,
+            ask: [],
+            deny: [...out.rules.deny, ...gate.rules.deny],
+          },
+          toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
+        })
+      }
       const classifier = classifierFor(sessionId, def.id)
       return createPermissionEngine({
         roots: () => [{ virtual: '/', real: '/' }],
@@ -489,6 +549,41 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         // pinned asks (write / destructive tools of non-built-in connectors) ask even in Bypass
         toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
       })
+    }
+
+    /** The authority of a program run, closed world (see `ProgramGate`); undefined for other sessions. */
+    const gateOf = (sessionId: string): ProgramGate | undefined => {
+      if (profileOfSession(sessionId).permissions !== 'program-authority') return undefined
+      const parsed = parseProgramSession(sessionId)
+      if (parsed === undefined) return undefined
+      const program = deps.programs?.get(parsed.programId)
+      const tools = Object.entries(out.toolNameMap).map(([name, origin]) => ({
+        name,
+        connectorId: origin.connectorId,
+        connectionIds: origin.connectionIds,
+      }))
+      // a deleted program leaves nothing granted: its session can still be read, never act
+      const rules = program === undefined ? { allow: [], deny: [] } : programRules(program, tools)
+      const name = program?.name ?? parsed.programId
+      const match = {
+        roots: [{ virtual: '/', real: '/' }],
+        toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
+      }
+      return {
+        rules,
+        refuse(call) {
+          for (const rule of rules.deny) {
+            if (matchRule(rule, call, { ...match, polarity: 'restrict' })) {
+              return forbiddenReason(name, call.toolName, rule)
+            }
+          }
+          const granted = rules.allow.some((rule) =>
+            matchRule(rule, call, { ...match, polarity: 'allow' }),
+          )
+          return granted ? undefined : outsideAuthorityReason(name, call.toolName)
+        },
+        askedReason: (toolName) => outsideAuthorityReason(name, toolName),
+      }
     }
 
     const plugins = [
@@ -517,6 +612,7 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           ]),
       sessionPermissions({
         createEngine,
+        gate: gateOf,
         registry: engines,
         mode: (ctx) =>
           resolveSessionMode(def, ctx.session.id, ctx.session.parent?.sessionId, currentSettings())
@@ -631,7 +727,10 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       budget: {
         ledger: {
           adapter: ledger,
-          scopes: (ctx) => [workspaceScope(String(ctx.runtime.workspaceId ?? workspaceId))],
+          scopes: (ctx) => [
+            workspaceScope(String(ctx.runtime.workspaceId ?? workspaceId)),
+            ...programScopes(ctx.session.id),
+          ],
         },
       },
       ...(out.mcpSources.length > 0 ? { mcp: out.mcpSources } : {}),

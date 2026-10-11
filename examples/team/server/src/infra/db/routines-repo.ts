@@ -40,6 +40,7 @@ interface RoutineRow {
   created_at: number
   updated_at: number
   version: number
+  program_id: string | null
 }
 
 const toRoutine = (r: RoutineRow): Routine => ({
@@ -64,6 +65,7 @@ const toRoutine = (r: RoutineRow): Routine => ({
   createdAt: r.created_at,
   updatedAt: r.updated_at,
   version: r.version,
+  programId: r.program_id,
 })
 
 interface RunRow {
@@ -113,6 +115,8 @@ export interface SlotClaim {
 }
 
 export interface SqliteRoutineStore extends RoutineStore {
+  /** The routine that owns a program's schedule trigger. */
+  getByProgram(programId: string): Routine | undefined
   /** Active routines whose slot is at or before `horizon`, oldest slot first. */
   due(horizon: number, limit: number): Routine[]
   /** The winner gets the run; a loser (another instance moved the slot) gets undefined. */
@@ -170,16 +174,27 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
   }
 
   return {
-    list({ agentId }) {
-      const rows =
-        agentId === undefined
-          ? sqlite.query<RoutineRow, []>('SELECT * FROM routines ORDER BY created_at, id').all()
-          : sqlite
-              .query<RoutineRow, [string]>(
-                'SELECT * FROM routines WHERE agent_id = ? ORDER BY created_at, id',
-              )
-              .all(agentId)
-      return rows.map(toRoutine)
+    list({ agentId, programId }) {
+      // program-owned routines (the schedule of a program) are listed only for their program
+      const where = [programId === undefined ? 'program_id IS NULL' : 'program_id = ?']
+      const params: string[] = programId === undefined ? [] : [programId]
+      if (agentId !== undefined) {
+        where.push('agent_id = ?')
+        params.push(agentId)
+      }
+      return sqlite
+        .query<RoutineRow, string[]>(
+          `SELECT * FROM routines WHERE ${where.join(' AND ')} ORDER BY created_at, id`,
+        )
+        .all(...params)
+        .map(toRoutine)
+    },
+
+    getByProgram(programId) {
+      const row = sqlite
+        .query<RoutineRow, [string]>('SELECT * FROM routines WHERE program_id = ? LIMIT 1')
+        .get(programId)
+      return row === null ? undefined : toRoutine(row)
     },
 
     get,
@@ -189,8 +204,8 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
         .query(
           `INSERT INTO routines (id, agent_id, name, prompt, spec, session_mode, overlap,
              catch_up_window_ms, status, next_fire_at, max_failures, max_fires, end_at,
-             created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?)`,
+             created_at, updated_at, program_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           r.id,
@@ -207,6 +222,7 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
           r.endAt,
           r.now,
           r.now,
+          r.programId ?? null,
         )
       return get(r.id) as Routine
     },

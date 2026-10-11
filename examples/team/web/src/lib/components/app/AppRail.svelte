@@ -7,6 +7,7 @@
 	import ListChecksIcon from 'phosphor-svelte/lib/ListChecks';
 	import PlugsConnectedIcon from 'phosphor-svelte/lib/PlugsConnected';
 	import PulseIcon from 'phosphor-svelte/lib/Pulse';
+	import StrategyIcon from 'phosphor-svelte/lib/Strategy';
 	import type { Component } from 'svelte';
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { SECTIONS, sectionOf, type SectionId } from '#lib/nav/sections.js';
@@ -24,6 +25,7 @@
 	const ICONS: Record<SectionId, Component> = {
 		agents: ChatsCircleIcon,
 		tasks: ListChecksIcon,
+		programs: StrategyIcon,
 		routines: ClockIcon,
 		files: FolderOpenIcon,
 		connectors: PlugsConnectedIcon,

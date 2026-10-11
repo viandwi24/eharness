@@ -49,3 +49,26 @@ export function openEditRoutine(routineId: string): void {
 export function closeRoutineDialog(): void {
 	routineDialog.open = false;
 }
+
+/** The program dialog: create (optionally for a preset agent) or edit one program. */
+export const programDialog = $state<{ open: boolean; programId: string | null; agentId: string | null }>({
+	open: false,
+	programId: null,
+	agentId: null
+});
+
+export function openNewProgram(agentId: string | null = null): void {
+	programDialog.programId = null;
+	programDialog.agentId = agentId;
+	programDialog.open = true;
+}
+
+export function openEditProgram(programId: string): void {
+	programDialog.programId = programId;
+	programDialog.agentId = null;
+	programDialog.open = true;
+}
+
+export function closeProgramDialog(): void {
+	programDialog.open = false;
+}

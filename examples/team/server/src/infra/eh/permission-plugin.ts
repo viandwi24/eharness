@@ -13,12 +13,27 @@
  */
 import { definePlugin, type HarnessContext, type HarnessPlugin } from 'eharness'
 import type { AutoEvent, PermissionEngine } from 'eharness/permissions'
-import { permissions } from 'eharness/permissions'
+import { DONT_ASK_REASON, permissions } from 'eharness/permissions'
 import { EH_MODE, type TeamMode } from '../../domain/modes.ts'
 
-export interface SessionPermissionsOptions {
-  /** A fresh engine (rules, tool kinds, classifier) for a session. */
-  createEngine: (sessionId: string) => PermissionEngine
+/**
+ * A closed-world gate of a session (a program run, `domain/programs.ts`): the engine settles the
+ * rules (`forbidden` as deny rules, `dontAsk` so nothing asks), and the gate adds that a call is
+ * approved only when an allow rule of the authority matches it. Anything else is denied with a
+ * reason the model reads, never asked: a background run has nobody to ask.
+ */
+export interface SessionGate {
+  /** The reason to refuse `call`, or undefined when the authority covers it. */
+  refuse(call: { toolName: string; input: unknown }): string | undefined
+  /** Reason of a call the engine would have asked about (an `alwaysAsk` tool, a protected path). */
+  askedReason(toolName: string): string
+}
+
+export interface SessionPermissionsOptions<G extends SessionGate = SessionGate> {
+  /** The gate of a session that runs unattended under a closed authority; absent = normal modes. */
+  gate?: (sessionId: string) => G | undefined
+  /** A fresh engine (rules, tool kinds, classifier) for a session; `gate` is the session's own. */
+  createEngine: (sessionId: string, gate?: G) => PermissionEngine
   /** The mode of the session of `ctx` (own, inherited from the parent, agent, workspace). */
   mode: (ctx: HarnessContext) => TeamMode
   /** Engines of the live sessions of this process, by session id. */
@@ -27,18 +42,22 @@ export interface SessionPermissionsOptions {
   onAuto?: (sessionId: string, event: AutoEvent, engine: PermissionEngine) => void
 }
 
-export function sessionPermissions(opts: SessionPermissionsOptions): HarnessPlugin<'permissions'> {
+export function sessionPermissions<G extends SessionGate = SessionGate>(
+  opts: SessionPermissionsOptions<G>,
+): HarnessPlugin<'permissions'> {
   return definePlugin({
     name: 'permissions',
     session: (ctx) => {
       const sessionId = (ctx as HarnessContext).session.id
-      const engine = opts.createEngine(sessionId)
+      const gate = opts.gate?.(sessionId)
+      const engine = opts.createEngine(sessionId, gate)
       opts.registry.set(sessionId, engine)
       const unsubscribe = engine.subscribeAuto((event) => opts.onAuto?.(sessionId, event, engine))
       // the plan-exit tool belongs to plan mode, which the team app does not offer
       const inner = permissions({
         engine,
-        mode: (hookCtx) => EH_MODE[opts.mode(hookCtx)],
+        // a gated session never asks: the engine runs in `dontAsk` whatever the chat mode says
+        mode: gate === undefined ? (hookCtx) => EH_MODE[opts.mode(hookCtx)] : 'dontAsk',
         planExitTool: false,
       })
       const contribution = inner['~def'].setup?.({
@@ -46,8 +65,15 @@ export function sessionPermissions(opts: SessionPermissionsOptions): HarnessPlug
         plugin: { name: 'permissions' },
         has: { dataPart: () => false, service: () => false },
       })
+      const hooks =
+        gate === undefined || contribution?.hooks === undefined
+          ? contribution?.hooks
+          : ({
+              ...contribution.hooks,
+              'tool.approve': gatedApprove(contribution.hooks, gate),
+            } as typeof contribution.hooks)
       return {
-        ...(contribution?.hooks === undefined ? {} : { hooks: contribution.hooks }),
+        ...(hooks === undefined ? {} : { hooks }),
         dispose: () => {
           unsubscribe()
           if (opts.registry.get(sessionId) === engine) opts.registry.delete(sessionId)
@@ -55,4 +81,34 @@ export function sessionPermissions(opts: SessionPermissionsOptions): HarnessPlug
       }
     },
   })
+}
+
+type Verdict =
+  | { type: 'approved' }
+  | { type: 'user-approval'; reason?: string }
+  | { type: 'denied'; reason: string }
+  | undefined
+type ApproveHook = (
+  ctx: HarnessContext,
+  e: { toolName: string; input: unknown },
+) => Promise<Verdict> | Verdict
+
+/**
+ * `tool.approve` of a gated session: the gate's closed-world check, then the engine's verdict
+ * (deny rules, `dontAsk`). Most restrictive wins, as in the core's chain (spec 11 §3); the
+ * reasons are the program's, so the agent learns what to do instead.
+ */
+function gatedApprove(hooks: { 'tool.approve'?: unknown }, gate: SessionGate): ApproveHook {
+  const engineHook = hooks['tool.approve'] as ApproveHook
+  return async (ctx, e) => {
+    const refusal = gate.refuse({ toolName: e.toolName, input: e.input })
+    if (refusal !== undefined) return { type: 'denied', reason: refusal }
+    const verdict = await engineHook(ctx, e)
+    if (verdict === undefined || verdict.type === 'approved') return verdict
+    // `dontAsk` turns an ask into a denial with the generic text: say what the run can do about it
+    if (verdict.type === 'user-approval' || verdict.reason === DONT_ASK_REASON) {
+      return { type: 'denied', reason: gate.askedReason(e.toolName) }
+    }
+    return verdict
+  }
 }

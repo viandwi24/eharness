@@ -39,6 +39,10 @@
       "description": "Scheduled prompts per agent (multi-instance safe, on the durable inbox)."
     },
     {
+      "name": "programs",
+      "description": "Standing orders: what an agent does on its own (brief, enforced authority, gates, budget, trigger), with run history."
+    },
+    {
       "name": "tasks",
       "description": "Delegated work across agents (the board)."
     },
@@ -1700,6 +1704,7 @@
               "agent-changed",
               "routine-fired",
               "routine-changed",
+              "program-changed",
               "settings-changed",
               "mode-changed",
               "model-call",
@@ -1817,7 +1822,8 @@
             "enum": [
               "user",
               "lead",
-              "routine"
+              "routine",
+              "program"
             ]
           },
           "title": {
@@ -1861,6 +1867,9 @@
           },
           "tokens": {
             "type": "integer"
+          },
+          "report": {
+            "$ref": "#/components/schemas/TaskReport"
           }
         },
         "required": [
@@ -1877,7 +1886,8 @@
           "summary",
           "lastActivityAt",
           "costUsd",
-          "tokens"
+          "tokens",
+          "report"
         ]
       },
       "TaskStatus": {
@@ -1892,6 +1902,42 @@
           "timed_out"
         ],
         "description": "`needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
+      },
+      "TaskReport": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "done",
+              "partial",
+              "failed",
+              "needs_decision"
+            ]
+          },
+          "summary": {
+            "type": "string"
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Library paths of what the run produced."
+          },
+          "notes": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "summary",
+          "outputs"
+        ],
+        "description": "The final report of a program run; null for other tasks and while it runs."
       },
       "TaskDetail": {
         "type": "object",
@@ -2436,6 +2482,13 @@
           },
           "version": {
             "type": "integer"
+          },
+          "programId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Set when a program owns this routine (the schedule of the program)."
           }
         },
         "required": [
@@ -2459,7 +2512,8 @@
           "endAt",
           "createdAt",
           "updatedAt",
-          "version"
+          "version",
+          "programId"
         ]
       },
       "RoutineSpec": {
@@ -5130,6 +5184,570 @@
             "items": {
               "$ref": "#/components/schemas/RoutineRun"
             }
+          }
+        },
+        "required": [
+          "runs"
+        ]
+      },
+      "ProgramList": {
+        "type": "object",
+        "properties": {
+          "programs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Program"
+            }
+          }
+        },
+        "required": [
+          "programs"
+        ]
+      },
+      "Program": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "brief": {
+            "type": "string"
+          },
+          "authority": {
+            "$ref": "#/components/schemas/ProgramAuthority"
+          },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Actions that still need the client (told to the agent; decisions come in a later phase)."
+          },
+          "escalation": {
+            "type": "string"
+          },
+          "forbidden": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rules or tool names denied in every case (deny rules of the permission engine)."
+          },
+          "budget": {
+            "$ref": "#/components/schemas/ProgramBudget"
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/ProgramTrigger"
+          },
+          "report": {
+            "type": "string",
+            "enum": [
+              "digest",
+              "task",
+              "silent"
+            ],
+            "description": "`digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "createdBy": {
+            "type": "string",
+            "description": "`client`, or the id of the proposing agent."
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "version": {
+            "type": "integer"
+          },
+          "triggerState": {
+            "$ref": "#/components/schemas/ProgramTriggerState"
+          }
+        },
+        "required": [
+          "id",
+          "agentId",
+          "name",
+          "brief",
+          "authority",
+          "gates",
+          "escalation",
+          "forbidden",
+          "budget",
+          "trigger",
+          "report",
+          "status",
+          "createdBy",
+          "createdAt",
+          "updatedAt",
+          "version",
+          "triggerState"
+        ]
+      },
+      "ProgramAuthority": {
+        "type": "object",
+        "properties": {
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100,
+            "description": "Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine."
+          },
+          "connectors": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100,
+            "description": "Connector or connection ids: every tool of them is allowed."
+          },
+          "read": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100,
+            "description": "Library path globs the run may read (`/library/data/**`)."
+          },
+          "write": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100,
+            "description": "Library path globs the run may write (`/library/reports/**`); they are readable too."
+          }
+        },
+        "required": [
+          "tools",
+          "connectors",
+          "read",
+          "write"
+        ]
+      },
+      "ProgramBudget": {
+        "type": "object",
+        "properties": {
+          "perRunUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "One run stops (`cost-cap`) when it has spent this much. null = no limit."
+          },
+          "perDayUsd": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "exclusiveMinimum": 0,
+            "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+          }
+        },
+        "required": [
+          "perRunUsd",
+          "perDayUsd"
+        ]
+      },
+      "ProgramTrigger": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "manual"
+                ]
+              }
+            },
+            "required": [
+              "kind"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "schedule"
+                ]
+              },
+              "spec": {
+                "$ref": "#/components/schemas/RoutineSpec"
+              }
+            },
+            "required": [
+              "kind",
+              "spec"
+            ]
+          }
+        ],
+        "description": "`manual`: runs only on \"run now\". `schedule`: the routine scheduler fires it (same claim, overlap, recovery and failure rules as routines)."
+      },
+      "ProgramTriggerState": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "active",
+              "paused"
+            ]
+          },
+          "pausedReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "manual",
+              "max-failures",
+              "max-fires",
+              "ended",
+              "completed",
+              "agent-archived",
+              null
+            ]
+          },
+          "nextFireAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastFireAt": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "lastStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "failures": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "pausedReason",
+          "nextFireAt",
+          "lastFireAt",
+          "lastStatus",
+          "failures"
+        ],
+        "description": "The routine that owns the schedule trigger (it pauses itself after repeated failures)."
+      },
+      "ProgramCreate": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent id or slug."
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "brief": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "authority": {
+            "type": "object",
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine."
+              },
+              "connectors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Connector or connection ids: every tool of them is allowed."
+              },
+              "read": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may read (`/library/data/**`)."
+              },
+              "write": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may write (`/library/reports/**`); they are readable too."
+              }
+            }
+          },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "escalation": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "forbidden": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "perRunUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "One run stops (`cost-cap`) when it has spent this much. null = no limit."
+              },
+              "perDayUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+              }
+            }
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/ProgramTrigger"
+          },
+          "report": {
+            "type": "string",
+            "enum": [
+              "digest",
+              "task",
+              "silent"
+            ],
+            "description": "`digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history."
+          }
+        },
+        "required": [
+          "agentId",
+          "name",
+          "brief"
+        ]
+      },
+      "ProgramPatch": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "brief": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000
+          },
+          "authority": {
+            "type": "object",
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine."
+              },
+              "connectors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Connector or connection ids: every tool of them is allowed."
+              },
+              "read": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may read (`/library/data/**`)."
+              },
+              "write": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may write (`/library/reports/**`); they are readable too."
+              }
+            }
+          },
+          "gates": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "escalation": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "forbidden": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500
+            },
+            "maxItems": 100
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "perRunUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "One run stops (`cost-cap`) when it has spent this much. null = no limit."
+              },
+              "perDayUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+              }
+            }
+          },
+          "trigger": {
+            "$ref": "#/components/schemas/ProgramTrigger"
+          },
+          "report": {
+            "type": "string",
+            "enum": [
+              "digest",
+              "task",
+              "silent"
+            ],
+            "description": "`digest`: a line in the client digest; `task`: the run on the board; `silent`: nothing beyond the run history."
+          },
+          "version": {
+            "type": "integer",
+            "description": "The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`."
+          }
+        }
+      },
+      "ProgramRunStarted": {
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string",
+            "example": "program:0198…:1760000000000"
+          },
+          "taskId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "started": {
+            "type": "boolean",
+            "description": "false: that run existed already."
+          }
+        },
+        "required": [
+          "sessionId",
+          "taskId",
+          "started"
+        ]
+      },
+      "ProgramRuns": {
+        "type": "object",
+        "properties": {
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            },
+            "description": "Task sessions of the program, newest first."
           }
         },
         "required": [
@@ -10920,6 +11538,676 @@
           },
           "404": {
             "description": "Unknown routine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs": {
+      "get": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "List programs",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "description": "Only this agent (id or slug)."
+            },
+            "required": false,
+            "description": "Only this agent (id or slug).",
+            "name": "agentId",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Programs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Create a program",
+        "description": "A standing order for an agent: brief, authority, gates, escalation, forbidden, budget, trigger and report. Each run is a task session `program:<id>:<runAt>` that follows Execute, Verify, Report and ends with a structured report. The authority is enforced by the permission engine for the run: allowed tools and paths run without approval, `forbidden` is denied, everything else is refused (nobody is there to ask).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Program"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent or a schedule without a next slot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs/{id}": {
+      "get": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "A program",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Program"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Edit a program",
+        "description": "A run already in progress keeps the authority it started with; the next run uses the new one. Changing the trigger moves the schedule.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramPatch"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Program"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Version conflict or a schedule without a next slot",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Delete a program",
+        "description": "Removes the program and its schedule. The task sessions of its past runs stay on the board.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The deleted program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Program"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs/{id}/pause": {
+      "post": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Pause a program",
+        "description": "Stops the schedule trigger. A run in progress finishes.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Program"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs/{id}/resume": {
+      "post": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Resume a program",
+        "description": "Recomputes the next slot from now: nothing missed while paused fires.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Program"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Archived agent or a finished schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs/{id}/run": {
+      "post": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Run now",
+        "description": "Starts a run now (the schedule is untouched). Returns when the run has started, not when it ends: follow the task session. `409 PROGRAM_BUSY` while another run of the program is going.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramRunStarted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "`PROGRAM_BUSY` or archived agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/programs/{id}/runs": {
+      "get": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "Run history, newest first",
+        "description": "The task sessions of the program, each with its structured report once the run ended.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Program id."
+            },
+            "required": true,
+            "description": "Program id.",
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            },
+            "required": false,
+            "name": "limit",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramRuns"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown program",
             "content": {
               "application/json": {
                 "schema": {

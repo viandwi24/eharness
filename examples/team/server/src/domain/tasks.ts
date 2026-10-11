@@ -9,8 +9,17 @@ export const TASK_STATUSES = [
   'timed_out',
 ] as const
 export type TaskStatus = (typeof TASK_STATUSES)[number]
-export type TaskOrigin = 'user' | 'lead' | 'routine'
+export type TaskOrigin = 'user' | 'lead' | 'routine' | 'program'
 export type PendingKind = 'approval' | 'question'
+
+/** The structured report a program run ends with (`SendOptions.output`, stored on the task row). */
+export interface TaskReport {
+  status: 'done' | 'partial' | 'failed' | 'needs_decision'
+  summary: string
+  /** Library paths of what the run produced. */
+  outputs: string[]
+  notes?: string | undefined
+}
 
 export interface Task {
   id: string
@@ -28,6 +37,8 @@ export interface Task {
   lastActivityAt: number
   costUsd: number
   tokens: number
+  /** The structured final report of a program run (`domain/programs.ts`); null for other tasks. */
+  report: TaskReport | null
 }
 
 export const isTerminal = (status: TaskStatus): boolean =>

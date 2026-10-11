@@ -49,7 +49,7 @@ Update this table in the same commit that changes a phase's status.
 | P37 | `eharness/activity`, `eharness/http`, `eharness/client`: activity feed, attention queue, fetch-style routes, browser client (ADR-0058, 0059; specs 25–27; no phase file) | done | P34 | — |
 | P38 | 0.8 readiness: security hardening review, upgrade guide, walkthroughs, production checklist (no phase file) | done | P35–P37 | — |
 | P39 | 0.8 hardening (internal multi-perspective review): one naming convention and single options objects, trimmed public surface with a committed exports snapshot, bounded waits and timeouts, fail-closed network and permission defaults, shared LLM judge engine, `config.observe`, one error taxonomy, one glob compiler, core and subagent restructuring without import cycles, test preload that fails on `W_INVARIANT_VIOLATION`, doc and example pass (ADR-0060; specs 01, 10, 15, 18; no phase file) | done | P38 | — |
-| P40 | [Team example: autonomous operations](P40-team-autonomous-operations.md) — manager agent, programs (standing orders with enforced authority), decision center, work queue, chunked big-data work with `run_code`, heartbeat and daily digest | todo | P32, P39 | — |
+| P40 | [Team example: autonomous operations](P40-team-autonomous-operations.md) — manager agent, programs (standing orders with enforced authority), decision center, work queue, chunked big-data work with `run_code`, heartbeat and daily digest | in progress (phase A done) | P32, P39 | — |
 
 **P13–P20 ship together as 0.4.0.** All of them are committed directly on `main` (no phase
 branches); each phase adds its own changeset (P13 `patch`, feature phases `minor`), and the next

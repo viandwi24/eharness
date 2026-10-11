@@ -48,6 +48,7 @@ import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
+import { drizzleProgramStore } from './infra/db/programs-repo.ts'
 import { pruneTables, type TableRetention } from './infra/db/retention.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
@@ -72,6 +73,7 @@ import { sqliteLibraryStore } from './infra/eh/library-store.ts'
 import { createModeService } from './infra/eh/mode-service.ts'
 import { createObserver } from './infra/eh/observe.ts'
 import { sqliteProfileStore } from './infra/eh/profile-store.ts'
+import { createProgramService, type ProgramService } from './infra/eh/program-service.ts'
 import {
   type ModelConfig,
   providerModelConfig,
@@ -161,6 +163,8 @@ export interface Server {
   factory: AgentFactory
   team: TeamService
   routines: RoutineService
+  /** Program runs (`infra/eh/program-service.ts`). */
+  programs: ProgramService
   /** Operational counters of the runtime (`config.observe`): failed spans, hook timeouts, ... */
   metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
@@ -341,6 +345,7 @@ export function compose(config: ServerConfig): Server {
   })
   connectorsRef = connectors
   const routineStore = sqliteRoutineStore(conn.sqlite)
+  const programStore = drizzleProgramStore(conn.db)
   const sessionModes = sqliteSessionModes(conn.sqlite)
   const chatToolsStore = sqliteChatTools(conn.sqlite)
   let routines: RoutineService | undefined
@@ -358,6 +363,7 @@ export function compose(config: ServerConfig): Server {
     agentById: (id) => agents.get(id),
     ...(config.classifier === undefined ? {} : { classifier: config.classifier }),
     sessionModes,
+    programs: programStore,
     chatTools: chatToolsStore,
     // Auto blocked / paused / resumed: the web shows "auto paused" from this event
     onAutoEvent: ({ sessionId, agentId, event, state, mode }) =>
@@ -403,12 +409,19 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const schedule = croneSchedule()
+  const programRunner = createProgramService(factory, {
+    agents,
+    tasks,
+    events,
+    log: { warn: (message) => console.warn(`team: ${message}`) },
+  })
   routines = createRoutineService(factory, {
     agents,
     routines: routineStore,
     schedule,
     tasks,
     events,
+    programs: { store: programStore, runner: programRunner },
     ...(config.routines === undefined ? {} : { config: config.routines }),
     log: { warn: (message) => console.warn(message) },
   })
@@ -434,6 +447,8 @@ export function compose(config: ServerConfig): Server {
     routines: routineStore,
     schedule,
     routineEngine: routines,
+    programs: programStore,
+    programRunner,
     events,
     modelCalls,
     clock: { now: () => Date.now() },
@@ -509,6 +524,7 @@ export function compose(config: ServerConfig): Server {
     factory,
     team,
     routines,
+    programs: programRunner,
     activityLog,
     metrics: observer.snapshot,
     providers,

@@ -145,6 +145,8 @@ export const tasks = sqliteTable(
     lastActivityAt: integer('last_activity_at').notNull().default(0),
     costUsd: real('cost_usd').notNull().default(0),
     tokens: integer('tokens').notNull().default(0),
+    /** The structured final report of a program run (`{ status, summary, outputs, notes? }`); null otherwise. */
+    report: json<{ status: string; summary: string; outputs: string[]; notes?: string }>('report'),
   },
   (t) => [
     index('tasks_state').on(t.status),
@@ -265,8 +267,48 @@ export const routines = sqliteTable(
     updatedAt: integer('updated_at').notNull(),
     /** Bumped by every edit through the API (not by the ticker): the concurrency token of editors. */
     version: integer('version').notNull().default(1),
+    /** Set when a program owns this routine (its schedule trigger); such routines are not listed as routines. */
+    programId: text('program_id'),
   },
-  (t) => [index('routines_due').on(t.status, t.nextFireAt), index('routines_agent').on(t.agentId)],
+  (t) => [
+    index('routines_due').on(t.status, t.nextFireAt),
+    index('routines_agent').on(t.agentId),
+    index('routines_program').on(t.programId),
+  ],
+)
+
+/**
+ * Programs (P40 decision D4): a standing order of an agent. A schedule trigger is owned by one row
+ * of `routines` (`routines.program_id`); every run is a task session `program:<id>:<runAt>`.
+ */
+export const programs = sqliteTable(
+  'programs',
+  {
+    id: text('id').primaryKey(),
+    agentId: text('agent_id').notNull(),
+    name: text('name').notNull(),
+    brief: text('brief').notNull(),
+    authority: json<{ tools: string[]; connectors: string[]; read: string[]; write: string[] }>(
+      'authority',
+    ).notNull(),
+    gates: json<string[]>('gates').notNull(),
+    escalation: text('escalation').notNull().default(''),
+    forbidden: json<string[]>('forbidden').notNull(),
+    budget: json<{ perRunUsd: number | null; perDayUsd: number | null }>('budget').notNull(),
+    trigger: json<{ kind: 'manual' } | { kind: 'schedule'; spec: Record<string, unknown> }>(
+      'trigger',
+    ).notNull(),
+    /** `digest` | `task` | `silent` */
+    report: text('report').notNull().default('task'),
+    /** `active` | `paused` */
+    status: text('status').notNull().default('active'),
+    /** `client`, or the id of the agent that proposed it. */
+    createdBy: text('created_by').notNull().default('client'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    version: integer('version').notNull().default(1),
+  },
+  (t) => [index('programs_agent').on(t.agentId)],
 )
 
 /** History of fires; the unique `(routine_id, scheduled_at)` makes a slot fire at most once. */

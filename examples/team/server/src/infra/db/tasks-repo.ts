@@ -7,7 +7,8 @@
 import type { Database } from 'bun:sqlite'
 import { uuidv7 } from 'eharness'
 import type { AgentActivity, TaskStore } from '../../app/ports.ts'
-import type { PendingKind, Task, TaskOrigin, TaskStatus } from '../../domain/tasks.ts'
+import { parseReport } from '../../domain/programs.ts'
+import type { PendingKind, Task, TaskOrigin, TaskReport, TaskStatus } from '../../domain/tasks.ts'
 
 interface TaskRow {
   id: string
@@ -24,6 +25,16 @@ interface TaskRow {
   last_activity_at: number
   cost_usd: number
   tokens: number
+  report: string | null
+}
+
+const parseJson = (text: string | null): unknown => {
+  if (text === null) return undefined
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
 }
 
 const toTask = (r: TaskRow): Task => ({
@@ -41,6 +52,7 @@ const toTask = (r: TaskRow): Task => ({
   lastActivityAt: r.last_activity_at,
   costUsd: r.cost_usd,
   tokens: r.tokens,
+  report: parseReport(parseJson(r.report)) ?? null,
 })
 
 export interface NewTask {
@@ -59,6 +71,8 @@ export interface TaskUpdate {
   summary?: string | null
   addCostUsd?: number
   addTokens?: number
+  /** The structured report of a program run (kept when absent). */
+  report?: TaskReport | null
 }
 
 /** The write half, used by the `taskIndex` plugin and the drift pass. */
@@ -105,6 +119,16 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
     getBySession(sessionId) {
       const row = taskBySession.get(sessionId)
       return row === null ? undefined : toTask(row)
+    },
+
+    ofProgram(programId, limit) {
+      return sqlite
+        .query<TaskRow, [string, number]>(
+          // session ids are `program:<id>:<runAt>`; the id has no `%` or `_` of its own (UUID)
+          "SELECT * FROM tasks WHERE session_id LIKE 'program:' || ? || ':%' ORDER BY started_at DESC, id DESC LIMIT ?",
+        )
+        .all(programId, limit)
+        .map(toTask)
     },
 
     ofAgent(agentId, dmSessionId) {
@@ -198,7 +222,8 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
       sqlite
         .query(
           `UPDATE tasks SET state = ?, pending_kind = ?, ended_at = ?, last_activity_at = ?,
-                  summary = COALESCE(?, summary), cost_usd = cost_usd + ?, tokens = tokens + ?
+                  summary = COALESCE(?, summary), cost_usd = cost_usd + ?, tokens = tokens + ?,
+                  report = COALESCE(?, report)
             WHERE session_id = ?`,
         )
         .run(
@@ -209,6 +234,7 @@ export function sqliteTaskStore(sqlite: Database): SqliteTaskStore {
           u.summary ?? null,
           u.addCostUsd ?? 0,
           u.addTokens ?? 0,
+          u.report == null ? null : JSON.stringify(u.report),
           sessionId,
         )
       const row = taskBySession.get(sessionId)

@@ -17,6 +17,7 @@ import { healthRoutes } from './routes/health.ts'
 import { libraryRoutes } from './routes/library.ts'
 import { logRoutes } from './routes/logs.ts'
 import { modeRoutes } from './routes/modes.ts'
+import { programRoutes } from './routes/programs.ts'
 import { providerRoutes } from './routes/providers.ts'
 import { routineRoutes } from './routes/routines.ts'
 import { settingsRoutes } from './routes/settings.ts'
@@ -68,6 +69,11 @@ export const OPENAPI_DOC: OpenAPIObjectConfig = {
     {
       name: 'routines',
       description: 'Scheduled prompts per agent (multi-instance safe, on the durable inbox).',
+    },
+    {
+      name: 'programs',
+      description:
+        'Standing orders: what an agent does on its own (brief, enforced authority, gates, budget, trigger), with run history.',
     },
     { name: 'tasks', description: 'Delegated work across agents (the board).' },
     {
@@ -229,6 +235,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', providerRoutes(options.deps))
   app.route('/', connectorRoutes(options.deps))
   app.route('/', routineRoutes(options.deps))
+  app.route('/', programRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)
