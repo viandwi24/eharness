@@ -366,6 +366,8 @@ export function createRoutineService(
     return report
   }
 
+  /** DM runs whose own turn parked on a wait with no person involved: the next turn continues them. */
+  const parked = new Map<string, Set<string>>()
   const outcomes: RoutineOutcomes = {
     async turnEnded(e) {
       if (stopped) return // the database may be closing
@@ -386,12 +388,29 @@ export function createRoutineService(
       if (runs.length === 0 && /^dm:[^:]+$/.test(e.sessionId) && e.stop !== 'tool-pending') {
         // a DM run waited for an approval; this turn is its continuation
         runs = store.needsActionRuns(e.sessionId)
+        // a run whose first turn parked on a wait (no inbox id on the continuation turn)
+        const waiting = parked.get(e.sessionId)
+        if (waiting !== undefined) {
+          for (const id of waiting) {
+            const run = store.getRun(id)
+            if (run !== undefined && !runs.some((r) => r.id === run.id)) runs.push(run)
+          }
+          parked.delete(e.sessionId)
+        }
       }
       const now = clock()
       for (const run of runs) {
         let outcome: Parameters<SqliteRoutineStore['finishRun']>[1]
         if (e.stop === 'tool-pending') {
-          if (!e.needsPerson) continue // waits on a delegated task: still running
+          if (!e.needsPerson) {
+            // waits on a delegated task: still running; the continuation turn ends the run
+            if (/^dm:[^:]+$/.test(e.sessionId)) {
+              const set = parked.get(e.sessionId) ?? new Set<string>()
+              set.add(run.id)
+              parked.set(e.sessionId, set)
+            }
+            continue
+          }
           outcome = { status: 'needs_action' }
         } else if (e.stop === 'aborted') {
           outcome = { status: 'failed', reason: 'aborted', countFailure: false }

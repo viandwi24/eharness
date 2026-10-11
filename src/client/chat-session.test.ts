@@ -24,6 +24,7 @@ function world() {
   const w = {
     stored: [] as UIMessage[],
     running: false,
+    activeMessageId: undefined as string | undefined,
     log: [] as string[],
     chat: (_body: Record<string, unknown>): Response => new Response(null, { status: 500 }),
     resume: (): Response => new Response(null, { status: 204 }),
@@ -55,7 +56,17 @@ function world() {
           id: 's1',
           running: w.running,
           busy: null,
-          activeTurn: null,
+          activeTurn:
+            w.activeMessageId === undefined
+              ? null
+              : {
+                  turnId: 't1',
+                  kind: 'respond',
+                  messageId: w.activeMessageId,
+                  owner: 'o',
+                  startedAt: 0,
+                  heartbeatAt: 0,
+                },
           pending: null,
           usage: {},
         })
@@ -162,7 +173,7 @@ describe('chat session: init and follow', () => {
     const state = t.session.get()
     expect(state).toMatchObject({ loaded: true, hasOlder: true, following: false, busy: false })
     expect(t.w.log[0]).toBe('GET /api/sessions/s1/messages?limit=2')
-    expect(t.w.log.filter((l) => l.includes('/messages')).length).toBe(2)
+    expect(t.w.log.filter((l) => l.includes('/messages')).length).toBe(3) // init, the refetch and the adjacency check of its page
   })
 
   test('init is idempotent and does not follow when no turn runs', async () => {
@@ -180,6 +191,44 @@ describe('chat session: init and follow', () => {
     expect(t.session.get().loaded).toBe(true)
     await t.session.init()
     expect(t.w.log.some((l) => l.includes('/messages'))).toBe(false)
+  })
+
+  test('a turn that continues an earlier assistant message streams it as the last message', async () => {
+    // a respond() continuation after an event message was stored behind the waiting reply:
+    // AI SDK resumeStream() only replaces the last message, so it must be last (no duplicate id)
+    const t = setup()
+    t.w.stored = [user('m1'), assistant('m2'), user('m3')] // m3: an event stored behind m2
+    await t.session.init()
+    t.w.running = true
+    t.w.activeMessageId = 'm2'
+    let orderAtResume: string[] = []
+    t.chat.resumes.push(() => {
+      orderAtResume = t.chat.messages.map((m) => m.id)
+      t.w.running = false
+      t.w.activeMessageId = undefined
+    })
+    await t.session.followServerTurn()
+    expect(orderAtResume).toEqual(['m1', 'm3', 'm2'])
+    // after the turn, storage is the truth again: the stored order comes back
+    expect(t.chat.messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3'])
+    expect(new Set(t.chat.messages.map((m) => m.id)).size).toBe(t.chat.messages.length)
+  })
+
+  test('the newest message, a user message or an unknown id is left in place', async () => {
+    const t = setup()
+    t.w.stored = [user('m1'), assistant('m2')]
+    await t.session.init()
+    for (const id of ['m2', 'm1', 'gone']) {
+      t.w.running = true
+      t.w.activeMessageId = id
+      let order: string[] = []
+      t.chat.resumes.push(() => {
+        order = t.chat.messages.map((m) => m.id)
+        t.w.running = false
+      })
+      await t.session.followServerTurn()
+      expect(order).toEqual(['m1', 'm2'])
+    }
   })
 
   test('a dropped connection while following is retried quietly', async () => {
@@ -262,6 +311,35 @@ describe('chat session: send', () => {
     expect(t.chat.log).toEqual(['send:hello', 'resume'])
     expect(t.chat.messages.map((m) => m.id)).toContain('m2')
     expect(t.session.get().busy).toBe(false)
+  })
+
+  test('messages stored while this tab streamed its own turn show when the turn ends', async () => {
+    const t = setup()
+    await t.session.init()
+    t.w.chat = () => {
+      // the turn stores its messages and announces them while the reply streams
+      t.w.stored = [user('m1', 'hello'), assistant('m2'), user('m3')]
+      void t.session.storedElsewhere() // busy: skipped, remembered
+      return new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1' },
+      })
+    }
+    await t.session.send('hello')
+    // the optimistic user message (a made-up id) is replaced by the stored ones
+    expect(t.chat.messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3'])
+    expect(t.w.log.filter((l) => l.includes('/messages')).length).toBe(2) // init + the flush
+  })
+
+  test('nothing is refetched after an own turn when nothing was announced', async () => {
+    const t = setup({ messages: [] })
+    t.w.chat = () =>
+      new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream', 'x-vercel-ai-ui-message-stream': 'v1' },
+      })
+    await t.session.send('hello')
+    expect(t.w.log.filter((l) => l.includes('/messages')).length).toBe(0)
   })
 
   test('a busy 409 drops the optimistic message and toasts', async () => {
@@ -396,6 +474,37 @@ describe('chat session: stop, stalled, paging, interrupted', () => {
     t.w.stored = [...t.w.stored, assistant('m6')]
     await t.session.refetch()
     expect(t.chat.messages.map((m) => m.id)).toEqual(['m1', 'm2', 'm3', 'm4', 'm5', 'm6'])
+  })
+
+  test('refetch after more than a page was stored drops the stale messages and pages from the new page', async () => {
+    const t = setup({ pageSize: 2 })
+    t.w.stored = [user('m01'), assistant('m02'), user('m03'), assistant('m04')]
+    await t.session.init()
+    expect(t.chat.messages.map((m) => m.id)).toEqual(['m03', 'm04'])
+    t.w.stored = [
+      ...t.w.stored,
+      user('m05'),
+      assistant('m06'),
+      user('m07'),
+      assistant('m08'),
+      user('m09'),
+      assistant('m10'),
+    ]
+    await t.session.refetch()
+    expect(t.chat.messages.map((m) => m.id)).toEqual(['m09', 'm10'])
+    expect(t.session.get().hasOlder).toBe(true)
+    expect(await t.session.loadOlder()).toBe(2)
+    expect(t.chat.messages.map((m) => m.id)).toEqual(['m07', 'm08', 'm09', 'm10'])
+  })
+
+  test('an optimistic user message never survives a refetch that holds the stored one', async () => {
+    const t = setup({ pageSize: 5 })
+    t.w.stored = [user('m01'), assistant('m02')]
+    await t.session.init()
+    t.chat.messages = [...t.chat.messages, user('zzOptimistic', 'hello')]
+    t.w.stored = [...t.w.stored, user('m03', 'hello'), assistant('m04')]
+    await t.session.refetch()
+    expect(t.chat.messages.map((m) => m.id)).toEqual(['m01', 'm02', 'm03', 'm04'])
   })
 
   test('an interrupted reply offers Continue and Retry', async () => {

@@ -213,4 +213,42 @@ describe('reconcileBackgroundChildren', () => {
       (await events(a.main, 'm')).filter((e) => e.data?.data?.status === 'timed_out'),
     ).toHaveLength(1)
   })
+
+  test('the timeout counts from the running turn, not from the child creation (a resumed child)', async () => {
+    const storage = newStorage()
+    const a = processOf(storage, {
+      main: [{ toolCalls: [spawn] }, { text: 'started' }],
+      worker: [{ toolCalls: [{ toolName: 'gated', toolCallId: 'g1', input: {} }] }],
+    })
+    await a.main.session('m').send('go').result
+    const childId = (await a.main.session('m').children())[0]?.sessionId as string
+    await until(
+      'child running',
+      async () => (await a.worker.peek(childId).stats()).activeTurn !== null,
+    )
+    // the child was created long ago (launched hours before, then resumed by a message just now)
+    const parent = a.main.session('m')
+    const resumedLongAfterCreation = new Proxy(parent, {
+      get(target, key, receiver) {
+        if (key === 'children') {
+          return async () =>
+            (await target.children()).map((c) => ({
+              ...c,
+              createdAt: c.createdAt - 3 * 60 * 60_000,
+            }))
+        }
+        return Reflect.get(target, key, receiver)
+      },
+    })
+    const out = await reconcileBackgroundChildren(resumedLongAfterCreation, {
+      openChild: (id) => a.worker.session(id),
+      timeoutMs: 60 * 60_000,
+      stopOnTimeout: true,
+    })
+    expect(out[0]).toMatchObject({ outcome: 'running' })
+    expect((await a.worker.peek(childId).stats()).activeTurn).not.toBeNull()
+    expect(
+      (await events(a.main, 'm')).filter((e) => e.data?.data?.status === 'timed_out'),
+    ).toHaveLength(0)
+  })
 })

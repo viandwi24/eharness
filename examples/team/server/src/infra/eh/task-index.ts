@@ -192,9 +192,12 @@ export function taskIndex(options: TaskIndexOptions): HarnessPlugin<'task-index'
                 summary:
                   e.error?.code === 'EH_PROVIDER_AUTH'
                     ? 'The model provider rejected the API key. Set it in Settings > Providers.'
-                    : assistantText === ''
-                      ? null
-                      : previewOf(assistantText, 500),
+                    : e.stop === 'error' && e.error !== undefined
+                      ? // a failed run says why (a later turn's summary replaces an older one)
+                        previewOf(`${e.error.code}: ${e.error.message}`, 500)
+                      : assistantText === ''
+                        ? null
+                        : previewOf(assistantText, 500),
                 addCostUsd: e.usage.costUsd ?? 0,
                 addTokens: e.usage.totalTokens,
               })

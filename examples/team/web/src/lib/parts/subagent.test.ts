@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { cardStatus, childSessionOf, taskOfCall, taskStatusWord } from './subagent.ts';
+import { cardStatus, childSessionOf, resolveStatus, taskOfCall, taskStatusWord } from './subagent.ts';
 
 describe('childSessionOf', () => {
 	test('marker first, then the start text, else none', () => {
@@ -31,5 +31,29 @@ describe('taskOfCall', () => {
 		expect(taskOfCall(rows, 'dm:a:agent:call-2', 'call-1')?.status).toBe('running');
 		expect(taskOfCall(rows, undefined, 'call-1')?.status).toBe('done');
 		expect(taskOfCall(rows, undefined, 'call-9')).toBeUndefined();
+	});
+});
+
+describe('resolveStatus', () => {
+	const base = { task: undefined, run: { status: 'running' as const }, progress: undefined, toolState: undefined, tasksLoaded: true };
+	test('the task row wins', () => {
+		expect(resolveStatus({ ...base, task: { status: 'timed_out' }, toolState: 'output-available' })).toBe('timed_out');
+	});
+	test('a running marker stays while the call runs', () => {
+		expect(resolveStatus({ ...base, toolState: 'input-available' })).toBe('running');
+	});
+	test('a finished call without a task row is not left spinning', () => {
+		expect(resolveStatus({ ...base, toolState: 'output-available' })).toBe('completed');
+		expect(resolveStatus({ ...base, toolState: 'output-error' })).toBe('failed');
+		expect(resolveStatus({ ...base, run: undefined, progress: { status: 'running' }, toolState: 'output-available' })).toBe('completed');
+	});
+	test('before the task list is loaded the marker is kept', () => {
+		expect(resolveStatus({ ...base, toolState: 'output-available', tasksLoaded: false })).toBe('running');
+	});
+	test('a background start says nothing about the child', () => {
+		expect(resolveStatus({ ...base, toolState: 'output-available', background: true })).toBe('running');
+	});
+	test('a final marker is kept', () => {
+		expect(resolveStatus({ ...base, run: { status: 'stopped' }, toolState: 'output-available' })).toBe('stopped');
 	});
 });

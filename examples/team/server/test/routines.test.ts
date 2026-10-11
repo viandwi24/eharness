@@ -518,6 +518,44 @@ describe('ticker', () => {
   })
 })
 
+describe('a failed run says why', () => {
+  test('a provider auth failure: the run reason names the fix, the task row keeps the cause, the routine counts it', async () => {
+    const denied = Object.assign(new Error('Incorrect API key provided'), { statusCode: 401 })
+    const a = instance(tmp(), { researcher: [{ throws: denied }] }, { first: true })
+    const r = await create(a.app, { schedule: { kind: 'every', everyMs: 3_600_000 } })
+    const now = Date.now()
+    dueAt(a.server, r.id, now - 100)
+    await a.server.routines.tick(now)
+    await until('run failed', async () =>
+      (await runs(a.app, r.id)).some((x) => x.status === 'failed'),
+    )
+    const run = (await runs(a.app, r.id)).find((x) => x.status === 'failed') as RoutineRun
+    expect(run.reason).toContain('Settings > Providers')
+    const task = a.server.deps.tasks.getBySession(run.sessionId)
+    expect(task?.status).toBe('failed')
+    expect(task?.summary).toContain('API key')
+    expect((await routine(a.app, r.id)).failures).toBe(1)
+  })
+
+  test('any other model error (code and message) is the summary of the failed task', async () => {
+    const boom: ScriptedStepInput = () => {
+      throw new Error('model is down')
+    }
+    const a = instance(tmp(), { researcher: [boom] }, { first: true })
+    const r = await create(a.app, { schedule: { kind: 'every', everyMs: 3_600_000 } })
+    const now = Date.now()
+    dueAt(a.server, r.id, now - 100)
+    await a.server.routines.tick(now)
+    await until('run failed', async () =>
+      (await runs(a.app, r.id)).some((x) => x.status === 'failed'),
+    )
+    const run = (await runs(a.app, r.id)).find((x) => x.status === 'failed') as RoutineRun
+    const task = a.server.deps.tasks.getBySession(run.sessionId)
+    expect(task?.status).toBe('failed')
+    expect(task?.summary).toStartWith('EH_RUN_FAILED')
+  })
+})
+
 describe('unattended runs', () => {
   test('a fire that needs approval waits in /approvals and is never approved by the scheduler', async () => {
     const a = instance(
@@ -605,5 +643,35 @@ describe('unattended runs', () => {
     expect(dm.messages[0]?.parts[0]?.text).toBe('Good morning brief')
     // manual runs do not move the schedule
     expect((await routine(a.app, r.id)).fireCount).toBe(0)
+  })
+
+  test('a DM run that parks on a wait with no person follows its continuation turn', async () => {
+    const a = instance(tmp(), { researcher: [{ text: 'slow', delayMs: 1_500 }] }, { first: true })
+    const r = await create(a.app, {
+      sessionMode: 'dm',
+      prompt: 'Brief',
+      schedule: { kind: 'every', everyMs: 3_600_000 },
+    })
+    const res = await a.app.request(`/routines/${r.id}/run`, { method: 'POST' })
+    const run = (await res.json()) as RoutineRun
+    const row = a.server.conn.sqlite
+      .query<{ inbox_id: string | null }, [string]>(
+        'SELECT inbox_id FROM routine_runs WHERE id = ?',
+      )
+      .get(run.id)
+    const inboxId = row?.inbox_id as string
+    expect(inboxId).toBeTruthy()
+    const outcomes = a.server.routines.outcomes
+    // the first turn parks on a delegated task (no person): the run keeps going
+    await outcomes.turnEnded({
+      sessionId: run.sessionId,
+      inboxId,
+      stop: 'tool-pending',
+      needsPerson: false,
+    })
+    expect((await runs(a.app, r.id))[0]?.status).toBe('enqueued')
+    // the continuation turn has no inbox id
+    await outcomes.turnEnded({ sessionId: run.sessionId, stop: 'complete', needsPerson: false })
+    expect((await runs(a.app, r.id))[0]?.status).toBe('succeeded')
   })
 })

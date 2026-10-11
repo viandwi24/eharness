@@ -23,7 +23,7 @@
 		const k = JSON.stringify(questions);
 		if (k !== key) {
 			key = k;
-			qs = Q.initState(questions);
+			qs = Q.takeDraft(approval.id, questions) ?? Q.initState(questions);
 		}
 	});
 	let busy = $state(false);
@@ -38,10 +38,14 @@
 	async function run(body: Parameters<typeof live.answer>[1]): Promise<void> {
 		if (busy) return;
 		busy = true;
+		Q.saveDraft(approval.id, qs); // the card unmounts when the item leaves the list; a failure brings it back
 		try {
 			await live.answer(approval, body);
+			Q.dropDraft(approval.id);
 			onAnswered?.();
 		} catch (e) {
+			// answered elsewhere: the item is gone for good; any other failure restores the draft
+			if (answerFailureText(e) === null) Q.dropDraft(approval.id);
 			const text = answerFailureText(e);
 			if (text) toast.error(text);
 		} finally {

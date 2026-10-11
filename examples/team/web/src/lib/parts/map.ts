@@ -81,12 +81,16 @@ export type PartView =
 			approvalNote?: { toolCallId: string; toolName: string; text: string };
 	  }
 	| { kind: 'event'; key: string; name: string; text: string; data?: unknown }
+	| { kind: 'notice'; key: string; level: 'info' | 'warning' | 'error'; code?: string; text: string }
 	| { kind: 'compaction'; key: string; summary: string; tokens?: unknown; trigger?: string; partial?: boolean }
 	| { kind: 'file'; key: string; url: string; mediaType: string; filename?: string }
 	| { kind: 'source'; key: string; sourceType: 'url' | 'document'; url?: string; title: string; mediaType?: string }
 	| { kind: 'unknown'; key: string; type: string; data?: unknown };
 
 type AnyPart = { type: string; [k: string]: unknown };
+
+/** Same wording the library stores for it (`APPROVED_THEN_DENIED`). */
+const APPROVED_THEN_DENIED = 'Approved, but denied when the call was re-validated by the approval policy.';
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
 	typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -179,6 +183,7 @@ export function viewModel(message: UIMessage): PartView[] {
 	const runs = new Map<string, SubagentRun>();
 	const toolCallIds = new Set<string>();
 	for (const p of parts) {
+		if (!isRecord(p) || typeof p.type !== 'string') continue;
 		if (p.type === 'data-subagent.run' && isRun(p.data)) runs.set(p.data.toolCallId, p.data);
 		if (p.type === 'dynamic-tool' || p.type.startsWith('tool-')) {
 			if (typeof p.toolCallId === 'string') toolCallIds.add(p.toolCallId);
@@ -187,6 +192,10 @@ export function viewModel(message: UIMessage): PartView[] {
 
 	parts.forEach((part, i) => {
 		const key = `${message.id}:${i}`;
+		if (!isRecord(part) || typeof part.type !== 'string') {
+			out.push({ kind: 'unknown', key, type: 'invalid' }); // a malformed part never crashes the list
+			return;
+		}
 		const type = part.type;
 
 		if (type === 'text') {
@@ -199,7 +208,12 @@ export function viewModel(message: UIMessage): PartView[] {
 		} else if (type === 'dynamic-tool' || type.startsWith('tool-')) {
 			const name = toolName(part);
 			const state = part.state as ToolViewState;
-			const approval = isRecord(part.approval) && typeof part.approval.id === 'string' ? (part.approval as ToolApproval) : undefined;
+			let approval = isRecord(part.approval) && typeof part.approval.id === 'string' ? (part.approval as ToolApproval) : undefined;
+			// A call a person approved can still be denied when a continuation re-validates it; the live
+			// stream keeps `approved: true` on that part (storage repairs it). Show what happened.
+			if (approval && state === 'output-denied' && approval.approved !== false) {
+				approval = { ...approval, approved: false, reason: approval.reason || APPROVED_THEN_DENIED };
+			}
 			const isSubagent = name === 'agent';
 			const toolCallId = String(part.toolCallId ?? key);
 			const progress = isSubagent && isProgress(part.output) ? part.output : undefined;
@@ -250,6 +264,10 @@ export function viewModel(message: UIMessage): PartView[] {
 		} else if (type === 'data-eh.event') {
 			const d = isRecord(part.data) ? part.data : {};
 			out.push({ kind: 'event', key, name: String(d.name ?? 'event'), text: String(d.text ?? ''), data: d.data });
+		} else if (type === 'data-eh.notice') {
+			const d = isRecord(part.data) ? part.data : {};
+			const level = d.level === 'error' || d.level === 'warning' ? d.level : 'info';
+			out.push({ kind: 'notice', key, level, code: str(d.code), text: String(d.message ?? '') });
 		} else if (type === 'data-eh.compaction') {
 			const d = isRecord(part.data) ? part.data : {};
 			out.push({

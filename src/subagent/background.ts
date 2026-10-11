@@ -199,18 +199,22 @@ export async function reconcileBackgroundChildren(
           else throw error
         }
         if (live) {
-          // really running: only the timeout applies
+          // really running: only the timeout applies. It is measured from the start of the run
+          // that is running now, not from the child's creation: a child resumed by a message (or a
+          // later turn) gets a fresh limit instead of being stopped as soon as it starts.
+          const run = stats.activeTurn
+          const runStartedAt = run?.startedAt ?? info.createdAt
           if (
             (startedBg || cancelledCall) &&
             options.timeoutMs !== undefined &&
-            now() - info.createdAt > options.timeoutMs
+            now() - runStartedAt > options.timeoutMs
           ) {
             const minutes = Math.round(options.timeoutMs / 60000)
             await deliver(
               info,
               'timed_out',
-              'timeout',
-              undefined,
+              run === null ? 'timeout' : `timeout:${run.turnId}`,
+              run?.turnId,
               specialHead(
                 'timed_out',
                 `${id}${info.name === undefined ? '' : ` "${info.name}"`}`,

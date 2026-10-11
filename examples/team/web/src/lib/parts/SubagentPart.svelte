@@ -6,7 +6,7 @@
 	import CircleNotchIcon from 'phosphor-svelte/lib/CircleNotch';
 	import { live } from '#lib/stores/live.svelte.js';
 	import type { PartView, SubagentProgress, SubagentRun, SubagentStatus } from './map.js';
-	import { canContinue, cardStatus, childSessionOf, STATUS_LABEL, taskOfCall } from './subagent.js';
+	import { canContinue, childSessionOf, resolveStatus, STATUS_LABEL, taskOfCall } from './subagent.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import { api, harness } from '#lib/api/index.js';
 	import { toast } from 'svelte-sonner';
@@ -39,14 +39,7 @@
 
 	// The task row is the truth (the child keeps running after a cancelled call, and a failed run can
 	// be followed up); the stored marker and the tool state only cover calls without a task row.
-	const status = $derived.by((): SubagentStatus => {
-		if (task) return cardStatus('running', task);
-		if (run?.status) return run.status;
-		if (progress?.status) return progress.status;
-		if (toolState === 'output-error' || toolState === 'output-denied') return 'failed';
-		if (toolState === 'output-available') return 'completed';
-		return 'running';
-	});
+	const status = $derived<SubagentStatus>(resolveStatus({ task, run, progress, toolState, tasksLoaded: live.state.tasksLoaded, background: view.kind === 'tool' && typeof view.output === 'string' && view.output.startsWith('Started background subagent') }));
 	const variants: Record<SubagentStatus, BadgeVariant> = {
 		running: 'info',
 		waiting: 'warning',
@@ -91,7 +84,7 @@
 		<div class="flex flex-wrap items-center gap-2">
 			<span class="font-medium">{label}</span>
 			{#if label !== agent}<span class="text-xs text-muted-foreground">{agent}</span>{/if}
-			<Badge shape="pill" variant={variants[status]}>{STATUS_LABEL[status]}</Badge>
+			<Badge shape="pill" variant={variants[status]}>{STATUS_LABEL[status] ?? status}</Badge>
 			{#if status === 'running'}<CircleNotchIcon class="size-3.5 animate-spin text-muted-foreground" aria-hidden="true" />{/if}
 			{#if detail}<span class="font-mono text-[11.5px] text-muted-foreground">{detail}</span>{/if}
 		</div>

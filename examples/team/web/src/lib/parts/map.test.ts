@@ -119,3 +119,29 @@ test('startsAuthorRun shows the header only when the author changes', () => {
 	expect(list.map((_, i) => startsAuthorRun(list, i))).toEqual([false, true, false, false, true]);
 	expect(startsAuthorRun([a('x')], 0)).toBe(true);
 });
+
+describe('viewModel: server parts the page must survive', () => {
+	test('eh.notice becomes a notice view with its level and code', () => {
+		const n = msg([{ type: 'data-eh.notice', data: { level: 'error', code: 'EH_PROVIDER', message: 'The provider failed' } }], {
+			metadata: { eharness: { kind: 'eh.notice' } }
+		} as never);
+		expect(messageKind(n)).toBe('eh.notice');
+		expect(viewModel(n)[0]).toMatchObject({ kind: 'notice', level: 'error', code: 'EH_PROVIDER', text: 'The provider failed' });
+		expect(viewModel(msg([{ type: 'data-eh.notice', data: {} }]))[0]).toMatchObject({ kind: 'notice', level: 'info', text: '' });
+	});
+
+	test('output-denied shows a denial even when the live stream kept approved: true', () => {
+		const v = viewModel(
+			msg([{ type: 'tool-bash', toolCallId: 'c1', state: 'output-denied', input: { command: 'ls' }, approval: { id: 'a1', approved: true } }])
+		);
+		expect(v[1]).toMatchObject({ kind: 'approval', approval: { approved: false } });
+		expect((v[0] as { errorText?: string }).errorText).toContain('denied');
+	});
+
+	test('unknown and malformed parts never throw and never show', () => {
+		const views = viewModel(msg([null, 7, {}, { type: 42 }, { type: 'data-future.thing', data: { a: 1 } }, { type: 'tool-x', state: 'weird', toolCallId: 1 }, { type: 'text', text: 'ok' }]));
+		expect(views.filter((v) => v.kind === 'unknown')).toHaveLength(5);
+		expect(hasVisibleParts(views)).toBe(true);
+		expect(hasVisibleParts(viewModel(msg([{ type: 'data-future.thing' }, { type: 'data-todos.list', data: {} }])))).toBe(false);
+	});
+});

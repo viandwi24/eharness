@@ -124,3 +124,25 @@ export function toAnswers(s: QState): { answers: QuestionAnswerBody[] } {
 		})
 	};
 }
+
+/**
+ * Unsent answers by approval id. Submitting removes the card at once (the library list is optimistic)
+ * and a failed submit puts the item back as a NEW card: it starts from the draft, not from scratch.
+ */
+const drafts = new Map<string, QState>();
+const MAX_DRAFTS = 50;
+
+export function saveDraft(id: string, s: QState): void {
+	drafts.delete(id);
+	drafts.set(id, s);
+	if (drafts.size > MAX_DRAFTS) drafts.delete(drafts.keys().next().value as string);
+}
+export function takeDraft(id: string, questions: QuestionDef[]): QState | undefined {
+	const d = drafts.get(id);
+	drafts.delete(id);
+	// only for the same question set
+	return d && JSON.stringify(d.questions) === JSON.stringify(questions) ? { ...d, step: Math.min(d.step, questions.length) } : undefined;
+}
+export function dropDraft(id: string): void {
+	drafts.delete(id);
+}

@@ -57,6 +57,8 @@
 	// Live approvals (events) win over the ones of the last read.
 	const approvals = $derived.by((): Approval[] => {
 		const fresh = live.state.approvals.filter((a) => a.taskId === taskId);
+		// once the live list is loaded it is the truth (an answered item must not come back from the stale read)
+		if (live.state.approvalsLoaded) return fresh;
 		const seen = new Set(fresh.map((a) => a.sessionId + a.id));
 		return [...fresh, ...(detail?.approvals ?? []).filter((a) => !seen.has(a.sessionId + a.id))];
 	});
@@ -132,7 +134,7 @@
 					streaming = false;
 					await load(id);
 					if (ctl.signal.aborted || mine !== loopToken) return;
-					liveMessages = new Map(); // the stored messages are the truth again
+					if (error === null) liveMessages = new Map(); // the stored messages are the truth again (a failed read keeps the live ones)
 					if (!isLive(detail?.task.status)) return;
 					await sleep(result === 'streamed' ? 250 : (pollDelay({ status: 'running', streaming: false, visible: document.visibilityState === 'visible' }) ?? 1000));
 				}

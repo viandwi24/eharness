@@ -170,6 +170,8 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
   let sending = false
   let initPromise: Promise<void> | undefined
   let idlePolls = 0
+  /** A stored message was announced while a turn ran here: the stored view is behind (see `flushMissed`). */
+  let missedStore = false
 
   const running = (): boolean => {
     const s = chat?.status
@@ -207,24 +209,72 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
       return undefined
     }
   }
-  const snapshot = async (): Promise<{ running: boolean } | undefined> => {
+  const snapshot = async (): Promise<{ running: boolean; messageId?: string } | undefined> => {
     try {
       const s = await client.sessions.get(sessionId)
-      return { running: s.running || (s.activeTurn !== null && s.activeTurn !== undefined) }
+      const active = s.activeTurn ?? null
+      return {
+        running: s.running || active !== null,
+        ...(active === null ? {} : { messageId: active.messageId }),
+      }
     } catch {
       return undefined
     }
   }
 
+  /**
+   * A turn can continue an assistant message that is no longer the newest one (a `respond()`
+   * continuation after event or input messages were stored behind it, or a recovered turn). AI SDK
+   * `resumeStream()` only replaces the last message; any other id is pushed as a second copy (a
+   * duplicate key in the UI). Move that message to the end while the turn streams; the refetch after
+   * the turn restores the stored order.
+   */
+  const moveStreamingMessageLast = (messageId: string | undefined): void => {
+    if (messageId === undefined || chat === undefined) return
+    const messages = chat.messages
+    const index = messages.findIndex((m) => m.id === messageId)
+    if (index === -1 || index === messages.length - 1) return
+    const message = messages[index] as UI
+    if (message.role !== 'assistant') return
+    chat.messages = [...messages.slice(0, index), ...messages.slice(index + 1), message]
+  }
+
   const refetch = async (): Promise<void> => {
+    missedStore = false
     const first = await page()
     if (first === undefined || chat === undefined) return
-    chat.messages = replaceTail(chat.messages, first.messages as UI[])
+    const fetched = first.messages as UI[]
+    const hasOlder = first.nextBefore !== undefined
+    let tail = replaceTail(chat.messages, fetched, hasOlder)
+    if (tail.check) {
+      const older = await page(first.nextBefore)
+      if (chat === undefined) return
+      // when the older page cannot be read, fall back to appending the page (no gap handling)
+      tail =
+        older === undefined
+          ? replaceTail(chat.messages, fetched)
+          : replaceTail(chat.messages, fetched, hasOlder, older.messages as UI[])
+    }
+    chat.messages = tail.messages
     const state = store.get()
-    if (nextBefore === undefined && !state.hasOlder) {
+    if (tail.gap) {
+      // more than a page was stored while away: "load older" fills the hole
+      nextBefore = first.nextBefore
+      patch({ hasOlder: true, notice: null })
+    } else if (nextBefore === undefined && !state.hasOlder) {
       nextBefore = first.nextBefore
       patch({ hasOlder: first.nextBefore !== undefined, notice: null })
     } else patch({ notice: null })
+  }
+
+  /**
+   * Messages stored while this tab streamed its own turn (kind messages such as events or notices,
+   * the steps of the turn) were announced but not shown (`storedElsewhere` is skipped while busy), and
+   * the optimistic user message still has the id AI SDK made up. When the turn is over, show what
+   * is stored.
+   */
+  const flushMissed = async (): Promise<void> => {
+    if (missedStore) await refetch()
   }
 
   /** The last `interruptOnce` failed in a way a retry cannot fix (not authorised). */
@@ -254,6 +304,7 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     try {
       for (let attempt = 0; ; attempt++) {
         netError = null
+        moveStreamingMessageLast((await snapshot())?.messageId)
         try {
           await chat.resumeStream()
         } catch (e) {
@@ -379,7 +430,7 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
         if (!store.get().loaded) {
           const first = await page()
           if (first !== undefined && chat !== undefined) {
-            chat.messages = replaceTail(chat.messages, first.messages as UI[])
+            chat.messages = replaceTail(chat.messages, first.messages as UI[]).messages
             nextBefore = first.nextBefore
             patch({ hasOlder: first.nextBefore !== undefined })
           } else if (first === undefined) notify('error', 'Could not load the conversation')
@@ -406,7 +457,11 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
     },
 
     async storedElsewhere() {
-      if (!store.get().loaded || busyNow()) return
+      if (!store.get().loaded) return
+      if (busyNow()) {
+        missedStore = true
+        return
+      }
       await refetch()
     },
 
@@ -478,7 +533,7 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
         queued = false
         // the turn runs on another instance: follow its stream, then refetch the stored messages
         await follow()
-      }
+      } else await flushMissed()
     },
 
     async stop() {
@@ -495,8 +550,10 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
       }
       // reading stops either way; the server turn may still run when the interrupt failed
       await chat?.stop()
-      if (confirmed) patch({ stopping: false })
-      else {
+      if (confirmed) {
+        patch({ stopping: false })
+        await flushMissed()
+      } else {
         notify('error', 'Could not stop the run on the server; it may still be running.')
         refreshBusy()
       }
@@ -521,7 +578,7 @@ export function createChatSession<UI extends UIMessage = UIMessage>(
       if (queued) {
         queued = false
         await follow()
-      }
+      } else await flushMissed()
     },
 
     async retry() {

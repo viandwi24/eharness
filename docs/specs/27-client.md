@@ -188,11 +188,20 @@ reads and writes `chat.messages`.
   (a crashed turn appears as `interrupted`). An unreachable server keeps the reader.
 - **`followServerTurn()`**: a turn this tab did not start (an event announced it): checks up to
   four times whether it is readable, follows it, else refetches. **`storedElsewhere()`**: refetch
-  when idle.
+  when idle; while this chat streams (or sends, or stops) it is remembered, and the stored messages
+  are refetched when the turn is over (after `send`, `retryTurn` and a confirmed `stop`; `follow`
+  always refetches). That brings the kind messages the turn stored (events, notices) and replaces the
+  optimistic user message, whose id AI SDK made up, with the stored one.
 - **`onFinish`**: a continuation (an assistant message with approval parts) refetches the stored
   message. **`onData`** tracks `data-eh.status` into `activity`.
 - **Paging**: `loadOlder()` merges an older page (ids already present are dropped);
-  `refetch()` replaces only the newest page (ids sort by creation time).
+  `refetch()` replaces only the newest page (ids sort by creation time). When the fetched page
+  starts after everything shown and has `nextBefore`, the session reads the page before it: if that
+  page does not contain the newest shown message, more than a page was stored while the tab was
+  away, so the stale older messages are dropped and paging restarts from the page (`nextBefore`
+  from the response, `hasOlder: true`; `loadOlder()` fills the gap); if it does, the messages in
+  between are inserted. Optimistic user messages at the end of the list (client-made ids) are
+  dropped when the page holds a new stored user message with the same text.
 - **`stop()`** (0.8.0): sets `stopping`, calls `sessions.interrupt` (up to three attempts, 300 ms ×
   attempt apart; a `401` / `403` is not retried, a `404` counts as stopped), then `chat.stop()`
   (reading stops regardless). When the server never confirmed, `notify('error', 'Could not stop

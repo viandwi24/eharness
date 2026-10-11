@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import {
-	back, canNext, canSubmit, goTo, initState, isReview, missing, next, pick, setNotes, setOther, toAnswers, type QuestionDef
+	back, canNext, dropDraft, saveDraft, takeDraft, canSubmit, goTo, initState, isReview, missing, next, pick, setNotes, setOther, toAnswers, type QuestionDef
 } from './state';
 
 const qs: QuestionDef[] = [
@@ -76,5 +76,22 @@ describe('question state', () => {
 
 	test('empty multi answer sends an empty object', () => {
 		expect(toAnswers(initState([qs[1]!])).answers).toEqual([{}]);
+	});
+});
+
+describe('drafts of a failed submit', () => {
+	const dq: QuestionDef[] = [{ question: 'A?', options: [{ label: 'x' }, { label: 'y' }] }, { question: 'B?', options: [{ label: 'z' }] }];
+	test('the new card starts from what was typed, once, for the same questions', () => {
+		const typed = pick(initState(dq), 1);
+		saveDraft('a1', typed);
+		expect(takeDraft('a1', dq)?.picked[0]).toEqual([1]);
+		expect(takeDraft('a1', dq)).toBeUndefined();
+	});
+	test('a different question set or a dropped draft starts fresh', () => {
+		saveDraft('a2', pick(initState(dq), 0));
+		expect(takeDraft('a2', [{ question: 'other?', options: [] }])).toBeUndefined();
+		saveDraft('a3', initState(dq));
+		dropDraft('a3');
+		expect(takeDraft('a3', dq)).toBeUndefined();
 	});
 });

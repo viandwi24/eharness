@@ -67,3 +67,28 @@ export const STATUS_LABEL: Record<SubagentStatus, string> = {
 
 /** A child the person can continue (it stopped without finishing its work). */
 export const canContinue = (status: SubagentStatus): boolean => status === 'interrupted' || status === 'timed_out' || status === 'not_started' || status === 'failed' || status === 'stopped';
+
+/**
+ * The card status of an `agent` call. The task row is the truth. Without one: the stored marker says
+ * what the call was at its start (`running`), so once the call itself ended (a tool result or error)
+ * and the task list is loaded, the tool state says what became of it. A row that never shows up
+ * (older than the list the board keeps) must not leave a finished call spinning forever.
+ */
+export function resolveStatus(input: {
+	task: TaskLike | undefined;
+	run: { status?: SubagentStatus } | undefined;
+	progress: { status?: string } | undefined;
+	toolState: string | undefined;
+	tasksLoaded: boolean;
+	/** A background start (its result only says the child started): the call ending says nothing about the child. */
+	background?: boolean;
+}): SubagentStatus {
+	const { task, run, progress, toolState } = input;
+	if (task) return cardStatus('running', task);
+	const ended = input.background !== true && (toolState === 'output-available' || toolState === 'output-error' || toolState === 'output-denied');
+	const fromTool: SubagentStatus = toolState === 'output-available' ? 'completed' : 'failed';
+	if (run?.status && !(run.status === 'running' && ended && input.tasksLoaded)) return run.status;
+	if (progress?.status && !(progress.status === 'running' && ended && input.tasksLoaded)) return progress.status as SubagentStatus;
+	if (ended) return fromTool;
+	return 'running';
+}

@@ -69,12 +69,63 @@ export function mergeOlder<UI extends UIMessage>(current: UI[], older: UI[]): UI
   return [...older.filter((m) => !have.has(m.id)), ...current]
 }
 
-/** Replace the newest part of `current` with a freshly fetched tail page; older loaded pages stay. */
-export function replaceTail<UI extends UIMessage>(current: UI[], tail: UI[]): UI[] {
+const textOf = (m: UIMessage): string =>
+  m.parts.map((p) => (p.type === 'text' ? p.text : '')).join('')
+
+/**
+ * Replace the newest part of `current` with a freshly fetched tail page; older loaded pages stay.
+ *
+ * - The optimistic user messages at the end of `current` (AI SDK made up their ids) that the
+ *   server stored for real (the page holds a new user message with the same text) are dropped, so
+ *   they never survive a refetch as duplicates.
+ * - When the page starts after everything shown and older messages exist (`hasOlder`: the response
+ *   had `nextBefore`), more than one page was stored meanwhile: keeping the old messages would leave
+ *   a hole, so only the page is kept (`gap: true`) and paging restarts from it. Whether the page is
+ *   adjacent needs the page before it: the first call answers `check: true`, the caller fetches
+ *   `before` (the page older than the tail) and calls again.
+ */
+export function replaceTail<UI extends UIMessage>(
+  current: UI[],
+  tail: UI[],
+  hasOlder = false,
+  before?: UI[],
+): { messages: UI[]; gap: boolean; check: boolean } {
   const first = tail[0]
-  if (first === undefined) return current
+  if (first === undefined) return { messages: current, gap: false, check: false }
+  const inPage = new Set(tail.map((m) => m.id))
+  const shown = new Set(current.map((m) => m.id))
+  const storedTexts = tail
+    .filter((m) => m.role === 'user' && !shown.has(m.id))
+    .map((m) => textOf(m))
+  // the trailing run of user messages the page does not hold: possibly client-only (optimistic)
+  let start = current.length
+  while (start > 0) {
+    const m = current[start - 1] as UI
+    if (m.role !== 'user' || inPage.has(m.id)) break
+    start--
+  }
+  const optimistic = new Set<string>()
+  for (const m of current.slice(start)) {
+    const i = storedTexts.indexOf(textOf(m))
+    if (i === -1) continue
+    storedTexts.splice(i, 1)
+    optimistic.add(m.id)
+  }
+  const kept = current.filter((m) => !inPage.has(m.id) && !optimistic.has(m.id))
+  // client-only messages that remain have unrelated ids: they do not say what is newest
+  const pending = new Set(current.slice(start).map((m) => m.id))
+  let newest: string | undefined
+  for (const m of kept)
+    if (!pending.has(m.id) && (newest === undefined || m.id > newest)) newest = m.id
+  if (hasOlder && newest !== undefined && first.id > newest) {
+    // the page starts after everything shown: is it adjacent? `before` is the page right before it
+    if (before === undefined) return { messages: current, gap: false, check: true }
+    if (!before.some((m) => m.id === newest)) return { messages: tail, gap: true, check: false }
+    const between = before.filter((m) => m.id > (newest as string) && !inPage.has(m.id))
+    return { messages: [...kept, ...between, ...tail], gap: false, check: false }
+  }
   // ids sort by creation time (UUIDv7): everything older than the page's first id is kept as is
-  return [...current.filter((m) => m.id < first.id), ...tail]
+  return { messages: [...kept.filter((m) => m.id < first.id), ...tail], gap: false, check: false }
 }
 
 type Meta = { eharness?: { stop?: string; kind?: string } } | undefined

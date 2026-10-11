@@ -91,6 +91,7 @@ import {
   type TeamService,
 } from './infra/eh/team-service.ts'
 import { sqliteUploadStore } from './infra/eh/upload-store.ts'
+import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
 import { croneSchedule } from './infra/schedule.ts'
 
 export interface ServerConfig {
@@ -344,6 +345,7 @@ export function compose(config: ServerConfig): Server {
   const chatToolsStore = sqliteChatTools(conn.sqlite)
   let routines: RoutineService | undefined
   const observer = createObserver({ log: (message) => console.warn(message) })
+  const logWarning = createDedupedWarningLog({})
   const factory = createAgentFactory({
     sqlite: conn.sqlite,
     models,
@@ -386,7 +388,7 @@ export function compose(config: ServerConfig): Server {
     onWarning: (w) => {
       // scripted (offline) models have no prices
       if (w.code === 'W_MODEL_UNPRICED' && models.provider === 'scripted') return
-      console.warn(`eharness warning ${w.code}: ${w.message}`)
+      logWarning(w)
     },
     observe: observer.observe,
     debug: { invariants: config.debug?.invariants ?? process.env.TEAM_DEBUG_INVARIANTS === '1' },

@@ -28,6 +28,7 @@
 	import { api } from '#lib/api/index.js';
 	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
 	import { startsAuthorRun } from '#lib/parts/map.js';
+	import { uniqueById } from '#lib/chat/messages.js';
 	import { tick } from 'svelte';
 	import PendingCard from './PendingCard.svelte';
 	import { toast } from 'svelte-sonner';
@@ -61,6 +62,12 @@
 		void ac.init();
 	});
 	const chat = $derived(ac.chat);
+	// One entry per id at the render boundary: a duplicate key would crash the whole page.
+	const messages = $derived(
+		uniqueById(chat.messages, (id) => {
+			if (import.meta.env.DEV) console.warn(`[chat] duplicate message id ${id} in the chat list; keeping the newest copy`);
+		})
+	);
 
 	/**
 	 * An inline tool approval of this agent's own message. Every answer goes through
@@ -186,7 +193,8 @@
 	const busy = $derived(chat.status === 'submitted' || chat.status === 'streaming');
 	// A turn the server no longer runs (it was killed, the connection went silent): resync.
 	$effect(() => {
-		if (!busy && !ac.following) return;
+		// `stopping` too: a stop the server has not confirmed is settled by `checkStalled`
+		if (!busy && !ac.following && !ac.stopping) return;
 		const timer = setInterval(() => void ac.checkStalled(), 4000);
 		return () => clearInterval(timer);
 	});
@@ -292,8 +300,8 @@
 						{#if ac.loadingOlder}
 							<div class="text-center text-xs text-muted-foreground" role="status">Loading earlier messages…</div>
 						{/if}
-						{#each chat.messages as m, i (m.id)}
-							{@const head = startsAuthorRun(chat.messages, i)}
+						{#each messages as m, i (m.id)}
+							{@const head = startsAuthorRun(messages, i)}
 							<ConversationItem messageId={m.id} class={m.role !== 'user' && !head && i > 0 ? '-mt-2' : ''}>
 								<MessageView
 									message={m}

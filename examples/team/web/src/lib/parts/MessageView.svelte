@@ -7,6 +7,7 @@
 	import EventPart from './EventPart.svelte';
 	import FilePart from './FilePart.svelte';
 	import InputPart from './InputPart.svelte';
+	import NoticePart from './NoticePart.svelte';
 	import { hasVisibleParts, messageKind, type PartView, viewModel } from './map.js';
 	import ReasoningPart from './ReasoningPart.svelte';
 	import SourcePart from './SourcePart.svelte';
@@ -100,10 +101,10 @@
 	{/if}
 {/snippet}
 
-{#if kind === 'eh.event' || kind === 'eh.compaction'}
+{#if kind === 'eh.event' || kind === 'eh.compaction' || kind === 'eh.notice'}
 	<!-- Kind messages are divider rows, not bubbles. -->
 	{#each views as v (v.key)}
-		{#if v.kind === 'event'}<EventPart name={v.name} text={v.text} />{:else if v.kind === 'compaction'}<CompactionPart summary={v.summary} tokens={v.tokens} trigger={v.trigger} />{/if}
+		{#if v.kind === 'event'}<EventPart name={v.name} text={v.text} />{:else if v.kind === 'compaction'}<CompactionPart summary={v.summary} tokens={v.tokens} trigger={v.trigger} />{:else if v.kind === 'notice'}<NoticePart level={v.level} text={v.text} code={v.code} />{/if}
 	{/each}
 {:else if visible}
 	<Message from={message.role === 'user' ? 'user' : 'assistant'}>
