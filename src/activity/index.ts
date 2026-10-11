@@ -24,7 +24,7 @@ export {
   memoryActivityStore,
   pruneBoundary,
 } from './memory.ts'
-export { type ActivityPluginOptions, activity, pendingRefs } from './plugin.ts'
+export { type ActivityPluginOptions, activity } from './plugin.ts'
 export {
   type ActivityPage,
   type ActivityStreamHandlerOptions,

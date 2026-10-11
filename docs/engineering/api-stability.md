@@ -6,24 +6,24 @@ Everything a user can observe without reading our source:
 
 1. Every symbol exported from `eharness` and its subpaths, including types:
 
-   | Subpath | Notes |
-   |---|---|
-   | `eharness` | core |
-   | `eharness/filesystem`, `eharness/filesystem/memory` | |
-   | `eharness/filesystem/node` | Node-only (ADR-0036) |
-   | `eharness/storage/memory` | |
-   | `eharness/mcp` | optional peer `@ai-sdk/mcp` |
-   | `eharness/todos`, `eharness/memory` | |
-   | `eharness/guard`, `eharness/group`, `eharness/openapi` | |
-   | `eharness/ask`, `eharness/permissions`, `eharness/subagent`, `eharness/web` | since 0.7 |
-   | `eharness/shell` | Node-only (ADR-0036); since 0.7 |
-   | `eharness/providers` | Draft (0.8) |
-   | `eharness/connectors` | Draft (0.8) |
-   | `eharness/activity` | Draft (0.8) |
-   | `eharness/http` | Draft (0.8) |
-   | `eharness/client` | Draft (0.8) |
-   | `eharness/client/react` | Draft (0.8) |
-   | `eharness/testing` | |
+   | Subpath | Stability | Notes |
+   |---|---|---|
+   | `eharness` | Accepted (specs 01-11) | core; spec 12 (models and cost) is Draft (0.3) |
+   | `eharness/filesystem`, `eharness/filesystem/memory` | Accepted (spec 08); `projectInstructions()` is Draft (0.7) | |
+   | `eharness/filesystem/node` | Accepted | Node-only (ADR-0036) |
+   | `eharness/storage/memory` | Accepted (spec 05) | |
+   | `eharness/mcp` | Accepted (spec 09) | optional peer `@ai-sdk/mcp` |
+   | `eharness/todos` | Draft (0.3) | spec 13 |
+   | `eharness/memory` | Draft (0.4) | spec 14 |
+   | `eharness/guard`, `eharness/group`, `eharness/openapi` | Draft (0.5) | specs 15-17 |
+   | `eharness/permissions`, `eharness/subagent`, `eharness/ask`, `eharness/web` | Draft (0.7) | specs 18, 20-22 |
+   | `eharness/shell` | Draft (0.7) | spec 19; Node-only (ADR-0036) |
+   | `eharness/providers` | Draft (0.8) | spec 23 |
+   | `eharness/connectors` | Draft (0.8) | spec 24 |
+   | `eharness/activity` | Draft (0.8) | spec 25 |
+   | `eharness/http` | Draft (0.8) | spec 26 |
+   | `eharness/client`, `eharness/client/react` | Draft (0.8) | spec 27; imports only `ai` at runtime |
+   | `eharness/testing` | Accepted | conformance suites and mocks; new suites arrive with the module they test |
 2. **Persisted formats:** `metadata.eharness`, core data part types and payloads (`eh.*`),
    core message kinds and payloads, `SessionStateSnapshot`, plugin data parts of shipped plugins.
 3. **Stream shape:** order and types of chunks the core writes (spec 04 §2).
@@ -39,11 +39,12 @@ public), log messages, performance characteristics.
 
 ## Semver policy
 
-| Version range | Breaking change goes into | Notes |
-|---|---|---|
-| `0.x` (now) | **minor** (`0.2.0 → 0.3.0`) | npm caret `^0.2.0` does not cross minors, so users are safe |
-| `0.x` | patch for fixes and additive features | never breaking |
-| `≥ 1.0` | **major** | standard semver |
+| Version range | Change | Bump | Notes |
+|---|---|---|---|
+| `0.x` (now) | breaking | **minor** (`0.2.0 → 0.3.0`) | npm caret `^0.2.0` does not cross minors, so users are safe |
+| `0.x` | new feature (subpath, option, hook, method) | **minor** | the repository has always released features as minors (see `CHANGELOG.md`) |
+| `0.x` | bug fix, wording tweak | patch | never breaking |
+| `≥ 1.0` | breaking / feature / fix | major / minor / patch | standard semver |
 
 Additionally:
 
@@ -80,6 +81,16 @@ Draft in 0.7:
 - The `<untrusted-content>` frame format and the helpers `untrustedContent()` and
   `UNTRUSTED_CONTENT_INSTRUCTIONS` (spec 03 §10).
 - `projectInstructions()` frames and defaults (spec 08 §13).
+
+Draft in 0.8:
+
+- The modules `eharness/providers`, `eharness/connectors`, `eharness/activity`, `eharness/http`,
+  `eharness/client` and `eharness/client/react` (specs 23-27).
+- In otherwise Accepted specs: the `message.saved` hook (spec 05, 25); partial resolution of pending
+  approvals (`TurnResult.partial`, spec 11 §4.3); `session.recover()` and `recovery.instanceId`
+  (spec 05); the `model.call` hook and `observeModel()` (spec 12 §7); `reconcileBackgroundChildren`
+  and background subagents in park mode (spec 20); `StreamLogAdapter`, `attachRemote()` and
+  `handleResumeRequest()` (spec 04 §6); `enqueue` timers, ids and metadata (spec 05 §12).
 
 Names derived from Claude Code are intentionally kept and are not renamed for style:
 `bash_output`, `kill_shell`, `agent`, and the camelCase permission modes (`acceptEdits`,

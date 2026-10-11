@@ -161,8 +161,7 @@ function matchPath(pattern: string, segments: string[]): Record<string, string> 
  * @see docs/specs/26-http.md
  */
 export function createHarnessHttp<P = unknown>(
-  // biome-ignore lint/suspicious/noExplicitAny: any agent config
-  agent: HarnessAgent<any> | undefined,
+  agent: HarnessAgent | undefined,
   options: HarnessHttpOptions<P>,
 ): HarnessHttp {
   if (typeof options?.authorize !== 'function') {

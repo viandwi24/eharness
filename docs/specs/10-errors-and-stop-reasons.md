@@ -51,6 +51,17 @@ model call (`stop: 'error'`, code `EH_STORAGE`). A failed assistant snapshot sav
 the next step (warning only). A failed final save sets `stop: 'error'` / `EH_STORAGE` in
 `run.result`; the stream has already been delivered.
 
+### 1.0 HTTP layer codes
+
+`eharness/http` adds its own `EH_HTTP_*` codes (`EH_HTTP_INVALID_JSON`, `EH_HTTP_INVALID_BODY`,
+`EH_HTTP_UNAUTHORIZED`, `EH_HTTP_FORBIDDEN`, `EH_HTTP_NOT_FOUND`, `EH_HTTP_METHOD_NOT_ALLOWED`,
+`EH_HTTP_ALREADY_ANSWERED`, `EH_HTTP_DUPLICATE_REQUEST`, `EH_HTTP_PAYLOAD_TOO_LARGE`,
+`EH_HTTP_UNSUPPORTED_MEDIA_TYPE`). They are wire codes of `{ error: { code, message } }` bodies, not
+`HarnessError` codes: the type is `HttpLayerErrorCode` and the status table is in
+[spec 26 §3](26-http.md#3-errors). Core errors that reach the wire (`EH_SESSION_BUSY`,
+`EH_INVALID_INPUT`, `EH_STORAGE`, ...) keep their code and map to a status as in
+`run.toHttpResponse()` (spec 04 §7.1).
+
 ### 1.1 `HarnessToolError`
 
 ```ts

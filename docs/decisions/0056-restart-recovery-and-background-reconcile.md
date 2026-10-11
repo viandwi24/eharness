@@ -15,7 +15,7 @@ whose first inbox item was never drained, or that waited for a person forever, n
 1. `recovery.instanceId`: an optional **stable** id of the instance. A process that restarts with
    the same id owns the turns its previous run left active, so the existing rule "an `activeTurn`
    owned by this instance but not running here is stale" recovers them at the next operation. It
-   must be unique among live instances of one storage (the example derives it from host and port).
+   must be unique among live instances of one storage (the team example uses `TEAM_INSTANCE_ID`, else `team-<port>`).
    Locks keyed by the same owner prefix may be taken over by the restarted instance (the example's
    SQLite lock does).
 2. `session.recover()`: runs the recovery of spec 05 §9 now (dangling calls answered `Interrupted:`,

@@ -50,8 +50,6 @@ export {
   CONTINUE_TEXT,
   describeChatError,
   interruptedTurn,
-  mergeOlder,
-  replaceTail,
 } from './chat-helpers.ts'
 export {
   type ChatActivity,
@@ -62,7 +60,7 @@ export {
   type ChatSessionState,
   createChatSession,
 } from './chat-session.ts'
-export { type Clock, systemClock } from './clock.ts'
+export type { Clock } from './clock.ts'
 export {
   type FollowOptions,
   type FollowResult,
@@ -71,6 +69,7 @@ export {
 export {
   type AttentionApi,
   type CallOptions,
+  type ChatSendOptions,
   createHarnessClient,
   type HarnessClient,
   type HarnessClientOptions,
@@ -78,19 +77,9 @@ export {
   isHarnessHttpError,
   isNetworkError,
   type Resolvable,
-  readHttpError,
-  type SendOptions,
   type SendResult,
   type SessionsApi,
 } from './http-client.ts'
-export {
-  type BootCheck,
-  backoffDelay,
-  createLiveness,
-  type Health,
-  type Liveness,
-  type LivenessOptions,
-} from './liveness.ts'
 export { createSseParser, type SseMessage, type SseParser } from './sse.ts'
 export {
   createStore,
@@ -99,8 +88,4 @@ export {
   type StoreTimers,
   type WritableStore,
 } from './store.ts'
-export {
-  createHarnessTransport,
-  emptyStreamResponse,
-  type HarnessTransportOptions,
-} from './transport.ts'
+export { createHarnessTransport, type HarnessTransportOptions } from './transport.ts'

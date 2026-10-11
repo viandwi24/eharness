@@ -22,7 +22,7 @@ export interface LivenessOptions {
 }
 
 /** Server keep-alive period of the activity stream (ms). */
-export const KEEP_ALIVE_MS = 15_000
+export const KEEP_ALIVE_MS = 8_000
 /** Extra silence tolerated beyond one keep-alive (ms). */
 export const GRACE_MS = 5_000
 /** Health ping period while busy (ms). */

@@ -7,3 +7,5 @@ Fix a stored message being dropped (`W_INVALID_MESSAGE`) after a person approved
 `modelClassifier` now sends `maxOutputTokens` (default `DEFAULT_CLASSIFIER_MAX_OUTPUT_TOKENS` = 1024) and `temperature` 0 (both configurable), and throws `ClassifierUnavailableError` when the judge could not run: the action is still denied (`auto: 'unavailable'`, `unavailable` auto event) but no longer counts as a block towards the repeated-blocks pause. See ADR-0055, spec 03 §6-7, spec 18 §12.
 
 New in `eharness/testing`: `schemaCheckedMessages(adapter)` / `assertValidUIMessage(message)` fail a save of a schema-invalid `UIMessage`.
+
+Behaviour change (no migration): `modelClassifier` now sends `maxOutputTokens` and `temperature` to the judge model, and a judge outage is `auto: 'unavailable'` (denied, not counted as a block). Stored `output-denied` parts always have `approved: false`.

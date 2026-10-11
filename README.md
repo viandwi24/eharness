@@ -10,7 +10,7 @@
 1.0, breaking changes ship only in minor versions (`0.7 → 0.8`) with a migration note in the
 [changelog](CHANGELOG.md), so `^0.7.0` is safe to depend on
 ([API stability](docs/engineering/api-stability.md)). Coming from 0.6? Read
-[Upgrading to 0.7](docs/guides/upgrading.md). Modules and sections marked *Draft* in the specs
+[Upgrading](docs/guides/upgrading.md) (0.7, 0.8). Modules and sections marked *Draft* in the specs
 (auto permission mode, agent messaging, the `<untrusted-content>` frame, project instructions) may
 still change in a minor release.
 
@@ -386,6 +386,11 @@ thin and idiomatic:
   (`eharness/shell`), rule-based permissions and plan mode (`eharness/permissions`), subagents with
   nested approvals that survive restarts (`eharness/subagent`), user questions (`eharness/ask`),
   web fetch and search (`eharness/web`), `session.fork()` and a parent/child index.
+- **Product building blocks (0.8, Draft):** provider profiles with secrets, model lists and a form
+  spec (`eharness/providers`), connectors with server-driven setup flows and OAuth
+  (`eharness/connectors`), a durable session activity feed and attention queue
+  (`eharness/activity`), a `fetch`-style HTTP module for chat, sessions, approvals and the feed
+  (`eharness/http`), and its browser client with React bindings (`eharness/client`).
 - **Prompt-cache friendly:** stable instructions and tool order; volatile context goes into
   per-turn and per-step reminders.
 
@@ -402,6 +407,11 @@ thin and idiomatic:
 | `eharness/subagent` | `subagents()` (`agent` tool; approvals inline / park / policy), `subagentChild()`, `pendingSubagentApprovals()`, `reconcileSubagentWaits()` |
 | `eharness/ask` | `askUser()` plugin (`ask_user_question`), `pendingQuestions()`, `answerOutput()` |
 | `eharness/web` | `webFetch()` (SSRF guards, Markdown) and `webSearch()` (provider-agnostic) plugins |
+| `eharness/providers` | Draft (0.8). `createProviderManager()`, provider definitions, `ProfileStore`, `formSpec()`, `SecretVault`, catalog loaders |
+| `eharness/connectors` | Draft (0.8). `createConnectorService()`, setup flows, OAuth 2.1, enablement, `activateConnectors()`, built-in connectors |
+| `eharness/activity` | Draft (0.8). `activity()` plugin, `ActivityStore` port, SSE helpers, `listAttention()` / `answerAttention()` |
+| `eharness/http` | Draft (0.8). `createHarnessHttp()`: a `fetch(Request)` handler for chat, resume, sessions, attention and activity behind one `authorize` hook |
+| `eharness/client` | Draft (0.8). Browser client, AI SDK transport, chat session, activity feed, attention list; `eharness/client/react` adds React bindings |
 | `eharness/storage/memory` | `memoryMessages()`, `memoryState()` (the default storage), `memoryInbox()`, `memoryBudgetLedger()` |
 | `eharness/mcp` | `mcpServer()` tool source (optional peer `@ai-sdk/mcp`) |
 | `eharness/todos` | `todos()` plugin (`todo_write` tool, `data-todos.list`), `latestTodos()`, `renderTodos()`, `openTodos()` |
@@ -480,6 +490,10 @@ Every example runs offline (`bun examples/<file>`) and is typechecked and execut
 [Ask the user](docs/guides/ask.md) ·
 [Web fetch and search](docs/guides/web.md) ·
 [Subagents](docs/guides/subagents.md) ·
+[Providers and profiles](docs/guides/providers-and-profiles.md) ·
+[Connectors](docs/guides/connectors.md) ·
+[HTTP server](docs/guides/http-server.md) ·
+[Web client](docs/guides/web-client.md) ·
 [Testing](docs/guides/testing.md) ·
 [Reference](docs/guides/reference.md) ·
 [Upgrading to 0.7](docs/guides/upgrading.md)
@@ -500,6 +514,7 @@ what to do: [production patterns → security](docs/guides/production-patterns.m
 
 | eharness | ai | zod | @ai-sdk/mcp (optional) | Runtime |
 |---|---|---|---|---|
+| 0.8.x | ^7.0.137 | ^3.25.76 \|\| ^4.1.8 | ^2.0.73 | Node ≥ 22, Bun |
 | 0.7.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
 | 0.6.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |
 | 0.5.x | ^7.0.127 | ^3.25.76 \|\| ^4.1.8 | ^2.0.66 | Node ≥ 22, Bun |

@@ -115,7 +115,7 @@ export interface CallOptions {
 }
 
 /** Options of {@link SessionsApi.send}. */
-export interface SendOptions extends CallOptions {
+export interface ChatSendOptions extends CallOptions {
   ifBusy?: 'reject' | 'steer' | 'wait'
   /** Default: the message id. */
   idempotencyKey?: string
@@ -143,7 +143,7 @@ export interface SessionsApi {
    * `POST /sessions/:id/chat` without a chat framework: a `200` answer is the UI message stream
    * (the caller reads or cancels `response.body`), a `202` is `queued`.
    */
-  send(sessionId: string, message: UIMessage, options?: SendOptions): Promise<SendResult>
+  send(sessionId: string, message: UIMessage, options?: ChatSendOptions): Promise<SendResult>
 }
 
 /** `/attention*` calls. */

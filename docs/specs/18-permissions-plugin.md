@@ -1,6 +1,6 @@
 # Spec 18 — Permissions (`eharness/permissions`)
 
-Status: **Draft**. Module: `src/permissions/*`. Built only with the public core API
+Status: **Draft (0.7)**. Module: `src/permissions/*`. Built only with the public core API
 (ADR-0008). Design: [ADR-0034](../decisions/0034-deployment-profiles.md). Promoted from the coder
 example's proven permission system (`examples/coder`).
 

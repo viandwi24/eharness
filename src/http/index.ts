@@ -14,7 +14,6 @@ export {
   type HttpDeny,
   openAccess,
 } from './authorize.ts'
-export { DEFAULT_MAX_BODY_BYTES } from './body.ts'
 export { httpError, statusOfCode } from './errors.ts'
 export { createHarnessHttp } from './router.ts'
 export {

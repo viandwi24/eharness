@@ -47,8 +47,8 @@ export interface ActivityFeedOptions {
   /** Reconnect delays in ms (jittered, the last one repeats). Default 250 ms up to 5 s. */
   backoff?: readonly number[]
   /**
-   * No bytes (not even the keep-alive comment, every 15 s) for this long: the connection is dead
-   * without an error: drop it and reconnect. Default 20 s.
+   * No bytes (not even the keep-alive comment, every 8 s) for this long: the connection is dead
+   * without an error: drop it and reconnect. Default 13 s.
    */
   idleMs?: number
   /** Period of the health tick (ms). 0 disables it. Default 1000. */

@@ -28,8 +28,12 @@ Full rules: [api-stability.md](api-stability.md).
 | Change | 0.x bump | ≥ 1.0 bump |
 |---|---|---|
 | Breaking (API, persisted format, contract semantics, peer `ai` major) | **minor** | major |
-| New feature, non-breaking | patch | minor |
+| New feature (subpath, option, hook, method), non-breaking | **minor** | minor |
 | Bug fix | patch | patch |
+
+In 0.x a feature is a minor too: that is how every release so far shipped (see `CHANGELOG.md`),
+and it keeps `^0.x.0` ranges from crossing into a release with new surface. A changeset that changes a
+default or a wire/stream shape counts as breaking even when it is a feature.
 
 The changeset for a breaking change starts with `**BREAKING:**` and includes a migration snippet.
 

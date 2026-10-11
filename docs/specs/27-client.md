@@ -54,7 +54,7 @@ createHarnessClient({ baseUrl, fetch?, headers?: Resolvable<HeadersInit | Record
 interface HarnessClient {
   baseUrl: string; url(path, query?): string; request(url, init?): Promise<Response>  // raw, no error mapping
   health(opts?): Promise<HealthResponse>        // always `cache: 'no-store'` (the restart probe)
-  sessions: { list, get, messages(id, { before?, limit? }), interrupt(id, reason?), send(id, message, { ifBusy?, idempotencyKey? }) }
+  sessions: { list, get, messages(id, { before?, limit? }), interrupt(id, reason?), send(id, message, ChatSendOptions) }   // ChatSendOptions = { ifBusy?, idempotencyKey?, signal?, init? } (not the core `SendOptions`)
   attention: { list(), answer<Answer>(id, { sessionId, answer: AttentionAnswerWire | Answer }) }
   activity: { page({ after?, limit? }) }
 }
@@ -128,7 +128,7 @@ type ResyncReason = 'connect' | 'resync-event' | 'boot-changed' | 'poll-gap'
   a changed boot id triggered; `'poll-gap'` is a polled page flagged `resync`.
 - **Boot**: the `boot` event and `GET /health` carry the server's boot id; `onBoot(id, restarted)`
   runs the first time and on every change.
-- **Liveness**: no bytes (not even the server keep-alive, 8 s by default) for `idleMs` (default 20 s) drops the
+- **Liveness**: no bytes (not even the server keep-alive, 8 s by default) for `idleMs` (default 13 s: 8 s keep-alive + 5 s grace) drops the
   connection. Every second the feed checks `shouldPing`: while `isBusy()` is true it pings
   `/health` about every 5 s (and always when the stream is stale). A failed ping on a live stream,
   or a changed boot id, reconnects at once without waiting out the backoff. `check()` pings now
@@ -139,9 +139,9 @@ type ResyncReason = 'connect' | 'resync-event' | 'boot-changed' | 'poll-gap'
 - **Lifecycle**: starts with the first subscriber, stops one second after the last, or use
   `start()` / `stop()` (an explicit `start()` is not stopped by the subscribers leaving).
   A listener that throws is isolated (`onError`); it never drops the connection.
-- `clock` (`now`, `random`, timers, `sleep`) is injectable for tests.
+- `clock` (`now`, `random`, timers, `sleep`; the `Clock` type is exported, pass a `Partial<Clock>`) is injectable for tests.
 
-Pure helpers: `createSseParser`, `createLiveness`, `backoffDelay`, `parseActivityEvent`.
+Pure helpers (public): `createSseParser` and `parseActivityEvent`, for a custom reader of the feed. The liveness state machine and the backoff are internal.
 
 ## 5. Chat session
 
@@ -184,8 +184,8 @@ reads and writes `chat.messages`.
   when idle.
 - **`onFinish`**: a continuation (an assistant message with approval parts) refetches the stored
   message. **`onData`** tracks `data-eh.status` into `activity`.
-- **Paging**: `loadOlder()` merges an older page (`mergeOlder` drops ids already present);
-  `refetch()` replaces only the newest page (`replaceTail`, ids sort by creation time).
+- **Paging**: `loadOlder()` merges an older page (ids already present are dropped);
+  `refetch()` replaces only the newest page (ids sort by creation time).
 - **`stop()`**: `sessions.interrupt` then `chat.stop()`. **Interrupted turns**: `interrupted()` is
   true when the conversation ends with an assistant message of stop `interrupted` (kind messages
   do not count); `continueTurn()` sends `CONTINUE_TEXT`, `retryTurn()` regenerates that reply.

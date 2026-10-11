@@ -93,6 +93,7 @@ retention rule for adapters that keep records themselves. Database adapters are 
 
 Web APIs only (`ReadableStream`, `Request`, `Response`).
 
+- `activityCursor(request)` reads the cursor of a request (`?after=` wins over `Last-Event-ID`): a number, `undefined` when none, `null` when invalid. Shared with `eharness/http`; use it in a custom SSE route.
 - `encodeActivityEvent(record)`: `id: <seq>\nevent: <type>\ndata: <record JSON>\n\n`.
 - `activityStream({ store, after?, filter?, bootId?, pollMs = 500, keepAliveMs = 8000, retryMs = 3000, batch = 200, signal?, onError? })`
   → `ReadableStream<Uint8Array>`. Frames:

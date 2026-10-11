@@ -88,8 +88,8 @@ One npm package, `eharness`, ESM-only, built with tsdown (ADR-0007).
 | `eharness/openapi` | `src/openapi/index.ts` | `openApiTools()`, `riskFromMethod()`, `OPENAPI_AUTO_DEFER_THRESHOLD` (spec 17) |
 | `eharness/testing` | `src/testing/index.ts` | `messageAdapterConformance()`, `stateAdapterConformance()`, `inboxAdapterConformance()`, `budgetLedgerConformance()`, `fileSystemConformance()`, `skillSourceConformance()`, `idGeneratorConformance()`, `scriptedModel()` |
 
-Peer dependencies: `ai@^7.0.127`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
-peer: `@ai-sdk/mcp@^2.0.66`. No runtime dependencies. The floors are the locked, tested versions
+Peer dependencies: `ai@^7.0.137`, `zod@^3.25.76 || ^4.1.8` (we import from `zod/v4`). Optional
+peer: `@ai-sdk/mcp@^2.0.73`. No runtime dependencies. The floors are the locked, tested versions
 (`bun.lock`): the core imports values (`StreamProviderError`, `toolSearch`, …) that early 7.0.x
 releases lack, and UI chunk order is public API — the golden streams are recorded with the locked
 `ai` (7.0.123 orders the transient `data-eh.status { state: 'tool' }` chunk differently), so the
