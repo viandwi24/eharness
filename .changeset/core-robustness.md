@@ -1,5 +1,0 @@
----
-"eharness": patch
----
-
-Core robustness fixes. A throwing `onWarning` handler or `logger` no longer hangs the session (the end of a turn always releases the lock, resolves `run.result` and closes the stream); concurrent `inject({ key })` calls with the same key store one message; the wait-timeout expiry timer backs off (250 ms to 30 s) while state storage fails instead of retrying every millisecond; a failed `regenerate()` / `edit()` no longer leaves a ghost rewind that hides history; the stream log is kept alive during quiet turns (optional `expire` as keep-alive) and restarted from 0 after a gap, and `inMemoryStreamLog` no longer creates an empty log on a gap (adapters must reject `at` > 0 on a missing log without creating it); `ifBusy: 'wait'` no longer leaks abort listeners; a tool output that `structuredClone` cannot copy is converted to a JSON-safe copy (or an error string) instead of killing the turn; the heartbeat timer cannot stack ticks; `activityStream` honours backpressure (512-frame queue) and a `session.events()` reader that falls 1 000 events behind is closed instead of buffering without bound.

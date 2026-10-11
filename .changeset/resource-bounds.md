@@ -1,5 +1,0 @@
----
-"eharness": minor
----
-
-Resource bounds. `diskFs` ripgrep searches are killed after `grepTimeoutMs` (default 30 000) or `grepMaxOutputBytes` (default 64 MiB), pass `--max-count`, and fall back to the JavaScript path reporting the reason through `onGrepFallback`. The local shell sandbox's `wait()` no longer hangs when a process that escaped the process group keeps stdout open: it resolves from the exit event after the 2 s grace period and ends the pipes. **BREAKING:** background subagent children (`'park'` mode) are bounded by default: `background.timeoutMs` defaults to one hour (`Number.POSITIVE_INFINITY` opts out) and `stopOnTimeout` defaults to `true`, enforced by a timer (`reconcileEveryMs` defaults to `min(60 000, timeoutMs / 4)`). Migration: pass `background: { timeoutMs: Number.POSITIVE_INFINITY, stopOnTimeout: false }` for the old behaviour. The memory adapters no longer grow without bound: the budget ledger deletes settled reservations and sweeps long-expired ones (`expiredRetentionMs`), the stream log sweep runs at most once per second, and the inbox keeps at most `maxDeadLetters` (default 1000) dead letters.

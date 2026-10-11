@@ -1,5 +1,0 @@
----
-"eharness": minor
----
-
-Observability: `config.observe(event)` reports phase durations (`lock.wait`, `turn.prepare`, `compaction`, `state.write`, `message.write`, `model.call`, `tool.execute` spans) and counters (`hook.failed`, `hook.timeout`, `events.overflow`, `state.conflict`, `tool-source.backoff`, `warning`), zero cost when unset; new guide with an OpenTelemetry bridge. The default warning handler dedupes per code + key within a time window (`warnings.dedupeWindowMs`, default 60 000) instead of forever and counts the suppressed repeats in the next report. Every numeric option is bounds-checked at boot (`recovery.staleMs`, `recovery.abortPollMs`, `streams.*`, `inbox.*`, `hooks.timeoutMs`, `toolSources.*`, `settings.timeout.*`, `sessionIdleMs`, `warnings.*`; durations above one day are rejected) with `EH_CONFIG_INVALID`. **BREAKING:** `debug.invariants` is explicit only and is no longer switched on by `NODE_ENV` `test` / `development` (enable it in your test setup with `debug: { invariants: true }`); option values that were silently accepted before (for example `streams.flushMs: 0`, a duration above one day) now throw at boot.
