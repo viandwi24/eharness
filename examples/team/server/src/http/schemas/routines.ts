@@ -57,6 +57,7 @@ export const RoutineSchema = z
     endAt: z.number().int().nullable(),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
+    version: z.number().int(),
   })
   .openapi('Routine')
 
@@ -102,6 +103,13 @@ export const RoutinePatchSchema = z
     maxFailures: fields.maxFailures.optional(),
     maxFires: fields.maxFires.optional(),
     endAt: fields.endAt.optional(),
+    version: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        'The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`.',
+      ),
   })
   .openapi('RoutinePatch')
 

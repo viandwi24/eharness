@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ConfirmDialog from './ConfirmDialog.svelte';
 	import Surface from '#lib/components/app/Surface.svelte';
 	import FileTextIcon from 'phosphor-svelte/lib/FileText';
 	import { untrack } from 'svelte';
@@ -80,8 +81,9 @@
 		});
 	});
 
+	let confirmDelete = $state(false);
 	async function remove(): Promise<void> {
-		if (!selected || !confirm(`Delete ${selected}?`)) return;
+		if (!selected) return;
 		try {
 			await api.delete('/memory/file', { query: query(selected) });
 			toast.success('Memory file deleted');
@@ -159,7 +161,7 @@
 				<span class="min-w-0 flex-1 truncate font-mono text-xs font-medium">{selected}</span>
 				{#if file && !editing}
 					<Button size="sm" variant="outline" onclick={() => (editing = true)}>Edit</Button>
-					<Button size="sm" variant="outline" onclick={remove}>Delete</Button>
+					<Button size="sm" variant="outline" onclick={() => (confirmDelete = true)}>Delete</Button>
 				{/if}
 			</div>
 			{#if fileError}<p class="text-xs text-destructive-text">{fileError}</p>{/if}
@@ -202,3 +204,7 @@
 		</Surface>
 	{/if}
 </div>
+
+{#if selected}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete {selected}?" description="This memory file is deleted." onConfirm={remove} />
+{/if}

@@ -86,6 +86,15 @@ export const AgentCreateSchema = z
 
 export const AgentPatchSchema = AgentCreateSchema.omit({ slug: true, role: true })
   .partial()
+  .extend({
+    version: z
+      .number()
+      .int()
+      .optional()
+      .describe(
+        'The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`.',
+      ),
+  })
   .openapi('AgentPatch', { description: 'Only the given fields change; `version` bumps.' })
 
 export const AgentListItemSchema = AgentSchema.extend({

@@ -161,7 +161,13 @@ export function createApp(options: AppOptions): OpenAPIHono {
     // eharness errors carry a code: busy / closed are conflicts, invalid input a bad request
     const code = (error as { code?: unknown }).code
     if (typeof code === 'string' && code.startsWith('EH_')) {
-      return c.json({ error: { code, message: error.message } }, (EH_STATUS[code] ?? 500) as 400)
+      const status = EH_STATUS[code] ?? 500
+      if (status >= 500) {
+        // storage and provider failures may carry SQL or upstream text: log it, answer generically
+        console.error(error)
+        return c.json({ error: { code, message: 'internal server error' } }, status as 500)
+      }
+      return c.json({ error: { code, message: error.message } }, status as 400)
     }
     console.error(error)
     return c.json({ error: { code: 'INTERNAL', message: 'internal server error' } }, 500)

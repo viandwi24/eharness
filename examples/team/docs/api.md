@@ -20,9 +20,12 @@ Chat, session reads, the attention answers and the event feed are **`eharness/ht
 
 ## Auth
 
-If `TEAM_TOKEN` is set, every route except `GET /health`, `/docs` and `/openapi.json` needs
-`Authorization: Bearer <token>` (compared in constant time). Unset means open: use that on
-localhost only. There is one token and one user (`actor` = `owner`); a browser `<img>` cannot send
+If `TEAM_TOKEN` is set, every route except `GET /health`, `/docs`, `/openapi.json` and
+`GET /oauth/callback` (the browser returns there from a provider, it cannot send the header; it only
+completes a flow that was started with a token) needs `Authorization: Bearer <token>` (compared in
+constant time). Unset means open: the server then listens on `127.0.0.1` only and refuses a
+non-loopback `TEAM_HOST`. The `Host` header must be loopback, `TEAM_HOST`, the host of
+`TEAM_PUBLIC_URL` or listed in `TEAM_ALLOWED_HOSTS` (else `403 FORBIDDEN_HOST`; DNS rebinding guard). There is one token and one user (`actor` = `owner`); a browser `<img>` cannot send
 the header, so the web fetches library bytes with `fetch` and uses object URLs.
 
 ## Errors

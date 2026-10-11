@@ -60,11 +60,11 @@ export async function addHistory(userDir: string, project: string, text: string)
       const last = [...lines].reverse().find((l) => l.project === project)
       if (last?.text === clean) return
       lines.push({ at: Date.now(), project, text: clean })
-      await mkdir(userDir, { recursive: true })
+      await mkdir(userDir, { recursive: true, mode: 0o700 })
       const kept = lines.slice(-HISTORY_MAX_LINES)
       const body = `${kept.map((l) => JSON.stringify(l)).join('\n')}\n`
       const temp = `${file}.${process.pid}.tmp`
-      await writeFile(temp, body)
+      await writeFile(temp, body, { mode: 0o600 })
       await rename(temp, file)
     })
   writes.set(file, next)

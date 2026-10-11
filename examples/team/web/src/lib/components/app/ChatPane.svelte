@@ -28,7 +28,7 @@
 	import { api } from '#lib/api/index.js';
 	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
 	import { startsAuthorRun } from '#lib/parts/map.js';
-	import { onDestroy, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import PendingCard from './PendingCard.svelte';
 	import { toast } from 'svelte-sonner';
 	import { answerFailureText } from '#lib/approval/outcome.js';
@@ -53,8 +53,12 @@
 	}: { agentId: string; panelOpen?: boolean; wide?: boolean; popoverOpen?: boolean; onTogglePanel: () => void } = $props();
 
 	const agent = $derived(agentsStore.find(agentId));
-	// One cached chat per agent (history, stream and pagination survive switching agents).
+	// One cached chat per agent (history, stream and pagination survive switching agents). Creating it is
+	// pure; the network load starts in the effect below.
 	const ac = $derived(agentChat(agentId));
+	$effect(() => {
+		void ac.init();
+	});
 	const chat = $derived(ac.chat);
 
 	/**
@@ -109,12 +113,17 @@
 		if (!vp || busyOlder || !ac.hasOlder || ac.loadingOlder) return;
 		if (vp.scrollHeight > vp.clientHeight && vp.scrollTop > 160) return;
 		busyOlder = true;
-		const height = vp.scrollHeight;
-		const top = vp.scrollTop;
-		const added = await ac.loadOlder();
-		await tick();
-		if (added > 0) vp.scrollTop = top + (vp.scrollHeight - height);
-		busyOlder = false;
+		try {
+			const height = vp.scrollHeight;
+			const top = vp.scrollTop;
+			const added = await ac.loadOlder();
+			await tick();
+			if (added > 0) vp.scrollTop = top + (vp.scrollHeight - height);
+		} catch {
+			// a failed page leaves the chat as it is; the next scroll retries
+		} finally {
+			busyOlder = false;
+		}
 	}
 	$effect(() => {
 		const vp = root?.querySelector<HTMLElement>('[data-slot="message-scroller-viewport"]');
@@ -129,9 +138,13 @@
 	});
 	// Opening the chat marks it read; the live store keeps it read while it stays visible.
 	$effect(() => {
-		live.setViewing(agentId);
+		const id = agentId;
+		live.setViewing(id);
+		// cleanup (agent switch or unmount): only clear what this pane set, never a newer pane's
+		return () => {
+			if (live.state.viewing === id) live.setViewing(null);
+		};
 	});
-	onDestroy(() => live.setViewing(null));
 	// Questions of this chat and approvals of the role agents it delegated to, answered inline.
 	const inline = $derived(live.chatPending(agentId));
 	let pendingIdx = $state(0);
@@ -152,8 +165,9 @@
 			else toast('Nothing to compact yet', { description: 'The conversation is still short; recent turns are always kept as they are.' });
 		} catch (e) {
 			const text = e instanceof Error ? e.message : '';
+			const busyCode = (e as { code?: unknown } | null)?.code === 'EH_SESSION_BUSY';
 			toast.error('Could not compact the conversation', {
-				description: /busy|running|locked/i.test(text) ? 'A turn is running. Try again when it has finished.' : text || undefined
+				description: busyCode ? 'A turn is running. Try again when it has finished.' : text || undefined
 			});
 		} finally {
 			compacting = false;

@@ -7,6 +7,11 @@ export function conflictVersion(err: unknown): { currentVersion: string | null }
 	return { currentVersion: typeof v === 'string' ? v : null };
 }
 
+/** A `VERSION_CONFLICT` 409: someone else changed the record since the editor loaded it. */
+export const isVersionConflict = (err: unknown): boolean => err instanceof ApiError && err.status === 409 && err.code === 'VERSION_CONFLICT';
+
+export const CONFLICT_TEXT = 'This was changed somewhere else since you opened it. Close and reopen it to get the latest version, then apply your edit again.';
+
 export const isFileExists = (err: unknown): boolean => err instanceof ApiError && err.status === 409 && err.code === 'FILE_EXISTS';
 
 export type SaveOutcome =

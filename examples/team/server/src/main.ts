@@ -2,7 +2,9 @@
  * Composition root: the only place that wires domain, app, infra and http together.
  *
  *   TEAM_DB     database file (default ./data/team.db; `:memory:` works)
- *   TEAM_TOKEN  bearer token; unset = open (localhost only, never expose such a server)
+ *   TEAM_TOKEN  bearer token; unset = open, and the server then listens on loopback only
+ *   TEAM_HOST   bind address (default 127.0.0.1); a non-loopback host requires TEAM_TOKEN
+ *   TEAM_ALLOWED_HOSTS   extra Host header names to accept (comma separated; loopback, TEAM_HOST and the TEAM_PUBLIC_URL host always are)
  *   PORT        default 4000
  *   OPENROUTER_API_KEY | AI_GATEWAY_API_KEY   read-only env provider profiles (more profiles are
  *                     added in Settings > Providers and stored encrypted); TEAM_SCRIPTED_MODEL wins over all
@@ -20,6 +22,7 @@
  *   TEAM_ROUTINE_TICK_MS   routine ticker interval (default 15000; 0 = off)
  *   TEAM_LOG_MAX_ROWS / TEAM_LOG_RETENTION_DAYS   model call log retention (default 5000 rows, 7 days)
  *   TEAM_EVENTS_RETENTION_HOURS / TEAM_EVENTS_MAX_ROWS   events feed retention (default 72 h, 100000 rows; 0 hours = by count only)
+ *   TEAM_ROUTINE_RUNS_RETENTION_DAYS / TEAM_TASKS_RETENTION_DAYS / TEAM_LIBRARY_HISTORY_RETENTION_DAYS   finished routine runs, finished tasks, library history (default 30 / 90 / 180 days; 0 = keep)
  *
  * New to this file? docs/guides/walkthrough-server.md follows a request through it: the boot
  * order (providers, connectors, then the reconcile pass of section 6-7), the activity feed and its
@@ -29,6 +32,7 @@ import { dirname } from 'node:path'
 import type { OpenAPIHono } from '@hono/zod-openapi'
 import type { ModelCatalog } from 'eharness'
 import { type SecretVault, sealedProfileStore } from 'eharness/providers'
+import { hostAllowed, type ListenConfig, listenConfig } from './app/auth.ts'
 import { checkChatBody } from './app/chat.ts'
 import type { Deps } from './app/ports.ts'
 import { seedAgents } from './app/seed.ts'
@@ -43,6 +47,7 @@ import { sqliteChatTools } from './infra/db/chat-tools-repo.ts'
 import { type Connection, openDatabase } from './infra/db/client.ts'
 import { sqliteModelCallStore } from './infra/db/model-calls-repo.ts'
 import { sqliteSessionModes } from './infra/db/modes-repo.ts'
+import { pruneTables, type TableRetention } from './infra/db/retention.ts'
 import { sqliteRoutineStore } from './infra/db/routines-repo.ts'
 import { sqliteSettingsStore } from './infra/db/settings-repo.ts'
 import { sqliteTaskStore } from './infra/db/tasks-repo.ts'
@@ -133,6 +138,8 @@ export interface ServerConfig {
    * boot and every `pruneEveryMs` (default 10 min; 0 = never again). `retentionHours: 0` keeps by count only.
    */
   events?: { retentionHours?: number; maxRows?: number; pruneEveryMs?: number }
+  /** Retention of finished routine runs, finished tasks and library history (days; 0 = keep). */
+  retention?: TableRetention
   /** Routine ticker (interval, lookahead, grace, recovery). `tickMs: 0` = no timer. */
   routines?: RoutineEngineConfig
   /**
@@ -273,9 +280,23 @@ export function compose(config: ServerConfig): Server {
       })
       .catch((error) => console.warn(`team: pruning events failed: ${String(error)}`))
   }
+  const pruneOld = (): void => {
+    try {
+      pruneTables(conn.sqlite, config.retention)
+    } catch (error) {
+      console.warn(`team: pruning tables failed: ${String(error)}`)
+    }
+  }
   pruneEvents()
+  pruneOld()
   const pruneEveryMs = config.events?.pruneEveryMs ?? 600_000
-  const pruneTimer = pruneEveryMs > 0 ? setInterval(pruneEvents, pruneEveryMs) : undefined
+  const pruneTimer =
+    pruneEveryMs > 0
+      ? setInterval(() => {
+          pruneEvents()
+          pruneOld()
+        }, pruneEveryMs)
+      : undefined
   pruneTimer?.unref()
   const settings = sqliteSettingsStore(conn.sqlite, {
     defaults: {
@@ -509,6 +530,10 @@ if (import.meta.main) {
   const eventHours = Number(process.env.TEAM_EVENTS_RETENTION_HOURS)
   const eventRows = Number(process.env.TEAM_EVENTS_MAX_ROWS)
   const dbFile = process.env.TEAM_DB ?? './data/team.db'
+  const retentionDays = (name: string): number | undefined => {
+    const v = Number(process.env[name])
+    return process.env[name] !== undefined && Number.isFinite(v) && v >= 0 ? v : undefined
+  }
   const listenPort = Number(process.env.PORT ?? 4000)
   const server = compose({
     dbFile,
@@ -528,6 +553,17 @@ if (import.meta.main) {
         : {}),
       ...(Number.isFinite(eventRows) && eventRows > 0 ? { maxRows: eventRows } : {}),
     },
+    retention: {
+      ...(retentionDays('TEAM_ROUTINE_RUNS_RETENTION_DAYS') === undefined
+        ? {}
+        : { routineRunsDays: retentionDays('TEAM_ROUTINE_RUNS_RETENTION_DAYS') as number }),
+      ...(retentionDays('TEAM_TASKS_RETENTION_DAYS') === undefined
+        ? {}
+        : { tasksDays: retentionDays('TEAM_TASKS_RETENTION_DAYS') as number }),
+      ...(retentionDays('TEAM_LIBRARY_HISTORY_RETENTION_DAYS') === undefined
+        ? {}
+        : { libraryHistoryDays: retentionDays('TEAM_LIBRARY_HISTORY_RETENTION_DAYS') as number }),
+    },
     ...(process.env.TEAM_ROUTINE_TICK_MS !== undefined && Number.isFinite(tickMs) && tickMs >= 0
       ? { routines: { tickMs } }
       : {}),
@@ -543,17 +579,64 @@ if (import.meta.main) {
     process.exit(1)
   }
   const port = Number(process.env.PORT ?? 4000)
+  let listen: ListenConfig
+  try {
+    listen = listenConfig(process.env)
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    process.exit(1)
+  }
   // idleTimeout 0: Bun closes a connection after 10 s without bytes by default, which cuts chat
   // streams while a long tool runs (the activity stream has its own 8 s keep-alive)
-  const http = Bun.serve({ port, idleTimeout: 0, fetch: server.app.fetch })
+  const http = Bun.serve({
+    port,
+    hostname: listen.hostname,
+    idleTimeout: 0,
+    fetch: (request, bunServer) => {
+      // DNS rebinding guard: only loopback names and the configured public hosts are served
+      if (!hostAllowed(request.headers.get('host') ?? undefined, listen.allowedHosts)) {
+        return Response.json(
+          {
+            error: { code: 'FORBIDDEN_HOST', message: 'host not allowed (see TEAM_ALLOWED_HOSTS)' },
+          },
+          { status: 403 },
+        )
+      }
+      return server.app.fetch(request, bunServer)
+    },
+  })
   console.log(
-    `team server on http://localhost:${http.port} (docs at /docs, ${token ? 'token auth' : 'OPEN: no TEAM_TOKEN set'})`,
+    `team server on http://${listen.hostname}:${http.port} (docs at /docs, ${token ? 'token auth' : 'no TEAM_TOKEN: open, loopback only'})`,
   )
+  let shuttingDown = false
   const shutdown = async (): Promise<void> => {
-    await http.stop()
-    await server.close()
+    if (shuttingDown) return
+    shuttingDown = true
+    // hard timeout: never hang on a stuck stream or a store that does not close
+    const hard = setTimeout(() => {
+      console.error('shutdown timed out, forcing exit')
+      process.exit(1)
+    }, 10_000)
+    hard.unref()
+    try {
+      // stop accepting, give in-flight requests a short drain, then close the streams
+      const stopped = http.stop()
+      await Promise.race([stopped, new Promise((r) => setTimeout(r, 1500))])
+      await http.stop(true)
+      await server.close()
+    } catch (error) {
+      console.error(`shutdown failed: ${error instanceof Error ? error.message : String(error)}`)
+      process.exit(1)
+    }
     process.exit(0)
   }
-  process.on('SIGINT', shutdown)
-  process.on('SIGTERM', shutdown)
+  process.on('SIGINT', () => void shutdown())
+  process.on('SIGTERM', () => void shutdown())
+  process.on('unhandledRejection', (reason) => {
+    console.error('unhandledRejection:', reason)
+  })
+  process.on('uncaughtException', (error) => {
+    console.error('uncaughtException:', error)
+    void shutdown()
+  })
 }

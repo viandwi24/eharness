@@ -36,9 +36,14 @@ const toRow = (def: AgentDef) => {
 }
 
 export function drizzleAgentRepo(db: Db): AgentRepo {
-  const connectorsOf = (): Map<string, AgentDef['connectors']> => {
+  /** Connectors of every agent, or of one agent (hot path: `get`/`getBySlug` read a single agent). */
+  const connectorsOf = (agentId?: string): Map<string, AgentDef['connectors']> => {
     const out = new Map<string, AgentDef['connectors']>()
-    for (const r of db.select().from(agentConnectors).all()) {
+    const rows =
+      agentId === undefined
+        ? db.select().from(agentConnectors).all()
+        : db.select().from(agentConnectors).where(eq(agentConnectors.agentId, agentId)).all()
+    for (const r of rows) {
       const entry = out.get(r.agentId) ?? {}
       entry[r.connectionId] = r.choices as AgentDef['connectors'][string]
       out.set(r.agentId, entry)
@@ -74,12 +79,12 @@ export function drizzleAgentRepo(db: Db): AgentRepo {
     get(id) {
       const row = db.select().from(agents).where(eq(agents.id, id)).get()
       if (row === undefined) return undefined
-      return toDef(row, connectorsOf().get(row.id) ?? {})
+      return toDef(row, connectorsOf(row.id).get(row.id) ?? {})
     },
     getBySlug(slug) {
       const row = db.select().from(agents).where(eq(agents.slug, slug)).get()
       if (row === undefined) return undefined
-      return toDef(row, connectorsOf().get(row.id) ?? {})
+      return toDef(row, connectorsOf(row.id).get(row.id) ?? {})
     },
     insert(def) {
       db.transaction(() => {
@@ -89,17 +94,22 @@ export function drizzleAgentRepo(db: Db): AgentRepo {
         writeConnectors(def.id, def.connectors, def.updatedAt)
       })
     },
-    update(def, expectedVersion) {
-      const rows = db
-        .update(agents)
-        .set(toRow(def))
-        .where(and(eq(agents.id, def.id), eq(agents.version, expectedVersion)))
-        .returning({ id: agents.id })
-        .all()
-      return rows.length === 1
+    update(def, expectedVersion, opts = {}) {
+      // one transaction: a version bump never lands without its connectors (or the reverse)
+      return db.transaction(() => {
+        const rows = db
+          .update(agents)
+          .set(toRow(def))
+          .where(and(eq(agents.id, def.id), eq(agents.version, expectedVersion)))
+          .returning({ id: agents.id })
+          .all()
+        if (rows.length !== 1) return false
+        if (opts.connectors === true) writeConnectors(def.id, def.connectors, def.updatedAt)
+        return true
+      })
     },
     setConnectors(agentId, connectors, now) {
-      writeConnectors(agentId, connectors, now)
+      db.transaction(() => writeConnectors(agentId, connectors, now))
     },
     count() {
       const row = db.select({ n: sql<number>`count(*)` }).from(agents).get()

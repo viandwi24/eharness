@@ -39,6 +39,7 @@ interface RoutineRow {
   end_at: number | null
   created_at: number
   updated_at: number
+  version: number
 }
 
 const toRoutine = (r: RoutineRow): Routine => ({
@@ -62,6 +63,7 @@ const toRoutine = (r: RoutineRow): Routine => ({
   endAt: r.end_at,
   createdAt: r.created_at,
   updatedAt: r.updated_at,
+  version: r.version,
 })
 
 interface RunRow {
@@ -230,6 +232,7 @@ export function sqliteRoutineStore(sqlite: Database): SqliteRoutineStore {
       if (patch.nextFireAt !== undefined) set('next_fire_at', patch.nextFireAt)
       if (patch.failures !== undefined) set('failures', patch.failures)
       set('updated_at', now)
+      sets.push('version = version + 1')
       sqlite.query(`UPDATE routines SET ${sets.join(', ')} WHERE id = ?`).run(...params, id)
       return get(id)
     },

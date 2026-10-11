@@ -104,6 +104,11 @@ export interface CreateControllerOptions {
   sessionId?: string
 }
 
+/** A user `!command` is stopped after this long (ms) ... */
+const SHELL_TIMEOUT_MS = 300_000
+/** ... or once it printed this many bytes. */
+const SHELL_MAX_BYTES = 1_000_000
+
 /**
  * Build the controller. `config.resume === true` (picker) is resolved by the UI: until then a
  * fresh session id is used.
@@ -693,17 +698,37 @@ export async function createController(opts: CreateControllerOptions): Promise<C
         }
       }
       let aborted = false
+      let stopReason: string | undefined
       const onAbort = (): void => {
         aborted = true
         void proc.kill()
       }
       if (signal?.aborted) onAbort()
       else signal?.addEventListener('abort', onAbort, { once: true })
+      // a `!command` runs at most SHELL_TIMEOUT_MS and keeps at most SHELL_MAX_BYTES of output
+      // (`yes` or a runaway log must not grow memory without bound)
+      const stop = (reason: string): void => {
+        if (stopReason !== undefined) return
+        stopReason = reason
+        void proc.kill()
+      }
+      const timeout = setTimeout(
+        () => stop(`timed out after ${Math.round(SHELL_TIMEOUT_MS / 1000)} s`),
+        SHELL_TIMEOUT_MS,
+      )
       let output = ''
+      let bytes = 0
       const pump = async (stream: ReadableStream<Uint8Array>): Promise<void> => {
         const dec = new TextDecoder()
         try {
-          for await (const bytes of stream) output += dec.decode(bytes, { stream: true })
+          for await (const chunk of stream) {
+            if (stopReason !== undefined) continue // drain what is still in flight, keep nothing
+            const room = SHELL_MAX_BYTES - bytes
+            const take = chunk.length > room ? chunk.subarray(0, Math.max(room, 0)) : chunk
+            bytes += take.length
+            output += dec.decode(take, { stream: true })
+            if (chunk.length > room) stop(`output over ${SHELL_MAX_BYTES} bytes`)
+          }
           output += dec.decode()
         } catch {
           // stream torn down by a kill
@@ -712,12 +737,16 @@ export async function createController(opts: CreateControllerOptions): Promise<C
       let exitCode: number | null = null
       try {
         const [, , result] = await Promise.all([pump(proc.stdout), pump(proc.stderr), proc.wait()])
-        exitCode = aborted ? null : result.exitCode
+        exitCode = aborted || stopReason !== undefined ? null : result.exitCode
       } catch (error) {
-        if (!aborted) output += `\n${error instanceof Error ? error.message : String(error)}`
+        if (!aborted && stopReason === undefined) {
+          output += `\n${error instanceof Error ? error.message : String(error)}`
+        }
       } finally {
+        clearTimeout(timeout)
         signal?.removeEventListener('abort', onAbort)
       }
+      if (stopReason !== undefined) output = `${output.trimEnd()}\n[command stopped: ${stopReason}]`
       return { output: capOutput(output.trimEnd(), 30_000), exitCode }
     },
 

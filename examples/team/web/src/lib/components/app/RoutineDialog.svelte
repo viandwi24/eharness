@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ConfirmDialog from './ConfirmDialog.svelte';
 	import { untrack } from 'svelte';
 	import TrashIcon from 'phosphor-svelte/lib/Trash';
 	import { api } from '#lib/api/index.js';
@@ -46,8 +47,9 @@
 		};
 	});
 
+	let confirmDelete = $state(false);
 	async function remove(): Promise<void> {
-		if (!routine || !confirm(`Delete routine "${routine.name}"? Its run history is removed too.`)) return;
+		if (!routine) return;
 		try {
 			await api.delete('/routines/{id}', { params: { id: routine.id } });
 			live.state.revs.routines++;
@@ -90,7 +92,7 @@
 		</div>
 		<Dialog.Footer class="border-t border-border px-5 py-3 sm:justify-between">
 			{#if routine}
-				<Button type="button" variant="ghost" class="text-destructive-text" onclick={() => void remove()}>
+				<Button type="button" variant="ghost" class="text-destructive-text" onclick={() => (confirmDelete = true)}>
 					<TrashIcon class="size-4" /> Delete
 				</Button>
 			{:else}
@@ -105,3 +107,7 @@
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>
+
+{#if routine}
+	<ConfirmDialog bind:open={confirmDelete} title="Delete routine {routine.name}?" description="Its run history is removed too." onConfirm={remove} />
+{/if}

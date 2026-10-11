@@ -3,6 +3,7 @@
 ## One instance
 
 `TEAM_DB` points at a SQLite file (WAL, `busy_timeout` 5 s). Run `bun run start`, set `TEAM_TOKEN`
+(and `TEAM_HOST=0.0.0.0` plus `TEAM_PUBLIC_URL` when it must be reachable; without a token it only listens on loopback)
 and put TLS in front (a reverse proxy; the server speaks plain HTTP). Always stop with SIGTERM or
 SIGINT so agents close cleanly; a SIGKILL is survivable (see below) but delays recovery of a turn
 that was streaming.

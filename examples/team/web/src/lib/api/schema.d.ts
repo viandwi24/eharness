@@ -5199,6 +5199,8 @@ export interface components {
                 /** @default [] */
                 deny: string[];
             };
+            /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
+            version?: number;
         };
         ModeState: {
             /**
@@ -5703,6 +5705,7 @@ export interface components {
             endAt: number | null;
             createdAt: number;
             updatedAt: number;
+            version: number;
         };
         /** @description `cron` (5 or 6 fields, IANA timezone, croner syntax), `every` (interval in ms, at least 10 s) or `at` (one shot). */
         RoutineSpec: {
@@ -6460,6 +6463,8 @@ export interface components {
             maxFailures?: number;
             maxFires?: number | null;
             endAt?: number | null;
+            /** @description The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`. */
+            version?: number;
         };
         RoutineRun: {
             id: string;

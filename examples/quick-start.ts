@@ -43,7 +43,7 @@ const agent = defineHarnessAgent({
 const session = agent.session('demo')
 const run = session.send('Write the current time to /notes/now.md')
 for await (const chunk of run.stream) {
-  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or: run.toResponse()
+  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or, in a route: await run.toHttpResponse()
 }
 
 const result = await run.result // never rejects: errors end the turn with stop: 'error'

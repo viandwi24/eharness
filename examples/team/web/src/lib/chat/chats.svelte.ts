@@ -27,6 +27,7 @@ live.onResync(() => {
 });
 live.addBusyProbe(() => [...chats.values()].some((c) => c.busy));
 
+/** The cached chat of an agent (created on first use). Pure: call `init()` from an effect, not from a derived. */
 export function agentChat(agentId: string): AgentChat {
 	let c = chats.get(agentId);
 	if (!c) {
@@ -37,6 +38,5 @@ export function agentChat(agentId: string): AgentChat {
 		});
 		chats.set(agentId, c);
 	}
-	void c.init();
 	return c;
 }

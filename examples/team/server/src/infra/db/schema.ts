@@ -3,6 +3,7 @@
  * with `bun run db:generate`; the eharness adapters (`infra/eh/storage.ts`) use the `eh_*`
  * tables with plain SQL on the same connection.
  */
+import { sql } from 'drizzle-orm'
 import {
   blob,
   index,
@@ -149,6 +150,8 @@ export const tasks = sqliteTable(
     index('tasks_state').on(t.status),
     index('tasks_agent').on(t.agentId),
     index('tasks_parent').on(t.parentSessionId),
+    index('tasks_activity').on(t.lastActivityAt),
+    index('tasks_ended').on(t.endedAt),
   ],
 )
 
@@ -164,7 +167,17 @@ export const events = sqliteTable(
     payload: json<Record<string, unknown>>('payload').notNull(),
     createdAt: integer('created_at').notNull(),
   },
-  (t) => [index('events_agent').on(t.agentId, t.type, t.seq)],
+  (t) => [
+    index('events_agent').on(t.agentId, t.type, t.seq),
+    // sidebar activity (`tasks.activity()`): the last message and the unread assistant messages
+    // of an agent without scanning every event or decoding every payload
+    index('events_message_agent').on(t.agentId, t.seq).where(sql`${t.type} = 'message-added'`),
+    index('events_assistant_agent')
+      .on(t.agentId, t.seq)
+      .where(
+        sql`${t.type} = 'message-added' and json_extract(${t.payload}, '$.role') = 'assistant'`,
+      ),
+  ],
 )
 
 /**
@@ -250,6 +263,8 @@ export const routines = sqliteTable(
     endAt: integer('end_at'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    /** Bumped by every edit through the API (not by the ticker): the concurrency token of editors. */
+    version: integer('version').notNull().default(1),
   },
   (t) => [index('routines_due').on(t.status, t.nextFireAt), index('routines_agent').on(t.agentId)],
 )
@@ -275,6 +290,7 @@ export const routineRuns = sqliteTable(
   (t) => [
     uniqueIndex('routine_runs_slot').on(t.routineId, t.scheduledAt),
     index('routine_runs_inbox').on(t.inboxId),
+    index('routine_runs_finished').on(t.finishedAt),
   ],
 )
 
@@ -312,7 +328,7 @@ export const libraryHistory = sqliteTable(
     agentId: text('agent_id'),
     at: integer('at').notNull(),
   },
-  (t) => [index('library_history_path').on(t.path, t.seq)],
+  (t) => [index('library_history_path').on(t.path, t.seq), index('library_history_at').on(t.at)],
 )
 
 /** Library and memory files (memory lives under `/memories/**`, ADR-0022). */

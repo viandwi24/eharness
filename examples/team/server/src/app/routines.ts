@@ -59,10 +59,13 @@ export function createRoutine(deps: Deps, draft: RoutineDraft): Routine {
   return routine
 }
 
-export type RoutineUpdate = Partial<Omit<RoutineDraft, 'agentId'>>
+export type RoutineUpdate = Partial<Omit<RoutineDraft, 'agentId'>> & { version?: number }
 
 export function updateRoutine(deps: Deps, id: string, update: RoutineUpdate): Routine {
   const current = getRoutine(deps, id)
+  if (update.version !== undefined && update.version !== current.version) {
+    throw conflict('the routine was changed concurrently; reload and retry', 'VERSION_CONFLICT')
+  }
   checkRoutineFields(update)
   const patch: RoutinePatch = {
     ...(update.name === undefined ? {} : { name: update.name.trim() }),

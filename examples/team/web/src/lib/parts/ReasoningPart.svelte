@@ -1,6 +1,6 @@
 <script lang="ts">
 	import CaretRightIcon from 'phosphor-svelte/lib/CaretRight';
-	import { Streamdown } from 'svelte-streamdown';
+	import SafeStreamdown from './SafeStreamdown.svelte';
 	import { Shimmer } from '#lib/components/ai/shimmer/index.js';
 	import { cn } from '#lib/utils.js';
 	import { reasoningLabel } from './activity.js';
@@ -28,7 +28,7 @@
 		<div
 			class="mt-2 border-l-2 border-border pl-3 text-[13.5px] leading-[1.6] text-muted-foreground [&>*:first-child]:mt-0 [&>*:last-child]:mb-0"
 		>
-			<Streamdown content={text} baseTheme="shadcn" {theme} />
+			<SafeStreamdown content={text} baseTheme="shadcn" {theme} />
 		</div>
 	{/if}
 </div>

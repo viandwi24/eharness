@@ -107,12 +107,15 @@
 	// While the task runs: follow the stream; when it ends or nothing streams, re-read the stored
 	// messages and poll (about 1 s) until the task stops running.
 	let loopId = '';
+	// Each loop owns `streaming`: a late `finally` of an aborted loop (task changed) must not clobber the new one.
+	let loopToken = 0;
 	$effect(() => {
 		const id = taskId;
 		if (!running || loopId === id) return;
 		const sessionId = untrack(() => detail?.task.sessionId);
 		if (!sessionId) return; // the task row is not loaded yet; the effect runs again with it
 		loopId = id;
+		const mine = ++loopToken;
 		const ctl = new AbortController();
 		void (async () => {
 			try {
@@ -120,20 +123,24 @@
 					const result = await followSessionStream(harness, sessionId, {
 						signal: ctl.signal,
 						onMessage: (m) => {
+							if (ctl.signal.aborted || mine !== loopToken) return;
 							streaming = true;
 							liveMessages = new Map(liveMessages).set(m.id, structuredClone(m));
 						}
 					});
-					if (ctl.signal.aborted) return;
+					if (ctl.signal.aborted || mine !== loopToken) return;
 					streaming = false;
 					await load(id);
+					if (ctl.signal.aborted || mine !== loopToken) return;
 					liveMessages = new Map(); // the stored messages are the truth again
 					if (!isLive(detail?.task.status)) return;
 					await sleep(result === 'streamed' ? 250 : (pollDelay({ status: 'running', streaming: false, visible: document.visibilityState === 'visible' }) ?? 1000));
 				}
 			} finally {
-				if (loopId === id) loopId = '';
-				streaming = false;
+				if (mine === loopToken) {
+					if (loopId === id) loopId = '';
+					streaming = false;
+				}
 			}
 		})();
 		return () => ctl.abort();

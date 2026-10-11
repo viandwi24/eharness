@@ -21,6 +21,7 @@
  */
 import { useApp, useStdout } from 'ink'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { markAltScreen } from '../../app/terminal.ts'
 import type { PageSpec } from './spec.ts'
 
 /** Enter the alternate screen (saves the cursor) and clear it. */
@@ -66,9 +67,11 @@ export function usePageHost(): PageHost {
       if (cancelled) return
       if (phase === 'entering') {
         stdout.write(ALT_SCREEN_ON)
+        markAltScreen(true)
         setView({ phase: 'open', page: view.page })
       } else {
         stdout.write(ALT_SCREEN_OFF)
+        markAltScreen(false)
         setView({ phase: 'closed' })
       }
     })()
@@ -83,6 +86,7 @@ export function usePageHost(): PageHost {
       if (viewRef.current.phase === 'open') {
         try {
           stdout.write(ALT_SCREEN_OFF)
+          markAltScreen(false)
         } catch {}
       }
     },

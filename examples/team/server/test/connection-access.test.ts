@@ -24,7 +24,7 @@ async function boot(dbFile = ':memory:', seed = true): Promise<Server> {
   const server = compose({
     dbFile,
     models: scriptedModelConfig(scriptedModel([]) as never),
-    env: { TEAM_SECRET_KEY: key },
+    env: { TEAM_SECRET_KEY: key, TEAM_ALLOW_PRIVATE_MCP: '1' },
     changePollMs: 0,
     seed,
     publicUrl: 'http://api.test',

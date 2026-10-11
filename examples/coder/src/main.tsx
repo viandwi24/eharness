@@ -17,6 +17,7 @@ import { type ScriptedStepInput, scriptedModel } from 'eharness/testing'
 import { type CliFlags, loadConfig, trustProject } from './app/config.ts'
 import { createController } from './app/controller.ts'
 import { KEY_ENV, missingKeyError } from './app/provider.ts'
+import { restoreTerminal } from './app/terminal.ts'
 import { THINKING_LEVELS, type ThinkingLevel } from './contracts.ts'
 import { createDenyingBroker } from './permissions/index.ts'
 import { runPrint } from './print.ts'
@@ -64,6 +65,7 @@ const CLOSE_GRACE_MS = 1500
 async function shutdown(code: number): Promise<void> {
   if (shuttingDown) return
   shuttingDown = true
+  restoreTerminal()
   try {
     activeController?.abort()
   } catch {
@@ -90,9 +92,25 @@ function flushWarnings(warnings: string[], from: number): void {
 }
 
 // last resort on any exit: no command of ours outlives the process
-process.on('exit', () => killAllSandboxProcesses('SIGKILL'))
+process.on('exit', () => {
+  restoreTerminal()
+  killAllSandboxProcesses('SIGKILL')
+})
+// registered before anything renders: a signal or a crash while the UI (or a fullscreen page) is up
+// must not leave the terminal on the alternate screen, raw or without a cursor
 process.on('SIGTERM', () => void shutdown(143))
-const onSigint = (): void => void shutdown(130)
+process.on('SIGINT', () => void shutdown(130))
+const crash =
+  (label: string) =>
+  (error: unknown): void => {
+    restoreTerminal()
+    process.stderr.write(
+      `coder: ${label}: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`,
+    )
+    void shutdown(1)
+  }
+process.on('uncaughtException', crash('uncaught exception'))
+process.on('unhandledRejection', crash('unhandled rejection'))
 
 const program = new Command()
   .name('coder')
@@ -221,7 +239,6 @@ const program = new Command()
           )
         }
         activeController = controller
-        process.on('SIGINT', onSigint)
         let code = 1
         try {
           code = await runPrint(controller, config.print)
@@ -242,7 +259,6 @@ const program = new Command()
       const shown = config.warnings.length
       activeController = controller
       await runInteractive(controller, { initialPrompt: prompt })
-      process.on('SIGINT', onSigint)
       // after the UI is gone stderr is safe again: show what happened while it was up
       flushWarnings(config.warnings, shown)
       await shutdown(0)

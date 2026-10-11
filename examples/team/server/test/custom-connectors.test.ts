@@ -32,7 +32,7 @@ async function boot(dbFile = ':memory:', seed = true): Promise<Server> {
   const server = compose({
     dbFile,
     models: scriptedModelConfig(scriptedModel([]) as never),
-    env: { TEAM_SECRET_KEY: key },
+    env: { TEAM_SECRET_KEY: key, TEAM_ALLOW_PRIVATE_MCP: '1' },
     changePollMs: 0,
     seed,
     publicUrl: 'http://api.test',
@@ -317,5 +317,36 @@ describe('migration of existing custom connections', () => {
     await call(server, 'PATCH', `/connections/mcp:${ops.id}:My Docs`, { label: 'Handbook' })
     await server.factory.prepare(ops)
     expect(prefixOf()).toBe('my-docs_')
+  })
+})
+
+describe('private endpoints (SSRF guard)', () => {
+  test('refused unless TEAM_ALLOW_PRIVATE_MCP=1', async () => {
+    const server = compose({
+      dbFile: ':memory:',
+      models: scriptedModelConfig(scriptedModel([]) as never),
+      env: { TEAM_SECRET_KEY: key },
+      changePollMs: 0,
+      reconcile: { onBoot: false, everyMs: 0 },
+      routines: { tickMs: 0 },
+    })
+    servers.push(server)
+    await server.connectorsReady
+    for (const url of [
+      'http://localhost:1/mcp',
+      'https://127.0.0.1/mcp',
+      'https://169.254.169.254/mcp',
+      'https://10.0.0.5/mcp',
+      'https://intranet/mcp',
+    ]) {
+      const probe = await call(server, 'POST', '/connectors/custom/probe', { url })
+      expect(probe.status).toBe(400)
+      const made = await call(server, 'POST', '/connectors/custom', {
+        name: 'X',
+        url,
+        signIn: 'none',
+      })
+      expect(made.status).toBe(400)
+    }
   })
 })

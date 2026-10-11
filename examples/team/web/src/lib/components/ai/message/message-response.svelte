@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { cn } from "#lib/utils.js";
-	import { Streamdown, type StreamdownProps } from "svelte-streamdown";
+	import type { StreamdownProps } from "svelte-streamdown";
+	import SafeStreamdown from "#lib/parts/SafeStreamdown.svelte";
 
 	let { content, class: className, theme, ...restProps }: StreamdownProps = $props();
 
@@ -35,7 +36,7 @@
 		className
 	)}
 >
-	<Streamdown
+	<SafeStreamdown
 		{content}
 		baseTheme="shadcn"
 		theme={{ ...typography, ...theme }}

@@ -49,6 +49,8 @@ export interface Routine {
   endAt: number | null
   createdAt: number
   updatedAt: number
+  /** Bumped by every edit through the API; editors send it back to detect a concurrent edit. */
+  version: number
 }
 
 export const RUN_STATUSES = [

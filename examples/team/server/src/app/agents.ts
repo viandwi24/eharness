@@ -133,12 +133,15 @@ export function createAgent(deps: Deps, draft: AgentDraft): AgentDef {
   return def
 }
 
-export type AgentPatch = Partial<Omit<AgentDraft, 'role' | 'slug'>>
+export type AgentPatch = Partial<Omit<AgentDraft, 'role' | 'slug'>> & { version?: number }
 
 /** Edit a definition: bumps `version`, so sessions pick it up on their next turn. */
 export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef {
   const current = getAgent(deps, id)
   if (current.archivedAt !== null) throw conflict('the agent is archived', 'ARCHIVED')
+  if (patch.version !== undefined && patch.version !== current.version) {
+    throw conflict('the agent was changed concurrently; reload and retry', 'VERSION_CONFLICT')
+  }
   const merged: AgentDraft = {
     name: patch.name ?? current.name,
     instructions: patch.instructions ?? current.instructions,
@@ -170,11 +173,9 @@ export function updateAgent(deps: Deps, id: string, patch: AgentPatch): AgentDef
     updatedAt: deps.clock.now(),
   }
   checkTeam(next.role, next.connectors)
-  if (!deps.agents.update(next, current.version)) {
+  if (!deps.agents.update(next, current.version, { connectors: patch.connectors !== undefined })) {
     throw conflict('the agent was changed concurrently; reload and retry', 'VERSION_CONFLICT')
   }
-  if (patch.connectors !== undefined)
-    deps.agents.setConnectors(next.id, next.connectors, next.updatedAt)
   return next
 }
 

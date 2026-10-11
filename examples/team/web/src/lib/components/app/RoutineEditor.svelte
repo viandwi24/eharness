@@ -7,6 +7,7 @@
 	import { NativeSelect, NativeSelectOption } from '#lib/components/ui/native-select/index.js';
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
+	import { CONFLICT_TEXT, isVersionConflict } from '#lib/conflict.js';
 	import {
 		buildSpec,
 		CATCH_UP_OPTIONS,
@@ -98,13 +99,13 @@
 		saving = true;
 		try {
 			const saved = routine
-				? await api.patch('/routines/{id}', { params: { id: routine.id }, body: common })
+				? await api.patch('/routines/{id}', { params: { id: routine.id }, body: { ...common, version: routine.version } })
 				: await api.post('/routines', { body: { agentId: pickedAgent, ...common } });
 			toast.success(routine ? 'Routine saved' : 'Routine created');
 			onSaved?.(saved);
 		} catch (err) {
 			errors = fieldErrors(err);
-			formError = err instanceof Error ? err.message : String(err);
+			formError = isVersionConflict(err) ? CONFLICT_TEXT : err instanceof Error ? err.message : String(err);
 		} finally {
 			saving = false;
 		}

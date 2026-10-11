@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Surface from '#lib/components/app/Surface.svelte';
+	import ConfirmDialog from './ConfirmDialog.svelte';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { toast } from '#lib/components/ui/sonner/index.js';
@@ -14,6 +15,7 @@
 	import { providersStore } from '#lib/providers/store.svelte.js';
 	import { agentChoiceOf, agentChoices, storedOfChoice, type AgentChoice } from '#lib/modes.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
+	import { CONFLICT_TEXT, isVersionConflict } from '#lib/conflict.js';
 
 	/** Without `agent` the editor creates one; with it, it edits (the lead cannot be archived). */
 	let {
@@ -79,7 +81,7 @@
 		};
 		try {
 			if (agent) {
-				await agentsStore.update(agent.id, body);
+				await agentsStore.update(agent.id, { ...body, version: agent.version });
 				toast.success('Agent saved');
 				onDone?.('saved');
 			} else {
@@ -90,14 +92,15 @@
 			}
 		} catch (err) {
 			errors = fieldErrors(err);
-			formError = err instanceof Error ? err.message : String(err);
+			formError = isVersionConflict(err) ? CONFLICT_TEXT : err instanceof Error ? err.message : String(err);
 		} finally {
 			saving = false;
 		}
 	}
 
+	let confirmArchive = $state(false);
 	async function archive() {
-		if (!agent || isLead || !confirm(`Archive ${agent.name}? Its history stays readable.`)) return;
+		if (!agent || isLead) return;
 		try {
 			await agentsStore.archive(agent.id);
 			toast.success('Agent archived');
@@ -173,7 +176,7 @@
 				{saving ? 'Saving…' : agent ? 'Save changes' : 'Create agent'}
 			</Button>
 			{#if agent}
-				<Button type="button" variant="outline" class="ml-auto" disabled={isLead} title={isLead ? 'The lead cannot be archived' : undefined} onclick={archive}>
+				<Button type="button" variant="outline" class="ml-auto" disabled={isLead} title={isLead ? 'The lead cannot be archived' : undefined} onclick={() => (confirmArchive = true)}>
 					Archive
 				</Button>
 			{/if}
@@ -184,7 +187,11 @@
 				<div class="font-medium">Archive agent</div>
 				<div class="text-xs text-muted-foreground">Hides it from the list. Its history stays readable.</div>
 			</div>
-			<Button type="button" variant="outline" size="sm" onclick={archive}>Archive</Button>
+			<Button type="button" variant="outline" size="sm" onclick={() => (confirmArchive = true)}>Archive</Button>
 		</Surface>
 	{/if}
 </form>
+
+{#if agent}
+	<ConfirmDialog bind:open={confirmArchive} title="Archive {agent.name}?" description="Its history stays readable." confirmLabel="Archive" onConfirm={archive} />
+{/if}

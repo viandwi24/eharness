@@ -451,9 +451,10 @@ describe('connect flows', () => {
       defaultEnabled: true,
       status: 'connected',
     })
-    // tools found at connect time are grouped into capabilities by their annotations
+    // tools found at connect time are grouped into capabilities by their annotations; a custom
+    // server's readOnlyHint is its own claim, so its reads ask too until someone opens them up
     expect(connection.capabilities.map((c: Json) => [c.id, c.defaultMode])).toEqual([
-      ['read', 'allow'],
+      ['read', 'ask'],
       ['write', 'ask'],
     ])
     expect(done.text).not.toContain('HEADERSECRET2')
@@ -734,15 +735,16 @@ describe('enablement', () => {
       (
         (await call(server, 'GET', `/agents/${writer.id}/connectors`)).json.connectors as Json[]
       ).find((c) => c.connectionId === id)?.capabilities as Json[]
-    // reads are allowed, writes ask first and are pinned (they ask in Bypass too)
+    // reads of a custom server ask (its annotations are untrusted), writes ask first and are
+    // pinned (they ask in Bypass too)
     expect(await caps()).toEqual([
-      expect.objectContaining({ id: 'read', mode: 'allow', pinned: false }),
+      expect.objectContaining({ id: 'read', mode: 'ask', pinned: false }),
       expect.objectContaining({ id: 'write', mode: 'ask', pinned: true, inherited: 'ask' }),
     ])
-    // the agent may open one up to Allowed; a pinned write still asks (the rule compiler pins `ask`
-    // only, so Allowed is the person's explicit choice for that agent)
+    // the agent may open one up to Allowed (reads here); a pinned write still asks (the rule
+    // compiler pins `ask` only, so Allowed is the person's explicit choice for that agent)
     await call(server, 'PUT', `/agents/${writer.id}/connectors`, {
-      connections: { [id]: { capabilities: { write: 'ask' } } },
+      connections: { [id]: { capabilities: { read: 'allow', write: 'ask' } } },
     })
     await server.factory.prepare(writer)
     const out = server.connectors.activated(writer.id)

@@ -31,6 +31,7 @@ import {
 } from 'eharness/connectors'
 import { listRemoteMcpTools, remoteMcpSource } from 'eharness/mcp'
 import type { ProfileStore, SecretVault } from 'eharness/providers'
+import { isPrivateHost } from 'eharness/web'
 import type { ConnectorsPort } from '../../app/ports.ts'
 import { type AgentDef, TOOL_ACCESS_AUTO_THRESHOLD, type ToolAccess } from '../../domain/agents.ts'
 import type {
@@ -82,6 +83,8 @@ export interface ConnectorsOptions {
   onFileChange?: (change: LibraryChange) => void
   env?: Env
   fetch?: typeof fetch
+  /** Resolves a host name to its addresses (custom connector SSRF guard; default: system DNS). */
+  resolveHost?: (host: string) => Promise<string[]>
   /** The OAuth callback URL of this server. */
   redirectUri: string
   events?: { append(event: NewEvent): void }
@@ -117,6 +120,11 @@ export interface ConnectorsRuntime extends ConnectorsPort {
     connections: ReturnType<typeof connectionStoreFromProfiles>
   }
   close(): void
+}
+
+async function lookupAll(host: string): Promise<string[]> {
+  const { lookup } = await import('node:dns/promises')
+  return (await lookup(host, { all: true })).map((r) => r.address)
 }
 
 const envName = (definitionId: string, suffix: string): string =>
@@ -595,10 +603,36 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   const fetcher = (): typeof fetch => options.fetch ?? globalThis.fetch
   const listTools = options.listTools ?? listRemoteMcpTools
 
+  /**
+   * SSRF guard: a custom connector URL must not point at a private, loopback or link-local host
+   * (literal or resolved), unless `TEAM_ALLOW_PRIVATE_MCP=1` (local MCP servers, dev only).
+   */
+  async function assertPublicEndpoint(url: string): Promise<void> {
+    if (env.TEAM_ALLOW_PRIVATE_MCP === '1') return
+    const host = new URL(url).hostname
+    const refuse = (): never => {
+      throw invalid(
+        'url points at a private or local host; set TEAM_ALLOW_PRIVATE_MCP=1 on the server to allow it',
+      )
+    }
+    if (isPrivateHost(host)) refuse()
+    // names that resolve to private ranges; skipped when a test injected its own fetch
+    const resolve = options.resolveHost ?? (options.fetch === undefined ? lookupAll : undefined)
+    if (resolve === undefined) return
+    let addresses: string[] = []
+    try {
+      addresses = await resolve(host)
+    } catch {
+      // unresolvable: the probe reports it
+    }
+    if (addresses.some((a) => isPrivateHost(a))) refuse()
+  }
+
   async function probeCustom(input: { url: string }): Promise<CustomProbe> {
     if (!isAllowedMcpUrl(input.url)) {
       throw invalid('url must be an https URL (http only on localhost)')
     }
+    await assertPublicEndpoint(input.url)
     let res: Response
     try {
       res = await fetcher()(input.url, {
@@ -679,6 +713,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
   }
 
   async function createCustom(input: CustomConnectorInput): Promise<CustomConnectorResult> {
+    await assertPublicEndpoint(input.url)
     const taken = await takenSlugs()
     const id = `conn_${crypto.randomUUID()}`
     const now = Date.now()

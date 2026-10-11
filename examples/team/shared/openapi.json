@@ -602,6 +602,10 @@
                 "default": []
               }
             }
+          },
+          "version": {
+            "type": "integer",
+            "description": "The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`."
           }
         },
         "description": "Only the given fields change; `version` bumps."
@@ -2429,6 +2433,9 @@
           },
           "updatedAt": {
             "type": "integer"
+          },
+          "version": {
+            "type": "integer"
           }
         },
         "required": [
@@ -2451,7 +2458,8 @@
           "maxFires",
           "endAt",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "version"
         ]
       },
       "RoutineSpec": {
@@ -5032,6 +5040,10 @@
               "integer",
               "null"
             ]
+          },
+          "version": {
+            "type": "integer",
+            "description": "The `version` the editor loaded; a different current version answers 409 `VERSION_CONFLICT`."
           }
         }
       },

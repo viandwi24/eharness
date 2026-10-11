@@ -54,7 +54,8 @@ export interface AgentRepo {
   getBySlug(slug: string): AgentDef | undefined
   insert(def: AgentDef): void
   /** Replace the row (not its connector enablement); `expectedVersion` guards concurrent edits (returns false on conflict). */
-  update(def: AgentDef, expectedVersion: number): boolean
+  /** Optimistic update; `connectors: true` replaces the agent's connectors in the same transaction. */
+  update(def: AgentDef, expectedVersion: number, opts?: { connectors?: boolean }): boolean
   /** Replace the whole connector enablement of an agent (the other enablement writes go through the connectors port). */
   setConnectors(agentId: string, connectors: AgentDef['connectors'], now: number): void
   count(): number
