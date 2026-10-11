@@ -1,6 +1,6 @@
 # ADR-0024: Durable inbox port
 
-Status: **Proposed** · Date: 2026-10-05
+Status: **Accepted** · Date: 2026-10-05
 
 ## Context
 

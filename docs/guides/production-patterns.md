@@ -271,7 +271,7 @@ export async function POST(req: Request): Promise<Response> {
   return handleChatRequest(session, body, {
     ifBusy: 'wait',
     runtime: { userId: user.id }, // per-request identity: SendOptions.runtime
-  }).toResponse()
+  }).toHttpResponse() // not toResponse(): pre-commit failures keep their HTTP status
 }
 ```
 
@@ -467,7 +467,7 @@ export async function POST(req: Request): Promise<Response> {
     runtime: { userId: user.id },
     clientTools: { allow: ['get_location', 'open_dialog'], maxTools: 8, timeoutMs: 120_000 },
     pageContext: { maxChars: 4_000 },
-  }).toResponse()
+  }).toHttpResponse() // not toResponse(): pre-commit failures keep their HTTP status
 }
 ```
 
@@ -719,7 +719,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const user = await authenticate(req)
   if (!(await userOwnsChat(user.id, id))) return new Response(null, { status: 404 })
   const run = agent.session(id).attach()
-  return run ? run.toResponse() : new Response(null, { status: 204 })
+  return run ? await run.toHttpResponse() : new Response(null, { status: 204 })
 }
 ```
 

@@ -1,6 +1,6 @@
 # ADR-0020: Pre-compaction flush
 
-Status: **Proposed** · Date: 2026-10-05 · Amends ADR-0004
+Status: **Accepted** · Date: 2026-10-05 · Amends ADR-0004
 
 ## Context
 

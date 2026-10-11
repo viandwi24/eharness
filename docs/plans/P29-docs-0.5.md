@@ -1,8 +1,8 @@
-# P29 — Docs, guides and 0.5.0 handoff
+# P29 — Docs, guides and 0.5.0 release notes
 
 Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
-Source: the 0.5 prior-art analysis (maintainer-only, `docs/tmp/`, not committed) — items #1–#8.
+Source: the 0.5 prior-art analysis (internal notes) — items #1–#8.
 
 Process (0.5.0): runs after P21–P28 are done; one gate at the end; then the consolidated review
 of the whole release (below) before the version PR.
@@ -11,7 +11,7 @@ of the whole release (below) before the version PR.
 
 Everything shipped in P21–P28 is documented for users: README, guides, reference, roadmap and
 the production-patterns guide reflect 0.5.0; every new subpath and option is in
-`docs/guides/reference.md`; and the 0.5.0 results notes (kept outside the repository) (English) maps the eight
+`docs/guides/reference.md`; and the 0.5.0 results notes (internal) (English) maps the eight
 prior-art items to what shipped, the final API, deviations from the plans and what stays app
 policy. The consolidated review finds spec/code drift before the release.
 
@@ -21,7 +21,7 @@ policy. The consolidated review finds spec/code drift before the release.
   phases" aimed at P29)
 - `docs/specs/*` as changed by P21–P28, new specs 15 (guard), 16 (group), 17 (openapi); ADRs
   0025–0032 (those that exist)
-- `docs/plans/P20-production-guide.md` and the 0.4.0 results notes (kept outside the repository) (shape of the handoff)
+- `docs/plans/P20-production-guide.md` and the 0.4.0 results notes (internal) (shape of the handoff)
 - `README.md`, `docs/README.md`, `docs/guides/README.md`, `docs/guides/reference.md`,
   `docs/guides/production-patterns.md`, `docs/plans/roadmap.md`
 - `docs/engineering/release.md` (version PR, changesets), `docs/engineering/api-stability.md`
@@ -41,7 +41,7 @@ runtimes) — mention the positioning in the results file, no code.
 
 `README.md`, `docs/README.md`, `docs/guides/**` (index, reference, production-patterns, links to
 the guides written by P23–P28), `docs/plans/roadmap.md`, `docs/plans/README.md` (board),
-the 0.5.0 results notes (kept outside the repository) (new), `package.json` devDependency versions (optional bump +
+the 0.5.0 results notes (internal) (new), `package.json` devDependency versions (optional bump +
 `bun install`), a `patch` changeset only if the bump or doc-adjacent code changes need one.
 
 ## Checklist
@@ -59,7 +59,7 @@ the 0.5.0 results notes (kept outside the repository) (new), `package.json` devD
 - [x] Roadmap: move the 0.5.0 rows to a "0.5.0" section (struck through in the open tables:
       "Approval classifier guard", "Inbox poison-item limit"; partial: "Durable execution",
       "Budget pre-flight estimate"); add items found during 0.5.0.
-- [x] the 0.5.0 results notes (kept outside the repository): table #1–#8 → verdict, what shipped (API), what stays app
+- [x] the 0.5.0 results notes (internal): table #1–#8 → verdict, what shipped (API), what stays app
       policy, deviations from the plan files and why, follow-ups.
 - [x] Optional devDependency bump (see above); run the full gate after it.
 - [ ] Board: P21–P29 `done`.
@@ -79,7 +79,7 @@ shape change without a golden or schema-evolution note (spec 03 §9). Findings a
 
 - [x] Every new public symbol of 0.5.0 appears in `reference.md`; every new subpath in README and
       CLAUDE.md.
-- [x] the 0.5.0 results notes (kept outside the repository) covers all eight items.
+- [x] the 0.5.0 results notes (internal) covers all eight items.
 - [ ] Consolidated review findings resolved or recorded as roadmap items.
 - [x] lint, typecheck, test, build, check:package, check:imports green.
 

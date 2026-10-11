@@ -1,6 +1,6 @@
 # ADR-0019: Prune stage and thrash stop
 
-Status: **Proposed** · Date: 2026-10-05 · Amends ADR-0004
+Status: **Accepted** · Date: 2026-10-05 · Amends ADR-0004
 
 ## Context
 

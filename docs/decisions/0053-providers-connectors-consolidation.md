@@ -1,6 +1,6 @@
 # ADR-0053: One config layer for providers and connectors
 
-Status: accepted
+Status: **Accepted**
 
 ## Context
 

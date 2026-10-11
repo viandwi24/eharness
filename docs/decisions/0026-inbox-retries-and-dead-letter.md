@@ -1,6 +1,6 @@
 # ADR-0026: Inbox retries and dead-letter
 
-Status: **Proposed** · Date: 2026-10-06 · Amends: ADR-0024
+Status: **Accepted** · Date: 2026-10-06 · Amends: ADR-0024
 
 ## Context
 

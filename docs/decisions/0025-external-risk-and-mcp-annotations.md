@@ -1,6 +1,6 @@
 # ADR-0025: External risk and tighten-only MCP annotation mapping
 
-Status: **Proposed** · Date: 2026-10-06 · Amends: [ADR-0017](0017-tool-risk-and-approval-decisions.md)
+Status: **Accepted** · Date: 2026-10-06 · Amends: [ADR-0017](0017-tool-risk-and-approval-decisions.md)
 
 ## Context
 

@@ -83,7 +83,7 @@ Options passed to an already cached session are ignored (`W_SESSION_OPTIONS_IGNO
 | `clearGrants()` | forget `remember: 'session'` grants |
 | `messages({ beforeId?, limit?, includeHidden? })` | stored history for UIs (pages past hidden messages until `limit` visible ones) |
 | `stats()` | `ContextStats` + `pending` + `activeTurn` |
-| `events()` | long-lived stream of `SessionEvent`s |
+| `events()` | long-lived stream of `SessionEvent`s; a reader more than 1 000 events behind is closed (open a new one) |
 | `idle()` | resolves when no turn runs and nothing is queued (nor a `collect` burst or inbox drain pending) |
 | `ready()`, `close()`, `running`, `id` | open now (configuration errors as exceptions), close, state |
 
@@ -99,14 +99,14 @@ description? }`: a typed, validated final answer in `result.output` —
 [structured output](structured-output.md)), and (0.5.0, server code) `clientTools`,
 `clientToolsOptions`, `pageContext`, `pageContextOptions` — [frontend tools](client-tools.md). Every turn operation returns a `HarnessRun`: `turnId`, `kind`, `messageId`
 (promise), `stream` (AI SDK UI message stream, single consumer), `result` (never rejects),
-`abort()`, `toResponse()`, `pipeTo(res)`. The stream ends only after the turn finalized: a client
+`abort()`, `toHttpResponse()` (use this in routes), `toResponse()` (stream only: a pre-commit failure stays inside a `200` stream), `pipeTo(res)`. The stream ends only after the turn finalized: a client
 that saw `finish` can send again at once (unless a queued or other turn started meanwhile). `handleChatRequest(session, body, options?)` maps a
 `useChat` request (`ChatRequestBody`) to `send` / `respond` / `regenerate` / `edit`; `options` are
 `SendOptions` plus `actor` (given to `approval.decided` for approval answers) and the opt-ins
 `clientTools: false | ClientToolsOptions` / `pageContext: false | PageContextOptions` (0.5.0; default
 `false`: `body.clientTools` / `body.pageContext` are ignored). It never lets a browser answer an
 external wait. It never throws
-`EH_SESSION_BUSY`: a busy session returns a failed run whose `toResponse()` answers **409**
+`EH_SESSION_BUSY`: a busy session returns a failed run whose `toHttpResponse()` answers **409**
 `{ error: { code, message } }`.
 
 `SessionEvent`s (`session.events()`): `turn-start`, `turn-end`, `pending`, `input-dropped`,
@@ -122,6 +122,27 @@ conservative safe subset of regular expressions (at most one variable-width quan
 `+`, `?`, `{n,m}` — in the whole pattern, no quantified groups, no backreferences or lookarounds;
 e.g. `.*foo.*bar` and `(\d+\.)+\d+` are refused), matches the first 2 000 characters of a line, and names `charOffset=<c>` of a match
 beyond the shown 300 characters.
+
+## Which one do I use
+
+**Chat entry points**
+
+| You have | Use | Gives you |
+|---|---|---|
+| One chat route in your own framework (Next, Hono, Express, ...) | `await handleChatRequest(session, body, options).toHttpResponse()` plus `handleResumeRequest(session, req)` for reconnects | The `useChat` protocol on the routes you write. Auth, ownership checks and every other route are yours. Pre-commit failures answer 409 / 400 / 503. |
+| A whole server, or a browser using `eharness/client` | `createHarnessHttp()` from `eharness/http` | The full set of routes (chat, resume, interrupt, session reads, attention, activity) with auth and principals. Always uses the status form. |
+| A script, a test, a CLI | `session.send()` and read `run.stream` / `await run.result` | No HTTP. `run.toResponse()` exists for tests that want the raw stream. |
+
+**Input while a turn is running**
+
+| Call | What it does | Use it when |
+|---|---|---|
+| `send(input, { ifBusy })` | Starts a turn and returns its `HarnessRun`. While busy: `'reject'` (default, `EH_SESSION_BUSY`), `'queue'`, `'steer'`, `'wait'` or `'collect'`. | The user typed in this process and you want the run (stream, result). |
+| `enqueue(input, { mode })` | Hands an input to whichever instance holds the session (durably with `storage.inbox`) and returns `{ inboxId }` without a run. `mode`: `'queue'` (default), `'steer'`, `'collect'`; also `availableAt` (timer), `id` (idempotency), `metadata`. | A server-side producer, a webhook, a scheduler, or another instance than the one running the turn. |
+| `inject(kind, data, { deliver, wake })` | Saves a kind message (not a user message) and can deliver it at the next step or wake the agent. | Background work or a plugin reporting back to the model, for example a finished job. |
+
+`ifBusy` and `mode` name the same three behaviors (`queue`, `steer`, `collect`); `ifBusy` also has
+`reject` and `wait`, which only make sense when you hold the run.
 
 ## Turn results and stop reasons
 

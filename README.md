@@ -57,7 +57,7 @@ const agent = defineHarnessAgent({
 const session = agent.session('demo')
 const run = session.send('Write the current time to /notes/now.md')
 for await (const chunk of run.stream) {
-  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or: run.toResponse()
+  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or, in a route: await run.toHttpResponse()
 }
 
 const result = await run.result // never rejects: errors end the turn with stop: 'error'
@@ -83,7 +83,7 @@ export async function POST(req: Request) {
   // a busy session answers 409 { error: { code: 'EH_SESSION_BUSY' } } (or pass ifBusy: 'wait')
   return handleChatRequest(agent.session(body.id), body, {
     runtime: { userId: user.id }, // per-request values go into the turn, not the cached session
-  }).toResponse()
+  }).toHttpResponse()
 }
 
 // GET /api/chat/[id]/stream — useChat({ resume: true }) replays the running turn
@@ -92,7 +92,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   const user = await authenticate(req)
   if (!(await userOwnsChat(user.id, id))) return new Response(null, { status: 404 }) // same check
   const run = agent.session(id).attach()
-  return run ? run.toResponse() : new Response(null, { status: 204 })
+  return run ? await run.toHttpResponse() : new Response(null, { status: 204 })
 }
 ```
 
@@ -270,7 +270,7 @@ export async function POST(req: Request) {
   return handleChatRequest(agent.session(body.id), body, {
     clientTools: { allow: ['get_location'], timeoutMs: 120_000 }, // body.clientTools
     pageContext: { maxChars: 4_000 }, // body.pageContext → a turn reminder framed as data
-  }).toResponse()
+  }).toHttpResponse()
 }
 ```
 

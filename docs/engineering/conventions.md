@@ -34,7 +34,9 @@ Verified in P0 with TypeScript 7.0.2, tsdown 0.23.0 and attw 0.18.5: no pin need
 - `const` type parameters for `define*` functions so literal names (plugin names, part keys) are
   preserved for inference.
 - No `any` in public types. `unknown` + narrowing inside.
-- No classes in the public API except `HarnessError`. Factories return plain objects.
+- No classes in the public API except error classes (`HarnessError`, `HarnessToolError` and subclasses of
+  `Error` such as `SummarizeError`, `ClassifierUnavailableError`, `HarnessHttpError`): `instanceof` and `code`
+  checks need a class. Everything else is a plain object returned by a factory.
 - Async boundaries: public methods that may do I/O return `Promise`; pure helpers are sync.
 - Use `Awaitable<T> = T | Promise<T>` for user-supplied callbacks.
 
@@ -44,7 +46,9 @@ Verified in P0 with TypeScript 7.0.2, tsdown 0.23.0 and attw 0.18.5: no pin need
 |---|---|---|
 | Definition helpers | `defineX` | `defineHarnessAgent`, `defineSkill`, `defineDataPart` |
 | Plugin factories | lower camel noun | `filesystem()`, `mcpServer()` |
+| Service / client factories | `create<Thing>` for things with live state or methods that are not plugins or adapters | `createHarnessHttp()`, `createHarnessClient()`, `createProviderManager()`, `createPermissionEngine()` |
 | Adapter factories | lower camel `<backend><Contract>` | `memoryFs()`, `memoryMessages()`, `memoryState()` |
+| Option types | `<Thing>Options` for arguments of a function, plugin factory, service or per-call method (the default); `<Section>Config` only for `HarnessAgentConfig` and the sections nested in it (`LoopConfig`, `CompactionConfig`, `BudgetConfig`, ...) | `SendOptions`, `SubagentsOptions`, `CompactionConfig` |
 | Error codes | `EH_UPPER_SNAKE` | `EH_SESSION_BUSY` |
 | Warning codes | `W_UPPER_SNAKE` | `W_SHADOWED` |
 | Core data parts / kinds | `eh.<name>` | `data-eh.status`, `eh.compaction` |
@@ -67,8 +71,9 @@ Verified in P0 with TypeScript 7.0.2, tsdown 0.23.0 and attw 0.18.5: no pin need
 
 - Every exported symbol has a TSDoc comment: one-line summary, then details, `@example` for
   entry points. Link to the spec section (`@see docs/specs/05-session-and-storage.md#4`).
-- Mark unstable API with `@experimental` in TSDoc **and** an `experimental_` prefix
-  (api-stability.md).
+- Mark unstable API with `@experimental` in TSDoc. A single experimental symbol gets an
+  `experimental_` prefix; Draft modules and sections (api-stability.md, "Draft modules and
+  sections") keep their plain names, with the status in the TSDoc and the stability table.
 
 ## Commits and PRs
 

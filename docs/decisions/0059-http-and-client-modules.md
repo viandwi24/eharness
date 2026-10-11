@@ -81,7 +81,7 @@ had already fixed once (trusting client metadata, `actor` from the body, answere
 
 - The team example deletes its chat, resume, abort, messages, approvals and event routes and keeps
   its domain hooks (`authorize`, `canAnswer`, `parseAnswer`, `describe`, `onError`).
-- The wire types become public API (Draft until 0.9, like `eharness/activity`).
+- The wire types become public API (Draft until 1.0, like `eharness/activity`).
 - A deployment behind a proxy must not buffer `text/event-stream` (documented, not enforceable).
 - The idempotency window (last 40 messages) is a known limit; a store can be added later without
   changing the wire.

@@ -47,7 +47,7 @@ const agent = defineHarnessAgent({
 const session = agent.session('demo')
 const run = session.send('Write the current time to /notes/now.md')
 for await (const chunk of run.stream) {
-  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or: run.toResponse()
+  if (chunk.type === 'text-delta') process.stdout.write(chunk.delta) // or, in a route: await run.toHttpResponse()
 }
 
 const result = await run.result // never rejects: errors end the turn with stop: 'error'
@@ -185,8 +185,12 @@ Nothing limits spending unless you set `budget` (with `models` pricing) or
 - **Keep history across restarts:** pass `storage: { messages, state }`. The default is in memory;
   see [writing a storage adapter](writing-a-storage-adapter.md) and the JSON-file and Postgres
   examples.
-- **Serve a web UI:** `handleChatRequest(agent.session(body.id), body).toResponse()` speaks
-  `useChat`'s protocol — [`examples/next-route.ts`](../../examples/next-route.ts).
+- **Serve a web UI:** `await handleChatRequest(agent.session(body.id), body).toHttpResponse()` speaks
+  `useChat`'s protocol — [`examples/next-route.ts`](../../examples/next-route.ts). Use
+  `toHttpResponse()`, not `toResponse()`: a failure before the turn's commit point (busy, bad input)
+  then answers 409 / 400 / 503 instead of a `200` stream that carries the error. For the full set of
+  routes (auth, attention, activity) mount `createHarnessHttp()` instead — see
+  [which entry point](reference.md#which-one-do-i-use).
 - **Stop reasons and errors:** `run.result` resolves with `stop` (`complete`, `tool-pending`,
   `error`, `aborted`, `max-steps`, `stuck`, `cost-cap`, `timeout`, …) and
   `error: { code, message }`. Only `EH_SESSION_BUSY` and `EH_SESSION_CLOSED` are thrown by

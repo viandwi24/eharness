@@ -1,6 +1,6 @@
 # ADR-0029: Cross-session budget ledger port
 
-Status: **Proposed** · Date: 2026-10-06 · Amends: [ADR-0016](0016-model-catalog-and-budgets.md)
+Status: **Accepted** · Date: 2026-10-06 · Amends: [ADR-0016](0016-model-catalog-and-budgets.md)
 
 ## Context
 

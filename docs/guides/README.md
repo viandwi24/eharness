@@ -42,6 +42,6 @@ is in [`../../examples`](../../examples) (every example runs offline with `bun e
 | [Production checklist](production-checklist.md) | one page to review before shipping: correctness, restarts and instances, streaming, security, cost, observability |
 | [Coding agent example](../../examples/coder/README.md) | a terminal coding agent built only on the public API: virtual workspace, permission rules, subagents, Ink UI |
 | [Team app example](../../examples/team/README.md) | a web + server team of agents: agents as data, lead and role agents, board and approvals, routines, several instances, SQLite adapters |
-| [Upgrading to 0.7](upgrading.md) | what changes for 0.6 users, with migration snippets, and the known gaps |
+| [Upgrading to 0.7 and 0.8](upgrading.md) | what changes for 0.6 and 0.7 users, with migration snippets, and the known gaps |
 | [Reference](reference.md) | every option, method, stop reason, error and warning at a glance |
 | [Connectors](connectors.md) | `eharness/connectors`: connect tools per workspace or agent, setup flows and OAuth, per-agent enablement and modes, built-in connectors, rendering flows in a UI |

@@ -1,6 +1,6 @@
 # ADR-0028: Request-scoped client tools and page context
 
-Status: **Proposed** · Date: 2026-10-06 · Amends: ADR-0013
+Status: **Accepted** · Date: 2026-10-06 · Amends: ADR-0013
 
 ## Context
 

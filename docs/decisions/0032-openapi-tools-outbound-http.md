@@ -1,6 +1,6 @@
 # ADR-0032: OpenAPI tools: outbound HTTP and SSRF defaults
 
-Status: **Proposed** · Date: 2026-10-06 · Builds on: [ADR-0007](0007-single-package-subpaths.md), [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0025](0025-external-risk-and-mcp-annotations.md)
+Status: **Accepted** · Date: 2026-10-06 · Builds on: [ADR-0007](0007-single-package-subpaths.md), [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0025](0025-external-risk-and-mcp-annotations.md)
 
 ## Context
 

@@ -1,6 +1,6 @@
 # ADR-0030: LLM approval guard as a plugin
 
-Status: **Proposed** · Date: 2026-10-06 · Builds on: [ADR-0017](0017-tool-risk-and-approval-decisions.md), [ADR-0025](0025-external-risk-and-mcp-annotations.md)
+Status: **Accepted** · Date: 2026-10-06 · Builds on: [ADR-0017](0017-tool-risk-and-approval-decisions.md), [ADR-0025](0025-external-risk-and-mcp-annotations.md)
 
 ## Context
 

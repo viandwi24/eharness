@@ -1,6 +1,6 @@
 # ADR-0021: Cross-process abort through state compare-and-set
 
-Status: **Proposed** · Date: 2026-10-05
+Status: **Accepted** · Date: 2026-10-05
 
 ## Context
 

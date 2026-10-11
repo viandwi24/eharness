@@ -157,17 +157,13 @@ library). Elysia was checked for comparison, see Alternatives considered.
 - Scalar mounts at `/docs` from `/openapi.json` (`Scalar({ url })`); confirm the exact option
   names in its README at M1.
 
-### 2.2 Web install (official commands, from the maintainer's research)
+### 2.2 Web install (official commands)
 
 ```bash
 bunx sv create web            # SvelteKit 3, TypeScript, add: tailwindcss
 bunx --bun shadcn-svelte@latest init          # style nova, icons phosphor
-bunx --bun shadcn-svelte@latest add \
-  https://viandwi24.github.io/edmi-ui/r/svelte/theme.json \
-  https://viandwi24.github.io/edmi-ui/r/svelte/all.json --overwrite
-bunx --bun shadcn-svelte@latest add \
-  https://viandwi24.github.io/edmi-ui/r/svelte/ai-all.json --overwrite
-bun add @edmi-ui/tokens
+# then add the UI kit's registry items (theme, UI kit, AI kit) and its token package
+# with the kit's own install commands; use the kit's current docs for the URLs
 ```
 
 Per CLAUDE.md rule 9: run these, do not hand-write generated files; read the then-current
@@ -815,7 +811,7 @@ Anthropic's multi-agent research system). Sources are listed below.
   `doc31`, `openapiRoutes`, `hc`)
 - https://ai-sdk.dev/docs/reference/ai-sdk-ui/use-chat (`Chat`, transport, resume,
   `addToolApprovalResponse`, `sendAutomaticallyWhen`)
-- https://viandwi24.github.io/edmi-ui/ (registry, kits) and the maintainer's install notes
+- the UI kit's own documentation (registry, kits)
 
 Research for D2–D4:
 - https://ai-sdk.dev/v7/docs/ai-sdk-ui/chatbot-resume-streams · https://github.com/vercel/resumable-stream

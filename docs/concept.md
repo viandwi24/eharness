@@ -110,7 +110,9 @@ separate subpaths (ADR-0036).
 | **Projection** | Converting stored `UIMessage`s into the `ModelMessage`s the model sees. |
 | **Boundary** | A message kind that starts the model context (the latest compaction marker). |
 | **Transient** | A data part sent to the client stream but never stored or projected. |
-| **Pending** | A session whose last turn stopped with `tool-pending`: approvals or client tool calls wait for `respond()`. |
+| **Pending** | A session whose last turn stopped with `tool-pending`: approvals or client tool calls wait for `respond()`. `session.pending()` returns the snapshot. |
+| **Attention** | The cross-session view of everything waiting on a person: pending approvals, questions and external waits of a session and its children, listed with `listAttention` and answered with `answerAttention` (`eharness/activity`, `eharness/http`, the client `attention` list). |
+| **Wait** | An external wait: a tool hands work to the outside world and the turn parks (`tool-pending`, `pending.externals[]`) until a result, timeout or cancel arrives. Unlike an approval, a browser cannot answer it; see the external waits guide. |
 | **Approval** | A per-call decision (`approved` / `denied` / `user-approval`) made by policy, risk rules, hooks and grants before a tool runs; every decision is reported to `approval.decided`. |
 | **Risk** | A tool's class in its AI SDK metadata (`read` / `write` / `destructive`) that `approval.risk` maps to an approval status. |
 | **Model catalog** | `models`: context window, max output and prices per model, supplied by the app. |

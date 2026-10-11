@@ -1,6 +1,6 @@
 # ADR-0023: Structured final output per turn (tool and native modes)
 
-Status: **Proposed** · Date: 2026-10-05
+Status: **Accepted** · Date: 2026-10-05
 
 ## Context
 

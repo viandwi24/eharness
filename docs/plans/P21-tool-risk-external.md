@@ -2,7 +2,7 @@
 
 Status: done · Owner: agent · Branch: `main` (direct commits; P21–P29 ship together as **0.5.0**)
 
-Source: 0.5 prior-art analysis item **#7** (maintainer-only, `docs/tmp/`, not committed). Verdict:
+Source: 0.5 prior-art analysis item **#7** (internal notes). Verdict:
 GENERIC-core for the metadata; the routing is a policy the application injects.
 
 Process (0.5.0): develop the whole checklist first, then run **one** gate at the end of the phase

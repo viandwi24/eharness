@@ -1,6 +1,6 @@
 # ADR-0022: Memory on FileSystem; provider memory tools are app-supplied
 
-Status: **Proposed** · Date: 2026-10-05
+Status: **Accepted** · Date: 2026-10-05
 
 ## Context
 

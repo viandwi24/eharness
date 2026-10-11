@@ -1,4 +1,4 @@
-# P20 — Production-patterns guide, docs and 0.4.0 handoff
+# P20 — Production-patterns guide, docs and 0.4.0 release notes
 
 Status: done · Owner: agent · Branch: `main` (direct commits; P13–P20 ship together as **0.4.0**)
 
@@ -27,13 +27,12 @@ that states the final API of U1–U9 and every difference from their proposal.
   (`hideSkillsRoot`, prefixes, `toolOutputs`)
 - `docs/specs/12-models-and-cost.md` §4 (budgets are per turn / per session)
 - `docs/guides/*` (all), `README.md`, `docs/guides/reference.md`, `docs/plans/roadmap.md`
-- the maintainer's local proposal notes (maintainer-only proposal notes; **read only, never
-  commit or edit it**)
+- the 0.4 proposal (internal notes, not in the repository)
 
 ## Owns
 
 `docs/guides/**`, `README.md`, `docs/plans/roadmap.md`, `docs/README.md`,
-the 0.4.0 results notes (kept outside the repository) (new folder + file), `examples/` additions for the guide, the
+the 0.4.0 results notes (internal) (new folder + file), `examples/` additions for the guide, the
 board. No `src/` changes (if a doc gap reveals a bug, file it under "Requests to other phases" of
 the owning phase or as a follow-up).
 
@@ -109,7 +108,7 @@ Design-level risks from the audit — each with the risk, the default, and what 
 - [x] `docs/plans/roadmap.md`: strike done items (Memory plugin, Prune stage, Output guardrails —
       schema part, Compaction thrash detection, Cross-process queue / wake) with "Done in 0.4.0";
       keep the out-of-scope items added during planning; update the "Shipped" line.
-- [x] the 0.4.0 results notes (kept outside the repository) (English): one section per U1–U9 with status,
+- [x] the 0.4.0 results notes (internal) (English): one section per U1–U9 with status,
       version (`0.4.0`), final API (signatures), and **differences from the proposal**, at least:
       - U1: flush recorded as model-invisible `eh.flush` audit kind (proposal: no trace); usage
         source `compaction-flush`; approvals auto-denied; `trigger` also `'turn'`.
@@ -136,9 +135,7 @@ Design-level risks from the audit — each with the risk, the default, and what 
 - [x] Every public symbol added in 0.4.0 appears in `reference.md` and at least one guide. (P18 symbols added after its merge.)
 - [x] Every guide example compiles (`bun run typecheck` covers `examples/`) and every new
       example runs offline in `examples.test.ts`.
-- [x] the 0.4.0 results notes (kept outside the repository) covers U1–U9 and matches the shipped specs. (U6 filled after the P18 merge.)
-- [ ] the maintainer's local proposal notes is neither modified nor committed. (Not modified by P20; but it
-      **is tracked** on `main` since the P14 merge `a4e300a` — maintainer decision, see Open questions.)
+- [x] the 0.4.0 results notes (internal) covers U1–U9 and matches the shipped specs. (U6 filled after the P18 merge.)
 - [x] lint, typecheck, test green (docs-only phase: no changeset needed unless `src/` changed).
 
 ## Changeset
@@ -162,9 +159,6 @@ Notes from implementing P20:
   `ctx.turn.input` is `undefined` there even for `send(text)`. Verified with a scripted turn. The
   guide documents it and uses `step.prepare` for retrieval. Closed in the final 0.4.0 review: the
   TSDoc of `TurnInfo.input`, spec 01 §4 and spec 02 §2 now state it.
-- **the maintainer's local proposal notes is tracked** since the P14 merge (`a4e300a`), although the plans say
-  it is maintainer-only and never committed. P20 did not touch it; the maintainer decides whether
-  to untrack it.
 - `examples/next-route.ts`: per-request identity moved from `agent.session(id, { runtime })` to
   `handleChatRequest(…, { runtime })`, and the GET route got the ownership-check comment (security
   section).

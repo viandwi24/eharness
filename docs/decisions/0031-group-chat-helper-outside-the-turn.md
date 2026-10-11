@@ -1,6 +1,6 @@
 # ADR-0031: Group chat as a plugin plus a helper outside the turn
 
-Status: **Proposed** · Date: 2026-10-06 · Builds on: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0011](0011-stored-order-equals-model-order.md)
+Status: **Accepted** · Date: 2026-10-06 · Builds on: [ADR-0008](0008-plugins-adapters-dogfooding.md), [ADR-0011](0011-stored-order-equals-model-order.md)
 
 ## Context
 

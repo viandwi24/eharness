@@ -10,7 +10,7 @@ the application opts in, the core validates and size-caps what arrives, a declar
 shadow a server tool, a call gets no permission a server tool would not get, and an unanswered
 call times out.
 
-Contract: [spec 11 §7.1](../specs/11-interaction.md#71-request-scoped-client-tools-and-page-context) ·
+Contract: [spec 11 §7.1](../specs/11-interaction.md#71-request-scoped-client-tools-and-page-context-050) ·
 decision: [ADR-0028](../decisions/0028-request-scoped-client-tools-and-page-context.md) ·
 runnable: [`examples/client-tools.ts`](../../examples/client-tools.ts),
 [`examples/next-route.ts`](../../examples/next-route.ts).
@@ -32,7 +32,7 @@ export async function POST(req: Request) {
       timeoutMs: 120_000,                     // a call the browser never answers expires
     },
     pageContext: { maxChars: 4_000 },         // default 4 000, all entries together
-  }).toResponse()
+  }).toHttpResponse() // not toResponse(): pre-commit failures keep their HTTP status
 }
 ```
 

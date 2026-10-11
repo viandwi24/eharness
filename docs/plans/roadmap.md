@@ -6,9 +6,13 @@ approvals with `approval.decided`, `eharness/todos`), 0.4.0 (hardening, prune st
 thrash stop, skill versions, pre-compaction flush, cross-process abort, `eharness/memory`, durable
 inbox, structured final output, production-patterns guide), 0.5.0 (external risk and MCP
 annotations, inbox dead-letter, external waits, request-scoped client tools and page context,
-budget ledger, `eharness/guard`, `eharness/group`, `eharness/openapi` — released by the next
-version PR).
-Details: `CHANGELOG.md`.
+budget ledger, `eharness/guard`, `eharness/group`, `eharness/openapi`), 0.6.0 (`wrapPlugin`,
+approvals combined with tools without `execute`), 0.7.0 (`eharness/permissions`, `eharness/shell`,
+`eharness/subagent`, `eharness/ask`, `eharness/web`, `eharness/filesystem/node`, fork, binary
+files, glob and multi-edit, `session.stats()` of the whole request, security defaults for MCP
+results and kind messages). **0.8.0 is next** (see [0.8.0](#080)): the changesets are written and
+the version PR releases them.
+Details: `CHANGELOG.md` and `docs/guides/upgrading.md`.
 
 ## Open items
 
@@ -25,7 +29,7 @@ before implementation.
 | **AI SDK `Agent` interface adapter** | `agent.asAgent(session)` implementing `agent-v1` so `createAgentUIStream` and `@ai-sdk/tui` work directly. |
 | **HarnessAgent adapter** | Publish `@ai-sdk/harness`-compatible adapter so an eharness agent can run behind `HarnessAgent`. |
 | ~~Binary files~~ in `FileSystem` | Done in P31 (`readBytes` / `writeBytes`, `FileMeta.binary`, media outputs; spec 08 §12). |
-| **Cross-process resumable streams** | Turn buffer adapter (Redis etc.) for `attach()` across instances. |
+| ~~Cross-process resumable streams~~ | Done in 0.8.0 (`StreamLogAdapter`, `storage.streams`, `attachRemote()`, `handleResumeRequest()`; spec 04 §6.2, ADR-0039). |
 | **Durable execution** | Suspend/resume a turn across processes (continuation state without secrets), compatible with Workflow DevKit. **Partly done in 0.5.0:** a turn can park at a tool boundary (`externalTool()`, `resolveWait()`, durable timeouts; spec 11 §4.2, ADR-0027) and resume in any instance. Remaining: replaying a turn's earlier steps after a crash and a Workflow DevKit adapter. |
 | ~~Memory plugin~~ | Done in 0.4.0 (`eharness/memory`, spec 14; provider-defined tools are app-supplied via the `tool` option). |
 | **Package split** | Only if an extension needs its own release cadence (ADR-0007). |
@@ -36,18 +40,45 @@ before implementation.
 | ~~USD budget~~ | Done in 0.3.0 (spec 12). |
 | **Immediate steer** | Interrupt the current model stream for urgent input instead of waiting for the step boundary. |
 | ~~Cross-process queue / wake~~ | Done in 0.4.0 (durable `InboxAdapter`: queue, steer, wake, collect, abort across instances; spec 05 §12, ADR-0024). |
-| **Continuation replay on resume** | `attach()` of a `respond()` continuation replays the stored prefix so `useChat` resume needs no re-fetch. |
-| **Partial approval answers** | `respond()` with a subset of pending approvals. |
+| ~~Continuation replay on resume~~ | Done in 0.8.0 (the resumed stream starts with a replay of the continued message; spec 04 §6.3, ADR-0045). |
+| ~~Partial approval answers~~ | Done in 0.8.0 (`respond()` records a subset; the last answer continues; spec 11, ADR-0044). |
 | ~~Rule-based grants~~ | Done in P31 via `eharness/permissions` (`Tool(spec)` rules such as `Bash(git *)`, spec 18); the core `remember` stays per tool. |
 | ~~Approval classifier guard~~ | Done in 0.5.0 (`eharness/guard`, spec 15, ADR-0030). |
 | **Goal plugin** | Outer loop: re-prompt after a turn until a goal is met (judge model or `update_goal` tool), paused after empty turns and by budgets. |
 | ~~Compaction thrash detection~~ | Done in 0.4.0 (`compaction.thrash`, stop `'context-thrash'`). |
 | **Shared task lists** | Todos shared across subagents/sessions (`listId`, owners, dependencies). |
 
+## 0.8.0
+
+P33–P38 (`docs/plans/README.md`), driven by the team example (`examples/team`) and a pre-release
+review. Six new Draft subpaths and many session APIs; nothing is removed (upgrade guide:
+`docs/guides/upgrading.md`).
+
+| Item | Shipped as |
+|---|---|
+| Providers | `eharness/providers`: definitions, profiles, `createProviderManager()`, catalogs (models.dev, OpenRouter), secret vault; spec 23, ADR-0048, 0052, 0053 |
+| Connectors | `eharness/connectors`: definitions, connections, per-agent enablement, server-driven setup flows, OAuth, activation; spec 24, ADR-0049-0053 |
+| Activity and attention | `eharness/activity`: `activity({ store })`, `ActivityStore`, SSE helpers, `listAttention` / `answerAttention`; spec 25, ADR-0058 |
+| HTTP and client | `eharness/http` (`createHarnessHttp`), `eharness/client`, `eharness/client/react`; specs 26-27, ADR-0059 |
+| Multi-instance and restarts | stream log and `attachRemote()`, `handleResumeRequest()`, held wakes, `recovery.instanceId`, `session.recover()`, `reconcileBackgroundChildren`, session invariants and fuzz suite, stale-handle reads (ADR-0039, 0054-0057) |
+| Interaction | partial resolution of approvals, continuation replay on resume, `run.accepted` / `toHttpResponse()`, `enqueue` timers, ids and metadata (ADR-0040, 0043-0045) |
+| Subagents | `agent.peek()`, child identity, `maxChildren`, park-mode messaging, durable background children (ADR-0041, 0042, 0046) |
+| Observability | `model.call` hook and `observeModel`, `openRouterCatalog`, `session.stats().usage` (ADR-0047) |
+| Security hardening | secrets bound to endpoints, case-insensitive deny/ask, dot-glob asks, prefix-scoped shell grants, remote MCP `read` asks, private-host checks, bounded event queues |
+
+### After 0.8.0 (not scheduled)
+
+| Item | Notes |
+|---|---|
+| **Stability pass toward 1.0** | Promote the Draft modules that settled in real use (permissions, subagent, shell, http, client); trim the widest surfaces (`eharness/connectors` exports about 90 names). |
+| **One input verb** | `send({ ifBusy })`, `enqueue({ mode })` and `inject()` overlap; align names before 1.0 (the which-one table in `docs/guides/reference.md` covers the gap meanwhile). |
+| **Split the big files** | `src/subagent/plugin.ts`, `src/session/session.ts`, `src/session/turn.ts` and `src/permissions/engine.ts` into focused modules (no behaviour change). |
+| **Open items above** | The unstruck rows (code mode, `Agent` adapter, durable execution replay, goal plugin, shared task lists, immediate steer). |
+
 ## 0.5.0
 
 P21–P29 (`docs/plans/README.md`), from the 0.5 prior-art analysis. Handoff to the requester:
-the 0.5.0 results notes (kept outside the repository).
+the 0.5.0 results notes (internal).
 
 | Item | Phase | Shipped as |
 |---|---|---|
@@ -87,7 +118,7 @@ P13–P20 (`docs/plans/README.md`): hardening, prune stage, compaction thrash de
 versions, pre-compaction flush, cross-process abort, memory plugin, structured final output,
 durable inbox (cross-process queue / steer / wake / collect), production-patterns guide. The rows
 above that 0.4.0 completes are struck through (P20).
-Handoff to the requester: the 0.4.0 results notes (kept outside the repository).
+Handoff to the requester: the 0.4.0 results notes (internal).
 
 ## Found during the 0.4.0 audit (not scheduled)
 

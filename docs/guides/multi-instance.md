@@ -75,7 +75,8 @@ export async function POST(req: Request) {
     const { inboxId } = await session.enqueue(body.messages.at(-1), { mode: 'steer' })
     return Response.json({ inboxId }, { status: 202 })
   }
-  return handleChatRequest(session, body).toResponse()
+  // toHttpResponse(): a pre-commit failure answers 409 / 400 / 503, not a 200 stream
+  return await handleChatRequest(session, body).toHttpResponse()
 }
 ```
 

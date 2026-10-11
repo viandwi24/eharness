@@ -1,6 +1,6 @@
 # ADR-0027: External waits: park at the tool boundary
 
-Status: **Proposed** · Date: 2026-10-06 · Amends: ADR-0012, ADR-0014
+Status: **Accepted** · Date: 2026-10-06 · Amends: ADR-0012, ADR-0014
 
 ## Context
 
