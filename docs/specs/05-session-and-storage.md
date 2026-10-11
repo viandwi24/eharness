@@ -1407,3 +1407,58 @@ the same as this session's (messages, state, inbox) so it works in every deploym
    plugin copies the file checkpoints of the kept turns, spec 08 §11). A throwing hook is
    `W_HOOK_FAILED`; the fork still succeeds and is returned.
 
+
+## 15. Invariants
+
+The state machine of a session (turns, pending state, inbox, recovery) must keep these properties
+after every operation, in every instance sharing the storage. They are enforced in code where a
+violation can be caught at the source, and checked by `assertSessionInvariants` (internal, used by
+the fuzz test) and `assertStoredSessionInvariants` (`eharness/testing`, for adapters and apps).
+
+| # | Invariant | Where it is enforced |
+|---|---|---|
+| I1 | Every message the core saves is a valid AI SDK `UIMessage` (schema, loose `metadata.eharness`, registered data part schemas, one `data-<kind>` part for kind messages). | `persist()` (every save: turn commit, `persistEachStep`, `respond` continuation, `inject`, recovery, compaction, rewind, flush, notices) |
+| I2 | Message ids are unique and strictly ascending: stored order = model order. | UUIDv7 generator; checked by tests |
+| I3 | Every tool call has exactly one result in the projection, except calls that are pending (ADR-0014); tool call ids are unique across the session. | projection (`Interrupted:` answers); checked by tests |
+| I4 | Pending ids (approval ids, tool call ids, wait ids) are unique and name non-terminal tool parts of the stored pending message. | `planRespond`; checked by tests |
+| I5 | At most one active turn per session; no `activeTurn` while nothing runs (after recovery); a stored `pending` names the newest non-kind message. | lock + compare-and-set commit; respond/turn preparation reloads a stale cache |
+| I6 | `inboxDelivered` is unique and at most 100 long; `rev` is a non-negative integer. | state store |
+
+**Policy for I1 (`debug.invariants`).** A message that fails validation at save time is a bug of the
+core or of a plugin hook (`message.beforeSave`), never of the caller:
+
+- `debug.invariants: true` (default when `NODE_ENV` is `test` or `development`): the save throws
+  `EH_INVALID_MESSAGE` (details `messageId`, `reason`), nothing is stored, the turn ends as a run error.
+- `false` (production default): **repair, don't drop**. The known repairs (`output-denied` approval
+  normalisation, `rawInput`) always run before the check. Anything else is warned
+  (`W_INVALID_MESSAGE`, `details.stage: 'save'`) and the message is **saved as it is**: dropping it
+  would lose the message that may hold the pending state. On load, a message that fails validation
+  but is named by `state.core.pending.messageId` or `state.core.activeTurn.messageId` is kept
+  (`W_INVALID_MESSAGE`, `details.kept: true`) instead of dropped, whatever `onInvalidMessage` says
+  (a `'throw'` policy still throws).
+
+`debug.invariants` also makes the session report an inconsistent state at the end of a turn
+(`W_INVARIANT_VIOLATION`, details list the violated invariants).
+
+**Multi-instance rules found by the fuzz test** (`src/session/fuzz.int.test.ts`):
+
+1. Inbox claims use an owner string unique per agent incarnation (`<instanceId>#<random>`), never the
+   stable `recovery.instanceId` alone: a restarted process would otherwise renew, and so hold
+   forever, the claims of its dead predecessor.
+2. An idle handle whose cache holds unwritten local changes checks the stored `rev` before a turn
+   and takes the stored state when it moved; it also reloads its messages when the stored pending
+   message is not the newest non-kind message of its view (`lastId` cannot see another instance
+   patching an older message).
+3. A queue held by pending approvals is re-checked against the stored state after every inbox pass: when
+   another instance answered them, the queued or waiting send starts (it never waits for an
+   operation of its own process).
+4. Direct sends gated behind the inbox line up behind queued turns (FIFO) instead of re-running the
+   gate step; a drain whose unit keeps failing before its commit point (lock held by another
+   instance) backs off exponentially (20 ms to 2 s) instead of claiming and releasing in a loop.
+
+**Tests.** `src/session/fuzz.int.test.ts` runs seeded random interleavings (send, steer, queue,
+respond approve/deny/partial, client tool answers, inject, wake, abort, compact, regenerate, edit,
+recover, crash and restart of an instance) on two instances sharing storage, inbox and lock, and
+checks the invariants after every step (`FUZZ_SEEDS`, `FUZZ_START`, `FUZZ_ONLY=<seed>` for a single
+seed with its op log). `multiInstanceConformance({ makeStorage })` (`eharness/testing`) runs the
+cross-instance cases against a storage backend; see `docs/engineering/testing.md`.

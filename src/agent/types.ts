@@ -543,6 +543,15 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
   telemetry?: TelemetryOptions
   /** Throw `EH_CONFIG_INVALID` instead of warning on API misuse. Default false. */
   strict?: boolean
+  /**
+   * Session invariants (spec 05 §15). `invariants: true`: a message the core is about to save that
+   * fails AI SDK `UIMessage` validation is a programmer error (`EH_INVALID_MESSAGE`, nothing is
+   * saved), and a turn end that leaves the session state inconsistent is reported as
+   * `W_INVARIANT_VIOLATION`. `false`: the production policy (warn `W_INVALID_MESSAGE`, save anyway;
+   * a message that holds pending state is never dropped). Default: `true` when
+   * `NODE_ENV` is `test` or `development`, else `false`.
+   */
+  debug?: { invariants?: boolean }
   logger?: HarnessLogger
   /** Called for every warning. Default: `console.warn`, deduplicated per code + key. */
   onWarning?: (w: HarnessWarning) => void

@@ -4,6 +4,7 @@ import { uuidv7 } from '../messages/ids.ts'
 import { memoryInbox, memoryMessages, memoryState } from '../storage/memory.ts'
 import { inboxAdapterConformance } from '../testing/inbox-adapter.conformance.ts'
 import { messageAdapterConformance } from '../testing/message-adapter.conformance.ts'
+import { multiInstanceConformance } from '../testing/multi-instance.conformance.ts'
 import { stateAdapterConformance } from '../testing/state-adapter.conformance.ts'
 import { defaultMemoryMessages, defaultMemoryState } from './memory-storage.ts'
 
@@ -171,4 +172,25 @@ describe('inboxAdapterConformance detects broken adapters', () => {
     const race = inboxAdapterConformance(() => broken).find((c) => c.name.includes('exactly once'))
     await expect(race?.run()).rejects.toThrow()
   })
+})
+
+describe('multi-instance conformance (memory adapters)', () => {
+  const makeStorage = () => {
+    const held = new Set<string>()
+    return {
+      messages: memoryMessages(),
+      state: memoryState(),
+      inbox: memoryInbox(),
+      lock: {
+        async acquire(sessionId: string) {
+          if (held.has(sessionId)) throw new Error('locked')
+          held.add(sessionId)
+          return async () => {
+            held.delete(sessionId)
+          }
+        },
+      },
+    }
+  }
+  for (const c of multiInstanceConformance({ makeStorage })) test(c.name, c.run, 20_000)
 })

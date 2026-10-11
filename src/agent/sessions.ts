@@ -40,6 +40,12 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
   const owner =
     (internals.config.recovery === false ? undefined : internals.config.recovery?.instanceId) ??
     uuidv7()
+  /**
+   * Owner string of inbox claims: unique per incarnation of this agent, unlike `owner`, which may
+   * be a stable instance id. A restarted process must not renew (and so hold forever) the claims
+   * its dead predecessor left behind (they expire after `claimTtlMs`; found by the fuzz test).
+   */
+  const claimOwner = `${owner}#${uuidv7()}`
   let defaults: { messages: MessageAdapter; state: StateAdapter } | undefined
   const sessions = new Map<string, SessionHandle>()
   /** Closes of handles that were replaced in `sessions` while closing (awaited by `close()`). */
@@ -106,6 +112,7 @@ export function createAgentSessions(internals: AgentInternals): AgentSessions {
       const handle: SessionHandle = createSessionHandle({
         internals,
         owner,
+        claimOwner,
         id,
         options: { ...options },
         openSession: (sessionId, sessionOptions) => agent.session(sessionId, sessionOptions),

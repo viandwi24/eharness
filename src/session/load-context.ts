@@ -113,7 +113,17 @@ export async function loadContext(args: {
   const newestRaw = raw.at(-1)?.id
   const newestId = typeof newestRaw === 'string' ? newestRaw : undefined
 
-  const { messages, warnings } = await validateStoredMessages(raw, registry, args.policy)
+  // messages holding pending state or the active turn are never dropped (spec 03 §7)
+  const protectedIds = new Set<string>()
+  if (args.core.pending?.messageId !== undefined) protectedIds.add(args.core.pending.messageId)
+  if (args.core.activeTurn?.messageId !== undefined)
+    protectedIds.add(args.core.activeTurn.messageId)
+  const { messages, warnings } = await validateStoredMessages(
+    raw,
+    registry,
+    args.policy,
+    protectedIds,
+  )
   messages.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 
   let boundary: HarnessUIMessage | undefined

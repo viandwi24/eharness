@@ -386,7 +386,10 @@ of type `data-<kind>`; otherwise it is invalid. `metadata.eharness`, when presen
 Policy `SessionOptions.onInvalidMessage` applies per message: `'drop'` (default: skip that message,
 warn `W_INVALID_MESSAGE`), `'keep'` (use the unvalidated copy — only if it is message-shaped, i.e. has a `parts` array;
 otherwise it is dropped with the warning), `'throw'` (`EH_INVALID_MESSAGE`).
-Validation runs on cold loads only (spec 05 §6), never on hot-path turns. The only repair is the
+A message named by `state.core.pending.messageId` or `state.core.activeTurn.messageId` is never
+dropped by the `'drop'` policy: it is kept with `W_INVALID_MESSAGE` (`details.kept: true`) because it
+holds pending state (spec 05 §15). Messages are also validated when the core **saves** them (spec 05
+§15, I1). Cold-load validation runs on cold loads only (spec 05 §6), never on hot-path turns. The only repair is the
 `output-denied` normalisation above (and the `rawInput` one); every other failure follows the policy.
 
 ## 8. Ids

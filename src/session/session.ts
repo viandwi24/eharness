@@ -36,6 +36,7 @@ import { recordOutsideTurn } from '../loop/ledger.ts'
 import { createKindMessage } from '../messages/kinds.ts'
 import { normalizeDeniedApprovals, normalizeRawInput } from '../messages/tool-parts.ts'
 import type { HarnessUIMessage, TurnResult } from '../messages/types.ts'
+import { checkMessageShape } from '../messages/validate.ts'
 import { costOf } from '../models/cost.ts'
 import type { HarnessContext, HarnessLogger } from '../plugin/types.ts'
 import { describeTools, instructionBlockStats, toolSourceStats } from '../registry/inventory.ts'
@@ -68,9 +69,10 @@ import {
 import { toSerialized } from './inbox/serialize.ts'
 import { type NormalizedInput, normalizeInput, validateEnqueueMetadata } from './input.ts'
 import { kindText } from './interaction/inbox.ts'
-import { RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
+import { pendingSignature, RESPOND_IGNORE_UNKNOWN } from './interaction/pending.ts'
 import { createDeferredRun, type DeferredRun, type QueuedTurn } from './interaction/queue.ts'
 import { createWaitOps } from './interaction/resolve.ts'
+import { checkSessionInvariants } from './invariants.ts'
 import { hiddenByRewind, loadContext, rewindsIn } from './load-context.ts'
 import { runsElsewhereHere } from './local-turns.ts'
 import { recoverInterruptedTurn } from './recover.ts'
@@ -128,6 +130,8 @@ function storageError(what: string, cause: unknown): HarnessError {
 export function createSessionHandle(args: {
   internals: AgentInternals
   owner: string
+  /** Owner string of inbox claims (unique per agent incarnation). */
+  claimOwner: string
   id: string
   options: SessionOptions
   /** Open another session of the agent (`agent.session`), for `fork()`. */
@@ -166,6 +170,7 @@ export function createSessionHandle(args: {
     state: createStateStore(args.state, id),
     ...(args.streams === undefined ? {} : { streams: args.streams }),
     owner: args.owner,
+    claimOwner: args.claimOwner,
     log,
     get signal() {
       return sessionController.signal
@@ -541,6 +546,35 @@ export function createSessionHandle(args: {
     }
   }
 
+  const debugInvariants =
+    config.debug?.invariants ??
+    ['test', 'development'].includes(
+      (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env
+        ?.NODE_ENV ?? '',
+    )
+
+  /** `debug.invariants`: report an inconsistent session at the end of a turn (spec 05 §15). */
+  async function reportInvariants(): Promise<void> {
+    try {
+      if (rt.view === undefined || rt.closed) return
+      const problems = await checkSessionInvariants(rt.state.snapshot(), rt.view, {
+        registry: internals.messages,
+        skipSchema: true,
+      })
+      if (problems.length === 0) return
+      rt.warn(
+        {
+          code: 'W_INVARIANT_VIOLATION',
+          message: `Session ${id} violates invariants after a turn: ${problems.join('; ')}`,
+          details: { sessionId: id, problems },
+        },
+        problems.join('|'),
+      )
+    } catch {
+      // a failing check never affects the session
+    }
+  }
+
   async function persist(messages: HarnessUIMessage[]): Promise<HarnessUIMessage[]> {
     const out: HarnessUIMessage[] = []
     for (const original of messages) {
@@ -559,6 +593,26 @@ export function createSessionHandle(args: {
       }
       // cached token estimate of the projection (spec 06 §2)
       out.push(await compaction.annotate(normalizeDeniedApprovals(message)))
+    }
+    for (const message of out) {
+      const problem = await checkMessageShape(message, internals.messages)
+      if (problem === undefined) continue
+      if (debugInvariants) {
+        throw new HarnessError(
+          'EH_INVALID_MESSAGE',
+          `The core is about to save an invalid message ${message.id}: ${problem}`,
+          { details: { messageId: message.id, reason: problem } },
+        )
+      }
+      // production: never drop a message (it may hold pending state); report and save it
+      rt.warn(
+        {
+          code: 'W_INVALID_MESSAGE',
+          message: `Message ${message.id} fails UIMessage validation and was saved as is: ${problem}`,
+          details: { messageId: message.id, reason: problem, stage: 'save' },
+        },
+        message.id,
+      )
     }
     try {
       await rt.messages.save(id, out)
@@ -655,6 +709,7 @@ export function createSessionHandle(args: {
     compaction,
     onTurnEnd() {
       current = undefined
+      if (debugInvariants) void reportInvariants()
       waits.arm()
       startNext()
       checkCollect()
@@ -795,8 +850,12 @@ export function createSessionHandle(args: {
       } catch {}
       gating = false
       if (rt.closed || gated.length === 0) return
-      if (rt.running || queue.length > 0) {
-        gateStep()
+      if (rt.running) return // the turn end calls gateStep again
+      if (queue.length > 0) {
+        // queued turns are older: the direct sends line up behind them (FIFO). The queue may be
+        // held by pending approvals; re-running this step would spin forever (fuzz seed 38).
+        queue.push(...gated.splice(0))
+        startNext()
         return
       }
       // a direct send starts like an idle `send()` does: the turn reloads the state, so a stale
@@ -814,9 +873,9 @@ export function createSessionHandle(args: {
    * queue), and a waiting `send()` at the head whose call already saw that pending state (it then
    * behaves as a new `send()`). Nothing else overtakes: the queue is FIFO.
    */
-  function startNext(): void {
+  function startNext(ignorePending = false): void {
     if (rt.closed || rt.running || queue.length === 0) return
-    const pending = rt.state.core().pending
+    const pending = ignorePending ? undefined : rt.state.core().pending
     // FIFO: only the head may start, except a waiting respond() (it resolves what holds the queue)
     const head = queue[0] as QueuedTurn
     const index =
@@ -830,6 +889,37 @@ export function createSessionHandle(args: {
     const [next] = queue.splice(index, 1)
     if (next === undefined) return
     launch(next)
+  }
+
+  /**
+   * A queue held by pending approvals of this handle's cache: another instance may have answered
+   * them (its `respond()` / `resolveWait()` never reaches this process). Called after every inbox
+   * pass: when the stored pending state no longer is the one holding the queue, start it (the
+   * turn reloads state and messages at its commit point, like a gated send). Without this a
+   * queued or waiting send would wait for an operation of its own process forever (fuzz seed 51).
+   */
+  let revalidating = false
+  async function releaseHeldQueue(): Promise<void> {
+    if (revalidating || rt.closed || rt.running || queue.length === 0) return
+    const held = rt.state.core().pending
+    if (held === undefined) return startNext()
+    revalidating = true
+    try {
+      const stored = await rt.state.peek()
+      if (rt.closed || rt.running) return
+      const now = stored?.core?.pending
+      if (now === undefined) return startNext(true)
+      // still held, but by another wait (another instance continued the message or ran a later
+      // turn): refresh the cache so the next operation sees it
+      if (pendingSignature(now) !== pendingSignature(held) && !rt.state.dirty) {
+        await rt.state.load()
+        rt.view = undefined
+      }
+    } catch {
+      // storage trouble: try again after the next inbox pass
+    } finally {
+      revalidating = false
+    }
   }
 
   /** Start a queued turn now (the caller checked that the session is free). */
@@ -2293,7 +2383,10 @@ export function createSessionHandle(args: {
             dropQueue(false)
             current?.abort(reason ?? 'aborted')
           },
-          settled: () => checkIdle(),
+          settled: () => {
+            checkIdle()
+            void releaseHeldQueue()
+          },
         })
   rt.inject = (kind, data, options) => session.inject(kind as never, data as never, options)
   touch()

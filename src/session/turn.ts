@@ -82,8 +82,10 @@ import {
   clientToolEntry,
   patchForNewInput,
   patchForRespond,
+  pendingSignature,
   planRespond,
   type RespondPlan,
+  viewHoldsPending,
 } from './interaction/pending.ts'
 import { createRewind, type RewindTarget, resolveRewindTarget } from './interaction/rewind.ts'
 import {
@@ -743,16 +745,42 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
 
     // 2. load context / validate the hot cache; respond() re-reads the state (freshest pending)
     await host.ensureContext()
+    if (rt.state.dirty) {
+      // unwritten local changes (usually healed pointers) on top of a state another instance has
+      // written since: they cannot be merged and would keep this handle blind to the foreign
+      // pending state / active turn forever (a respond() answering "nothing is waiting"). Take the
+      // stored state; the heals run again on the reloaded messages (fuzz seed 99).
+      const stored = await rt.state.peek()
+      if ((stored?.rev ?? 0) !== rt.state.snapshot().rev) {
+        await rt.state.load()
+        rt.view = undefined
+        await host.ensureContext()
+      }
+    }
     if (op.kind === 'respond' && !rt.state.dirty) await rt.state.load()
     else if (rt.state.core().pending !== undefined && !rt.state.dirty) {
       // the cache says "pending": another instance may have resolved it meanwhile (external
       // waits, spec 11 §4.2) — and patched the pending message, which keeps its id, so the
       // `lastId` check above cannot see it: reload the state, and the messages when it changed
-      const before = rt.state.core().pending?.messageId
+      const before = pendingSignature(rt.state.core().pending)
       await rt.state.load()
-      if (rt.state.core().pending?.messageId !== before) {
+      if (pendingSignature(rt.state.core().pending) !== before) {
         rt.view = undefined
         await host.ensureContext()
+      }
+    }
+    // the cache is consistent with the state it was validated against: the message the stored
+    // pending state names must be the newest non-kind message of the view, with all its pending
+    // calls. The `lastId` check cannot see another instance patching an older message (a pending
+    // message continued with new calls, a turn of another instance saved while this one stored a
+    // newer event): reload the messages (fuzz seeds 115, 360).
+    {
+      const held = rt.state.core().pending
+      if (held !== undefined && rt.view !== undefined && !rt.state.dirty) {
+        if (!viewHoldsPending(rt.view, held)) {
+          rt.view = undefined
+          await host.ensureContext()
+        }
       }
     }
     // hooks of the preparation may change ctx.state: discarded if the turn ends before committing

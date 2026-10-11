@@ -55,7 +55,56 @@ describe('postgres MessageAdapter', () => {
 
 Suites: `messageAdapterConformance`, `stateAdapterConformance`, `fileSystemConformance`,
 `skillSourceConformance`, `idGeneratorConformance`, `inboxAdapterConformance` (0.4.0),
-`budgetLedgerConformance` (0.5.0; the factory receives the case's static limits), `profileStoreConformance` (`eharness/providers` stores), `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`, `flowStoreConformance` (`eharness/connectors` stores). `scriptedProvider` is a provider definition with scripted models.
+`multiInstanceConformance` (a whole storage backend shared by several agent instances, see below), `budgetLedgerConformance` (0.5.0; the factory receives the case's static limits), `profileStoreConformance` (`eharness/providers` stores), `connectionStoreConformance`, `credentialStoreConformance`, `enablementStoreConformance`, `flowStoreConformance` (`eharness/connectors` stores). `scriptedProvider` is a provider definition with scripted models.
+
+### Multi-instance conformance
+
+`multiInstanceConformance({ makeStorage, connect?, cleanup?, latencyMs? })` runs real agents (a
+scripted model, no network) on **one** storage shared by several instances. `makeStorage` returns a
+fresh `{ messages, state, inbox?, lock? }` per case; `connect(shared, index)` may return the view of
+instance `index` (a new database connection); `cleanup` drops the schema. Cases that need an inbox
+or a lock are skipped when the storage has none. The memory adapters run it in
+`src/session/memory-storage.test.ts`; an application adapter (Postgres, MySQL, Redis) runs it
+exactly like the adapter suites:
+
+```ts
+import { multiInstanceConformance } from 'eharness/testing'
+
+describe('postgres storage, several instances', () => {
+  const suite = multiInstanceConformance({
+    makeStorage: async () => ({
+      messages: postgresMessages(pool),
+      state: postgresState(pool),
+      inbox: postgresInbox(pool),
+      lock: postgresLock(pool),
+    }),
+    latencyMs: 5,
+  })
+  for (const c of suite) test(c.name, c.run, 30_000)
+})
+```
+
+Cases: B reads the turn A ran; an approval A asked is answered by B and the tool runs once (a
+second answer is rejected); two partial answers from two instances; a steer and a queued input
+enqueued by B reach the running turn of A and run once; a wake held behind pending approvals runs
+once after B answers; a `send(…, { ifBusy: 'wait' })` held in B starts after A answers; B recovers
+the turn of a crashed A without re-executing the tool; concurrent sends from two instances neither
+overlap nor duplicate. Every case ends with `assertStoredSessionInvariants` (also exported, spec 05
+§15) on the stored session.
+
+### Fuzz test
+
+`src/session/fuzz.int.test.ts` is a deterministic property test (seeded PRNG, no dependencies):
+per seed two instances share in-memory messages, state, inbox and lock; a random script of 10 to 31
+operations (see spec 05 §15) runs against a scripted model whose steps are random (text, approval
+tool, slow tool, client tool, provider error). After every operation the invariants must hold, no
+turn operation may throw anything but `EH_SESSION_BUSY` / `EH_SESSION_CLOSED`, `run.result` never
+rejects, at most one turn runs at a time, and a runaway storage loop is reported. At the end every
+leftover is driven to completion (answer pending, recover) and the quiescent invariants are
+checked. A failure prints the seed, the stored messages and the op log; reproduce with
+`FUZZ_ONLY=<seed> bun test src/session/fuzz.int.test.ts`. `FUZZ_SEEDS` (default 250, about 25 s)
+and `FUZZ_START` widen the search; run a few thousand seeds before a release that touches the
+session runtime.
 
 Minimum cases for `budgetLedgerConformance`: unknown scopes have no limit; reserve up to the limit
 and refuse beyond it (refused scope, limit, spent + reserved); a used-up scope refuses a zero

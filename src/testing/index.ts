@@ -38,6 +38,11 @@ export {
   messageAdapterConformance,
 } from './message-adapter.conformance.ts'
 export {
+  type MultiInstanceConformanceOptions,
+  type MultiInstanceStorage,
+  multiInstanceConformance,
+} from './multi-instance.conformance.ts'
+export {
   type ProfileStoreConformanceOptions,
   type ProfileStoreUnderTest,
   profileStoreConformance,
@@ -59,6 +64,10 @@ export {
   type ScriptedProviderOptions,
   scriptedProvider,
 } from './scripted-provider.ts'
+export {
+  assertStoredSessionInvariants,
+  type StoredSessionInvariantOptions,
+} from './session-invariants.ts'
 export {
   SKILL_SOURCE_FIXTURE,
   type SkillSourceConformanceOptions,

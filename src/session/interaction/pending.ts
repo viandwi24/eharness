@@ -15,7 +15,7 @@ import {
   NOT_EXECUTED_NEW_INPUT,
   WAIT_CANCELLED_NEW_INPUT,
 } from '../../messages/texts.ts'
-import type { ToolPartLike } from '../../messages/tool-parts.ts'
+import { hasToolResult, isToolPart, type ToolPartLike } from '../../messages/tool-parts.ts'
 import type { HarnessUIMessage, PendingState, WaitResult } from '../../messages/types.ts'
 import { isKnownPending } from './waits.ts'
 
@@ -594,4 +594,40 @@ export function patchForNewInput(
       return undefined
     }),
   )
+}
+
+/**
+ * True when `view` is consistent with the stored `pending`: its newest non-kind message is the
+ * pending message and every pending call is an open tool part of it. A cache that fails this is
+ * stale (another instance answered, or continued the same message with new calls: the message
+ * keeps its id, so `lastId` cannot see it) and must be reloaded.
+ */
+export function viewHoldsPending(
+  view: readonly HarnessUIMessage[],
+  pending: PendingState,
+): boolean {
+  let newest: HarnessUIMessage | undefined
+  for (const message of view) if (kindOf(message) === undefined) newest = message
+  if (newest?.id !== pending.messageId) return false
+  const open = new Set<string>()
+  for (const part of newest.parts as Array<{ type: string }>) {
+    if (isToolPart(part) && !hasToolResult(part)) open.add(part.toolCallId)
+  }
+  const calls = [
+    ...pending.approvals.map((a) => a.toolCallId),
+    ...pending.clientTools.map((c) => c.toolCallId),
+    ...(pending.externals ?? []).map((e) => e.toolCallId),
+  ]
+  return calls.every((id) => open.has(id))
+}
+
+/** Identity of a pending state (message and calls): equal signatures mean the same wait. */
+export function pendingSignature(pending: PendingState | undefined): string {
+  if (pending === undefined) return ''
+  return JSON.stringify([
+    pending.messageId,
+    pending.approvals.map((a) => a.approvalId).sort(),
+    pending.clientTools.map((c) => c.toolCallId).sort(),
+    (pending.externals ?? []).map((e) => e.waitId).sort(),
+  ])
 }

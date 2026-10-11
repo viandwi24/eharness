@@ -83,6 +83,8 @@ export interface SessionRuntime {
   readonly streams?: StreamLogAdapter
   /** Random id of the agent instance (crash recovery owner). */
   readonly owner: string
+  /** Owner string of inbox claims: unique per incarnation of the agent (never a stable id). */
+  readonly claimOwner: string
   readonly log: HarnessLogger
   /** `ctx.signal`: aborts on session close and when a session open fails (then replaced). */
   readonly signal: AbortSignal

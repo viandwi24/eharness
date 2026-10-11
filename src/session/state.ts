@@ -104,6 +104,8 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
   let persistedRev: number | null = null
   /** {@link signature} of the stored snapshot as last read or written by this store. */
   let baseline = signature(empty())
+  /** The snapshot as last read or written by this store: the base of the three-way merge. */
+  let base: SessionStateSnapshot = empty()
   let loaded = false
   let version = 0
   let writtenVersion = 0
@@ -158,6 +160,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
         persistedRev = snapshot.rev
       }
       baseline = signature(snapshot)
+      base = structuredClone(snapshot)
       version = 0
       writtenVersion = 0
       loaded = true
@@ -212,10 +215,11 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
                   if (attempt >= GUARD_RETRIES || !(await mergeForeign())) return false
                   continue
                 }
-                // another writer changed the state: take over what foreign instances may write
-                // (`core.children`, spec 05 §13) and retry; plain `set` as the last resort
+                // another writer changed the state: three-way merge (what this store changed
+                // since it last read wins, everything else is the stored value) and retry; a
+                // blind overwrite would resurrect a stale `pending` / `activeTurn` (fuzz seed 1648)
                 if (attempt < GUARD_RETRIES) {
-                  await mergeChildren()
+                  await mergeThreeWay()
                   continue
                 }
                 await adapter.set(sessionId, next)
@@ -229,6 +233,7 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
           snapshot.rev = next.rev
           persistedRev = next.rev
           baseline = signature(next)
+          base = structuredClone(next)
           writtenVersion = capturedVersion
           lastWriteAt = Date.now()
           return true
@@ -281,16 +286,56 @@ export function createStateStore(adapter: StateAdapter, sessionId: string): Stat
         persistedRev = snapshot.rev
         return true
       }
-      /** A plain (unguarded) write conflicted: re-read the stored rev and children. */
-      const mergeChildren = async (): Promise<void> => {
+      /**
+       * A plain (unguarded) write conflicted: re-read the stored state and merge field by field
+       * against `base`. A field this store changed wins (core fields and plugin keys); a field it
+       * did not change takes the stored value; `pending`, `activeTurn`, `abortRequest` and
+       * `children` are always the stored ones (another instance owns them while this one is idle).
+       */
+      const mergeThreeWay = async (): Promise<void> => {
         const stored = await adapter.get(sessionId)
         if (stored === null) {
           persistedRev = null
           return
         }
-        takeChildren(stored)
+        const theirs = structuredClone(stored)
+        const ownedElsewhere = new Set(['pending', 'activeTurn', 'abortRequest', 'children'])
+        const core = (theirs.core ?? {}) as Record<string, unknown>
+        const ours = snapshot.core as Record<string, unknown>
+        const was = base.core as Record<string, unknown>
+        for (const key of new Set([...Object.keys(ours), ...Object.keys(was)])) {
+          if (ownedElsewhere.has(key) || stable(ours[key]) === stable(was[key])) continue
+          if (ours[key] === undefined) delete core[key]
+          else core[key] = structuredClone(ours[key])
+        }
+        const plugins = (theirs.plugins ?? {}) as Record<string, Record<string, JSONValue>>
+        const names = new Set([...Object.keys(snapshot.plugins), ...Object.keys(base.plugins)])
+        for (const name of names) {
+          const mine = snapshot.plugins[name] ?? {}
+          const old = base.plugins[name] ?? {}
+          for (const key of new Set([...Object.keys(mine), ...Object.keys(old)])) {
+            if (stable(mine[key]) === stable(old[key])) continue
+            if (mine[key] === undefined) {
+              if (plugins[name] !== undefined) delete plugins[name][key]
+              if (plugins[name] !== undefined && Object.keys(plugins[name]).length === 0) {
+                delete plugins[name]
+              }
+            } else {
+              plugins[name] = { ...(plugins[name] ?? {}), [key]: structuredClone(mine[key]) }
+            }
+          }
+        }
+        // in place: callers may hold `core()` across the write
+        const target = snapshot.core as Record<string, unknown>
+        for (const key of Object.keys(target)) delete target[key]
+        Object.assign(target, core)
+        for (const key of Object.keys(snapshot.plugins)) delete snapshot.plugins[key]
+        Object.assign(snapshot.plugins, plugins)
         snapshot.rev = typeof stored.rev === 'number' ? stored.rev : 0
         persistedRev = snapshot.rev
+        // the merged result is what the stored state plus our changes look like; the base is the
+        // stored state, so a retry that conflicts again merges against the newest one
+        base = structuredClone({ ...theirs, rev: snapshot.rev })
       }
       const result = queue.then(run, run)
       queue = result.catch(() => undefined)

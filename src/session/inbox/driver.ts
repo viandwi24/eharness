@@ -219,8 +219,13 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     rt.warn(warning, `inbox:${what}`)
   }
 
+  /** Consecutive failed unit starts (without `inbox.retry`) and the end of the drain's pause. */
+  let failStreak = 0
+  let holdoffUntil = 0
+
   function ack(ids: string[], turnId?: string): Promise<void> {
     if (ids.length === 0) return Promise.resolve()
+    failStreak = 0
     const after = unpark(ids)
     return track(
       (async () => {
@@ -280,8 +285,8 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
     if (ids.length === 0) return
     try {
       // always with `owner`: a stale holder's release must not touch a newer owner's claim
-      if (retry === undefined) await adapter.release(ids, { owner: rt.owner })
-      else await adapter.release(ids, { ...(opts ?? { uncount: true }), owner: rt.owner })
+      if (retry === undefined) await adapter.release(ids, { owner: rt.claimOwner })
+      else await adapter.release(ids, { ...(opts ?? { uncount: true }), owner: rt.claimOwner })
     } catch (error) {
       warn('release', error) // claimable again once the claim expires
     }
@@ -290,7 +295,15 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
 
   /** Release items after a failed attempt: backoff from their attempts, `lastError`. */
   async function releaseFailed(ids: string[], error: unknown): Promise<void> {
-    if (retry === undefined) return releaseNow(ids)
+    if (retry === undefined) {
+      // 0.4 behaviour: released at once (unlimited redelivery). This drain pauses itself with a
+      // growing holdoff, or a turn that keeps failing before its commit point (lock held by
+      // another instance) would claim, fail and release in a hot loop (fuzz seed 321).
+      failStreak++
+      holdoffUntil = Date.now() + Math.min(2_000, 20 * 2 ** Math.min(failStreak, 7))
+      wakeAt(holdoffUntil)
+      return releaseNow(ids)
+    }
     const attempts = Math.max(1, ...items(ids).map((i) => i.attempts))
     const delayMs = backoffDelay(attempts, retry.backoff)
     await releaseNow(ids, { delayMs, lastError: failureText(error) })
@@ -691,6 +704,10 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
   async function drainOnce(): Promise<void> {
     while (inflight.size > 0) await Promise.all([...inflight])
     if (closed) return
+    if (Date.now() < holdoffUntil) {
+      wakeAt(holdoffUntil)
+      return
+    }
     let turn = host.current()
     if (turn === undefined) {
       if (!host.free()) return // a turn is starting or compact() runs: drained when it ends
@@ -703,7 +720,7 @@ export function createInboxDrain(host: DrainHost): InboxDrain {
         foreignTurn = undefined
       }
     }
-    const items = await adapter.claim(sessionId, rt.owner, { claimTtlMs: host.claimTtlMs })
+    const items = await adapter.claim(sessionId, rt.claimOwner, { claimTtlMs: host.claimTtlMs })
     if (items.length === 0) return
     items.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
     for (const item of items) if (!held.has(item.id)) claimed.set(item.id, item)

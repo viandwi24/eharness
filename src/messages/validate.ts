@@ -74,6 +74,7 @@ export async function validateStoredMessages(
   messages: readonly unknown[],
   registry: MessageRegistry,
   policy: InvalidMessagePolicy = 'drop',
+  protectedIds: ReadonlySet<string> = new Set(),
 ): Promise<ValidateStoredMessagesResult> {
   const result: HarnessUIMessage[] = []
   const warnings: HarnessWarning[] = []
@@ -181,8 +182,20 @@ export async function validateStoredMessages(
         },
       )
     }
-    // 'keep' uses the unvalidated copy, but only if it is structurally a message at all
-    if (policy === 'keep' && Array.isArray((copy as { parts?: unknown } | null)?.parts)) {
+    // 'keep' uses the unvalidated copy, but only if it is structurally a message at all. A message
+    // that holds pending state (or the active turn) is never dropped: "repair, don't drop"
+    const holdsState = typeof messageId === 'string' && protectedIds.has(messageId)
+    if (
+      (policy === 'keep' || holdsState) &&
+      Array.isArray((copy as { parts?: unknown } | null)?.parts)
+    ) {
+      if (holdsState && policy !== 'keep') {
+        warnings.push({
+          code: 'W_INVALID_MESSAGE',
+          message: `Stored message ${String(messageId)} failed validation but holds pending state; it was kept unvalidated: ${reason}`,
+          details: { messageId, reason, kept: true },
+        })
+      }
       result.push(copy as HarnessUIMessage)
       return
     }
@@ -191,5 +204,49 @@ export async function validateStoredMessages(
       message: `Stored message ${String(messageId)} failed validation and was dropped: ${reason}`,
       details: { messageId, reason },
     })
+  }
+}
+
+/**
+ * Check one message about to be saved (spec 05 §3, invariant I1): AI SDK `UIMessage` schema with
+ * the loose harness metadata schema and the registry's data schemas, plus the kind shape rule.
+ * Unregistered `data-*` parts are not checked (they are ignored on load). Returns the problem, or
+ * `undefined` when the message is valid. Never throws.
+ */
+export async function checkMessageShape(
+  message: unknown,
+  registry: MessageRegistry,
+): Promise<string | undefined> {
+  let copy: HarnessUIMessage
+  try {
+    copy = structuredClone(message) as HarnessUIMessage
+  } catch (error) {
+    return `not cloneable: ${describe(error)}`
+  }
+  if (typeof copy !== 'object' || copy === null || !Array.isArray(copy.parts)) {
+    return 'not a UIMessage (missing parts)'
+  }
+  const kind = kindOf(copy)
+  if (kind !== undefined) {
+    if (registry.kind(kind) === undefined) return `kind '${kind}' is not registered`
+    if (copy.parts.length !== 1 || copy.parts[0]?.type !== `data-${kind}`) {
+      return `kind message '${kind}' must have exactly one part of type 'data-${kind}'`
+    }
+  }
+  copy.parts = copy.parts.filter((part) => {
+    const type = (part as { type?: unknown } | null)?.type
+    return (
+      typeof type !== 'string' || !type.startsWith('data-') || registry.dataPart(type) !== undefined
+    )
+  })
+  try {
+    const validated = await safeValidateUIMessages<HarnessUIMessage>({
+      messages: [copy],
+      metadataSchema,
+      dataSchemas: registry.dataSchemas(),
+    })
+    return validated.success ? undefined : describe(validated.error)
+  } catch (error) {
+    return describe(error)
   }
 }

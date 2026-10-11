@@ -96,7 +96,8 @@ export interface HarnessWarning { code: WarningCode; message: string; details?: 
 | `W_SHADOWED` | dynamic tool/skill name hidden by an earlier one |
 | `W_TOOL_SOURCE_FAILED` | a tool source `list()`/connect failed |
 | `W_MCP_DRIFT` | MCP tool definition changed; tool excluded |
-| `W_INVALID_MESSAGE` | stored message failed validation and was dropped |
+| `W_INVALID_MESSAGE` | a stored message failed validation and was dropped (`details.kept: true`: it holds pending state and was kept), or (`details.stage: 'save'`) the core saved a message that fails validation as it is (spec 05 §15) |
+| `W_INVARIANT_VIOLATION` | `debug.invariants`: a session invariant does not hold at the end of a turn (spec 05 §15) |
 | `W_REPAIRED_MESSAGE` | a stored message had a known inconsistency (an `output-denied` tool part with `approval.approved: true`) and was repaired in memory instead of dropped |
 | `W_INVALID_SKILL` | skill metadata invalid; skipped |
 | `W_SKILL_SOURCE_FAILED` | a skill source `list()` failed (retried next turn), or its `search()` / `locate()` failed (core matcher / no location used) |
