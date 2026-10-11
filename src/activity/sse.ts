@@ -32,7 +32,10 @@ export interface ActivityStreamOptions {
   bootId?: string
   /** Store poll interval in ms. Default 500. */
   pollMs?: number
-  /** A comment frame after this many quiet ms. Default 15 000. */
+  /**
+   * A comment frame after this many quiet ms. Default 8 000: below the 10 s idle timeout of the
+   * Bun HTTP server and of common proxies, which otherwise close a quiet stream.
+   */
   keepAliveMs?: number
   /** Reconnect delay hint (`retry:` field) in ms. Default 3000. */
   retryMs?: number
@@ -63,7 +66,7 @@ const sleep = (ms: number, signal: AbortSignal): Promise<void> =>
 export function activityStream(options: ActivityStreamOptions): ReadableStream<Uint8Array> {
   const { store } = options
   const pollMs = options.pollMs ?? 500
-  const keepAliveMs = options.keepAliveMs ?? 15_000
+  const keepAliveMs = options.keepAliveMs ?? 8_000
   const batch = options.batch ?? 200
   const internal = new AbortController()
   const onOuterAbort = (): void => internal.abort()

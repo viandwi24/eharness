@@ -94,7 +94,7 @@ retention rule for adapters that keep records themselves. Database adapters are 
 Web APIs only (`ReadableStream`, `Request`, `Response`).
 
 - `encodeActivityEvent(record)`: `id: <seq>\nevent: <type>\ndata: <record JSON>\n\n`.
-- `activityStream({ store, after?, filter?, bootId?, pollMs = 500, keepAliveMs = 15000, retryMs = 3000, batch = 200, signal?, onError? })`
+- `activityStream({ store, after?, filter?, bootId?, pollMs = 500, keepAliveMs = 8000, retryMs = 3000, batch = 200, signal?, onError? })`
   → `ReadableStream<Uint8Array>`. Frames:
   1. At once, before the first store read: `retry: <ms>`, a `: connected` comment and, with
      `bootId`, `event: boot` with `{"boot": "<id>"}` (a changed id tells the client the server restarted).
@@ -102,7 +102,8 @@ Web APIs only (`ReadableStream`, `Request`, `Response`).
      `event: resync` with `{"seq": <the mark, or the head>}`, then the stream continues from there:
      the client refetches its state. `after === 0` never resyncs.
   3. Records after the cursor, in `seq` order (`filter` hides some; the cursor still advances).
-  4. `: keep-alive` after `keepAliveMs` of silence.
+  4. `: keep-alive` after `keepAliveMs` of silence. The default stays below the 10 s idle timeout of
+     `Bun.serve` and of common proxies, which close a quiet connection.
   Without `after` the stream starts at the current head (new events only). It ends on `signal` abort,
   on `cancel()` and on a store error (`onError`).
 - `handleActivityStream(request, options)`: `Response` (`text/event-stream`, `no-cache, no-transform`,

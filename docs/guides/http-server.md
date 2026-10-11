@@ -46,8 +46,15 @@ app.all('/api/*', (c) => http.fetch(c.req.raw)) // createHarnessHttp(agent, { ba
 Bun:
 
 ```ts
-Bun.serve({ port: 3000, fetch: http.fetch })
+// idleTimeout: 0. Bun closes a connection after 10 s without bytes by default; a chat stream is
+// silent while a long tool runs, and that would cut it off.
+Bun.serve({ port: 3000, idleTimeout: 0, fetch: http.fetch })
 ```
+
+The activity stream sends a keep-alive comment every 8 s by default (`activity.keepAliveMs`), which
+keeps it under that limit and under the idle timeouts of most proxies. Chat streams have no
+keep-alive: raise the idle timeout of every hop (Bun, load balancer, reverse proxy) above your
+longest silent tool call.
 
 Node (Express, `http`, Fastify): convert the incoming request to a `Request` with a **streamed**
 body (do not buffer it; the module enforces `maxBodyBytes` itself), call `http.fetch`, and pipe the
