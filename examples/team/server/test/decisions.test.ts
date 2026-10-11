@@ -347,6 +347,7 @@ describe('proposals', () => {
       researcher: [
         call('propose_plan', {
           title: 'Weekly review',
+          agent: 'researcher',
           name: 'Weekly review',
           brief: 'Review the library.',
           authority: { read: ['/library/**'] },
@@ -354,6 +355,7 @@ describe('proposals', () => {
         }),
         call('propose_plan', {
           title: 'Other',
+          agent: 'researcher',
           name: 'Other',
           brief: 'Nope.',
         }),
@@ -392,7 +394,10 @@ describe('proposals', () => {
 
   test('an invalid edit is refused before anything is decided', async () => {
     const { app } = fresh({
-      researcher: [call('propose_plan', { title: 'T', name: 'N', brief: 'B' }), { text: 'ok' }],
+      researcher: [
+        call('propose_plan', { title: 'T', agent: 'researcher', name: 'N', brief: 'B' }),
+        { text: 'ok' },
+      ],
     })
     await (
       await app.request('/sessions/dm:researcher/chat', postAs('dm:researcher', userMessage('go')))

@@ -47,6 +47,7 @@ import { getAgent } from './agents.ts'
 import { postAlerts, postBriefing } from './briefings.ts'
 import type { Deps } from './ports.ts'
 import { threadSessionsOf } from './threads.ts'
+import { sessionsWithOpenDecision } from './work-queue.ts'
 
 const HOUR = 3_600_000
 /** A beat recorded as running this long ago, with no turn in sight, is a dead one. */
@@ -318,6 +319,7 @@ export async function observeTeam(deps: Deps, now: number): Promise<Finding[]> {
     now,
     tasks,
     decisions: deps.decisions.list({ status: 'open', limit: 100 }),
+    waitingSessions: sessionsWithOpenDecision(deps),
     programs,
     routines: deps.routines.list({}),
     connections: connections.map((c) => ({
@@ -364,7 +366,12 @@ export async function teamStatus(
       now,
     )
   }
-  return { text: statusText(fresh, now), findings: fresh }
+  const dayStart = Math.floor(now / 86_400_000) * 86_400_000
+  const spend = {
+    month: await deps.heartbeat.budget(),
+    todayUsd: deps.modelCalls.stats({ from: dayStart, to: now }).totals.costUsd,
+  }
+  return { text: statusText(fresh, now, spend), findings: fresh }
 }
 
 // --- a beat ------------------------------------------------------------------------------------
@@ -559,8 +566,12 @@ export async function runDigest(deps: Deps, at = deps.clock.now()): Promise<Dige
   const since = state.lastSentAt ?? at - FIRST_DIGEST_WINDOW_MS
   const tasks = deps.tasks.list({ limit: 500 })
   const programs = new Map(deps.programs.list({}).map((p) => [p.id, p]))
+  // every run that was active in the window counts: also one that started before it and ended in
+  // it (a worker task queued yesterday), and the runs of routines, not only of programs
+  const activeInWindow = (t: Task): boolean =>
+    t.startedAt >= since || (t.endedAt ?? t.lastActivityAt) >= since
   const runs = tasks
-    .filter((t) => t.origin === 'program' && t.startedAt >= since)
+    .filter((t) => (t.origin === 'program' || t.origin === 'routine') && activeInWindow(t))
     .map((task) => {
       const program = programs.get(parseProgramSession(task.sessionId)?.programId ?? '')
       return {

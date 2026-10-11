@@ -30,6 +30,7 @@ export function agentChat(agentId: string, sessionId: string): AgentChat {
 		c = new AgentChat({
 			agentId,
 			sessionId,
+			dismiss: (id) => toast.dismiss(id),
 			// the same message again replaces the toast instead of stacking another one
 			notify: (level, text) => (level === 'error' ? toast.error(text, { id: text.slice(0, 80) }) : toast(text, { id: text.slice(0, 80) }))
 		});

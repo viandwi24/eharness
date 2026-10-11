@@ -42,6 +42,7 @@ import {
   resolveScope,
   senderLabel,
   splitText,
+  summarizeToolInput,
 } from './policy.ts'
 import {
   type ChannelLog,
@@ -820,16 +821,6 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       : `I have a question: ${lines.join(' / ')}`
   }
 
-  const inputExcerpt = (input: unknown): string => {
-    let text: string
-    try {
-      text = typeof input === 'string' ? input : (JSON.stringify(input) ?? '')
-    } catch {
-      text = ''
-    }
-    return text === '' || text === '{}' ? '' : clip(text.replace(/\s+/g, ' '), 300)
-  }
-
   /** Who may answer: the member who triggered the turn, or an admin of the connection. */
   const mayAnswer = (
     config: ConnectionConfig,
@@ -864,12 +855,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     }> = []
     for (const a of pending.approvals) {
       if (a.answer !== undefined || a.granted === true) continue
-      const excerpt = inputExcerpt(a.input)
+      const summary = summarizeToolInput(a.input)
       items.push({
         itemId: a.approvalId,
         kind: 'approval',
         toolName: a.toolName,
-        text: `I need an approval to use ${a.toolName}${a.risk === undefined ? '' : ` (${a.risk})`}${excerpt === '' ? '' : `: ${excerpt}`}.`,
+        text: `I need an approval to use ${a.toolName}${a.risk === undefined ? '' : ` (${a.risk})`}.${summary === '' ? '' : `\n${summary}`}`,
       })
     }
     for (const c of pending.clientTools) {
@@ -900,11 +891,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       if (rec === undefined) continue // announced already (a partial answer re-ends the turn)
       const buttons =
         item.kind === 'approval' && caps.buttons === true && deps.approvals !== undefined
-      const text = buttons
-        ? `${item.text} Approve?`
-        : item.kind === 'approval'
-          ? `${item.text} Answer it in ${where}.`
-          : `${item.text} Answer it in ${where}.`
+      const text = buttons ? `${item.text}\nApprove?` : `${item.text}\nAnswer it in ${where}.`
       await outbox.enqueue(
         [
           {

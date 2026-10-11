@@ -42,6 +42,13 @@ export interface ProgramBudget {
   perRunUsd: number | null
   /** All runs of one UTC day stop at this spend (null = no limit). */
   perDayUsd: number | null
+  /**
+   * Output tokens one model call of a run may produce (null / absent = sized from the budget, see
+   * `programMaxOutputTokens`). Every call reserves its worst case (context + this many output
+   * tokens at the model's price) against the budgets before it runs, so a small cap is what lets a
+   * small budget work at all.
+   */
+  maxOutputTokens?: number | null
 }
 
 /** A worker program works through the queued tasks of its agent, one session per task (D6). */
@@ -149,6 +156,9 @@ const globProblem = (item: string): string | undefined => {
   return undefined
 }
 
+export const MIN_OUTPUT_TOKENS = 256
+export const MAX_PROGRAM_OUTPUT_TOKENS = 65_536
+
 const usdProblem = (field: string, value: number | null | undefined): void => {
   if (value == null) return
   if (!Number.isFinite(value) || value <= 0 || value > 1_000_000) {
@@ -196,6 +206,16 @@ export function checkProgramFields(f: {
   checkList('forbidden', f.forbidden, ruleProblem)
   usdProblem('budget.perRunUsd', f.budget?.perRunUsd)
   usdProblem('budget.perDayUsd', f.budget?.perDayUsd)
+  const cap = f.budget?.maxOutputTokens
+  if (
+    cap != null &&
+    (!Number.isInteger(cap) || cap < MIN_OUTPUT_TOKENS || cap > MAX_PROGRAM_OUTPUT_TOKENS)
+  ) {
+    throw invalid(
+      `budget.maxOutputTokens must be a whole number of ${MIN_OUTPUT_TOKENS}-${MAX_PROGRAM_OUTPUT_TOKENS} or null`,
+      'INVALID_PROGRAM',
+    )
+  }
   if (f.trigger !== undefined && f.trigger.kind !== 'manual' && f.trigger.kind !== 'schedule') {
     throw invalid('trigger.kind must be manual or schedule', 'INVALID_PROGRAM')
   }
@@ -213,6 +233,157 @@ export function normalizeAuthority(a: Partial<ProgramAuthority> | undefined): Pr
     read: cleanList(a?.read ?? []),
     write: cleanList(a?.write ?? []),
   }
+}
+
+// --- file tools of a run -----------------------------------------------------------------------
+
+export const FILE_READ_TOOLS = ['read_file', 'list_files', 'grep', 'glob'] as const
+export const FILE_WRITE_TOOLS = ['write_file', 'edit_file'] as const
+/** Every file tool a program run can be given (deleting is never part of an authority). */
+export const PROGRAM_FILE_TOOLS: readonly string[] = [...FILE_READ_TOOLS, ...FILE_WRITE_TOOLS]
+
+const baseName = (rule: string): string => rule.trim().split('(')[0] as string
+
+/**
+ * The file tools a program run gets even when the Files capabilities of its agent are off: what the
+ * authority grants it. Paths to write give the write tools (and the read tools: editing reads
+ * first), paths to read the read tools, and naming a tool (or the `Read` / `Edit` rule kinds) gives
+ * that one. The permission gate still limits every call to the granted paths; this only decides
+ * which tools exist in the run, so an authority never grants something the model cannot call.
+ */
+export function runFileTools(authority: ProgramAuthority): string[] {
+  const out = new Set<string>()
+  if (authority.write.length > 0) for (const t of PROGRAM_FILE_TOOLS) out.add(t)
+  if (authority.read.length > 0) for (const t of FILE_READ_TOOLS) out.add(t)
+  for (const rule of authority.tools) {
+    const name = baseName(rule)
+    if (PROGRAM_FILE_TOOLS.includes(name)) out.add(name)
+    if (name === 'Read') for (const t of FILE_READ_TOOLS) out.add(t)
+    if (name === 'Edit' || name === 'Write') for (const t of PROGRAM_FILE_TOOLS) out.add(t)
+  }
+  return [...out]
+}
+
+// --- model calls: output cap and the budget floor ----------------------------------------------
+
+/** Output tokens of one call of a run when nothing smaller is set (a catalog limit is lower still). */
+export const PROGRAM_DEFAULT_OUTPUT_TOKENS = 16_384
+/** About the size of the first request of a run (instructions, tools, the brief), for the floor. */
+export const TYPICAL_CONTEXT_TOKENS = 20_000
+/** The smallest cap the budget sizing picks. */
+const SMALLEST_SIZED_OUTPUT_TOKENS = 2_048
+
+/** What the model catalog knows of a model (`ModelInfo` of eharness, structurally): USD per million tokens. */
+export interface PricedModel {
+  pricing?: { input: number; output: number } | undefined
+  maxOutputTokens?: number | undefined
+}
+
+/**
+ * What a model call reserves before it runs (worst case: the whole output cap is used), in USD;
+ * undefined for a model without a price (the ledger reserves 0 for it).
+ */
+export function callReserveUsd(
+  info: PricedModel | undefined,
+  outputTokens: number,
+  contextTokens = TYPICAL_CONTEXT_TOKENS,
+): number | undefined {
+  const pricing = info?.pricing
+  if (pricing === undefined) return undefined
+  return (contextTokens * pricing.input + outputTokens * pricing.output) / 1_000_000
+}
+
+/**
+ * The output cap of one model call of a program run. The budgets reserve the worst case of every
+ * call, so a run with a small budget must also have a small cap: unset, the cap is sized so one
+ * call reserves at most about half of the smallest budget (never below 2 048 tokens, never above
+ * the default or the model's own limit). An explicit `budget.maxOutputTokens` wins.
+ */
+export function programMaxOutputTokens(
+  budget: Pick<ProgramBudget, 'perRunUsd' | 'perDayUsd' | 'maxOutputTokens'>,
+  info?: PricedModel,
+): number {
+  if (budget.maxOutputTokens != null) return budget.maxOutputTokens
+  const ceiling = Math.min(PROGRAM_DEFAULT_OUTPUT_TOKENS, info?.maxOutputTokens ?? Infinity)
+  const limits = [budget.perRunUsd, budget.perDayUsd].filter((v): v is number => v != null)
+  const pricing = info?.pricing
+  if (limits.length === 0 || pricing === undefined || pricing.output <= 0) return ceiling
+  const room = Math.min(...limits) / 2 - (TYPICAL_CONTEXT_TOKENS * pricing.input) / 1_000_000
+  const sized = Math.floor((room * 1_000_000) / pricing.output)
+  return Math.max(SMALLEST_SIZED_OUTPUT_TOKENS, Math.min(ceiling, sized))
+}
+
+// --- what the authority and the budget cannot do (warnings) -------------------------------------
+
+export interface ProgramWarning {
+  code: 'tool-unavailable' | 'channel-not-bound' | 'budget-below-minimum'
+  /** The form field it is about (`authority.tools`, `budget.perRunUsd`, ...). */
+  field: string
+  message: string
+}
+
+/** What the agent of a program can actually use in a run. */
+export interface ToolAvailability {
+  /** Tool names a run of the agent has (connector tools it may use, plugin tools, base tools). */
+  available: ReadonlySet<string>
+  /** Names of the channel tools; they exist only for an agent bound to a channel connection. */
+  channelTools: readonly string[]
+  channelsBound: boolean
+}
+
+/** Names that are tool names (snake case), not rule kinds like `Read(...)` or `WebFetch(...)`. */
+const isToolName = (name: string): boolean => /^[a-z][a-z0-9_]*$/.test(name)
+
+/**
+ * Tools the authority names that the run can never have: the connector is off or the agent is not
+ * bound to a channel. Such a call is refused as unavailable, `request_authority` cannot help and
+ * a run that insists on it only loops.
+ */
+export function toolWarnings(
+  authority: Pick<ProgramAuthority, 'tools'>,
+  tools: ToolAvailability,
+): ProgramWarning[] {
+  const out: ProgramWarning[] = []
+  for (const rule of authority.tools) {
+    const name = baseName(rule)
+    if (!isToolName(name)) continue
+    if (tools.channelTools.includes(name) && !tools.channelsBound) {
+      out.push({
+        code: 'channel-not-bound',
+        field: 'authority.tools',
+        message: `${name}: the agent is not bound to any channel connection, so the run can never post or read a channel. Bind the agent to a channel connection first, or remove it from the authority.`,
+      })
+    } else if (!tools.available.has(name)) {
+      out.push({
+        code: 'tool-unavailable',
+        field: 'authority.tools',
+        message: `${name}: the agent has no such tool (its connector is off or the name is wrong), so the run can never use it. Turn the connector on for the agent, or remove it.`,
+      })
+    }
+  }
+  return out
+}
+
+/** A budget smaller than one worst-case call stops every run before its first call. */
+export function budgetWarnings(
+  budget: Pick<ProgramBudget, 'perRunUsd' | 'perDayUsd' | 'maxOutputTokens'>,
+  info: (PricedModel & { id?: string }) | undefined,
+): ProgramWarning[] {
+  const cap = programMaxOutputTokens(budget, info)
+  const reserve = callReserveUsd(info, cap)
+  if (reserve === undefined) return []
+  const out: ProgramWarning[] = []
+  const check = (field: string, label: string, value: number | null | undefined): void => {
+    if (value == null || value >= reserve) return
+    out.push({
+      code: 'budget-below-minimum',
+      field,
+      message: `${label} $${value} is below the $${reserve.toFixed(4)} one model call reserves${info?.id === undefined ? '' : ` on ${info.id}`} (up to ${cap} output tokens): every run would stop with $0 spent. Raise it to at least $${reserve.toFixed(4)}, or lower the output cap.`,
+    })
+  }
+  check('budget.perRunUsd', 'The per-run budget', budget.perRunUsd)
+  check('budget.perDayUsd', 'The per-day budget', budget.perDayUsd)
+  return out
 }
 
 // --- sessions ----------------------------------------------------------------------------------

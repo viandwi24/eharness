@@ -36,11 +36,13 @@ import { allPass, fixUpPrompt } from '../../domain/deliverables.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import { UPLOADS_ROOT } from '../../domain/library.ts'
 import {
+  budgetWarnings,
   PROGRAM_RUN_MAX_STEPS,
   type Program,
   parseProgramSession,
   programRunPrompt,
   programSessionId,
+  toolWarnings,
 } from '../../domain/programs.ts'
 import type { Task } from '../../domain/tasks.ts'
 import { workItemPrompt } from '../../domain/work-queue.ts'
@@ -127,6 +129,9 @@ export function createProgramService(
       output: { schema: REPORT_SCHEMA, description: 'The final report of this program run.' },
       ifBusy: 'reject',
       maxSteps: PROGRAM_RUN_MAX_STEPS,
+      // every call reserves its worst case against the budgets: a run gets the cap its budget can
+      // afford, not the agent-wide one (`programMaxOutputTokens`)
+      ...factory.programTurn(def, sessionId),
     })
     return run.result.then(
       (result) => (result as { stop?: string }).stop,
@@ -229,6 +234,58 @@ export function createProgramService(
     return out
   }
 
+  /**
+   * Why a run can not start at all, or undefined. Only what makes a run loop: tools the authority
+   * names that channel-less agents never have. Everything else the run finds out itself, with a
+   * refusal it can read.
+   */
+  function unrunnable(program: Program, def: AgentDef): string | undefined {
+    const problems = toolWarnings(
+      program.authority,
+      factory.toolAvailability(def, program.authority),
+    )
+      .filter((w) => w.code === 'channel-not-bound')
+      .map((w) => w.message)
+    return problems.length === 0
+      ? undefined
+      : `Program "${program.name}" cannot run: ${problems.join(' ')}`
+  }
+
+  /** The run fails before its first model call: a failed task with the reason, and the caller throws. */
+  function failEarly(program: Program, def: AgentDef, sessionId: string, reason: string): never {
+    const t = clock()
+    const row = deps.tasks.ensure({
+      agentId: def.id,
+      sessionId,
+      parentSessionId: null,
+      origin: 'program',
+      title: `Program run: ${program.name}`,
+      startedAt: t,
+    })
+    deps.tasks.update(sessionId, {
+      status: 'failed',
+      pendingKind: null,
+      now: t,
+      summary: reason,
+      report: { status: 'failed', summary: reason, outputs: [] },
+    })
+    deps.events.append({
+      type: 'task-changed',
+      agentId: def.id,
+      sessionId,
+      payload: {
+        taskId: row.id,
+        status: 'failed',
+        pendingKind: null,
+        title: row.title,
+        parentSessionId: null,
+        created: true,
+      },
+      at: t,
+    })
+    throw conflict(reason, 'PROGRAM_UNRUNNABLE')
+  }
+
   /** A session of this id has run, or is running. */
   async function exists(sessionId: string): Promise<boolean> {
     const peek = factory.peek(sessionId)
@@ -289,11 +346,19 @@ export function createProgramService(
       if (def === undefined) throw notFound('agent', program.agentId)
       if (def.archivedAt !== null) throw conflict('the agent is archived', 'AGENT_ARCHIVED')
       await factory.prepare(def)
-      if (program.worker != null) return startWorker(program, def, runAt)
       const sessionId = programSessionId(program.id, runAt)
+      if (program.worker != null) {
+        const reason = unrunnable(program, def)
+        // nothing is claimed for a run that cannot work: the queue keeps its tasks
+        if (reason !== undefined && !(await exists(sessionId)))
+          failEarly(program, def, sessionId, reason)
+        return startWorker(program, def, runAt)
+      }
 
       // a recovered fire or a double click: the run exists already
       if (await exists(sessionId)) return { sessionId, started: false }
+      const reason = unrunnable(program, def)
+      if (reason !== undefined) failEarly(program, def, sessionId, reason)
 
       const t = clock()
       const prompt = programRunPrompt(program, {
@@ -313,6 +378,16 @@ export function createProgramService(
       if (before === undefined) announce(def, sessionId, row, true)
       track(runChecked(program, def, sessionId, prompt))
       return { sessionId, started: true }
+    },
+
+    async check({ agentId, authority, budget }) {
+      const def = deps.agents.get(agentId)
+      if (def === undefined) throw notFound('agent', agentId)
+      await factory.prepare(def)
+      return [
+        ...toolWarnings(authority, factory.toolAvailability(def, authority)),
+        ...budgetWarnings(budget, factory.modelInfo(def)),
+      ]
     },
 
     async verifyResumed(sessionId) {

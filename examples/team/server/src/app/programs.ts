@@ -12,8 +12,11 @@ import {
   normalizeAuthority,
   normalizeWorker,
   type Program,
+  type ProgramAuthority,
+  type ProgramBudget,
   type ProgramDraft,
   type ProgramTrigger,
+  type ProgramWarning,
 } from '../domain/programs.ts'
 import type { Routine } from '../domain/routines.ts'
 import type { Task } from '../domain/tasks.ts'
@@ -120,6 +123,7 @@ export function createProgram(
     budget: {
       perRunUsd: draft.budget?.perRunUsd ?? null,
       perDayUsd: draft.budget?.perDayUsd ?? null,
+      maxOutputTokens: draft.budget?.maxOutputTokens ?? null,
     },
     trigger,
     report: draft.report ?? 'task',
@@ -263,4 +267,37 @@ export async function runProgramNow(
     started: started.started,
     idle: false,
   }
+}
+
+/**
+ * What a program (or a draft of one) cannot do: tools its authority names that the agent never has
+ * and a budget below the cost of one model call. Warnings, never errors: the editor shows them
+ * while the client types, and a save still works.
+ */
+export async function checkProgramDraft(
+  deps: Deps,
+  draft: {
+    agentId: string
+    authority?: Partial<ProgramAuthority> | undefined
+    budget?: Partial<ProgramBudget> | undefined
+  },
+): Promise<ProgramWarning[]> {
+  const agent = getAgent(deps, draft.agentId)
+  return deps.programRunner.check({
+    agentId: agent.id,
+    authority: normalizeAuthority(draft.authority),
+    budget: {
+      perRunUsd: draft.budget?.perRunUsd ?? null,
+      perDayUsd: draft.budget?.perDayUsd ?? null,
+      maxOutputTokens: draft.budget?.maxOutputTokens ?? null,
+    },
+  })
+}
+
+/** A saved program with its warnings (`POST` / `PATCH` answers). */
+export async function programWithWarnings(
+  deps: Deps,
+  view: ProgramView,
+): Promise<ProgramView & { warnings: ProgramWarning[] }> {
+  return { ...view, warnings: await checkProgramDraft(deps, view) }
 }

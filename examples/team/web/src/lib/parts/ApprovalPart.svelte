@@ -10,6 +10,7 @@
 	import type { ToolUIPartApproval } from '#lib/components/ai/confirmation/index.js';
 	import ApprovalActions from '#lib/components/app/ApprovalActions.svelte';
 	import type { ApprovalAnswerBody } from '#lib/approval/answer.js';
+	import { approvalHeadline } from '#lib/approval/summary.js';
 	import type { PartView } from './map.js';
 
 	export type ApprovalAnswer = { id: string } & ApprovalAnswerBody;
@@ -28,6 +29,7 @@
 	// An automatic decision (Auto mode) never shows buttons; a request the server no longer lists
 	// as waiting was decided elsewhere (another tab, the classifier, a remembered grant).
 	const automatic = $derived((view.approval as { isAutomatic?: boolean }).isAutomatic === true);
+	const headline = $derived(approvalHeadline(view.toolName, view.input));
 	const decidedElsewhere = $derived(view.state === 'approval-requested' && !automatic && canAnswer?.(view.approval.id) === false);
 </script>
 
@@ -42,6 +44,9 @@
 			Rejected: {view.title}{view.approval.reason ? ` (${view.approval.reason})` : ''}
 		</ConfirmationRejected>
 	</ConfirmationTitle>
+	{#if headline && view.state === 'approval-requested'}
+		<p class="mt-1 rounded-md bg-muted px-2 py-1 font-mono text-[11.5px] break-words whitespace-pre-wrap" data-testid="approval-headline">{headline}</p>
+	{/if}
 	{#if !automatic}
 		<ConfirmationActions class="block">
 			<ApprovalActions toolName={view.toolName} onAnswer={(body) => onApproval?.({ id: view.approval.id, ...body })} />

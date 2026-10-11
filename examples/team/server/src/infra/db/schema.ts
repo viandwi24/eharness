@@ -379,7 +379,11 @@ export const programs = sqliteTable(
     gates: json<string[]>('gates').notNull(),
     escalation: text('escalation').notNull().default(''),
     forbidden: json<string[]>('forbidden').notNull(),
-    budget: json<{ perRunUsd: number | null; perDayUsd: number | null }>('budget').notNull(),
+    budget: json<{
+      perRunUsd: number | null
+      perDayUsd: number | null
+      maxOutputTokens?: number | null
+    }>('budget').notNull(),
     trigger: json<{ kind: 'manual' } | { kind: 'schedule'; spec: Record<string, unknown> }>(
       'trigger',
     ).notNull(),
@@ -882,4 +886,27 @@ export const channelPairingTokens = sqliteTable(
     usedAt: integer('used_at'),
   },
   (t) => [index('channel_pairing_expiry').on(t.expiresAt)],
+)
+
+/**
+ * Chats a bot connection has seen (any update from a group, supergroup or channel, or a change of
+ * the bot's own membership), so an admin can pick which ones the agent may use. `topics` is a JSON
+ * object of forum topic id to name. Not the channel log: it holds no message text.
+ */
+export const channelKnownChats = sqliteTable(
+  'channel_known_chats',
+  {
+    connectionId: text('connection_id').notNull(),
+    chatId: text('chat_id').notNull(),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    username: text('username'),
+    forum: integer('forum').notNull().default(0),
+    topics: text('topics').notNull().default('{}'),
+    botStatus: text('bot_status'),
+    canPost: integer('can_post'),
+    firstSeen: integer('first_seen').notNull(),
+    lastSeen: integer('last_seen').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.connectionId, t.chatId] })],
 )

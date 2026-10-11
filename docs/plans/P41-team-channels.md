@@ -123,7 +123,7 @@ template; stores only what a task needs. Operators must review these terms for t
 
 - [x] L1 (gateway core in `examples/team/server/src/infra/channels`, mock adapter, scripted U1/U2/U3 flows in `test/channels.test.ts`; migration 0021)
 - [x] L2 (session slot, `qr` view, `resend`, `service.credentials` / `markNeedsAuth`, spec 24; `subagent({ onPark: 'notice' })`, spec 20 §3.5)
-- [ ] L3
+- [x] L3 (grammY Bot API adapter in `infra/telegram`, "Telegram bot" connector, Channels page; migration 0023; fake Bot API tests; manual check with a real bot still open)
 - [ ] L4
 - [ ] U1, U2, U3 scripted flows green; manual checks with a real test bot and test account
 
@@ -194,9 +194,77 @@ Against the real use cases (U1 audit, U2 publishing, U3 internal group). Migrati
   instances sharing one outbox (a second process would treat the first one's `sending` rows as
   its own boot leftovers only at its own boot); file posts in the outbox.
 
+## L3 notes (as built)
+
+- **Code.** `infra/telegram/`: `adapter.ts` (grammY `Bot` + `@grammyjs/runner` + `@grammyjs/auto-retry`,
+  pinned exact: grammy 1.46.0, runner 2.0.3, auto-retry 2.0.2; example dependencies, not library),
+  `normalize.ts` (update to `InboundEvent`, pure), `format.ts` (HTML escaper, Markdown subset to
+  Telegram HTML, post-escape splitting), `connector.ts` (apiKey connector `telegram-bot`),
+  `service.ts` (the runtime that starts one poller per connected and bound connection, and the
+  admin service behind `ChannelsPort`), `known-chats.ts`. Routes `http/routes/channels.ts`
+  (`/channels/connections/...`), web page `/channels`. Migration 0023 (`channel_known_chats`).
+  `compose` returns `server.telegram`; `TEAM_TELEGRAM_API_ROOT` points the bot and the connector
+  test at a local Bot API server (or a test fake).
+- **Polling under Bun works** (long polling, runner, sequentialize per chat, stop while a long poll
+  is pending, getFile download) against a fake Bot API in `test/telegram-adapter.test.ts`; this
+  closes the soak question for polling. Webhook mode is not built; polling refuses to start while a
+  webhook is set (`webhook` state) unless the admin chooses "Remove webhook and poll"
+  (`POST .../webhook/delete`).
+- **Updates.** `allowed_updates` is explicit (message, edited_message, channel_post,
+  edited_channel_post, callback_query, my_chat_member, chat_member, message_reaction). Signals:
+  mention by entity (`@botname` or `text_mention` with the bot's id), reply to the bot (the topic's
+  first message does not count as a reply), `bot_command` at offset 0 with `@botname` checked
+  (a command for another bot counts as addressing someone else). Forum topics are their own
+  conversation (`<chat>/<thread>`). Callback queries become `action` events (`<name>:<data>`,
+  under 64 bytes) and are answered at once. `my_chat_member` and any chat update feed the known
+  chats list (also for chats the allowlist drops).
+- **Outbound.** Everything goes through the gateway's outbox and outbound queue. The adapter maps
+  Telegram errors to `ChannelError`: 429 -> `rate_limit` with `retry_after`, 401 -> `fatal`,
+  403/400 -> `invalid` (a DM before Start says "press Start first"), 5xx/network -> `transient`.
+  auto-retry absorbs flood waits of at most 5 s inside one call; longer ones surface as
+  `rate_limit` and the queue parks them. Text is HTML (strict escaper; a Markdown subset is
+  converted; if Telegram cannot parse the entities the same text is resent plain), split at 4096
+  after escaping, buttons on the last part. Files: photo, album (2 to 10 images), audio, video,
+  document; a caption over 1024 after escaping goes out as its own message. The idempotency key
+  is remembered per process so an in-process retry never posts twice (Telegram cannot dedupe; with
+  no history capability a crash is handled by the outbox as "not resent, bell").
+- **Files in.** `getFile`, 20 MB cap checked before and after; over the cap the gateway tells the
+  model "not loaded: over the limit".
+- **Capabilities.** history none, buttons yes, members = administrators only (`getChatAdministrators`),
+  topics, reactions, edit, delete, pin, typing, upload. Native actions (deferred tools,
+  `telegram_<name>`): `get_chat`, `get_member_count`, `list_admins`, `get_member` (read);
+  `pin_message`, `unpin_message`, `create_forum_topic`, `edit_forum_topic`, `close_forum_topic`,
+  `reopen_forum_topic`, `set_chat_title`, `unban_member` (write); `send_poll`,
+  `create_invite_link` (external); `delete_forum_topic`, `ban_member`, `restrict_member`,
+  `leave_chat` (destructive). A refusal is returned as text, never thrown.
+- **Setup.** The connector asks for the bot token only (sealed like any connector secret).
+  `test()` calls `getMe` (+ `getWebhookInfo`), shows `@username` and explains privacy mode from
+  `can_read_all_group_messages`. The Channels page shows the same guidance and warns when a chat's
+  policy needs more than mentions and the bot is not an admin. A rejected token (401, at start or
+  while polling) calls `markNeedsAuth`, raises a bell (`channel-auth:<id>`) and stops the
+  transport; reconnect with a new token on Connectors. The token is scrubbed from every error text.
+- **Runtime.** `connectors.rev()` changes (and explicit admin calls) trigger a sync: start when
+  the connection is enabled, connected and bound (a gateway config exists), stop otherwise; a
+  changed token restarts. Failed starts retry every 30 s (`error` state); `409` (another poller)
+  is reported as such. One process must poll a bot: no lease yet (two instances on one database
+  would fight with 409).
+- **Channels page.** Connections (state badge, next-step hint, agent binding), Chats (discovered
+  from updates; allowlist switch, wake mention/always/observe-only, delivery, retention days,
+  per-topic wake), People (issue a `/start` deep link per team member, shown once; linked accounts;
+  revoke), Delivery (outbox waiting/failed, breaker with reset, restart). "Observe" is the
+  `never` wake (messages are stored as context, the agent never answers).
+- **Part A fixes.** An approval request in a chat now shows `key: value` lines (what and where
+  first, values clipped, secret-looking keys and values hidden: `summarizeToolInput` in
+  `policy.ts`) instead of raw JSON. The web link in channel messages follows `TEAM_WEB_URL`, else
+  the server's own public URL when `TEAM_WEB_DIR` is set (same origin), else the Vite dev URL
+  (`resolveWebUrl`).
+- **Not done.** Webhook mode, a lease for several instances, answering an `ask_user_question` from
+  the chat (link only), ack reaction set `message_reaction` as a wake signal (reactions are
+  dropped by the gateway), Telegram Desktop export import.
+
 ## Open questions
 
-- grammY long polling under Bun needs a soak check; webhook through `Bun.serve` is the fallback.
+- grammY long polling under Bun: works against a fake Bot API; a long soak with a real bot is still to do. Webhook through `Bun.serve` stays the fallback.
 - Whether a plain `@botname` text mention reaches a bot in privacy mode (docs list commands and
   replies only) — test with a real bot.
 - Admin log retention (believed about 48 h) — verify with a real account.

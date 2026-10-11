@@ -68,3 +68,31 @@ export function summarizeApproval(toolName: string, input: unknown): ApprovalSum
 	}
 	return { title, rows, raw };
 }
+
+const HEADLINE_KEYS = ['path', 'file_path', 'filePath', 'file', 'command', 'cmd', 'url', 'to', 'pattern', 'query', 'subagent_type', 'description'];
+
+/**
+ * One short line saying what will happen, for places with no room for the full parameter list (the
+ * inline approval in the chat): the first of path, command, URL, recipient, pattern or task, plus the
+ * size of the content a write carries. Empty when the input has nothing readable.
+ */
+export function approvalHeadline(toolName: string, input: unknown): string {
+	if (typeof input === 'string') return clip1(input.trim());
+	if (typeof input !== 'object' || input === null || Array.isArray(input)) return '';
+	const o = input as Record<string, unknown>;
+	for (const key of HEADLINE_KEYS) {
+		const v = o[key];
+		if (typeof v !== 'string' || !v.trim()) continue;
+		const label = LABELS[key] ?? humanize(key);
+		const content = typeof o.content === 'string' ? o.content : typeof o.new_string === 'string' ? o.new_string : undefined;
+		const size = content !== undefined && /write|edit|create/.test(toolName) ? ` (${content.length.toLocaleString('en')} characters)` : '';
+		return `${label}: ${clip1(v.trim())}${size}`;
+	}
+	return '';
+}
+
+function clip1(s: string): string {
+	const line = s.split('\n')[0] ?? '';
+	const more = s.includes('\n') ? ' …' : '';
+	return (line.length > 140 ? `${line.slice(0, 140)}…` : line) + more;
+}

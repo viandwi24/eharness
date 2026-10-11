@@ -1,4 +1,5 @@
 import { createHarnessClient } from 'eharness/client';
+import { createBackoff } from './backoff';
 import { createClient, toApiError } from './client';
 
 export * from './client';
@@ -31,7 +32,10 @@ export function setToken(token: string): void {
  * Base URL: `PUBLIC_API_URL`, else `/api`, which `vite dev` proxies to the server
  * (default http://localhost:4000, override with `TEAM_API_PROXY`).
  */
-export const api = createClient({ baseUrl: __PUBLIC_API_URL__ || '/api', getToken });
+/** Shared gate: the live store shows "cannot reach the server" while it is down, and Retry opens it. */
+export const reachability = createBackoff();
+
+export const api = createClient({ baseUrl: __PUBLIC_API_URL__ || '/api', getToken, reachability });
 
 export const apiBase: string = __PUBLIC_API_URL__ || '/api';
 

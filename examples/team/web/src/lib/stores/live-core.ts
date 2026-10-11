@@ -27,6 +27,8 @@ export type LiveState = {
 	connection: FeedStatus;
 	/** The events stream dropped and is being re-established (a server restart, the network). */
 	reconnecting: boolean;
+	/** Requests to the API keep failing (down, wrong address, an HTML page): they back off and the app says so. */
+	unreachable: boolean;
 	/** Agent id (or slug) of the open chat; null elsewhere. */
 	viewing: string | null;
 	/** Counters bumped (debounced) by file / routine / settings / mode / message events; screens refetch when one moves. */
@@ -44,6 +46,7 @@ export const emptyLiveState = (): LiveState => ({
 	notificationsLoaded: false,
 	connection: 'idle',
 	reconnecting: false,
+	unreachable: false,
 	viewing: null,
 	revs: { files: 0, routines: 0, programs: 0, heartbeat: 0, decisions: 0, settings: 0, modes: 0, chat: 0, providers: 0, connectors: 0, threads: 0, briefings: 0 }
 });

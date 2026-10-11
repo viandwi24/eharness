@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { ApiError, createClient, fieldErrors, toApiError } from './client';
+import { createBackoff } from './backoff';
 
 const json = (status: number, body: unknown): Response =>
 	new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -56,5 +57,22 @@ describe('client', () => {
 			}) as unknown as typeof fetch
 		});
 		expect(((await api.get('/agents').catch((e: unknown) => e)) as ApiError).code).toBe('NETWORK_ERROR');
+	});
+	test('an HTML answer is a bad response, and a failing GET stops going out after a few tries', async () => {
+		let calls = 0;
+		const reachability = createBackoff();
+		const api = createClient({
+			baseUrl: '',
+			reachability,
+			fetch: (async () => {
+				calls++;
+				return new Response('<!doctype html><title>x</title>', { status: 200, headers: { 'content-type': 'text/html' } });
+			}) as unknown as typeof fetch
+		});
+		const first = (await api.get('/agents').catch((e: unknown) => e)) as ApiError;
+		expect(first.code).toBe('BAD_RESPONSE');
+		for (let i = 0; i < 50; i++) await api.get('/agents').catch(() => undefined);
+		expect(calls).toBeLessThan(5);
+		expect(reachability.down).toBe(true);
 	});
 });

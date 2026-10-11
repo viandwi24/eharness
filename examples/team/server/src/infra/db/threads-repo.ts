@@ -1,7 +1,12 @@
 /** Chat threads (`chat_threads`), plain SQL on the shared connection. */
 import type { Database } from 'bun:sqlite'
 import type { ThreadStore } from '../../app/ports.ts'
-import type { Thread, ThreadSeed, ThreadSource } from '../../domain/threads.ts'
+import {
+  FIRST_THREAD_TITLE,
+  type Thread,
+  type ThreadSeed,
+  type ThreadSource,
+} from '../../domain/threads.ts'
 
 interface Row {
   id: string
@@ -109,15 +114,16 @@ export function sqliteThreadStore(sqlite: Database): ThreadStore {
       return store.get(id)
     },
     touch(sessionId, info) {
-      // a message does not rename or restore a thread; it moves the activity and names an unnamed one
+      // a message does not rename or restore a thread; it moves the activity and names an unnamed one.
+      // The first thread of an agent starts as "Chat" (no words yet): its first message names it too.
       sqlite
         .query(
           `UPDATE chat_threads
               SET last_message_at = MAX(COALESCE(last_message_at, 0), ?), preview = ?,
-                  title = CASE WHEN title IS NULL AND ? IS NOT NULL THEN ? ELSE title END
+                  title = CASE WHEN (title IS NULL OR (title = ? AND last_message_at IS NULL AND preview IS NULL)) AND ? IS NOT NULL THEN ? ELSE title END
             WHERE session_id = ?`,
         )
-        .run(info.at, info.preview, info.title, info.title, sessionId)
+        .run(info.at, info.preview, FIRST_THREAD_TITLE, info.title, info.title, sessionId)
     },
   }
   return store

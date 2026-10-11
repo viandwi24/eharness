@@ -416,6 +416,36 @@ ordered by last activity; an unnamed thread is named by its first user message. 
 archive is the delete (plan P32 §5.1). A briefing's "Discuss in chat" goes to the lead; `agent` may
 name another one.
 
+## Fixes of the first real-model pass
+
+A pass with a real model (DeepSeek) running manager, worker and auditor programs found seven problems.
+All are fixed in the team example; `src/` is untouched (the per-turn `settings.maxOutputTokens` of
+`SendOptions` was enough).
+
+- [x] 1. Files-capability trap: a program run gets the file tools its authority grants (`runFileTools`,
+      the `fileGrant` plugin narrows `activeTools`; the connector's deny rule is dropped for a run, the
+      gate still limits paths). `request_authority` for a tool the agent can never have returns the reason
+      and does not park. The program editor warns for tools the agent cannot have (`POST /programs/check`).
+- [x] 2. Budget floor: program turns pass a sized `maxOutputTokens` (`budget.maxOutputTokens`, else half
+      the smallest budget, 2 048 to 16 384; no migration, the field lives in the budget JSON); the editor
+      has the field and warns when a budget is below one call's reservation for the agent model.
+- [x] 3. `propose_plan`: `agent` required (error lists agents), near-identical open proposals of one agent
+      are not stored twice (the model gets the existing id).
+- [x] 4. Heartbeat and briefing from real data: `team_status` spend lines (ledger and call log), failing
+      findings carry the real spend, the digest counts all runs (window by activity, routines included),
+      names failed runs, prints counts.
+- [x] 5. `list_tasks` shows cost per task, a `program` filter and a total (read risk, lead and heartbeat).
+- [x] 6. `column` (waiting / review / ...) on `GET /tasks` and `GET /tasks/{id}`; a parked run is not
+      "stuck" for the heartbeat. `status` is unchanged (queue and claim untouched); the web board already
+      mapped a parked run to Waiting through the open-decision set, so it needed no change.
+- [x] 7. Channel tools in an authority of an agent bound to no channel: warning at save and in the editor,
+      the run fails before its first model call (`PROGRAM_UNRUNNABLE`).
+- Tests: `server/test/p40-fixes.test.ts` (scripted models, including a manager / worker / auditor scenario
+  with Files edit off), web `lib/programs/form.test.ts`.
+- Not changed: tools named in an authority that the agent has through a connector turned off are only
+  warned about (the run starts and the model cannot call them); only the channel case fails early,
+  because that is the one that made runs loop.
+
 ## Acceptance criteria
 
 - [ ] The acceptance scenario runs end to end on an isolated instance with scripted models: the
@@ -433,6 +463,11 @@ name another one.
 
 ## Requests to other phases
 
+- Library (optional, not blocking): `createChatSession` of `eharness/client` has `send`, `retryTurn` and
+  `continueTurn` but no `regenerate(messageId)` / `edit(messageId, input)`, although the HTTP chat route
+  and `useChat` support both. The team web calls `chat.regenerate({ messageId })` and
+  `chat.sendMessage({ text, messageId })` on the bound chat and then `session.refetch()` (worked around in
+  `AgentChat`); wrappers in the session would give them the same busy/error handling as `send`.
 - Library (optional, not blocking): inbox items cannot carry `SendOptions.output`, so a durable,
   restartable run with a typed result cannot ride the inbox. A way to attach a serializable output
   spec (for example a named spec the agent registers) to an enqueued input would let program runs

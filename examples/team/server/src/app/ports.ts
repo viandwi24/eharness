@@ -3,6 +3,14 @@ import type { AgentDef } from '../domain/agents.ts'
 import type { ApprovalView } from '../domain/approvals.ts'
 import type { Briefing, Notification, NotificationKind } from '../domain/briefings.ts'
 import type {
+  ChannelBindInput,
+  ChannelChatView,
+  ChannelConnectionView,
+  ChannelLinkView,
+  ChannelPairingIssued,
+  ChannelPolicyInput,
+} from '../domain/channels.ts'
+import type {
   AgentConnectors,
   AgentConnectorView,
   ConnectionAccessInput,
@@ -43,7 +51,12 @@ import type {
   ModelCallStats,
 } from '../domain/model-calls.ts'
 import type { AgentModeChoice, ModeSource, TeamMode } from '../domain/modes.ts'
-import type { Program } from '../domain/programs.ts'
+import type {
+  Program,
+  ProgramAuthority,
+  ProgramBudget,
+  ProgramWarning,
+} from '../domain/programs.ts'
 import type {
   ModelView,
   ProfileCreate,
@@ -311,6 +324,15 @@ export interface ProgramRunner {
     program: Program,
     options: { runAt: number },
   ): Promise<{ sessionId: string; started: boolean; idle?: boolean }>
+  /**
+   * What a program of this agent, authority and budget cannot do (`ProgramWarning`): tools the run
+   * can never have and a budget below the cost of one model call. Nothing is stored.
+   */
+  check(input: {
+    agentId: string
+    authority: ProgramAuthority
+    budget: Pick<ProgramBudget, 'perRunUsd' | 'perDayUsd' | 'maxOutputTokens'>
+  }): Promise<ProgramWarning[]>
 }
 
 /** Rehearsals (test runs) of programs (`infra/db/rehearsal-repo.ts`, `domain/rehearsal.ts`). */
@@ -715,6 +737,33 @@ export interface ConnectorsPort {
 
 export type { AgentConnectors }
 
+/** Channel connections (chat platforms), their bindings, chats, pairing and delivery state. */
+export interface ChannelsPort {
+  connections(): Promise<ChannelConnectionView[]>
+  connection(id: string): Promise<ChannelConnectionView>
+  /** Bind a connection to an agent (starts the transport). */
+  bind(id: string, input: ChannelBindInput): Promise<ChannelConnectionView>
+  /** Remove the binding (stops the transport; the connector connection stays). */
+  unbind(id: string): Promise<ChannelConnectionView>
+  chats(id: string): Promise<ChannelChatView[]>
+  /** Set (or with `topic` set, set for a topic) the policy of a known chat. `null` removes the entry. */
+  setChatPolicy(
+    id: string,
+    chatId: string,
+    input: ChannelPolicyInput | null,
+    topic?: string,
+  ): Promise<ChannelChatView>
+  links(id: string): Promise<ChannelLinkView[]>
+  issuePairing(id: string, memberId: string): Promise<ChannelPairingIssued>
+  revokeLink(id: string, peerId: string): Promise<void>
+  /** Remove the webhook of the bot so polling can start. */
+  deleteWebhook(id: string): Promise<ChannelConnectionView>
+  /** Stop and start the transport again (after a transient failure). */
+  restart(id: string): Promise<ChannelConnectionView>
+  /** Close the outbound breaker by hand. */
+  resetBreaker(id: string): Promise<ChannelConnectionView>
+}
+
 export interface Deps {
   agents: AgentRepo
   chat: ChatPort
@@ -729,6 +778,7 @@ export interface Deps {
   settings: SettingsStore
   providers: ProvidersPort
   connectors: ConnectorsPort
+  channels: ChannelsPort
   /** Where the browser app lives (the OAuth callback redirects back to it). */
   webUrl: string
   modes: ModePort

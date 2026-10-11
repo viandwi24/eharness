@@ -61,3 +61,18 @@ export function webStatic(dir: string): WebStatic {
     },
   }
 }
+
+/**
+ * Where the web app lives, for links in channel messages and OAuth redirects: an explicit setting,
+ * else `TEAM_WEB_URL`, else (with `TEAM_WEB_DIR` the server serves the web itself) the server's own
+ * public URL, else the Vite dev server.
+ */
+export function resolveWebUrl(input: {
+  configured?: string
+  env: Record<string, string | undefined>
+  publicUrl: string
+}): string {
+  const explicit = input.configured ?? (input.env.TEAM_WEB_URL?.trim() || undefined)
+  const url = explicit ?? (input.env.TEAM_WEB_DIR ? input.publicUrl : 'http://localhost:5173')
+  return url.replace(/\/$/, '')
+}

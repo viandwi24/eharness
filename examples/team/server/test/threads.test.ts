@@ -248,6 +248,50 @@ describe('thread CRUD: all threads are equal', () => {
   })
 })
 
+describe('the first thread is named by its first message', () => {
+  test('"Chat" gives way to the first words once, and a later message does not rename it', async () => {
+    const i = instance(tmp(), { lead: [{ text: 'One' }, { text: 'Two' }] })
+    const first = (await threadsOf(i))[0] as Thread
+    expect(first.title).toBe('Chat')
+    expect((await say(i, first.sessionId, 'Summarize your recent work')).status).toBe(200)
+    await until('first thread named', async () => (await threadsOf(i))[0]?.title !== 'Chat')
+    expect((await threadsOf(i))[0]?.title).toBe('Summarize your recent work')
+    expect((await say(i, first.sessionId, 'Something else entirely')).status).toBe(200)
+    await until(
+      'second message stored',
+      async () => (await threadsOf(i))[0]?.preview !== 'Summarize your recent work',
+    )
+    expect((await threadsOf(i))[0]?.title).toBe('Summarize your recent work')
+  })
+})
+
+describe('workspace usage', () => {
+  test('GET /usage counts chat turns from every thread and lists every source', async () => {
+    const i = instance(tmp(), { lead: [{ text: 'One' }, { text: 'Two' }] })
+    const other = await newThread(i)
+    const first = (await threadsOf(i)).find((t) => t.id !== other.id) as Thread
+    expect((await say(i, first.sessionId, 'first thread')).status).toBe(200)
+    expect((await say(i, other.sessionId, 'second thread')).status).toBe(200)
+    await until('both turns counted', async () => {
+      const r = await i.app.request('/usage')
+      const u = (await r.json()) as { bySource: Array<{ source: string; count: number }> }
+      return (u.bySource.find((s) => s.source === 'chat')?.count ?? 0) >= 2
+    })
+    const u = (await (await i.app.request('/usage')).json()) as {
+      bySource: Array<{ source: string }>
+      agents: Array<{ id: string; bySource: unknown[] }>
+    }
+    expect(u.bySource.map((s) => s.source)).toEqual([
+      'chat',
+      'task',
+      'delegated',
+      'routine',
+      'program',
+    ])
+    expect(u.agents.find((a) => a.id === i.leadId)?.bySource).toHaveLength(5)
+  })
+})
+
 describe('migration of the single DM', () => {
   test('a DM from before threads becomes the first thread; its history stays', async () => {
     const dir = tmp()
@@ -270,6 +314,7 @@ describe('migration of the single DM', () => {
       'channel_pairing_tokens',
       'channel_outbox',
       'channel_approvals',
+      'channel_known_chats',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(

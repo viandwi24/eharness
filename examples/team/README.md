@@ -37,6 +37,7 @@ docs/     architecture, API, operations
   workspace and per-agent memory.
 - **Routines**: cron / interval / one-shot prompts, safe with several instances.
 - **Connectors** (Claude style): built-in Files, Memory, Planning, Web, Ask the user and Team; GitHub and any remote MCP URL, connected once for the workspace (available to all agents, each agent may override) or for one agent; per agent each capability is Allowed, Ask first or Off. Secrets are encrypted, writes of external connectors always ask, even in Bypass mode. Custom connectors are added like in Claude: **Add custom connector** → name + remote MCP URL → the server probes it (OAuth detected or not) → choose *Sign in now*, *Sign in when needed* or *No sign in*, an optional OAuth client and request headers → each one becomes its own card. Their tool prefix is a slug of the name taken at creation, so renaming never renames tools. The composer's tools menu switches connectors per chat, and **Tool access** (Auto / On demand) decides whether third-party tools are loaded up front or found through `tool_search`.
+- **Channels** (Telegram bot): the **Channels** page connects a bot (token from @BotFather), binds it to an agent, lists the chats it was added to with a policy each (wake on mention, always, or observe only; reply or post-by-tool; retention), pairs employees with a `/start` link and shows the outbound queue. Groups, forum topics, channels and DMs; approvals with buttons. See [Telegram bot](#telegram-bot).
 - **Cost controls**: a per-workspace USD budget on a shared ledger and a cap on concurrent
   delegations. Multi-agent runs cost many times a chat, see the
   [lead and role agents guide](../../docs/guides/lead-and-role-agents.md).
@@ -89,7 +90,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_ALLOWED_HOSTS` | - | comma-separated `Host` header names accepted besides loopback, `TEAM_HOST` and the host of `TEAM_PUBLIC_URL` (DNS rebinding guard: other hosts get `403 FORBIDDEN_HOST`) |
 | `TEAM_DEBUG_INVARIANTS` | - | `1` = `debug.invariants` on every agent (explicit in eharness; the server tests set it through `server/bunfig.toml`). A broken session invariant then fails the turn instead of only warning |
 | `TEAM_ALLOW_PRIVATE_MCP` | - | `1` = custom connector URLs may point at private/loopback hosts (local MCP servers; dev only) |
-| `TEAM_PUBLIC_URL` / `TEAM_WEB_URL` | `http://localhost:$PORT` / `http://localhost:5173` | where browsers reach the server (OAuth redirect URI `<url>/oauth/callback`; its host and origin are always allowed) / where the OAuth callback sends the browser back (`<url>/connectors`; its origin is always allowed) |
+| `TEAM_PUBLIC_URL` / `TEAM_WEB_URL` | `http://localhost:$PORT` / `http://localhost:5173` (with `TEAM_WEB_DIR`: the public URL, same origin) | where browsers reach the server (OAuth redirect URI `<url>/oauth/callback`; its host and origin are always allowed) / where the OAuth callback sends the browser back (`<url>/connectors`; its origin is always allowed) and the links in channel messages |
 | `TEAM_<CONNECTOR>_CLIENT_ID` / `_CLIENT_SECRET` | - | OAuth app of a curated connector (for example `TEAM_GITHUB_CLIENT_ID`); or save it on the Connectors page (stored encrypted) |
 | `OPENROUTER_BASE_URL` | - | base URL of the OpenRouter env profile (proxies) |
 | `TEAM_DB` | `./data/team.db` | SQLite file (WAL). Several instances may share it |
@@ -103,6 +104,7 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 | `TEAM_EVENTS_MAX_ROWS` | `100000` | events feed: rows kept (the oldest go first). The newest event and the latest message of each agent are always kept. A client resuming from a pruned cursor gets a `resync` signal (SSE `event: resync`, or `resync: true` on `GET /activity`) and refetches its state |
 | `TEAM_ROUTINE_RUNS_RETENTION_DAYS` / `TEAM_TASKS_RETENTION_DAYS` / `TEAM_LIBRARY_HISTORY_RETENTION_DAYS` | `30` / `90` / `180` | days kept of finished routine runs, finished tasks (their chat messages stay in the session store) and library history rows (besides the per-path cap); `0` = keep. Pruned at boot and every 10 min together with events |
 | `TEAM_CHANNEL_KEY` | dev key file | 32 bytes, base64: encrypts the channel message log at rest (its own key; dev: `data/channel.key`); `TEAM_CHANNEL_KEY_PREVIOUS` for rotation |
+| `TEAM_TELEGRAM_API_ROOT` | `https://api.telegram.org` | Bot API root of the Telegram bot (a local Bot API server, or a test fake) |
 | `TEAM_WEB_DIR` | - | serve the built web (`web/build`) from the server on one port; the API then lives under `/api` (set by the Docker image) |
 | `TZ` | host timezone | team timezone default (active hours, briefing time) |
 | `TEAM_DEMO_COLLECTOR` | - | `1` = register the demo community source (5 000 deterministic chat messages) for the big-data tools |
@@ -111,6 +113,26 @@ No key? Set `TEAM_SCRIPTED_MODEL=/path/to/steps.json` in `.env` to run offline w
 
 The web reads the token from `PUBLIC_TEAM_TOKEN` (build/dev env) or from the one saved on its Settings page (browser storage). Migrations are generated by
 drizzle-kit (`bun run db:generate`) and applied at boot.
+
+## Telegram bot
+
+1. In Telegram open **@BotFather**, send `/newbot`, pick a name and a username ending in `bot`, and
+   copy the token it gives you (`123456:ABC...`).
+2. Groups: the bot only sees mentions, replies and commands while **privacy mode** is on (the
+   default). To let it follow a whole group (answer on every message, or observe), either make it
+   a **group admin**, or send `/setprivacy` to @BotFather, choose *Disable* and **remove and re-add**
+   the bot to the group. For channels, add the bot as an admin with the right to post.
+3. In the web app open **Channels** -> **Connect a Telegram bot** and paste the token (it is stored
+   encrypted and never shown again). The page tells you whether privacy mode is on.
+4. **Bind** the connection to an agent. Add the bot to a group and write a message; the chat shows
+   up under **Chats**. Allow it and choose when the agent wakes.
+5. **People**: create a link for a team member and send it; they open it in Telegram and press
+   **Start**. Only linked accounts can message the agent directly.
+
+A bot can only receive updates by one method at a time: if a webhook is set the page offers to
+remove it. Run one server process per bot. `TEAM_TELEGRAM_API_ROOT` points at a local Bot API
+server. Telegram's terms limit what may be done with chat data (platform data and AI): read the
+notes in [P41](../../docs/plans/P41-team-channels.md) and ingest only chats you own or manage.
 
 ## Docker
 

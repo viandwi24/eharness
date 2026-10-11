@@ -12,7 +12,7 @@ import { MEMORY_ROOT } from '../domain/memory.ts'
 import type { Deps, FileChange } from './ports.ts'
 
 export interface LibraryEntry extends LibraryFileMeta {
-  /** The agent that first wrote the file; null = a person (upload or editor). */
+  /** The agent that wrote the file last (every save sets it); null = a person (upload or editor). */
   createdBy: { id: string; name: string; slug: string } | null
 }
 

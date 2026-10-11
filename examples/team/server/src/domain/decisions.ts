@@ -306,6 +306,7 @@ export const PROPOSE_PLAN_DESCRIPTION =
   'brief (what to do, step by step), the authority it needs (tools, connectors, library paths), ' +
   'what still needs a decision (gates), forbidden actions and a budget. `body` is the pitch for ' +
   'the client in markdown: the goal, the steps, why, and links to the evidence (library paths). ' +
-  '`agent` is the agent that will run it (default: you). This does not start anything and does ' +
+  '`agent` (required) is the slug of the agent that will run it. An open proposal that says the ' +
+  'same thing is not created twice: you are told which one exists. This does not start anything and does ' +
   'not pause you: the client approves, edits or rejects it in the Decision Center. Ask for the ' +
   'least authority that does the job.'

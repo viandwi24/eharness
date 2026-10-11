@@ -599,6 +599,37 @@ run through the same `routineOutcomes` plugin, so repeated failures pause the sc
 program pauses the routine. **Run now** starts a run directly (one at a time per program, `409
 PROGRAM_BUSY`); the run history of a program is its tasks.
 
+**What a run gets that its agent does not have (real-model pass).** Three traps showed up the
+first time a real model ran programs, each with a team-level fix and none in the library:
+
+- *File tools.* The Files connector of an agent can have Edit switched off for chats. A program that
+  grants write paths would then never get `write_file`, and `request_authority` cannot help (the
+  tool does not exist, so it is not an authority question). The files plugin now always defines the
+  read and write tools (`connector-catalog.ts`; an agent with no Files connection gets a bare
+  `filesystem` plugin with them), and the [`fileGrant`](../../examples/team/server/src/infra/eh/file-grant-plugin.ts)
+  plugin narrows `activeTools` per step: every session sees what its connector offers, a program
+  run also the tools its authority grants (`runFileTools`: write paths give write and read tools,
+  read paths the read tools, naming a tool gives that tool; never `delete_file`). The connector's
+  own deny rule is dropped for a run, the closed-world gate decides, and it still limits each call
+  to the granted paths. *Without it:* a manager grants `/library/reports/**` and the worker answers
+  "I have no write tool" forever.
+- *The budget floor.* Every model call reserves its worst case (context plus the output cap at the
+  model price) against the run and the day scopes before it runs (section 12). With the agent-wide
+  32k output cap that is about $0.04 on a cheap model, so a $0.02 per-run budget failed with $0
+  spent. A program run now passes `settings.maxOutputTokens` per turn
+  (`factory.programTurn`, for the first turn and for the continuation after a decision):
+  `budget.maxOutputTokens` when the program sets it, else a cap sized so one call reserves about half
+  of the smallest budget (2 048 to 16 384, never above the model limit; `programMaxOutputTokens`).
+  The editor warns when a budget is still below one call (`POST /programs/check`, `budgetWarnings`).
+  The `cost-cap` failure text says that the stop is a reservation, not spend.
+- *Tools that cannot exist.* A program whose authority lists `channel_send` or `channel_manage` while
+  its agent is bound to no channel connection used to loop "running": the tool never exists. The
+  same check that warns in the editor (`toolWarnings`, over `factory.toolAvailability`) now makes the
+  run fail before its first model call (`409 PROGRAM_UNRUNNABLE`, a failed task with the reason; a
+  worker run claims nothing), and `request_authority` for a tool the run can never have returns the
+  reason to the model instead of parking (a `superRefine` on the tool input, so the run is not parked
+  and no decision is opened).
+
 *Without the gate:* a program run in `dontAsk` could read everything and an MCP tool outside the
 authority would only be "not allowed by mode", with the generic reason; the agent could not tell
 that it should report instead of retrying. *Without `dontAsk`:* the first out-of-authority write of
@@ -857,6 +888,21 @@ and outside hours make no model call; ok shows nothing; attention fills the buff
 the DM once; the same findings are deduplicated; overlap and a parked beat skip; the gate refuses
 writes; three similar requests, not two; the digest contents and its idempotence; the routine fires,
 a claimed fire is recovered once, a beat the server died in is closed.
+
+**Real numbers (real-model pass).** A beat once reported a budget as burnt while the ledger showed
+$0: it had read "the budget of this run was used up" (a reservation that did not fit) as spend. Now
+`team_status` ends with the spend from the ledger (this month against the limit) and the call log
+(today), says what a budget stop means, and a failing-run finding carries what the run actually
+spent. The beat prompt says to quote only those numbers. A run parked on a decision is `running`
+in the task index but is no longer "stuck": the heartbeat reports it as waiting for you, and
+`GET /tasks` / `GET /tasks/{id}` carry `column` (`waiting` while parked, `review`, ...) next to
+`status`, which is untouched, so the queue and claim logic do not change. The digest counts every run
+that was active in its window (also one that started before it, and routine runs), prints
+`19 runs: 15 done, 3 failed, 1 still running`, names the failed ones whatever their program reports,
+and leaves the rest as a count. The lead reads per-run and per-task cost with `list_tasks` (each row
+shows what its session spent, `program` filters by id or name, the total is the last line).
+`propose_plan` needs `agent` (a readable error lists the agents) and is not stored twice: an open
+proposal for the same agent with a similar title or brief is returned to the model instead.
 
 *Without the checklist rule:* a heartbeat on every agent pays a model call every half hour to say
 nothing. *Without fingerprints:* the same stuck task is reported every beat.
@@ -1229,6 +1275,49 @@ something you can run for U1-U3.
 
 The web app shows a source badge for a channel conversation in the thread list and in the
 switcher; it can be read and continued there (what is written there is not posted to the chat).
+
+## 28b. Telegram bot and the Channels page (P41 phase L3)
+
+**What.** The first real adapter: a Telegram bot over the Bot API with grammY
+([`infra/telegram`](../../examples/team/server/src/infra/telegram)). It implements the
+`ChannelAdapter` of section 28, so the gateway, outbox, approvals and tools are unchanged.
+
+**Setup in four steps** (the owner enters the token in the web app, never in a file):
+
+1. In Telegram, @BotFather `/newbot`; copy the token. For groups, either make the bot a group admin
+   or turn privacy mode off (`/setprivacy`, then re-add the bot), otherwise it only sees mentions,
+   replies and commands.
+2. Channels page, **Connect a Telegram bot**: the connector flow takes the token and runs
+   `getMe`; the connection shows `@username` and what privacy mode means for this bot.
+3. Bind the connection to an agent. Polling starts; the bot shows as *Running*.
+4. Write in a group where the bot is (or add it): the chat appears under **Chats**. Allow it and
+   choose when the agent wakes (mention, every message, observe only), how it replies and how
+   long messages are kept. For employees, **People** issues a `/start` deep link per team
+   member; only linked accounts reach the agent by DM, and only they (or an admin) answer
+   approvals pressed in a chat.
+
+**Transport.**
+
+- *Inbound.* `run(bot)` (concurrent) with `sequentialize` by chat, `allowed_updates` listed
+  explicitly, a long poll of 30 s. `normalize.ts` turns an update into an `InboundEvent`: mention
+  by entity, reply to the bot, `/command@botname`, forum topic as its own conversation, edits,
+  channel posts, reactions, callback queries (answered at once, then handed to the gateway as
+  `action` events), and `my_chat_member` / chat updates into the known chats table.
+- *Outbound.* Through the gateway's outbox and queue. Telegram's `retry_after` becomes a
+  `ChannelError('rate_limit', ..., ms)` that the queue parks; auto-retry only absorbs waits up to
+  5 s. HTML only, with a strict escaper and a Markdown subset; a parse failure is resent plain.
+- *Errors and secrets.* 401 means a revoked token: `markNeedsAuth`, a bell, the poller stops. The
+  token sits in every request URL, so every message that leaves the adapter is scrubbed.
+- *Tests* run the real grammY and runner under Bun against a fake Bot API on a local port
+  ([`test/support/fake-telegram.ts`](../../examples/team/server/test/support/fake-telegram.ts)):
+  polling order, signals, topics, callbacks, the 20 MB cap, 429 `retry_after`, 401, privacy
+  guidance, HTML escaping and splitting, and the whole flow through the HTTP API
+  (`test/telegram-channels.test.ts`). No real network.
+
+**Admin API.** `GET /channels/connections`, `PUT|DELETE .../{id}/binding`, `GET .../chats`,
+`PATCH|DELETE .../chats/{chatId}/policy[?topic=]`, `GET .../links`, `POST .../pairing`,
+`DELETE .../links/{peerId}`, `POST .../webhook/delete`, `.../restart`, `.../breaker/reset`
+(zod-openapi schemas, generated web types). The web page is `/channels`.
 
 ## What to change when you copy it
 

@@ -1,5 +1,6 @@
 // Chat threads as the web shows them (P40 phase M). Pure: no network, no Svelte.
 import type { Thread } from '../api/client';
+import { stripMarkdown } from '../format';
 
 export const NEW_CHAT_TITLE = 'New chat';
 
@@ -7,7 +8,7 @@ export const NEW_CHAT_TITLE = 'New chat';
 export function threadTitle(t: Pick<Thread, 'title' | 'preview'>): string {
 	const title = t.title?.trim();
 	if (title) return title;
-	const preview = t.preview?.trim();
+	const preview = stripMarkdown(t.preview);
 	return preview ? (preview.length > 48 ? `${preview.slice(0, 47)}…` : preview) : NEW_CHAT_TITLE;
 }
 

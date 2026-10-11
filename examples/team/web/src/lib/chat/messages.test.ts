@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { isEmptyAssistant, uniqueById, withoutEmptyAssistant } from './messages.ts';
+import { editableInput, endsInErrorNotice, isEmptyAssistant, regenerateTarget, uniqueById, withoutEmptyAssistant } from './messages.ts';
 
 describe('uniqueById', () => {
 	test('returns the same list when ids are unique', () => {
@@ -39,5 +39,28 @@ describe('empty assistant messages', () => {
 		const list = [text];
 		expect(withoutEmptyAssistant(list)).toBe(list);
 		expect(withoutEmptyAssistant([empty, text])).toEqual([text]);
+	});
+});
+
+describe('regenerateTarget / editableInput / endsInErrorNotice', () => {
+	const user = (id: string, text: string) => ({ id, role: 'user', parts: [{ type: 'text', text }] }) as never;
+	const asst = (id: string) => ({ id, role: 'assistant', parts: [{ type: 'text', text: 'hi' }] }) as never;
+	const notice = (id: string, level: string) =>
+		({ id, role: 'assistant', metadata: { eharness: { kind: 'eh.notice' } }, parts: [{ type: 'data-eh.notice', data: { level, message: 'x' } }] }) as never;
+
+	test('regenerate targets the newest reply, skipping kind messages, never a user message', () => {
+		expect(regenerateTarget([user('1', 'a'), asst('2'), notice('3', 'error')])?.id).toBe('2');
+		expect(regenerateTarget([user('1', 'a'), asst('2'), user('3', 'b')])).toBeUndefined();
+		expect(regenerateTarget([])).toBeUndefined();
+	});
+	test('edit returns text and files of a user message only', () => {
+		expect(editableInput(user('1', 'hello'))?.text).toBe('hello');
+		expect(editableInput(asst('2'))).toBeUndefined();
+		expect(editableInput(user('3', '  '))).toBeUndefined();
+	});
+	test('an error notice after the last user message is detected', () => {
+		expect(endsInErrorNotice([user('1', 'a'), asst('2'), notice('3', 'error')])).toBe(true);
+		expect(endsInErrorNotice([user('1', 'a'), notice('3', 'warning')])).toBe(false);
+		expect(endsInErrorNotice([notice('3', 'error'), user('1', 'a')])).toBe(false);
 	});
 });

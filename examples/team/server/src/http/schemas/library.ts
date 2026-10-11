@@ -3,7 +3,9 @@ import { z } from '@hono/zod-openapi'
 const CreatedBy = z
   .object({ id: z.string(), name: z.string(), slug: z.string() })
   .nullable()
-  .openapi({ description: 'The agent that first wrote the file; null = a person.' })
+  .openapi({
+    description: 'The agent that wrote the file last; null = a person (an upload or the editor).',
+  })
 
 export const LibraryEntrySchema = z
   .object({

@@ -2,9 +2,12 @@
 	import WarningCircleIcon from 'phosphor-svelte/lib/WarningCircle';
 	import InfoIcon from 'phosphor-svelte/lib/Info';
 	import { cn } from '#lib/utils.js';
+	import { errorHint } from '#lib/chat/errors.js';
 
 	/** The `eh.notice` kind: what the core says about a turn (an error, a timeout, a recovered crash, a warning). */
 	let { level, text, code }: { level: 'info' | 'warning' | 'error'; text: string; code?: string } = $props();
+	// the one place a failed turn is shown: the stored notice, with the fix when the code has one
+	const hint = $derived(level === 'error' ? errorHint(code) : undefined);
 </script>
 
 <div
@@ -14,5 +17,5 @@
 	data-code={code}
 >
 	{#if level === 'info'}<InfoIcon class="mt-0.5 size-4 shrink-0" />{:else}<WarningCircleIcon class="mt-0.5 size-4 shrink-0" />{/if}
-	<span class="min-w-0 flex-1 break-words">{text}</span>
+	<span class="min-w-0 flex-1 break-words">{text}{#if hint}<span class="mt-0.5 block opacity-90">{hint}</span>{/if}</span>
 </div>

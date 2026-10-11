@@ -878,6 +878,7 @@ describe('program suggestions', () => {
         call('team_status', {}),
         call('propose_plan', {
           title: 'Weekly sales summary every Monday',
+          agent: 'lead',
           name: 'Weekly sales summary',
           brief: 'Summarize the weekly sales numbers per region into /library/reports/sales/.',
           authority: { read: ['/library/sales/**'], write: ['/library/reports/sales/**'] },

@@ -41,7 +41,7 @@ import {
 } from 'eharness'
 import { type ActivityStore, activity } from 'eharness/activity'
 import type { ActivatedConnectors, BuiltinInput } from 'eharness/connectors'
-import { filesystem } from 'eharness/filesystem'
+import { type FileToolName, filesystem } from 'eharness/filesystem'
 import {
   type AutoClassifier,
   type AutoEvent,
@@ -54,6 +54,7 @@ import {
 import { subagent } from 'eharness/subagent'
 import type { EventAppender, ProgramStore } from '../../app/ports.ts'
 import type { AgentDef } from '../../domain/agents.ts'
+import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import {
   isAllowedMediaType,
   LIBRARY_URL_PREFIX,
@@ -73,10 +74,18 @@ import {
 import {
   forbiddenReason,
   outsideAuthorityReason,
+  PROGRAM_BASE_TOOLS,
+  PROGRAM_FILE_TOOLS,
+  type ProgramAuthority,
   parseProgramSession,
   programDayScope,
+  programMaxOutputTokens,
   programRules,
   programRunScope,
+  runFileTools,
+  type ToolAvailability,
+  toolWarnings,
+  WORKER_TOOLS,
 } from '../../domain/programs.ts'
 import { LEAD_PLAYBOOK, ROLE_AGENT_NOTE } from '../../domain/prompts.ts'
 import { isSimulatedCall, parseRehearsalSession, simulatedText } from '../../domain/rehearsal.ts'
@@ -84,7 +93,8 @@ import { originOfSession, profileOfSession } from '../../domain/run-profiles.ts'
 import type { WorkspaceSettings } from '../../domain/settings.ts'
 import { parseChatSession } from '../../domain/threads.ts'
 import { type BigDataConfig, createBigDataHook } from '../bigdata/index.ts'
-import { type ChannelGateway, channels } from '../channels/index.ts'
+import { CHANNEL_TOOLS, type ChannelGateway, channels } from '../channels/index.ts'
+import { nativeToolName } from '../channels/policy.ts'
 import type { ChatToolsStore } from '../db/chat-tools-repo.ts'
 import type { SessionModeStore } from '../db/modes-repo.ts'
 import type { TaskWriter } from '../db/tasks-repo.ts'
@@ -92,7 +102,8 @@ import type { ActivityLog } from './activity-log.ts'
 import { chatTools } from './chat-tools-plugin.ts'
 import { MEMORY_TOOL_KINDS } from './connector-catalog.ts'
 import type { ConnectorsRuntime } from './connectors.ts'
-import { type DecisionIntake, decisions } from './decisions-plugin.ts'
+import { DECISION_TOOLS, type DecisionIntake, decisions } from './decisions-plugin.ts'
+import { fileGrant } from './file-grant-plugin.ts'
 import { type HeartbeatIntake, heartbeat } from './heartbeat-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import { type SessionGate, sessionPermissions } from './permission-plugin.ts'
@@ -110,7 +121,7 @@ import {
 } from './storage.ts'
 import { sqliteStreamLog } from './stream-log.ts'
 import { taskIndex } from './task-index.ts'
-import { type WorkQueueIntake, workQueue } from './work-queue-plugin.ts'
+import { WORK_QUEUE_TOOLS, type WorkQueueIntake, workQueue } from './work-queue-plugin.ts'
 
 /** Limits of delegation (plan decision D4: multi-agent runs cost many times a chat). */
 export interface TeamLimits {
@@ -247,6 +258,19 @@ export interface AgentFactory {
   agentFor(def: AgentDef): HarnessAgent
   /** The model an agent runs on and what the catalog knows about it (window, prices). */
   modelInfo(def: AgentDef): ModelInfoOf
+  /**
+   * Turn settings of a program run: the output cap its budget can afford (`programMaxOutputTokens`).
+   * Every model call reserves its worst case against the budgets, so a run with a small budget
+   * must not use the agent-wide 32k cap. `{}` for any other session. Pass it to every turn of the
+   * run (`send`, `resolveWait`).
+   */
+  programTurn(def: AgentDef, sessionId: string): { settings?: { maxOutputTokens: number } }
+  /**
+   * The tools a program run of `def` can have under `authority`: the connector tools that are on,
+   * the plugin tools every run has, the file tools the authority grants, and the channel tools when
+   * the agent is bound to a channel connection. Await `prepare(def)` first.
+   */
+  toolAvailability(def: AgentDef, authority: ProgramAuthority): ToolAvailability
   /** Shared storage ports (messages, state, inbox), for `agent.session(id, { lock })` callers. */
   storage: ReturnType<typeof createStorage>
   /** Cross-process turn lock; pass it as `session(id, { lock })`. */
@@ -609,6 +633,36 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     })
   }
 
+  /** The tools a program run of `def` can have (`AgentFactory.toolAvailability`). */
+  function availabilityOf(
+    def: AgentDef,
+    out: ActivatedConnectors,
+    authority: ProgramAuthority,
+  ): ToolAvailability {
+    const gateway = deps.channels?.()
+    const bound = gateway?.connectionsOf(def.id) ?? []
+    const available = new Set<string>([
+      ...Object.keys(out.toolNameMap).filter((t) => !out.rules.deny.includes(t)),
+      ...PROGRAM_BASE_TOOLS,
+      ...WORKER_TOOLS,
+      ...DECISION_TOOLS,
+      ...WORK_QUEUE_TOOLS,
+      READ_BRIEFINGS_TOOL,
+      'final_answer',
+      ...runFileTools(authority),
+    ])
+    if (bound.length > 0) {
+      for (const tool of CHANNEL_TOOLS) available.add(tool)
+      for (const c of bound) {
+        const adapter = gateway?.adapter(c.connectionId)
+        for (const action of adapter?.actions ?? []) {
+          available.add(nativeToolName(adapter?.platform ?? 'channel', action.name))
+        }
+      }
+    }
+    return { available, channelTools: CHANNEL_TOOLS, channelsBound: bound.length > 0 }
+  }
+
   function build(
     def: AgentDef,
     settings: ReturnType<typeof currentSettings>,
@@ -631,7 +685,12 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
           rules: {
             allow: gate.rules.allow,
             ask: [],
-            deny: [...out.rules.deny, ...gate.rules.deny],
+            // a file tool the agent's Files connector has switched off is not denied here: the
+            // authority of the program decides (`fileGrant`), and it is closed-world
+            deny: [
+              ...out.rules.deny.filter((rule) => !PROGRAM_FILE_TOOLS.includes(rule)),
+              ...gate.rules.deny,
+            ],
           },
           toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
         })
@@ -737,9 +796,24 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       }
     }
 
+    // file tools the Files connector of this agent does not offer (switched off, or no connection)
+    const withheldFileTools = PROGRAM_FILE_TOOLS.filter(
+      (t) => !(t in out.toolNameMap) || out.rules.deny.includes(t),
+    )
+    /** What the authority of the program of a session grants of them (empty for other sessions). */
+    const grantedFileTools = (sessionId: string): ReadonlySet<string> => {
+      const parsed = parseProgramSession(sessionId) ?? parseRehearsalSession(sessionId)
+      const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
+      return new Set(program === undefined ? [] : runFileTools(program.authority))
+    }
+
     const plugins = [
-      // memory needs the `fs` service: a bare filesystem plugin when only memory is on
-      ...(pluginNames.has('memory') && !pluginNames.has('filesystem')
+      // memory needs the `fs` service: a bare filesystem plugin when only memory is on. With
+      // programs it also defines the file tools (hidden from every session but a program run that
+      // is granted them, `fileGrant`), so an agent without a Files connection can still be given
+      // paths to write
+      ...((pluginNames.has('memory') || deps.programs !== undefined) &&
+      !pluginNames.has('filesystem')
         ? [
             filesystem({
               fs: sessionFileSystem(
@@ -748,13 +822,16 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
                   ...(deps.onFileChange ? { onChange: deps.onFileChange } : {}),
                 }),
               ),
-              tools: [],
+              tools: deps.programs === undefined ? [] : (PROGRAM_FILE_TOOLS as FileToolName[]),
               hiddenPrefixes: ['/memories'],
               ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
             }),
           ]
         : []),
       ...out.plugins,
+      // file tools of the agent's connector stay as they are; a program run may add those its
+      // authority grants (the engine of a run does not deny them, see `createEngine`)
+      fileGrant({ withheld: withheldFileTools, granted: grantedFileTools }),
       ...(deps.chatTools === undefined
         ? []
         : [
@@ -769,6 +846,27 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
             decisions({
               intake: deps.decisions,
               agentOf: (slug) => deps.agentBySlug?.(slug),
+              // `request_authority` for a tool the run can never have explains why instead of
+              // parking: no decision of the client can make the tool exist
+              unavailable: (sessionId, asked) => {
+                const parsed = parseProgramSession(sessionId)
+                const program =
+                  parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
+                if (program === undefined) return undefined
+                const merged = {
+                  ...program.authority,
+                  tools: [...program.authority.tools, ...(asked.tools ?? [])],
+                  read: [...program.authority.read, ...(asked.read ?? [])],
+                  write: [...program.authority.write, ...(asked.write ?? [])],
+                }
+                const problems = toolWarnings(
+                  { tools: asked.tools ?? [] },
+                  availabilityOf(def, out, merged),
+                )
+                return problems.length === 0
+                  ? undefined
+                  : `${problems.map((w) => w.message).join(' ')} Asking for it cannot help: finish what is inside your authority and report what you could not do (status 'needs_decision').`
+              },
             }),
           ]),
       ...(deps.workQueue === undefined
@@ -976,7 +1074,16 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
       return { id: sel.modelId, profileId: sel.profileId, ...(info ?? {}) }
     }
     const id = def.model ?? settings.defaultModel ?? deps.models.defaultModel
-    return { id, ...(lookupModel(catalog, id) ?? {}) }
+    let info = lookupModel(catalog, id)
+    if (info === undefined) {
+      // the id alone is not what the catalog keys on (a scripted or aliased model): ask the model
+      try {
+        info = lookupModel(catalog, deps.models.resolve(...selectionOf(def, settings)))
+      } catch {
+        info = undefined
+      }
+    }
+    return { id, ...(info ?? {}) }
   }
 
   /**
@@ -1035,6 +1142,21 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
     },
     agentFor: (def) => factoryAgentFor(def, def.archivedAt !== null),
     modelInfo: (def) => modelInfoOf(def, currentSettings()),
+    toolAvailability: (def, authority) =>
+      availabilityOf(def, deps.connectors.activated(def.id) ?? EMPTY_ACTIVATION, authority),
+    programTurn(def, sessionId) {
+      const parsed = parseProgramSession(sessionId)
+      const program = parsed === undefined ? undefined : deps.programs?.get(parsed.programId)
+      if (program === undefined) return {}
+      return {
+        settings: {
+          maxOutputTokens: programMaxOutputTokens(
+            program.budget,
+            modelInfoOf(def, currentSettings()),
+          ),
+        },
+      }
+    },
     peek: (sessionId) => {
       const lead = deps.lead?.()
       const any = lead ?? deps.roster?.()[0]

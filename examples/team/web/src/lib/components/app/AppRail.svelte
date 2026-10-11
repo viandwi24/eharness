@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import NewspaperIcon from 'phosphor-svelte/lib/Newspaper';
+	import ChatCircleDotsIcon from 'phosphor-svelte/lib/ChatCircleDots';
 	import ChatsCircleIcon from 'phosphor-svelte/lib/ChatsCircle';
 	import ClockIcon from 'phosphor-svelte/lib/Clock';
 	import FolderOpenIcon from 'phosphor-svelte/lib/FolderOpen';
@@ -34,6 +35,7 @@
 		programs: StrategyIcon,
 		routines: ClockIcon,
 		files: FolderOpenIcon,
+		channels: ChatCircleDotsIcon,
 		connectors: PlugsConnectedIcon,
 		logs: PulseIcon,
 		settings: GearIcon

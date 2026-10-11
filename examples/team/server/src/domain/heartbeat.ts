@@ -327,13 +327,15 @@ export interface ProgramObservation {
   /** The schedule trigger: null for a manual program. */
   trigger: { status: Routine['status']; pausedReason: Routine['pausedReason'] } | null
   /** Newest first. */
-  runs: Array<Pick<Task, 'id' | 'status' | 'endedAt' | 'summary'>>
+  runs: Array<Pick<Task, 'id' | 'status' | 'endedAt' | 'summary'> & { costUsd?: number }>
 }
 
 export interface ObserveInput {
   now: number
   tasks: readonly Task[]
   decisions: readonly Pick<Decision, 'id' | 'title' | 'kind' | 'createdAt' | 'status'>[]
+  /** Sessions parked on an open decision (they show `running` but wait for the client). */
+  waitingSessions?: ReadonlySet<string>
   programs: readonly ProgramObservation[]
   /** Routines that are not a program's schedule. */
   routines: readonly Pick<
@@ -369,8 +371,24 @@ export function observe(input: ObserveInput): Finding[] {
   const out: Finding[] = []
   const { now } = input
 
+  const parked = input.waitingSessions ?? new Set<string>()
   for (const t of input.tasks) {
-    if (t.status === 'running' && now - t.lastActivityAt >= STUCK_MS) {
+    // a run parked on an open decision is `running` in the index, but it is not stuck: it waits
+    // for the client (and `decision.open` below reports the decision once it is old)
+    const onDecision = t.status === 'running' && parked.has(t.sessionId)
+    if (onDecision) {
+      if (now - t.lastActivityAt >= WAITING_MS) {
+        out.push(
+          f(
+            'task.waiting',
+            t.id,
+            `Waiting for you: ${t.title}`,
+            `Parked on a decision in the Decision Center for ${ago(now - t.lastActivityAt)}.`,
+            [`/tasks/${t.id}`, '/decisions'],
+          ),
+        )
+      }
+    } else if (t.status === 'running' && now - t.lastActivityAt >= STUCK_MS) {
       out.push(
         f(
           'task.stuck',
@@ -446,7 +464,9 @@ export function observe(input: ObserveInput): Finding[] {
           'program.failing',
           `${p.program.id}:${last.id}`,
           `Program run failed: ${p.program.name}`,
-          last.summary ?? 'No summary.',
+          // what the run really spent, from the ledger: a "budget used up" stop is a reservation
+          // that did not fit, not money burnt (a model must not say otherwise)
+          `${last.summary ?? 'No summary.'}${last.costUsd === undefined ? '' : ` (This run actually spent ${usd(last.costUsd)}.)`}`,
           [link, `/tasks/${last.id}`],
         ),
       )
@@ -551,7 +571,7 @@ export function requestWords(text: string): Map<string, string> {
 
 export const requestTokens = (text: string): Set<string> => new Set(requestWords(text).keys())
 
-const jaccard = (a: ReadonlySet<string>, b: ReadonlySet<string>): number => {
+export const jaccard = (a: ReadonlySet<string>, b: ReadonlySet<string>): number => {
   if (a.size === 0 || b.size === 0) return 0
   let shared = 0
   for (const t of a) if (b.has(t)) shared++
@@ -641,16 +661,36 @@ const usd = (n: number): string => `$${n >= 1 ? n.toFixed(2) : n.toFixed(4)}`
 // --- the model's view --------------------------------------------------------------------------
 
 /** What `team_status` returns: compact, newest findings first, capped. */
-export function statusText(findings: readonly Finding[], now: number): string {
+export interface SpendNow {
+  /** The workspace budget this month (the ledger); null when none is tracked. */
+  month: { spentUsd: number; limitUsd: number | null } | null
+  /** Model spend since 00:00 UTC (the model call log). */
+  todayUsd: number
+}
+
+/** The spend lines of `team_status`: real numbers, so no beat has to guess what was burnt. */
+export function spendLines(spend: SpendNow): string[] {
+  const month =
+    spend.month === null
+      ? 'no monthly budget is tracked'
+      : `this month ${usd(spend.month.spentUsd)}${spend.month.limitUsd === null ? '' : ` of ${usd(spend.month.limitUsd)}`}`
+  return [
+    `Spend (from the ledger and the call log, not an estimate): ${month}; today ${usd(spend.todayUsd)}.`,
+    'A "budget used up" stop of a run means one model call could not be reserved against its limit; it says nothing about money spent. Quote only these numbers and the cost shown for a run.',
+  ]
+}
+
+export function statusText(findings: readonly Finding[], now: number, spend?: SpendNow): string {
+  const spendText = spend === undefined ? '' : `\n\n${spendLines(spend).join('\n')}`
   if (findings.length === 0) {
-    return `Team status at ${new Date(now).toISOString()}: nothing new to report. Everything the server watches is fine or already reported.`
+    return `Team status at ${new Date(now).toISOString()}: nothing new to report. Everything the server watches is fine or already reported.${spendText}`
   }
   const lines = findings.slice(0, 30).map((x, i) => {
     const links = x.links.length === 0 ? '' : `\n   links: ${x.links.join(', ')}`
     return `${i + 1}. [${x.kind}]${x.urgent ? ' URGENT' : ''} ${x.title}\n   ${x.detail.replace(/\n/g, '\n   ')}\n   fingerprint: ${x.fingerprint}${links}`
   })
   const more = findings.length > 30 ? `\n(${findings.length - 30} more not shown)` : ''
-  return `Team status at ${new Date(now).toISOString()}: ${findings.length} finding(s) not reported yet.\n\n${lines.join('\n')}${more}`
+  return `Team status at ${new Date(now).toISOString()}: ${findings.length} finding(s) not reported yet.\n\n${lines.join('\n')}${more}${spendText}`
 }
 
 /** The turn that starts a beat. The checklist is the person's; the findings come from the tool. */
@@ -672,6 +712,8 @@ export function beatPrompt(input: {
     '2. Work through the checklist below (read the library files it names).',
     '3. Decide what deserves the client attention. A finding that is just information, or that you',
     '   cannot act on, still goes in the result as an item; routine and healthy things do not.',
+    '   About money: say only what team_status states as spend, or the cost of a run. Never infer',
+    '   that a budget was burnt from a stop message.',
     '4. Mark an item urgent only when waiting for the daily digest would cost something (a program',
     '   paused itself, a limit is about to stop all work, data may be lost). Urgent items reach',
     '   the client bell at once; you never wait for an answer, so do not ask questions.',
@@ -763,11 +805,47 @@ const oneLine = (s: string, max = 200): string => {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean
 }
 
+const MAX_FAILED_LISTED = 10
+
+type RunBucket = 'done' | 'failed' | 'waiting' | 'running'
+
+/** Where a run counts in the digest header: what it reports, else what its session says. */
+function runBucket(task: Pick<Task, 'status' | 'report'>): RunBucket {
+  if (task.report?.status === 'failed') return 'failed'
+  if (task.report?.status === 'needs_decision') return 'waiting'
+  switch (task.status) {
+    case 'done':
+      return 'done'
+    case 'needs_action':
+      return 'waiting'
+    case 'queued':
+    case 'running':
+      return 'running'
+    default:
+      return 'failed'
+  }
+}
+
+/** "19 runs: 14 done, 3 failed, 2 waiting for you": every run of the window, counted from the board. */
+function runCounts(tasks: ReadonlyArray<Pick<Task, 'status' | 'report'>>): string {
+  const n: Record<RunBucket, number> = { done: 0, failed: 0, waiting: 0, running: 0 }
+  for (const t of tasks) n[runBucket(t)]++
+  const parts = [
+    n.done > 0 ? `${n.done} done` : '',
+    n.failed > 0 ? `${n.failed} failed` : '',
+    n.waiting > 0 ? `${n.waiting} waiting for you` : '',
+    n.running > 0 ? `${n.running} still running` : '',
+  ].filter(Boolean)
+  return `${tasks.length} run${tasks.length === 1 ? '' : 's'}: ${parts.join(', ')}.`
+}
+
 /** The digest message (markdown), built from data. */
 export function buildDigest(input: DigestInput): Digest {
   const shown = input.runs.filter((r) => r.report !== 'silent')
   const detailed = shown.filter((r) => r.report === 'digest')
-  const onBoard = shown.length - detailed.length
+  // a run that failed is never hidden behind "on the board", whatever its program reports
+  const failedOther = shown.filter((r) => r.report !== 'digest' && runBucket(r.task) === 'failed')
+  const onBoard = shown.length - detailed.length - failedOther.length
   const empty =
     shown.length === 0 &&
     input.decisions.length === 0 &&
@@ -779,6 +857,7 @@ export function buildDigest(input: DigestInput): Digest {
 
   out.push('### What ran')
   if (shown.length === 0) out.push('No program runs.')
+  else out.push(runCounts(shown.map((r) => r.task)))
   for (const r of detailed) {
     const rep = r.task.report
     const status = rep?.status ?? r.task.status
@@ -790,6 +869,23 @@ export function buildDigest(input: DigestInput): Digest {
       link: `/tasks/${r.task.id}`,
     })
     for (const o of rep?.outputs.slice(0, 5) ?? []) out.push(`  - ${o}`)
+  }
+  for (const r of failedOther.slice(0, MAX_FAILED_LISTED)) {
+    const rep = r.task.report
+    out.push(
+      `- **${r.programName}**: failed — ${oneLine(rep?.summary ?? r.task.summary ?? 'no summary')} (/tasks/${r.task.id})`,
+    )
+    items.push({
+      kind: 'run',
+      title: r.programName,
+      detail: `failed — ${oneLine(rep?.summary ?? r.task.summary ?? 'no summary')}`,
+      link: `/tasks/${r.task.id}`,
+    })
+  }
+  if (failedOther.length > MAX_FAILED_LISTED) {
+    out.push(
+      `- ${failedOther.length - MAX_FAILED_LISTED} more failed run(s) are on the board (/tasks).`,
+    )
   }
   if (onBoard > 0) out.push(`- ${onBoard} more run(s) are on the board (/tasks).`)
 

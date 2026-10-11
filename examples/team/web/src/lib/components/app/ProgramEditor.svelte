@@ -7,7 +7,7 @@
 	import { toast } from '#lib/components/ui/sonner/index.js';
 	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { CONFLICT_TEXT, isVersionConflict } from '#lib/conflict.js';
-	import { bodyFromForm, emptyProgramForm, formFromProgram, REPORT_OPTIONS, validateProgramForm, type Program, type ProgramForm, type ProgramShape } from '#lib/programs/form.js';
+	import { bodyFromForm, checkFromForm, emptyProgramForm, formFromProgram, REPORT_OPTIONS, validateProgramForm, warningsOf, type Program, type ProgramForm, type ProgramShape, type ProgramWarning } from '#lib/programs/form.js';
 	import DeliverablesFields from './DeliverablesFields.svelte';
 	import ScheduleFields from './ScheduleFields.svelte';
 
@@ -36,11 +36,41 @@
 	// svelte-ignore state_referenced_locally
 	let form = $state<ProgramForm>(program ? formFromProgram(program) : proposed ? formFromProgram(proposed) : emptyProgramForm());
 	// svelte-ignore state_referenced_locally
-	let pickedAgent = $state(program?.agentId ?? agentId);
+	let pickedAgent = $state(program?.agentId ?? proposed?.agentId ?? agentId);
 	let errors = $state<Record<string, string>>({});
 	let formError = $state('');
 
 	onMount(() => void agentsStore.load());
+
+	// What the program cannot do as configured (tools its agent never has, a budget below one model call):
+	// the server checks the form while the client types, and the warnings sit next to the fields.
+	let warnings = $state<ProgramWarning[]>([]);
+	$effect(() => {
+		let request;
+		try {
+			request = checkFromForm(form, pickedAgent || proposed?.agentId || '');
+		} catch {
+			request = undefined;
+		}
+		if (!request) {
+			warnings = [];
+			return;
+		}
+		let stale = false;
+		const timer = setTimeout(() => {
+			api.post('/programs/check', { body: request })
+				.then((r) => {
+					if (!stale) warnings = r.warnings;
+				})
+				.catch(() => {
+					if (!stale) warnings = [];
+				});
+		}, 400);
+		return () => {
+			stale = true;
+			clearTimeout(timer);
+		};
+	});
 	$effect(() => {
 		valid = !!form.name.trim() && !!form.brief.trim() && (!!pickedAgent || !!proposed);
 	});
@@ -85,6 +115,12 @@
 	</label>
 {/snippet}
 
+{#snippet warn(fields: string[])}
+	{#each warningsOf(warnings, ...fields) as w (w.message)}
+		<p class="rounded-md border border-warning/40 bg-warning-soft px-2 py-1.5 text-xs text-warning-text" role="status" data-testid="program-warning">{w.message}</p>
+	{/each}
+{/snippet}
+
 <form id={formId} class="flex flex-col gap-4 text-sm" onsubmit={submit}>
 	{#if !program && !proposed}
 		<label class="flex flex-col gap-1">
@@ -115,6 +151,7 @@
 			What this program may do while nobody is watching. It is enforced for every run: anything not listed here is refused, never asked.
 		</p>
 		{@render lines('tools', 'Tools', 'web_fetch\nWebFetch(domain:example.com)', 'One tool name or rule per line.')}
+		{@render warn(['authority.tools'])}
 		{@render lines('connectors', 'Connectors', 'github', 'Connector or connection ids: every tool of them is allowed.')}
 		<div class="grid gap-3 sm:grid-cols-2">
 			{@render lines('read', 'Read paths', '/library/videos/**', 'Library globs, one per line.')}
@@ -166,6 +203,12 @@
 				{#if errors.perDayUsd}<span class="text-xs text-destructive-text">{errors.perDayUsd}</span>{/if}
 			</label>
 		</div>
+		<label class="flex flex-col gap-1 sm:w-64">
+			<span class="text-xs text-muted-foreground">Output tokens per model call (optional)</span>
+			<Input bind:value={form.maxOutputTokens} inputmode="numeric" placeholder="sized from the budget" aria-invalid={!!errors.maxOutputTokens} />
+			{#if errors.maxOutputTokens}<span class="text-xs text-destructive-text">{errors.maxOutputTokens}</span>{:else}<span class="text-xs text-muted-foreground">Every model call reserves its worst case (the whole output cap at the model price) before it runs. A small budget needs a small cap.</span>{/if}
+		</label>
+		{@render warn(['budget.perRunUsd', 'budget.perDayUsd'])}
 	</fieldset>
 
 	<fieldset class="flex flex-col gap-2">

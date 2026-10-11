@@ -297,3 +297,86 @@ export function createLoopGuard(options: {
     },
   }
 }
+
+const SECRET_KEY =
+  /(token|secret|password|passwd|api[-_]?key|authorization|credential|cookie|bearer|private)/i
+/** Shapes of credentials that may sit in a value: bot tokens, `sk-` keys, bearer headers, JWTs. */
+const SECRET_VALUE =
+  /(\b\d{6,}:[A-Za-z0-9_-]{25,}\b|\bsk-[A-Za-z0-9_-]{16,}|\bBearer\s+[A-Za-z0-9._~+/=-]{12,}|\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]+)/g
+/** Fields that say what is done and where, in the order they read best. */
+const PRIORITY_KEYS = [
+  'action',
+  'connection',
+  'conversation',
+  'chat_id',
+  'chatId',
+  'topic',
+  'member',
+  'to',
+  'path',
+  'url',
+  'command',
+  'name',
+  'title',
+  'subject',
+  'text',
+  'message',
+  'body',
+  'content',
+  'query',
+]
+
+const scalarText = (value: unknown, max: number): string | undefined => {
+  if (typeof value === 'string') {
+    const flat = value.replace(SECRET_VALUE, '[hidden]').replace(/\s+/g, ' ').trim()
+    return flat === '' ? undefined : clipText(flat, max)
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
+  if (Array.isArray(value)) return `${value.length} item${value.length === 1 ? '' : 's'}`
+  return undefined
+}
+
+const clipText = (text: string, max: number): string =>
+  text.length > max ? `${text.slice(0, max - 1)}…` : text
+
+/**
+ * A short human summary of a tool call's input for an approval request in a chat: a few
+ * `key: value` lines (what and where first), long values clipped, anything that looks like a secret
+ * hidden. Plain text; the adapter escapes it for its platform. Empty when there is nothing to say.
+ */
+export function summarizeToolInput(input: unknown, options: { maxFields?: number } = {}): string {
+  const maxFields = options.maxFields ?? 5
+  if (input === null || input === undefined) return ''
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    const text = scalarText(input, 160)
+    return text === undefined ? '' : text
+  }
+  const record = input as Record<string, unknown>
+  const keys = Object.keys(record)
+  const ordered = [
+    ...PRIORITY_KEYS.filter((k) => keys.includes(k)),
+    ...keys.filter((k) => !PRIORITY_KEYS.includes(k)),
+  ]
+  const lines: string[] = []
+  let hidden = 0
+  for (const key of ordered) {
+    const value = record[key]
+    if (value === undefined || value === null) continue
+    if (SECRET_KEY.test(key)) {
+      hidden++
+      continue
+    }
+    const text = scalarText(value, 160)
+    if (text === undefined) {
+      if (typeof value === 'object') lines.push(`${key}: (details in the web app)`)
+      continue
+    }
+    if (lines.length >= maxFields) {
+      hidden++
+      continue
+    }
+    lines.push(`${key}: ${text}`)
+  }
+  if (hidden > 0) lines.push(`(+${hidden} more field${hidden === 1 ? '' : 's'} not shown)`)
+  return lines.join('\n')
+}

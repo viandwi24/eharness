@@ -97,6 +97,22 @@ describe('library', () => {
     const again = (await (await app.request('/library')).json()) as { files: FileEntry[] }
     expect(again.files.find((f) => f.path === '/library/a.md')?.createdBy?.slug).toBe('researcher')
 
+    // a person saving over an agent's file becomes its author (it must not keep showing the agent)
+    const agentPath = '/library/by-agent.md'
+    const wrote = await libraryFs(s.conn.sqlite, { agentId: researcher?.id as string }).write(
+      agentPath,
+      'agent\n',
+    )
+    expect(wrote.ok).toBe(true)
+    const agentVersion = wrote.ok ? wrote.version : ''
+    const mine = await app.request(
+      '/library/file',
+      send('PUT', { path: agentPath, content: 'person\n', ifVersion: agentVersion }),
+    )
+    expect(mine.status).toBe(200)
+    const after = (await (await app.request('/library')).json()) as { files: FileEntry[] }
+    expect(after.files.find((f) => f.path === agentPath)?.createdBy).toBeNull()
+
     const read = (await (await app.request(`/library/file?${q({ path })}`)).json()) as {
       file: FileEntry
       content: string

@@ -1,12 +1,12 @@
 import { z } from '@hono/zod-openapi'
-import { EVENT_TYPES, TASK_PRIORITIES, TASK_STATUSES } from '../../app/catalog.ts'
+import { BOARD_COLUMNS, EVENT_TYPES, TASK_PRIORITIES, TASK_STATUSES } from '../../app/catalog.ts'
 import { ChatStatsSchema, UiMessageSchema } from './chat.ts'
 import { LibraryEntrySchema, MemoryFileInfoSchema } from './library.ts'
 import { RoutineSchema } from './routines.ts'
 
 export const TaskStatusSchema = z.enum(TASK_STATUSES).openapi('TaskStatus', {
   description:
-    '`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
+    '`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).',
 })
 
 export const TaskPrioritySchema = z.enum(TASK_PRIORITIES).openapi('TaskPriority')
@@ -111,6 +111,10 @@ export const TaskSchema = z
     }),
     round: z.number().int().openapi({ description: '1, +1 every time the work was sent back.' }),
     history: z.array(z.string()).openapi({ description: 'Sessions of earlier rounds.' }),
+    column: z.enum(BOARD_COLUMNS).optional().openapi({
+      description:
+        'Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.',
+    }),
   })
   .openapi('Task')
 

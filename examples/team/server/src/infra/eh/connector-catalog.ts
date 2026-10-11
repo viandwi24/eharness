@@ -29,8 +29,10 @@ import { z } from 'zod'
 import type { AgentDef } from '../../domain/agents.ts'
 import { READ_BRIEFINGS_TOOL } from '../../domain/briefings.ts'
 import { agentMemory, WORKSPACE_MEMORY } from '../../domain/memory.ts'
+import { PROGRAM_FILE_TOOLS } from '../../domain/programs.ts'
 import { type BigDataHook, bigDataConnector } from '../bigdata/index.ts'
 import { CHANNEL_READ_TOOLS } from '../channels/index.ts'
+import { telegramConnector } from '../telegram/connector.ts'
 import { DECISION_TOOLS } from './decisions-plugin.ts'
 import { type LibraryChange, libraryFs } from './library-fs.ts'
 import type { ModelConfig } from './provider.ts'
@@ -101,6 +103,8 @@ export interface CatalogOptions {
    * with `tool_search`, `'auto'` = the library's per-server threshold). Default `true`.
    */
   defer?: () => boolean | 'auto'
+  /** Bot API root of the Telegram bot connector (default `https://api.telegram.org`). */
+  telegramApiRoot?: string
 }
 
 /** Connection label of the two memory scopes, as people and the model read them. */
@@ -388,7 +392,9 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
               ...(options.onFileChange ? { onChange: options.onFileChange } : {}),
             }),
           ),
-          tools: tools as FileToolName[],
+          // every tool a program run can be granted is defined; the ones the connection does not
+          // offer are hidden from every session but a run that is granted them (`fileGrant`)
+          tools: [...new Set([...tools, ...PROGRAM_FILE_TOOLS])] as FileToolName[],
           hiddenPrefixes: ['/memories'],
           ...(def.skills.length > 0 ? { skills: { root: '/skills' } } : {}),
         })
@@ -423,6 +429,9 @@ export function createConnectorDefinitions(options: CatalogOptions): AnyConnecto
     ...builtins,
     bigDataConnector(() => options.hooks.bigdata),
     github(listTools, defer),
+    telegramConnector(
+      options.telegramApiRoot === undefined ? {} : { apiRoot: options.telegramApiRoot },
+    ),
     customMcp(listTools, defer),
   ]
 }

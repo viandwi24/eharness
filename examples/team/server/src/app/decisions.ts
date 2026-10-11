@@ -31,6 +31,7 @@ import {
 } from '../domain/decisions.ts'
 import { type DeliverableCheck, deliverableLine } from '../domain/deliverables.ts'
 import { conflict, invalid, notFound } from '../domain/errors.ts'
+import { jaccard, requestTokens } from '../domain/heartbeat.ts'
 import {
   normalizeAuthority,
   type Program,
@@ -144,6 +145,68 @@ export function createProposal(deps: Deps, input: ProposeInput): Decision {
   })
   changed(deps, d, 'created')
   return d
+}
+
+/** How alike two open proposals of one agent must be to count as the same proposal. */
+const SAME_TITLE = 0.5
+const SAME_BRIEF = 0.6
+
+/**
+ * An open proposal for the same agent that says the same thing (word overlap of the title and
+ * name, or of the brief): the model proposed twice, or five times with other words.
+ */
+export function similarOpenProposal(
+  deps: Deps,
+  runnerId: string,
+  draft: { title: string; name: string; brief: string },
+): Decision | undefined {
+  const title = requestTokens(`${draft.title} ${draft.name}`)
+  const brief = requestTokens(draft.brief)
+  return deps.decisions
+    .list({ status: 'open', kind: 'proposal', limit: 200 })
+    .find(
+      (d) =>
+        d.kind === 'proposal' &&
+        d.payload.program.agentId === runnerId &&
+        (jaccard(title, requestTokens(`${d.title} ${d.payload.program.name}`)) >= SAME_TITLE ||
+          jaccard(brief, requestTokens(d.payload.program.brief)) >= SAME_BRIEF),
+    )
+}
+
+/**
+ * `propose_plan` as the model calls it. The agent that runs the plan must be named (a missing
+ * one used to default to the proposer, the lead, and put work on the wrong desk), and a proposal
+ * that an open one already says is not created again: the model is told which one exists.
+ * Errors are readable text, they are for the model.
+ */
+export function proposeFromAgent(
+  deps: Deps,
+  input: ProposeInput,
+): { decision: Decision; duplicate: boolean } {
+  const roster = deps.agents
+    .list()
+    .map((a) => `${a.slug} (${a.name})`)
+    .join(', ')
+  if (input.runner === undefined || input.runner.trim() === '') {
+    throw invalid(
+      `\`agent\` is required: the slug of the agent that will run the plan. Agents: ${roster}.`,
+      'INVALID_PROPOSAL',
+    )
+  }
+  const runner = deps.agents.list().find((a) => a.slug === input.runner || a.id === input.runner)
+  if (runner === undefined) {
+    throw invalid(
+      `no agent "${input.runner}". Use one of these slugs: ${roster}.`,
+      'INVALID_PROPOSAL',
+    )
+  }
+  const existing = similarOpenProposal(deps, runner.id, {
+    title: input.title,
+    name: input.program.name,
+    brief: input.program.brief,
+  })
+  if (existing !== undefined) return { decision: existing, duplicate: true }
+  return { decision: createProposal(deps, { ...input, runner: runner.id }), duplicate: false }
 }
 
 export interface EscalateInput {

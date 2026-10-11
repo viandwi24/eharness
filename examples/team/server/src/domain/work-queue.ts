@@ -93,9 +93,11 @@ export function describeTask(t: Task): string {
   ].join('\n')
 }
 
-/** One line per task for `list_tasks`. */
+export const costText = (usd: number): string => `$${usd >= 1 ? usd.toFixed(2) : usd.toFixed(4)}`
+
+/** One line per task for `list_tasks`: the cost is what the session really spent (ledger / call log). */
 export const taskLine = (t: Task, column: string): string =>
-  `- ${t.id} [${column}] ${t.title} (${t.agentId}, ${t.priority}${t.dueAt === null ? '' : `, due ${dueText(t.dueAt)}`})${
+  `- ${t.id} [${column}] ${t.title} (${t.agentId}, ${t.priority}${t.dueAt === null ? '' : `, due ${dueText(t.dueAt)}`}${t.status === 'queued' ? '' : `, cost ${costText(t.costUsd)}`})${
     t.summary === null ? '' : ` — ${previewOf(t.summary, 140)}`
   }`
 

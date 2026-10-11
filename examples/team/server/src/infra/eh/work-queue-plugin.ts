@@ -20,7 +20,7 @@ import { simulatedTaskText } from '../../domain/rehearsal.ts'
 import { profileOfSession } from '../../domain/run-profiles.ts'
 import { BOARD_COLUMNS, TASK_PRIORITIES, type Task } from '../../domain/tasks.ts'
 import type { TaskDraft, TaskPatch } from '../../domain/work-queue.ts'
-import { describeTask, taskLine } from '../../domain/work-queue.ts'
+import { costText, describeTask, taskLine } from '../../domain/work-queue.ts'
 import { rehearsalSessions } from './rehearsal-registry.ts'
 
 export const CREATE_TASK_TOOL = 'create_task'
@@ -41,6 +41,7 @@ export interface WorkQueueIntake {
   list(query: {
     column?: (typeof BOARD_COLUMNS)[number] | undefined
     agentId?: string | undefined
+    program?: string | undefined
     limit?: number | undefined
   }): Array<{ task: Task; column: string }>
   update(id: string, patch: TaskPatch): Task
@@ -93,6 +94,10 @@ const listSchema = z.object({
       'queued, running, waiting (waits for the client), review (finished, not accepted yet) or done.',
     ),
   agent: z.string().optional().describe('Only the tasks of this agent (slug).'),
+  program: z
+    .string()
+    .optional()
+    .describe('Only the runs of this program (its id or name), e.g. to see what it spent.'),
   limit: z.number().int().min(1).max(100).optional(),
 })
 
@@ -121,7 +126,7 @@ const text = (error: unknown): string =>
 export const CREATE_TASK_DESCRIPTION =
   'Put a task in the work queue of an agent. The task waits as Queued on the board until a worker program of that agent picks it up (priority first, then the nearest due date, then the oldest). The client sees it and may change or cancel it. Write a complete brief.'
 export const LIST_TASKS_DESCRIPTION =
-  'Read the task board: each task with its column (queued, running, waiting, review, done), owner and priority. Use it before queueing work, so you do not queue the same thing twice.'
+  'Read the task board: each task with its column (queued, running, waiting, review, done), owner, priority and what it cost so far (its own session). Filter by column, agent or program; the total cost of the rows is at the end. Use it before queueing work, so you do not queue the same thing twice, and to answer what a run or a program cost.'
 export const UPDATE_TASK_DESCRIPTION =
   'Change a task that has not started: re-prioritise, reassign, rewrite, set a due date, or cancel it. A task that runs or finished cannot be changed.'
 export const COMPLETE_TASK_DESCRIPTION =
@@ -225,10 +230,15 @@ export function workQueue(options: WorkQueuePluginOptions): HarnessPlugin<'work-
               const rows = intake().list({
                 column: input.column,
                 agentId: input.agent,
+                program: input.program,
                 limit: input.limit,
               })
               if (rows.length === 0) return 'No tasks match.'
-              return rows.map((r) => taskLine(r.task, r.column)).join('\n')
+              const total = rows.reduce((sum, r) => sum + r.task.costUsd, 0)
+              return [
+                ...rows.map((r) => taskLine(r.task, r.column)),
+                `Cost of these ${rows.length} task(s): ${costText(total)} (what their sessions really spent).`,
+              ].join('\n')
             } catch (error) {
               return `ERROR: could not read the board: ${text(error)}`
             }

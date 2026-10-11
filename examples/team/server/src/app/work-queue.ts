@@ -5,6 +5,7 @@
  * Review or sends it back with a note.
  */
 import { conflict, invalid, notFound } from '../domain/errors.ts'
+import { parseProgramSession } from '../domain/programs.ts'
 import { boardColumn, isWorkItem, type Task, type TaskPriority } from '../domain/tasks.ts'
 import {
   checkTaskFields,
@@ -55,6 +56,15 @@ export function columnsOf(
 ): Map<string, ReturnType<typeof boardColumn>> {
   const waiting = sessionsWithOpenDecision(deps)
   return new Map(tasks.map((t) => [t.id, boardColumn(t, waiting.has(t.sessionId))]))
+}
+
+/** Tasks with the column the board shows them in (a run parked on a decision is `waiting`). */
+export function withColumns(
+  deps: Deps,
+  tasks: readonly Task[],
+): Array<Task & { column: ReturnType<typeof boardColumn> }> {
+  const columns = columnsOf(deps, tasks)
+  return tasks.map((t) => ({ ...t, column: columns.get(t.id) as ReturnType<typeof boardColumn> }))
 }
 
 /** Queue a task. `createdBy` is `client` or the id of the agent that wrote it. */
@@ -155,6 +165,8 @@ export function sendBackTask(deps: Deps, id: string, note: string): Task {
 
 export interface TaskQuery {
   column?: ReturnType<typeof boardColumn> | undefined
+  /** Only the runs of this program (id or name). */
+  program?: string | undefined
   /** Agent id or slug. */
   agentId?: string | undefined
   limit?: number | undefined
@@ -166,7 +178,15 @@ export function listBoard(
   query: TaskQuery,
 ): Array<{ task: Task; column: ReturnType<typeof boardColumn> }> {
   const agentId = query.agentId === undefined ? undefined : getAgent(deps, query.agentId).id
-  const tasks = deps.tasks.list({ ...(agentId === undefined ? {} : { agentId }), limit: 500 })
+  let tasks = deps.tasks.list({ ...(agentId === undefined ? {} : { agentId }), limit: 500 })
+  if (query.program !== undefined) {
+    const wanted = query.program.trim().toLowerCase()
+    const program = deps.programs
+      .list({})
+      .find((p) => p.id === query.program || p.name.toLowerCase() === wanted)
+    if (program === undefined) throw notFound('program', query.program)
+    tasks = tasks.filter((t) => parseProgramSession(t.sessionId)?.programId === program.id)
+  }
   const columns = columnsOf(deps, tasks)
   return tasks
     .map((task) => ({ task, column: columns.get(task.id) as ReturnType<typeof boardColumn> }))

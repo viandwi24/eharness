@@ -2,6 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import {
 	authoritySummary,
 	bodyFromForm,
+	checkFromForm,
+	parseOutputCap,
+	warningsOf,
 	budgetSummary,
 	emptyProgramForm,
 	formFromProgram,
@@ -59,7 +62,7 @@ describe('program form', () => {
 		expect(body.authority).toEqual(program.authority);
 		expect(body.gates).toEqual(['publishing']);
 		expect(body.forbidden).toEqual(['Bash(rm *)']);
-		expect(body.budget).toEqual({ perRunUsd: 2, perDayUsd: null });
+		expect(body.budget).toEqual({ perRunUsd: 2, perDayUsd: null, maxOutputTokens: null });
 		expect(body.trigger).toEqual({ kind: 'schedule', spec: { kind: 'cron', expr: '0 9 * * 1-5', tz: 'UTC' } });
 		expect(body.deliverables).toEqual(program.deliverables);
 	});
@@ -84,7 +87,7 @@ describe('program form', () => {
 	test('a manual program sends a manual trigger', () => {
 		const body = bodyFromForm({ ...emptyProgramForm(), name: 'x', brief: 'y' });
 		expect(body.trigger).toEqual({ kind: 'manual' });
-		expect(body.budget).toEqual({ perRunUsd: null, perDayUsd: null });
+		expect(body.budget).toEqual({ perRunUsd: null, perDayUsd: null, maxOutputTokens: null });
 	});
 
 	test('a worker program: the queue option round-trips and is validated', () => {
@@ -122,5 +125,29 @@ describe('program form', () => {
 		expect(budgetSummary({ perRunUsd: 2, perDayUsd: 10 })).toBe('$2 / run, $10 / day');
 		expect(budgetSummary({ perRunUsd: 0.5, perDayUsd: null })).toBe('$0.50 / run');
 		expect(budgetSummary({ perRunUsd: null, perDayUsd: null })).toBe('no limit');
+	});
+
+	test('the output cap: empty is sized from the budget, otherwise 256 to 65536, and it round-trips', () => {
+		expect(parseOutputCap('')).toBeNull();
+		expect(parseOutputCap(' 4096 ')).toBe(4096);
+		expect(parseOutputCap('100')).toBe('invalid');
+		expect(parseOutputCap('70000')).toBe('invalid');
+		expect(parseOutputCap('1.5')).toBe('invalid');
+		const form = { ...formFromProgram({ ...program, budget: { perRunUsd: 0.05, perDayUsd: null, maxOutputTokens: 4096 } }, 'UTC') };
+		expect(form.maxOutputTokens).toBe('4096');
+		expect(bodyFromForm(form).budget).toEqual({ perRunUsd: 0.05, perDayUsd: null, maxOutputTokens: 4096 });
+		expect(validateProgramForm({ ...form, maxOutputTokens: '10' }).maxOutputTokens).toBeTruthy();
+	});
+
+	test('the check request is the agent, the authority and the budget as typed; warnings are picked by field', () => {
+		const form = formFromProgram(program, 'UTC');
+		expect(checkFromForm(form, '')).toBeUndefined();
+		expect(checkFromForm(form, 'a1')).toEqual({ agentId: 'a1', authority: program.authority, budget: { perRunUsd: 2, perDayUsd: null, maxOutputTokens: null } });
+		const warnings = [
+			{ code: 'tool-unavailable' as const, field: 'authority.tools', message: 'write_file: no such tool' },
+			{ code: 'budget-below-minimum' as const, field: 'budget.perRunUsd', message: 'too small' }
+		];
+		expect(warningsOf(warnings, 'authority.tools').map((w) => w.code)).toEqual(['tool-unavailable']);
+		expect(warningsOf(warnings, 'budget.perRunUsd', 'budget.perDayUsd').map((w) => w.code)).toEqual(['budget-below-minimum']);
 	});
 });

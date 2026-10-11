@@ -111,6 +111,8 @@ export interface ConnectorsRuntime extends ConnectorsPort {
   prepare(defs: readonly AgentDef[]): Promise<void>
   /** A fresh access token of a connection (server side only; never in a view). */
   accessTokenFor(connectionId: string): Promise<string>
+  /** A runtime learned that a credential no longer works (revoked bot token): the connection needs a reconnect. */
+  markNeedsAuth(connectionId: string, message?: string): Promise<void>
   /** The last activation of an agent, or undefined when it was never prepared. */
   activated(agentId: string): ActivatedConnectors | undefined
   /** A connection row changed locally (called by the profile store hook). */
@@ -146,6 +148,9 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     ...(options.listTools === undefined ? {} : { listTools: options.listTools }),
     ...(options.onFileChange === undefined ? {} : { onFileChange: options.onFileChange }),
     hooks,
+    ...(env.TEAM_TELEGRAM_API_ROOT === undefined
+      ? {}
+      : { telegramApiRoot: env.TEAM_TELEGRAM_API_ROOT }),
   })
   const defs = new Map(definitions.map((d) => [d.id, d]))
   const vault = options.vault
@@ -802,6 +807,7 @@ export function createConnectors(options: ConnectorsOptions): ConnectorsRuntime 
     rev: () => revision,
     prepare,
     accessTokenFor: (connectionId) => service.accessToken(connectionId),
+    markNeedsAuth: (connectionId, message) => service.markNeedsAuth(connectionId, message),
     activated: (agentId) => cache.get(agentId)?.out,
     profileChanged: (kind) => {
       if (kind === 'connection') changed()

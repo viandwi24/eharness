@@ -32,6 +32,10 @@ export const ProgramBudgetSchema = z
       description:
         'All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit.',
     }),
+    maxOutputTokens: z.number().int().min(256).max(65536).nullable().optional().openapi({
+      description:
+        'Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384).',
+    }),
   })
   .openapi('ProgramBudget')
 
@@ -77,6 +81,17 @@ export const ProgramTriggerStateSchema = z
       'The routine that owns the schedule trigger (it pauses itself after repeated failures).',
   })
 
+export const ProgramWarningSchema = z
+  .object({
+    code: z.enum(['tool-unavailable', 'channel-not-bound', 'budget-below-minimum']),
+    field: z.string().openapi({ example: 'authority.tools' }),
+    message: z.string(),
+  })
+  .openapi('ProgramWarning', {
+    description:
+      'Something the program cannot do as configured: a tool in its authority its agent never has (its connector is off, or the agent is not bound to a channel), or a budget below the cost of one model call. Warnings never block a save.',
+  })
+
 export const ProgramSchema = z
   .object({
     id: z.string(),
@@ -106,6 +121,9 @@ export const ProgramSchema = z
     updatedAt: z.number().int(),
     version: z.number().int(),
     triggerState: ProgramTriggerStateSchema.nullable(),
+    warnings: z.array(ProgramWarningSchema).optional().openapi({
+      description: 'Only on the answers of create and update: see `ProgramWarning`.',
+    }),
   })
   .openapi('Program')
 
@@ -159,6 +177,18 @@ export const ProgramPatchSchema = z
       ),
   })
   .openapi('ProgramPatch')
+
+export const ProgramCheckSchema = z
+  .object({
+    agentId: z.string().min(1).openapi({ description: 'Agent id or slug.' }),
+    authority: ProgramAuthoritySchema.partial().optional(),
+    budget: ProgramBudgetSchema.partial().optional(),
+  })
+  .openapi('ProgramCheck')
+
+export const ProgramCheckResultSchema = z
+  .object({ warnings: z.array(ProgramWarningSchema) })
+  .openapi('ProgramCheckResult')
 
 export const ProgramRunStartedSchema = z
   .object({

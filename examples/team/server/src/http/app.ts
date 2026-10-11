@@ -11,6 +11,7 @@ import { DomainError } from '../app/errors.ts'
 import type { Deps } from '../app/ports.ts'
 import { agentRoutes } from './routes/agents.ts'
 import { briefingRoutes } from './routes/briefings.ts'
+import { channelRoutes } from './routes/channels.ts'
 import { chatRoutes } from './routes/chat.ts'
 import { connectorRoutes } from './routes/connectors.ts'
 import { decisionRoutes } from './routes/decisions.ts'
@@ -28,6 +29,7 @@ import { settingsRoutes } from './routes/settings.ts'
 import { taskRoutes } from './routes/tasks.ts'
 import { threadRoutes } from './routes/threads.ts'
 import { uploadRoutes } from './routes/uploads.ts'
+import { usageRoutes } from './routes/usage.ts'
 
 export interface AppOptions {
   deps: Deps
@@ -264,6 +266,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', taskRoutes(options.deps))
   app.route('/', libraryRoutes(options.deps))
   app.route('/', settingsRoutes(options.deps))
+  app.route('/', usageRoutes(options.deps))
   app.route('/', providerRoutes(options.deps))
   app.route('/', connectorRoutes(options.deps))
   app.route('/', routineRoutes(options.deps))
@@ -271,6 +274,7 @@ export function createApp(options: AppOptions): OpenAPIHono {
   app.route('/', rehearsalRoutes(options.deps))
   app.route('/', decisionRoutes(options.deps))
   app.route('/', heartbeatRoutes(options.deps))
+  app.route('/', channelRoutes(options.deps))
   app.route('/', logRoutes(options.deps))
 
   app.doc31('/openapi.json', OPENAPI_DOC)

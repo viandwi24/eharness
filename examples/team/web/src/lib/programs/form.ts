@@ -7,6 +7,8 @@ export type ProgramCreate = components['schemas']['ProgramCreate'];
 export type ProgramPatch = components['schemas']['ProgramPatch'];
 export type ProgramReportMode = Program['report'];
 export type Deliverable = components['schemas']['Deliverable'];
+export type ProgramWarning = components['schemas']['ProgramWarning'];
+export type ProgramCheck = components['schemas']['ProgramCheck'];
 export type DeliverableKind = Deliverable['kind'];
 
 /** One deliverable as the editor holds it: text fields, parsed on save. */
@@ -115,6 +117,8 @@ export type ProgramForm = {
 	/** USD as typed; empty = no limit. */
 	perRunUsd: string;
 	perDayUsd: string;
+	/** Output tokens one model call may produce, as typed; empty = sized from the budget. */
+	maxOutputTokens: string;
 	triggerKind: 'manual' | 'schedule';
 	schedule: ScheduleForm;
 	report: ProgramReportMode;
@@ -144,6 +148,7 @@ export const emptyProgramForm = (): ProgramForm => ({
 	escalation: '',
 	perRunUsd: '',
 	perDayUsd: '',
+	maxOutputTokens: '',
 	triggerKind: 'manual',
 	schedule: defaultScheduleForm(),
 	report: 'task',
@@ -165,8 +170,16 @@ export function parseUsd(text: string): number | null | 'invalid' {
 	return Number.isFinite(n) && n > 0 ? n : 'invalid';
 }
 
+/** The output cap field: empty is "sized from the budget"; otherwise a whole number from 256 to 65536. */
+export function parseOutputCap(text: string): number | null | 'invalid' {
+	const t = text.trim();
+	if (t === '') return null;
+	const n = Number(t);
+	return Number.isInteger(n) && n >= 256 && n <= 65536 ? n : 'invalid';
+}
+
 /** The fields of a program the form edits: a stored program or a proposed one. */
-export type ProgramShape = Pick<Program, 'name' | 'brief' | 'authority' | 'gates' | 'forbidden' | 'escalation' | 'budget' | 'trigger' | 'report'> & { worker?: Program['worker']; deliverables?: Program['deliverables'] };
+export type ProgramShape = Pick<Program, 'name' | 'brief' | 'authority' | 'gates' | 'forbidden' | 'escalation' | 'budget' | 'trigger' | 'report'> & { agentId?: string; worker?: Program['worker']; deliverables?: Program['deliverables'] };
 
 export function formFromProgram(p: ProgramShape, fallbackTz?: string): ProgramForm {
 	return {
@@ -181,6 +194,7 @@ export function formFromProgram(p: ProgramShape, fallbackTz?: string): ProgramFo
 		escalation: p.escalation,
 		perRunUsd: p.budget.perRunUsd === null ? '' : String(p.budget.perRunUsd),
 		perDayUsd: p.budget.perDayUsd === null ? '' : String(p.budget.perDayUsd),
+		maxOutputTokens: p.budget.maxOutputTokens == null ? '' : String(p.budget.maxOutputTokens),
 		triggerKind: p.trigger.kind,
 		schedule: p.trigger.kind === 'schedule' ? parseSpec(p.trigger.spec, fallbackTz) : defaultScheduleForm(fallbackTz),
 		report: p.report,
@@ -206,6 +220,7 @@ export function validateProgramForm(f: ProgramForm): Record<string, string> {
 	Object.assign(errors, validateDeliverables(f.deliverables));
 	if (parseUsd(f.perRunUsd) === 'invalid') errors.perRunUsd = 'Enter an amount above 0, or leave it empty.';
 	if (parseUsd(f.perDayUsd) === 'invalid') errors.perDayUsd = 'Enter an amount above 0, or leave it empty.';
+	if (parseOutputCap(f.maxOutputTokens) === 'invalid') errors.maxOutputTokens = 'Enter a whole number from 256 to 65536, or leave it empty.';
 	return errors;
 }
 
@@ -213,6 +228,7 @@ export function validateProgramForm(f: ProgramForm): Record<string, string> {
 export function bodyFromForm(f: ProgramForm): Omit<ProgramCreate, 'agentId'> {
 	const perRun = parseUsd(f.perRunUsd);
 	const perDay = parseUsd(f.perDayUsd);
+	const cap = parseOutputCap(f.maxOutputTokens);
 	return {
 		name: f.name.trim(),
 		brief: f.brief.trim(),
@@ -225,13 +241,26 @@ export function bodyFromForm(f: ProgramForm): Omit<ProgramCreate, 'agentId'> {
 		gates: splitLines(f.gates),
 		forbidden: splitLines(f.forbidden),
 		escalation: f.escalation.trim(),
-		budget: { perRunUsd: perRun === 'invalid' ? null : perRun, perDayUsd: perDay === 'invalid' ? null : perDay },
+		budget: { perRunUsd: perRun === 'invalid' ? null : perRun, perDayUsd: perDay === 'invalid' ? null : perDay, maxOutputTokens: cap === 'invalid' ? null : cap },
 		trigger: f.triggerKind === 'manual' ? { kind: 'manual' } : { kind: 'schedule', spec: buildSpec(f.schedule) },
 		report: f.report,
 		deliverables: f.deliverables.map(deliverableFromRow).filter((d): d is Deliverable => d !== null),
 		worker: f.worker ? { maxTasks: Math.min(20, Math.max(1, Math.trunc(Number(f.maxTasks)) || 3)) } : null
 	};
 }
+
+/**
+ * What the editor asks the server to check while the client types (`POST /programs/check`): the
+ * agent, the authority and the budget. `undefined` while no agent is chosen.
+ */
+export function checkFromForm(f: ProgramForm, agentId: string): ProgramCheck | undefined {
+	if (!agentId) return undefined;
+	const { authority, budget } = bodyFromForm(f);
+	return { agentId, authority, budget };
+}
+
+/** The warnings of one form field (`authority.tools`, `budget.perRunUsd`, ...). */
+export const warningsOf = (warnings: readonly ProgramWarning[], ...fields: string[]): ProgramWarning[] => warnings.filter((w) => fields.includes(w.field));
 
 export type ProgramBadge = { label: string; variant: 'success' | 'secondary' | 'warning' | 'destructive' };
 

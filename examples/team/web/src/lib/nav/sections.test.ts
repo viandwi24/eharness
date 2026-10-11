@@ -11,6 +11,7 @@ describe('sections', () => {
 		expect(sectionOf('/decisions')).toBe('decisions');
 		expect(sectionOf('/briefings')).toBe('briefings');
 		expect(sectionOf('/programs')).toBe('programs');
+		expect(sectionOf('/channels')).toBe('channels');
 		expect(sectionOf('/connectors')).toBe('connectors');
 		expect(sectionOf('/logs')).toBe('logs');
 		expect(sectionOf('/settings')).toBe('settings');

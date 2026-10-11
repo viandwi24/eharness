@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { summarizeApproval } from './summary.js';
+import { approvalHeadline, summarizeApproval } from './summary.js';
 
 describe('summarizeApproval', () => {
 	test('friendly title and one row per field', () => {
@@ -27,5 +27,18 @@ describe('summarizeApproval', () => {
 		});
 		expect(summarizeApproval('custom_tool', undefined)).toEqual({ title: 'custom_tool', rows: [], raw: '' });
 		expect(summarizeApproval('x', 'plain').rows[0]!.value).toBe('plain');
+	});
+});
+
+describe('approvalHeadline', () => {
+	test('names the path, command or target in one line', () => {
+		expect(approvalHeadline('bash', { command: 'rm -rf build' })).toBe('Command: rm -rf build');
+		expect(approvalHeadline('write_file', { path: 'a/b.md', content: 'hello' })).toBe('Path: a/b.md (5 characters)');
+		expect(approvalHeadline('send_message', { to: 'writer', content: 'x' })).toBe('To: writer');
+	});
+	test('keeps one line and ignores unreadable input', () => {
+		expect(approvalHeadline('bash', { command: 'a\nb' })).toBe('Command: a …');
+		expect(approvalHeadline('x', { n: 1 })).toBe('');
+		expect(approvalHeadline('x', undefined)).toBe('');
 	});
 });

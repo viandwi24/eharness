@@ -28,7 +28,9 @@
 	import { api } from '#lib/api/index.js';
 	import { openEditAgent } from '#lib/stores/dialogs.svelte.js';
 	import { startsAuthorRun } from '#lib/parts/map.js';
-	import { uniqueById, withoutEmptyAssistant } from '#lib/chat/messages.js';
+	import { editableInput, regenerateTarget, uniqueById, withoutEmptyAssistant } from '#lib/chat/messages.js';
+	import ArrowsClockwiseIcon from 'phosphor-svelte/lib/ArrowsClockwise';
+	import { Textarea } from '#lib/components/ui/textarea/index.js';
 	import { goto } from '$app/navigation';
 	import ThreadBar from './ThreadBar.svelte';
 	import { threadsStore } from '#lib/stores/threads.svelte.js';
@@ -37,7 +39,7 @@
 	import PendingCard from './PendingCard.svelte';
 	import { toast } from 'svelte-sonner';
 	import { answerFailureText } from '#lib/approval/outcome.js';
-	import { errorHint, lastTurnErrorCode, requestFailureText } from '#lib/chat/errors.js';
+	import { requestFailureText } from '#lib/chat/errors.js';
 	import type { PromptInputMessage } from '#lib/components/ai/prompt-input/index.js';
 	import { agentChat } from '#lib/chat/chats.svelte.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
@@ -129,6 +131,35 @@
 		void ac?.send(text, files);
 	}
 
+	// Regenerate the newest reply; edit a sent message (the rest of the chat after it is replaced).
+	const regenTarget = $derived(regenerateTarget(chat?.messages ?? []));
+	let editingId = $state<string | null>(null);
+	let editText = $state('');
+	function startEdit(m: (typeof messages)[number]): void {
+		const input = editableInput(m);
+		if (!input) return;
+		editingId = m.id;
+		editText = input.text;
+	}
+	async function saveEdit(m: (typeof messages)[number]): Promise<void> {
+		const input = editableInput(m);
+		const text = editText.trim();
+		if (!input || !text) return;
+		editingId = null;
+		try {
+			await ac?.edit(m.id, text, input.files);
+		} catch (e) {
+			toast.error(requestFailureText(e, 'Could not edit the message'));
+		}
+	}
+	async function regenerate(id: string): Promise<void> {
+		try {
+			await ac?.regenerate(id);
+		} catch (e) {
+			toast.error(requestFailureText(e, 'Could not regenerate the reply'));
+		}
+	}
+
 	// Scroll-up pagination: load the next older page near the top and keep the viewport anchored.
 	let root = $state<HTMLElement | null>(null);
 	// Height of the floating dock (pending card + composer), used to pad the conversation.
@@ -206,8 +237,6 @@
 		if (first && first.length >= 6 && first.length <= 64) out.push(`Help me with: ${first.charAt(0).toLowerCase()}${first.slice(1)}`);
 		return out;
 	});
-	// the stored error code of the last turn (`TurnResult.error.code`): a hint for the ones with a fix
-	const turnErrorHint = $derived(errorHint(lastTurnErrorCode(chat?.messages ?? [])));
 	const busy = $derived(chat?.status === 'submitted' || chat?.status === 'streaming');
 	// A turn the server no longer runs (it was killed, the connection went silent): resync.
 	$effect(() => {
@@ -323,6 +352,16 @@
 						{#each messages as m, i (m.id)}
 							{@const head = startsAuthorRun(messages, i)}
 							<ConversationItem messageId={m.id} class={m.role !== 'user' && !head && i > 0 ? '-mt-2' : ''}>
+								{#if editingId === m.id}
+									<div class="ml-auto flex w-full max-w-[85%] flex-col gap-2" data-testid="message-edit">
+										<Textarea bind:value={editText} rows={3} aria-label="Edit message" />
+										<div class="flex justify-end gap-1.5">
+											<Button size="xs" variant="ghost" onclick={() => (editingId = null)}>Cancel</Button>
+											<Button size="xs" disabled={!editText.trim() || busy} onclick={() => void saveEdit(m)}>Save and resend</Button>
+										</div>
+									</div>
+								{:else}
+								<div class="group/msg flex flex-col {m.role === 'user' ? 'items-end' : ''}">
 								<MessageView
 									message={m}
 									agent={agent ? { id: agent.id, name: agent.name, color: agent.color } : undefined}
@@ -332,6 +371,13 @@
 									{canAnswer}
 									onOpenSession={(sid) => void openSession(sid)}
 								/>
+								{#if m.role === 'user' && !busy && thread.archivedAt === null && editableInput(m)}
+									<Button size="icon-xs" variant="ghost" class="mt-0.5 opacity-0 transition-opacity group-hover/msg:opacity-100 focus-visible:opacity-100" aria-label="Edit message" onclick={() => startEdit(m)}>
+										<PencilSimpleIcon />
+									</Button>
+								{/if}
+								</div>
+								{/if}
 							</ConversationItem>
 						{:else}
 							{#if !ac.loaded}
@@ -389,17 +435,9 @@
 								<Button size="xs" variant="ghost" onclick={() => ac.dismissProblem()}>Dismiss</Button>
 							</div>
 						{/if}
-						{#if turnErrorHint && !chat.error && !busy}
-							<div class="flex items-start gap-2 rounded-lg border border-border bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert" data-testid="chat-turn-error">
-								<WarningCircleIcon class="mt-0.5 size-4 shrink-0" />
-								<span class="min-w-0 flex-1 break-words">{turnErrorHint}</span>
-							</div>
-						{/if}
-						{#if chat.error}
-							<div class="flex items-center gap-2 rounded-lg border border-border bg-destructive-soft px-3 py-2 text-sm text-destructive-text" role="alert">
-								<WarningCircleIcon class="size-4 shrink-0" />
-								<span class="min-w-0 flex-1 truncate">{chat.error.message || 'Something went wrong'}</span>
-								<Button size="xs" variant="ghost" onclick={() => chat.clearError()}>Dismiss</Button>
+						{#if regenTarget && !busy && thread.archivedAt === null}
+							<div class="flex items-center gap-1 text-xs text-muted-foreground" data-testid="chat-actions">
+								<Button size="xs" variant="ghost" onclick={() => void regenerate(regenTarget.id)}><ArrowsClockwiseIcon /> Regenerate</Button>
 							</div>
 						{/if}
 					</ConversationContent>

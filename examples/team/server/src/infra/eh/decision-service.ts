@@ -16,6 +16,7 @@
  */
 import { errorText } from 'eharness'
 import type { AgentRepo, DecisionResolver } from '../../app/ports.ts'
+import type { AgentDef } from '../../domain/agents.ts'
 import { followUpText } from '../../domain/decisions.ts'
 import { conflict, notFound } from '../../domain/errors.ts'
 import { PROGRAM_RUN_MAX_STEPS, parseProgramSession } from '../../domain/programs.ts'
@@ -59,7 +60,7 @@ export function createDecisionService(
     void watched.finally(() => inflight.delete(watched))
   }
   /** A program run continues with its report spec, a heartbeat with its result spec. */
-  const options = (sessionId: string) => {
+  const options = (def: AgentDef, sessionId: string) => {
     if (sessionId.startsWith('heartbeat:')) {
       return { output: { schema: BEAT_SCHEMA, description: 'The result of this heartbeat.' } }
     }
@@ -70,6 +71,8 @@ export function createDecisionService(
           // the continuation is a new turn: without this it gets the agent's default step limit
           // and a long (chunked) run that parked once is cut off early
           maxSteps: PROGRAM_RUN_MAX_STEPS,
+          // and the output cap its budget can afford, as in the first turn
+          ...factory.programTurn(def, sessionId),
         }
   }
 
@@ -85,7 +88,7 @@ export function createDecisionService(
       if (decision.waitId === null) {
         // a decision made from a final report: the session is idle, the answer is a new message
         const run = session.send(followUpText(decision, answer), {
-          ...options(decision.sessionId),
+          ...options(def, decision.sessionId),
           ifBusy: 'queue',
         })
         track(run, decision.sessionId)
@@ -98,7 +101,7 @@ export function createDecisionService(
           const result = await session.resolveWait(
             decision.waitId,
             { output: answer },
-            options(decision.sessionId),
+            options(def, decision.sessionId),
           )
           if (result.status === 'continued') {
             track(result.run, decision.sessionId)

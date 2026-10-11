@@ -340,7 +340,7 @@ describe('program API', () => {
       )
     ).json()) as ProgramView
     expect(patched).toMatchObject({ name: 'Scripts v2', version: p.version + 1 })
-    expect(patched.budget).toEqual({ perRunUsd: null, perDayUsd: 5 })
+    expect(patched.budget).toEqual({ perRunUsd: null, perDayUsd: 5, maxOutputTokens: null })
     const stale = await app.request(
       `/programs/${p.id}`,
       json('PATCH', { name: 'x', version: p.version }),

@@ -1,6 +1,7 @@
 import { createRoute, OpenAPIHono, z } from '@hono/zod-openapi'
 import type { Deps } from '../../app/ports.ts'
 import {
+  checkProgramDraft,
   createProgram,
   deleteProgram,
   getProgram,
@@ -8,12 +9,15 @@ import {
   pauseProgram,
   programRuns,
   programView,
+  programWithWarnings,
   resumeProgram,
   runProgramNow,
   updateProgram,
 } from '../../app/programs.ts'
 import { errorResponses, jsonError } from '../schemas/common.ts'
 import {
+  ProgramCheckResultSchema,
+  ProgramCheckSchema,
   ProgramCreateSchema,
   ProgramIdParam,
   ProgramListSchema,
@@ -59,6 +63,22 @@ const createRoute_ = createRoute({
     201: { description: 'Created', content: json(ProgramSchema) },
     404: jsonError('Unknown agent'),
     409: jsonError('Archived agent or a schedule without a next slot'),
+    ...errorResponses,
+  },
+})
+
+const checkRoute = createRoute({
+  method: 'post',
+  path: '/programs/check',
+  tags: ['programs'],
+  summary: 'What a program cannot do as configured',
+  description:
+    'Checks an agent, an authority and a budget (nothing is stored): tools the authority names that the agent never has (its connector is off; a channel tool while the agent is bound to no channel connection) and a budget below what one model call reserves on the agent model. The editor calls it while the client types; create and update answer with the same `warnings`.',
+  security,
+  request: { body: { required: true, content: json(ProgramCheckSchema) } },
+  responses: {
+    200: { description: 'Warnings', content: json(ProgramCheckResultSchema) },
+    404: jsonError('Unknown agent'),
     ...errorResponses,
   },
 })
@@ -186,12 +206,26 @@ export function programRoutes(deps: Deps): OpenAPIHono {
         200,
       )
     })
-    .openapi(createRoute_, (c) => c.json(createProgram(deps, c.req.valid('json')) as never, 201))
+    .openapi(checkRoute, async (c) =>
+      c.json({ warnings: await checkProgramDraft(deps, c.req.valid('json')) }, 200),
+    )
+    .openapi(createRoute_, async (c) =>
+      c.json(
+        (await programWithWarnings(deps, createProgram(deps, c.req.valid('json')))) as never,
+        201,
+      ),
+    )
     .openapi(getRoute, (c) =>
       c.json(programView(deps, getProgram(deps, c.req.valid('param').id)) as never, 200),
     )
-    .openapi(patchRoute, (c) =>
-      c.json(updateProgram(deps, c.req.valid('param').id, c.req.valid('json')) as never, 200),
+    .openapi(patchRoute, async (c) =>
+      c.json(
+        (await programWithWarnings(
+          deps,
+          updateProgram(deps, c.req.valid('param').id, c.req.valid('json')),
+        )) as never,
+        200,
+      ),
     )
     .openapi(deleteRoute_, (c) =>
       c.json(programView(deps, deleteProgram(deps, c.req.valid('param').id)) as never, 200),

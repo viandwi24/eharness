@@ -1,5 +1,5 @@
 import { type ActivityFeed, createActivityFeed } from 'eharness/client';
-import { api, harness } from '../api/index';
+import { api, harness, reachability } from '../api/index';
 import { agentsStore } from './agents.svelte.js';
 import { createLiveCore, emptyLiveState } from './live-core';
 
@@ -9,7 +9,22 @@ export const live = createLiveCore(api, agentsStore, state, {
 	isVisible: () => typeof document === 'undefined' || document.visibilityState === 'visible'
 });
 
+reachability.subscribe((down) => (state.unreachable = down));
+
 let feed: ActivityFeed | undefined;
+
+/**
+ * Reconnect now: open the request gate, restart the events stream (a refused token stops it for good
+ * until the credentials change) and refetch everything. Used by the token form and the unreachable bar.
+ */
+export function reconnectLive(): void {
+	reachability.reset();
+	if (feed) {
+		feed.stop();
+		feed.start();
+	}
+	void live.resync();
+}
 
 /** Start the tab's single events connection (idempotent). Returns a stop function. */
 export function startLive(): () => void {

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { live } from '#lib/stores/live.svelte.js';
+	import { live, reconnectLive } from '#lib/stores/live.svelte.js';
 </script>
 
 <!-- Thin, quiet top bar while the events stream is down (server restart, network). Fades in after a
@@ -8,7 +8,13 @@
 	<!-- Terminal: the server answered 401 / 403 to the activity stream. Retrying will not help; the
 	     token (Settings) must change. -->
 	<div role="alert" class="fixed inset-x-0 top-0 z-50 flex h-6 items-center justify-center gap-1.5 bg-destructive-soft text-[11px] text-destructive-text" data-testid="feed-unauthorized">
-		Not authorized: the server refused the token. Set a valid token in Settings, then reload.
+		Not authorized: the server refused the token. Set a valid token in Settings and save it.
+	</div>
+{:else if live.state.unreachable}
+	<!-- The API keeps failing (down, wrong address, an HTML page): requests back off, this says why nothing loads. -->
+	<div role="alert" class="fixed inset-x-0 top-0 z-50 flex h-6 items-center justify-center gap-2 bg-destructive-soft text-[11px] text-destructive-text" data-testid="server-unreachable">
+		Cannot reach the server. Retrying with longer pauses.
+		<button type="button" class="underline underline-offset-2" onclick={reconnectLive}>Retry now</button>
 	</div>
 {:else if live.state.reconnecting}
 	<div

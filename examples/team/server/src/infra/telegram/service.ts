@@ -1,0 +1,596 @@
+/**
+ * Telegram channels: the runtime that starts and stops one bot transport per connected, bound
+ * connection, and the admin service behind the Channels page (`ChannelsPort`).
+ *
+ * A connection of the "Telegram bot" connector (`connector.ts`) is polled when it is connected,
+ * enabled and bound to an agent (a gateway config exists). The runtime follows the connector
+ * connections (a change bumps `connectors.rev()`) and the explicit calls of the admin service.
+ * A rejected token (401) marks the connection `needs-auth` and raises a bell; other failures show
+ * as `error` with a message and are retried.
+ */
+import type { Database } from 'bun:sqlite'
+import type { ConnectionRecord } from 'eharness/connectors'
+import type { ChannelsPort } from '../../app/ports.ts'
+import type { AgentDef } from '../../domain/agents.ts'
+import type {
+  ChannelBindInput,
+  ChannelChatView,
+  ChannelConnectionView,
+  ChannelPolicy,
+  ChannelPolicyInput,
+  ChannelRuntimeState,
+} from '../../domain/channels.ts'
+import { conflict, invalid, notFound } from '../../domain/errors.ts'
+import type { ChannelGateway } from '../channels/index.ts'
+import {
+  type ConnectionConfig,
+  type GroupPolicy,
+  resolveScope,
+  type ScopePolicy,
+} from '../channels/policy.ts'
+import type { ConversationRef } from '../channels/types.ts'
+import {
+  createTelegramAdapter,
+  type TelegramAdapter,
+  type TelegramBotInfo,
+  type TelegramFailure,
+  TelegramSetupError,
+} from './adapter.ts'
+import { privacyGuidance, TELEGRAM_CONNECTOR_ID } from './connector.ts'
+import { type KnownChat, type KnownChatStore, sqliteKnownChats } from './known-chats.ts'
+
+export interface TelegramChannelsOptions {
+  sqlite: Database
+  gateway: ChannelGateway
+  connectors: {
+    stores: {
+      connections: {
+        list(q?: { definitionId?: string }): Promise<ConnectionRecord[]>
+        get(id: string): Promise<ConnectionRecord | undefined>
+      }
+    }
+    rev(): number
+    markNeedsAuth(connectionId: string, message?: string): Promise<void>
+  }
+  agents: { get(id: string): AgentDef | undefined }
+  notify?(n: { key: string; title: string; body: string; agentId: string | null }): void
+  apiRoot?: string
+  fetch?: typeof fetch
+  /** Long-poll timeout (seconds, default 30). */
+  pollTimeoutSec?: number
+  /** How often the runtime looks for connection changes (ms, default 1000; 0 = only on explicit calls). */
+  syncPollMs?: number
+  /** Delay before a failed start is tried again (ms, default 30 000; 0 = never). */
+  retryMs?: number
+  warn?(message: string): void
+  now?(): number
+}
+
+export interface TelegramChannels extends ChannelsPort {
+  /** Follow the connector connections (initial pass, then on every change). */
+  start(): void
+  /** One pass now: start what should run, stop what should not. */
+  sync(): Promise<void>
+  stop(): Promise<void>
+  /** Chats the bot has seen (store, for tests and the page). */
+  known: KnownChatStore
+}
+
+interface RuntimeEntry {
+  state: ChannelRuntimeState
+  message?: string
+  since: number
+  adapter?: TelegramAdapter
+  bot?: TelegramBotInfo
+  webhookUrl?: string
+  /** The token the running adapter was started with (a changed token restarts it). */
+  token?: string
+  retry?: ReturnType<typeof setTimeout>
+}
+
+const clip = (text: string, max: number): string => (text.length > max ? text.slice(0, max) : text)
+
+export function createTelegramChannels(options: TelegramChannelsOptions): TelegramChannels {
+  const { gateway } = options
+  const now = options.now ?? (() => Date.now())
+  const warn = options.warn ?? ((m) => console.warn(`team: ${m}`))
+  const known = sqliteKnownChats(options.sqlite)
+  const entries = new Map<string, RuntimeEntry>()
+  let stopped = false
+  let lastRev = -1
+  let poller: ReturnType<typeof setInterval> | undefined
+  let chain: Promise<void> = Promise.resolve()
+
+  const entryOf = (id: string): RuntimeEntry => {
+    let e = entries.get(id)
+    if (e === undefined) {
+      e = { state: 'stopped', since: now() }
+      entries.set(id, e)
+    }
+    return e
+  }
+  const setState = (e: RuntimeEntry, state: ChannelRuntimeState, message?: string): void => {
+    if (e.state !== state) e.since = now()
+    e.state = state
+    if (message === undefined) delete e.message
+    else e.message = message
+  }
+  const tokenOf = (record: ConnectionRecord): string | undefined => {
+    const t = (record.settings as { token?: unknown }).token
+    return typeof t === 'string' && t.trim() !== '' ? t.trim() : undefined
+  }
+  const listRecords = (): Promise<ConnectionRecord[]> =>
+    options.connectors.stores.connections.list({ definitionId: TELEGRAM_CONNECTOR_ID })
+  const recordOf = async (id: string): Promise<ConnectionRecord> => {
+    const r = await options.connectors.stores.connections.get(id)
+    if (r === undefined || r.definitionId !== TELEGRAM_CONNECTOR_ID) {
+      throw notFound('channel connection', id)
+    }
+    return r
+  }
+
+  // --- runtime ---------------------------------------------------------------------------------
+
+  async function halt(id: string): Promise<void> {
+    const e = entries.get(id)
+    if (e?.retry !== undefined) clearTimeout(e.retry)
+    if (e !== undefined) delete e.retry
+    if (e?.adapter !== undefined) {
+      delete e.adapter
+      await gateway.unregister(id).catch(() => undefined)
+    }
+  }
+
+  async function authFailed(id: string, record: ConnectionRecord | undefined): Promise<void> {
+    const e = entryOf(id)
+    const message =
+      'Telegram rejected the bot token (it may have been revoked). Enter a new token to reconnect.'
+    await halt(id)
+    setState(e, 'needs-auth', message)
+    await options.connectors.markNeedsAuth(id, message).catch(() => undefined)
+    options.notify?.({
+      key: `channel-auth:${id}`,
+      title: `Telegram bot ${record?.label ?? id} needs a new token`,
+      body: message,
+      agentId: gateway.config(id)?.agentId ?? null,
+    })
+  }
+
+  function scheduleRetry(id: string): void {
+    const ms = options.retryMs ?? 30_000
+    const e = entryOf(id)
+    if (ms <= 0 || stopped) return
+    if (e.retry !== undefined) clearTimeout(e.retry)
+    e.retry = setTimeout(() => {
+      delete e.retry
+      void sync().catch(() => undefined)
+    }, ms)
+    ;(e.retry as { unref?: () => void }).unref?.()
+  }
+
+  async function failed(id: string, failure: TelegramFailure): Promise<void> {
+    const record = await options.connectors.stores.connections.get(id)
+    if (failure.kind === 'auth') return authFailed(id, record)
+    const e = entryOf(id)
+    await halt(id)
+    setState(
+      e,
+      'error',
+      failure.kind === 'conflict'
+        ? 'Another process is polling this bot (or a webhook was set). Only one poller can read a bot at a time.'
+        : failure.message,
+    )
+    scheduleRetry(id)
+  }
+
+  async function startOne(
+    record: ConnectionRecord,
+    token: string,
+    onWebhook: 'refuse' | 'delete' = 'refuse',
+  ): Promise<void> {
+    const id = record.id
+    const e = entryOf(id)
+    setState(e, 'starting')
+    const adapter = createTelegramAdapter({
+      connectionId: id,
+      token,
+      ...(options.apiRoot === undefined ? {} : { apiRoot: options.apiRoot }),
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+      ...(options.pollTimeoutSec === undefined ? {} : { pollTimeoutSec: options.pollTimeoutSec }),
+      onWebhook,
+      hooks: {
+        onChat: (chat) => known.see(id, chat),
+        onFailure: (failure) => void failed(id, failure).catch(() => undefined),
+        warn,
+      },
+    })
+    e.adapter = adapter
+    e.token = token
+    try {
+      await gateway.register(adapter)
+      const info = adapter.info()
+      if (info !== undefined) e.bot = info
+      delete e.webhookUrl
+      setState(e, 'running')
+    } catch (error) {
+      await halt(id)
+      if (error instanceof TelegramSetupError && error.code === 'webhook-set') {
+        if (error.webhookUrl !== undefined) e.webhookUrl = error.webhookUrl
+        setState(e, 'webhook', error.message)
+        return
+      }
+      const kind = (error as { kind?: string }).kind
+      if (kind === 'fatal') return authFailed(id, record)
+      setState(e, 'error', error instanceof Error ? error.message : String(error))
+      scheduleRetry(id)
+    }
+  }
+
+  async function doSync(): Promise<void> {
+    if (stopped) return
+    lastRev = options.connectors.rev()
+    const records = await listRecords()
+    const seen = new Set<string>()
+    for (const record of records) {
+      const id = record.id
+      seen.add(id)
+      const e = entryOf(id)
+      const token = tokenOf(record)
+      const bound = gateway.config(id) !== undefined
+      if (!record.enabled) {
+        await halt(id)
+        setState(e, 'disabled')
+        continue
+      }
+      if (record.status === 'needs-auth' || token === undefined) {
+        await halt(id)
+        setState(e, 'needs-auth', record.statusMessage ?? 'Enter the bot token to connect.')
+        continue
+      }
+      if (!bound) {
+        await halt(id)
+        setState(e, 'unbound')
+        continue
+      }
+      if (e.adapter !== undefined && e.token === token) continue
+      if (e.adapter !== undefined) await halt(id)
+      // a pending retry (error, webhook) is handled here too: a sync is always a fresh try
+      if (e.state === 'webhook' && e.token === token && e.webhookUrl !== undefined) {
+        // the admin has to decide (delete the webhook): do not retry on every sync
+        continue
+      }
+      await startOne(record, token)
+    }
+    for (const id of [...entries.keys()]) {
+      if (seen.has(id)) continue
+      await halt(id)
+      entries.delete(id)
+    }
+  }
+
+  function sync(): Promise<void> {
+    chain = chain.catch(() => undefined).then(doSync)
+    return chain
+  }
+
+  const peek = (id: string): RuntimeEntry | undefined => entries.get(id)
+
+  // --- views -----------------------------------------------------------------------------------
+
+  const policyOf = (g: ScopePolicy | undefined): ChannelPolicy | null =>
+    g === undefined
+      ? null
+      : {
+          enabled: g.enabled !== false,
+          ...(g.agentId === undefined ? {} : { agentId: g.agentId }),
+          ...(g.wake === undefined ? {} : { wake: g.wake }),
+          ...(g.delivery === undefined ? {} : { delivery: g.delivery }),
+          ...(g.retentionDays === undefined ? {} : { retentionDays: g.retentionDays }),
+        }
+
+  async function viewOf(record: ConnectionRecord): Promise<ChannelConnectionView> {
+    const id = record.id
+    const e = peek(id) ?? { state: 'stopped' as const, since: now() }
+    const config = gateway.config(id)
+    const counts = gateway.outbox.counts(id)
+    const bot = e.bot ?? e.adapter?.info()
+    const breaker = gateway.outbound.breaker(id)
+    return {
+      id,
+      platform: 'telegram',
+      label: record.label,
+      ...(record.accountLabel === undefined ? {} : { accountLabel: record.accountLabel }),
+      connectionStatus: record.status,
+      ...(record.statusMessage === undefined ? {} : { statusMessage: record.statusMessage }),
+      enabled: record.enabled,
+      runtime: {
+        state: e.state,
+        ...(e.message === undefined ? {} : { message: e.message }),
+        since: e.since,
+      },
+      ...(bot === undefined
+        ? {}
+        : {
+            bot: {
+              id: bot.id,
+              username: bot.username,
+              name: bot.name,
+              canReadAllGroupMessages: bot.canReadAllGroupMessages,
+              guidance: privacyGuidance(bot.canReadAllGroupMessages),
+            },
+          }),
+      ...(e.webhookUrl === undefined ? {} : { webhookUrl: e.webhookUrl }),
+      binding:
+        config === undefined
+          ? null
+          : {
+              agentId: config.agentId,
+              groupPolicy: config.groupPolicy,
+              dm: config.dm,
+              allowBots: config.allowBots,
+              admins: config.admins,
+              historyLimit: config.historyLimit,
+              defaults: {
+                ...(config.defaults.wake === undefined ? {} : { wake: config.defaults.wake }),
+                ...(config.defaults.delivery === undefined
+                  ? {}
+                  : { delivery: config.defaults.delivery }),
+                ...(config.defaults.retentionDays === undefined
+                  ? {}
+                  : { retentionDays: config.defaults.retentionDays }),
+              },
+            },
+      counts: {
+        chats: known.list(id).length,
+        linked: gateway.pairing.members(id).length,
+        outboxPending: counts.pending + counts.sending,
+        outboxFailed: counts.failed,
+      },
+      ...(breaker === undefined || !breaker.open ? {} : { breaker }),
+    }
+  }
+
+  const refOf = (chat: KnownChat, topic?: string): ConversationRef => ({
+    id: topic === undefined ? chat.chatId : `${chat.chatId}/${topic}`,
+    connectionId: chat.connectionId,
+    container: chat.chatId,
+    ...(topic === undefined ? {} : { topic }),
+    kind: chat.kind,
+  })
+
+  function chatView(config: ConnectionConfig | undefined, chat: KnownChat): ChannelChatView {
+    const group = config?.groups[chat.chatId]
+    const scope = config === undefined ? undefined : resolveScope(config, refOf(chat))
+    return {
+      chatId: chat.chatId,
+      kind: chat.kind,
+      title: chat.title,
+      ...(chat.username === undefined ? {} : { username: chat.username }),
+      forum: chat.forum,
+      topics: Object.entries(chat.topics).map(([topicId, name]) => ({
+        id: topicId,
+        name,
+        policy: policyOf(group?.topics?.[topicId]),
+      })),
+      ...(chat.botStatus === undefined ? {} : { botStatus: chat.botStatus }),
+      ...(chat.canPost === undefined ? {} : { canPost: chat.canPost }),
+      firstSeen: chat.firstSeen,
+      lastSeen: chat.lastSeen,
+      policy: policyOf(group),
+      effective: {
+        allowed: scope?.allowed ?? false,
+        wake: scope?.wake ?? 'mention',
+        delivery: scope?.delivery ?? 'final_text',
+        retentionDays: scope?.retentionDays ?? 30,
+      },
+    }
+  }
+
+  // --- admin -----------------------------------------------------------------------------------
+
+  const requireConfig = (id: string): ConnectionConfig => {
+    const c = gateway.config(id)
+    if (c === undefined) throw conflict('Bind this connection to an agent first.', 'NOT_BOUND')
+    return c
+  }
+
+  const checkAgent = (agentId: string): void => {
+    const a = options.agents.get(agentId)
+    if (a === undefined || a.archivedAt !== null) throw invalid(`unknown agent: ${agentId}`)
+  }
+
+  const applyScope = (target: ScopePolicy, input: ChannelPolicyInput): ScopePolicy => {
+    const next: ScopePolicy = { ...target }
+    const set = <K extends 'agentId' | 'wake' | 'delivery' | 'retentionDays'>(
+      key: K,
+      value: ScopePolicy[K] | null | undefined,
+    ): void => {
+      if (value === undefined) return
+      if (value === null) delete next[key]
+      else next[key] = value
+    }
+    if (input.enabled !== undefined) next.enabled = input.enabled
+    if (typeof input.agentId === 'string') checkAgent(input.agentId)
+    set('agentId', input.agentId)
+    set('wake', input.wake)
+    set('delivery', input.delivery)
+    set('retentionDays', input.retentionDays)
+    return next
+  }
+
+  const port: TelegramChannels = {
+    known,
+    start() {
+      stopped = false
+      void sync().catch((e) => warn(`telegram: sync failed: ${String(e)}`))
+      const every = options.syncPollMs ?? 1000
+      if (every > 0) {
+        poller = setInterval(() => {
+          if (options.connectors.rev() !== lastRev) {
+            void sync().catch((e) => warn(`telegram: sync failed: ${String(e)}`))
+          }
+        }, every)
+        ;(poller as { unref?: () => void }).unref?.()
+      }
+    },
+    sync,
+    async stop() {
+      stopped = true
+      if (poller !== undefined) clearInterval(poller)
+      await chain.catch(() => undefined)
+      for (const id of [...entries.keys()]) await halt(id)
+    },
+    async connections() {
+      if (options.connectors.rev() !== lastRev) await sync()
+      const records = await listRecords()
+      return Promise.all(records.map(viewOf))
+    },
+    async connection(id) {
+      if (options.connectors.rev() !== lastRev) await sync()
+      return viewOf(await recordOf(id))
+    },
+    async bind(id, input: ChannelBindInput) {
+      const record = await recordOf(id)
+      checkAgent(input.agentId)
+      const existing = gateway.config(id)
+      gateway.configure({
+        ...(existing ?? {}),
+        connectionId: id,
+        agentId: input.agentId,
+        ...(input.groupPolicy === undefined ? {} : { groupPolicy: input.groupPolicy }),
+        ...(input.dm === undefined ? {} : { dm: input.dm }),
+        ...(input.allowBots === undefined ? {} : { allowBots: input.allowBots }),
+        ...(input.admins === undefined ? {} : { admins: input.admins }),
+        ...(input.historyLimit === undefined ? {} : { historyLimit: input.historyLimit }),
+        ...(input.defaults === undefined
+          ? {}
+          : {
+              defaults: applyScope(existing?.defaults ?? {}, {
+                ...(input.defaults.wake === undefined ? {} : { wake: input.defaults.wake }),
+                ...(input.defaults.delivery === undefined
+                  ? {}
+                  : { delivery: input.defaults.delivery }),
+                ...(input.defaults.retentionDays === undefined
+                  ? {}
+                  : { retentionDays: input.defaults.retentionDays }),
+              }),
+            }),
+      })
+      await sync()
+      return viewOf(record)
+    },
+    async unbind(id) {
+      const record = await recordOf(id)
+      gateway.removeConnection(id)
+      await sync()
+      return viewOf(record)
+    },
+    async chats(id) {
+      await recordOf(id)
+      const config = gateway.config(id)
+      return known.list(id).map((c) => chatView(config, c))
+    },
+    async setChatPolicy(id, chatId, input, topic) {
+      await recordOf(id)
+      const config = requireConfig(id)
+      const chat = known.get(id, chatId)
+      if (chat === undefined) throw notFound('chat', chatId)
+      const groups: Record<string, GroupPolicy> = { ...config.groups }
+      const group: GroupPolicy = { ...(groups[chatId] ?? {}) }
+      if (topic === undefined) {
+        if (input === null) delete groups[chatId]
+        else {
+          const next = applyScope(group, { enabled: true, ...input })
+          groups[chatId] = {
+            ...group,
+            ...next,
+            label: group.label ?? clip(chat.title, 80),
+            ...(group.topics === undefined ? {} : { topics: group.topics }),
+          }
+        }
+      } else {
+        if (!(topic in chat.topics)) throw notFound('topic', topic)
+        const topics = { ...(group.topics ?? {}) }
+        if (input === null) delete topics[topic]
+        else topics[topic] = applyScope(topics[topic] ?? {}, input)
+        groups[chatId] = {
+          ...group,
+          // a topic entry needs the chat itself allowed
+          enabled: group.enabled ?? true,
+          label: group.label ?? clip(chat.title, 80),
+          topics,
+        }
+      }
+      gateway.configure({ ...config, groups })
+      return chatView(gateway.config(id), chat)
+    },
+    async links(id) {
+      await recordOf(id)
+      return gateway.pairing.members(id).map((l) => ({
+        peerId: l.peerId,
+        memberId: l.memberId,
+        ...(l.name === null ? {} : { name: l.name }),
+        linkedAt: l.linkedAt,
+      }))
+    },
+    async issuePairing(id, memberId) {
+      await recordOf(id)
+      requireConfig(id)
+      const member = memberId.trim()
+      if (member === '' || member.length > 64) throw invalid('memberId must be 1 to 64 characters')
+      const username = peek(id)?.bot?.username ?? peek(id)?.adapter?.info()?.username
+      if (username === undefined || username === '') {
+        throw conflict(
+          'The bot is not running yet: connect it first, then issue the link.',
+          'NOT_RUNNING',
+        )
+      }
+      const ttl = 24 * 3_600_000
+      const token = gateway.pairing.issue(id, member, ttl)
+      return {
+        memberId: member,
+        link: `https://t.me/${username}?start=${token}`,
+        command: `/start ${token}`,
+        expiresAt: now() + ttl,
+      }
+    },
+    async revokeLink(id, peerId) {
+      await recordOf(id)
+      if (!gateway.pairing.unlink(id, peerId)) throw notFound('linked account', peerId)
+    },
+    async deleteWebhook(id) {
+      const record = await recordOf(id)
+      const token = tokenOf(record)
+      if (token === undefined) throw conflict('The connection has no token.', 'NO_TOKEN')
+      requireConfig(id)
+      await halt(id)
+      chain = chain.catch(() => undefined).then(() => startOne(record, token, 'delete'))
+      await chain
+      return viewOf(record)
+    },
+    async restart(id) {
+      const record = await recordOf(id)
+      await halt(id)
+      setState(entryOf(id), 'stopped')
+      await sync()
+      return viewOf(record)
+    },
+    async resetBreaker(id) {
+      const record = await recordOf(id)
+      gateway.outbound.reset(id)
+      return viewOf(record)
+    },
+  }
+  return port
+}
+
+/** A `ChannelsPort` that delegates to a service built later (the service needs the app deps). */
+export function lazyChannelsPort(get: () => ChannelsPort | undefined): ChannelsPort {
+  return new Proxy({} as ChannelsPort, {
+    get: (_t, name) => {
+      const target = get()
+      if (target === undefined) throw new Error('channels are not ready yet')
+      return (target as unknown as Record<string | symbol, unknown>)[name]
+    },
+  })
+}

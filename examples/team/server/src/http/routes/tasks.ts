@@ -16,6 +16,7 @@ import {
   createTask,
   sendBackTask,
   updateQueuedTask,
+  withColumns,
 } from '../../app/work-queue.ts'
 import { errorResponses, IdParam, jsonError, ThreadQuery } from '../schemas/common.ts'
 import {
@@ -259,20 +260,17 @@ export function taskRoutes(deps: Deps): OpenAPIHono {
   return new OpenAPIHono()
     .openapi(tasksRoute, (c) => {
       const { status, agentId, limit } = c.req.valid('query')
-      return c.json(
-        {
-          tasks: listTasks(deps, {
-            limit,
-            ...(status === undefined ? {} : { status }),
-            ...(agentId === undefined ? {} : { agentId }),
-          }),
-        },
-        200,
-      )
+      const tasks = listTasks(deps, {
+        limit,
+        ...(status === undefined ? {} : { status }),
+        ...(agentId === undefined ? {} : { agentId }),
+      })
+      return c.json({ tasks: withColumns(deps, tasks) }, 200)
     })
     .openapi(taskRoute, async (c) => {
       const detail = await getTask(deps, c.req.valid('param').id)
-      return c.json(detail as never, 200)
+      const [task] = withColumns(deps, [detail.task])
+      return c.json({ ...detail, task } as never, 200)
     })
     .openapi(createTaskRoute, (c) =>
       c.json(createTask(deps, c.req.valid('json') as never) as never, 201),

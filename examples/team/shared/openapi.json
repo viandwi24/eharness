@@ -2287,6 +2287,17 @@
               "type": "string"
             },
             "description": "Sessions of earlier rounds."
+          },
+          "column": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "waiting",
+              "review",
+              "done"
+            ],
+            "description": "Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`."
           }
         },
         "required": [
@@ -2328,7 +2339,7 @@
           "interrupted",
           "timed_out"
         ],
-        "description": "`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
+        "description": "`queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit)."
       },
       "TaskReport": {
         "type": [
@@ -3232,7 +3243,7 @@
               "name",
               "slug"
             ],
-            "description": "The agent that first wrote the file; null = a person."
+            "description": "The agent that wrote the file last; null = a person (an upload or the editor)."
           },
           "updatedAt": {
             "type": "integer"
@@ -3740,6 +3751,121 @@
             "description": "IANA timezone."
           }
         }
+      },
+      "WorkspaceUsage": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "object",
+            "properties": {
+              "count": {
+                "type": "integer"
+              },
+              "tokens": {
+                "type": "integer"
+              },
+              "costUsd": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "count",
+              "tokens",
+              "costUsd"
+            ]
+          },
+          "bySource": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceUsage"
+            }
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "color": {
+                  "type": "string"
+                },
+                "bySource": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/SourceUsage"
+                  }
+                },
+                "total": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "tokens": {
+                      "type": "integer"
+                    },
+                    "costUsd": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "count",
+                    "tokens",
+                    "costUsd"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "bySource",
+                "total"
+              ]
+            }
+          }
+        },
+        "required": [
+          "total",
+          "bySource",
+          "agents"
+        ]
+      },
+      "SourceUsage": {
+        "type": "object",
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "chat",
+              "task",
+              "delegated",
+              "routine",
+              "program"
+            ],
+            "description": "`chat` (all chat threads), `task` (tasks queued by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs)."
+          },
+          "count": {
+            "type": "integer",
+            "description": "Chat: turns that ran a model step. The others: runs."
+          },
+          "tokens": {
+            "type": "integer"
+          },
+          "costUsd": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "source",
+          "count",
+          "tokens",
+          "costUsd"
+        ]
       },
       "Providers": {
         "type": "object",
@@ -5891,6 +6017,13 @@
           },
           "triggerState": {
             "$ref": "#/components/schemas/ProgramTriggerState"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProgramWarning"
+            },
+            "description": "Only on the answers of create and update: see `ProgramWarning`."
           }
         },
         "required": [
@@ -5984,6 +6117,15 @@
             ],
             "exclusiveMinimum": 0,
             "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+          },
+          "maxOutputTokens": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 256,
+            "maximum": 65536,
+            "description": "Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384)."
           }
         },
         "required": [
@@ -6150,6 +6292,134 @@
         ],
         "description": "The routine that owns the schedule trigger (it pauses itself after repeated failures)."
       },
+      "ProgramWarning": {
+        "type": "object",
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "tool-unavailable",
+              "channel-not-bound",
+              "budget-below-minimum"
+            ]
+          },
+          "field": {
+            "type": "string",
+            "example": "authority.tools"
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "field",
+          "message"
+        ],
+        "description": "Something the program cannot do as configured: a tool in its authority its agent never has (its connector is off, or the agent is not bound to a channel), or a budget below the cost of one model call. Warnings never block a save."
+      },
+      "ProgramCheckResult": {
+        "type": "object",
+        "properties": {
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProgramWarning"
+            }
+          }
+        },
+        "required": [
+          "warnings"
+        ]
+      },
+      "ProgramCheck": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Agent id or slug."
+          },
+          "authority": {
+            "type": "object",
+            "properties": {
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine."
+              },
+              "connectors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Connector or connection ids: every tool of them is allowed."
+              },
+              "read": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may read (`/library/data/**`)."
+              },
+              "write": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                },
+                "maxItems": 100,
+                "description": "Library path globs the run may write (`/library/reports/**`); they are readable too."
+              }
+            }
+          },
+          "budget": {
+            "type": "object",
+            "properties": {
+              "perRunUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "One run stops (`cost-cap`) when it has spent this much. null = no limit."
+              },
+              "perDayUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "exclusiveMinimum": 0,
+                "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+              },
+              "maxOutputTokens": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 256,
+                "maximum": 65536,
+                "description": "Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384)."
+              }
+            }
+          }
+        },
+        "required": [
+          "agentId"
+        ]
+      },
       "ProgramCreate": {
         "type": "object",
         "properties": {
@@ -6253,6 +6523,15 @@
                 ],
                 "exclusiveMinimum": 0,
                 "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+              },
+              "maxOutputTokens": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 256,
+                "maximum": 65536,
+                "description": "Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384)."
               }
             }
           },
@@ -6394,6 +6673,15 @@
                 ],
                 "exclusiveMinimum": 0,
                 "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+              },
+              "maxOutputTokens": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 256,
+                "maximum": 65536,
+                "description": "Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384)."
               }
             }
           },
@@ -7885,6 +8173,15 @@
                 ],
                 "exclusiveMinimum": 0,
                 "description": "All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit."
+              },
+              "maxOutputTokens": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 256,
+                "maximum": 65536,
+                "description": "Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384)."
               }
             }
           },
@@ -8264,6 +8561,571 @@
               "null"
             ],
             "description": "IANA timezone; null = the team timezone (workspace setting)."
+          }
+        }
+      },
+      "ChannelConnectionList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelConnection"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelConnection": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The connector connection id."
+          },
+          "platform": {
+            "type": "string",
+            "enum": [
+              "telegram"
+            ]
+          },
+          "label": {
+            "type": "string"
+          },
+          "accountLabel": {
+            "type": "string"
+          },
+          "connectionStatus": {
+            "type": "string"
+          },
+          "statusMessage": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "runtime": {
+            "type": "object",
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "unbound",
+                  "disabled",
+                  "starting",
+                  "running",
+                  "needs-auth",
+                  "webhook",
+                  "error",
+                  "stopped"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "since": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "state",
+              "since"
+            ]
+          },
+          "bot": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "username": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "canReadAllGroupMessages": {
+                "type": "boolean"
+              },
+              "guidance": {
+                "type": "string",
+                "description": "What privacy mode means for this bot."
+              }
+            },
+            "required": [
+              "id",
+              "username",
+              "name",
+              "canReadAllGroupMessages",
+              "guidance"
+            ]
+          },
+          "webhookUrl": {
+            "type": "string"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/ChannelBinding"
+          },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "chats": {
+                "type": "integer"
+              },
+              "linked": {
+                "type": "integer"
+              },
+              "outboxPending": {
+                "type": "integer"
+              },
+              "outboxFailed": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "chats",
+              "linked",
+              "outboxPending",
+              "outboxFailed"
+            ]
+          },
+          "breaker": {
+            "type": "object",
+            "properties": {
+              "open": {
+                "type": "boolean"
+              },
+              "until": {
+                "type": "integer"
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "open",
+              "until",
+              "reason"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "platform",
+          "label",
+          "connectionStatus",
+          "enabled",
+          "runtime",
+          "binding",
+          "counts"
+        ]
+      },
+      "ChannelBinding": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "agentId": {
+            "type": "string"
+          },
+          "groupPolicy": {
+            "type": "string",
+            "enum": [
+              "allowlist",
+              "open"
+            ]
+          },
+          "dm": {
+            "type": "string",
+            "enum": [
+              "pairing",
+              "disabled"
+            ]
+          },
+          "allowBots": {
+            "type": "boolean"
+          },
+          "admins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "historyLimit": {
+            "type": "integer"
+          },
+          "defaults": {
+            "type": "object",
+            "properties": {
+              "wake": {
+                "type": "string",
+                "enum": [
+                  "mention",
+                  "always",
+                  "never"
+                ]
+              },
+              "delivery": {
+                "type": "string",
+                "enum": [
+                  "final_text",
+                  "message_tool"
+                ]
+              },
+              "retentionDays": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "required": [
+          "agentId",
+          "groupPolicy",
+          "dm",
+          "allowBots",
+          "admins",
+          "historyLimit",
+          "defaults"
+        ]
+      },
+      "ChannelBindBody": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "groupPolicy": {
+            "type": "string",
+            "enum": [
+              "allowlist",
+              "open"
+            ]
+          },
+          "dm": {
+            "type": "string",
+            "enum": [
+              "pairing",
+              "disabled"
+            ]
+          },
+          "allowBots": {
+            "type": "boolean"
+          },
+          "admins": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "historyLimit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "defaults": {
+            "type": "object",
+            "properties": {
+              "wake": {
+                "type": "string",
+                "enum": [
+                  "mention",
+                  "always",
+                  "never"
+                ]
+              },
+              "delivery": {
+                "type": "string",
+                "enum": [
+                  "final_text",
+                  "message_tool"
+                ]
+              },
+              "retentionDays": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3650
+              }
+            }
+          }
+        },
+        "required": [
+          "agentId"
+        ]
+      },
+      "ChannelChatList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelChat"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelChat": {
+        "type": "object",
+        "properties": {
+          "chatId": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "dm",
+              "group",
+              "channel"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "forum": {
+            "type": "boolean"
+          },
+          "topics": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "policy": {
+                  "$ref": "#/components/schemas/ChannelPolicy"
+                }
+              },
+              "required": [
+                "id",
+                "name",
+                "policy"
+              ]
+            }
+          },
+          "botStatus": {
+            "type": "string"
+          },
+          "canPost": {
+            "type": "boolean"
+          },
+          "firstSeen": {
+            "type": "integer"
+          },
+          "lastSeen": {
+            "type": "integer"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/ChannelPolicy"
+          },
+          "effective": {
+            "type": "object",
+            "properties": {
+              "allowed": {
+                "type": "boolean"
+              },
+              "wake": {
+                "type": "string",
+                "enum": [
+                  "mention",
+                  "always",
+                  "never"
+                ]
+              },
+              "delivery": {
+                "type": "string",
+                "enum": [
+                  "final_text",
+                  "message_tool"
+                ]
+              },
+              "retentionDays": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "allowed",
+              "wake",
+              "delivery",
+              "retentionDays"
+            ]
+          }
+        },
+        "required": [
+          "chatId",
+          "kind",
+          "title",
+          "forum",
+          "topics",
+          "firstSeen",
+          "lastSeen",
+          "policy",
+          "effective"
+        ]
+      },
+      "ChannelPolicy": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "`false` takes the chat out of the allowlist."
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "wake": {
+            "type": "string",
+            "enum": [
+              "mention",
+              "always",
+              "never"
+            ]
+          },
+          "delivery": {
+            "type": "string",
+            "enum": [
+              "final_text",
+              "message_tool"
+            ]
+          },
+          "retentionDays": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "ChannelPolicyBody": {
+        "type": "object",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "agentId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1
+          },
+          "wake": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "mention",
+              "always",
+              "never",
+              null
+            ]
+          },
+          "delivery": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "final_text",
+              "message_tool",
+              null
+            ]
+          },
+          "retentionDays": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 3650
+          }
+        }
+      },
+      "ChannelLinkList": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChannelLink"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "ChannelLink": {
+        "type": "object",
+        "properties": {
+          "peerId": {
+            "type": "string"
+          },
+          "memberId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "linkedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "peerId",
+          "memberId",
+          "linkedAt"
+        ]
+      },
+      "ChannelPairing": {
+        "type": "object",
+        "properties": {
+          "memberId": {
+            "type": "string"
+          },
+          "link": {
+            "type": "string",
+            "description": "Deep link to open in Telegram. Shown once."
+          },
+          "command": {
+            "type": "string"
+          },
+          "expiresAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "memberId",
+          "link",
+          "command",
+          "expiresAt"
+        ]
+      },
+      "ChannelPairingBody": {
+        "type": "object",
+        "properties": {
+          "memberId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "default": "owner"
           }
         }
       },
@@ -13278,6 +14140,52 @@
         }
       }
     },
+    "/usage": {
+      "get": {
+        "tags": [
+          "settings"
+        ],
+        "summary": "Usage of the whole workspace, by agent and by source",
+        "description": "Tokens and cost of every agent: chats (all threads), tasks, delegated work, routine runs and program runs. Chat usage is the cumulative usage of the thread sessions; the others come from the task rows.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkspaceUsage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/providers": {
       "get": {
         "tags": [
@@ -15631,6 +16539,72 @@
         }
       }
     },
+    "/programs/check": {
+      "post": {
+        "tags": [
+          "programs"
+        ],
+        "summary": "What a program cannot do as configured",
+        "description": "Checks an agent, an authority and a budget (nothing is stored): tools the authority names that the agent never has (its connector is off; a channel tool while the agent is bound to no channel connection) and a budget below what one model call reserves on the agent model. The editor calls it while the client types; create and update answer with the same `warnings`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramCheck"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Warnings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgramCheckResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/programs/{id}": {
       "get": {
         "tags": [
@@ -17666,6 +18640,948 @@
           },
           "401": {
             "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Channel connections",
+        "description": "Telegram bot connections (connect the bot on the Connectors page) with the state of the transport, the bound agent, counts and the outbound breaker. The bot token is never part of a view.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Connections",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnectionList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "One channel connection",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/binding": {
+      "put": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Bind a connection to an agent",
+        "description": "Sets the agent that answers on this connection and its defaults (DM pairing, allowlist, wake and delivery defaults). Starts polling. Chats are allowed one by one (`PATCH .../chats/{chatId}/policy`) unless `groupPolicy` is `open`.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelBindBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Remove the binding",
+        "description": "Stops the transport. The connector connection and the chat history stay.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/chats": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Known chats",
+        "description": "Groups, supergroups and channels the bot has seen (any update, or being added or removed), with the policy that applies. Discovery starts when the connection is bound and the bot is in a chat.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Chats",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChatList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/chats/{chatId}/policy": {
+      "patch": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Allow a chat and set its policy",
+        "description": "Creates or changes the entry of a known chat in the allowlist: `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, an `agentId` override. With `?topic=` the policy is of a forum topic. A `null` field clears the override.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A forum topic id: the policy is of the topic."
+            },
+            "required": false,
+            "description": "A forum topic id: the policy is of the topic.",
+            "name": "topic",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelPolicyBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection, chat or topic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The connection is not bound to an agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Take a chat out of the allowlist",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "chatId",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "description": "A forum topic id: the policy is of the topic."
+            },
+            "required": false,
+            "description": "A forum topic id: the policy is of the topic.",
+            "name": "topic",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The chat",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelChat"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection, chat or topic",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The connection is not bound to an agent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/links": {
+      "get": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Linked accounts",
+        "description": "Telegram accounts paired with team members (employees who opened their /start link).",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Links",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelLinkList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/pairing": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Issue a pairing link for a team member",
+        "description": "A one-time `/start` deep link (valid 24 hours). The person opens it in Telegram and the account is linked; only linked accounts reach the agent by DM. The link is shown once.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelPairingBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelPairing"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Not bound, or the bot is not running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/links/{peerId}": {
+      "delete": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Revoke a linked account",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "peerId",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Revoked"
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/webhook/delete": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Remove the webhook of the bot",
+        "description": "Polling refuses to start while a webhook is set. This removes it and starts polling.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/restart": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Restart the transport",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/channels/connections/{id}/breaker/reset": {
+      "post": {
+        "tags": [
+          "channels"
+        ],
+        "summary": "Close the outbound breaker",
+        "description": "After errors that paused sending, once the cause is fixed.",
+        "security": [
+          {
+            "Bearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "id",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The connection",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConnection"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong bearer token",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown connection",
             "content": {
               "application/json": {
                 "schema": {

@@ -52,7 +52,7 @@ export const DECISION_TOOLS = [PROPOSE_PLAN_TOOL, ESCALATE_TOOL, REQUEST_AUTHORI
 
 /** What the plugin needs from the app (`app/decisions.ts` over the deps, built in `main.ts`). */
 export interface DecisionIntake {
-  propose(input: ProposeInput): { id: string }
+  propose(input: ProposeInput): { id: string; duplicate?: boolean }
   escalate(input: EscalateInput): { id: string }
   amend(input: AmendInput): { id: string }
   /** A run ended with `needs_decision` and did not escalate. */
@@ -64,6 +64,14 @@ export interface DecisionsPluginOptions {
   intake: () => DecisionIntake | undefined
   /** The agent of a hook context (`ctx.agent.id` is the slug of the definition). */
   agentOf: (slug: string) => { id: string } | undefined
+  /**
+   * Why a `request_authority` for these tools can never help (the tool does not exist for this
+   * agent), or undefined. The call is then refused with that text instead of parking the run.
+   */
+  unavailable?: (
+    sessionId: string,
+    asked: { tools?: string[]; read?: string[]; write?: string[] },
+  ) => string | undefined
 }
 
 const list = z.array(z.string().min(1).max(500)).max(100)
@@ -102,7 +110,10 @@ const proposeSchema = z.object({
     .max(MAX_BRIEF_CHARS)
     .optional()
     .describe('The pitch in markdown: goal, steps, why, links to the evidence (library paths).'),
-  agent: z.string().optional().describe('Slug of the agent that will run it. Default: you.'),
+  agent: z
+    .string()
+    .optional()
+    .describe('Required: slug of the agent that will run the plan (see your team).'),
   name: z.string().min(1).max(120).describe('Name of the program.'),
   brief: z
     .string()
@@ -220,7 +231,7 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
           metadata: { risk: 'write', idempotent: false },
           execute: (input): string => {
             try {
-              const { id } = intake().propose({
+              const { id, duplicate } = intake().propose({
                 agentId: self().id,
                 sessionId,
                 title: input.title,
@@ -257,6 +268,9 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
                       }),
                 },
               })
+              if (duplicate === true) {
+                return `A proposal like this is already open: ${id}. It was not created again; it waits for the client in the Decision Center. Do not propose it again: tell the client it is there, and carry on with other work.`
+              }
               return `Proposal ${id} is waiting for the client in the Decision Center. Nothing started and nothing is granted yet; do not act as if it were approved. Tell the client what you proposed and carry on with other work.`
             } catch (error) {
               return `ERROR: could not propose the plan: ${text(error)}`
@@ -327,7 +341,11 @@ export function decisions(options: DecisionsPluginOptions): HarnessPlugin<'decis
       if (origin === 'program') {
         tools[REQUEST_AUTHORITY_TOOL] = externalTool({
           description: REQUEST_AUTHORITY_DESCRIPTION,
-          inputSchema: authoritySchemaAsk,
+          // an input that fails here is answered to the model as an error, the run does not park
+          inputSchema: authoritySchemaAsk.superRefine((value, refinement) => {
+            const why = options.unavailable?.(sessionId, value)
+            if (why !== undefined) refinement.addIssue({ code: 'custom', message: why })
+          }),
           outputSchema: answerSchema,
           metadata: { risk: 'write', idempotent: true },
           start: (input, { waitId }) => {

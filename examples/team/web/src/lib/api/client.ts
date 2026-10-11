@@ -1,4 +1,5 @@
 import type { components, paths } from './schema';
+import { type Backoff, createBackoff } from './backoff';
 
 /** Schema types re-exported for the app. */
 export type Agent = components['schemas']['Agent'];
@@ -95,10 +96,18 @@ export type ClientOptions = {
 	baseUrl: string;
 	getToken?: () => string | null | undefined;
 	fetch?: typeof fetch;
+	/**
+	 * Shared "is the server reachable" gate: network errors, HTML answers and 502/503/504 count against
+	 * it. While it is down only one GET per backoff window goes out (see `backoff.ts`).
+	 */
+	reachability?: Backoff;
 };
 
 export function createClient(opts: ClientOptions) {
 	const base = opts.baseUrl.replace(/\/+$/, '');
+	const reach = opts.reachability;
+	// one gate per GET endpoint: a screen that refetches an endpoint in a loop cannot hammer a failing one
+	const gates = new Map<string, Backoff>();
 
 	async function request<P extends keyof paths, M extends Method>(
 		method: M,
@@ -117,6 +126,10 @@ export function createClient(opts: ClientOptions) {
 		const token = opts.getToken?.();
 		if (token) headers.authorization = `Bearer ${token}`;
 		if (o.body !== undefined) headers['content-type'] = 'application/json';
+		const gate = method === 'get' ? (gates.get(String(path)) ?? gates.set(String(path), createBackoff()).get(String(path))!) : undefined;
+		if (gate && ((reach?.down && !reach.tryAcquire()) || !gate.tryAcquire())) {
+			throw new ApiError(0, 'NETWORK_ERROR', 'Cannot reach the server. Trying again shortly.');
+		}
 		let res: Response;
 		try {
 			res = await (opts.fetch ?? fetch)(`${base}${url}`, {
@@ -127,9 +140,24 @@ export function createClient(opts: ClientOptions) {
 			});
 		} catch (cause) {
 			if (o.signal?.aborted) throw cause;
+			gate?.failure();
+			reach?.failure();
 			throw new ApiError(0, 'NETWORK_ERROR', 'Cannot reach the server');
 		}
 		const body: unknown = await res.json().catch(() => undefined);
+		// an HTML page where JSON was expected: the API is not behind this address (a static host, a proxy error page)
+		const html = (res.headers?.get?.('content-type') ?? '').includes('text/html');
+		if (html || res.status === 502 || res.status === 503 || res.status === 504) {
+			gate?.failure();
+			reach?.failure();
+			if (html) throw new ApiError(res.status || 502, 'BAD_RESPONSE', 'The server answered with a web page instead of data. Is the API address right?');
+		} else if (res.status >= 500) {
+			gate?.failure();
+			reach?.success();
+		} else {
+			gate?.success();
+			reach?.success();
+		}
 		if (!res.ok) throw toApiError(res.status, body);
 		return body as ResponseOf<P, M>;
 	}

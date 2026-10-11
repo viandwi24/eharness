@@ -13,7 +13,8 @@
  *   TEAM_SECRET_KEY   32 bytes base64: encrypts provider secrets, connection secrets and tokens at rest (dev: a key file next to the DB)
  *   TEAM_ALLOWED_ORIGINS extra browser origins allowed to send state-changing requests (the origins of TEAM_WEB_URL and TEAM_PUBLIC_URL always are; other `Origin`s get 403 FORBIDDEN_ORIGIN, the CSRF guard)
  *   TEAM_PUBLIC_URL   where this server is reached by the browser (OAuth callback `<url>/oauth/callback`; default http://localhost:PORT)
- *   TEAM_WEB_URL      where the web app lives (the OAuth callback redirects to `<url>/connectors`; default http://localhost:5173)
+ *   TEAM_WEB_URL      where the web app lives (the OAuth callback redirects to `<url>/connectors`, channel messages link to it; default http://localhost:5173, or TEAM_PUBLIC_URL with TEAM_WEB_DIR)
+ *   TEAM_TELEGRAM_API_ROOT Bot API root of the Telegram bot (default https://api.telegram.org; a local Bot API server or a test fake)
  *   TEAM_WEB_DIR      serve the built web (web/build) from this server on one port; the API then lives under /api (Dockerfile)
  *   TEAM_<CONNECTOR>_CLIENT_ID / _CLIENT_SECRET   OAuth app of a curated connector (e.g. TEAM_GITHUB_CLIENT_ID); or save it in the web app
  *   TEAM_CLASSIFIER_MODEL   model of Auto permission mode, `profile:model` or a plain id (default: the default model; none with a scripted model)
@@ -44,8 +45,8 @@ import { checkChatBody, uploadFile } from './app/chat.ts'
 import {
   createAmendment,
   createEscalation,
-  createProposal,
   createReportEscalation,
+  proposeFromAgent,
 } from './app/decisions.ts'
 import { recheckTask } from './app/deliverables.ts'
 import { abandonBeat, ensureHeartbeats, finishBeat, teamStatus } from './app/heartbeat.ts'
@@ -141,7 +142,12 @@ import { createDedupedWarningLog } from './infra/eh/warning-log.ts'
 import type { WorkQueueIntake } from './infra/eh/work-queue-plugin.ts'
 import { installJsonSchemaValidator } from './infra/json-schema.ts'
 import { croneSchedule } from './infra/schedule.ts'
-import { webStatic } from './infra/web-static.ts'
+import {
+  createTelegramChannels,
+  lazyChannelsPort,
+  type TelegramChannels,
+} from './infra/telegram/service.ts'
+import { resolveWebUrl, webStatic } from './infra/web-static.ts'
 
 export interface ServerConfig {
   dbFile: string
@@ -218,6 +224,8 @@ export interface ServerConfig {
     /** Retry timing of the outbox (tests shorten it). */
     delivery?: { retryBaseMs?: number; retryMaxMs?: number; maxAttempts?: number }
   }
+  /** Telegram bot transport timers (tests shorten them). */
+  telegram?: { pollTimeoutSec?: number; syncPollMs?: number; retryMs?: number }
 }
 
 export interface Server {
@@ -237,6 +245,8 @@ export interface Server {
   heartbeats: HeartbeatService
   /** The channels gateway: connections, adapters, pairing, the channel log (`infra/channels`). */
   channels: ChannelGateway
+  /** The Telegram bot transport and the admin service behind the Channels page (`infra/telegram`). */
+  telegram: TelegramChannels
   /** Operational counters of the runtime (`config.observe`): failed spans, hook timeouts, ... */
   metrics: () => Record<string, number>
   /** The model call log writer (the `model.call` plugin and the classifier observer). */
@@ -400,10 +410,11 @@ export function compose(config: ServerConfig): Server {
     process.env.TEAM_PUBLIC_URL ??
     `http://localhost:${process.env.PORT ?? 4000}`
   ).replace(/\/$/, '')
-  const webUrl = (config.webUrl ?? process.env.TEAM_WEB_URL ?? 'http://localhost:5173').replace(
-    /\/$/,
-    '',
-  )
+  const webUrl = resolveWebUrl({
+    ...(config.webUrl === undefined ? {} : { configured: config.webUrl }),
+    env: config.env ?? process.env,
+    publicUrl,
+  })
   const connectors = createConnectors({
     sqlite: conn.sqlite,
     profiles: profileStore,
@@ -583,6 +594,8 @@ export function compose(config: ServerConfig): Server {
     ...(config.routines === undefined ? {} : { config: config.routines }),
     log: { warn: (message) => console.warn(message) },
   })
+  // the Channels page's service needs the gateway, which needs these deps: late-bound
+  let telegram: TelegramChannels | undefined
   const deps: Deps = {
     agents,
     chat: createChatService(factory, { workspaceId: WORKSPACE_ID }),
@@ -600,6 +613,7 @@ export function compose(config: ServerConfig): Server {
     settings,
     providers,
     connectors,
+    channels: lazyChannelsPort(() => telegram),
     webUrl,
     modes: createModeService(factory, {
       store: sessionModes,
@@ -623,7 +637,10 @@ export function compose(config: ServerConfig): Server {
     workspaceId: WORKSPACE_ID,
   }
   decisionIntake = {
-    propose: (input) => createProposal(deps, input),
+    propose: (input) => {
+      const { decision, duplicate } = proposeFromAgent(deps, input)
+      return { id: decision.id, duplicate }
+    },
     escalate: (input) => createEscalation(deps, input),
     amend: (input) => createAmendment(deps, input),
     reportNeedsDecision: (input) => void createReportEscalation(deps, input),
@@ -649,6 +666,26 @@ export function compose(config: ServerConfig): Server {
     },
     canReadBriefings: (slug) => agents.getBySlug(slug)?.role === 'lead',
     briefings: (query) => briefingsText(deps, query),
+  }
+  // bell alerts of the channels (breaker opened, outbox failure, a bot token rejected)
+  const channelNotify = (n: {
+    key: string
+    title: string
+    body: string
+    agentId: string | null
+  }): void => {
+    const added = deps.notifications.insert({
+      id: deps.ids.next(),
+      kind: 'alert',
+      key: n.key,
+      title: n.title,
+      body: n.body,
+      link: null,
+      agentId: n.agentId,
+      createdAt: Date.now(),
+    })
+    if (added !== undefined)
+      events.append({ type: 'notification-changed', payload: { kind: 'alert' } })
   }
   // channels: chat platforms as sessions of an agent (docs/plans/P41-team-channels.md)
   const channelFiles = libraryFs(conn.sqlite)
@@ -692,20 +729,7 @@ export function compose(config: ServerConfig): Server {
         }
       },
     },
-    notify: (n) => {
-      const added = deps.notifications.insert({
-        id: deps.ids.next(),
-        kind: 'alert',
-        key: n.key,
-        title: n.title,
-        body: n.body,
-        link: null,
-        agentId: n.agentId,
-        createdAt: Date.now(),
-      })
-      if (added !== undefined)
-        events.append({ type: 'notification-changed', payload: { kind: 'alert' } })
-    },
+    notify: (n) => channelNotify(n),
     ...(config.channels?.collect === undefined ? {} : { collect: config.channels.collect }),
     ...(config.channels?.typingEveryMs === undefined
       ? {}
@@ -723,6 +747,26 @@ export function compose(config: ServerConfig): Server {
     log: { warn: (message) => console.warn(`team: ${message}`) },
   })
   const channels = channelGateway
+  // the Telegram bot transport: one poller per connected, bound connection (`infra/telegram`)
+  const telegramEnv = config.env ?? process.env
+  telegram = createTelegramChannels({
+    sqlite: conn.sqlite,
+    gateway: channels,
+    connectors,
+    agents,
+    notify: (n) => channelNotify(n),
+    ...(telegramEnv.TEAM_TELEGRAM_API_ROOT === undefined
+      ? {}
+      : { apiRoot: telegramEnv.TEAM_TELEGRAM_API_ROOT }),
+    ...(config.fetch === undefined ? {} : { fetch: config.fetch }),
+    ...(config.telegram?.pollTimeoutSec === undefined
+      ? {}
+      : { pollTimeoutSec: config.telegram.pollTimeoutSec }),
+    ...(config.telegram?.syncPollMs === undefined
+      ? {}
+      : { syncPollMs: config.telegram.syncPollMs }),
+    ...(config.telegram?.retryMs === undefined ? {} : { retryMs: config.telegram.retryMs }),
+  })
   const purgeChannels = (): void => {
     try {
       channels.purge()
@@ -731,6 +775,7 @@ export function compose(config: ServerConfig): Server {
     }
   }
   purgeChannels()
+  telegram.start()
   const channelPurgeMs = config.channels?.purgeEveryMs ?? 3_600_000
   const channelPurgeTimer =
     channelPurgeMs > 0 ? setInterval(purgeChannels, channelPurgeMs) : undefined
@@ -834,6 +879,7 @@ export function compose(config: ServerConfig): Server {
     decisions: decisionService,
     heartbeats,
     channels,
+    telegram,
     activityLog,
     metrics: observer.snapshot,
     providers,
@@ -846,6 +892,7 @@ export function compose(config: ServerConfig): Server {
       if (timer !== undefined) clearInterval(timer)
       if (pruneTimer !== undefined) clearInterval(pruneTimer)
       if (channelPurgeTimer !== undefined) clearInterval(channelPurgeTimer)
+      await telegram?.stop()
       await channels.stop()
       await routines?.stop()
       await ready

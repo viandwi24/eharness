@@ -10,3 +10,23 @@ export function formatTime(ms: number | null | undefined, now: number = Date.now
 	if (diff < 7) return d.toLocaleDateString([], { weekday: 'short' });
 	return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
+
+/**
+ * One plain line from markdown, for previews (sidebar, thread list): no emphasis marks, headings,
+ * list bullets, link or image syntax, code fences or HTML tags; whitespace collapsed.
+ */
+export function stripMarkdown(text: string | null | undefined): string {
+	if (!text) return '';
+	return text
+		.replace(/```[\s\S]*?```/g, ' ')
+		.replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+		.replace(/<[^>\n]+>/g, ' ')
+		.replace(/^\s{0,3}(#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/gm, '')
+		.replace(/(\*\*|__)(.+?)\1/g, '$2')
+		.replace(/(\*|_)([^*_\n]+?)\1/g, '$2')
+		.replace(/~~(.+?)~~/g, '$1')
+		.replace(/`([^`]*)`/g, '$1')
+		.replace(/\s+/g, ' ')
+		.trim();
+}

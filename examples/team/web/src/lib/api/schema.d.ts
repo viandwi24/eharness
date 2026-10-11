@@ -3975,6 +3975,63 @@ export interface paths {
         };
         trace?: never;
     };
+    "/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Usage of the whole workspace, by agent and by source
+         * @description Tokens and cost of every agent: chats (all threads), tasks, delegated work, routine runs and program runs. Chat usage is the cumulative usage of the thread sessions; the others come from the task rows.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Usage */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["WorkspaceUsage"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/providers": {
         parameters: {
             query?: never;
@@ -6170,6 +6227,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/programs/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * What a program cannot do as configured
+         * @description Checks an agent, an authority and a budget (nothing is stored): tools the authority names that the agent never has (its connector is off; a channel tool while the agent is bound to no channel connection) and a budget below what one model call reserves on the agent model. The editor calls it while the client types; create and update answer with the same `warnings`.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ProgramCheck"];
+                };
+            };
+            responses: {
+                /** @description Warnings */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ProgramCheckResult"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown agent */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/programs/{id}": {
         parameters: {
             query?: never;
@@ -7995,6 +8122,881 @@ export interface paths {
         };
         trace?: never;
     };
+    "/channels/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Channel connections
+         * @description Telegram bot connections (connect the bot on the Connectors page) with the state of the transport, the bound agent, counts and the outbound breaker. The bot token is never part of a view.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Connections */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnectionList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One channel connection */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/binding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Bind a connection to an agent
+         * @description Sets the agent that answers on this connection and its defaults (DM pairing, allowlist, wake and delivery defaults). Starts polling. Chats are allowed one by one (`PATCH .../chats/{chatId}/policy`) unless `groupPolicy` is `open`.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelBindBody"];
+                };
+            };
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        /**
+         * Remove the binding
+         * @description Stops the transport. The connector connection and the chat history stay.
+         */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/chats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Known chats
+         * @description Groups, supergroups and channels the bot has seen (any update, or being added or removed), with the policy that applies. Discovery starts when the connection is bound and the bot is in a chat.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Chats */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChatList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/chats/{chatId}/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Take a chat out of the allowlist */
+        delete: {
+            parameters: {
+                query?: {
+                    /** @description A forum topic id: the policy is of the topic. */
+                    topic?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                    chatId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The chat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection, chat or topic */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The connection is not bound to an agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        /**
+         * Allow a chat and set its policy
+         * @description Creates or changes the entry of a known chat in the allowlist: `wake` (`mention`, `always`, `never` = observe only), `delivery`, `retentionDays`, an `agentId` override. With `?topic=` the policy is of a forum topic. A `null` field clears the override.
+         */
+        patch: {
+            parameters: {
+                query?: {
+                    /** @description A forum topic id: the policy is of the topic. */
+                    topic?: string;
+                };
+                header?: never;
+                path: {
+                    id: string;
+                    chatId: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelPolicyBody"];
+                };
+            };
+            responses: {
+                /** @description The chat */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelChat"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection, chat or topic */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description The connection is not bound to an agent */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        trace?: never;
+    };
+    "/channels/connections/{id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Linked accounts
+         * @description Telegram accounts paired with team members (employees who opened their /start link).
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Links */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelLinkList"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/pairing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a pairing link for a team member
+         * @description A one-time `/start` deep link (valid 24 hours). The person opens it in Telegram and the account is linked; only linked accounts reach the agent by DM. The link is shown once.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ChannelPairingBody"];
+                };
+            };
+            responses: {
+                /** @description The link */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelPairing"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Not bound, or the bot is not running */
+                409: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/links/{peerId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Revoke a linked account */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                    peerId: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Revoked */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown link */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/webhook/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remove the webhook of the bot
+         * @description Polling refuses to start while a webhook is set. This removes it and starts polling.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restart the transport */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/channels/connections/{id}/breaker/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Close the outbound breaker
+         * @description After errors that paused sending, once the cause is fixed.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The connection */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ChannelConnection"];
+                    };
+                };
+                /** @description Invalid request */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Missing or wrong bearer token */
+                401: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+                /** @description Unknown connection */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/logs": {
         parameters: {
             query?: never;
@@ -8881,9 +9883,14 @@ export interface components {
             round: number;
             /** @description Sessions of earlier rounds. */
             history: string[];
+            /**
+             * @description Where the board shows the task (`GET /tasks` and `GET /tasks/{id}`). `status` is what the session does; `column` adds what the client sees: a run parked on an open decision (`escalate`, `request_authority`) has `status: running` but `column: waiting`, a finished work item that is not accepted is `review`.
+             * @enum {string}
+             */
+            column?: "queued" | "running" | "waiting" | "review" | "done";
         };
         /**
-         * @description `queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running`; `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
+         * @description `queued`: in the work queue, no session yet (a worker program takes it); `needs_action`: an approval or question waits for a person; `running` (also while a run is parked on a decision: see `column` of the task for `waiting`); `done`; `failed`; `stopped` (aborted); `interrupted` (its process stopped; continue it); `timed_out` (a delegation ran past its time limit).
          * @enum {string}
          */
         TaskStatus: "queued" | "needs_action" | "running" | "done" | "failed" | "stopped" | "interrupted" | "timed_out";
@@ -9108,7 +10115,7 @@ export interface components {
             mediaType: string | null;
             binary: boolean;
             createdByAgentId: string | null;
-            /** @description The agent that first wrote the file; null = a person. */
+            /** @description The agent that wrote the file last; null = a person (an upload or the editor). */
             createdBy: {
                 id: string;
                 name: string;
@@ -9240,6 +10247,36 @@ export interface components {
             defaultProfile?: string | null;
             /** @description IANA timezone. */
             timezone?: string;
+        };
+        WorkspaceUsage: {
+            total: {
+                count: number;
+                tokens: number;
+                costUsd: number;
+            };
+            bySource: components["schemas"]["SourceUsage"][];
+            agents: {
+                id: string;
+                name: string;
+                color?: string;
+                bySource: components["schemas"]["SourceUsage"][];
+                total: {
+                    count: number;
+                    tokens: number;
+                    costUsd: number;
+                };
+            }[];
+        };
+        SourceUsage: {
+            /**
+             * @description `chat` (all chat threads), `task` (tasks queued by a person), `delegated` (work an agent handed to another), `routine` (routine runs), `program` (program runs).
+             * @enum {string}
+             */
+            source: "chat" | "task" | "delegated" | "routine" | "program";
+            /** @description Chat: turns that ran a model step. The others: runs. */
+            count: number;
+            tokens: number;
+            costUsd: number;
         };
         Providers: {
             providers: components["schemas"]["ProviderDefinition"][];
@@ -9893,6 +10930,8 @@ export interface components {
             updatedAt: number;
             version: number;
             triggerState: components["schemas"]["ProgramTriggerState"];
+            /** @description Only on the answers of create and update: see `ProgramWarning`. */
+            warnings?: components["schemas"]["ProgramWarning"][];
         };
         ProgramAuthority: {
             /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
@@ -9909,6 +10948,8 @@ export interface components {
             perRunUsd: number | null;
             /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
             perDayUsd: number | null;
+            /** @description Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384). */
+            maxOutputTokens?: number | null;
         };
         /** @description `manual`: runs only on "run now". `schedule`: the routine scheduler fires it (same claim, overlap, recovery and failure rules as routines). */
         ProgramTrigger: {
@@ -9952,6 +10993,39 @@ export interface components {
             lastStatus: string | null;
             failures: number;
         } | null;
+        /** @description Something the program cannot do as configured: a tool in its authority its agent never has (its connector is off, or the agent is not bound to a channel), or a budget below the cost of one model call. Warnings never block a save. */
+        ProgramWarning: {
+            /** @enum {string} */
+            code: "tool-unavailable" | "channel-not-bound" | "budget-below-minimum";
+            /** @example authority.tools */
+            field: string;
+            message: string;
+        };
+        ProgramCheckResult: {
+            warnings: components["schemas"]["ProgramWarning"][];
+        };
+        ProgramCheck: {
+            /** @description Agent id or slug. */
+            agentId: string;
+            authority?: {
+                /** @description Tool names or permission rule specifiers the run may use (`web_fetch`, `Bash(git status)`, `WebFetch(domain:example.com)`). Enforced by the permission engine. */
+                tools?: string[];
+                /** @description Connector or connection ids: every tool of them is allowed. */
+                connectors?: string[];
+                /** @description Library path globs the run may read (`/library/data/**`). */
+                read?: string[];
+                /** @description Library path globs the run may write (`/library/reports/**`); they are readable too. */
+                write?: string[];
+            };
+            budget?: {
+                /** @description One run stops (`cost-cap`) when it has spent this much. null = no limit. */
+                perRunUsd?: number | null;
+                /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
+                perDayUsd?: number | null;
+                /** @description Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384). */
+                maxOutputTokens?: number | null;
+            };
+        };
         ProgramCreate: {
             /** @description Agent id or slug. */
             agentId: string;
@@ -9975,6 +11049,8 @@ export interface components {
                 perRunUsd?: number | null;
                 /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
                 perDayUsd?: number | null;
+                /** @description Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384). */
+                maxOutputTokens?: number | null;
             };
             trigger?: components["schemas"]["ProgramTrigger"];
             /**
@@ -10009,6 +11085,8 @@ export interface components {
                 perRunUsd?: number | null;
                 /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
                 perDayUsd?: number | null;
+                /** @description Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384). */
+                maxOutputTokens?: number | null;
             };
             trigger?: components["schemas"]["ProgramTrigger"];
             /**
@@ -10392,6 +11470,8 @@ export interface components {
                 perRunUsd?: number | null;
                 /** @description All runs of the program in one UTC day stop at this spend (ledger scope `program:<id>:<day>`). null = no limit. */
                 perDayUsd?: number | null;
+                /** @description Output tokens one model call of a run may produce. Every call reserves its worst case (context + this cap at the model price) against the budgets before it runs, so a small cap is what lets a small budget work. null / absent: sized from the budget (at most 16 384). */
+                maxOutputTokens?: number | null;
             };
             trigger?: components["schemas"]["ProgramTrigger"];
             /** @enum {string} */
@@ -10494,6 +11574,149 @@ export interface components {
             time?: string;
             /** @description IANA timezone; null = the team timezone (workspace setting). */
             timezone?: string | null;
+        };
+        ChannelConnectionList: {
+            items: components["schemas"]["ChannelConnection"][];
+        };
+        ChannelConnection: {
+            /** @description The connector connection id. */
+            id: string;
+            /** @enum {string} */
+            platform: "telegram";
+            label: string;
+            accountLabel?: string;
+            connectionStatus: string;
+            statusMessage?: string;
+            enabled: boolean;
+            runtime: {
+                /** @enum {string} */
+                state: "unbound" | "disabled" | "starting" | "running" | "needs-auth" | "webhook" | "error" | "stopped";
+                message?: string;
+                since: number;
+            };
+            bot?: {
+                id: number;
+                username: string;
+                name: string;
+                canReadAllGroupMessages: boolean;
+                /** @description What privacy mode means for this bot. */
+                guidance: string;
+            };
+            webhookUrl?: string;
+            binding: components["schemas"]["ChannelBinding"];
+            counts: {
+                chats: number;
+                linked: number;
+                outboxPending: number;
+                outboxFailed: number;
+            };
+            breaker?: {
+                open: boolean;
+                until: number;
+                reason: string;
+            };
+        };
+        ChannelBinding: {
+            agentId: string;
+            /** @enum {string} */
+            groupPolicy: "allowlist" | "open";
+            /** @enum {string} */
+            dm: "pairing" | "disabled";
+            allowBots: boolean;
+            admins: string[];
+            historyLimit: number;
+            defaults: {
+                /** @enum {string} */
+                wake?: "mention" | "always" | "never";
+                /** @enum {string} */
+                delivery?: "final_text" | "message_tool";
+                retentionDays?: number;
+            };
+        } | null;
+        ChannelBindBody: {
+            agentId: string;
+            /** @enum {string} */
+            groupPolicy?: "allowlist" | "open";
+            /** @enum {string} */
+            dm?: "pairing" | "disabled";
+            allowBots?: boolean;
+            admins?: string[];
+            historyLimit?: number;
+            defaults?: {
+                /** @enum {string} */
+                wake?: "mention" | "always" | "never";
+                /** @enum {string} */
+                delivery?: "final_text" | "message_tool";
+                retentionDays?: number;
+            };
+        };
+        ChannelChatList: {
+            items: components["schemas"]["ChannelChat"][];
+        };
+        ChannelChat: {
+            chatId: string;
+            /** @enum {string} */
+            kind: "dm" | "group" | "channel";
+            title: string;
+            username?: string;
+            forum: boolean;
+            topics: {
+                id: string;
+                name: string;
+                policy: components["schemas"]["ChannelPolicy"];
+            }[];
+            botStatus?: string;
+            canPost?: boolean;
+            firstSeen: number;
+            lastSeen: number;
+            policy: components["schemas"]["ChannelPolicy"];
+            effective: {
+                allowed: boolean;
+                /** @enum {string} */
+                wake: "mention" | "always" | "never";
+                /** @enum {string} */
+                delivery: "final_text" | "message_tool";
+                retentionDays: number;
+            };
+        };
+        ChannelPolicy: {
+            /** @description `false` takes the chat out of the allowlist. */
+            enabled: boolean;
+            agentId?: string;
+            /** @enum {string} */
+            wake?: "mention" | "always" | "never";
+            /** @enum {string} */
+            delivery?: "final_text" | "message_tool";
+            retentionDays?: number;
+        } | null;
+        ChannelPolicyBody: {
+            enabled?: boolean;
+            agentId?: string | null;
+            /** @enum {string|null} */
+            wake?: "mention" | "always" | "never" | null;
+            /** @enum {string|null} */
+            delivery?: "final_text" | "message_tool" | null;
+            retentionDays?: number | null;
+        };
+        ChannelLinkList: {
+            items: components["schemas"]["ChannelLink"][];
+        };
+        ChannelLink: {
+            peerId: string;
+            memberId: string;
+            name?: string;
+            linkedAt: number;
+        };
+        ChannelPairing: {
+            memberId: string;
+            /** @description Deep link to open in Telegram. Shown once. */
+            link: string;
+            command: string;
+            expiresAt: number;
+        };
+        ChannelPairingBody: {
+            /** @default owner */
+            memberId: string;
         };
         ModelCallList: {
             items: components["schemas"]["ModelCallSummary"][];

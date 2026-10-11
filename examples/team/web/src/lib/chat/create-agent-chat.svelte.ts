@@ -8,6 +8,7 @@ import { type ChatSession, type ChatSessionState, createChatSession, interrupted
 import { harness } from '../api/index';
 import { UPLOAD_MAX_BYTES } from './constants.js';
 import { uploadErrorText } from './http.js';
+import { endsInErrorNotice } from './messages.js';
 
 export type Notify = (level: 'info' | 'error', text: string) => void;
 
@@ -19,6 +20,8 @@ export type CreateAgentChatOptions = {
 	messages?: UIMessage[];
 	/** Toasts. */
 	notify?: Notify;
+	/** Removes a toast by the id `notify` gave it (the first 80 characters of its text). */
+	dismiss?: (id: string) => void;
 	/** Page size of `GET /sessions/{id}/messages`. */
 	pageSize?: number;
 };
@@ -31,23 +34,43 @@ export class AgentChat {
 	readonly agentId: string;
 	readonly sessionId: string;
 	#s = $state.raw<ChatSessionState>(INITIAL);
+	readonly #dismiss: ((id: string) => void) | undefined;
 
 	constructor(options: CreateAgentChatOptions) {
 		this.agentId = options.agentId;
 		this.sessionId = options.sessionId;
+		this.#dismiss = options.dismiss;
 		this.session = createChatSession<UIMessage>({
 			client: harness,
 			sessionId: options.sessionId, // the session of one chat thread
 			...(options.messages ? { messages: options.messages } : {}),
 			...(options.pageSize ? { pageSize: options.pageSize } : {}),
 			transportOptions: { ifBusy: 'steer' }, // a message sent while a turn runs joins it
-			...(options.notify ? { notify: options.notify } : {})
+			notify: (level, text) => {
+				options.notify?.(level, text);
+				if (level === 'error') void this.#settleError(text);
+			}
 		});
 		// Every approval and question is answered through `POST /attention/{id}/answer` (see the live
 		// store), never by posting the assistant message back: no `sendAutomaticallyWhen`.
 		this.chat = new Chat<UIMessage>({ ...this.session.chatInit });
 		this.session.bind(this.chat);
 		this.session.subscribe((s) => (this.#s = s));
+	}
+
+	/**
+	 * A failed turn is shown once. The core stores an error notice for it (a row in the chat), so when
+	 * that row is there the toast is dropped; a failure with no stored notice (a request that never
+	 * started a turn) keeps its toast and nothing else. The chat's own error state is never shown.
+	 */
+	async #settleError(text: string): Promise<void> {
+		this.chat.clearError();
+		try {
+			await this.session.refetch();
+		} catch {
+			return;
+		}
+		if (endsInErrorNotice(this.chat.messages)) this.#dismiss?.(text.slice(0, 80));
 	}
 
 	/** History loaded (first page). */
@@ -107,6 +130,38 @@ export class AgentChat {
 	dismissProblem = (): void => this.session.dismissProblem();
 	/** Send a user message (with already uploaded file parts). While a turn runs it is steered into it. */
 	send = (text: string, files: FileUIPart[] = []): Promise<void> => this.session.send(text, files);
+
+	/**
+	 * Answer the reply `messageId` again (spec 05 `regenerate`: the reply and what follows are hidden by
+	 * a rewind marker). The library session wraps `send` and `retryTurn` only, so this goes through the
+	 * chat directly and then resyncs with storage.
+	 */
+	async regenerate(messageId: string): Promise<void> {
+		if (this.busy) return;
+		try {
+			await this.chat.regenerate({ messageId });
+		} finally {
+			await this.#resync();
+		}
+	}
+
+	/** Replace the stored user message `messageId` and answer it (spec 05 `edit`: later messages are hidden). */
+	async edit(messageId: string, text: string, files: FileUIPart[] = []): Promise<void> {
+		if (this.busy) return;
+		try {
+			await this.chat.sendMessage({ text, ...(files.length > 0 ? { files } : {}), messageId });
+		} finally {
+			await this.#resync();
+		}
+	}
+
+	async #resync(): Promise<void> {
+		try {
+			await this.session.refetch();
+		} catch {
+			// the next event or reload shows what is stored
+		}
+	}
 
 	/** Upload one file to the library and return the file part for the message. */
 	async upload(file: { url: string; mediaType: string; filename?: string }): Promise<FileUIPart> {

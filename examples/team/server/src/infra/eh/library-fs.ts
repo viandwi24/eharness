@@ -44,7 +44,7 @@ export interface LibraryChange {
 }
 
 export interface LibraryFsOptions {
-  /** Stored as the creating agent of files this instance writes. */
+  /** Stored as the author (the latest writer; none = a person) of files this instance writes. */
   agentId?: string
   /** Called after every successful write, delete or move (event feed hook, M4). */
   onChange?: (change: LibraryChange) => void
@@ -136,7 +136,8 @@ export function libraryFs(sqlite: Database, options: LibraryFsOptions = {}): Fil
              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT (path) DO UPDATE SET
                version = excluded.version, text = excluded.text, bytes = excluded.bytes,
-               media_type = excluded.media_type, size = excluded.size, updated_at = excluded.updated_at`,
+               media_type = excluded.media_type, size = excluded.size,
+               created_by_agent_id = excluded.created_by_agent_id, updated_at = excluded.updated_at`,
           )
           .run(
             path,

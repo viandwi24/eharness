@@ -12,7 +12,7 @@
 	import * as Tooltip from '#lib/components/ui/tooltip/index.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
 	import { openNewAgent } from '#lib/stores/dialogs.svelte.js';
-	import { formatTime } from '#lib/format.js';
+	import { formatTime, stripMarkdown } from '#lib/format.js';
 
 	let query = $state('');
 	let searchEl = $state<HTMLInputElement | null>(null);
@@ -94,7 +94,7 @@
 						<span class="shrink-0 text-xs text-muted-foreground">{formatTime(act?.lastMessageAt)}</span>
 					</span>
 					<span class="flex items-center justify-between gap-2">
-						<span class="truncate text-xs text-muted-foreground">{act?.preview || a.description}</span>
+						<span class="truncate text-xs text-muted-foreground">{stripMarkdown(act?.preview) || a.description}</span>
 						{#if act?.unread}<span class="size-2 shrink-0 rounded-full bg-brand" aria-label="{act.unread} unread"></span>{/if}
 					</span>
 				</span>

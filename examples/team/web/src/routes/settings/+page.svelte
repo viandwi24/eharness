@@ -27,12 +27,12 @@
 	import * as Table from '#lib/components/ui/table/index.js';
 	import { providersStore } from '#lib/providers/store.svelte.js';
 	import { modeInfo, settingsModeOf, settingsModes } from '#lib/modes.js';
-	import { sumUsage, type Usage } from '#lib/settings/usage.js';
+	import { percentOf, sourceLabel } from '#lib/settings/usage.js';
 	import { validateGeneral } from '#lib/settings/validate.js';
 	import { timezoneOptions } from '#lib/heartbeat/model.js';
 	import { AUTO_THRESHOLD } from '#lib/connectors/tool-access.js';
 	import { agentsStore } from '#lib/stores/agents.svelte.js';
-	import { live } from '#lib/stores/live.svelte.js';
+	import { live, reconnectLive } from '#lib/stores/live.svelte.js';
 	import { formatUsd } from '#lib/time.js';
 
 	type Settings = components['schemas']['Settings'];
@@ -124,23 +124,16 @@
 	}
 
 	// --- usage -----------------------------------------------------------------------------
-	let usage = $state<{ total: Usage; rows: { id: string; name: string; color?: string; usage: Usage }[] } | null>(null);
+	// `GET /usage`: chats (every thread), tasks, delegated work, routine and program runs
+	let usage = $state<components['schemas']['WorkspaceUsage'] | null>(null);
 	let usageError = $state('');
 	let useq = 0;
 	async function loadUsage(): Promise<void> {
 		const mine = ++useq;
 		try {
-			if (!agentsStore.state.loaded) await agentsStore.load();
-			const rows = await Promise.all(
-				agentsStore.state.agents.map(async (a) => ({
-					id: a.id,
-					name: a.name,
-					color: a.color,
-					usage: (await api.get('/agents/{id}/stats', { params: { id: a.id } })).usage
-				}))
-			);
+			const r = await api.get('/usage');
 			if (mine !== useq) return;
-			usage = { total: sumUsage(rows.map((r) => r.usage)), rows };
+			usage = r;
 			usageError = '';
 		} catch (e) {
 			if (mine === useq) usageError = e instanceof Error ? e.message : 'Could not load usage';
@@ -148,11 +141,11 @@
 	}
 
 	const costSegments = $derived(
-		(usage?.rows ?? [])
-			.filter((r) => r.usage.costUsd > 0)
-			.sort((a, b) => b.usage.costUsd - a.usage.costUsd)
+		(usage?.agents ?? [])
+			.filter((r) => r.total.costUsd > 0)
+			.sort((a, b) => b.total.costUsd - a.total.costUsd)
 			.slice(0, 5)
-			.map((r) => ({ label: r.name, value: Math.max(1, Math.round((r.usage.costUsd / (usage?.total.costUsd || 1)) * 100)) }))
+			.map((r) => ({ label: r.name, value: Math.max(1, percentOf(r.total.costUsd, usage?.total.costUsd ?? 0)) }))
 	);
 
 	// --- connection ------------------------------------------------------------------------
@@ -165,6 +158,7 @@
 		setToken(token.trim());
 		tokenSaved = token.trim();
 		toast.success('Token saved in this browser');
+		reconnectLive(); // the stream, the lists and every screen refetch with the new token: no reload
 		void agentsStore.load();
 		void loadSettings();
 		void loadUsage();
@@ -282,7 +276,7 @@
 						<Card.Header>
 							<Card.Title>Usage</Card.Title>
 							<Card.Description>
-								All-time totals across agent chats.
+								All-time totals: chats, tasks, delegated work, routine and program runs.
 								{#if settings?.budgetUsd !== null && settings?.budgetUsd !== undefined}Monthly budget: {formatUsd(settings.budgetUsd)}.{/if}
 							</Card.Description>
 						</Card.Header>
@@ -294,11 +288,36 @@
 									{#each [0, 1, 2, 3] as n (n)}<Skeleton class="h-24 rounded-xl" />{/each}
 								</div>
 							{:else}
-								<div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+								<div class="grid grid-cols-2 gap-3 lg:grid-cols-3">
 									<StatTile class="w-full px-4 py-3.5" label="Cost" value={formatUsd(usage.total.costUsd)} />
-									<StatTile class="w-full px-4 py-3.5" label="Turns" value={num(usage.total.turns)} />
-									<StatTile class="w-full px-4 py-3.5" label="Input tokens" value={num(usage.total.inputTokens)} />
-									<StatTile class="w-full px-4 py-3.5" label="Output tokens" value={num(usage.total.outputTokens)} />
+									<StatTile class="w-full px-4 py-3.5" label="Tokens" value={num(usage.total.tokens)} />
+									<StatTile class="w-full px-4 py-3.5" label="Turns and runs" value={num(usage.total.count)} />
+								</div>
+								<div class="flex flex-col gap-1.5">
+									<h3 class="text-[13px] font-medium">By source</h3>
+									<div class="overflow-hidden rounded-lg border border-border" data-testid="usage-by-source">
+										<Table.Root>
+											<Table.Header>
+												<Table.Row class="hover:bg-transparent">
+													<Table.Head>Source</Table.Head>
+													<Table.Head class="text-right">Count</Table.Head>
+													<Table.Head class="text-right">Tokens</Table.Head>
+													<Table.Head class="text-right">Cost</Table.Head>
+												</Table.Row>
+											</Table.Header>
+											<Table.Body>
+												{#each usage.bySource as s (s.source)}
+													{@const l = sourceLabel(s.source)}
+													<Table.Row>
+														<Table.Cell>{l.label}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(s.count)} {l.unit}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(s.tokens)}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{formatUsd(s.costUsd)}</Table.Cell>
+													</Table.Row>
+												{/each}
+											</Table.Body>
+										</Table.Root>
+									</div>
 								</div>
 								{#if costSegments.length > 1}
 									<div class="flex flex-col gap-1.5">
@@ -306,7 +325,7 @@
 										<AllocationBar.AllocationBar segments={costSegments} />
 									</div>
 								{/if}
-								{#if !usage.rows.length}
+								{#if !usage.agents.length}
 									<Empty.Root class="border p-6">
 										<Empty.Header>
 											<Empty.Title class="text-sm">No agents yet</Empty.Title>
@@ -319,20 +338,20 @@
 											<Table.Header>
 												<Table.Row class="hover:bg-transparent">
 													<Table.Head>Agent</Table.Head>
-													<Table.Head class="text-right">Turns</Table.Head>
+													<Table.Head class="text-right">Turns and runs</Table.Head>
 													<Table.Head class="text-right">Tokens</Table.Head>
 													<Table.Head class="text-right">Cost</Table.Head>
 												</Table.Row>
 											</Table.Header>
 											<Table.Body>
-												{#each usage.rows as r (r.id)}
+												{#each usage.agents as r (r.id)}
 													<Table.Row>
 														<Table.Cell>
 															<span class="flex items-center gap-2"><AgentAvatar seed={r.id} color={r.color} size={18} />{r.name}</span>
 														</Table.Cell>
-														<Table.Cell class="text-right font-mono text-xs">{num(r.usage.turns)}</Table.Cell>
-														<Table.Cell class="text-right font-mono text-xs">{num(r.usage.totalTokens)}</Table.Cell>
-														<Table.Cell class="text-right font-mono text-xs">{formatUsd(r.usage.costUsd)}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(r.total.count)}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{num(r.total.tokens)}</Table.Cell>
+														<Table.Cell class="text-right font-mono text-xs">{formatUsd(r.total.costUsd)}</Table.Cell>
 													</Table.Row>
 												{/each}
 											</Table.Body>
