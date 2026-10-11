@@ -11,7 +11,6 @@
 	import type { Task } from '#lib/api/client.js';
 	import { AgentAvatar } from '#lib/components/ai/agent-avatar/index.js';
 	import PageHeader from '#lib/components/app/PageHeader.svelte';
-	import PendingCard from '#lib/components/app/PendingCard.svelte';
 	import TaskCard from '#lib/components/app/TaskCard.svelte';
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
@@ -43,13 +42,9 @@
 		!q || t.title.toLowerCase().includes(q) || agentName(t.agentId).toLowerCase().includes(q) || (t.summary ?? '').toLowerCase().includes(q);
 
 	const board = $derived(groupBoard(live.state.tasks.filter(matches), { agentId: agentFilter || null }));
-	const approvals = $derived(live.state.approvals.filter((a) => (!agentFilter || a.agentId === agentFilter) && (!q || a.agentName.toLowerCase().includes(q) || a.toolName.toLowerCase().includes(q))));
-	// Approvals of a task are shown on its card (inline); the rest (DM chats) get their own cards.
-	const taskIds = $derived(new Set(live.state.tasks.map((t) => t.id)));
-	const loose = $derived(approvals.filter((a) => !a.taskId || !taskIds.has(a.taskId)));
-	const needsCount = $derived(board.needs.length + loose.length);
+	const needsCount = $derived(board.needs.length);
 	const loaded = $derived(live.state.tasksLoaded);
-	const total = $derived(board.needs.length + board.running.length + board.done.length + loose.length);
+	const total = $derived(board.needs.length + board.running.length + board.done.length);
 
 	const columns: { id: Column; title: string; icon: typeof HandPalmIcon; empty: string }[] = [
 		{ id: 'needs', title: 'Needs action', icon: HandPalmIcon, empty: 'Nothing is waiting for you.' },
@@ -67,7 +62,6 @@
 			// storage unavailable: keep the default
 		}
 		void live.loadTasks();
-		void live.loadApprovals();
 		void agentsStore.load();
 	});
 
@@ -85,7 +79,7 @@
 		query = '';
 	}
 	const statusBadge = (t: Task): { label: string; variant: ReturnType<typeof badgeFor>['variant'] } =>
-		t.status === 'needs_action' ? { label: t.pendingKind === 'question' ? 'question' : 'approval', variant: 'warning' } : badgeFor(t.status, t.summary);
+		t.status === 'needs_action' ? { label: 'Waiting for you', variant: 'warning' } : badgeFor(t.status, t.summary);
 </script>
 
 {#snippet filters(cls: string)}
@@ -134,7 +128,7 @@
 				{#each columns as col (col.id)}
 					{@const all = board[col.id]}
 					{@const items = col.id === 'done' ? all.slice(0, doneShown) : all}
-					{@const count = all.length + (col.id === 'needs' ? loose.length : 0)}
+					{@const count = all.length}
 					<Kanban.Root
 						title={col.title}
 						meta={String(count)}
@@ -144,17 +138,8 @@
 						{#if !loaded}
 							{#each [0, 1] as n (n)}<Skeleton class="h-[72px] w-full rounded-xl" />{/each}
 						{:else}
-							{#if col.id === 'needs'}
-								{#each loose as a (a.sessionId + a.id)}
-									<PendingCard approval={a} onOpenTask={openTask} />
-								{/each}
-							{/if}
 							{#each items as t (t.id)}
-								{@const own = col.id === 'needs' ? approvals.filter((a) => a.taskId === t.id) : []}
 								<TaskCard task={t} onOpen={openTask} highlight={col.id === 'needs'} />
-								{#each own as a (a.sessionId + a.id)}
-									<PendingCard approval={a} onOpenTask={openTask} />
-								{/each}
 							{/each}
 							{#if col.id === 'done' && all.length > doneShown}
 								<Button variant="ghost" size="sm" class="w-full text-muted-foreground" onclick={() => (doneShown += PAGE)}>
@@ -173,9 +158,6 @@
 			</div>
 		{:else}
 			<div class="flex flex-col gap-3">
-				{#each loose as a (a.sessionId + a.id)}
-					<PendingCard approval={a} onOpenTask={openTask} />
-				{/each}
 				{#if !loaded}
 					{#each [0, 1, 2, 3] as n (n)}<Skeleton class="h-10 w-full" />{/each}
 				{:else if listRows.length === 0}

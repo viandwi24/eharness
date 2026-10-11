@@ -3,14 +3,26 @@
 	import { Badge } from '#lib/components/ui/badge/index.js';
 	import { Button } from '#lib/components/ui/button/index.js';
 	import * as Popover from '#lib/components/ui/popover/index.js';
+	import { goto } from '$app/navigation';
+	import type { Approval } from '#lib/api/client.js';
 	import { openTask } from '#lib/stores/drawer.svelte.js';
 	import { live } from '#lib/stores/live.svelte.js';
-	import PendingCard from './PendingCard.svelte';
 
 	/** Where the list opens from the bell (the rail opens it to the right). */
 	let { side = 'top', align = 'end' }: { side?: 'top' | 'right' | 'bottom' | 'left'; align?: 'start' | 'center' | 'end' } = $props();
 	const count = $derived(live.state.approvals.length);
 	let open = $state(false);
+
+	/** Where the request is answered: the task view of a task, the agent's DM chat otherwise. */
+	const place = (a: Approval): string => (a.taskId ? (live.state.tasks.find((t) => t.id === a.taskId)?.title ?? 'a task') : 'the chat');
+	const text = (a: Approval): string =>
+		a.kind === 'question' ? `${a.agentName} asked you a question in ${place(a)}` : `${a.agentName} is waiting for your approval in ${place(a)}`;
+	/** Notifications only link: the answer is given inline in the session's chat. */
+	function go(a: Approval): void {
+		open = false;
+		if (a.taskId) openTask(a.taskId);
+		else void goto(`/a/${a.agentId}`);
+	}
 </script>
 
 <Popover.Root bind:open>
@@ -25,15 +37,11 @@
 		{/snippet}
 	</Popover.Trigger>
 	<Popover.Content elevation="floating" {side} {align} class="flex max-h-[70svh] w-[min(92vw,24rem)] flex-col gap-2 overflow-y-auto p-2">
-		<div class="px-1 pt-1 text-sm font-medium">Needs your approval</div>
+		<div class="px-1 pt-1 text-sm font-medium">Notifications</div>
 		{#each live.state.approvals as a (a.sessionId + a.id)}
-			<PendingCard
-				approval={a}
-				onOpenTask={(id) => {
-					open = false;
-					openTask(id);
-				}}
-			/>
+			<button type="button" class="rounded-md px-2 py-2 text-left text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring" data-testid="notification" onclick={() => go(a)}>
+				{text(a)}
+			</button>
 		{:else}
 			<p class="px-1 py-4 text-center text-sm text-muted-foreground">Nothing waiting.</p>
 		{/each}

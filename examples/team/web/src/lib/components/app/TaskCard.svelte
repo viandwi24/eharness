@@ -13,7 +13,7 @@
 	const agent = $derived(agentsStore.find(task.agentId));
 	const badge = $derived.by(() => {
 		if (task.status === 'needs_action') {
-			return { label: task.pendingKind === 'question' ? 'Question' : 'Approval', variant: 'warning' as const };
+			return { label: 'Waiting for you', variant: 'warning' as const };
 		}
 		const b = badgeFor(task.status, task.summary);
 		return { label: b.label[0].toUpperCase() + b.label.slice(1), variant: b.variant };

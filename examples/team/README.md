@@ -2,8 +2,8 @@
 
 A team of AI agents you chat with, built **only on the public eharness API**. One lead agent and
 several role agents (researcher, writer, analyst, ops) share a library of files and a memory. You
-talk to any of them, watch what the others are doing on a task board, approve risky actions from
-one inbox, and let agents run routines on a schedule.
+talk to any of them, watch what the others are doing on a task board, approve risky actions and answer
+questions inline in the chat, and let agents run routines on a schedule.
 
 It is the reference for deployment profile "web + server" ([ADR-0034](../../docs/decisions/0034-deployment-profiles.md)):
 the web is only a UI, the server runs everything, survives `SIGKILL`, and can run as several
@@ -30,8 +30,9 @@ docs/     architecture, API, operations
   attachments, tool approvals in the thread.
 - **Lead and role agents**: the lead hands work to role agents (parked, so approvals survive
   restarts) and reads their reports; agents are rows in the database you edit in the app, not code.
-- **Board and approvals inbox**: every delegated task, and everything waiting for a person, across
-  all sessions.
+- **Board and notifications**: every delegated task on a board, and a bell listing what waits for a
+  person. Approvals and questions are answered only inline in the session's chat (the agent's DM
+  or the task view); notifications and the board just link there.
 - **Library and memory**: shared files agents write and you edit (stale edits lose to agent writes),
   workspace and per-agent memory.
 - **Routines**: cron / interval / one-shot prompts, safe with several instances.
@@ -41,7 +42,7 @@ docs/     architecture, API, operations
   [lead and role agents guide](../../docs/guides/lead-and-role-agents.md).
 
 Screenshots (to be added under `docs/img/`): `chat.png` (chat with the context panel),
-`board.png` (tasks board with an approval drawer), `approvals.png` (inbox), `library.png`,
+`board.png` (tasks board with an approval drawer), `library.png`,
 `routines.png`, `agent-editor.png`.
 
 ## Quick start

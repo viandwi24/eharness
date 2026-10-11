@@ -291,7 +291,7 @@ state, and the answer arrives later as a tool output. The app adds one thing: a 
 kind. [`parseAnswer`](../../examples/team/server/src/infra/eh/harness-http.ts) (in `harness-http.ts`)
 turns `{ kind: 'question', answers }` into a tool output with `answerOutput`, and
 [`team-service.ts`](../../examples/team/server/src/infra/eh/team-service.ts) reads the
-questions back with `pendingQuestions` for the inbox. Guide: [ask](ask.md).
+questions back with `pendingQuestions` for the chat's pending dock. Guide: [ask](ask.md).
 *Without a non-interactive setting* an autonomous run (a routine, a background child nobody
 watches) parks on a question nobody sees; use `ask({ interactive: false })` or switch the
 built-in off for those agents (see the guide).
@@ -462,7 +462,9 @@ into the "set your API key" hint ([`chat/errors.ts`](../../examples/team/web/src
 **The attention list.** [`stores/live-core.ts`](../../examples/team/web/src/lib/stores/live-core.ts)
 uses `createAttentionList` with the app's own `list` source (an enriched `/approvals`), the app's
 extra event (`task-changed`) and the app's `question` answer kind. It gives optimistic answers, a
-generation guard against stale refetches and a debounce. The task session view uses `followSessionStream` ([`SessionView.svelte`](../../examples/team/web/src/lib/components/app/SessionView.svelte);
+generation guard against stale refetches and a debounce. The app answers only inline in the
+session's chat (DM or task view); the notification bell and the tasks board only link to the
+session that holds the pending item. The task session view uses `followSessionStream` ([`SessionView.svelte`](../../examples/team/web/src/lib/components/app/SessionView.svelte);
 merge logic in [`tasks/follow.ts`](../../examples/team/web/src/lib/tasks/follow.ts)) to merge the
 live stream of a child with stored messages.
 
