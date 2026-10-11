@@ -68,6 +68,12 @@ one context. The client sees outputs (reports, drafts, findings) and a short lis
   condition triggers, nudges stuck work, and **proposes programs from patterns it sees** — it never
   creates authority itself.
 - **D10 — Daily digest** in the client's DM for information-only results; no notification per item.
+- **D11 — Agents act on company systems as virtual users.** Each agent is a bot account of the
+  company system with its own role and token; it calls the same API the web uses (OpenAPI →
+  `openApiSource`), so business rules, validation and role checks are written once and enforced by
+  the company backend (layer 1); program authority in eharness narrows it further (layer 2).
+  Start on staging and read-only; write authority opens per program. Delegation "on behalf of a
+  person" is out of scope until needed; company events (webhooks) as program triggers come later.
 - **Deferred:** memory consolidation ("dreaming"), skill evolution / auto-heal, voice, chat
   channels (Telegram/Slack as a UI). The Telegram *data source* comes through an MCP connector.
 
@@ -88,6 +94,7 @@ and decided before code (docs over presets: patterns become guides, not wrapper 
 | D | **Big-data toolkit**: collector interface + cursor, manifest helpers, `run_code`, chunked map/reduce with subagents; guide | auditor scenario on a scripted 5 000-message fixture |
 | E | **Heartbeat** + daily digest + program suggestions | |
 | F | Telegram source through an MCP connector (setup only) | after A–E work offline |
+| G | **Company system integration (agent = virtual user)**: a mock internal company API in the repo (OpenAPI 3.1; roles employee / leader / manager; *Clipper* module: upload video, submit social link, analytics by views and by uploader; *Video production* module: idea → draft → shoot → edit → YouTube upload) and the team agents connected to it as **bot users** — one service account and token per agent (`kind: bot`, least-privilege role, revocable), tools from `openApiSource` (include/exclude per agent, method risk feeding program authority, token injected by `headers()` from the vault, never visible to the model), read-only first. Shows that business logic is written once (the API) and reused by people and agents. | D11 |
 
 Every phase: offline scripted-model tests (team server tests), e2e in the browser on an isolated
 instance, docs (walkthrough + guide), no paid model calls in tests.
