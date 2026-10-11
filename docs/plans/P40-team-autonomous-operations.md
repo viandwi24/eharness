@@ -1,6 +1,6 @@
 # P40 — Team example: autonomous operations (manager, programs, decision center, big-data work)
 
-Status: in progress (phases A, B, C, D and E done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
+Status: in progress (phases A, B, C, D, E and H done) · Owner: maintainer (CTO mandate) · Branch: `main` (batched, see release workflow)
 
 ## Goal
 
@@ -112,8 +112,9 @@ and decided before code (docs over presets: patterns become guides, not wrapper 
 | E | **Heartbeat** + daily digest + program suggestions | |
 | H | **Deliverables contract** (system layer): a program lists required deliverables (path pattern, markdown with required sections or JSON with a schema); the server checks them at run end, gives the agent one fix-up turn with the exact errors (the real *Verify* step), then marks the run `partial` and opens a decision. Style and quality guidance stays in editable skills. | after C, E |
 | I | **Stability pass**: soak test (many program runs, several agents at once, kill/restart mid-run, injected provider errors 429/500/timeouts), end-to-end browser checks of every client flow | after H |
-| J | **Evals** (developer tool, a CLI such as `bun run eval <scenario>`, no web page; opt-in, real model, budget-capped, not in CI; generic scenario format: fixture data + program config + deterministic checks + rubric): fixed scenarios scored automatically (auditor recall/precision against the planted incidents, deliverable checks) and by a rubric judge; scores kept per run to compare prompt/skill/model changes. Needs the client's output examples as the answer key. | after the client provides examples |
+| J | **Evals** (developer tool, a CLI such as `bun run eval <scenario>`, no web page; opt-in, real model, budget-capped, not in CI; generic scenario format: fixture data + program config + deterministic checks + rubric): fixed scenarios scored automatically (auditor recall/precision against the planted incidents, deliverable checks) and by a rubric judge; scores kept per run to compare prompt/skill/model changes. Needs the client's output examples as the answer key. | **built** (framework + 3 illustrative scenarios); real runs await the client's examples and an approved budget |
 | K | **Rehearsal (test run)** for clients, generic for any program: run a program on sample data in a safe mode (writes go to a scratch area, external writes such as company API calls or posts are disabled or simulated), show the deliverables, decisions it would raise and cost before activating; save rehearsals as the program's test cases and re-run them after edits. | after H, J |
+| M | **Chat threads per agent**: besides the pinned **Main** thread (the existing `dm:<agentId>`, the fixed address for system news: daily digest, urgent heartbeat alerts, reports of work not started from a chat), a "New chat" button creates threads `chat:<agentId>:<threadId>` with a clean context, auto titles, listed under the agent in the sidebar, reopenable. Continuity across threads comes from memory (agent profile, workspace memory, pinned files), not chat history. Work delegated from a thread reports back to that thread. Generic, example only (one thread = one session). | after I, K |
 | F | ~~Telegram source~~ — **deferred**: decided together with the messaging/channels design (data source vs outbound tools vs live chat) | later |
 | G | **Docs only for now** ([docs/examples/integrate-team-to-your-system.md](../examples/integrate-team-to-your-system.md)); no implementation until a client integrates. Original scope: **Company system integration (agent = virtual user)**: a mock internal company API in the repo (OpenAPI 3.1; roles employee / leader / manager; illustrative modules from one client use case — any departments work — e.g. a *Clipper* module: upload video, submit social link, analytics by views and by uploader; *Video production* module: idea → draft → shoot → edit → YouTube upload) and the team agents connected to it as **bot users** — one service account and token per agent (`kind: bot`, least-privilege role, revocable), tools from `openApiSource` (include/exclude per agent, method risk feeding program authority, token injected by `headers()` from the vault, never visible to the model), read-only first. Shows that business logic is written once (the API) and reused by people and agents. | D11 |
 
@@ -250,6 +251,40 @@ Decided in phase E: system routines reuse `routines.program_id` with a `sys:` ke
 events, not in `TickReport`); the urgent/digest message is an `eh.event` in the lead DM; a beat is
 recorded by the `turn.end` hook; "similar" is word-overlap clustering (Jaccard 0.5 on crude stems),
 deliberately conservative.
+
+## Phase J checklist (evals)
+
+- [x] CLI `bun run eval <scenario> [--model] [--budget] [--repeat]`, `compare`, `list`
+  (`examples/team/evals`); hard budget through the ledger and `maxSessionUsd`; refuses `CI`
+  without `--allow-ci`.
+- [x] Generic scenario format (fixture files, tasks, deterministic checks, JSON rubric files graded
+  by a structured-output judge), reports as markdown + JSON under `evals/results/` (git-ignored).
+- [x] Scenarios `community-audit` (recall/precision vs `truth()`), `research-queue`,
+  `writer-drafts`; guide [Evals](../guides/evals.md); walkthrough section 23.
+- [x] Tests with scripted models only (`evals/test`, `bun run test:evals`).
+- Not done on purpose: real runs await the client's example outputs and an approved budget.
+
+## Phase H checklist (deliverables contract)
+
+- [x] Domain `domain/deliverables.ts` (path tokens, markdown headings, JSON Schema through an
+      installed validator, `minChars`), `programs.deliverables` and `tasks.deliverables` columns,
+      migration `0018`.
+- [x] Run end: structured report, then the deterministic check; one fix-up turn in the same
+      session with the exact failures; still failing = `partial` report + escalation decision.
+- [x] Work items with failing deliverables stay out of Review (and cannot be accepted) until a
+      re-check passes (`POST /tasks/{id}/deliverables/check`, or the decision's retry).
+- [x] Program editor, proposal edit dialog (Decision Center), `propose_plan`, task view (Pass / Fail
+      per file, Check again), run history badge.
+- [x] Run contract text and the `chunked-audit` skill mention deliverables.
+- [x] Tests `server/test/deliverables.test.ts`, web `form.test.ts` / `board.test.ts`; walkthrough
+      section 24.
+
+Decided in phase H: deliverables belong to the program (work items use their worker program's
+list; a per-task list was not needed); the JSON Schema subset is whatever zod 4 `fromJSONSchema`
+converts, installed into the pure domain (`infra/json-schema.ts`) because the domain imports no
+packages; a report that says `failed` or `needs_decision` is not checked; the decision is an
+ordinary report-source escalation, so approving it sends the client's note as a new message and
+the run is re-checked when that turn ends.
 
 ## Phase D checklist (big-data toolkit)
 
