@@ -433,11 +433,12 @@ describe('custom-fs-adapter conformance', () => {
 })
 
 const databaseUrl = process.env.DATABASE_URL ?? ''
-// CI provides a Postgres service (ci.yml); without DATABASE_URL the block below would skip silently.
-test('CI runs the Postgres adapters (DATABASE_URL is set)', () => {
-  if (process.env.CI && databaseUrl === '') {
+// The CI check job has a Postgres service and sets EH_REQUIRE_POSTGRES (ci.yml); there the block
+// below must not skip silently. Other CI jobs (the release `pack` job) have no Postgres.
+test('the CI check job runs the Postgres adapters (DATABASE_URL is set)', () => {
+  if (process.env.EH_REQUIRE_POSTGRES === '1' && databaseUrl === '') {
     throw new Error(
-      'CI is set but DATABASE_URL is empty: the postgres-storage tests would be skipped',
+      'EH_REQUIRE_POSTGRES is set but DATABASE_URL is empty: the postgres-storage tests would be skipped',
     )
   }
 })

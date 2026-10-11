@@ -46,6 +46,8 @@ jobs:
       - run: bun test # includes examples/examples.test.ts (offline, scripted models)
         env:
           DATABASE_URL: postgres://postgres:eharness@localhost:5432/postgres
+          # this job has the Postgres service: the Postgres adapter tests must not skip silently
+          EH_REQUIRE_POSTGRES: '1'
       - run: bun run build
       - run: bun run check:package # publint + attw
       - run: bun run check:imports # subpath modules import core only via src/index.ts
