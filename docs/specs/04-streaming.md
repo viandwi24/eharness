@@ -1,6 +1,6 @@
 # Spec 04 — Streaming
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/stream`.
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Module: `src/stream`.
 
 ## 1. One protocol
 
@@ -208,6 +208,8 @@ ordering and part shapes are identical on both sides (ADR-0003).
   `attachRemote()` (§6.2).
 - `session.events(): ReadableStream<SessionEvent>` — long-lived channel for things that happen
   outside a turn stream. A session with an open `events()` reader is not idle-evicted.
+  Each reader queues at most 1 000 events: a reader that falls further behind is closed (its stream
+  ends) instead of buffering without bound; open a new `events()` reader and re-read state.
 
 - For a `respond()` continuation the buffer holds only the continuation chunks (the live stream
   of the `respond()` call is unchanged). `attach()` / `attachRemote()` and the stream log serve the
@@ -268,6 +270,12 @@ Rules:
    `aborted` / `timeout`, `error` for `error`, else `done`), then `expire(key, retentionMs)`.
    A failed call is a `W_STREAM_LOG_FAILED` warning (once per turn and operation); the turn is
    never failed or delayed, and a log that is missing chunks is not closed.
+   **Keep-alive and recovery (0.8):** while the turn is quiet the writer calls the optional
+   `expire(key, retentionMs)` about every `retentionMs / 3`, so a turn that outlives the retention
+   keeps its log. When an append fails after chunks were confirmed (for example the log expired:
+   `at` > 0 on a missing log), the writer restarts from `at: 0` (appends are idempotent, up to 3
+   restarts per turn). An adapter must reject `at` > 0 on a log that does not exist **without
+   creating it**.
 4. **`session.attachRemote({ from = 0, signal })`**: for a turn of this process it is `attach()`
    from `from` (turn buffer). Otherwise it reads the stored state, takes `core.activeTurn` (none,
    or a heartbeat older than `recovery.staleMs` → `undefined`), waits up to 3 s for the owner's
@@ -366,7 +374,7 @@ export async function POST(req: Request) {
 export async function GET(req: Request) {        // reconnect (useChat resume)
   const id = new URL(req.url).searchParams.get('id')!
   const run = agent.session(id).attach()
-  return run ? run.toResponse() : new Response(null, { status: 204 })
+  return run ? await run.toHttpResponse() : new Response(null, { status: 204 })
 }
 ```
 
@@ -401,7 +409,7 @@ Verified AI SDK v7 behaviour and what the core does with it:
   payloads.
 - The stream always ends with exactly one `finish` or one `abort`, never left hanging.
 
-### 7.1 Status of failures before the commit point (0.9.0)
+### 7.1 Status of failures before the commit point (0.8.0)
 
 `run.accepted` separates failures **before** the turn's commit point (spec 05 §3 step 11:
 busy in this or another instance, a `SessionLock` held elsewhere, `EH_INVALID_INPUT`, a pending

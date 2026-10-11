@@ -209,6 +209,7 @@ export function createWarningEmitter(options: {
   strict?: boolean
 }): WarningEmitter {
   const seen = new Set<string>()
+  let handlerFailureReported = false
   return (warning, key) => {
     if (options.strict === true && STRICT_CODES.has(warning.code)) {
       throw new HarnessError('EH_CONFIG_INVALID', `${warning.code}: ${warning.message}`, {
@@ -216,7 +217,20 @@ export function createWarningEmitter(options: {
       })
     }
     if (options.onWarning !== undefined) {
-      options.onWarning(warning)
+      // a handler bug must never break the runtime (it is called from finalisation paths too)
+      try {
+        options.onWarning(warning)
+      } catch (handlerError) {
+        if (!handlerFailureReported) {
+          handlerFailureReported = true
+          try {
+            console.error(
+              '[eharness] onWarning handler threw (further failures are silent):',
+              handlerError,
+            )
+          } catch {}
+        }
+      }
       return
     }
     const dedupeKey = `${warning.code}\u0000${key ?? ''}`

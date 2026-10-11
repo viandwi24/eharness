@@ -22,6 +22,7 @@ import {
 import { fromEnv } from './env.ts'
 import {
   ehMeta,
+  endpointChanged,
   formSpec,
   mergeSecretPatch,
   providerFormSpec,
@@ -169,6 +170,52 @@ describe('redaction and merge', () => {
     expect(mergeSecretPatch(schema, stored, { headers: {} }).headers).toEqual({})
     expect(mergeSecretPatch(schema, stored, { bogus: 1 }).bogus).toBeUndefined()
   })
+  test('changing an endpoint drops the kept secrets', () => {
+    const stored = { ...profile.settings, baseURL: 'https://api.example/v1' }
+    const patch = { baseURL: 'https://attacker.example/v1' }
+    expect(endpointChanged(schema, stored, patch)).toBe(true)
+    expect(endpointChanged(schema, stored, { baseURL: 'https://api.example/v1' })).toBe(false)
+    expect(endpointChanged(schema, stored, {})).toBe(false)
+    expect(endpointChanged(schema, stored, { baseURL: null })).toBe(true)
+    const merged = mergeSecretPatch(schema, stored, {
+      ...patch,
+      apiKey: { keep: true },
+      headers: { Authorization: { keep: true } },
+    })
+    expect(merged.baseURL).toBe('https://attacker.example/v1')
+    expect(merged.apiKey).toBeUndefined()
+    expect(merged.headers).toEqual({})
+    // resent secrets are accepted
+    const resent = mergeSecretPatch(schema, stored, { ...patch, apiKey: 'fresh-key-1' })
+    expect(resent.apiKey).toBe('fresh-key-1')
+    // an unchanged endpoint keeps everything
+    expect(mergeSecretPatch(schema, stored, { baseURL: stored.baseURL }).apiKey).toBe(KEY)
+  })
+
+  test('the endpoint flag comes from format uri or the meta, and can opt out', () => {
+    const s = z.object({
+      u: z.url().optional(),
+      v: z
+        .string()
+        .optional()
+        .meta(ehMeta({ endpoint: true })),
+      w: z
+        .url()
+        .optional()
+        .meta(ehMeta({ endpoint: false })),
+      t: z
+        .string()
+        .meta(ehMeta({ secret: true }))
+        .optional(),
+    })
+    const eps = formSpec(s)
+      .fields.filter((f) => f.endpoint === true)
+      .map((f) => f.path)
+    expect(eps).toEqual(['u', 'v'])
+    expect(mergeSecretPatch(s, { t: 'x1', w: 'https://a.b' }, { w: 'https://c.d' }).t).toBe('x1')
+    expect(mergeSecretPatch(s, { t: 'x1', v: 'a' }, { v: 'b' }).t).toBeUndefined()
+  })
+
   test('validateSettings throws EH_CONFIG_INVALID without values', () => {
     try {
       validateSettings(schema, { apiKey: 5 })
@@ -448,6 +495,22 @@ describe('manager', () => {
     })
     expect(created.id).toBe('openrouter-2')
     expect(JSON.stringify(created)).not.toContain('k-2-aaaaaaaaaaaa')
+    // editing only the baseURL must not carry the stored key to the new host
+    await m.putProfile({
+      id: 'moved',
+      providerId: 'openrouter',
+      settings: { apiKey: 'k-3-aaaaaaaaaaaa', baseURL: 'https://api.example/v1' },
+    })
+    await expect(
+      m.putProfile({ id: 'moved', settings: { baseURL: 'https://attacker.example/v1' } }),
+    ).rejects.toThrow(/apiKey/)
+    const moved = await m.putProfile({
+      id: 'moved',
+      settings: { baseURL: 'https://other.example/v1', apiKey: 'k-4-aaaaaaaaaaaa' },
+    })
+    expect(moved.settings.apiKey).toMatchObject({ set: true })
+    await m.putProfile({ id: 'moved', label: 'kept' })
+    expect((await m.getProfile('moved'))?.settings.apiKey).toMatchObject({ set: true })
     await expect(m.putProfile({ id: 'openrouter', label: 'x' })).rejects.toThrow(/read-only/)
     await expect(m.deleteProfile('openrouter')).rejects.toThrow(/read-only/)
     await expect(m.putProfile({ providerId: 'openrouter', settings: {} })).rejects.toThrow(/apiKey/)
@@ -455,11 +518,12 @@ describe('manager', () => {
       m.putProfile({ providerId: 'openrouter', id: 'a:b', settings: { apiKey: 'k' } }),
     ).rejects.toThrow(/Invalid profile id/)
     const all = await m.listProfiles()
-    expect(all.map((p) => p.id).sort()).toEqual(['openrouter', 'openrouter-2'])
+    expect(all.map((p) => p.id).sort()).toEqual(['moved', 'openrouter', 'openrouter-2'])
     expect(JSON.stringify(all)).not.toContain(KEY)
     const d = await m.describe()
     expect(d.providers[0]?.form.fields.some((f) => f.path === 'apiKey' && f.secret)).toBe(true)
     await m.deleteProfile('openrouter-2')
+    await m.deleteProfile('moved')
     expect((await m.listProfiles()).map((p) => p.id)).toEqual(['openrouter'])
   })
 

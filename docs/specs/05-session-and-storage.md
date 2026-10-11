@@ -1,6 +1,6 @@
 # Spec 05 — Session and storage
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Modules: `src/session`, `src/storage` (memory adapters).
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Modules: `src/session`, `src/storage` (memory adapters).
 
 eharness knows only `sessionId: string`. Chat lists, titles, owners and permissions belong to the
 application.
@@ -160,11 +160,11 @@ export interface HarnessSession<
   stats(): Promise<ContextStats & {
     pending: PendingState | null
     activeTurn: ActiveTurn | null
-    /** 0.9.0: `state.core.usage`: all finished turns (§7); zeros when none ran. */
+    /** 0.8.0: `state.core.usage`: all finished turns (§7); zeros when none ran. */
     usage: { inputTokens: number; outputTokens: number; turns: number; costUsd?: number }
   }>
   /**
-   * 0.9.0: a turn running now: `{ scope: 'local', turnId }` (this process) or `{ scope: 'remote',
+   * 0.8.0: a turn running now: `{ scope: 'local', turnId }` (this process) or `{ scope: 'remote',
    * turnId, owner, heartbeatAt }` (a stored `activeTurn` of another owner younger than
    * `recovery.staleMs`; the same liveness rule as §9); `null` when idle. Reads the stored state,
    * never recovers. A `SessionLock` held elsewhere without a stored `activeTurn` is not visible.
@@ -350,7 +350,7 @@ loaded, so they respect the per-session floor and are ordered **rewind < notices
      model call, e.g. an expired link) does not break later turns: the step's wire replaces that
      file part with the text `FILE_UNAVAILABLE` (spec 10 §5) and the step is retried (once per
      failing URL; storage is unchanged). A failing file of the current turn stays a run error;
-   - file references (0.9.0): a custom protocol in `inputFiles.protocols` (e.g. `library:`) is
+   - file references (0.8.0): a custom protocol in `inputFiles.protocols` (e.g. `library:`) is
      stored as is; `inputFiles.resolve(url, { sessionId, mediaType, filename })` turns it into
      `{ data | url, mediaType? }` for the model at projection time (spec 03 §6), so stored
      messages stay small;
@@ -710,7 +710,7 @@ Notes:
 ## 7. State
 
 `core.usage` (`{ inputTokens, outputTokens, turns, costUsd? }`) is the cumulative usage of all
-finished turns, updated by the end-of-turn state write; `session.stats().usage` returns it (0.9.0).
+finished turns, updated by the end-of-turn state write; `session.stats().usage` returns it (0.8.0).
 
 ```ts
 export interface StateAdapter {
@@ -883,7 +883,8 @@ recovery?: {
   had reserved) so histories show the interruption and `regenerate()` has a target; it projects to
   nothing for the model. Open `text` / `reasoning` parts of a recovered message are closed
   (`state: 'done'`).
-- `inject({ key })` (spec 11 §6.3) stores `metadata.eharness.key`; a repeated key is a no-op.
+- `inject({ key })` (spec 11 §6.3) stores `metadata.eharness.key`; a repeated key is a no-op. Concurrent calls with the same `key` on one handle share one in-flight call (one message, the same id). The dedupe reads the newest 200 stored messages, so across instances (and beyond 200 newer messages) `key` is best-effort; use an id of your own in the payload when you need strict uniqueness.
+- A throwing `onWarning` handler or `logger` never breaks the runtime: failures are swallowed (reported once on `console.error`), and the end of a turn always releases the lock, resolves `run.result`, clears `running` and closes the stream, whatever throws on the way. A failed `regenerate()` / `edit()` whose rewind marker cannot be saved removes its `core.rewinds` entry again (no hidden history). The expiry timer of timed external waits backs off exponentially (250 ms to 30 s) while storage fails. `send({ ifBusy: 'wait' })` removes its `abortSignal` listener when the wait ends.
 
 ### 9.1 Cross-process abort (0.4.0)
 
@@ -1300,7 +1301,7 @@ starts a wake unit while the stored pending state is set: the item waits in the 
 restarts) and runs in the instance that sees the pending items resolved. With `enqueueOnce` the
 item carries `dedupeKey: 'wake:<messageId>'`, so an app that repairs a stranded event enqueues the
 same key and never doubles a wake.
-### 2.2 Read-only handle: `agent.peek(id)` (0.9)
+### 2.2 Read-only handle: `agent.peek(id)` (0.8)
 
 Opening a session (`agent.session(id)` + any operation except `messages()`/`children()`/`busy()`)
 runs `session.start` hooks, crash recovery and plugin reconciles, which may start model calls
@@ -1339,7 +1340,7 @@ index).
 2. **Parent side: `core.children`.** `{ sessionId, turnId, toolCallId?, createdAt, agent?, name?,
    description? }[]` (the identity fields come from `ParentInfo` when the opener set them: for
    `subagents()` the catalog key of the child's agent, the `name` and the `description` of the
-   `agent` call; entries without them, written before 0.9, read as before; `ParentInfo.agent` etc.
+   `agent` call; entries without them, written before 0.8, read as before; `ParentInfo.agent` etc.
    are also on `ctx.session.parent` inside the child),
    append-only, capped at 500 (the oldest are dropped), deduplicated by `sessionId`. It is a
    **foreign-writable** field (§7, like `abortRequest`, §9.1): the child's runtime writes the

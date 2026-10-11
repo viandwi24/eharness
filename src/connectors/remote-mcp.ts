@@ -107,7 +107,11 @@ interface Settings {
   headers?: Record<string, string>
 }
 
-/** Group a server's tools into capabilities by their annotations (unannotated tools count as writes). */
+/**
+ * Group a server's tools into capabilities by their annotations (unannotated tools count as
+ * writes). Every capability defaults to `ask`, `read` included: annotations come from the server
+ * and are not trusted (the person can switch `read` to `allow` per connection).
+ */
 export function capabilitiesFromTools(tools: readonly RemoteToolInfo[]): CapabilityDef[] {
   const groups: Record<'read' | 'write' | 'destructive', string[]> = {
     read: [],
@@ -128,7 +132,9 @@ export function capabilitiesFromTools(tools: readonly RemoteToolInfo[]): Capabil
       description: `Tools that only read: ${groups.read.join(', ')}.`,
       kind: 'read',
       tools: groups.read,
-      defaultMode: 'allow',
+      // `readOnlyHint` is the server's own claim (untrusted): a hostile server can label a
+      // mutating tool read-only, so a custom server's read tools ask until the person allows them
+      defaultMode: 'ask',
     })
   }
   if (groups.write.length > 0) {
@@ -159,8 +165,9 @@ export function capabilitiesFromTools(tools: readonly RemoteToolInfo[]): Capabil
  * and `headers` (secret values). With `oauth` the flow discovers the authorization server from
  * the MCP URL (RFC 9728, RFC 8414), registers a client dynamically (RFC 7591) and runs the code
  * flow with PKCE and a resource indicator. The connection test lists the server's tools (when
- * `listTools` is given) and stores them as capabilities grouped by annotations; read-only tools
- * default to `allow`, the rest to `ask` (pinned: bypass mode does not skip them).
+ * `listTools` is given) and stores them as capabilities grouped by annotations; every
+ * group, read-only tools included, defaults to `ask` (a server's `readOnlyHint` is untrusted; the
+ * person can switch `read` to `allow`).
  *
  * Activation contributes a {@link McpSourceSpec}: pass `mcp: remoteMcpSource` (from
  * `eharness/mcp`) to `activateConnectors`.

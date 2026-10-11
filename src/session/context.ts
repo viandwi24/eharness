@@ -23,6 +23,29 @@ export const defaultLogger: HarnessLogger = {
   },
 }
 
+/**
+ * Wrap a logger so that a throwing one never breaks the runtime (finalisation paths log too).
+ * The first failure is reported once on `console.error`.
+ */
+export function safeLogger(inner: HarnessLogger): HarnessLogger {
+  let reported = false
+  const guard =
+    (level: 'debug' | 'info' | 'warn' | 'error') =>
+    (msg: string, data?: Record<string, unknown>): void => {
+      try {
+        if (data === undefined) inner[level](msg)
+        else inner[level](msg, data)
+      } catch (loggerError) {
+        if (reported) return
+        reported = true
+        try {
+          console.error('[eharness] logger threw (further failures are silent):', loggerError)
+        } catch {}
+      }
+    }
+  return { debug: guard('debug'), info: guard('info'), warn: guard('warn'), error: guard('error') }
+}
+
 /** Services map: accessing a service no plugin provides throws `EH_SERVICE_MISSING`. */
 function createServices(rt: SessionRuntime, plugin: string): HarnessServices {
   return new Proxy({} as HarnessServices, {

@@ -54,7 +54,7 @@ import { buildSessionSkills } from '../skills/registry.ts'
 import { createLogStream } from '../stream/log-reader.ts'
 import { resolveStreamLogOptions } from '../stream/log-writer.ts'
 import { createRun, failedRun } from '../stream/run.ts'
-import { createContext, defaultLogger, pendingServices } from './context.ts'
+import { createContext, defaultLogger, pendingServices, safeLogger } from './context.ts'
 import { createEventHub } from './events.ts'
 import { copyMessages, registerChild } from './family.ts'
 import { createHookRunner } from './hooks.ts'
@@ -154,7 +154,7 @@ export function createSessionHandle(args: {
 }): SessionHandle {
   const { internals, id } = args
   const config = internals.config
-  const log: HarnessLogger = config.logger ?? defaultLogger
+  const log: HarnessLogger = safeLogger(config.logger ?? defaultLogger)
   const closeController = new AbortController()
   /** `ctx.signal`: aborts on close, and when an open fails (a retried open gets a fresh one). */
   let sessionController = new AbortController()
@@ -807,7 +807,13 @@ export function createSessionHandle(args: {
     // a waiting operation is dropped by its own abortSignal while it waits (spec 05 §2)
     const signal = item.wait === undefined ? undefined : item.options.abortSignal
     if (signal?.aborted === true) remove()
-    else signal?.addEventListener('abort', () => void remove(), { once: true })
+    else if (signal !== undefined) {
+      const onAbort = () => void remove()
+      signal.addEventListener('abort', onAbort, { once: true })
+      // the wait ends when the entry launches or settles: the listener must not outlive it
+      entry.detachAbort = () => signal.removeEventListener('abort', onAbort)
+      void entry.handle.run.result.then(entry.detachAbort, entry.detachAbort)
+    }
     // the session may have gone idle meanwhile (e.g. a steer that arrived as its turn ended)
     queueMicrotask(startNext)
     return entry.handle.run
@@ -932,6 +938,7 @@ export function createSessionHandle(args: {
 
   /** Start a queued turn now (the caller checked that the session is free). */
   function launch(next: QueuedTurn): void {
+    next.detachAbort?.()
     rt.running = true
     touch()
     current = startTurn(host, {
@@ -1351,6 +1358,98 @@ export function createSessionHandle(args: {
     return closing
   }
 
+  const injectFlights = new Map<string, Promise<{ message: unknown; run?: unknown }>>()
+
+  async function injectOnce(
+    kind: string,
+    data: unknown,
+    options: { key?: string; wake?: boolean; deliver?: 'next-step' | 'end-of-turn' | string },
+  ): Promise<{ message: unknown; run?: unknown }> {
+    assertOpen()
+    const registered = internals.messages.kind(kind)
+    if (registered === undefined) {
+      throw new HarnessError('EH_INVALID_INPUT', `Unknown message kind '${kind}'.`, {
+        details: { kind },
+      })
+    }
+    const validate = asSchema(registered.def.schema).validate
+    let value: unknown = data
+    if (validate !== undefined) {
+      const result = await validate(data)
+      if (!result.success) {
+        throw new HarnessError(
+          'EH_INVALID_INPUT',
+          `Invalid payload for kind '${kind}': ${result.error.message}`,
+          { details: { kind }, cause: result.error },
+        )
+      }
+      value = result.value
+    }
+    const key = options.key
+    if (key !== undefined && (typeof key !== 'string' || key === '' || key.length > 200)) {
+      throw new HarnessError(
+        'EH_INVALID_INPUT',
+        'inject({ key }) must be a non-empty string of at most 200 characters.',
+      )
+    }
+    touch()
+    await ensureOpen()
+    if (key !== undefined) {
+      // stored messages, not the hot cache: another instance may have saved it
+      let recent: HarnessUIMessage[] = []
+      try {
+        recent = (await rt.messages.load({ sessionId: id, limit: 200 })) as HarnessUIMessage[]
+      } catch (error) {
+        throw storageError('load', error)
+      }
+      const existing = recent.find((m) => m.metadata?.eharness?.key === key)
+      if (existing !== undefined) return { message: structuredClone(existing) as never }
+    }
+    if (rt.view === undefined) await ensureContext()
+    const message = createKindMessage(kind, value, {
+      id: rt.nextId(),
+      role: registered.def.role,
+      createdAt: Date.now(),
+      parentId: rt.view?.at(-1)?.id ?? null,
+      ...(rt.turn === undefined ? {} : { turnId: rt.turn.info.id }),
+      ...(key === undefined ? {} : { key }),
+    })
+    const [saved] = await persist([message])
+    const out = saved ?? message
+    events.emit({ type: 'message', message: out as never })
+    const result = { message: structuredClone(out) as never }
+    const wake = options.wake === true
+    // next-step delivery (wake while running implies it, spec 11 §6.3)
+    if ((options.deliver === 'next-step' || wake) && current !== undefined) {
+      const text = inlineText(out, kind)
+      if (text !== undefined && current.deliverEvent(out, text, wake)) return result
+    }
+    if (!wake || rt.closed) return result
+    // a turn of this session runs in another instance, or approvals / client tool calls wait for
+    // an answer (stored, so also those another instance parked): hand the wake to the durable
+    // inbox. Whoever holds the session runs it once it is free (spec 05 §12, ADR-0054)
+    if (current === undefined && !rt.running && args.inbox !== undefined && drain !== undefined) {
+      const foreign = await foreignTurn()
+      const parked = foreign === undefined && (await storedPending())
+      if (foreign !== undefined || parked) {
+        if (await holdWakeDurably(out.id)) {
+          if (foreign !== undefined) drain.foreign(foreign)
+          return result
+        }
+      }
+    }
+    if (rt.closed) return result
+    // wake an idle session now; otherwise (a turn is ending, compact() runs, or approvals wait
+    // for an answer) a no-input wake turn is queued and runs when the session is free
+    if (!rt.running && rt.state.core().pending === undefined) {
+      return {
+        ...result,
+        run: begin({ kind: 'wake', input: undefined, options: {}, queued: false }) as never,
+      }
+    }
+    return { ...result, run: enqueue({ kind: 'wake', input: undefined, options: {} }) as never }
+  }
+
   const session: HarnessSession<UIMessage, Record<string, unknown>> = {
     id,
     get running() {
@@ -1639,89 +1738,23 @@ export function createSessionHandle(args: {
       return remoteAbort(reason)
     },
     async inject(kind, data, options = {}) {
-      assertOpen()
-      const registered = internals.messages.kind(kind)
-      if (registered === undefined) {
-        throw new HarnessError('EH_INVALID_INPUT', `Unknown message kind '${kind}'.`, {
-          details: { kind },
-        })
-      }
-      const validate = asSchema(registered.def.schema).validate
-      let value: unknown = data
-      if (validate !== undefined) {
-        const result = await validate(data)
-        if (!result.success) {
-          throw new HarnessError(
-            'EH_INVALID_INPUT',
-            `Invalid payload for kind '${kind}': ${result.error.message}`,
-            { details: { kind }, cause: result.error },
-          )
+      const flightKey = options.key
+      if (typeof flightKey === 'string' && flightKey !== '') {
+        // concurrent calls with the same key share one in-flight call: exactly one message
+        const running = injectFlights.get(flightKey)
+        if (running !== undefined) {
+          const first = await running
+          return { message: structuredClone(first.message) } as never
         }
-        value = result.value
-      }
-      const key = options.key
-      if (key !== undefined && (typeof key !== 'string' || key === '' || key.length > 200)) {
-        throw new HarnessError(
-          'EH_INVALID_INPUT',
-          'inject({ key }) must be a non-empty string of at most 200 characters.',
-        )
-      }
-      touch()
-      await ensureOpen()
-      if (key !== undefined) {
-        // stored messages, not the hot cache: another instance may have saved it
-        let recent: HarnessUIMessage[] = []
+        const flight = injectOnce(kind, data, options)
+        injectFlights.set(flightKey, flight)
         try {
-          recent = (await rt.messages.load({ sessionId: id, limit: 200 })) as HarnessUIMessage[]
-        } catch (error) {
-          throw storageError('load', error)
-        }
-        const existing = recent.find((m) => m.metadata?.eharness?.key === key)
-        if (existing !== undefined) return { message: structuredClone(existing) as never }
-      }
-      if (rt.view === undefined) await ensureContext()
-      const message = createKindMessage(kind, value, {
-        id: rt.nextId(),
-        role: registered.def.role,
-        createdAt: Date.now(),
-        parentId: rt.view?.at(-1)?.id ?? null,
-        ...(rt.turn === undefined ? {} : { turnId: rt.turn.info.id }),
-        ...(key === undefined ? {} : { key }),
-      })
-      const [saved] = await persist([message])
-      const out = saved ?? message
-      events.emit({ type: 'message', message: out as never })
-      const result = { message: structuredClone(out) as never }
-      const wake = options.wake === true
-      // next-step delivery (wake while running implies it, spec 11 §6.3)
-      if ((options.deliver === 'next-step' || wake) && current !== undefined) {
-        const text = inlineText(out, kind)
-        if (text !== undefined && current.deliverEvent(out, text, wake)) return result
-      }
-      if (!wake || rt.closed) return result
-      // a turn of this session runs in another instance, or approvals / client tool calls wait for
-      // an answer (stored, so also those another instance parked): hand the wake to the durable
-      // inbox. Whoever holds the session runs it once it is free (spec 05 §12, ADR-0054)
-      if (current === undefined && !rt.running && args.inbox !== undefined && drain !== undefined) {
-        const foreign = await foreignTurn()
-        const parked = foreign === undefined && (await storedPending())
-        if (foreign !== undefined || parked) {
-          if (await holdWakeDurably(out.id)) {
-            if (foreign !== undefined) drain.foreign(foreign)
-            return result
-          }
+          return (await flight) as never
+        } finally {
+          if (injectFlights.get(flightKey) === flight) injectFlights.delete(flightKey)
         }
       }
-      if (rt.closed) return result
-      // wake an idle session now; otherwise (a turn is ending, compact() runs, or approvals wait
-      // for an answer) a no-input wake turn is queued and runs when the session is free
-      if (!rt.running && rt.state.core().pending === undefined) {
-        return {
-          ...result,
-          run: begin({ kind: 'wake', input: undefined, options: {}, queued: false }) as never,
-        }
-      }
-      return { ...result, run: enqueue({ kind: 'wake', input: undefined, options: {} }) as never }
+      return injectOnce(kind, data, options) as never
     },
     async compact(options) {
       assertOpen()

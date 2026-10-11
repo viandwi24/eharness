@@ -4,7 +4,8 @@
  *
  * - `Bash(bun test *)`: `*` matches any text; a trailing ` *` also matches the bare command; a
  *   trailing `:*` is the same as ` *`. An allow rule must match every subcommand and never
- *   matches a complex command; deny and ask rules match when any subcommand matches.
+ *   matches a complex command; deny and ask rules match when any subcommand matches, also after
+ *   undoing `!`, program paths, git global options, wrappers and `sh -c` payloads (`restrictiveForms`).
  * - `Read(.env*)`, `Edit(src/**)`: gitignore patterns. `//abs/path` is an absolute path, `~/x`
  *   is relative to the home directory, `/x` and `./x` are relative to the project root, `x`
  *   follows gitignore (a pattern without a slash matches at any depth).
@@ -13,8 +14,16 @@
  * - The tool part is an alias (`Read`, `Edit`, `Bash`, …, see `DEFAULT_ALIASES`) or a tool name.
  */
 
-import { parseCommand } from './command.ts'
-import { cachedPattern, isAbsolute, join, normalize, patternMatches, relative } from './paths.ts'
+import { parseCommand, restrictiveForms } from './command.ts'
+import {
+  cachedPattern,
+  foldSegment,
+  isAbsolute,
+  join,
+  normalize,
+  patternMatches,
+  relative,
+} from './paths.ts'
 import {
   commandOf,
   createToolTable,
@@ -177,15 +186,18 @@ function anchorDirs(ctx: MatchContext): string[] {
  * Match an absolute real path against a path specifier (gitignore semantics). `//abs` and `~/x`
  * are absolute, `/x`, `./x` and `a/b` are anchored at the project root, and a bare pattern
  * (`.env*`, no slash) applies at any depth in the project root AND inside every root.
+ * `insensitive` matches case-insensitively on NFC text (deny/ask rules and protected paths: macOS
+ * and Windows file systems ignore case, and an extra match only costs a question).
  */
 export function pathMatchesSpecifier(
   specifier: string,
   realPath: string,
   ctx: MatchContext,
+  insensitive = false,
 ): boolean {
   const resolved = resolveSpecifier(specifier, ctx)
   if (resolved === undefined) return false
-  const compiled = cachedPattern(resolved.pattern)
+  const compiled = cachedPattern(resolved.pattern, insensitive)
   if (compiled === undefined) return false
   const bases = isAnyDepth(specifier) ? [resolved.base, ...anchorDirs(ctx)] : [resolved.base]
   for (const dir of new Set(bases)) {
@@ -321,10 +333,13 @@ export function specifierCouldMatch(
   target: string,
   subtree: boolean,
   ctx: MatchContext,
+  insensitive = false,
 ): boolean {
-  const segments = splitSegments(target)
+  const fold = (list: string[]): string[] =>
+    insensitive ? list.map((s) => (s === '**' ? s : foldSegment(s))) : list
+  const segments = fold(splitSegments(target))
   if (subtree) segments.push('**')
-  return ruleSegments(specifier, ctx).some((rule) => pathsIntersect(rule, segments))
+  return ruleSegments(specifier, ctx).some((rule) => pathsIntersect(fold(rule), segments))
 }
 
 /**
@@ -355,8 +370,10 @@ export function ruleMatchesCall(
           parsed.subcommands.every((sub) => matchBashSpec(specifier, sub))
         )
       }
+      // deny/ask also see through `!`, program paths, git global options, wrappers and `sh -c`
       return (
         parsed.subcommands.some((sub) => matchBashSpec(specifier, sub)) ||
+        restrictiveForms(command).subcommands.some((sub) => matchBashSpec(specifier, sub)) ||
         matchBashSpec(specifier, command)
       )
     }
@@ -372,7 +389,7 @@ export function ruleMatchesCall(
     case 'write': {
       const target = callTarget(call, ctx)
       if (target === undefined || target === null) return false
-      return pathMatchesSpecifier(specifier, target.real, ctx)
+      return pathMatchesSpecifier(specifier, target.real, ctx, polarity === 'restrict')
     }
     default:
       return false

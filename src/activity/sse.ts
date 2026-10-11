@@ -12,6 +12,9 @@ import type { ActivityRecord, ActivityStore } from './types.ts'
 
 const encoder = new TextEncoder()
 
+/** Frames queued for a reader before the store tail pauses (backpressure). */
+const SSE_QUEUE_FRAMES = 512
+
 /** One SSE frame of a record. */
 export function encodeActivityEvent(record: ActivityRecord): string {
   const type = record.type.replace(/[\r\n]/g, ' ')
@@ -73,63 +76,74 @@ export function activityStream(options: ActivityStreamOptions): ReadableStream<U
   if (options.signal?.aborted === true) internal.abort()
   else options.signal?.addEventListener('abort', onOuterAbort, { once: true })
 
-  return new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const write = (text: string): void => {
-        if (!internal.signal.aborted) controller.enqueue(encoder.encode(text))
-      }
-      try {
-        write(
-          `retry: ${options.retryMs ?? 3000}\n: connected\n` +
-            (options.bootId === undefined
-              ? ''
-              : `event: boot\ndata: ${JSON.stringify({ boot: options.bootId })}\n\n`),
-        )
-        const head = await store.lastSeq()
-        let cursor = options.after ?? head
-        if (options.after !== undefined && options.after > 0) {
-          const pruned = await store.prunedThrough()
-          // below the retention mark, or ahead of the head (the log was reset): events were missed
-          if (options.after < pruned || options.after > head) {
-            const seq = options.after > head ? head : pruned
-            write(`event: resync\ndata: ${JSON.stringify({ seq })}\n\n`)
-            cursor = seq
-          }
+  return new ReadableStream<Uint8Array>(
+    {
+      async start(controller) {
+        const write = (text: string): void => {
+          if (!internal.signal.aborted) controller.enqueue(encoder.encode(text))
         }
-        let quiet = 0
-        while (!internal.signal.aborted) {
-          const records = await store.read({ after: cursor, limit: batch })
-          for (const record of records) {
-            cursor = record.seq
-            if (options.filter === undefined || options.filter(record)) {
-              write(encodeActivityEvent(record))
-              quiet = 0
+        try {
+          write(
+            `retry: ${options.retryMs ?? 3000}\n: connected\n` +
+              (options.bootId === undefined
+                ? ''
+                : `event: boot\ndata: ${JSON.stringify({ boot: options.bootId })}\n\n`),
+          )
+          const head = await store.lastSeq()
+          let cursor = options.after ?? head
+          if (options.after !== undefined && options.after > 0) {
+            const pruned = await store.prunedThrough()
+            // below the retention mark, or ahead of the head (the log was reset): events were missed
+            if (options.after < pruned || options.after > head) {
+              const seq = options.after > head ? head : pruned
+              write(`event: resync\ndata: ${JSON.stringify({ seq })}\n\n`)
+              cursor = seq
             }
           }
-          if (records.length >= batch) continue // more is waiting: no sleep
-          quiet += pollMs
-          if (quiet >= keepAliveMs) {
-            write(': keep-alive\n\n')
-            quiet = 0
+          let quiet = 0
+          while (!internal.signal.aborted) {
+            // backpressure: a client that stopped reading must not grow an unbounded queue
+            while (
+              !internal.signal.aborted &&
+              controller.desiredSize !== null &&
+              controller.desiredSize <= 0
+            ) {
+              await sleep(Math.min(pollMs, 50), internal.signal)
+            }
+            const records = await store.read({ after: cursor, limit: batch })
+            for (const record of records) {
+              cursor = record.seq
+              if (options.filter === undefined || options.filter(record)) {
+                write(encodeActivityEvent(record))
+                quiet = 0
+              }
+            }
+            if (records.length >= batch) continue // more is waiting: no sleep
+            quiet += pollMs
+            if (quiet >= keepAliveMs) {
+              write(': keep-alive\n\n')
+              quiet = 0
+            }
+            await sleep(pollMs, internal.signal)
           }
-          await sleep(pollMs, internal.signal)
+        } catch (error) {
+          if (!internal.signal.aborted) options.onError?.(error)
+        } finally {
+          options.signal?.removeEventListener('abort', onOuterAbort)
+          internal.abort()
+          try {
+            controller.close()
+          } catch {
+            // already closed by cancel()
+          }
         }
-      } catch (error) {
-        if (!internal.signal.aborted) options.onError?.(error)
-      } finally {
-        options.signal?.removeEventListener('abort', onOuterAbort)
+      },
+      cancel() {
         internal.abort()
-        try {
-          controller.close()
-        } catch {
-          // already closed by cancel()
-        }
-      }
+      },
     },
-    cancel() {
-      internal.abort()
-    },
-  })
+    new CountQueuingStrategy({ highWaterMark: SSE_QUEUE_FRAMES }),
+  )
 }
 
 /** Options of {@link handleActivityStream}. */

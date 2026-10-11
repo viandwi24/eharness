@@ -583,7 +583,8 @@ export interface StreamLogAdapter {
   /**
    * Append `chunks` (JSON values) and return the new length. With `at`, the first chunk takes
    * cursor `at`: chunks that are already stored (length > `at`) are skipped, so a retried call is
-   * idempotent; `at` greater than the length rejects. Appending to a closed log is ignored
+   * idempotent; `at` greater than the length (or `at` > 0 on a log that does not exist) rejects
+   * and must not create a log: the writer then restarts from `at: 0`. Appending to a closed log is ignored
    * (returns the length).
    */
   append(key: StreamLogKey, chunks: unknown[], options?: { at?: number }): Promise<number>
@@ -593,7 +594,10 @@ export interface StreamLogAdapter {
   read(key: StreamLogKey, from: number, options?: { limit?: number }): Promise<StreamLogRead>
   /** Optional push: called after every append and on close. Returns the unsubscribe function. */
   subscribe?(key: StreamLogKey, onAppend: () => void): () => void
-  /** Optional: drop the log `ttlMs` from now (the core calls it after `close`). */
+  /**
+   * Optional: drop the log `ttlMs` from now (the core calls it after `close`, and, while a quiet
+   * turn is still streaming, as a keep-alive that refreshes the retention).
+   */
   expire?(key: StreamLogKey, ttlMs: number): Promise<void>
 }
 

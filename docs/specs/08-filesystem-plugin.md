@@ -1,6 +1,6 @@
 # Spec 08 — Filesystem plugin
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0 (multi-edit `edit_file`, `glob`, `onAdapterError`). Module: `src/filesystem` (`eharness/filesystem`, `eharness/filesystem/memory`).
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Module: `src/filesystem` (`eharness/filesystem`, `eharness/filesystem/memory`).
 
 The filesystem plugin is the **reference plugin**: it shows how a plugin provides a service, tools,
 skills, state and data parts using only the public API. It ships one adapter (`memoryFs`). Anything
@@ -575,7 +575,7 @@ interface FileSystem {
   binary file replaces it.
 - `binary` classification is the same everywhere (`looksBinary`, exported): NUL byte in the first
   8000 bytes, or invalid UTF-8.
-- `writeBytes(..., { mediaType })` (0.9.0) declares the IANA media type. An adapter that can keep
+- `writeBytes(..., { mediaType })` (0.8.0) declares the IANA media type. An adapter that can keep
   it (a database column, object metadata) returns it as `FileMeta.mediaType` (`list`, `stat`) and
   `BinaryFile.mediaType` afterwards, also for text files (`text/csv`), until the next write without
   one; others may ignore it. `memoryFs` keeps it; the conformance option `keepsMediaType` checks

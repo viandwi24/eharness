@@ -21,6 +21,10 @@ Safety, all `ERROR:` strings for the model:
 
 - Private, loopback, link-local IP literals and local names are always refused, unless the host
   is trusted with `allow` (for a local docs server: `allow: ['localhost']`).
+- Local names and IP literals are normalised first: a trailing dot (`localhost.`,
+  `metadata.google.internal.`) is ignored, and IPv4-mapped / compatible, NAT64 (`64:ff9b::/96`),
+  6to4 (`2002::/16`, embedded IPv4 checked), site-local (`fec0::/10`), `100.64.0.0/10`,
+  `198.18.0.0/15`, `0.0.0.0/8`, `192.0.0.0/24` and the documentation ranges are refused too.
 - The library has no DNS. To refuse names that resolve to private addresses, inject a resolver:
   `resolveHost: async (host) => (await dns.lookup(host, { all: true })).map((e) => e.address)`
   **Without `resolveHost`, a public hostname that resolves to a private address is not blocked**

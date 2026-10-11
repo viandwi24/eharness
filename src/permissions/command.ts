@@ -414,3 +414,150 @@ export function parseCommand(command: string): ParsedCommand {
   extra(command, 0)
   return result
 }
+
+// ─── deny / ask normalisation (spec 18 §5) ─────────────────────────────────────────────────────
+
+/** Result of {@link restrictiveForms}. */
+export interface RestrictiveForms {
+  /**
+   * Every subcommand of the command line plus, for each, the forms it takes once evasions are
+   * undone (see {@link restrictiveForms}). Deny and ask rules match when any of them matches.
+   */
+  subcommands: string[]
+  /** A `sh -c` / `eval` payload that could not be parsed: the command must ask. */
+  unparseable: boolean
+}
+
+const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh'])
+/** `sudo` / `doas` options that take a value. */
+const SUDO_VALUE_FLAGS = new Set(['-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U', '-r', '-t'])
+/** `env` options that take a value. */
+const ENV_VALUE_FLAGS = new Set(['-u', '-C', '-S', '-P'])
+/** `git` global options that take a separate value (`-C dir`, `--git-dir dir`). */
+const GIT_VALUE_FLAGS = new Set([
+  '-C',
+  '-c',
+  '--git-dir',
+  '--work-tree',
+  '--namespace',
+  '--super-prefix',
+  '--exec-path',
+  '--config-env',
+])
+const MAX_NORMALISE_DEPTH = 4
+
+/** Skip leading options of a wrapper (`-n`, `-u NAME`, …); `valueFlags` take the next word. */
+function skipFlags(t: string[], from: number, valueFlags: ReadonlySet<string>): number {
+  let i = from
+  while (t[i]?.startsWith('-') === true && t[i] !== '-' && t[i] !== '--') {
+    i += valueFlags.has(t[i] as string) ? 2 : 1
+  }
+  if (t[i] === '--') i++
+  return i
+}
+
+/** Drop git global options before the subcommand: `git -C . -c x=y --no-pager push` → `git push`. */
+function skipGitOptions(t: string[]): string[] {
+  let i = 1
+  while (t[i]?.startsWith('-') === true) {
+    const flag = t[i] as string
+    i += GIT_VALUE_FLAGS.has(flag) ? 2 : 1
+  }
+  return i === 1 ? t : ['git', ...t.slice(i)]
+}
+
+/**
+ * Peel one subcommand down to what actually runs, collecting every form on the way. Never used to
+ * widen an allow rule.
+ */
+function peel(tokens: string[], depth: number, out: RestrictiveForms): void {
+  let t = tokens
+  for (let guard = 0; guard < 12; guard++) {
+    // history negation, leading control keywords and any env assignments
+    while (t[0] !== undefined && (t[0] === '!' || KEYWORDS.has(t[0]) || ASSIGNMENT.test(t[0]))) {
+      t = t.slice(1)
+    }
+    t = stripWrappers(t)
+    const head = t[0]
+    if (head === undefined) return
+    // `/bin/rm`, `./rm` → `rm`
+    const base =
+      head.includes('/') && !head.endsWith('/') ? (head.split('/').pop() as string) : head
+    if (base !== head) t = [base, ...t.slice(1)]
+    let rest: string[] | undefined
+    switch (base) {
+      case 'sudo':
+      case 'doas':
+        rest = t.slice(skipFlags(t, 1, SUDO_VALUE_FLAGS))
+        break
+      case 'env':
+        rest = t.slice(skipFlags(t, 1, ENV_VALUE_FLAGS))
+        break
+      case 'exec':
+      case 'nohup':
+      case 'command':
+      case 'builtin':
+      case 'time':
+        rest = t.slice(skipFlags(t, 1, new Set(['-a'])))
+        break
+      case 'nice':
+        rest = t.slice(skipFlags(t, 1, new Set(['-n'])))
+        break
+      case 'timeout': {
+        const i = skipFlags(t, 1, new Set(['-k', '-s']))
+        rest = t.slice(DURATION.test(t[i] ?? '') ? i + 1 : i)
+        break
+      }
+      default:
+        break
+    }
+    if (rest !== undefined) {
+      out.subcommands.push(rest.join(' '))
+      t = rest
+      continue
+    }
+    if (base === 'eval' || SHELLS.has(base)) {
+      let payload: string[] | undefined
+      if (base === 'eval') payload = t.slice(1)
+      else {
+        const c = t.findIndex((w, i) => i > 0 && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w))
+        if (c >= 0) payload = t.slice(c + 1)
+      }
+      if (payload !== undefined) {
+        if (payload.length === 0 || depth >= MAX_NORMALISE_DEPTH) {
+          out.unparseable = true
+          return
+        }
+        const inner = parseCommand(payload.join(' '))
+        if (inner.subcommands.length === 0) out.unparseable = true
+        for (const sub of inner.subcommands) {
+          out.subcommands.push(sub)
+          peel(sub.split(' '), depth + 1, out)
+        }
+      }
+    }
+    if (base === 'git') t = skipGitOptions(t)
+    out.subcommands.push(t.join(' '))
+    return
+  }
+}
+
+/**
+ * The subcommands of a command line as deny and ask rules should see them. Besides the parsed
+ * subcommands, each one also appears with the usual evasions undone: a leading `!`, an absolute
+ * or relative program path reduced to its name (`/bin/rm` → `rm`), git global options removed
+ * (`git -C . -c x=y --no-pager push` → `git push`), wrappers looked through (`sudo`, `doas`,
+ * `env [VAR=x…]`, `exec`, `nice`, `timeout <n>`, `nohup`, `command`, `builtin`, `time`) and the
+ * payload of `sh|bash|zsh|dash|ksh -c '…'` and `eval '…'` parsed with the same parser. A payload
+ * that cannot be parsed sets `unparseable`. Only for restricting rules: allow rules keep using
+ * {@link parseCommand}, so none of this can widen an approval.
+ *
+ * @param command - Raw command line as the model wrote it.
+ */
+export function restrictiveForms(command: string): RestrictiveForms {
+  const parsed = parseCommand(command)
+  const out: RestrictiveForms = { subcommands: [...parsed.subcommands], unparseable: false }
+  for (const sub of parsed.subcommands) peel(sub.split(' '), 0, out)
+  out.subcommands = [...new Set(out.subcommands.filter((s) => s !== ''))]
+  return out
+}

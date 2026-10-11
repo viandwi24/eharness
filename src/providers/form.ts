@@ -99,6 +99,7 @@ function toField(path: string, key: string, raw: Json, required: boolean): FormF
   if (meta.placeholder !== undefined) field.placeholder = meta.placeholder
   if (meta.envHint !== undefined) field.envHint = meta.envHint
   if (typeof node.format === 'string') field.format = node.format
+  if (meta.endpoint ?? (node.format === 'uri' || node.format === 'url')) field.endpoint = true
   if (typeof node.minimum === 'number' && kind !== 'integer') field.min = node.minimum
   if (typeof node.maximum === 'number' && kind !== 'integer') field.max = node.maximum
   return field
@@ -248,21 +249,59 @@ export function redactProfile<P extends ConfigProfile>(
   } as PublicConfigProfile<P>
 }
 
+const sameValue = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
+
+/**
+ * `true` when `patch` changes an endpoint field (a `format: 'uri'` field or `endpoint: true`
+ * meta) of `stored`: a different value, or `null` on a stored one. A field absent from the patch
+ * or equal to the stored value is not a change. A secret kept across such a change would be sent
+ * to the new endpoint, so {@link mergeSecretPatch} drops the stored secrets then.
+ */
+export function endpointChanged(
+  schema: z.ZodObject,
+  stored: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): boolean {
+  for (const field of formSpec(schema).fields) {
+    if (field.endpoint !== true || !hasPath(patch, field.path)) continue
+    const value = getPath(patch, field.path)
+    if (value === undefined) continue
+    const before = getPath(stored, field.path)
+    if (value === null ? before !== undefined && before !== null : !sameValue(before, value))
+      return true
+  }
+  return false
+}
+
 /**
  * Apply an edit from a form to stored settings without the form resending secrets. A field absent
  * from `patch` keeps its stored value; a secret given as `undefined`, `''` or `{ keep: true }`
  * keeps it; `null` removes any field; a `secretValues` record keeps a stored value for a key
  * given as `''` / `{ keep: true }` and drops keys that are missing from the patch. Keys the
- * schema does not know are ignored. Returns a new object; validation is separate
- * ({@link validateSettings}).
+ * schema does not know are ignored.
+ *
+ * When the patch changes an endpoint field ({@link endpointChanged}) no stored secret is kept:
+ * every secret and `secretValues` entry must be resent in the same patch, otherwise it is cleared
+ * (and `validateSettings` reports a required one as missing). This stops an edit from pointing a
+ * profile at another host that then receives the old key. Returns a new object; validation is
+ * separate ({@link validateSettings}).
  */
 export function mergeSecretPatch(
   schema: z.ZodObject,
   stored: Record<string, unknown>,
   patch: Record<string, unknown>,
 ): Record<string, unknown> {
-  const out = structuredClone(stored)
-  for (const field of formSpec(schema).fields) {
+  const fields = formSpec(schema).fields
+  const rebind = endpointChanged(schema, stored, patch)
+  const base = structuredClone(stored)
+  if (rebind) {
+    for (const field of fields) {
+      if (field.secret) deletePath(base, field.path)
+      else if (field.secretValues) deletePath(base, field.path)
+    }
+  }
+  const out = structuredClone(base)
+  for (const field of fields) {
     if (!hasPath(patch, field.path)) continue
     const value = getPath(patch, field.path)
     if (value === null) {
@@ -271,7 +310,7 @@ export function mergeSecretPatch(
       if (value === undefined || value === '' || isKeep(value)) continue
       setPath(out, field.path, value)
     } else if (field.secretValues && isObject(value)) {
-      const before = getPath(stored, field.path)
+      const before = getPath(base, field.path)
       const next: Record<string, unknown> = {}
       for (const [k, v] of Object.entries(value)) {
         if (v === '' || isKeep(v) || v === undefined) {

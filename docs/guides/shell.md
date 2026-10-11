@@ -34,6 +34,22 @@ sandbox: writes only inside …" or "… without an OS sandbox …"). It is comp
 tools are resolved, so a `setOs()` toggle shows up in the next session or tool resolution; the
 prompt cache is only busted when the setting actually changed.
 
+## Environment and sandbox limits
+
+- **The command inherits the host environment.** Without `env` options the child gets a full copy
+  of `process.env`: provider API keys, database URLs, `SECRET_KEY`. Any approved script
+  (`npm test`) can read them, even though `echo $X` and `env` are not auto-approved. For a model
+  shell, pass a minimal environment (only `PATH`, `HOME`, `LANG` and what the project needs) and
+  keep secrets in the process that runs the harness, not in the shell's environment.
+- **The OS sandbox limits writes and network, not reads.** Seatbelt and bubblewrap leave the
+  whole file system readable (SSH keys, `~/.aws`); keep credentials out of the user that runs the
+  server or use a container/VM driver. The macOS profile also keeps outbound unix sockets, which
+  reaches `/var/run/docker.sock` or an ssh-agent socket: do not describe it as a hard jail when
+  those exist. `sandbox.state()` only says whether the tool is active.
+- **Timeouts kill the process group** with SIGTERM then SIGKILL after 2 s; a descendant that
+  detached from the group and ignores SIGTERM can outlive a timeout. Use a container for
+  untrusted workloads.
+
 ## Live output
 
 Foreground commands write transient `data-shell.output` parts (`{ toolCallId, stream, chunk }`).

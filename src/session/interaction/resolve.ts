@@ -44,6 +44,10 @@ import {
 /** Compare-and-set attempts of one recording before giving up (the state keeps changing). */
 const RECORD_ATTEMPTS = 6
 
+/** Backoff of the expiry timer after consecutive failures (the inbox item covers durable retry). */
+const EXPIRY_BACKOFF_BASE_MS = 250
+const EXPIRY_BACKOFF_MAX_MS = 30_000
+
 type Recorded =
   | { status: 'recorded'; remaining: number }
   | { status: 'already-resolved' }
@@ -331,19 +335,30 @@ export function createWaitOps(host: WaitOpsHost): WaitOps {
     return structuredClone(pending.externals ?? [])
   }
 
+  let expiryFailures = 0
+
   function arm(): void {
     if (timer !== undefined) clearTimeout(timer)
     timer = undefined
     if (rt.closed) return
     const at = nextTimeoutAt(rt.state.core().pending)
     if (at === undefined) return
-    const delay = Math.min(Math.max(0, at - Date.now()), MAX_TIMER_MS)
+    // consecutive expiry failures back off exponentially (250 ms .. 30 s), reset on success
+    const backoff =
+      expiryFailures === 0
+        ? 0
+        : Math.min(EXPIRY_BACKOFF_MAX_MS, EXPIRY_BACKOFF_BASE_MS * 2 ** (expiryFailures - 1))
+    const delay = Math.min(Math.max(backoff, at - Date.now()), MAX_TIMER_MS)
     timer = setTimeout(() => {
       timer = undefined
       // a running turn re-arms the timer when it ends
       if (rt.closed || rt.running) return
       void expireWaits()
+        .then(() => {
+          expiryFailures = 0
+        })
         .catch((error: unknown) => {
+          expiryFailures++
           if (!isBusy(error)) rt.log.warn('eharness: wait expiry failed', { error })
         })
         .finally(() => arm())

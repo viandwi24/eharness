@@ -5,7 +5,7 @@
  *
  * @see docs/specs/24-connectors.md#10-the-connector-service
  */
-import { mergeSecretPatch, validateSettings } from '../providers/index.ts'
+import { endpointChanged, mergeSecretPatch, validateSettings } from '../providers/index.ts'
 import { type ActivateOptions, activateConnectors } from './activate.ts'
 import { createCredentialManager, type RefreshLock } from './credentials.ts'
 import {
@@ -346,8 +346,17 @@ export function createConnectorService(options: ConnectorServiceOptions): Connec
       if (patch.defaultModes !== undefined) next.defaultModes = { ...patch.defaultModes }
       if (patch.settings !== undefined) {
         const schema = connectorSchema(def)
+        const rebind = endpointChanged(schema, record.settings, patch.settings)
         const merged = mergeSecretPatch(schema, record.settings, patch.settings)
         next.settings = validateSettings(schema, merged, `settings of '${record.label}'`)
+        if (rebind) {
+          // tokens were issued for the old endpoint: never present them to the new one
+          await options.credentials.delete(id)
+          if (def.auth.type === 'oauth2' || def.auth.type === 'deviceCode') {
+            next.status = 'needs-auth'
+            next.statusMessage = 'The endpoint changed: authorize the connection again.'
+          }
+        }
       }
       await options.connections.put(next)
       return toPublic(next)

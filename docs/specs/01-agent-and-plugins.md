@@ -1,6 +1,6 @@
 # Spec 01 — Agent and plugins
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0 (`wrapPlugin`, §2.1). Module: `src/agent`, `src/plugin`.
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Module: `src/agent`, `src/plugin`.
 
 ## 1. `defineHarnessAgent`
 
@@ -67,7 +67,7 @@ export interface HarnessAgentConfig<DP extends DataPartMap = DataPartMap> {
    */
   inputFiles?: {
     protocols?: string[]; maxBytes?: number
-    /** 0.9.0: resolve a stored file URL for the model at projection time (spec 03 §6). */
+    /** 0.8.0: resolve a stored file URL for the model at projection time (spec 03 §6). */
     resolve?: (url: string, ctx: { sessionId: string; mediaType: string; filename?: string }) =>
       Promise<{ mediaType?: string; data?: Uint8Array | string; url?: string } | null | undefined> | …
   }
@@ -455,6 +455,9 @@ export interface HarnessHooks<DP extends DataPartMap = {}> {
     : Awaitable<ToolApprovalStatus | void>
   /** Every automatic approval decision and every respond() answer (spec 11 §3.3). Observational; errors are W_HOOK_FAILED. */
   'approval.decided'?(ctx: HarnessContext<DP>, e: ApprovalDecision): Awaitable<void>
+  /** Scope a session grant (spec 11 §3.1, 0.8): a string narrows `remember: 'session'` to that part of the input, `null` = this call cannot be remembered, nothing = one grant per tool name. First non-void wins; deterministic; a throw is `null`. */
+  'tool.grantScope'?(ctx: HarnessContext<DP>, e: { toolName: string; input: unknown })
+    : Awaitable<string | null | void>
   /** Chainable. Rewrite tool input before approval and execution (implemented via experimental_refineToolInput). Must be deterministic (spec 11 §3). */
   'tool.before'?(ctx: HarnessContext<DP>, e: { toolName: string; input: unknown })
     : Awaitable<{ input: unknown } | void>

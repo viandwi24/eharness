@@ -20,7 +20,7 @@
  * that redirects (or `tee`s) outside the working directories.
  */
 import { type GuardTranscriptEntry, HarnessError } from '../index.ts'
-import { parseCommand } from './command.ts'
+import { parseCommand, restrictiveForms } from './command.ts'
 import {
   escapeRegExp,
   ignoreMatcher,
@@ -191,6 +191,14 @@ export interface PermissionEngine {
   subscribeAuto(listener: AutoListener): () => void
   /** Rule to offer for "don't ask again" (`Bash(git status *)`, `Edit`, …), if any. */
   suggestRule(call: PermissionCall): string | undefined
+  /**
+   * Scope of a session grant (`remember: 'session'`, spec 11 §3.1) for a call: for a shell tool the
+   * command prefix suggestRule uses (`git status` for `git status -s`); `null` when the call must
+   * never be remembered (a wrapper, interpreter or shell program, a compound or complex command, a
+   * redirect, a protected path); `undefined` for every other tool (the grant stays per tool name).
+   * The permissions plugin feeds this to the core's `tool.grantScope` hook.
+   */
+  grantScope(call: PermissionCall): string | null | undefined
   /** Add an allow rule (scope `project` by default). Resolves when `persist` finished. */
   allow(rule: string, scope?: RuleScope): Promise<void>
   /**
@@ -327,7 +335,7 @@ function readRuleForCommand(
   return readRulesOf(rules, env).find(
     (rule) =>
       rule.specifier === undefined ||
-      reals.some((real) => pathMatchesSpecifier(rule.specifier as string, real, env)),
+      reals.some((real) => pathMatchesSpecifier(rule.specifier as string, real, env, true)),
   )
 }
 
@@ -347,7 +355,7 @@ function readRuleCovering(
     (rule) =>
       rule.specifier !== undefined &&
       cover.some((c) =>
-        specifierCouldMatch(rule.specifier as string, shellPath(c.arg, env), c.subtree, env),
+        specifierCouldMatch(rule.specifier as string, shellPath(c.arg, env), c.subtree, env, true),
       ),
   )
 }
@@ -376,7 +384,7 @@ function writeTargets(call: PermissionCall, env: Env): string[] {
 /** Does a rule deny/ask this write path (an `Edit` rule applied to a redirect target)? */
 function editRuleMatchesPath(rule: ParsedRule, real: string, env: Env): boolean {
   if (!env.tools.coversKind(rule.tool, 'write')) return false
-  return rule.specifier === undefined || pathMatchesSpecifier(rule.specifier, real, env)
+  return rule.specifier === undefined || pathMatchesSpecifier(rule.specifier, real, env, true)
 }
 
 /** acceptEdits: only reads and `mkdir`/`touch`/`mv`/`cp` whose paths are inside writable dirs. */
@@ -455,6 +463,20 @@ const WRAPPERS = new Set([
  * complex commands, and commands containing `*`, get no rule.
  */
 function bashSuggestion(command: string): string | undefined {
+  const prefix = shellPrefix(command)
+  if (prefix === undefined) return undefined
+  return prefix.exact ? `Bash(${prefix.text})` : `Bash(${prefix.text} *)`
+}
+
+/**
+ * The command prefix a rule suggestion or a session grant is scoped to: `prog sub` for an ordinary
+ * program, the whole command (`exact`) for an interpreter, shell or wrapper, when the second word
+ * is a flag, for `git config` and for a one-word command. `undefined` for compound and complex
+ * commands and commands containing `*`. `wrapper` marks the programs that run other programs.
+ */
+function shellPrefix(
+  command: string,
+): { text: string; exact: boolean; wrapper: boolean } | undefined {
   const parsed = parseCommand(command)
   if (parsed.complex || parsed.subcommands.length !== 1) return undefined
   const first = parsed.subcommands[0] as string
@@ -462,13 +484,12 @@ function bashSuggestion(command: string): string | undefined {
   const words = first.split(' ')
   const program = (words[0] as string).split('/').pop() as string
   const second = words[1]
-  if (second === undefined) return `Bash(${first})`
-  const risky =
-    WRAPPERS.has(program) ||
-    /^python[\d.]*$/.test(program) ||
-    second.startsWith('-') ||
-    (program === 'git' && second === 'config')
-  return risky ? `Bash(${first})` : `Bash(${words[0]} ${second} *)`
+  const wrapper = WRAPPERS.has(program) || /^python[\d.]*$/.test(program)
+  if (second === undefined) return { text: first, exact: true, wrapper }
+  const risky = wrapper || second.startsWith('-') || (program === 'git' && second === 'config')
+  return risky
+    ? { text: first, exact: true, wrapper }
+    : { text: `${words[0]} ${second}`, exact: false, wrapper }
 }
 
 /**
@@ -497,7 +518,18 @@ function protectedTextPattern(patterns: readonly string[]): RegExp | undefined {
     if (first !== '' && !/[*?[\\!#]/.test(first)) names.add(first)
   }
   if (names.size === 0) return undefined
-  return new RegExp(`(?<![\\w.-])(?:${[...names].map(escapeRegExp).join('|')})(?![\\w.-])`)
+  // trailing dots and spaces name the same file on Windows (`.git.`, `.git /config`)
+  return new RegExp(
+    `(?<![\\w.-])(?:${[...names].map((n) => escapeRegExp(n.normalize('NFC'))).join('|')})[. ]*(?![\\w.-])`,
+    'i',
+  )
+}
+
+/** Does a command text mention a protected name (also as `.git.`, `.git /x` or in NFD form)? */
+function mentionsProtected(env: Env, text: string): boolean {
+  const pattern = env.protectedText
+  if (pattern === undefined) return false
+  return pattern.test(text) || pattern.test(text.normalize('NFC'))
 }
 
 /** Parse a rule list, throwing `EH_CONFIG_INVALID` for an invalid rule or an unusable `~/`. */
@@ -549,7 +581,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
   for (const kind of ['allow', 'ask', 'deny'] as const) parseRules(rules[kind], home)
 
   const protectedPatterns = options.protectedPaths ?? DEFAULT_PROTECTED_PATHS
-  const protectedMatch = ignoreMatcher(protectedPatterns)
+  const protectedMatch = ignoreMatcher(protectedPatterns, true)
   const protectedText = protectedTextPattern(protectedPatterns)
   const builtinAsk = parseRules(options.builtinAsk ?? DEFAULT_BUILTIN_ASK, home)
   const ro: CommandFilter =
@@ -714,7 +746,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
     }
     if (bash !== undefined && !readOnly && e.protectedText !== undefined) {
       const parsedCommand = parseCommand(bash)
-      if (e.protectedText.test(`${bash}\n${parsedCommand.subcommands.join('\n')}`)) {
+      if (mentionsProtected(e, `${bash}\n${parsedCommand.subcommands.join('\n')}`)) {
         return { status: 'user-approval', reason: 'touches a protected path' }
       }
     }
@@ -727,6 +759,14 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
 
     // 5. ask rules
     if (m !== 'bypassPermissions') {
+      // a `sh -c` / `eval` payload we cannot read could hide anything a rule is there to stop
+      if (
+        bash !== undefined &&
+        rules.deny.length + rules.ask.length > 0 &&
+        restrictiveForms(bash).unparseable
+      ) {
+        return { status: 'user-approval', reason: 'runs a shell payload that cannot be analysed' }
+      }
       const asks = parsed(rules.ask)
       const ask =
         asks.find((rule) => ruleMatchesCall(rule, call, 'restrict', e)) ??
@@ -1017,6 +1057,18 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       return next
     },
     decide,
+    grantScope(call: PermissionCall): string | null | undefined {
+      if (tools.kindOf(call.toolName) !== 'shell') return undefined
+      const command = commandOf(call, tools.spec(call.toolName))
+      if (command === undefined) return null
+      const e = env()
+      const prefix = shellPrefix(command)
+      if (prefix === undefined || prefix.wrapper || prefix.text === '') return null
+      if (writeTargets(call, e).some((real) => e.isProtected(real))) return null
+      if (mentionsProtected(e, command)) return null
+      if (parseCommand(command).redirects.some((t) => t !== NULL_DEVICE)) return null
+      return prefix.text
+    },
     suggestRule(call: PermissionCall): string | undefined {
       const kind = tools.kindOf(call.toolName)
       if (kind === 'plan-exit' || kind === 'ask') return undefined
@@ -1027,7 +1079,7 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
         case 'shell': {
           const command = commandOf(call, tools.spec(call.toolName))
           if (command === undefined) return undefined
-          if (e.protectedText?.test(command) === true) return undefined
+          if (mentionsProtected(e, command)) return undefined
           return bashSuggestion(command)
         }
         case 'write':
@@ -1075,11 +1127,19 @@ export function createPermissionEngine(options: PermissionEngineOptions): Permis
       const e = env()
       const target = toRealPath(virtualPath, e.roots)
       if (target === undefined) return false
-      const matches = (rule: ParsedRule): boolean =>
-        rule.specifier !== undefined && pathMatchesSpecifier(rule.specifier, target.real, e)
+      // deny/ask rules fold case; an allow rule must match exactly
+      const matchesWith =
+        (insensitive: boolean) =>
+        (rule: ParsedRule): boolean =>
+          rule.specifier !== undefined &&
+          pathMatchesSpecifier(rule.specifier, target.real, e, insensitive)
       const reads = (list: readonly string[]): ParsedRule[] => readRulesOf(parsed(list), e)
-      if (reads(rules.deny).some(matches) || reads(rules.ask).some(matches)) return true
-      return readRulesOf(e.builtinAsk, e).some(matches) && !reads(rules.allow).some(matches)
+      if (reads(rules.deny).some(matchesWith(true)) || reads(rules.ask).some(matchesWith(true)))
+        return true
+      return (
+        readRulesOf(e.builtinAsk, e).some(matchesWith(true)) &&
+        !reads(rules.allow).some(matchesWith(false))
+      )
     },
   }
 }

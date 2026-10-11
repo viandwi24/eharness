@@ -89,7 +89,8 @@ describe('connector service', () => {
     })
     expect(await specs[0]?.getAccessToken?.()).toBe('access-1')
     expect(specs[0]?.allow).toEqual(['search', 'create'])
-    expect(out.rules).toMatchObject({ allow: ['search'], ask: ['create'], pinnedAsk: ['create'] })
+    // read tools of a custom server ask too: readOnlyHint is untrusted
+    expect(out.rules).toMatchObject({ allow: [], ask: ['search', 'create'], pinnedAsk: ['create'] })
     expect(server.tokenRequests.length).toBe(1)
 
     // opting an agent out, per-capability and per-tool overrides
@@ -128,11 +129,22 @@ describe('connector service', () => {
     if (!done.ok || done.connection === undefined) return
     const updated = await service.update(done.connection.id, {
       label: 'Renamed',
-      settings: { url: 'https://mcp.example.com/v2', headers: { Authorization: '' } },
+      settings: { url: 'https://mcp.example.com/mcp', headers: { Authorization: '' } },
     })
     expect(updated.label).toBe('Renamed')
-    expect(updated.settings.url).toBe('https://mcp.example.com/v2')
     expect(updated.settings.headers).toEqual({ Authorization: { set: true, hint: '…en-1' } })
+    // a new URL never inherits the stored header values
+    const moved = await service.update(done.connection.id, {
+      settings: { url: 'https://mcp.example.com/v2', headers: { Authorization: '' } },
+    })
+    expect(moved.settings.url).toBe('https://mcp.example.com/v2')
+    expect(moved.settings.headers).toEqual({})
+    await service.update(done.connection.id, {
+      settings: {
+        url: 'https://mcp.example.com/mcp',
+        headers: { Authorization: 'Bearer secret-token-1' },
+      },
+    })
     await expect(
       service.update(done.connection.id, { settings: { url: 'not a url' } }),
     ).rejects.toMatchObject({ details: { reason: 'settings-invalid' } })

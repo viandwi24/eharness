@@ -232,8 +232,9 @@ connection (`builtin:<id>:agent:<agent>`); idempotent.
 settings `url` (https), `authMode` (`none | headers | oauth`), `headers` (secret values). With
 `oauth` the flow uses MCP discovery (RFC 9728, RFC 8414), dynamic client registration and PKCE with
 the `resource` indicator. `listTools` (`listRemoteMcpTools` from `eharness/mcp`) runs in the
-connection test; tools are grouped by annotations into `read` (default `allow`), `write` and
-`destructive` (default `ask`, pinned) and stored on the connection. `activate` returns an
+connection test; tools are grouped by annotations into `read`, `write` and `destructive`; all default to `ask`
+(annotations are server-controlled and untrusted; `write` and `destructive` are pinned, `read` is
+not, so a person can switch it to `allow`) and stored on the connection. `activate` returns an
 `McpSourceSpec`; pass `mcp: remoteMcpSource` (`eharness/mcp`), which builds an `mcpServer`
 transport whose `authProvider` (`bearerAuthProvider`) returns a fresh token for every request, so
 refreshed tokens apply without reconnecting (spec 09 §3).
@@ -247,7 +248,9 @@ return value is browser-safe (redacted connections, flows without scratch, no to
 the asking flow (an app may keep one per scope or hand out one entered earlier in the same flow;
 a dedicated "enter the OAuth app" flow step is not part of the library: apps save the client
 before connecting, see ADR-0053). `catalog()`, `list`, `get`, `startConnect`, `reconnect`, `getFlow`, `advance`, `completeOAuth`
-(the callback route), `update` (secret patch + validation), `remove` (connection, credentials,
+(the callback route), `update` (secret patch + validation; a changed endpoint field, e.g. the custom MCP `url`, drops every stored
+secret the patch does not resend, deletes the stored OAuth credentials and sets `needs-auth` for `oauth2` / `deviceCode`
+connectors: spec 23 §2 `endpointChanged`), `remove` (connection, credentials,
 every agent's entry), `enablement`, `setEnablement`, `test` (records status, account, discovered
 capabilities), `accessToken` (server side only), `activate`, `sweep`. A finished flow saves the
 connection and credentials, stays for 5 minutes (a polling tab gets `finished` with the

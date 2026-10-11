@@ -31,6 +31,12 @@ export interface FieldMeta {
   secret?: boolean
   /** For a `keyvalue` (record) field: the values are secrets (for example header values). */
   secretValues?: boolean
+  /**
+   * The value says where requests (and therefore secrets) are sent. Fields with a JSON Schema
+   * `format` of `uri` / `url` (`z.url()`) are endpoints by default; set `false` to opt out. When an
+   * edit changes an endpoint, stored secrets are dropped and must be resent (see `mergeSecretPatch`).
+   */
+  endpoint?: boolean
   group?: FieldGroup
   widget?: FieldWidget
   showWhen?: ShowWhen
@@ -209,6 +215,8 @@ export interface FormField {
   envHint?: string
   /** JSON Schema `format` (`uri`, `email`, …). */
   format?: string
+  /** Changing this field drops the stored secrets (they must be resent). `uri` fields by default. */
+  endpoint?: true
   min?: number
   max?: number
 }

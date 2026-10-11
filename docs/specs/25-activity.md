@@ -105,6 +105,7 @@ Web APIs only (`ReadableStream`, `Request`, `Response`).
   3. Records after the cursor, in `seq` order (`filter` hides some; the cursor still advances).
   4. `: keep-alive` after `keepAliveMs` of silence. The default stays below the 10 s idle timeout of
      `Bun.serve` and of common proxies, which close a quiet connection.
+  The tail honours backpressure: while the client's queue (512 frames) is full the store is not read; a client that stops reading holds nothing in memory beyond that.
   Without `after` the stream starts at the current head (new events only). It ends on `signal` abort,
   on `cancel()` and on a store error (`onError`).
 - `handleActivityStream(request, options)`: `Response` (`text/event-stream`, `no-cache, no-transform`,

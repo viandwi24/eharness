@@ -1,6 +1,6 @@
 # Spec 03 — Messages
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/messages`.
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Module: `src/messages`.
 
 This is the most important contract in eharness: it defines what is **stored**, what is
 **streamed**, and what the **model sees**.
@@ -293,7 +293,7 @@ Details (normative for the implementation in `src/messages/project.ts`):
 - Only the newest boundary (highest id) of the view is projected, and only its `partial` counts;
   older boundaries are dropped (the loader normally removes them already). If
   `partial.messageId` has fewer `step-start` parts than `fromStep + 1`, all its parts are dropped.
-- File references (0.9.0): with `ctx.resolveFile` (= `config.inputFiles.resolve`, spec 05 §3 step 7),
+- File references (0.8.0): with `ctx.resolveFile` (= `config.inputFiles.resolve`, spec 05 §3 step 7),
   step 6 first replaces the `url` (and `mediaType`) of every `file` part whose URL is not a
   `data:` URL with the resolved value (`{ data }` bytes / base64 become a `data:` URL, `{ url }` is
   used as is), keeping the AI SDK `FileUIPart` shape; `undefined` leaves the part, `null` or a

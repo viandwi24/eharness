@@ -63,6 +63,19 @@ export interface IgnorePattern {
   /** A trailing `/`: only directories (here: parents of the tested path) match. */
   dirOnly: boolean
   regex: RegExp
+  /** Case-insensitive, NFC-normalised, trailing dots and spaces of a segment ignored (`.git.` is `.git`). */
+  ci?: boolean
+}
+
+/**
+ * Fold a path segment for a case-insensitive comparison: NFC, lower case, and no trailing dots or
+ * spaces (Windows ignores them, so `.git.` and `.git ` name `.git`). Used for protected paths and
+ * deny/ask rules, where an extra match only costs an extra question.
+ */
+export function foldSegment(segment: string): string {
+  const folded = segment.normalize('NFC').toLowerCase()
+  const trimmed = folded.replace(/[. ]+$/, '')
+  return trimmed === '' ? folded : trimmed
 }
 
 /** Translate the glob part of a gitignore pattern (no leading or trailing `/`) to a RegExp source. */
@@ -123,8 +136,8 @@ function globSource(glob: string): string {
  * - a trailing `/` matches directories only; `**` matches any number of directories;
  * - `*` and `?` never match a `/` and, unlike a shell, do match a leading dot.
  */
-export function compilePattern(pattern: string): IgnorePattern | undefined {
-  let p = pattern.replace(/(?<!\\)\s+$/, '')
+export function compilePattern(pattern: string, ci = false): IgnorePattern | undefined {
+  let p = ci ? pattern.normalize('NFC') : pattern.replace(/(?<!\\)\s+$/, '')
   if (p === '' || p.startsWith('#') || p.startsWith('!')) return undefined
   if (p.startsWith('\\#') || p.startsWith('\\!')) p = p.slice(1)
   const dirOnly = p.endsWith('/')
@@ -134,7 +147,10 @@ export function compilePattern(pattern: string): IgnorePattern | undefined {
   p = p.replace(/^\/+/, '')
   const body = globSource(p)
   try {
-    return { dirOnly, regex: new RegExp(anchored ? `^${body}$` : `^(?:.*/)?${body}$`) }
+    const source = anchored ? `^${body}$` : `^(?:.*/)?${body}$`
+    return ci
+      ? { dirOnly, regex: new RegExp(source, 'i'), ci: true }
+      : { dirOnly, regex: new RegExp(source) }
   } catch {
     return undefined
   }
@@ -145,7 +161,8 @@ export function compilePattern(pattern: string): IgnorePattern | undefined {
  * directories (matching a directory covers everything below it).
  */
 export function patternMatches(compiled: IgnorePattern, relPath: string): boolean {
-  const segments = relPath.split('/').filter((s) => s !== '')
+  const raw = relPath.split('/').filter((s) => s !== '')
+  const segments = compiled.ci === true ? raw.map(foldSegment) : raw
   const last = compiled.dirOnly ? segments.length - 1 : segments.length
   for (let i = 1; i <= last; i++) {
     if (compiled.regex.test(segments.slice(0, i).join('/'))) return true
@@ -155,19 +172,25 @@ export function patternMatches(compiled: IgnorePattern, relPath: string): boolea
 
 const cache = new Map<string, IgnorePattern | null>()
 
-/** Compile with a cache (rules are matched on every call). */
-export function cachedPattern(pattern: string): IgnorePattern | undefined {
-  let compiled = cache.get(pattern)
+/** Compile with a cache (rules are matched on every call). `ci`: see {@link IgnorePattern.ci}. */
+export function cachedPattern(pattern: string, ci = false): IgnorePattern | undefined {
+  const key = `${ci ? 'i' : 's'}:${pattern}`
+  let compiled = cache.get(key)
   if (compiled === undefined) {
-    compiled = compilePattern(pattern) ?? null
+    compiled = compilePattern(pattern, ci) ?? null
     if (cache.size > 2000) cache.clear()
-    cache.set(pattern, compiled)
+    cache.set(key, compiled)
   }
   return compiled ?? undefined
 }
 
 /** A matcher for a list of gitignore patterns (a path matches when any pattern does). */
-export function ignoreMatcher(patterns: readonly string[]): (relPath: string) => boolean {
-  const compiled = patterns.map(cachedPattern).filter((c): c is IgnorePattern => c !== undefined)
+export function ignoreMatcher(
+  patterns: readonly string[],
+  ci = false,
+): (relPath: string) => boolean {
+  const compiled = patterns
+    .map((p) => cachedPattern(p, ci))
+    .filter((c): c is IgnorePattern => c !== undefined)
   return (relPath) => compiled.some((c) => patternMatches(c, relPath))
 }

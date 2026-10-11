@@ -148,6 +148,8 @@ export function permissionsPlugin(opts: PermissionsPluginOptions): HarnessPlugin
               return { type: 'denied' as const, reason: decision.reason }
           }
         },
+        // a session grant of a shell tool covers the command prefix, never the whole tool
+        'tool.grantScope': (_ctx, e) => engine.grantScope({ toolName: e.toolName, input: e.input }),
         'step.prepare': async (ctx, e) => {
           const own = await modeOf(ctx as HarnessContext)
           const current = own ?? engine.mode

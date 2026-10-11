@@ -69,6 +69,14 @@ the schema's property order. `providerFormSpec(def)` is `formSpec(def.settings)`
   from the patch keeps its stored value; a secret given as `undefined`, `''` or `{ keep: true }`
   keeps it; `null` removes any field; a `secretValues` record keeps a stored value for a key given
   as `''` / `{ keep: true }` and drops keys missing from the patch; unknown keys are ignored.
+  **Secrets are bound to the endpoint**: a field is an *endpoint* when its JSON Schema `format` is
+  `uri` / `url` (`z.url()`) or its meta says `ehMeta({ endpoint: true })` (`endpoint: false` opts a
+  URL out; `FormField.endpoint` tells a UI). When a patch changes an endpoint (`endpointChanged`:
+  a different value, or `null` on a stored one) no stored secret is kept: `secret` fields and
+  `secretValues` entries absent from the patch, or given as `''` / `{ keep: true }`, are cleared and
+  must be resent in the same patch. A required one then fails `validateSettings` with the usual
+  `EH_CONFIG_INVALID` (`apiKey: …`). Otherwise an edit of only `baseURL` would make `test()` /
+  `models()` send the stored key to the new host. An unchanged endpoint keeps everything.
 - `validateSettings(schema, settings, name?)`: `safeParse`; failure throws `EH_CONFIG_INVALID`
   (`details.reason: 'settings-invalid'`, `details.issues`) with `path: message` lines and never a
   value.

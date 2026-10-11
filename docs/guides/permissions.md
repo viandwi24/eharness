@@ -217,6 +217,29 @@ wrote) can contain instructions aimed at the model. No single layer stops that; 
 
 Framing lowers the odds; permissions and containment limit the damage when it fails.
 
+## Security notes
+
+- **Case and Unicode.** Protected paths, the built-in `.env*` ask and your `deny` / `ask` rules match
+  case-insensitively (NFC, trailing dots and spaces ignored), on every platform: `.GIT/config` and
+  `.ENV` ask like `.git/config` and `.env`. `allow` rules stay exact.
+- **Globs cannot leave the project.** A read-only command whose glob can expand to `..`
+  (`cat .[.]/.[.]/etc/passwd`, `ls .?/`, `ls -d .*`) asks instead of auto-approving; `*.ts`, `.git*`
+  and other ordinary globs are unaffected.
+- **Deny rules are best-effort, not a boundary.** `Bash(rm *)` and `Bash(git push *)` also deny
+  `! rm`, `/bin/rm`, `sudo rm`, `env A=1 rm`, `sh -c "rm x"`, `eval 'rm x'`, `git -C . push`,
+  `git --no-pager push` and `git -c x=y push` (`ask` rules too; `allow` rules never get this, so
+  they cannot be widened). A `sh -c` payload that cannot be read asks. Not seen: `busybox rm`,
+  renamed binaries, `find -exec`, scripts, computed names. Use `dontAsk`/`plan` modes, the OS
+  sandbox and least-privilege credentials for a real boundary.
+- **"Allow for this session" is scoped for shells (0.8).** On a shell tool, `remember: 'session'`
+  stores the command prefix (`git commit`), so approving `git commit -m a` never approves
+  `curl …`; wrappers, interpreters, compound commands, redirects and protected paths are not
+  remembered. Other tools keep one grant per tool name (after one approved edit every later edit
+  that would ask runs unasked, never one that is `denied`). Grants stored by older versions for a
+  shell tool are ignored and asked again. Turn `allowRemember` off if you do not want this at all.
+- **The analysis is a gate, not a sandbox** (spec 18 §11): pair shells with
+  [the OS sandbox](shell.md#environment-and-sandbox-limits).
+
 ## Plugin options
 
 | Option | What |

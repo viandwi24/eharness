@@ -548,6 +548,10 @@ export function memoryStreamLog(options: MemoryStreamLogOptions = {}): StreamLog
       sweep()
       const id = idOf(key)
       let log = logs.get(id)
+      // a gap on a missing log is rejected without creating an empty one (the writer restarts)
+      if (log === undefined && opts?.at !== undefined && opts.at > 0) {
+        throw new Error(`append at ${opts.at} leaves a gap: the log does not exist`)
+      }
       if (log === undefined) {
         log = {
           chunks: [],

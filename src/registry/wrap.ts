@@ -129,7 +129,7 @@ export function wrapTool(name: string, tool: Tool, deps: ToolWrapDeps): Tool {
           for await (const value of source) {
             last = value
             has = true
-            yield value
+            yield cloneableOutput(name, value)
           }
         } catch (error) {
           throw toToolError(error, options.toolCallId)
@@ -193,9 +193,31 @@ export async function finishToolOutput(
     }
   }
   const limits = deps.limits
-  return limits === undefined
-    ? current
-    : limitToolOutput(name, toolCallId, current, { ...limits, warn: deps.warn })
+  const limited =
+    limits === undefined
+      ? current
+      : await limitToolOutput(name, toolCallId, current, { ...limits, warn: deps.warn })
+  return cloneableOutput(name, limited)
+}
+
+/**
+ * A tool output the stream can copy: `structuredClone` rejects functions and some class
+ * instances, which would kill the turn after the tool already ran. Falls back to a JSON-safe copy,
+ * then to an error string the model can read (spec 09, rule 6).
+ */
+function cloneableOutput(name: string, output: unknown): unknown {
+  try {
+    structuredClone(output)
+    return output
+  } catch {
+    // not copyable as is
+  }
+  try {
+    const json = JSON.stringify(output)
+    return json === undefined ? undefined : JSON.parse(json)
+  } catch (error) {
+    return `Error: the output of tool '${name}' could not be serialized (${error instanceof Error ? error.message : String(error)}). The tool did run.`
+  }
 }
 
 /** `experimental_refineToolInput` map running the `tool.before` chain, or `undefined`. */
@@ -244,6 +266,37 @@ function normalizeStatus(status: ToolApprovalStatus | undefined): Normalized {
   const out: Normalized = { type: type as Normalized['type'] }
   if (typeof status === 'object' && typeof status.reason === 'string') out.reason = status.reason
   return out
+}
+
+/** Separator between a tool name and its scope in a grant key (`bash\u0000git status`). */
+export const GRANT_SCOPE_SEPARATOR = '\u0000'
+
+/**
+ * The key a session grant of this call is stored under and looked up by (spec 11 §3.1): the tool
+ * name, or `<tool>\u0000<scope>` when a `tool.grantScope` hook scopes the tool; `null` when a hook
+ * says the call cannot be remembered (or throws: fail closed). First non-void hook result wins.
+ */
+export async function grantKeyOf(
+  deps: Pick<ToolWrapDeps, 'hooks' | 'contextOf' | 'warn'>,
+  toolName: string,
+  input: unknown,
+): Promise<string | null> {
+  for (const hook of deps.hooks.list('tool.grantScope')) {
+    try {
+      const scope = await hook.fn(deps.contextOf(hook.owner), {
+        toolName,
+        input: structuredClone(input),
+      })
+      if (scope === null) return null
+      if (typeof scope === 'string') {
+        return scope === '' ? null : `${toolName}${GRANT_SCOPE_SEPARATOR}${scope}`
+      }
+    } catch (error) {
+      hookFailed(deps, 'tool.grantScope', hook.owner, error)
+      return null
+    }
+  }
+  return toolName
 }
 
 /** Session approval grants, read at every approval decision (spec 11 §3.1). */
@@ -347,7 +400,15 @@ export function buildApproval(
         by = entry.by
       }
     }
-    const grant = grants?.current()?.[toolCall.toolName]
+    // no `tool.grantScope` hook: no await, so the approval path keeps its microtask timing (chunk
+    // order is public API)
+    const grantKey =
+      grants === undefined
+        ? null
+        : deps.hooks.list('tool.grantScope').length === 0
+          ? toolCall.toolName
+          : await grantKeyOf(deps, toolCall.toolName, toolCall.input)
+    const grant = grantKey === null ? undefined : grants?.current()?.[grantKey]
     if (grant === 'never') {
       if (winner.type !== 'denied') {
         winner = { type: 'denied' }

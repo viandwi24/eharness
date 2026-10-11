@@ -333,7 +333,7 @@ export interface InputFilesConfig {
   /** Maximum decoded size of a `data:` URL in bytes. Default 20 MB (20 971 520). */
   maxBytes?: number
   /**
-   * Resolve a stored file URL for the model (0.9.0, spec 03 §6). Called at projection time for
+   * Resolve a stored file URL for the model (0.8.0, spec 03 §6). Called at projection time for
    * every file part whose URL is not a `data:` URL, so apps keep references (a custom protocol
    * listed in `protocols`, e.g. `library://uploads/7`) in stored messages instead of inlined
    * base64. The stored message is never changed. Return `{ data }` (bytes or base64) or

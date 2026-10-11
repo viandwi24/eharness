@@ -713,6 +713,49 @@ export function isGlobArg(arg: string): boolean {
   return /[*?[]/.test(arg)
 }
 
+/**
+ * Whether one glob segment (`.[.]`, `.?`, `.*`, `.[!x]`, `[.][.]`) can expand to `..` and so leave
+ * the directory. A leading `*` or `?` never matches a leading dot in a shell, so `*.ts` and `?x`
+ * are fine; an explicit dot, a class that holds a dot and a negated class are over-approximated as
+ * matching (older bash and macOS `/bin/bash` match `..` with `.[.]` and `.?`, bash 5.2+ does not).
+ */
+export function globMayMatchDotDot(segment: string): boolean {
+  if (!/[*?[]/.test(segment)) return false
+  if (segment[0] === '*' || segment[0] === '?') return false
+  let source = ''
+  for (let i = 0; i < segment.length; i++) {
+    const ch = segment[i] as string
+    if (ch === '*') source += '.*'
+    else if (ch === '?') source += '.'
+    else if (ch === '\\' && i + 1 < segment.length) source += `\\${segment[++i]}`
+    else if (ch === '[') {
+      const end = segment.indexOf(']', i + 2)
+      if (end === -1) {
+        source += '\\['
+        continue
+      }
+      let body = segment.slice(i + 1, end)
+      let negate = false
+      if (body[0] === '!' || body[0] === '^') {
+        negate = true
+        body = body.slice(1)
+      }
+      source += `[${negate ? '^' : ''}${body.replace(/[\\\]^]/g, '\\$&')}]`
+      i = end
+    } else source += ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  }
+  try {
+    return new RegExp(`^${source}$`).test('..')
+  } catch {
+    return true
+  }
+}
+
+/** True when a glob argument has a segment that can expand to `..` (an escape from the working directory). */
+export function globMayEscape(arg: string): boolean {
+  return isGlobArg(arg) && arg.split('/').some(globMayMatchDotDot)
+}
+
 /** A path argument as the guard sees it, and whether its whole subtree is read. */
 export interface Cover {
   arg: string
@@ -896,7 +939,8 @@ export interface ReadPaths {
   match: string[]
   /**
    * True when an argument cannot be resolved lexically: any `$` expansion or backtick in ANY
-   * argument, `~user` or brace expansion in a path argument.
+   * argument, `~user`, brace expansion or a glob segment that can expand to `..` (`.[.]`, `.?`,
+   * `.*`) in a path argument.
    */
   unsafe: boolean
   /** Arguments whose content is read through a directory (recursion) or a glob. */
@@ -922,7 +966,11 @@ export function readPathArguments(subcommand: string, filter?: CommandFilter): R
   const analysis = analyze(all, filter)
   if (analysis === undefined) return out
   const pathLike = (arg: string): boolean => {
-    if (arg.includes('{') || (arg.startsWith('~') && arg !== '~' && !arg.startsWith('~/'))) {
+    if (
+      arg.includes('{') ||
+      (arg.startsWith('~') && arg !== '~' && !arg.startsWith('~/')) ||
+      globMayEscape(arg)
+    ) {
       out.unsafe = true
       return false
     }

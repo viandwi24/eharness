@@ -1,6 +1,6 @@
 # Spec 11 — Interaction: approvals, client tools, regenerate/edit, steering, wake
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.5.0. Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Modules: `src/session/interaction/*`, `src/stream/chat-request.ts`.
 
 This spec covers everything a user (or a UI) does to a session besides "send a new message":
 answering tool approvals, returning client-side tool results, regenerating or editing, talking to
@@ -151,6 +151,22 @@ answered is not affected by them; grants recorded earlier apply from step 0). A 
 in the commit-point state write of the `respond()` that carries it.
 A grant that can never apply (the policy or a hook returns `denied` for that tool) raises
 `W_GRANT_IGNORED` once.
+
+**Scoped grants (0.8, `tool.grantScope`).** The key a grant is stored and looked up under is the
+tool name unless a `tool.grantScope` hook (spec 01 §5) scopes the tool. The hook gets
+`{ toolName, input }` and returns a string (the scope), `null` (this call cannot be remembered) or
+nothing (default). The first non-void result in plugin order wins; a throw counts as `null`.
+A scoped key is `<toolName>\u0000<scope>` (`state.core.grants['bash\u0000git commit']`); with `null`
+no grant is recorded (the answer itself still applies once) and none is looked up, so the call asks.
+The `permissions` plugin scopes **shell-kind tools to the command prefix** (spec 18 §7: the prefix
+that `suggestRule` offers; never a wrapper or interpreter, never a compound, complex or redirecting
+command, never one touching a protected path). Approving `git commit -m a` for the session
+auto-approves later `git commit …`, not `curl …`. Other tools keep one grant per tool name.
+
+*Compatibility.* The state shape is unchanged (`Record<string, 'always' | 'never'>`); old and new
+keys coexist. An old per-tool grant (`grants.bash`) is still honoured for tools no hook scopes. For
+a scoped (shell) tool it is **ignored** (the call asks again; a stored `'never'` for the whole tool
+is ignored the same way). `session.clearGrants()` clears both.
 
 ### 3.2 Tool risk
 

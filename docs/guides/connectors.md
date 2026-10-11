@@ -20,6 +20,8 @@ import {
   connectionStoreFromProfiles, credentialStoreFromProfiles, memoryEnablementStore, memoryFlowStore,
 } from 'eharness/connectors'
 import { listRemoteMcpTools, remoteMcpSource } from 'eharness/mcp'
+import { filesystem, type FileToolName } from 'eharness/filesystem'
+import { memory } from 'eharness/memory'
 
 const vault = webCryptoVault(keyBytes)                       // or your own SecretVault
 const profiles = sealedProfileStore(dbProfileStore, vault, { kinds: ['connection', 'connection-credentials'] })
@@ -152,6 +154,22 @@ Name tools `ctx.toolPrefix + tool` (or let `mcp` apply the prefix) so two connec
 connector never collide. For OAuth connectors use `auth: { type: 'oauth2', authorizationUrl,
 tokenUrl, scopes, pkce: true }`, give the admin client with `clientConfig`, and read tokens with
 `ctx.connection.getAccessToken()` (refreshed under a lock).
+
+## Security notes
+
+- **Secrets stay with their endpoint.** The custom MCP `url` is an endpoint field. `service.update`
+  with a different `url` drops the stored header values the patch does not resend, deletes the OAuth
+  credentials and sets `needs-auth` (for OAuth connectors): the old token is never presented to a
+  new host. Your own definitions get the same by using `z.url()` (or `ehMeta({ endpoint: true })`)
+  for any field that decides where requests go ([Providers](providers-and-profiles.md)).
+- **Annotations come from the remote server.** `remoteMcpConnector` groups a tool with
+  `readOnlyHint: true` into the `read` capability when the connection is tested, but that
+  capability now defaults to `ask` like the others (a hostile server can mislabel a mutating tool).
+  Switch it to `allow` (a capability mode on the enablement, `modes: { read: 'allow' }`) only for servers you
+  trust. Curated connectors you define yourself keep the defaults you give them
+  ([tools and MCP](tools-and-mcp.md#mcp-servers-eharnessmcp)).
+- Provider and MCP URLs are fetched by your injected `fetch`: apply your network policy there
+  (private ranges, redirects) when the URLs come from untrusted people.
 
 ## Reference
 

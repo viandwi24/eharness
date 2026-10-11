@@ -67,7 +67,7 @@ import {
 import type { TurnInfo, TurnSource } from '../plugin/types.ts'
 import type { ToolOutputSink } from '../registry/output-limits.ts'
 import { resolveTurnRegistry, type TurnRegistry } from '../registry/turn.ts'
-import { finishToolOutput, hookFailed, reportDecision } from '../registry/wrap.ts'
+import { finishToolOutput, grantKeyOf, hookFailed, reportDecision } from '../registry/wrap.ts'
 import { describeError } from '../stream/describe-error.ts'
 import { createStreamLogWriter, resolveStreamLogOptions } from '../stream/log-writer.ts'
 import { createRun, createTurnBuffer, type TurnBuffer } from '../stream/run.ts'
@@ -696,7 +696,19 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
   }
 
   /** Heartbeat (spec 05 §9) and abort poll (§9.1): step ends and the heartbeat timer. */
+  let heartbeatInFlight = false
   async function heartbeat(): Promise<void> {
+    // a slow state store must not stack ticks (each would queue another write and abort poll)
+    if (heartbeatInFlight) return
+    heartbeatInFlight = true
+    try {
+      await heartbeatOnce()
+    } finally {
+      heartbeatInFlight = false
+    }
+  }
+
+  async function heartbeatOnce(): Promise<void> {
     await abortPoll?.poll()
     if (!recovery || !committed || assistantId === undefined) return
     if (Date.now() - rt.state.lastWriteAt < staleMs / 4) return
@@ -1277,7 +1289,18 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       if (remembered.length > 0) {
         grantsBefore = core.grants === undefined ? undefined : { ...core.grants }
         core.grants = { ...(core.grants ?? {}) }
-        for (const a of remembered) core.grants[a.toolName] = a.approved ? 'always' : 'never'
+        for (const a of remembered) {
+          // a `tool.grantScope` hook may scope the grant to part of the input, or refuse it (§3.1)
+          const key =
+            rt.open === undefined
+              ? a.toolName
+              : await grantKeyOf(
+                  { hooks: rt.open.hooks, contextOf: rt.contextOf, warn: rt.warn },
+                  a.toolName,
+                  plan.pending.approvals.find((p) => p.approvalId === a.approvalId)?.input,
+                )
+          if (key !== null) core.grants[key] = a.approved ? 'always' : 'never'
+        }
         grantsRecorded = true
         needWrite = true
       }
@@ -1368,7 +1391,28 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
       }
     }
     if (rewind !== undefined) {
-      created.push(...(await host.persist([rewind])))
+      try {
+        created.push(...(await host.persist([rewind])))
+      } catch (markerError) {
+        // the marker is not stored: its entry in `core.rewinds` would hide history for nothing
+        const ghost = rewind.id
+        const entries = rt.state.core().rewinds
+        if (entries !== undefined) {
+          const kept = entries.filter((e) => e.rewindId !== ghost)
+          if (kept.length === 0) delete rt.state.core().rewinds
+          else rt.state.core().rewinds = kept
+          rt.state.markDirty()
+          try {
+            await rt.state.writeIfDirty()
+          } catch (undoError) {
+            rt.log.warn('eharness: removing the rewind entry of an unsaved marker failed', {
+              error: undoError,
+            })
+          }
+        }
+        rt.view = undefined
+        throw markerError
+      }
       const marker = rewind
       const hidden = [{ afterId: afterIdOf(marker), rewindId: marker.id }]
       if (rt.view !== undefined) {
@@ -1919,6 +1963,58 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
     if (turnTimer !== undefined) clearTimeout(turnTimer)
     if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
     external?.removeEventListener('abort', onExternalAbort)
+    let finished: { turnResult: TurnResult<UIMessage>; stop: StopReason } | undefined
+    try {
+      finished = await endPhases(message)
+    } catch (endError) {
+      // whatever throws above, the turn must still end: lock released, result resolved, stream closed
+      rt.log.error('eharness: the end of the turn failed', { error: endError })
+    }
+    const stop: StopReason = finished?.stop ?? 'error'
+    const turnResult: TurnResult<UIMessage> =
+      finished?.turnResult ??
+      withoutUndefined({
+        turnId,
+        kind: op.kind,
+        messageId: committed ? assistantId : undefined,
+        stop: 'error' as const,
+        messages: [] as UIMessage[],
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        steps: outcome.steps,
+        durationMs: Date.now() - startedAt,
+        error: toTurnError(new Error('the end of the turn failed'), (m, d) => rt.log.warn(m, d)),
+      })
+    // the finalisation: every step guarded, none can keep the session busy. After the lock is
+    // released everything runs synchronously (no await between `running = false` and the end)
+    const guard = (what: string, fn: () => void): void => {
+      try {
+        fn()
+      } catch (finalError) {
+        rt.log.warn(`eharness: ${what} failed`, { error: finalError })
+      }
+    }
+    if (releaseLock !== undefined) {
+      try {
+        await releaseLock()
+      } catch (lockError) {
+        rt.log.warn('eharness: releasing the session lock failed', { error: lockError })
+      }
+    }
+    localTurns.delete(turnId)
+    if (rt.turn === turnState) rt.turn = undefined
+    rt.running = false
+    guard('status event', () => rt.events.emit({ type: 'status', running: false }))
+    resolveAccepted(undefined) // no-op after a pre-commit failure or commit
+    resolveResult(turnResult)
+    guard('turn-end bookkeeping', () => host.onTurnEnd())
+    guard('stopObserving', () => stopObserving())
+    // the stream ends last: a reader that saw `finish` can start the next turn right away
+    guard('closing the stream', () => closeBuffer(stop))
+  }
+
+  async function endPhases(
+    message: HarnessUIMessage | undefined,
+  ): Promise<{ turnResult: TurnResult<UIMessage>; stop: StopReason }> {
     let stop = outcome.stop
     let error = outcome.error
     let assistant: HarnessUIMessage | undefined
@@ -2114,24 +2210,14 @@ export function startTurn(host: TurnHost, op: TurnOperation): RunningTurn {
         }
       }
     }
-    await settleInbox(stop)
-    if (releaseLock !== undefined) {
-      try {
-        await releaseLock()
-      } catch (lockError) {
-        rt.log.warn('eharness: releasing the session lock failed', { error: lockError })
-      }
+    try {
+      await settleInbox(stop)
+    } catch (inboxError) {
+      rt.log.warn('eharness: settling the inbox at the end of the turn failed', {
+        error: inboxError,
+      })
     }
-    localTurns.delete(turnId)
-    if (rt.turn === turnState) rt.turn = undefined
-    rt.running = false
-    rt.events.emit({ type: 'status', running: false })
-    resolveAccepted(undefined) // no-op after a pre-commit failure or commit
-    resolveResult(turnResult)
-    host.onTurnEnd()
-    stopObserving()
-    // the stream ends last: a reader that saw `finish` can start the next turn right away
-    closeBuffer(stop)
+    return { turnResult, stop }
   }
 
   /**

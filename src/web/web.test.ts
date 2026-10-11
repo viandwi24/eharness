@@ -232,6 +232,46 @@ describe('helpers', () => {
     }
   })
 
+  test('isPrivateHost: trailing dots, transition ranges and reserved blocks', () => {
+    for (const h of [
+      'localhost.',
+      'x.local.',
+      'metadata.google.internal.',
+      'x.internal.',
+      '[64:ff9b::a9fe:a9fe]',
+      '[64:ff9b::7f00:1]',
+      '[64:ff9b:1::1]',
+      '[2002:7f00:1::]',
+      '[2002:a9fe:a9fe::1]',
+      '[fec0::1]',
+      '[::ffff:169.254.169.254]',
+      '[::7f00:1]',
+      '198.18.0.1',
+      '198.19.255.255',
+      '100.64.0.1',
+      '100.127.255.255',
+      '0.1.2.3',
+      '192.0.0.1',
+      '203.0.113.9',
+    ]) {
+      expect(isPrivateHost(h)).toBe(true)
+    }
+    for (const h of [
+      'example.com.',
+      '[64:ff9b::808:808]',
+      '[2002:808:808::]',
+      '100.128.0.1',
+      '198.20.0.1',
+    ]) {
+      expect(isPrivateHost(h)).toBe(false)
+    }
+  })
+
+  test('matchHost ignores a trailing dot', () => {
+    expect(matchHost('example.com', 'example.com.')).toBe(true)
+    expect(matchHost('*.example.com', 'a.example.com.')).toBe(true)
+  })
+
   test('matchHost', () => {
     expect(matchHost('example.com', 'EXAMPLE.com')).toBe(true)
     expect(matchHost('example.com', 'a.example.com')).toBe(false)

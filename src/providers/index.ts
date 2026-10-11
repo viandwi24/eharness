@@ -44,6 +44,7 @@ export {
 export { type EnvConfigurable, type FromEnvOptions, fromEnv } from './env.ts'
 export {
   ehMeta,
+  endpointChanged,
   formSpec,
   mergeSecretPatch,
   providerFormSpec,

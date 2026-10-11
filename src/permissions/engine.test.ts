@@ -252,6 +252,114 @@ describe('protected paths', () => {
   })
 })
 
+describe('case-insensitive protected paths and .env asks', () => {
+  const variants = [
+    '/.GIT/hooks/pre-commit',
+    '/.Git/config',
+    '/.coder/SETTINGS.json',
+    '/.git /config',
+    '/.git./config',
+    '/.CODER/Agents/x.md',
+    '/@dirs/shared-lib/.GIT/config',
+  ]
+  for (const mode of ['default', 'acceptEdits', 'bypassPermissions'] as const) {
+    test(`file tools ask for case variants in ${mode}`, () => {
+      for (const path of variants) {
+        for (const tool of [TOOL.write, TOOL.edit, TOOL.delete]) {
+          expect([path, tool, status(make(mode).decide(fileCall(tool, path)))]).toEqual([
+            path,
+            tool,
+            'user-approval',
+          ])
+        }
+      }
+    })
+  }
+
+  test('shell commands that name a case variant ask', () => {
+    for (const mode of ['default', 'acceptEdits', 'bypassPermissions'] as const) {
+      for (const c of [
+        'cp x .Git/config',
+        'mv x .GIT/hooks/pre-commit',
+        'tee .Git/config < x',
+        'echo x > .GIT/config',
+        'echo x >> .Coder/agents/a.md',
+      ]) {
+        expect([mode, c, status(make(mode).decide(bash(c)))]).toEqual([mode, c, 'user-approval'])
+      }
+    }
+  })
+
+  test('a Unicode-decomposed name folds to NFC', () => {
+    const engine = make('acceptEdits', {}, { protectedPaths: ['\u00e9cole'] })
+    expect(status(engine.decide(fileCall(TOOL.write, '/e\u0301cole/x')))).toBe('user-approval')
+  })
+
+  test('.env reads ask for case variants', () => {
+    const engine = make('default')
+    for (const c of ['cat .ENV', 'cat .Env', 'cat sub/.ENV.local', 'grep KEY .eNv']) {
+      expect([c, status(engine.decide(bash(c)))]).toEqual([c, 'user-approval'])
+    }
+    expect(status(engine.decide(fileCall(TOOL.read, '/.ENV')))).toBe('user-approval')
+    expect(status(engine.decide(fileCall(TOOL.read, '/a/.Env.production')))).toBe('user-approval')
+    expect(status(engine.decide(bash('cat .E*')))).toBe('user-approval')
+    expect(engine.readBlocked('/.ENV')).toBe(true)
+  })
+
+  test('deny rules fold case, allow rules stay exact', () => {
+    expect(
+      status(
+        make('default', { deny: ['Edit(secrets/**)'] }).decide(fileCall(TOOL.write, '/SECRETS/a')),
+      ),
+    ).toBe('denied')
+    const engine = make('default', { allow: ['Read(.env.example)'] })
+    expect(status(engine.decide(fileCall(TOOL.read, '/.env.example')))).toBe('approved')
+    expect(status(engine.decide(fileCall(TOOL.read, '/.ENV.EXAMPLE')))).toBe('user-approval')
+  })
+})
+
+describe('glob segments that can expand to ..', () => {
+  test('ask in every mode that auto-approves reads', () => {
+    const cmds = [
+      'cat .[.]/.[.]/etc/passwd',
+      'cat .?/.?/x',
+      'ls .[.]/',
+      'grep -r x .[.]',
+      'ls -d .*',
+      'cat [.][.]/x',
+      'cat src/.[.]/.[.]/x',
+      'cat .[!x]/x',
+      'cat ..*/x',
+      'cat ./.?',
+    ]
+    for (const mode of ['default', 'plan', 'acceptEdits'] as const) {
+      for (const c of cmds) {
+        expect([mode, c, status(make(mode).decide(bash(c)))]).toEqual([mode, c, 'user-approval'])
+      }
+    }
+  })
+
+  test('ordinary globs and dotfiles stay approved', () => {
+    for (const c of [
+      'ls *.ts',
+      'cat src/*.ts',
+      'cat src/?.ts',
+      'ls [a-z]*',
+      'grep -r x src/**/*.ts',
+      'ls .github',
+      'cat .gitignore',
+      'ls .git*',
+      'ls .gi?',
+    ]) {
+      expect([c, status(make('default').decide(bash(c)))]).toEqual([c, 'approved'])
+    }
+  })
+
+  test('isReadOnlyCommand still accepts them (the path guard decides)', () => {
+    expect(isReadOnlyCommand('ls .[.]/')).toBe(true)
+  })
+})
+
 describe('bash in each mode', () => {
   test('read-only commands inside the working directories', () => {
     const cmds = [
@@ -1707,5 +1815,133 @@ describe('auto mode', () => {
     // auto without a classifier is dropped from the cycle
     const noAuto = make('plan', {}, { modeCycle: modeCycleFor({ auto: true }) })
     expect([noAuto.cycleMode(), noAuto.cycleMode()]).toEqual(['default', 'acceptEdits'])
+  })
+})
+
+describe('deny and ask rules see through evasions (spec 18 §5)', () => {
+  const engine = make('default', { deny: ['Bash(rm:*)', 'Bash(git push:*)'] })
+  const denied = [
+    'rm -rf x',
+    '! rm -rf x',
+    '/bin/rm -rf x',
+    './rm x',
+    'sudo rm x',
+    'sudo -u root rm x',
+    'env A=1 rm x',
+    'env -i rm x',
+    'exec rm x',
+    'nice -n 5 rm x',
+    'timeout 5 rm x',
+    'nohup rm x',
+    'command rm x',
+    'builtin rm x',
+    'sh -c "rm -rf /"',
+    "bash -c 'echo hi; rm x'",
+    'zsh -lc "rm x"',
+    "eval 'rm x'",
+    'sudo sh -c "rm x"',
+    'if true; then rm x; fi',
+    'git push',
+    'git -C . push',
+    'git --no-pager push',
+    'git -c x=y push',
+    'git --git-dir=.git --work-tree=. push',
+    'git -C /tmp -c a=b --no-pager push origin',
+    '/usr/bin/git -C . push',
+  ]
+  for (const command of denied) {
+    test(`denies ${command}`, () => {
+      expect(status(engine.decide(bash(command)))).toBe('denied')
+    })
+  }
+
+  test('ordinary commands are not denied', () => {
+    for (const command of [
+      'git status',
+      'git -C . status',
+      'sudo ls',
+      'sh -c "echo rm"',
+      'echo rm',
+    ]) {
+      expect(status(engine.decide(bash(command)))).not.toBe('denied')
+    }
+  })
+
+  test('ask rules look through too', () => {
+    const asking = make('acceptEdits', { ask: ['Bash(touch:*)'] })
+    expect(status(asking.decide(bash('touch a')))).toBe('user-approval')
+    expect(asking.decide(bash('/usr/bin/touch a'))).toMatchObject({ rule: 'Bash(touch:*)' })
+    expect(asking.decide(bash('env A=1 touch a'))).toMatchObject({ rule: 'Bash(touch:*)' })
+  })
+
+  test('an unparseable sh -c payload asks when deny or ask rules exist', () => {
+    expect(make('default', { deny: ['Bash(rm:*)'] }).decide(bash('sh -c')).status).toBe(
+      'user-approval',
+    )
+    expect(
+      make('acceptEdits', { deny: ['Bash(rm:*)'], allow: ['Bash(sh *)'] }).decide(bash("sh -c ''"))
+        .status,
+    ).toBe('user-approval')
+  })
+
+  test('allow rules do not widen: a wrapper is not matched as its payload', () => {
+    const allowing = make('default', { allow: ['Bash(ls:*)'] })
+    expect(status(allowing.decide(bash('ls -la')))).toBe('approved')
+    expect(status(allowing.decide(bash('sudo ls')))).toBe('user-approval')
+    expect(status(allowing.decide(bash('/bin/ls')))).toBe('user-approval')
+    expect(status(allowing.decide(bash('! ls')))).toBe('user-approval')
+    expect(status(allowing.decide(bash('sh -c "ls"')))).toBe('user-approval')
+  })
+})
+
+describe('shell protected text variants', () => {
+  test('trailing dots, trailing spaces and NFC forms ask', () => {
+    for (const command of [
+      'cp x .git./config',
+      'cp x ".git /config"',
+      'cp x .GIT../config',
+      'cp x .git /config',
+    ]) {
+      expect(status(make('bypassPermissions').decide(bash(command)))).toBe('user-approval')
+    }
+    expect(status(make('acceptEdits').decide(bash('cp x .gitignore')))).not.toBe('user-approval')
+    expect(status(make('bypassPermissions').decide(bash('cp x foo.git.bak')))).toBe('approved')
+  })
+
+  test('a protected name with non-ASCII characters matches its decomposed form', () => {
+    const engine = make('bypassPermissions', {}, { protectedPaths: ['.café'] })
+    expect(status(engine.decide(bash('cp x .café/config')))).toBe('user-approval')
+  })
+})
+
+describe('grantScope (session grants of shell tools)', () => {
+  const engine = make('default')
+  test('the command prefix of the suggestion, never a wrapper or an empty prefix', () => {
+    expect(engine.grantScope(bash('git status -s'))).toBe('git status')
+    expect(engine.grantScope(bash('git status'))).toBe('git status')
+    expect(engine.grantScope(bash('npm run build'))).toBe('npm run')
+    expect(engine.grantScope(bash('ls'))).toBe('ls')
+    expect(engine.grantScope(bash('ls -la'))).toBe('ls -la')
+    for (const command of [
+      'sudo ls',
+      'env A=1 ls',
+      'bash -c "ls"',
+      'python3 x.py',
+      'node x.js',
+      '',
+      'ls && rm x',
+      'echo $(date)',
+      'echo x > out.txt',
+      'echo x > .git/config',
+      'cp a .git/config',
+      'ls *',
+    ]) {
+      expect(engine.grantScope(bash(command))).toBeNull()
+    }
+  })
+
+  test('other tools keep per-tool grants', () => {
+    expect(engine.grantScope(fileCall(TOOL.edit, '/src/a.ts'))).toBeUndefined()
+    expect(engine.grantScope(call('web_fetch', { url: 'https://a.com' }))).toBeUndefined()
   })
 })

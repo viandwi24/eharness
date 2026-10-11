@@ -188,6 +188,13 @@ const agent = defineHarnessAgent({
 - Other options: `prefix` (default `<name>_`, `''` for none), `maxRetries` (retries of tool calls,
   default 0), `refresh` (`'session'` or `'turn'`).
 
+> **Remote MCP and `readOnlyHint`.** `mcpServer()` treats annotations as tighten-only (above). The
+> connectors module (`remoteMcpConnector`, [Connectors](connectors.md)) instead groups a custom
+> server's tools by the annotations it sent at connect time: `readOnlyHint: true` lands in the
+> `read` capability. A hostile or compromised server controls that label, so that capability
+> defaults to `ask` like `write` and `destructive` (since 0.8); set the `read` mode to `allow` (`modes: { read: 'allow' }`)
+> on an enablement only for servers you trust.
+
 MCP output is untrusted: the text parts of every tool result reach the model inside
 `<untrusted-content source="mcp" name="<server>/<tool>">…</untrusted-content>` (images, structured
 JSON and `isError` are unchanged, and the UI keeps the raw result). Opt out per server with

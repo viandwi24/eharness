@@ -46,8 +46,10 @@ Tool input `{ url, prompt? }`. Rules, in order:
 2. `deny` match → `ERROR: <host> is not allowed`.
 3. A host not trusted by `allow` (or any host when `onlyAllowed` and not in `allow`: `ERROR: <host> is not in the allow list`):
    - IP literals and local names (`localhost`, `*.localhost`, `*.local`, `*.internal`, `*.lan`,
-     single-label names) in private, loopback, link-local, CGNAT, unspecified or multicast ranges
-     (IPv4, IPv6, IPv4-mapped) → `ERROR: <host> is a private or local host and is not allowed. Add it to the <toolName> allow list (allow: ['<host>']) to fetch it.` (`<toolName>` is the configured `toolName`, default `web_fetch`). **Always** applied to untrusted hosts, with or without
+     single-label names; one trailing dot is stripped first: `localhost.`) in private, loopback, link-local, CGNAT
+     (`100.64.0.0/10`), benchmarking (`198.18.0.0/15`), `0.0.0.0/8`, `192.0.0.0/24`, documentation, unspecified or
+     multicast ranges (IPv4; IPv6 incl. unique-local, `fe80::/10`, site-local `fec0::/10`, IPv4-mapped/compatible,
+     NAT64 `64:ff9b::/96` and 6to4 `2002::/16` with the embedded IPv4 checked, Teredo) → `ERROR: <host> is a private or local host and is not allowed. Add it to the <toolName> allow list (allow: ['<host>']) to fetch it.` (`<toolName>` is the configured `toolName`, default `web_fetch`). **Always** applied to untrusted hosts, with or without
      `resolveHost`.
    - ports other than 80/443 → refused.
    - with `resolveHost`: any resolved address in a private range → refused. A resolver error is

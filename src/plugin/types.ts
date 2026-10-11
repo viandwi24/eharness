@@ -439,6 +439,18 @@ export interface HarnessHooks<DP extends DataPartMap = Record<never, never>> {
    * audit logs and cross-session inboxes; errors are `W_HOOK_FAILED`.
    */
   'approval.decided'?(ctx: HarnessContext<DP>, e: ApprovalDecision): Awaitable<void>
+  /**
+   * Scope a session grant (`respond({ approvals: [{ remember: 'session' }] })`, spec 11 §3.1) to
+   * part of a tool's input. A string narrows the grant to that scope (`git status` for a shell
+   * tool: approving it never approves `curl …`); `null` says this call cannot be remembered (no
+   * grant is stored or applied); `undefined` keeps the default, one grant per tool name. First
+   * non-void result wins, in plugin order. Must be deterministic and side-effect free; a throw
+   * counts as `null`.
+   */
+  'tool.grantScope'?(
+    ctx: HarnessContext<DP>,
+    e: { toolName: string; input: unknown },
+  ): Awaitable<string | null | void>
   /** Chainable. Rewrite tool input before approval and execution. Must be deterministic (spec 11 §3). */
   'tool.before'?(
     ctx: HarnessContext<DP>,

@@ -91,6 +91,14 @@ Svelte 5 sketch (React is the same loop):
 ```
 
 Paths are dotted for nested objects; show "set …1234" from `profile.settings.apiKey` (`{ set, hint }`).
+
+**Changing the endpoint resets the secrets.** A `format: 'uri'` field (`z.url()`), or one marked
+`ehMeta({ endpoint: true })` (`FormField.endpoint` is `true`), says where the stored secrets are
+sent. If an edit changes it (a new `baseURL`), `putProfile` / `mergeSecretPatch` do not keep the
+old key or header values: the form must resend them, otherwise the save fails with
+`EH_CONFIG_INVALID` for a required key (and an optional secret is cleared). So an edit that only
+repoints a profile cannot make `test()` / `models()` send the old key to another host. Show "enter
+the key again" in the UI when the person edits the URL.
 The same machinery works on any zod object (`formSpec`, `redactSettings`, `mergeSecretPatch`,
 `fromEnv`, `ConfigProfile`, `ProfileStore` with another `kind`).
 

@@ -76,6 +76,12 @@ export function createStreamLogWriter(args: {
     }
   }
 
+  /** Restarts from cursor 0 after an append failed with chunks already sent (gap: log lost). */
+  let restarts = 0
+  const MAX_RESTARTS = 3
+  /** When the adapter last saw this log (an append or a keep-alive), for the retention refresh. */
+  let touchedAt = Date.now()
+
   /** Append everything not yet confirmed, batch by batch. False when an append failed. */
   async function drain(): Promise<boolean> {
     while (sent < buffer.replayLength) {
@@ -84,7 +90,15 @@ export function createStreamLogWriter(args: {
         // `at` makes a retry after an unknown outcome idempotent
         await adapter.append(key, chunks, { at: sent })
         sent += chunks.length
+        touchedAt = Date.now()
       } catch (error) {
+        // the log may have expired / been lost (a gap): start over from the first chunk, which
+        // is safe because appends with `at` are idempotent
+        if (sent > 0 && restarts < MAX_RESTARTS) {
+          restarts++
+          sent = 0
+          continue
+        }
         fail('append', error)
         return false
       }
@@ -92,8 +106,23 @@ export function createStreamLogWriter(args: {
     return true
   }
 
+  /** Quiet turn: refresh the retention of the open log before it can expire (spec 04 §6.2). */
+  async function keepAlive(): Promise<void> {
+    if (adapter.expire === undefined || sent === 0) return
+    if (Date.now() - touchedAt < Math.max(options.flushMs, options.retentionMs / 3)) return
+    touchedAt = Date.now()
+    try {
+      await adapter.expire(key, options.retentionMs)
+    } catch (error) {
+      fail('expire', error)
+    }
+  }
+
   const flush = (): Promise<boolean> => {
-    const run = chain.then(drain)
+    const run = chain.then(drain).then(async (ok) => {
+      if (ok) await keepAlive()
+      return ok
+    })
     chain = run.then(
       () => undefined,
       () => undefined,

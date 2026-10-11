@@ -237,6 +237,20 @@ Result: `subcommands` (wrappers stripped, whitespace normalised), `redirects` (`
   3), so deny and ask rules see them.
 - A comment ends at the newline, so a command after it is still parsed.
 
+**Deny and ask normalisation (0.8, `restrictiveForms`).** Only deny and ask rules (and the
+built-in asks) match a second, normalised view of each subcommand; allow rules never do, so this
+cannot widen an approval. The extra forms: a leading `!` and control keywords dropped; every
+`VAR=x` assignment dropped; an absolute or relative program path reduced to its name (`/bin/rm`,
+`./rm` → `rm`); git global options removed before the subcommand (`-C <dir>`, `-c k=v`,
+`--no-pager`, `--git-dir=…`, `--work-tree=…`, …); the wrappers `sudo`, `doas`, `env`, `exec`, `nice`,
+`timeout <n>`, `nohup`, `command`, `builtin`, `time` looked through; and the payload of
+`sh|bash|zsh|dash|ksh -c '<payload>'` and `eval '<payload>'` parsed with the same parser and matched
+the same way (nested to depth 4). A payload that cannot be parsed (empty, no command) makes the
+call ask when any deny or ask rule exists. So `deny: ['Bash(rm:*)', 'Bash(git push:*)']` denies `! rm x`,
+`/bin/rm x`, `sudo rm x`, `env A=1 rm x`, `sh -c "rm -rf /"`, `git -C . push`, `git --no-pager push`
+and `git -c x=y push`. Still best-effort: `busybox rm`, an aliased or renamed binary, `find -exec`,
+a script that runs the program, or a variable-built command name are not seen.
+
 **Read-only commands** (`isReadOnlyCommand`). Auto-approved (default, plan, acceptEdits; bypass skips
 the path checks) only when the whole line is: not complex, no redirect except to `/dev/null`, and
 every subcommand accepted by its **argument grammar**. A grammar is an allow-list — accepted flags
@@ -282,6 +296,15 @@ a shell redirect, to a match asks in every mode. Applications add their own stat
 (`'.myapp/settings*.json'`). A shell command mentions a protected pattern when its first literal
 segment appears as a word (`.git`, not `.gitignore`, not `foo.git`).
 
+Matching is **case-insensitive and Unicode-NFC** for everything that can only restrict: protected
+paths and their shell-text search, the built-in `Read(.env*)` ask, and user `deny` / `ask` rules
+(macOS and Windows file systems ignore case, so `.GIT/hooks/x` and `.ENV` name the real files).
+Trailing dots and spaces of a path segment are ignored (`.git.`, `.git ` are `.git` on Windows).
+It is the same on every platform: a false match costs one question. `allow` rules stay exact, so a
+case variant never inherits an allow. A new protected name needs no case variants. The shell-text search (a command mentioning a protected
+name) also catches `.git.`, `.git /config`, `".git /config"` and Unicode forms that normalise to the
+name (NFC), so `cp x .git./config` asks.
+
 ## 7. The plugin
 
 `permissionsPlugin({ engine, mode?, allowedTools?, disallowedTools?, planExitTool?, filterOutputs?, onDecision?, onPlanExit? })`
@@ -290,6 +313,7 @@ segment appears as a word (`.git`, not `.gitignore`, not `foo.git`).
 | Where | What |
 |---|---|
 | `tool.approve` | `await engine.decideAsync(...)` (the classifier of `auto` mode runs here, with the event's `toolCallId`, restricted `transcript()` and the turn's abort signal) → `{ type: 'approved' }`, `{ type: 'user-approval', reason? }`, `{ type: 'denied', reason }`. Combines with other hooks, policy and grants by "most restrictive wins" (spec 11 §3) |
+| `tool.grantScope` | `engine.grantScope(call)`: for a shell-kind tool the command prefix (`git commit` for `git commit -m x`; the prefix `suggestRule` offers), `null` for a wrapper/interpreter/shell program, a compound or complex command, a redirect or a protected path (never remembered), `undefined` for other tools (spec 11 §3.1) |
 | `step.prepare` | `activeTools`: drops `inactiveTools`, `disallowedTools`, and everything outside `allowedTools` (names or aliases). A mode change takes effect at the next model call. When the plan-exit tool was just approved (`e.continuing`), the next step already offers the tools of the mode being entered |
 | `tool.after` | `filterOutputs` (default true): lines of `grep`/`list_files`/`glob` output (per the tool's `listing`) whose path `readBlocked` reports are dropped and counted: `(N results hidden by permission rules)` |
 | `approval.decided` | a person's approval (`by: 'user'`, approved) calls `engine.noteApproval()`: a paused auto mode resumes. Then `onDecision(decision)`: every automatic decision (`by: 'plugin:permissions'`) and every answer — an audit log. Errors are `W_HOOK_FAILED` and never change a decision |
@@ -448,6 +472,26 @@ review are not part of this module.
 
 - Paths are POSIX strings; `real` is a namespace for rules and shell commands, not necessarily a
   disk. There is no symlink resolution and no Windows path support.
+- Glob arguments of auto-approved read-only commands must stay inside the working directories:
+  a glob segment that can expand to `..` (`.[.]`, `.?`, `.*`, `[.][.]`, `.[!x]`, `..*`; a segment
+  starting with `*` or `?` cannot, a shell never matches a leading dot with them) makes the path
+  unresolvable, so the command asks (bash <= 5.1 and macOS `/bin/bash` expand `.[.]` to `..`; 5.2+
+  does not, but the guard does not depend on the shell version).
+- Deny rules are **best-effort filters on the parsed command**, not a boundary. They see through
+  `!`, program paths, git global options, the common wrappers and `sh -c` / `eval` payloads (§5),
+  but not `busybox rm`, renamed or aliased binaries, `find -exec`, scripts or computed command
+  names. Use them to remove the obvious paths; rely on the mode, the approval and the OS sandbox
+  for the rest.
+- A session grant (`respond({ approvals: [{ remember: 'session' }] })`, spec 11 §3.1) for a shell
+  tool is scoped to the **command prefix** (`tool.grantScope`, §7): approving `git commit -m a`
+  with `remember: 'session'` approves later `git commit …` calls that would ask, not `curl …`. A
+  wrapper or interpreter (`sudo`, `env`, `bash -c`, `python`, `node`, …), a compound or complex
+  command, a redirect, a command mentioning a protected path or one with `*` is never remembered
+  (approved once, asks again). Grants of other tools stay per tool name: one approved edit makes
+  every later edit of the session that would ask run unasked. A grant never overrides `denied`.
+  Old per-tool grants of a shell tool (stored before 0.8) are ignored: the call asks again.
+  Offer `remember` only where that is acceptable (`allowRemember: false` in `eharness/http`), or
+  grant by rule (`persist`) instead.
 - The shell analysis is a gate, not a sandbox: run the shell tool in an OS sandbox (`eharness/shell`) when
   the model is not trusted.
 - A command the analysis cannot read is never approved by a rule or a grammar; it asks (or is denied

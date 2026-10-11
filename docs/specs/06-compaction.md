@@ -1,6 +1,6 @@
 # Spec 06 — Compaction
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/compaction`.
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Module: `src/compaction`.
 
 Compaction is **fixed** (ADR-0004, amended by ADR-0019): one well-tested algorithm with a few
 knobs; the prune stage (§5.0) is a setting of it, not a strategy. The extension point

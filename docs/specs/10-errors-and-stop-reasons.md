@@ -1,6 +1,6 @@
 # Spec 10 — Errors, warnings, stop reasons
 
-Status: **Accepted (reviewed for 0.1.0)**, updated for 0.4.0. Module: `src/errors.ts`.
+Status: **Accepted (reviewed for 0.1.0)**, updated through 0.8.0. Module: `src/errors.ts`.
 
 ## 1. Errors (thrown)
 
@@ -88,7 +88,7 @@ mapped (they carry only the model's own input).
 
 ## 2. Warnings (non-fatal)
 
-Delivered to `config.onWarning` (every occurrence; the **default** handler deduplicates per
+Delivered to `config.onWarning` (a throwing handler is swallowed, reported once on `console.error`; every occurrence; the **default** handler deduplicates per
 code + key, remembering the 1 000 most recently used keys so per-turn keys cannot grow it
 forever), as transient `data-eh.warning` during a turn, and as session `data` events otherwise.
 With `config.strict: true`, misuse warnings (`W_TRANSIENT_OVERRIDE`, `W_UNKNOWN_DATA_PART`,

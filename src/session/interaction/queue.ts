@@ -25,6 +25,8 @@ export interface QueuedTurn {
    * waiting `send()` is held while approvals that did not exist at call time are pending.
    */
   wait?: { pendingAtCall: string | undefined }
+  /** Removes the `abortSignal` listener of a waiting entry (when the wait ends). */
+  detachAbort?: () => void
   /** `respond()` answers of a waiting respond. */
   respond?: { response: PendingResponse; ignoreUnknown: boolean }
   /** The run handed to the caller (bound to the real run when the turn starts). */

@@ -13,7 +13,12 @@ export {
   type ModelClassifierOptions,
   modelClassifier,
 } from './classifier.ts'
-export { type ParsedCommand, parseCommand } from './command.ts'
+export {
+  type ParsedCommand,
+  parseCommand,
+  type RestrictiveForms,
+  restrictiveForms,
+} from './command.ts'
 export {
   AUTO_MAX_CONSECUTIVE_BLOCKS,
   AUTO_MAX_TOTAL_BLOCKS,
