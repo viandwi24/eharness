@@ -1,10 +1,12 @@
 /** Channels gateway (docs/plans/P41-team-channels.md, phase L1): platform neutral, no platform names. */
 
 export type {
+  ApprovalAnswerInput,
   ChannelGateway,
   ConnectionInfo,
   GatewayDeps,
   HandleResult,
+  PendingView,
   WakeInput,
 } from './gateway.ts'
 export { createChannelGateway } from './gateway.ts'

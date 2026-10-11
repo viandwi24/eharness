@@ -642,7 +642,13 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
         mode: 'default',
         ...(classifier === undefined ? {} : { classifier }),
         // connector modes and the app's own rules, most restrictive wins (activateConnectors)
-        rules: { allow: out.rules.allow, ask: out.rules.ask, deny: out.rules.deny },
+        // read-risk native actions of the agent's channel connections never ask (derived from the
+        // adapters' action catalog, `infra/channels`)
+        rules: {
+          allow: [...out.rules.allow, ...(deps.channels?.()?.readActionTools(def.id) ?? [])],
+          ask: out.rules.ask,
+          deny: out.rules.deny,
+        },
         // pinned asks (write / destructive tools of non-built-in connectors) ask even in Bypass
         toolKinds: { ...MEMORY_TOOL_KINDS, ...out.rules.toolKinds },
       })
@@ -808,6 +814,9 @@ export function createAgentFactory(deps: AgentFactoryDeps): AgentFactory {
               messageTool: true,
               outputTool: false,
               stopTool: false,
+              // "waiting for the client" is a stored notice, not an extra lead model call; the
+              // role agent's final report still wakes the lead
+              onPark: 'notice',
             }),
           ]),
       ...(deps.routineOutcomes === undefined

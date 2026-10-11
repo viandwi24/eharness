@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { belongsToThread, chatHref, chatSessionAgent, cleanTitle, pickThread, splitThreads, threadHref, threadSourceBadge, threadTitle } from './model.ts';
+import { belongsToThread, chatHref, chatSessionAgent, cleanTitle, pickThread, splitThreads, threadHref, threadSourceBadge, threadSourceHint, threadTitle } from './model.ts';
 
 describe('thread model', () => {
 	test('title: name, else the last words, else New chat', () => {
@@ -8,6 +8,20 @@ describe('thread model', () => {
 		expect(threadTitle({ title: null, preview: 'Where are the scripts?' })).toBe('Where are the scripts?');
 		expect(threadTitle({ title: null, preview: 'a'.repeat(80) })).toHaveLength(48);
 		expect(threadTitle({ title: null, preview: null })).toBe('New chat');
+	});
+	test('the hint of a channel badge says it is readable and continuable, and not posted back', () => {
+		expect(threadSourceHint('telegram · Ops')).toContain('telegram · Ops');
+		expect(threadSourceHint('telegram · Ops')).toContain('not posted to the chat');
+	});
+	test('the default is the newest web thread; a channel thread opens when asked for', () => {
+		const threads = [
+			{ id: 't-channel', sessionId: 'channel:c1:room', source: 'channel' as const },
+			{ id: 't-web', sessionId: 'chat:a:1', source: 'web' as const }
+		];
+		expect(pickThread(threads, null)?.id).toBe('t-web');
+		expect(pickThread([threads[0]], null)?.id).toBe('t-channel');
+		expect(pickThread(threads, 'channel:c1:room')?.id).toBe('t-channel');
+		expect(pickThread(threads, 't-web')?.id).toBe('t-web');
 	});
 	test('source badge: none for the web, the label (or Channel) otherwise', () => {
 		expect(threadSourceBadge({ source: 'web', sourceLabel: null })).toBeNull();

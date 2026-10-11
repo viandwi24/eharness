@@ -68,6 +68,8 @@ export interface ConversationRow {
   label: string | null
   retentionDays: number | null
   createdAt: number
+  /** 0 for the first agent; bumped when the agent of the conversation changes. */
+  generation: number
 }
 
 interface ConversationDb {
@@ -79,6 +81,7 @@ interface ConversationDb {
   label: string | null
   retention_days: number | null
   created_at: number
+  generation: number
 }
 
 const toConversation = (r: ConversationDb): ConversationRow => ({
@@ -90,6 +93,7 @@ const toConversation = (r: ConversationDb): ConversationRow => ({
   label: r.label,
   retentionDays: r.retention_days,
   createdAt: r.created_at,
+  generation: r.generation,
 })
 
 export interface ConversationStore {
@@ -97,7 +101,13 @@ export interface ConversationStore {
   bySession(sessionId: string): ConversationRow | undefined
   list(connectionId?: string): ConversationRow[]
   /** Create the row when missing; an existing row keeps its session and agent. */
-  ensure(row: Omit<ConversationRow, 'createdAt'>, now: number): ConversationRow
+  ensure(row: Omit<ConversationRow, 'createdAt' | 'generation'>, now: number): ConversationRow
+  /** The agent of the conversation changed: it moves to a new session (and generation). */
+  rebind(
+    connectionId: string,
+    conversationId: string,
+    to: { agentId: string; sessionId: string; generation: number },
+  ): ConversationRow | undefined
   setRetention(connectionId: string, conversationId: string, days: number | null): void
 }
 
@@ -150,6 +160,15 @@ export function sqliteConversationStore(sqlite: Database): ConversationStore {
           now,
         )
       return toConversation(get.get(row.connectionId, row.conversationId) as ConversationDb)
+    },
+    rebind(connectionId, conversationId, to) {
+      sqlite
+        .query(
+          'UPDATE channel_conversations SET agent_id = ?, session_id = ?, generation = ? WHERE connection_id = ? AND conversation_id = ?',
+        )
+        .run(to.agentId, to.sessionId, to.generation, connectionId, conversationId)
+      const r = get.get(connectionId, conversationId)
+      return r === null ? undefined : toConversation(r)
     },
     setRetention(connectionId, conversationId, days) {
       sqlite

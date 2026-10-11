@@ -124,6 +124,11 @@ export interface ChannelCapabilities {
   history: boolean
   members: boolean
   upload: boolean
+  /**
+   * Messages can carry action buttons (`OutboundMessage.buttons`); a press arrives as an inbound
+   * `action` event. Without it the gateway falls back to a link to the web app.
+   */
+  buttons?: boolean
 }
 
 export interface OutboundFile {
@@ -132,12 +137,26 @@ export interface OutboundFile {
   bytes: Uint8Array
 }
 
+/** An action button under a message. `name` and `data` come back in the inbound `action` event. */
+export interface OutboundButton {
+  name: string
+  label: string
+  data?: string
+}
+
 export interface OutboundMessage {
   text: string
   /** Platform message id to quote / reply to. */
   replyTo?: string
   files?: OutboundFile[]
   silent?: boolean
+  /** Only sent when the adapter has the `buttons` capability. */
+  buttons?: OutboundButton[]
+  /**
+   * The outbox row id of this message: stable across retries. An adapter whose platform can dedupe
+   * (or that keeps its own sent log) uses it so a retried send never posts twice.
+   */
+  key?: string
 }
 
 export interface SentMessage {
@@ -204,6 +223,7 @@ export interface ChannelAdapter {
   start(sink: EventSink): Promise<void>
   stop(): Promise<void>
   send(ref: ConversationRef, message: OutboundMessage): Promise<SentMessage>
+  /** Replace the text of a message. Editing removes its buttons (a message edited this way has none). */
   edit?(ref: ConversationRef, messageId: string, text: string): Promise<void>
   delete?(ref: ConversationRef, messageId: string): Promise<void>
   pin?(ref: ConversationRef, messageId: string, pinned: boolean): Promise<void>

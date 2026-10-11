@@ -1169,8 +1169,57 @@ policy, the sealed log and its retention, pairing, U3 (mention wakes with the ob
 replies quoting the trigger in its topic; unmapped DM ignored; two agents in one group; the loop
 guard), U1 (an audit chat never wakes), U2 (a program posts three updates through the queue at the
 configured rate and reads them back), rate-limit parking, the breaker and the bell, dedupe of a
-redelivered event and a restart that keeps the log, pairing and session.
+redelivered event and a restart that keeps the log, pairing and session; the hardening tests:
+a simulated crash between turn end and delivery (one send after the restart), a `sending` row
+checked against the platform, a blind platform, retried chunks keep their order, approvals
+(buttons, deny, refusal, admin, web link, web wins, question), the rebinding and read actions.
 `bun scripts/channels-demo.ts` runs a small demo on the mock adapter.
+
+**Hardening (reliable delivery, approvals, rebinding).** Four rules turn the sketch above into
+something you can run for U1-U3.
+
+- *Outbox* ([`delivery-store.ts`](../../examples/team/server/src/infra/channels/delivery-store.ts),
+  table `channel_outbox`). Nothing is sent before it is a row (body sealed like the log): `reply`
+  rows are written at `turn.end` (one per chunk, with the trigger, the target and the chunk index;
+  a trigger that already has reply rows queues nothing), `post` rows by `channel_send`, `approval`
+  rows by the approval announcement. A row is claimed with a compare-and-set (`pending` ->
+  `sending`) so it is posted by one sender at most, and its id travels to the adapter as
+  `OutboundMessage.key` (an adapter whose platform can dedupe uses it). Success marks the row
+  `sent` with the platform message id. A reply or approval row whose send fails is retried
+  (backoff 5 s doubling to 5 min, ten attempts, then a bell notification); an `invalid` error is
+  final. On boot (`register`) retries are due at once and rows a crash left in `sending` are
+  checked against the platform history: found = marked sent, absent = sent, and a platform that
+  cannot list history never gets the row again (marked failed, bell rings: a duplicate is worse
+  than a visible gap). `post` rows (tool calls) are never retried by the outbox and never resent
+  after a crash: the model was told, ADR-0014 says an interrupted tool call is not re-executed.
+  Chunk `n+1` waits for chunk `n`. Posts with files bypass the outbox (the bytes are not stored).
+- *Approvals in chat.* A turn that a channel message started and that stops at a tool approval or
+  an `ask_user_question` posts a short request into the conversation (quoting the trigger). With
+  the `buttons` capability an approval carries Approve / Deny buttons (inbound `action` events,
+  `approve` / `deny`, data = the approval row id); without it, and for every question, the request
+  links to the thread in the web app. **Who may answer from the chat:** the team member the
+  trigger's sender is linked to (pairing), or a member listed in the connection's `admins`
+  (default `['owner']`, the example's single principal). Everybody else, including unmapped
+  accounts, gets a readable refusal and nothing changes. The answer goes through the same
+  `answerAttention` as the web. **First answer wins:** the chat claims the approval row with a
+  compare-and-set before answering; an answer from anywhere else shows up as a `pending-changed`
+  event in the activity feed, which the gateway reads (a wrapper around the activity store,
+  [`attention.ts`](../../examples/team/server/src/infra/channels/attention.ts)) and turns into an
+  edit of the request ("Answered in the web app"); a late button press gets "already answered".
+  A turn the web app starts in a channel thread announces nothing in the chat. The reply of the
+  continuation is delivered through the outbox like any other (the parked trigger is kept in
+  `channel_approvals`).
+- *Rebinding.* The agent of a conversation is the binding's agent at every wake (group or topic
+  `agentId`, else the connection's). When it changed, the conversation moves to the next
+  generation: a new session `channel:<connection>:<conversation>#2` and a new thread of the new
+  agent. The old agent's thread stays as history; its pending approvals still work.
+- *Native read actions.* `gateway.readActionTools(agentId)` lists the tool names of the
+  read-risk native actions of the agent's connections, derived from the adapters' catalogs, and
+  the permission engine of a session allows them. Write, external and destructive actions keep
+  asking.
+
+The web app shows a source badge for a channel conversation in the thread list and in the
+switcher; it can be read and continued there (what is written there is not posted to the chat).
 
 ## What to change when you copy it
 

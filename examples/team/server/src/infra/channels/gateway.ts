@@ -14,9 +14,18 @@
  */
 import type { Database } from 'bun:sqlite'
 import { errorText, uuidv7 } from 'eharness'
+import { ASK_TOOL, pendingQuestions } from 'eharness/ask'
 import type { SecretVault } from 'eharness/providers'
 import type { EventAppender, ThreadStore } from '../../app/ports.ts'
 import { isAllowedMediaType, MAX_UPLOAD_BYTES, mediaTypeOfName } from '../../domain/chat.ts'
+import {
+  type ApprovalRow,
+  type ApprovalStore,
+  type OutboxRow,
+  type OutboxStore,
+  sqliteApprovalStore,
+  sqliteOutboxStore,
+} from './delivery-store.ts'
 import { createOutbound, type Outbound, type OutboundOptions } from './outbound.ts'
 import {
   type ConnectionConfig,
@@ -26,6 +35,7 @@ import {
   createLoopGuard,
   decideWake,
   NO_REPLY,
+  nativeToolName,
   neutralize,
   type RateLimits,
   type ResolvedScope,
@@ -53,6 +63,7 @@ import {
   type InboundAttachment,
   type InboundEvent,
   type OutboundFile,
+  type OutboundMessage,
 } from './types.ts'
 
 /** A user-facing failure of a channel operation: the message is written for the model to read. */
@@ -63,6 +74,35 @@ export interface FilePart {
   mediaType: string
   url: string
   filename?: string
+}
+
+export interface ApprovalAnswerInput {
+  agentId: string
+  sessionId: string
+  /** `approvalId` of the pending item. */
+  itemId: string
+  approved: boolean
+  actor: { id: string; name?: string }
+}
+
+/** The part of a turn's `pending` state the gateway reads (a structural subset of the library's). */
+export interface PendingView {
+  approvals: ReadonlyArray<{
+    approvalId: string
+    toolCallId: string
+    toolName: string
+    input?: unknown
+    risk?: string
+    granted?: true
+    answer?: unknown
+  }>
+  clientTools: ReadonlyArray<{
+    toolCallId: string
+    toolName: string
+    input?: unknown
+    answer?: unknown
+    result?: unknown
+  }>
 }
 
 export interface WakeInput {
@@ -100,6 +140,20 @@ export interface GatewayDeps {
   }
   /** Reads a library file for `channel_send` uploads. */
   files: { read(path: string): Promise<{ bytes: Uint8Array; mediaType: string } | undefined> }
+  /**
+   * Answers an approval of a channel session on the session that owns it (the library's
+   * `answerAttention`, the same path as the web app). Absent = approvals cannot be answered from
+   * a chat: the request only links to the web app.
+   */
+  approvals?: {
+    answer(input: ApprovalAnswerInput): Promise<{
+      status: 'resumed' | 'recorded' | 'already-answered' | 'not-found'
+    }>
+  }
+  /** Link to a channel thread in the web app, for requests that cannot use buttons. */
+  webLink?: (target: { agentId: string; sessionId: string }) => string | undefined
+  /** Retry timing of the outbox (tests use small values). */
+  delivery?: { retryBaseMs?: number; retryMaxMs?: number; maxAttempts?: number }
   /** A bell notification (breaker opened). */
   notify?(n: { key: string; title: string; body: string; agentId: string | null }): void
   now?: () => number
@@ -114,6 +168,7 @@ export interface GatewayDeps {
 }
 
 export type HandleResult =
+  | { action: 'approval'; reason: string }
   | { action: 'wake'; reason: string }
   | { action: 'observe'; reason: string }
   | { action: 'drop'; reason: string }
@@ -148,6 +203,8 @@ export interface PostOptions {
   text: string
   replyTo?: string | undefined
   files?: OutboundFile[]
+  /** The session whose tool call posts (kept on the outbox row). */
+  sessionId?: string | undefined
 }
 
 export interface ChannelGateway {
@@ -170,6 +227,19 @@ export interface ChannelGateway {
   }
   conversations: ConversationStore
   log: ChannelLog
+  /** The outbox: every message is a row before it is sent (replies, posts, approval requests). */
+  outbox: OutboxStore
+  /** Approvals and questions announced in chat conversations. */
+  approvals: ApprovalStore
+  /** Send what is due in the outbox of a connection (default: all). Resolves when the pass is done. */
+  flush(connectionId?: string): Promise<void>
+  /**
+   * An item of a channel session stopped waiting (answered in the web app, by the classifier, or
+   * from a chat): updates the announcement. Fed from the activity feed (`pending-changed`).
+   */
+  pendingChanged(event: { sessionId: string; waiting: readonly string[] }): Promise<void>
+  /** Tool names of the read-risk native actions of the connections an agent has (allowed without asking). */
+  readActionTools(agentId: string): string[]
   outbound: Outbound
   /** Library access of the tools (uploads out, attachments in). */
   files: GatewayDeps['files']
@@ -190,6 +260,7 @@ export interface ChannelGateway {
     sessionId: string
     stop: string
     messages: ReadonlyArray<{ role: string; parts?: unknown; metadata?: unknown }>
+    pending?: PendingView | undefined
   }): Promise<void>
   /** Delete log rows past their retention. Returns the number removed. */
   purge(): number
@@ -201,6 +272,8 @@ const MAX_ATTACHMENTS = 4
 const TYPING_EVERY_MS = 4000
 const REPLY_EXCERPT = 200
 const PAIRING_TTL_MS = 24 * 3_600_000
+/** Chunk size of a reply queued while its connection is down (under every platform limit we know). */
+const FALLBACK_TEXT_LENGTH = 4000
 
 const clip = (text: string, max: number): string =>
   text.length > max ? `${text.slice(0, max - 1)}…` : text
@@ -256,6 +329,12 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   const conversations = sqliteConversationStore(deps.sqlite)
   const log = sqliteChannelLog(deps.sqlite, deps.vault)
   const pairing = sqlitePairingStore(deps.sqlite)
+  const outbox = sqliteOutboxStore(deps.sqlite, deps.vault)
+  const approvals = sqliteApprovalStore(deps.sqlite)
+  const retryBaseMs = deps.delivery?.retryBaseMs ?? 5000
+  const retryMaxMs = deps.delivery?.retryMaxMs ?? 300_000
+  const maxDeliveryAttempts = deps.delivery?.maxAttempts ?? 10
+  let stopped = false
   const adapters = new Map<string, ChannelAdapter>()
   const cache = new Map<string, ConnectionConfig>(configs.list().map((c) => [c.connectionId, c]))
   const guards = new Map<string, ReturnType<typeof createLoopGuard>>()
@@ -325,7 +404,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
   ): ConversationRow {
     const existing = conversations.get(config.connectionId, ref.id)
     const label = ref.title ?? scope.label ?? ref.container
-    const row =
+    let row =
       existing ??
       conversations.ensure(
         {
@@ -342,6 +421,17 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     if (existing !== undefined) {
       // keep the newest reference (title changes), never the session or agent
       conversations.ensure({ ...existing, ref, label: ref.title ?? null }, now())
+    }
+    // the agent of a conversation follows the current binding at every wake: a new agent never
+    // continues the session of the one before it (its own session, its own thread)
+    if (row.agentId !== scope.agentId) {
+      const generation = row.generation + 1
+      row =
+        conversations.rebind(config.connectionId, ref.id, {
+          agentId: scope.agentId,
+          sessionId: channelSessionId(config.connectionId, ref.id, generation),
+          generation,
+        }) ?? row
     }
     const sourceLabel = `${adapter.platform} · ${label}`
     const thread = deps.threads.getBySession(row.sessionId)
@@ -446,6 +536,486 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     return lines.join('\n')
   }
 
+  // --- delivery: the outbox ---------------------------------------------------------------------
+
+  const flushChains = new Map<string, Promise<void>>()
+  const flushTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  const recovered = new Set<string>()
+
+  const backoff = (attempt: number): number =>
+    Math.min(retryMaxMs, retryBaseMs * 2 ** Math.max(0, attempt - 1))
+
+  const targetOf = (
+    row: OutboxRow,
+  ): { connectionId: string; conversationId: string; kind: ConversationKind } => ({
+    connectionId: row.connectionId,
+    conversationId: row.conversationId,
+    kind: row.ref.kind,
+  })
+
+  const logSent = (
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+    ref: ConversationRef,
+    platformId: string,
+    text: string,
+    files: OutboundFile[] = [],
+  ): void => {
+    void log
+      .insert(
+        {
+          connectionId: config.connectionId,
+          conversationId: ref.id,
+          platformId,
+          at: now(),
+          self: true,
+          sender: adapter.self(),
+          text,
+          attachments: files.map((f) => ({
+            id: f.name,
+            name: f.name,
+            mediaType: f.mediaType,
+            size: f.bytes.byteLength,
+          })),
+        },
+        { pending: false, handled: true },
+      )
+      .catch((error) => {
+        if (!stopped) warn(`channels: could not log a sent message: ${errorText(error)}`)
+      })
+  }
+
+  const giveUp = (row: OutboxRow, config: ConnectionConfig, reason: string): void => {
+    outbox.markFailed(row.id, reason, now())
+    warn(`channels: a ${row.kind} to ${row.conversationId} was not delivered: ${reason}`)
+    deps.notify?.({
+      key: `channel-outbox:${row.id}`,
+      title: `A message to ${row.ref.title ?? row.conversationId} was not delivered`,
+      body: `The ${row.kind === 'reply' ? 'reply' : row.kind === 'approval' ? 'approval request' : 'message'} could not be sent: ${reason}`,
+      agentId: config.agentId,
+    })
+  }
+
+  /**
+   * Send one outbox row. `retry`: a failure leaves the row for a later attempt (replies, approval
+   * requests); `once`: a failure is final (a tool call told the model, which may post again).
+   */
+  async function deliver(
+    row: OutboxRow,
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+    mode: 'retry' | 'once',
+  ): Promise<'sent' | 'retry' | 'failed' | 'skipped' | 'busy'> {
+    if (stopped) return 'retry'
+    if (!outbox.claim(row.id, now())) return 'busy'
+    if (row.kind === 'approval' && row.approvalId !== undefined) {
+      // answered in the meantime (the web app was faster): nothing to ask any more
+      if (approvals.get(row.approvalId)?.status !== 'open') {
+        outbox.markSkipped(row.id, 'answered before it was sent', now())
+        return 'skipped'
+      }
+    }
+    const caps = adapter.capabilities
+    const message: OutboundMessage = {
+      text: row.text,
+      key: row.id,
+      ...(row.replyTo !== undefined && caps.quote ? { replyTo: row.replyTo } : {}),
+      ...(row.buttons !== undefined && row.buttons.length > 0 && caps.buttons === true
+        ? { buttons: row.buttons }
+        : {}),
+    }
+    try {
+      const sent = await limitedOutbound.run(targetOf(row), () => adapter.send(row.ref, message))
+      outbox.markSent(row.id, sent.messageId, now())
+      logSent(config, adapter, row.ref, sent.messageId, row.text)
+      if (row.approvalId !== undefined) {
+        approvals.setMessage(row.approvalId, sent.messageId)
+        const a = approvals.get(row.approvalId)
+        // answered while the request was on its way: fix the message now
+        if (a !== undefined && a.status === 'answered') void resolveMessage(a, adapter, config)
+      }
+      return 'sent'
+    } catch (error) {
+      if (stopped) return 'retry'
+      const reason = errorText(error)
+      if (mode === 'once') {
+        outbox.markFailed(row.id, reason, now())
+        throw error
+      }
+      const kind = error instanceof ChannelError ? error.kind : 'transient'
+      if (kind === 'invalid' || row.attempts + 1 >= maxDeliveryAttempts) {
+        giveUp(row, config, reason)
+        return 'failed'
+      }
+      outbox.retryLater(row.id, reason, now() + backoff(row.attempts + 1), now())
+      return 'retry'
+    }
+  }
+
+  /** A row a crashed process left `sending`: did the platform get it? (Never post a message twice.) */
+  async function recoverRow(
+    row: OutboxRow,
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+  ): Promise<void> {
+    let found: string | undefined
+    let checked = false
+    if (adapter.capabilities.history && adapter.fetchHistory !== undefined) {
+      try {
+        const recent = await adapter.fetchHistory(row.ref, { limit: 50 })
+        checked = true
+        const self = adapter.self()
+        found = recent.find(
+          (e) =>
+            e.text === row.text &&
+            (e.sender === undefined || e.sender.id === self.id || e.sender.isSelf === true) &&
+            e.at >= row.createdAt - 60_000 &&
+            !outbox.platformIdTaken(row.connectionId, e.messageId),
+        )?.messageId
+      } catch (error) {
+        warn(`channels: could not check what ${row.id} did: ${errorText(error)}`)
+      }
+    }
+    if (found !== undefined) {
+      outbox.markSent(row.id, found, now())
+      if (row.approvalId !== undefined) approvals.setMessage(row.approvalId, found)
+      return
+    }
+    if (checked && row.kind !== 'post') {
+      // the platform does not have it: it is safe to send
+      outbox.retryLater(row.id, 'the process stopped while sending', 0, now())
+      return
+    }
+    outbox.markFailed(
+      row.id,
+      checked
+        ? 'interrupted before it was sent; a tool call is never re-executed'
+        : 'the process stopped while sending and the platform cannot say whether it arrived; not resent to avoid a duplicate',
+      now(),
+    )
+    if (row.kind !== 'post') {
+      deps.notify?.({
+        key: `channel-outbox:${row.id}`,
+        title: `A message to ${row.ref.title ?? row.conversationId} may not have arrived`,
+        body: 'The server stopped while it was sending it, and the platform cannot tell whether it was delivered. It was not sent again.',
+        agentId: config.agentId,
+      })
+    }
+  }
+
+  async function flushPass(connectionId: string): Promise<void> {
+    const adapter = adapters.get(connectionId)
+    const config = cache.get(connectionId)
+    if (stopped || adapter === undefined || config === undefined) return
+    if (!recovered.has(connectionId)) {
+      recovered.add(connectionId)
+      outbox.failStalePosts(connectionId, now())
+      outbox.releaseAll(connectionId)
+      for (const row of await outbox.sending(connectionId)) await recoverRow(row, config, adapter)
+    }
+    const stalled = new Set<string>()
+    for (;;) {
+      const rows = await outbox.due(connectionId, now(), 50)
+      let progressed = false
+      for (const row of rows) {
+        if (stopped) return
+        if (stalled.has(row.conversationId) || outbox.blockedBy(row)) continue
+        const result = await deliver(row, config, adapter, 'retry')
+        if (result === 'retry') stalled.add(row.conversationId)
+        else progressed = true
+      }
+      if (!progressed) break
+    }
+    // a failed attempt left rows for later: wake up when the first is due
+    const next = outbox.nextDue(connectionId, now())
+    const old = flushTimers.get(connectionId)
+    if (old !== undefined) clearTimeout(old)
+    flushTimers.delete(connectionId)
+    if (next !== undefined && !stopped) {
+      const timer = setTimeout(
+        () => {
+          flushTimers.delete(connectionId)
+          void flush(connectionId).catch(() => undefined)
+        },
+        Math.max(10, next - now()),
+      )
+      ;(timer as { unref?: () => void }).unref?.()
+      flushTimers.set(connectionId, timer)
+    }
+  }
+
+  function flush(connectionId?: string): Promise<void> {
+    const ids = connectionId === undefined ? [...adapters.keys()] : [connectionId]
+    return Promise.all(
+      ids.map((id) => {
+        const next = (flushChains.get(id) ?? Promise.resolve())
+          .catch(() => undefined)
+          .then(() => flushPass(id))
+        flushChains.set(id, next)
+        return next.catch((error) => {
+          if (!stopped) warn(`channels: delivery pass of ${id} failed: ${errorText(error)}`)
+        })
+      }),
+    ).then(() => undefined)
+  }
+
+  // --- approvals in chat -----------------------------------------------------------------------
+
+  const outcomeText = (a: ApprovalRow): string => {
+    if (a.outcome === 'approved' || a.outcome === 'denied') {
+      const by = a.answeredBy === null ? '' : ` by ${a.answeredBy}`
+      return `${a.outcome === 'approved' ? 'Approved' : 'Denied'}${by}: ${a.toolName}`
+    }
+    return `Answered in the web app: ${a.toolName}`
+  }
+
+  /** The announcement shows how it ended (edited in place; a platform that cannot edit gets a short follow-up). */
+  async function resolveMessage(
+    a: ApprovalRow,
+    adapter: ChannelAdapter,
+    config: ConnectionConfig,
+  ): Promise<void> {
+    if (a.messageId === null) return
+    const conv = conversations.get(a.connectionId, a.conversationId)
+    if (conv === undefined) return
+    const text = outcomeText(a)
+    try {
+      if (adapter.capabilities.edit && adapter.edit !== undefined) {
+        const edit = adapter.edit.bind(adapter)
+        const messageId = a.messageId
+        await limitedOutbound.run(
+          { connectionId: a.connectionId, conversationId: a.conversationId, kind: conv.ref.kind },
+          () => edit(conv.ref, messageId, text),
+        )
+      } else {
+        await sendDirect(config, adapter, conv.ref, text, a.messageId)
+      }
+    } catch (error) {
+      if (!stopped) warn(`channels: could not update an approval message: ${errorText(error)}`)
+    }
+  }
+
+  const questionTextOf = (item: {
+    toolCallId: string
+    toolName: string
+    input?: unknown
+  }): string => {
+    const q = pendingQuestions({
+      approvals: [],
+      clientTools: [{ toolCallId: item.toolCallId, toolName: item.toolName, input: item.input }],
+      externals: [],
+    } as never)[0]
+    const lines = (q?.questions ?? []).map((x: { question?: string }) => x.question).filter(Boolean)
+    return lines.length === 0
+      ? 'I have a question for you.'
+      : `I have a question: ${lines.join(' / ')}`
+  }
+
+  const inputExcerpt = (input: unknown): string => {
+    let text: string
+    try {
+      text = typeof input === 'string' ? input : (JSON.stringify(input) ?? '')
+    } catch {
+      text = ''
+    }
+    return text === '' || text === '{}' ? '' : clip(text.replace(/\s+/g, ' '), 300)
+  }
+
+  /** Who may answer: the member who triggered the turn, or an admin of the connection. */
+  const mayAnswer = (
+    config: ConnectionConfig,
+    a: ApprovalRow,
+    memberId: string | undefined,
+  ): boolean =>
+    memberId !== undefined && (memberId === a.requesterMember || config.admins.includes(memberId))
+
+  /** A turn of a channel conversation stopped at an approval or a question: say so in the conversation. */
+  async function announce(
+    row: ConversationRow,
+    adapter: ChannelAdapter,
+    trigger: string | undefined,
+    pending: PendingView,
+  ): Promise<void> {
+    let requesterPeer: string | null = null
+    let requesterMember: string | null = null
+    if (trigger !== undefined) {
+      const msg = await log.find(row.connectionId, row.conversationId, trigger)
+      requesterPeer = msg?.sender?.id ?? null
+      if (requesterPeer !== null)
+        requesterMember = pairing.memberOf(row.connectionId, requesterPeer)?.memberId ?? null
+    }
+    const caps = adapter.capabilities
+    const link = deps.webLink?.({ agentId: row.agentId, sessionId: row.sessionId })
+    const where = link === undefined ? 'the team web app' : link
+    const items: Array<{
+      itemId: string
+      kind: 'approval' | 'question'
+      toolName: string
+      text: string
+    }> = []
+    for (const a of pending.approvals) {
+      if (a.answer !== undefined || a.granted === true) continue
+      const excerpt = inputExcerpt(a.input)
+      items.push({
+        itemId: a.approvalId,
+        kind: 'approval',
+        toolName: a.toolName,
+        text: `I need an approval to use ${a.toolName}${a.risk === undefined ? '' : ` (${a.risk})`}${excerpt === '' ? '' : `: ${excerpt}`}.`,
+      })
+    }
+    for (const c of pending.clientTools) {
+      if (c.toolName !== ASK_TOOL || c.answer !== undefined || c.result !== undefined) continue
+      items.push({
+        itemId: c.toolCallId,
+        kind: 'question',
+        toolName: c.toolName,
+        text: questionTextOf(c),
+      })
+    }
+    for (const item of items) {
+      const rec = approvals.insert(
+        {
+          connectionId: row.connectionId,
+          conversationId: row.conversationId,
+          sessionId: row.sessionId,
+          agentId: row.agentId,
+          itemId: item.itemId,
+          itemKind: item.kind,
+          toolName: item.toolName,
+          triggerId: trigger ?? null,
+          requesterPeer,
+          requesterMember,
+        },
+        now(),
+      )
+      if (rec === undefined) continue // announced already (a partial answer re-ends the turn)
+      const buttons =
+        item.kind === 'approval' && caps.buttons === true && deps.approvals !== undefined
+      const text = buttons
+        ? `${item.text} Approve?`
+        : item.kind === 'approval'
+          ? `${item.text} Answer it in ${where}.`
+          : `${item.text} Answer it in ${where}.`
+      await outbox.enqueue(
+        [
+          {
+            connectionId: row.connectionId,
+            conversationId: row.conversationId,
+            sessionId: row.sessionId,
+            kind: 'approval',
+            triggerId: trigger,
+            chunkIndex: 0,
+            chunkCount: 1,
+            ref: row.ref,
+            text: clip(text, caps.maxTextLength),
+            ...(trigger !== undefined && caps.quote ? { replyTo: trigger } : {}),
+            ...(buttons
+              ? {
+                  buttons: [
+                    { name: 'approve', label: 'Approve', data: rec.id },
+                    { name: 'deny', label: 'Deny', data: rec.id },
+                  ],
+                }
+              : {}),
+            approvalId: rec.id,
+          },
+        ],
+        now(),
+      )
+    }
+    if (items.length > 0) await flush(row.connectionId)
+  }
+
+  /** A button pressed under an approval request. Undefined when it is not one of ours. */
+  async function handleApprovalAction(
+    event: Extract<InboundEvent, { type: 'action' }>,
+    config: ConnectionConfig,
+    adapter: ChannelAdapter,
+  ): Promise<HandleResult | undefined> {
+    const rec = event.data === undefined ? undefined : approvals.get(event.data)
+    const ref = event.conversation
+    if (
+      rec === undefined ||
+      rec.connectionId !== config.connectionId ||
+      rec.conversationId !== ref.id ||
+      rec.itemKind !== 'approval'
+    ) {
+      return undefined
+    }
+    const reply = (text: string): Promise<void> =>
+      sendDirect(config, adapter, ref, text, rec.messageId ?? undefined).catch((error) =>
+        warn(`channels: an approval reply failed: ${errorText(error)}`),
+      )
+    const link = pairing.memberOf(config.connectionId, event.sender.id)
+    const web = deps.webLink?.({ agentId: rec.agentId, sessionId: rec.sessionId })
+    if (!mayAnswer(config, rec, link?.memberId)) {
+      await reply(
+        link === undefined
+          ? `I cannot tell who you are, so I cannot take your answer here. Link your account to the team first${web === undefined ? '' : `, or answer in the web app: ${web}`}.`
+          : `Only the person who asked or a team admin can answer this${web === undefined ? '' : `. It can also be answered in the web app: ${web}`}.`,
+      )
+      return { action: 'approval', reason: 'not allowed to answer' }
+    }
+    if (rec.status !== 'open') {
+      await reply(`That was already answered (${outcomeText(rec)}).`)
+      return { action: 'approval', reason: 'already answered' }
+    }
+    if (deps.approvals === undefined) {
+      await reply(`Answering from a chat is not set up. Answer in ${web ?? 'the team web app'}.`)
+      return { action: 'approval', reason: 'no answer path' }
+    }
+    const approved = event.name === 'approve'
+    const who =
+      link?.name ?? event.sender.name ?? event.sender.username ?? link?.memberId ?? 'someone'
+    // claim first (atomic): whichever answer arrives first wins, the other side is told
+    if (!approvals.answer(rec.id, who, approved ? 'approved' : 'denied', now())) {
+      await reply('That was already answered elsewhere.')
+      return { action: 'approval', reason: 'already answered' }
+    }
+    let status: string
+    try {
+      const result = await deps.approvals.answer({
+        agentId: rec.agentId,
+        sessionId: rec.sessionId,
+        itemId: rec.itemId,
+        approved,
+        actor: { id: link?.memberId ?? event.sender.id, name: who },
+      })
+      status = result.status
+    } catch (error) {
+      approvals.reopen(rec.id)
+      await reply(
+        `I could not record that answer (${errorText(error)}). Try again, or answer in ${web ?? 'the web app'}.`,
+      )
+      return { action: 'approval', reason: 'answer failed' }
+    }
+    const done = approvals.get(rec.id) as ApprovalRow
+    if (status === 'already-answered' || status === 'not-found') {
+      // the web app (or the classifier) got there first: say how it ended
+      approvals.answer(rec.id, who, 'web', now())
+      await resolveMessage({ ...done, outcome: 'web', answeredBy: null }, adapter, config)
+      return { action: 'approval', reason: status }
+    }
+    await resolveMessage(done, adapter, config)
+    return { action: 'approval', reason: approved ? 'approved' : 'denied' }
+  }
+
+  async function pendingChanged(event: {
+    sessionId: string
+    waiting: readonly string[]
+  }): Promise<void> {
+    for (const rec of approvals.open(event.sessionId)) {
+      if (event.waiting.includes(rec.itemId)) continue
+      // not waiting any more and not answered from this chat: someone answered it elsewhere
+      if (!approvals.answer(rec.id, 'web', 'web', now())) continue
+      const adapter = adapters.get(rec.connectionId)
+      const config = cache.get(rec.connectionId)
+      const done = approvals.get(rec.id)
+      if (adapter !== undefined && config !== undefined && done !== undefined)
+        await resolveMessage(done, adapter, config)
+    }
+  }
+
   // --- events ----------------------------------------------------------------------------------
 
   async function sendDirect(
@@ -453,10 +1023,15 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     adapter: ChannelAdapter,
     ref: ConversationRef,
     text: string,
+    replyTo?: string,
   ): Promise<void> {
     await limitedOutbound.run(
       { connectionId: config.connectionId, conversationId: ref.id, kind: ref.kind },
-      () => adapter.send(ref, { text }),
+      () =>
+        adapter.send(ref, {
+          text,
+          ...(replyTo !== undefined && adapter.capabilities.quote ? { replyTo } : {}),
+        }),
     )
   }
 
@@ -631,6 +1206,10 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       }
       return { action: 'record', reason: 'edited' }
     }
+    if (event.type === 'action' && (event.name === 'approve' || event.name === 'deny')) {
+      const answered = await handleApprovalAction(event, config, adapter)
+      if (answered !== undefined) return answered
+    }
     return handleMessageLike(event, config, adapter, scope)
   }
 
@@ -739,47 +1318,53 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       throw new ChannelUserError('There is nothing to send.')
     }
     const ids: string[] = []
-    for (const [i, chunk] of chunks.entries()) {
-      const quote =
-        i === 0 && options.replyTo !== undefined && caps.quote ? options.replyTo : undefined
-      let sent: { messageId: string }
+    if (files.length > 0) {
+      // files are not kept in the outbox (the tool call is answered at once; it can post again)
       try {
-        sent = await limitedOutbound.run(
+        const sent = await limitedOutbound.run(
           { connectionId: config.connectionId, conversationId: ref.id, kind: ref.kind },
-          () =>
-            adapter.send(ref, {
-              text: chunk,
-              ...(quote === undefined ? {} : { replyTo: quote }),
-              ...(files.length === 0 ? {} : { files }),
-            }),
+          () => adapter.send(ref, { text: chunks[0] as string, files }),
         )
+        ids.push(sent.messageId)
+        logSent(config, adapter, ref, sent.messageId, chunks[0] as string, files)
       } catch (error) {
         if (error instanceof ChannelError) {
           throw new ChannelUserError(`Sending failed (${error.kind}): ${error.message}`)
         }
         throw error
       }
-      ids.push(sent.messageId)
-      await log
-        .insert(
-          {
-            connectionId: config.connectionId,
-            conversationId: ref.id,
-            platformId: sent.messageId,
-            at: now(),
-            self: true,
-            sender: adapter.self(),
-            text: chunk,
-            attachments: files.map((f) => ({
-              id: f.name,
-              name: f.name,
-              mediaType: f.mediaType,
-              size: f.bytes.byteLength,
-            })),
-          },
-          { pending: false, handled: true },
-        )
-        .catch((error) => warn(`channels: could not log a sent message: ${errorText(error)}`))
+      return ids
+    }
+    // a post is a row before it is sent; a failure is final (the tool call tells the model)
+    const rowIds = await outbox.enqueue(
+      chunks.map((chunk, i) => ({
+        connectionId: config.connectionId,
+        conversationId: ref.id,
+        sessionId: options.sessionId,
+        kind: 'post' as const,
+        chunkIndex: i,
+        chunkCount: chunks.length,
+        ref,
+        text: chunk,
+        ...(i === 0 && options.replyTo !== undefined && caps.quote
+          ? { replyTo: options.replyTo }
+          : {}),
+      })),
+      now(),
+    )
+    for (const [i, id] of rowIds.entries()) {
+      const row = (await outbox.get(id)) as OutboxRow
+      try {
+        await deliver(row, config, adapter, 'once')
+      } catch (error) {
+        for (const later of rowIds.slice(i + 1))
+          outbox.markFailed(later, 'an earlier part of the message was not sent', now())
+        if (error instanceof ChannelError) {
+          throw new ChannelUserError(`Sending failed (${error.kind}): ${error.message}`)
+        }
+        throw error
+      }
+      ids.push(((await outbox.get(id)) as OutboxRow).platformId as string)
     }
     return ids
   }
@@ -868,6 +1453,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     sessionId: string
     stop: string
     messages: ReadonlyArray<{ role: string; parts?: unknown; metadata?: unknown }>
+    pending?: PendingView | undefined
   }): Promise<void> {
     stopTyping(end.sessionId)
     const row = conversations.bySession(end.sessionId)
@@ -875,25 +1461,56 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     const upTo = shown.get(end.sessionId)
     shown.delete(end.sessionId)
     if (upTo !== undefined) log.clearPending(row.connectionId, row.conversationId, upTo)
-    if (end.stop !== 'complete') return
     const ids = triggerIds(end.messages)
-    const trigger = ids.at(-1)
-    if (trigger === undefined) return // not a turn the channel started (a person in the web app)
+    // a continuation (an approval answered) carries no trigger of its own: the one that parked it
+    const parked = approvals.activeTrigger(end.sessionId)
+    const trigger = ids.at(-1) ?? parked?.triggerId ?? undefined
     const config = cache.get(row.connectionId)
     const adapter = adapters.get(row.connectionId)
-    if (config === undefined || adapter === undefined) return
+    if (end.stop === 'tool-pending') {
+      if (
+        trigger !== undefined &&
+        end.pending !== undefined &&
+        config !== undefined &&
+        adapter !== undefined
+      )
+        await announce(row, adapter, trigger, end.pending)
+      return
+    }
+    // the turn is over: its announcements no longer belong to a running turn
+    if (parked !== undefined) approvals.consume(end.sessionId)
+    if (end.stop !== 'complete') return
+    if (trigger === undefined) return // not a turn the channel started (a person in the web app)
+    if (config === undefined) return
     const scope = resolveScope(config, row.ref)
     if (scope.delivery !== 'final_text') return
     const text = finalAssistantText(end.messages)
     if (text === '') return
     if (scope.wake === 'always' && text === NO_REPLY) return
     try {
-      await post(
-        { config, adapter, ref: row.ref, scope },
-        { text, ...(scope.quote === 'first' ? { replyTo: trigger } : {}) },
+      // persist before sending: a crash after this point loses nothing (the outbox is flushed on boot)
+      // a connection that is not connected right now still queues the reply (it goes out on reconnect)
+      const chunks = splitText(text, adapter?.capabilities.maxTextLength ?? FALLBACK_TEXT_LENGTH)
+      await outbox.enqueue(
+        chunks.map((chunk, i) => ({
+          connectionId: row.connectionId,
+          conversationId: row.conversationId,
+          sessionId: row.sessionId,
+          kind: 'reply' as const,
+          triggerId: trigger,
+          chunkIndex: i,
+          chunkCount: chunks.length,
+          ref: row.ref,
+          text: chunk,
+          ...(i === 0 && scope.quote === 'first' && (adapter?.capabilities.quote ?? true)
+            ? { replyTo: trigger }
+            : {}),
+        })),
+        now(),
       )
+      await flush(row.connectionId)
     } catch (error) {
-      warn(`channels: the reply to ${row.sessionId} was not delivered: ${errorText(error)}`)
+      warn(`channels: the reply to ${row.sessionId} was not queued: ${errorText(error)}`)
     }
   }
 
@@ -915,6 +1532,7 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
       const existing = adapters.get(adapter.connectionId)
       if (existing !== undefined) await existing.stop().catch(() => undefined)
       adapters.set(adapter.connectionId, adapter)
+      recovered.delete(adapter.connectionId)
       await adapter.start(async (event) => {
         try {
           await handle(event)
@@ -922,6 +1540,8 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
           warn(`channels: an event of ${adapter.connectionId} failed: ${errorText(error)}`)
         }
       })
+      // boot: what an earlier process left in the outbox goes out now
+      void flush(adapter.connectionId)
     },
     async unregister(connectionId) {
       const a = adapters.get(connectionId)
@@ -942,6 +1562,20 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     },
     conversations,
     log,
+    outbox,
+    approvals,
+    flush,
+    pendingChanged,
+    readActionTools(agentId) {
+      const names: string[] = []
+      for (const c of cache.values()) {
+        if (!isBound(agentId, c.connectionId)) continue
+        const adapter = adapters.get(c.connectionId)
+        for (const a of adapter?.actions ?? [])
+          if (a.risk === 'read') names.push(nativeToolName(adapter?.platform ?? 'channel', a.name))
+      }
+      return [...new Set(names)]
+    },
     outbound: limitedOutbound,
     files: deps.files,
     attachments: deps.attachments,
@@ -957,6 +1591,9 @@ export function createChannelGateway(deps: GatewayDeps): ChannelGateway {
     turnEnded,
     purge: () => log.purge(now(), deps.retentionDays),
     async stop() {
+      stopped = true
+      for (const t of flushTimers.values()) clearTimeout(t)
+      flushTimers.clear()
       for (const id of [...typing.keys()]) stopTyping(id)
       for (const a of adapters.values()) await a.stop().catch(() => undefined)
       adapters.clear()

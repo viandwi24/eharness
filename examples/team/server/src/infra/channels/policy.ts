@@ -83,6 +83,12 @@ export const ConnectionConfigSchema = z.object({
       cooldownMs: z.number().int().min(1).default(600_000),
     })
     .default({ maxEvents: 20, windowMs: 300_000, cooldownMs: 600_000 }),
+  /**
+   * Team members (the member ids pairing links accounts to) who may answer any approval of this
+   * connection from a chat, besides the member who triggered the turn. The team example has one
+   * principal, `owner`.
+   */
+  admins: z.array(z.string().min(1)).default(['owner']),
   /** Observed messages injected into the next wake (default 50). */
   historyLimit: z.number().int().min(1).max(200).default(50),
   rate: RateLimitsSchema.default(RateLimitsSchema.parse({})),
@@ -197,9 +203,23 @@ export function matchesAlias(text: string, aliases: readonly string[], self: Ide
   return false
 }
 
-/** `channel:<connectionId>:<conversation id>`: one session per conversation. */
-export const channelSessionId = (connectionId: string, conversationId: string): string =>
-  `channel:${connectionId}:${conversationId}`
+/**
+ * `channel:<connectionId>:<conversation id>`: one session per conversation and agent. When the
+ * agent of a conversation changes, the new agent gets the next generation (`...#2`): it never
+ * continues the session of the agent before it.
+ */
+export const channelSessionId = (
+  connectionId: string,
+  conversationId: string,
+  generation = 0,
+): string =>
+  `channel:${connectionId}:${conversationId}${generation > 0 ? `#${generation + 1}` : ''}`
+
+/** The tool name of a native action: `<platform>_<action>` (the same rule everywhere). */
+export const nativeToolName = (platform: string, action: string): string => {
+  const safe = (s: string): string => s.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+  return `${safe(platform)}_${safe(action)}`
+}
 
 export const isChannelSession = (sessionId: string): boolean => sessionId.startsWith('channel:')
 

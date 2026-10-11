@@ -747,10 +747,83 @@ export const channelConversations = sqliteTable(
     /** Days the log keeps this conversation (null = the workspace default). */
     retentionDays: integer('retention_days'),
     createdAt: integer('created_at').notNull(),
+    /** Bumped when the agent of the conversation changes: the new agent gets a new session. */
+    generation: integer('generation').notNull().default(0),
   },
   (t) => [
     primaryKey({ columns: [t.connectionId, t.conversationId] }),
     uniqueIndex('channel_conversations_session').on(t.sessionId),
+  ],
+)
+
+/**
+ * The outbox (P41 hardening): every message the gateway sends is a row before it is sent.
+ * `kind`: `reply` (final text of a turn), `post` (a tool call), `approval` (a request for an
+ * answer). `status`: `pending` -> `sending` (claimed) -> `sent` | `failed` | `skipped`. `body` is
+ * sealed with the channel vault (text, quote, buttons). A row is posted at most once: it is
+ * claimed with a compare-and-set and carries its own id to the adapter as the idempotency key.
+ */
+export const channelOutbox = sqliteTable(
+  'channel_outbox',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    sessionId: text('session_id'),
+    kind: text('kind').notNull(),
+    /** Platform id of the message that woke the agent (replies, approvals). */
+    triggerId: text('trigger_id'),
+    chunkIndex: integer('chunk_index').notNull().default(0),
+    chunkCount: integer('chunk_count').notNull().default(1),
+    body: text('body').notNull(),
+    status: text('status').notNull().default('pending'),
+    attempts: integer('attempts').notNull().default(0),
+    nextAt: integer('next_at').notNull().default(0),
+    lastError: text('last_error'),
+    platformId: text('platform_id'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+    sentAt: integer('sent_at'),
+  },
+  (t) => [
+    index('channel_outbox_due').on(t.connectionId, t.status, t.createdAt),
+    index('channel_outbox_trigger').on(t.connectionId, t.conversationId, t.kind, t.triggerId),
+  ],
+)
+
+/**
+ * An approval or question of a channel turn that was announced in the conversation. `status`:
+ * `open` -> `answered` (from the channel by `answeredBy`, or elsewhere = the web). `consumed`:
+ * the turn that raised it finished (its reply was queued).
+ */
+export const channelApprovals = sqliteTable(
+  'channel_approvals',
+  {
+    id: text('id').primaryKey(),
+    connectionId: text('connection_id').notNull(),
+    conversationId: text('conversation_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    agentId: text('agent_id').notNull(),
+    /** `approvalId` or `toolCallId` of the pending item. */
+    itemId: text('item_id').notNull(),
+    itemKind: text('item_kind').notNull(),
+    toolName: text('tool_name').notNull(),
+    triggerId: text('trigger_id'),
+    /** Platform account that wrote the trigger, and the team member it is linked to (when it is). */
+    requesterPeer: text('requester_peer'),
+    requesterMember: text('requester_member'),
+    status: text('status').notNull().default('open'),
+    answeredBy: text('answered_by'),
+    outcome: text('outcome'),
+    /** Platform id of the request message, once it was sent. */
+    messageId: text('message_id'),
+    consumed: integer('consumed').notNull().default(0),
+    createdAt: integer('created_at').notNull(),
+    answeredAt: integer('answered_at'),
+  },
+  (t) => [
+    uniqueIndex('channel_approvals_item').on(t.sessionId, t.itemId),
+    index('channel_approvals_session').on(t.sessionId, t.status),
   ],
 )
 

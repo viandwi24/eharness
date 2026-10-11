@@ -32,6 +32,7 @@ export const MOCK_CAPABILITIES: ChannelCapabilities = {
   history: true,
   members: true,
   upload: true,
+  buttons: true,
 }
 
 export interface MockSent {
@@ -76,6 +77,16 @@ export interface MockAdapter extends ChannelAdapter {
   readonly typings: number[]
   /** Deliver a message from a person; resolves when the gateway handled it. */
   say(input: MockSay): Promise<string>
+  /** A button pressed in a chat (an inbound `action` event). */
+  press(input: {
+    chat?: string
+    topic?: string
+    kind?: ConversationKind
+    from: Identity
+    name: string
+    data?: string
+    messageId?: string
+  }): Promise<void>
   /** Deliver any event (edit, delete, a redelivery with the same id, ...). */
   emit(event: InboundEvent): Promise<void>
   /** The conversation reference the adapter builds for a chat. */
@@ -277,6 +288,21 @@ export function createMockAdapter(options: MockOptions): MockAdapter {
         },
       })
       return id
+    },
+    async press(input) {
+      await adapter.emit({
+        type: 'action',
+        conversation: ref(input.chat ?? 'room', {
+          ...(input.topic === undefined ? {} : { topic: input.topic }),
+          ...(input.kind === undefined ? {} : { kind: input.kind }),
+          title: input.kind === 'dm' ? (input.from.name ?? input.from.id) : 'Room',
+        }),
+        at: clock(),
+        name: input.name,
+        sender: input.from,
+        ...(input.data === undefined ? {} : { data: input.data }),
+        ...(input.messageId === undefined ? {} : { messageId: input.messageId }),
+      })
     },
     ref,
     failNext(error, n = 1) {

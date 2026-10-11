@@ -268,6 +268,8 @@ describe('migration of the single DM', () => {
       'channel_messages',
       'channel_identities',
       'channel_pairing_tokens',
+      'channel_outbox',
+      'channel_approvals',
     ])
       db.run(`DROP TABLE IF EXISTS ${table}`)
     const journal = JSON.parse(
@@ -322,9 +324,8 @@ describe('work started from a thread', () => {
       lead: [
         { toolCalls: [delegateBg] },
         { text: 'Delegated.' },
-        // the library wakes the parent twice, by design (spec 20): once when the child parks on
-        // the person's answer ("waiting"), once when it finishes (its report)
-        { text: 'It is waiting for the client.' },
+        // the child parking on the person's answer is a stored notice (`onPark: 'notice'`, spec 20
+        // §3.5), not a model call: the lead wakes once, when the child's report arrives
         { text: 'Report received.' },
       ],
       researcher: [
@@ -375,8 +376,9 @@ describe('work started from a thread', () => {
     await until('lead woke in its thread', async () =>
       (await messagesOf(i, t.sessionId)).includes('Report received.'),
     )
-    expect(i.models.lead?.calls).toHaveLength(4)
-    expect(await messagesOf(i, t.sessionId)).toContain('It is waiting for the client.')
+    expect(i.models.lead?.calls).toHaveLength(3)
+    // the notice is in the thread (visible), the model read it together with the report
+    expect(await messagesOf(i, t.sessionId)).toContain('is waiting for the user')
     expect(await messagesOf(i, other.sessionId)).not.toContain('Report received.')
     expect(await messagesOf(i, `dm:${i.leadId}`)).not.toContain('Report received.')
   })

@@ -22,10 +22,11 @@ import { rehearsalSessions } from '../eh/rehearsal-registry.ts'
 import {
   type ChannelGateway,
   ChannelUserError,
+  type PendingView,
   type ResolvedTarget,
   type TargetInput,
 } from './gateway.ts'
-import { senderLabel } from './policy.ts'
+import { nativeToolName, senderLabel } from './policy.ts'
 import type { ActionRisk, ChannelAdapter, HistoryEntry } from './types.ts'
 
 export const CHANNEL_DESCRIBE_TOOL = 'channel_describe'
@@ -120,8 +121,6 @@ const describeSchema = z.object({
   connection: z.string().optional().describe('Only this connection.'),
 })
 
-const safeName = (s: string): string => s.toLowerCase().replace(/[^a-z0-9_]/g, '_')
-
 const timeOf = (at: number): string => new Date(at).toISOString().slice(0, 16).replace('T', ' ')
 
 const clip = (text: string, max: number): string =>
@@ -185,6 +184,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
                 'history',
                 'members',
                 'upload',
+                'buttons',
               ] as const
             ).filter((f) => k[f])
             lines.push(
@@ -211,7 +211,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
           }
           for (const a of adapter?.actions ?? []) {
             lines.push(
-              `  Native action ${safeName(adapter?.platform ?? 'channel')}_${safeName(a.name)} (${a.risk}): ${a.summary}`,
+              `  Native action ${nativeToolName(adapter?.platform ?? 'channel', a.name)} (${a.risk}): ${a.summary}`,
             )
           }
         }
@@ -358,6 +358,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
             return `ERROR: the file is larger than ${MAX_UPLOAD_BYTES} bytes.`
           const name = input.file.split('/').pop() ?? 'file'
           const ids = await gw.post(t, {
+            sessionId,
             text: input.text ?? '',
             files: [{ name, mediaType: file.mediaType, bytes: file.bytes }],
           })
@@ -368,6 +369,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
         if (input.action === 'reply' && input.replyTo === undefined)
           return 'ERROR: reply needs replyTo (a platform message id).'
         const ids = await gw.post(t, {
+          sessionId,
           text: input.text,
           ...(input.action === 'reply' ? { replyTo: input.replyTo } : {}),
         })
@@ -468,7 +470,7 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
       for (const c of bound) {
         const adapter = gw.adapter(c.connectionId)
         for (const action of adapter?.actions ?? []) {
-          const name = `${safeName(adapter?.platform ?? 'channel')}_${safeName(action.name)}`
+          const name = nativeToolName(adapter?.platform ?? 'channel', action.name)
           const list = natives.get(name) ?? []
           list.push({
             connectionId: c.connectionId,
@@ -536,10 +538,16 @@ export function channels(options: ChannelsPluginOptions): HarnessPlugin<'channel
             e: {
               stop: string
               messages: Array<{ role: string; parts?: unknown; metadata?: unknown }>
+              pending?: PendingView
             },
           ): Promise<void> => {
             try {
-              await gw.turnEnded({ sessionId, stop: e.stop, messages: e.messages })
+              await gw.turnEnded({
+                sessionId,
+                stop: e.stop,
+                messages: e.messages,
+                pending: e.pending,
+              })
             } catch (error) {
               hookCtx.log.warn(
                 `channels: could not finish the turn of ${sessionId}: ${errorText(error)}`,

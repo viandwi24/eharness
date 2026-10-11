@@ -17,10 +17,21 @@ export function threadSourceBadge(t: Pick<Thread, 'source' | 'sourceLabel'>): st
 	return t.sourceLabel?.trim() || 'Channel';
 }
 
-/** The thread to show: the one asked for when it exists, else the first (newest activity). */
-export function pickThread<T extends Pick<Thread, 'id' | 'sessionId'>>(threads: readonly T[], wanted: string | null | undefined): T | undefined {
+/** What the badge of a channel conversation means (tooltip): where it lives and that web messages stay here. */
+export function threadSourceHint(badge: string): string {
+	return `Conversation from ${badge}. You can read it and continue it here; what you write here is not posted to the chat.`;
+}
+
+/**
+ * The thread to show: the one asked for when it exists, else the newest web thread (a busy channel
+ * conversation must not take over the web chat; the server's default does the same), else the first.
+ */
+export function pickThread<T extends Pick<Thread, 'id' | 'sessionId'> & { source?: Thread['source'] }>(
+	threads: readonly T[],
+	wanted: string | null | undefined
+): T | undefined {
 	// a link may name the thread by its id or by its session id (a decision or a log row knows only that)
-	return threads.find((t) => t.id === wanted || t.sessionId === wanted) ?? threads[0];
+	return threads.find((t) => t.id === wanted || t.sessionId === wanted) ?? threads.find((t) => t.source !== 'channel') ?? threads[0];
 }
 
 /** Link to the chat thread of a session id (`dm:…` or `chat:…`), or undefined for any other session. */

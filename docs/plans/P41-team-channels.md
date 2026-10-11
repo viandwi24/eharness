@@ -122,7 +122,7 @@ template; stores only what a task needs. Operators must review these terms for t
 ## Checklist
 
 - [x] L1 (gateway core in `examples/team/server/src/infra/channels`, mock adapter, scripted U1/U2/U3 flows in `test/channels.test.ts`; migration 0021)
-- [ ] L2
+- [x] L2 (session slot, `qr` view, `resend`, `service.credentials` / `markNeedsAuth`, spec 24; `subagent({ onPark: 'notice' })`, spec 20 §3.5)
 - [ ] L3
 - [ ] L4
 - [ ] U1, U2, U3 scripted flows green; manual checks with a real test bot and test account
@@ -152,10 +152,47 @@ template; stores only what a task needs. Operators must review these terms for t
   keep their own risk; a read-risk native action still asks (no allow rule for names the app does
   not know).
 - Limits of L1, on purpose: tools are built when a session opens (a binding made later reaches the
-  next session); a reply is at-most-once (a process that dies between the turn and the delivery
-  loses the reply; a reconcile pass can come with L3); reactions are not stored; `/new` and owner-only
-  commands are not built; an approval a channel turn needs is answered in the web app (nothing can be
-  answered in the chat); the agent of a conversation is fixed by its first wake.
+  next session); reactions are not stored; `/new` and owner-only commands are not built; a post
+  with files is not kept in the outbox.
+
+## L1 hardening (as built)
+
+Against the real use cases (U1 audit, U2 publishing, U3 internal group). Migration 0022
+(`channel_outbox`, `channel_approvals`, `channel_conversations.generation`).
+
+- **Outbox** (`delivery-store.ts`, `gateway.ts`). Every reply, post and approval request is a
+  sealed row before it is sent (trigger, target, chunk index); claimed by compare-and-set; the row
+  id is the adapter's idempotency key (`OutboundMessage.key`); marked `sent` with the platform id.
+  Replies and approval requests are retried (backoff, ten attempts, then a bell); on boot due
+  rows go out and a row left `sending` by a crash is looked up in the platform history (found =
+  sent; absent = sent; no history capability = not resent, failed, bell). `post` rows (tool calls)
+  are not retried and not resent after a crash (the model was told; ADR-0014). Chunk order holds.
+  A reply to a connection that is down is still queued (chunked at 4000). One reply per trigger.
+- **Approvals in chat.** `turn.end` with `stop: 'tool-pending'` of a channel-originated turn
+  (the trigger comes from the user message, or from `channel_approvals` for a continuation) posts
+  a request per pending item. Capability `buttons` (new `ChannelCapabilities.buttons`,
+  `OutboundMessage.buttons`): Approve / Deny, inbound `action` events `approve` / `deny` with the
+  approval row id. No buttons, and every question: a link to the thread
+  (`<TEAM_WEB_URL>/a/<agent>?t=<thread>`). **Who may answer:** the member the trigger's sender is
+  paired with, or a member in the connection's `admins` (default `['owner']`: the example has one
+  principal). Others (including unpaired accounts) are refused in chat, nothing changes. The answer
+  uses the same `answerAttention` as the web. First answer wins: the chat claims the row first;
+  anything else shows up as `pending-changed` in the feed (a wrapper of the activity store) and
+  the request is edited ("Answered in the web app"); a late press is told it was answered.
+  Platforms without edit get a short follow-up. A turn the web starts in a channel thread
+  announces nothing in the chat. The mock adapter has `buttons` and `press()`.
+- **Rebinding.** At each wake the conversation's agent is the current binding's. A change bumps
+  `generation`: session `channel:<c>:<conv>#2`, a new thread of the new agent; the old thread and
+  its pending approvals stay. Observed (pending) messages carry over (they belong to the
+  conversation, not the session).
+- **Read native actions.** `readActionTools(agentId)` (from the adapters' catalogs) feeds the
+  allow rules of the permission engine in `agent-factory.ts` (`createEngine`); other risks ask.
+- **Web.** The switcher shows the source badge (the list already did); channel threads can be
+  read and continued. The default thread selection is unchanged (the newest open thread, which can
+  be a channel thread; the server's `threadSessionOf` still skips them).
+- Not done on purpose: answering an `ask_user_question` from the chat (link only); several
+  instances sharing one outbox (a second process would treat the first one's `sending` rows as
+  its own boot leftovers only at its own boot); file posts in the outbox.
 
 ## Open questions
 

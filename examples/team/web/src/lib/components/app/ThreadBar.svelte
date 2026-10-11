@@ -16,12 +16,12 @@
 	import { timeAgo } from '#lib/time.js';
 	import { live } from '#lib/stores/live.svelte.js';
 	import { threadsStore } from '#lib/stores/threads.svelte.js';
-	import { cleanTitle, pickThread, splitThreads, threadHref, threadSourceBadge, threadTitle } from '#lib/threads/model.js';
+	import { cleanTitle, pickThread, splitThreads, threadHref, threadSourceBadge, threadSourceHint, threadTitle } from '#lib/threads/model.js';
 	import type { Thread } from '#lib/api/client.js';
 
 	/**
 	 * The chat threads of one agent (all equal): a switcher with the list, "New chat", and rename /
-	 * archive of the open one. Channel conversations will show up in the same list with a source badge.
+	 * archive of the open one. Channel conversations are in the same list (and in the switcher) with a source badge; they can be read and continued here.
 	 */
 	let { agentId, current, disabled = false }: { agentId: string; current: Thread | undefined; disabled?: boolean } = $props();
 
@@ -33,6 +33,7 @@
 
 	const threads = $derived(threadsStore.threadsOf(agentId));
 	const parts = $derived(splitThreads(threads));
+	const currentBadge = $derived(current ? threadSourceBadge(current) : null);
 
 	$effect(() => {
 		void live.state.revs.threads; // a chat was created, renamed or moved (any tab)
@@ -120,6 +121,9 @@
 			{#snippet child({ props })}
 				<Button {...props} variant="ghost" size="sm" class="min-w-0 max-w-[60%] justify-start gap-1.5 px-2" aria-label="Chats" data-testid="thread-switcher">
 					<span class="truncate text-sm">{current ? threadTitle(current) : 'Chat'}</span>
+					{#if currentBadge}
+						<Badge variant="outline" class="shrink-0 text-[10px]" data-testid="thread-bar-source" title={threadSourceHint(currentBadge)}>{currentBadge}</Badge>
+					{/if}
 					<CaretDownIcon class="size-3.5 shrink-0" />
 				</Button>
 			{/snippet}
